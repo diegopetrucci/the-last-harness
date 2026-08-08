@@ -17,23 +17,37 @@ function tempFixture() {
 }
 
 function runInstallState(fixture, extraArgs = []) {
-	return execFileSync(process.execPath, [
-		installStateScript,
-		"--state-path", fixture.statePath,
-		"--repo", "diegopetrucci/the-last-harness",
-		"--ref", "main",
-		"--track", "ref",
-		"--package-source", "git:github.com/diegopetrucci/the-last-harness@main",
-		"--package-source-is-default", "true",
-		"--raw-base", "https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main",
-		"--agent-dir", fixture.agentDir,
-		"--bin-dir", fixture.binDir,
-		"--wrapper-name", "tlh",
-		...extraArgs,
-	], {
-		cwd: repoRoot,
-		encoding: "utf8",
-	});
+	return execFileSync(
+		process.execPath,
+		[
+			installStateScript,
+			"--state-path",
+			fixture.statePath,
+			"--repo",
+			"diegopetrucci/the-last-harness",
+			"--ref",
+			"main",
+			"--track",
+			"ref",
+			"--package-source",
+			"git:github.com/diegopetrucci/the-last-harness@main",
+			"--package-source-is-default",
+			"true",
+			"--raw-base",
+			"https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main",
+			"--agent-dir",
+			fixture.agentDir,
+			"--bin-dir",
+			fixture.binDir,
+			"--wrapper-name",
+			"tlh",
+			...extraArgs,
+		],
+		{
+			cwd: repoRoot,
+			encoding: "utf8",
+		},
+	);
 }
 
 function readJson(path) {
@@ -67,22 +81,36 @@ test("tlh-install-state refuses to write install-state outside the isolated tlh 
 	const fixture = tempFixture();
 	const outsideStatePath = join(fixture.dir, "outside-install-state.json");
 
-	const result = spawnSync(process.execPath, [
-		installStateScript,
-		"--state-path", outsideStatePath,
-		"--repo", "diegopetrucci/the-last-harness",
-		"--ref", "main",
-		"--track", "ref",
-		"--package-source", "git:github.com/diegopetrucci/the-last-harness@main",
-		"--package-source-is-default", "true",
-		"--raw-base", "https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main",
-		"--agent-dir", fixture.agentDir,
-		"--bin-dir", fixture.binDir,
-		"--wrapper-name", "tlh",
-	], {
-		cwd: repoRoot,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[
+			installStateScript,
+			"--state-path",
+			outsideStatePath,
+			"--repo",
+			"diegopetrucci/the-last-harness",
+			"--ref",
+			"main",
+			"--track",
+			"ref",
+			"--package-source",
+			"git:github.com/diegopetrucci/the-last-harness@main",
+			"--package-source-is-default",
+			"true",
+			"--raw-base",
+			"https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main",
+			"--agent-dir",
+			fixture.agentDir,
+			"--bin-dir",
+			fixture.binDir,
+			"--wrapper-name",
+			"tlh",
+		],
+		{
+			cwd: repoRoot,
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /refusing unsafe TLH install state/);

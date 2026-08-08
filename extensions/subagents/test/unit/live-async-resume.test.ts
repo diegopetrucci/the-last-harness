@@ -36,14 +36,19 @@ describe("live async resume interrupt", () => {
 
 			const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
 			const state = {
-				asyncJobs: new Map([["run-live", {
-					asyncId: "run-live",
-					asyncDir,
-					status: "running" as const,
-					pid: process.pid,
-					activityState: "needs_attention" as const,
-					updatedAt: 100,
-				}]]),
+				asyncJobs: new Map([
+					[
+						"run-live",
+						{
+							asyncId: "run-live",
+							asyncDir,
+							status: "running" as const,
+							pid: process.pid,
+							activityState: "needs_attention" as const,
+							updatedAt: 100,
+						},
+					],
+				]),
 			};
 
 			const result = interruptLiveAsyncResumeTarget({
@@ -58,7 +63,10 @@ describe("live async resume interrupt", () => {
 			});
 
 			assert.deepEqual(result, { ok: true, asyncId: "run-live" });
-			assert.deepEqual(kills, [{ pid: process.pid, signal: 0 }, { pid: process.pid, signal: ASYNC_RESUME_INTERRUPT_SIGNAL }]);
+			assert.deepEqual(kills, [
+				{ pid: process.pid, signal: 0 },
+				{ pid: process.pid, signal: ASYNC_RESUME_INTERRUPT_SIGNAL },
+			]);
 			assert.equal(state.asyncJobs.get("run-live")?.activityState, undefined);
 			assert.equal(state.asyncJobs.get("run-live")?.updatedAt, 1234);
 			// The portable control request is dropped regardless of the signal path.
@@ -88,14 +96,19 @@ describe("live async resume interrupt", () => {
 			assert.equal(target.kind, "live");
 
 			const state = {
-				asyncJobs: new Map([["run-live", {
-					asyncId: "run-live",
-					asyncDir,
-					status: "running" as const,
-					pid: process.pid,
-					activityState: "needs_attention" as const,
-					updatedAt: 100,
-				}]]),
+				asyncJobs: new Map([
+					[
+						"run-live",
+						{
+							asyncId: "run-live",
+							asyncDir,
+							status: "running" as const,
+							pid: process.pid,
+							activityState: "needs_attention" as const,
+							updatedAt: 100,
+						},
+					],
+				]),
 			};
 
 			const result = interruptLiveAsyncResumeTarget({
@@ -136,16 +149,19 @@ describe("live async resume interrupt", () => {
 				lastUpdate: Date.now(),
 				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			});
-			const target = resolveAsyncResumeTarget({ id: "run-live" }, {
-				asyncDirRoot: asyncRoot,
-				resultsDir,
-				kill: (_pid, signal) => {
-					if (signal === 0) return true;
-					const error = new Error("missing process") as NodeJS.ErrnoException;
-					error.code = "ESRCH";
-					throw error;
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-live" },
+				{
+					asyncDirRoot: asyncRoot,
+					resultsDir,
+					kill: (_pid, signal) => {
+						if (signal === 0) return true;
+						const error = new Error("missing process") as NodeJS.ErrnoException;
+						error.code = "ESRCH";
+						throw error;
+					},
 				},
-			});
+			);
 			assert.equal(target.kind, "live");
 
 			const result = interruptLiveAsyncResumeTarget({
@@ -158,7 +174,10 @@ describe("live async resume interrupt", () => {
 				},
 			});
 
-			assert.deepEqual(result, { ok: false, message: "Async run run-live is live but no interrupt-capable runner pid was found." });
+			assert.deepEqual(result, {
+				ok: false,
+				message: "Async run run-live is live but no interrupt-capable runner pid was found.",
+			});
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
 			const repairedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			assert.equal(repairedStatus.state, "failed");

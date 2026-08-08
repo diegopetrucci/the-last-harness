@@ -95,7 +95,10 @@ describe("result intercom formatter", () => {
 				],
 			});
 
-			assert.match(payload.message, /Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/);
+			assert.match(
+				payload.message,
+				/Revive child: subagent\(\{ action: "resume", id: "run-multi", index: 0, message: "\.\.\." \}\)/,
+			);
 			assert.doesNotMatch(payload.message, /unsupported for multi-child/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -109,7 +112,14 @@ describe("result intercom formatter", () => {
 			mode: "single",
 			source: "async",
 			asyncId: "run-missing-session",
-			children: [{ agent: "worker", status: "failed", summary: "failed", sessionPath: path.join(os.tmpdir(), "missing-pi-session.jsonl") }],
+			children: [
+				{
+					agent: "worker",
+					status: "failed",
+					summary: "failed",
+					sessionPath: path.join(os.tmpdir(), "missing-pi-session.jsonl"),
+				},
+			],
 		});
 
 		assert.match(payload.message, /Resume: unavailable; no child session file was persisted/);
@@ -122,31 +132,39 @@ describe("result intercom formatter", () => {
 			runId: "root-run",
 			mode: "parallel",
 			source: "foreground",
-			children: attachNestedChildrenToResultChildren("root-run", [
-				{ agent: "owner-a", status: "completed", summary: "done", index: 0 },
-				{ agent: "owner-b", status: "completed", summary: "done", index: 1 },
-			], [{
-				id: "nested-a",
-				parentRunId: "root-run",
-				parentStepIndex: 1,
-				depth: 1,
-				path: [{ runId: "root-run", stepIndex: 1 }],
-				state: "complete",
-				agent: "reviewer",
-				sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
-				controlInbox: "/tmp/should-not-leak",
-				capabilityToken: "secret-token",
-				children: [{
-					id: "nested-grandchild",
-					parentRunId: "nested-a",
-					depth: 2,
-					path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
-					state: "complete",
-					agent: "auditor",
-					controlInbox: "/tmp/grandchild-should-not-leak",
-					capabilityToken: "grandchild-secret",
-				}],
-			}]),
+			children: attachNestedChildrenToResultChildren(
+				"root-run",
+				[
+					{ agent: "owner-a", status: "completed", summary: "done", index: 0 },
+					{ agent: "owner-b", status: "completed", summary: "done", index: 1 },
+				],
+				[
+					{
+						id: "nested-a",
+						parentRunId: "root-run",
+						parentStepIndex: 1,
+						depth: 1,
+						path: [{ runId: "root-run", stepIndex: 1 }],
+						state: "complete",
+						agent: "reviewer",
+						sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
+						controlInbox: "/tmp/should-not-leak",
+						capabilityToken: "secret-token",
+						children: [
+							{
+								id: "nested-grandchild",
+								parentRunId: "nested-a",
+								depth: 2,
+								path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
+								state: "complete",
+								agent: "auditor",
+								controlInbox: "/tmp/grandchild-should-not-leak",
+								capabilityToken: "grandchild-secret",
+							},
+						],
+					},
+				],
+			),
 		});
 
 		const nested = payload.children[1]?.children?.[0];
@@ -180,7 +198,14 @@ describe("result intercom formatter", () => {
 			runId: "run-native",
 			mode: "parallel",
 			children: [
-				{ agent: "completed-1", status: "completed", summary: "done", artifactPath: "/tmp/a.md", intercomTarget: "subagent-a-run-native-1", index: 0 },
+				{
+					agent: "completed-1",
+					status: "completed",
+					summary: "done",
+					artifactPath: "/tmp/a.md",
+					intercomTarget: "subagent-a-run-native-1",
+					index: 0,
+				},
 				{ agent: "failed-1", status: "failed", summary: "failed badly", sessionPath: "/tmp/b.jsonl", index: 1 },
 				{ agent: "paused-1", status: "paused", summary: "paused output", index: 2 },
 				{ agent: "completed-2", status: "completed", summary: "done", index: 3 },
@@ -199,8 +224,14 @@ describe("result intercom formatter", () => {
 		assert.match(grouped.text, /Mode: parallel/);
 		assert.match(grouped.text, /Status: failed/);
 		assert.match(grouped.text, /Children: 7 completed, 1 failed, 1 paused/);
-		assert.match(grouped.text, /2\/9\. failed-1 — failed[\s\S]*3\/9\. paused-1 — paused[\s\S]*1\/9\. completed-1 — completed/);
-		assert.match(grouped.text, /… \[1 child results omitted; highest-priority results shown first, inspect retained details for the full set\]/);
+		assert.match(
+			grouped.text,
+			/2\/9\. failed-1 — failed[\s\S]*3\/9\. paused-1 — paused[\s\S]*1\/9\. completed-1 — completed/,
+		);
+		assert.match(
+			grouped.text,
+			/… \[1 child results omitted; highest-priority results shown first, inspect retained details for the full set\]/,
+		);
 		assert.match(grouped.text, /Output artifact: \/tmp\/a\.md/);
 		assert.match(grouped.text, /Session: \/tmp\/b\.jsonl/);
 		assert.doesNotMatch(grouped.text, /intercom target/i);
@@ -215,37 +246,47 @@ describe("result intercom formatter", () => {
 			chainSteps: 2,
 			statusOverride: "failed",
 			errorSummary: `Collected output validation failed: ${"E".repeat(2_000)}`,
-			children: [{
-				agent: "reviewer",
-				status: "failed",
-				summary: "s".repeat(2_000),
-				artifactPath: "/tmp/reviewer-output.md",
-				children: Array.from({ length: 9 }, (_, index) => ({
-					id: `nested-${index}`,
-					parentRunId: "run-chain-native-error",
-					parentStepIndex: 0,
-					depth: 1,
-					path: [{ runId: "run-chain-native-error", stepIndex: 0 }],
-					state: "complete",
-					agent: `nested-agent-${index}`,
-					children: [{
-						id: `nested-${index}-child`,
-						parentRunId: `nested-${index}`,
-						depth: 2,
-						path: [{ runId: "run-chain-native-error", stepIndex: 0 }, { runId: `nested-${index}` }],
+			children: [
+				{
+					agent: "reviewer",
+					status: "failed",
+					summary: "s".repeat(2_000),
+					artifactPath: "/tmp/reviewer-output.md",
+					children: Array.from({ length: 9 }, (_, index) => ({
+						id: `nested-${index}`,
+						parentRunId: "run-chain-native-error",
+						parentStepIndex: 0,
+						depth: 1,
+						path: [{ runId: "run-chain-native-error", stepIndex: 0 }],
 						state: "complete",
-						agent: `nested-child-${index}`,
-						children: [{
-							id: `nested-${index}-grandchild`,
-							parentRunId: `nested-${index}-child`,
-							depth: 3,
-							path: [{ runId: "run-chain-native-error", stepIndex: 0 }, { runId: `nested-${index}` }, { runId: `nested-${index}-child` }],
-							state: "complete",
-							agent: `nested-grandchild-${index}`,
-						}],
-					}],
-				})),
-			}],
+						agent: `nested-agent-${index}`,
+						children: [
+							{
+								id: `nested-${index}-child`,
+								parentRunId: `nested-${index}`,
+								depth: 2,
+								path: [{ runId: "run-chain-native-error", stepIndex: 0 }, { runId: `nested-${index}` }],
+								state: "complete",
+								agent: `nested-child-${index}`,
+								children: [
+									{
+										id: `nested-${index}-grandchild`,
+										parentRunId: `nested-${index}-child`,
+										depth: 3,
+										path: [
+											{ runId: "run-chain-native-error", stepIndex: 0 },
+											{ runId: `nested-${index}` },
+											{ runId: `nested-${index}-child` },
+										],
+										state: "complete",
+										agent: `nested-grandchild-${index}`,
+									},
+								],
+							},
+						],
+					})),
+				},
+			],
 		});
 
 		assert.equal(grouped.status, "failed");
@@ -268,7 +309,13 @@ describe("result intercom formatter", () => {
 			mode: "parallel",
 			source: "foreground",
 			children: [
-				{ agent: "a", status: "completed", summary: "done", artifactPath: "/tmp/a.md", intercomTarget: "subagent-a-run-abc-1" },
+				{
+					agent: "a",
+					status: "completed",
+					summary: "done",
+					artifactPath: "/tmp/a.md",
+					intercomTarget: "subagent-a-run-abc-1",
+				},
 				{ agent: "b", status: "failed", summary: "failed", sessionPath: "/tmp/b.jsonl" },
 			],
 		});
@@ -281,7 +328,10 @@ describe("result intercom formatter", () => {
 		assert.match(receipt, /Delivered parallel subagent results via intercom\./);
 		assert.match(receipt, /Children: 1 completed, 1 failed/);
 		assert.match(receipt, /Artifacts:\n- a \[completed\]: \/tmp\/a\.md/);
-		assert.match(receipt, /Run intercom targets \(may be inactive after completion\):\n- a \[completed\]: subagent-a-run-abc-1/);
+		assert.match(
+			receipt,
+			/Run intercom targets \(may be inactive after completion\):\n- a \[completed\]: subagent-a-run-abc-1/,
+		);
 		assert.match(receipt, /Sessions:\n- b \[failed\]: \/tmp\/b\.jsonl/);
 		assert.match(receipt, /Full grouped output was sent over intercom\./);
 	});
@@ -289,15 +339,17 @@ describe("result intercom formatter", () => {
 	it("strips heavy output fields from receipt details", () => {
 		const stripped = stripDetailsOutputsForIntercomReceipt({
 			mode: "single",
-			results: [{
-				agent: "worker",
-				task: "Task",
-				exitCode: 0,
-				messages: [{ role: "assistant", content: [{ type: "text", text: "full" }] } as never],
-				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
-				finalOutput: "full output",
-				truncation: { text: "truncated", truncated: true },
-			}],
+			results: [
+				{
+					agent: "worker",
+					task: "Task",
+					exitCode: 0,
+					messages: [{ role: "assistant", content: [{ type: "text", text: "full" }] } as never],
+					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1 },
+					finalOutput: "full output",
+					truncation: { text: "truncated", truncated: true },
+				},
+			],
 		});
 		assert.equal(stripped.results[0]?.messages, undefined);
 		assert.equal(stripped.results[0]?.finalOutput, undefined);

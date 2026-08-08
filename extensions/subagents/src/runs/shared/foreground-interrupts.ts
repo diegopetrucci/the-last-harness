@@ -1,6 +1,10 @@
 import type { ForegroundRunControl } from "../../shared/types.ts";
 
-export function registerForegroundInterrupt(control: ForegroundRunControl | undefined, key: number, interrupt: () => boolean): void {
+export function registerForegroundInterrupt(
+	control: ForegroundRunControl | undefined,
+	key: number,
+	interrupt: () => boolean,
+): void {
 	if (!control) return;
 	control.activeInterrupts ??= new Map();
 	control.activeInterrupts.set(key, interrupt);

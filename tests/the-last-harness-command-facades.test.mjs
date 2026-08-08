@@ -6,7 +6,9 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { registerToggleTlhGitAttributionCommand } = await jiti.import("../extensions/the-last-harness/attribution.ts");
 const { registerEffortCommand } = await jiti.import("../extensions/the-last-harness/effort.ts");
-const { registerExperimentalCommand, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { registerExperimentalCommand, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
+	"../extensions/the-last-harness/experimental.ts",
+);
 const { registerUsageCommand } = await jiti.import("../extensions/the-last-harness/usage-limits.ts");
 
 function createPiHarness() {
@@ -79,7 +81,10 @@ test("effort facade keeps completions eager-light and shares one lazy handler ac
 		},
 	});
 	assert.deepEqual(
-		pi.commands.get("effort").getArgumentCompletions("").map((item) => item.value),
+		pi.commands
+			.get("effort")
+			.getArgumentCompletions("")
+			.map((item) => item.value),
 		["medium", "high", "xhigh", "max"],
 	);
 	assert.equal(loadCount, 0);

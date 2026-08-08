@@ -4,7 +4,8 @@ import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
 
 export const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
 const SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL = String.raw`(?:\*\*Output:\*\*\s*)?`;
-const SINGLE_OUTPUT_INSTRUCTION_PATTERN = "(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
+const SINGLE_OUTPUT_INSTRUCTION_PATTERN =
+	"(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
 export const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(
 	String.raw`${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`,
 	"i",
@@ -45,7 +46,9 @@ export function resolveSingleOutputPath(
 	if (path.isAbsolute(output)) return output;
 	if (relativeBaseDir) return path.resolve(relativeBaseDir, output);
 	const baseCwd = requestedCwd
-		? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))
+		? path.isAbsolute(requestedCwd)
+			? requestedCwd
+			: path.resolve(runtimeCwd, requestedCwd)
 		: runtimeCwd;
 	return path.resolve(baseCwd, output);
 }
@@ -99,7 +102,11 @@ export function formatSavedOutputReference(savedPath: string, fullOutput: string
 	};
 }
 
-export function validateFileOnlyOutputMode(outputMode: OutputMode | undefined, outputPath: string | undefined, context: string): string | undefined {
+export function validateFileOnlyOutputMode(
+	outputMode: OutputMode | undefined,
+	outputPath: string | undefined,
+	context: string,
+): string | undefined {
 	if (outputMode === "file-only" && !outputPath) {
 		return `${context} sets outputMode: "file-only" but does not configure an output file. Set output to a path or use outputMode: "inline".`;
 	}
@@ -141,9 +148,7 @@ export function resolveSingleOutput(
 	let changedSinceStart = false;
 	try {
 		const stat = fs.statSync(outputPath);
-		changedSinceStart = !beforeRun?.exists
-			|| stat.mtimeMs !== beforeRun.mtimeMs
-			|| stat.size !== beforeRun.size;
+		changedSinceStart = !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
 	} catch (error) {
 		const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
 		if (code !== "ENOENT" && code !== "ENOTDIR") {

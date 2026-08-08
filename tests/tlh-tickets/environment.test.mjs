@@ -1,12 +1,5 @@
 import test from "node:test";
-import {
-	assert,
-	join,
-	mkdirSync,
-	runTickets,
-	tempFixture,
-	writeFileSync,
-} from "./test-helpers.mjs";
+import { assert, join, mkdirSync, runTickets, tempFixture, writeFileSync } from "./test-helpers.mjs";
 
 test("runTickets ignores inherited PI_CODING_AGENT_DIR and TLH_* environment", () => {
 	const fixture = tempFixture();
@@ -17,8 +10,14 @@ test("runTickets ignores inherited PI_CODING_AGENT_DIR and TLH_* environment", (
 		mkdirSync(agentDir, { recursive: true });
 	}
 	writeFileSync(join(defaultAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: true } } })}\n`);
-	writeFileSync(join(inheritedPiAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
-	writeFileSync(join(inheritedTlhAgent, "settings.json"), `${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`);
+	writeFileSync(
+		join(inheritedPiAgent, "settings.json"),
+		`${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`,
+	);
+	writeFileSync(
+		join(inheritedTlhAgent, "settings.json"),
+		`${JSON.stringify({ tlh: { tickets: { enabled: false } } })}\n`,
+	);
 
 	const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousTlhAgentDir = process.env.TLH_AGENT_DIR;

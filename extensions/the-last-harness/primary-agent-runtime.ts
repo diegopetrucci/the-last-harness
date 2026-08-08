@@ -1,6 +1,11 @@
 import { join } from "node:path";
 
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import {
 	DEFAULT_PRIMARY_AGENT,
@@ -29,7 +34,11 @@ import {
 } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
-import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
+import {
+	EMBEDDED_SUBAGENTS_FEATURE,
+	buildChildExperimentalPrompt,
+	buildPrimaryExperimentalPrompt,
+} from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -126,126 +135,137 @@ function writeTlhPrimaryAgentModelOverride(
 	primary: TlhPrimaryAgentSelection,
 	modelKey: string | undefined,
 ): TlhPrimaryAgentWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write model-override settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		const rawTlh = settings.tlh;
-		let tlh: Record<string, unknown>;
-		if (rawTlh === undefined) {
-			tlh = {};
-			settings.tlh = tlh;
-		} else if (isRecord(rawTlh)) {
-			tlh = rawTlh;
-		} else {
-			throw new Error("settings.tlh must be an object to update model-override settings.");
-		}
-
-		const rawPrimaryAgent = tlh.primaryAgent;
-		let primaryAgent: Record<string, unknown>;
-		if (rawPrimaryAgent === undefined) {
-			primaryAgent = {};
-			tlh.primaryAgent = primaryAgent;
-		} else if (isRecord(rawPrimaryAgent)) {
-			primaryAgent = rawPrimaryAgent;
-		} else {
-			throw new Error("settings.tlh.primaryAgent must be an object to update model-override settings.");
-		}
-
-		const rawModelOverrides = primaryAgent.modelOverrides;
-		let modelOverrides: Record<string, unknown>;
-		if (rawModelOverrides === undefined) {
-			modelOverrides = {};
-			primaryAgent.modelOverrides = modelOverrides;
-		} else if (isRecord(rawModelOverrides)) {
-			modelOverrides = rawModelOverrides;
-		} else {
-			throw new Error("settings.tlh.primaryAgent.modelOverrides must be an object.");
-		}
-
-		const existingOverride = modelOverrides[primary];
-		if (modelKey === undefined) {
-			if (!Object.prototype.hasOwnProperty.call(modelOverrides, primary)) {
-				return { changed: false };
+	return withLockedTlhSettingsWrite(
+		cwd,
+		"Refusing to write model-override settings outside the isolated TLH profile.",
+		(current) => {
+			const settings = parseTlhSettingsContent(current);
+			const rawTlh = settings.tlh;
+			let tlh: Record<string, unknown>;
+			if (rawTlh === undefined) {
+				tlh = {};
+				settings.tlh = tlh;
+			} else if (isRecord(rawTlh)) {
+				tlh = rawTlh;
+			} else {
+				throw new Error("settings.tlh must be an object to update model-override settings.");
 			}
-			delete modelOverrides[primary];
-		} else {
-			if (existingOverride === modelKey) {
-				return { changed: false };
+
+			const rawPrimaryAgent = tlh.primaryAgent;
+			let primaryAgent: Record<string, unknown>;
+			if (rawPrimaryAgent === undefined) {
+				primaryAgent = {};
+				tlh.primaryAgent = primaryAgent;
+			} else if (isRecord(rawPrimaryAgent)) {
+				primaryAgent = rawPrimaryAgent;
+			} else {
+				throw new Error("settings.tlh.primaryAgent must be an object to update model-override settings.");
 			}
-			modelOverrides[primary] = modelKey;
-		}
 
-		// Clean up empty modelOverrides object
-		if (Object.keys(modelOverrides).length === 0) {
-			delete primaryAgent.modelOverrides;
-		}
+			const rawModelOverrides = primaryAgent.modelOverrides;
+			let modelOverrides: Record<string, unknown>;
+			if (rawModelOverrides === undefined) {
+				modelOverrides = {};
+				primaryAgent.modelOverrides = modelOverrides;
+			} else if (isRecord(rawModelOverrides)) {
+				modelOverrides = rawModelOverrides;
+			} else {
+				throw new Error("settings.tlh.primaryAgent.modelOverrides must be an object.");
+			}
 
-		return {
-			changed: true,
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
+			const existingOverride = modelOverrides[primary];
+			if (modelKey === undefined) {
+				if (!Object.hasOwn(modelOverrides, primary)) {
+					return { changed: false };
+				}
+				delete modelOverrides[primary];
+			} else {
+				if (existingOverride === modelKey) {
+					return { changed: false };
+				}
+				modelOverrides[primary] = modelKey;
+			}
+
+			// Clean up empty modelOverrides object
+			if (Object.keys(modelOverrides).length === 0) {
+				delete primaryAgent.modelOverrides;
+			}
+
+			return {
+				changed: true,
+				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+			};
+		},
+	);
 }
 
-function writeTlhPrimaryAgentDefault(cwd: string, selection: TlhPrimaryAgentSelection | undefined): TlhPrimaryAgentWriteResult {
-	return withLockedTlhSettingsWrite(cwd, "Refusing to write primary-agent settings outside the isolated TLH profile.", (current) => {
-		const settings = parseTlhSettingsContent(current);
-		const rawTlh = settings.tlh;
-		let tlh: Record<string, unknown>;
-		if (rawTlh === undefined) {
-			tlh = {};
-			settings.tlh = tlh;
-		} else if (isRecord(rawTlh)) {
-			tlh = rawTlh;
-		} else {
-			throw new Error("settings.tlh must be an object to update primary-agent settings.");
-		}
+function writeTlhPrimaryAgentDefault(
+	cwd: string,
+	selection: TlhPrimaryAgentSelection | undefined,
+): TlhPrimaryAgentWriteResult {
+	return withLockedTlhSettingsWrite(
+		cwd,
+		"Refusing to write primary-agent settings outside the isolated TLH profile.",
+		(current) => {
+			const settings = parseTlhSettingsContent(current);
+			const rawTlh = settings.tlh;
+			let tlh: Record<string, unknown>;
+			if (rawTlh === undefined) {
+				tlh = {};
+				settings.tlh = tlh;
+			} else if (isRecord(rawTlh)) {
+				tlh = rawTlh;
+			} else {
+				throw new Error("settings.tlh must be an object to update primary-agent settings.");
+			}
 
-		const rawPrimaryAgent = tlh.primaryAgent;
-		let primaryAgent: Record<string, unknown>;
-		if (rawPrimaryAgent === undefined) {
-			primaryAgent = {};
-			tlh.primaryAgent = primaryAgent;
-		} else if (isRecord(rawPrimaryAgent)) {
-			primaryAgent = rawPrimaryAgent;
-		} else {
-			throw new Error("settings.tlh.primaryAgent must be an object to update primary-agent defaults.");
-		}
+			const rawPrimaryAgent = tlh.primaryAgent;
+			let primaryAgent: Record<string, unknown>;
+			if (rawPrimaryAgent === undefined) {
+				primaryAgent = {};
+				tlh.primaryAgent = primaryAgent;
+			} else if (isRecord(rawPrimaryAgent)) {
+				primaryAgent = rawPrimaryAgent;
+			} else {
+				throw new Error("settings.tlh.primaryAgent must be an object to update primary-agent defaults.");
+			}
 
-		let changed = false;
-		const setField = (key: "enabled" | "selected", value: boolean | string | undefined) => {
-			if (value === undefined) {
-				if (Object.prototype.hasOwnProperty.call(primaryAgent, key)) {
-					delete primaryAgent[key];
+			let changed = false;
+			const setField = (key: "enabled" | "selected", value: boolean | string | undefined) => {
+				if (value === undefined) {
+					if (Object.hasOwn(primaryAgent, key)) {
+						delete primaryAgent[key];
+						changed = true;
+					}
+					return;
+				}
+				if (primaryAgent[key] !== value) {
+					primaryAgent[key] = value;
 					changed = true;
 				}
-				return;
+			};
+
+			if (selection === undefined) {
+				setField("enabled", undefined);
+				setField("selected", undefined);
+			} else if (selection === DISABLED_PRIMARY_AGENT) {
+				setField("enabled", false);
+				setField("selected", DISABLED_PRIMARY_AGENT);
+			} else {
+				setField("enabled", true);
+				setField("selected", selection);
 			}
-			if (primaryAgent[key] !== value) {
-				primaryAgent[key] = value;
-				changed = true;
+
+			if (!changed) {
+				return { changed: false };
 			}
-		};
 
-		if (selection === undefined) {
-			setField("enabled", undefined);
-			setField("selected", undefined);
-		} else if (selection === DISABLED_PRIMARY_AGENT) {
-			setField("enabled", false);
-			setField("selected", DISABLED_PRIMARY_AGENT);
-		} else {
-			setField("enabled", true);
-			setField("selected", selection);
-		}
-
-		if (!changed) {
-			return { changed: false };
-		}
-
-		return {
-			changed: true,
-			nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-		};
-	});
+			return {
+				changed: true,
+				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+			};
+		},
+	);
 }
 
 function primaryToolAllowlist(primary: AgentPrompt | undefined): string[] {
@@ -414,7 +434,11 @@ function createTlhPrimaryAgentRuntime(
 		);
 	}
 
-	function ensureLoadedPrimarySelection(ctx: ExtensionContext, selection: TlhPrimaryAgentSelection, source: string): TlhPrimaryAgentSelection {
+	function ensureLoadedPrimarySelection(
+		ctx: ExtensionContext,
+		selection: TlhPrimaryAgentSelection,
+		source: string,
+	): TlhPrimaryAgentSelection {
 		if (selection === DISABLED_PRIMARY_AGENT || primaryAgents.has(selection)) {
 			return selection;
 		}
@@ -428,7 +452,10 @@ function createTlhPrimaryAgentRuntime(
 
 	function syncPrimaryAgentState(ctx: ExtensionContext): void {
 		const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
-		const defaultResolution = resolvePrimaryAgentConfig(primaryConfig) as { selection: TlhPrimaryAgentSelection; invalidSelected?: string };
+		const defaultResolution = resolvePrimaryAgentConfig(primaryConfig) as {
+			selection: TlhPrimaryAgentSelection;
+			invalidSelected?: string;
+		};
 		if (defaultResolution.invalidSelected) {
 			warnInvalidPrimarySelection(ctx, "default", defaultResolution.invalidSelected);
 		}
@@ -469,7 +496,10 @@ function createTlhPrimaryAgentRuntime(
 		const activePrimary = effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
 		const rawModelOverrides = primaryConfig?.modelOverrides as unknown;
 		const modelOverride =
-			activePrimary && !shouldForceApplyForLock(activePrimary) && isRecord(rawModelOverrides) && typeof rawModelOverrides[effective] === "string"
+			activePrimary &&
+			!shouldForceApplyForLock(activePrimary) &&
+			isRecord(rawModelOverrides) &&
+			typeof rawModelOverrides[effective] === "string"
 				? rawModelOverrides[effective]
 				: "none";
 		return [
@@ -500,7 +530,11 @@ function createTlhPrimaryAgentRuntime(
 		const validTools = filterAvailableTools(desiredTools, allToolNames);
 		const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
 		if (warnOnMissing && missingTools.length > 0) {
-			warnOnce(ctx, `missing-primary-tools-${primary.name}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
+			warnOnce(
+				ctx,
+				`missing-primary-tools-${primary.name}`,
+				`TLH primary agent tools are not available yet: ${missingTools.join(", ")}`,
+			);
 		}
 		return validTools;
 	}
@@ -535,7 +569,11 @@ function createTlhPrimaryAgentRuntime(
 	): Promise<ActiveModel | undefined> {
 		if (!model) {
 			const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
-			warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
+			warnOnce(
+				ctx,
+				`missing-primary-model-${primary.name}`,
+				`TLH primary agent models are not available for configured providers: ${candidates}`,
+			);
 			return undefined;
 		}
 		if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
@@ -549,17 +587,23 @@ function createTlhPrimaryAgentRuntime(
 			tlhApplyingModel = false;
 		}
 		if (!success) {
-			warnOnce(ctx, `primary-model-unavailable-${primary.name}`, `TLH could not switch to primary agent model: ${model.provider}/${model.id}`);
+			warnOnce(
+				ctx,
+				`primary-model-unavailable-${primary.name}`,
+				`TLH could not switch to primary agent model: ${model.provider}/${model.id}`,
+			);
 			return undefined;
 		}
 		return model;
 	}
 
 	function currentThinkingSatisfiesPrimaryFloor(primary: AgentPrompt, currentThinking: string): boolean {
-		return primary.lockThinking !== true
-			&& primary.minThinking !== undefined
-			&& isThinkingLevel(currentThinking)
-			&& thinkingLevelAtLeast(currentThinking, primary.minThinking);
+		return (
+			primary.lockThinking !== true &&
+			primary.minThinking !== undefined &&
+			isThinkingLevel(currentThinking) &&
+			thinkingLevelAtLeast(currentThinking, primary.minThinking)
+		);
 	}
 
 	function applyPrimaryThinking(primary: AgentPrompt, thinking: AgentPrompt["thinking"]): void {
@@ -602,9 +646,7 @@ function createTlhPrimaryAgentRuntime(
 		if (!forceApply) {
 			const storedOverride = primaryConfig?.modelOverrides?.[selection];
 			if (storedOverride) {
-				const overrideRef = availableModels.find(
-					(m) => `${m.provider}/${m.id}` === storedOverride,
-				);
+				const overrideRef = availableModels.find((m) => `${m.provider}/${m.id}` === storedOverride);
 				if (overrideRef) {
 					resolvedModel = overrideRef;
 				}
@@ -641,7 +683,9 @@ function createTlhPrimaryAgentRuntime(
 
 	function parsePrimaryAgentSelection(value: string | undefined): TlhPrimaryAgentSelection | undefined {
 		const normalized = value?.trim().toLowerCase();
-		return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized) ? (normalized as TlhPrimaryAgentSelection) : undefined;
+		return normalized !== undefined && PRIMARY_AGENT_CYCLE.includes(normalized)
+			? (normalized as TlhPrimaryAgentSelection)
+			: undefined;
 	}
 
 	function switchPrimaryAgentCommandCompletions(prefix: string) {
@@ -689,7 +733,10 @@ function createTlhPrimaryAgentRuntime(
 					}
 					setSessionPrimaryAgentOverride(undefined);
 					await applyPrimaryModeChange(ctx);
-					ctx.ui.notify(`Cleared TLH primary-agent session override. Primary agent: ${currentPrimaryAgentLabel()}.`, "info");
+					ctx.ui.notify(
+						`Cleared TLH primary-agent session override. Primary agent: ${currentPrimaryAgentLabel()}.`,
+						"info",
+					);
 					return;
 				}
 
@@ -709,7 +756,7 @@ function createTlhPrimaryAgentRuntime(
 					const primary = activePrimaryAgent();
 					const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
 					const rawModelOverrides = primaryConfig?.modelOverrides as unknown;
-					const hasStoredOverride = isRecord(rawModelOverrides) && Object.prototype.hasOwnProperty.call(rawModelOverrides, selection);
+					const hasStoredOverride = isRecord(rawModelOverrides) && Object.hasOwn(rawModelOverrides, selection);
 					if (primary && shouldForceApplyForLock(primary) && !hasStoredOverride) {
 						ctx.ui.notify(
 							`No model override to clear: ${primaryAgentLabel(selection)} uses fixed model defaults and does not persist overrides.`,
@@ -721,9 +768,10 @@ function createTlhPrimaryAgentRuntime(
 						const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, undefined);
 						await applyPrimaryModeChange(ctx);
 						const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-						const message = primary && shouldForceApplyForLock(primary)
-							? `Cleared stale ignored model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()} uses fixed model defaults.${backupLabel}`
-							: `${result.changed ? "Cleared" : "No override to clear for"} model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`;
+						const message =
+							primary && shouldForceApplyForLock(primary)
+								? `Cleared stale ignored model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()} uses fixed model defaults.${backupLabel}`
+								: `${result.changed ? "Cleared" : "No override to clear for"} model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`;
 						ctx.ui.notify(message, "info");
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
@@ -749,12 +797,18 @@ function createTlhPrimaryAgentRuntime(
 
 				if (command === "default") {
 					if (parts.length !== 2) {
-						ctx.ui.notify("Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify(
+							"Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset",
+							"error",
+						);
 						return;
 					}
 					const defaultSelection = value === "reset" ? undefined : parsePrimaryAgentSelection(value);
 					if (value !== "reset" && !defaultSelection) {
-						ctx.ui.notify("Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset", "error");
+						ctx.ui.notify(
+							"Usage: /switch-primary-agent default architect|rush|product|bug-hunter|disabled|reset",
+							"error",
+						);
 						return;
 					}
 
@@ -775,7 +829,10 @@ function createTlhPrimaryAgentRuntime(
 					return;
 				}
 
-				ctx.ui.notify("Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|model reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]", "error");
+				ctx.ui.notify(
+					"Usage: /switch-primary-agent [status|architect|rush|product|bug-hunter|disabled|reset|model reset|default architect|default rush|default product|default bug-hunter|default disabled|default reset]",
+					"error",
+				);
 			},
 		});
 
@@ -819,8 +876,14 @@ function createTlhPrimaryAgentRuntime(
 			}
 			const chosenKey = `${event.model.provider}/${event.model.id}`;
 			// Determine the primary's bundled default model to know whether to clear the override.
-			const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
-			const bundledKey = primaryDefaults.model ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}` : undefined;
+			const primaryDefaults = selectProviderAwareAgentDefaults(
+				primary,
+				getUnfilteredAvailableModels(ctx.modelRegistry),
+				event.model.provider,
+			);
+			const bundledKey = primaryDefaults.model
+				? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
+				: undefined;
 			// If user picked the bundled default, clear the override; otherwise record it.
 			const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
 			try {
@@ -910,7 +973,10 @@ function createTlhPrimaryAgentRuntime(
 			if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
 				return { block: true, reason: rushDeveloperDelegationReason() };
 			}
-			const embeddedFeatureEnabled = isExperimentalFeatureEnabled(sessionExperimentalSnapshot, EMBEDDED_SUBAGENTS_FEATURE);
+			const embeddedFeatureEnabled = isExperimentalFeatureEnabled(
+				sessionExperimentalSnapshot,
+				EMBEDDED_SUBAGENTS_FEATURE,
+			);
 			if (embeddedFeatureEnabled) {
 				const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
 				if (embeddedBlockReason) {
@@ -926,7 +992,9 @@ function createTlhPrimaryAgentRuntime(
 				const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
 				if (requestedEmbeddedTargets.length > 0) {
 					const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
-					const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
+					const unauthorizedTargets = requestedEmbeddedTargets.filter(
+						(target) => !authorizedEmbeddedTargets.has(target),
+					);
 					if (unauthorizedTargets.length > 0) {
 						return {
 							block: true,
@@ -939,7 +1007,13 @@ function createTlhPrimaryAgentRuntime(
 		});
 	}
 
-	return { applySessionStart, currentPrimaryAgentLabel, activePrimaryAgentPrompt: activePrimaryAgent, registerCommands, registerLifecycleHooks };
+	return {
+		applySessionStart,
+		currentPrimaryAgentLabel,
+		activePrimaryAgentPrompt: activePrimaryAgent,
+		registerCommands,
+		registerLifecycleHooks,
+	};
 }
 
 export function registerTlhPrimaryAgentRuntime(

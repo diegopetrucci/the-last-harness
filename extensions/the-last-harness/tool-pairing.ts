@@ -91,9 +91,7 @@ export function computeMedian(values: number[]): number | null {
 	if (values.length === 0) return null;
 	const sorted = [...values].sort((a, b) => a - b);
 	const mid = Math.floor(sorted.length / 2);
-	return sorted.length % 2 === 0
-		? ((sorted[mid - 1]! + sorted[mid]!) / 2)
-		: sorted[mid]!;
+	return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +119,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * object).  Some fixtures and edge-cases store it on the outer entry.
  * Accept both to remain tolerant.
  */
-function resolveTimestamp(
-	entry: Record<string, unknown>,
-	message: Record<string, unknown>,
-): string | null {
+function resolveTimestamp(entry: Record<string, unknown>, message: Record<string, unknown>): string | null {
 	if (typeof message["timestamp"] === "string" && message["timestamp"]) {
 		return message["timestamp"];
 	}
@@ -163,10 +158,7 @@ export function pairToolCalls(entries: unknown[]): PairingResult {
 	// pending tool calls: toolCallId -> { toolName, callTimestamp }
 	const pendingCalls = new Map<string, { toolName: string; callTimestamp: string }>();
 	// pending tool results: toolCallId -> { resultTimestamp, isError, details }
-	const pendingResults = new Map<
-		string,
-		{ resultTimestamp: string; isError: boolean; details?: SubagentDetails }
-	>();
+	const pendingResults = new Map<string, { resultTimestamp: string; isError: boolean; details?: SubagentDetails }>();
 
 	for (const parsed of entries) {
 		if (!isObject(parsed)) continue;
@@ -217,8 +209,7 @@ export function pairToolCalls(entries: unknown[]): PairingResult {
 
 		if (role === "toolResult") {
 			// Accept both "toolCallId" (corpus) and fallback
-			const toolCallId =
-				typeof message["toolCallId"] === "string" ? message["toolCallId"] : null;
+			const toolCallId = typeof message["toolCallId"] === "string" ? message["toolCallId"] : null;
 			if (!toolCallId) continue;
 
 			const ts = resolveTimestamp(parsed, message);

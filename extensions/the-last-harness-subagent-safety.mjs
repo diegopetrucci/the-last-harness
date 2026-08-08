@@ -8,7 +8,16 @@
  * @property {(() => void)=} registerParent
  */
 
-export const ALLOWED_SUBAGENTS = Object.freeze(["developer", "code-reviewer", "repo-scout", "diff-summarizer", "librarian", "web-scout", "oracle", "contrarian"]);
+export const ALLOWED_SUBAGENTS = Object.freeze([
+	"developer",
+	"code-reviewer",
+	"repo-scout",
+	"diff-summarizer",
+	"librarian",
+	"web-scout",
+	"oracle",
+	"contrarian",
+]);
 export const SAFE_SUBAGENT_ACTIONS = Object.freeze(["list", "get", "status", "interrupt", "doctor", "resume", "steer"]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
@@ -166,7 +175,9 @@ function validateExecutionBearingTargets(input, allowedSubagents, allowedSubagen
 		return `TLH primary-agent subagent execution must target one of: ${allowedSubagents.join(", ")}${embeddedSuffix}.`;
 	}
 
-	const disallowed = targets.filter((agent) => !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)));
+	const disallowed = targets.filter(
+		(agent) => !allowedSubagentSet.has(agent) && !(allowEmbeddedTargets && isEmbeddedSubagentTarget(agent)),
+	);
 	if (disallowed.length > 0) {
 		return `TLH primary agents may delegate only to: ${allowedSubagents.join(", ")}${embeddedSuffix}. Disallowed target(s): ${disallowed.join(", ")}.`;
 	}
@@ -241,7 +252,12 @@ export function validateSubagentToolInput(input, options = {}) {
 		return contextReason;
 	}
 
-	return validateExecutionBearingTargets(input, allowedSubagents, allowedSubagentSet, Boolean(options.allowEmbeddedTargets));
+	return validateExecutionBearingTargets(
+		input,
+		allowedSubagents,
+		allowedSubagentSet,
+		Boolean(options.allowEmbeddedTargets),
+	);
 }
 
 /**

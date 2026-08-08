@@ -43,11 +43,13 @@ function getThinkingLevelCompletions(prefix: string, runtime?: TlhPrimaryAgentRu
 		minThinking !== undefined
 			? THINKING_LEVELS.filter((level) => thinkingLevelAtLeast(level, minThinking))
 			: THINKING_LEVELS;
-	const completions = filteredLevels.filter((level) => level.startsWith(normalizedPrefix)).map((level) => ({
-		value: level,
-		label: level,
-		description: THINKING_LEVEL_DESCRIPTIONS[level],
-	}));
+	const completions = filteredLevels
+		.filter((level) => level.startsWith(normalizedPrefix))
+		.map((level) => ({
+			value: level,
+			label: level,
+			description: THINKING_LEVEL_DESCRIPTIONS[level],
+		}));
 	return completions.length > 0 ? completions : null;
 }
 
@@ -56,7 +58,9 @@ export function registerEffortCommand(
 	runtime?: TlhPrimaryAgentRuntime,
 	options: TlhEffortCommandFacadeOptions = {},
 ): void {
-	const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./effort-command.js") as Promise<EffortCommandModule>));
+	const loadModule = createRetryableLazyImport(
+		options.loadModule ?? (() => import("./effort-command.js") as Promise<EffortCommandModule>),
+	);
 	const runHandler = async (args: string, ctx: ExtensionCommandContext) => {
 		const module = await loadModule();
 		await module.handleThinkingLevelCommand(pi, args, ctx, runtime);

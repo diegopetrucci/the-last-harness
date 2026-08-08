@@ -77,9 +77,7 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
     };
     const collapsedContextHintLines = (width) => {
         const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-        const plainText = startupResources.context.length === 0
-            ? hint
-            : `Context: ${startupResources.context.join(", ")}. ${hint}`;
+        const plainText = startupResources.context.length === 0 ? hint : `Context: ${startupResources.context.join(", ")}. ${hint}`;
         return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
     };
     const headerDetails = (width) => [
@@ -87,7 +85,13 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
-        const lines = [logo, "", ...installWarningLine(width), ...collapsedContextHintLines(width), ...startupTipLine(width)];
+        const lines = [
+            logo,
+            "",
+            ...installWarningLine(width),
+            ...collapsedContextHintLines(width),
+            ...startupTipLine(width),
+        ];
         return lines;
     };
     const renderExpanded = (width) => {

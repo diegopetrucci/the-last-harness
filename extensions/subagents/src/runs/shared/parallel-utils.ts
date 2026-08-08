@@ -130,9 +130,7 @@ export async function mapConcurrent<T, R>(
 		}
 	}
 
-	await Promise.all(
-		Array.from({ length: Math.min(safeLimit, items.length) }, (_, wi) => worker(wi)),
-	);
+	await Promise.all(Array.from({ length: Math.min(safeLimit, items.length) }, (_, wi) => worker(wi)));
 	return results;
 }
 
@@ -152,18 +150,16 @@ export interface ParallelTaskResult {
 
 export function aggregateParallelOutputs(
 	results: ParallelTaskResult[],
-	headerFormat: (index: number, agent: string) => string = (i, agent) =>
-		`=== Parallel Task ${i + 1} (${agent}) ===`,
+	headerFormat: (index: number, agent: string) => string = (i, agent) => `=== Parallel Task ${i + 1} (${agent}) ===`,
 ): string {
 	return results
 		.map((r, i) => {
 			const header = headerFormat(r.taskIndex ?? i, r.agent);
 			const hasOutput = Boolean(r.output?.trim());
 			const notice = r.modelFallbackNotice ? `Notice: ${r.modelFallbackNotice}` : "";
-			const status =
-				r.timedOut
-					? `TIMED OUT${r.error ? `: ${r.error}` : ""}`
-					: r.exitCode === -1
+			const status = r.timedOut
+				? `TIMED OUT${r.error ? `: ${r.error}` : ""}`
+				: r.exitCode === -1
 					? "SKIPPED"
 					: r.exitCode !== 0 && r.exitCode !== null
 						? `FAILED (exit code ${r.exitCode})${r.error ? `: ${r.error}` : ""}`
@@ -173,7 +169,7 @@ export function aggregateParallelOutputs(
 								? `EMPTY OUTPUT (expected output file missing: ${r.outputTargetPath})`
 								: !hasOutput && !r.outputTargetPath
 									? "EMPTY OUTPUT (no textual response returned)"
-							: "";
+									: "";
 			const body = status ? (hasOutput ? `${status}\n${r.output}` : status) : r.output;
 			return `${header}\n${[notice, body].filter(Boolean).join("\n")}`;
 		})

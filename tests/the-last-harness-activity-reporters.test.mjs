@@ -7,10 +7,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-	createHerdrActivityReporter,
-	createCmuxActivityReporter,
-} = await jiti.import("../extensions/the-last-harness/activity-reporters.ts");
+const { createHerdrActivityReporter, createCmuxActivityReporter } = await jiti.import(
+	"../extensions/the-last-harness/activity-reporters.ts",
+);
 
 function createFakeTimers() {
 	let now = 0;
@@ -82,7 +81,10 @@ test("Herdr reporter no-ops without required env and when official reporter is i
 			calls.push(request);
 		},
 	});
-	noopReporter.handleSessionStart({ mode: "tui", sessionManager: { getSessionFile: () => "/tmp/s.json", getSessionId: () => "s" } });
+	noopReporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => "/tmp/s.json", getSessionId: () => "s" },
+	});
 	noopReporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
 	await flushAsyncWork();
 	assert.deepEqual(calls, []);
@@ -98,8 +100,15 @@ test("Herdr reporter no-ops without required env and when official reporter is i
 		},
 	});
 
-	singleWriterReporter.handleSessionStart({ mode: "tui", sessionManager: { getSessionFile: () => "/tmp/s.json", getSessionId: () => "s" } });
-	singleWriterReporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
+	singleWriterReporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => "/tmp/s.json", getSessionId: () => "s" },
+	});
+	singleWriterReporter.handleSnapshot({
+		inProgress: true,
+		primaryReasons: ["primary:agent-loop"],
+		activeAsyncJobIds: [],
+	});
 	await flushAsyncWork();
 	assert.deepEqual(singleWriterCalls, []);
 });
@@ -148,7 +157,10 @@ test("Herdr reporter retries timed out activity socket delivery once", async () 
 	await flushAsyncWork();
 	assert.equal(sockets[1].destroyCalls, 1);
 	// Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
-	assert.deepEqual(timers.getPendingDelays().filter((d) => d <= 2000), []);
+	assert.deepEqual(
+		timers.getPendingDelays().filter((d) => d <= 2000),
+		[],
+	);
 	assert.deepEqual(JSON.parse(sockets[0].writes[0]), JSON.parse(sockets[1].writes[0]));
 });
 
@@ -217,7 +229,11 @@ test("Herdr reporter disables heartbeat for numeric zero representations", async
 		reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
 		await flushAsyncWork();
 		assert.equal(calls.filter((call) => call.method === "pane.report_agent").length, 1);
-		assert.deepEqual(timers.getPendingDelays(), [], `zero interval ${JSON.stringify(configuredInterval)} must disable heartbeat`);
+		assert.deepEqual(
+			timers.getPendingDelays(),
+			[],
+			`zero interval ${JSON.stringify(configuredInterval)} must disable heartbeat`,
+		);
 
 		timers.advance(60000);
 		await flushAsyncWork();
@@ -313,7 +329,10 @@ test("Herdr reporter does not retry after first activity socket response", async
 	await flushAsyncWork();
 	assert.equal(sockets[0].destroyCalls, 1);
 	// Heartbeat timer (default 20s) is expected to be pending after first state report; only socket-retry timers (≤2000ms) should be gone.
-	assert.deepEqual(timers.getPendingDelays().filter((d) => d <= 2000), []);
+	assert.deepEqual(
+		timers.getPendingDelays().filter((d) => d <= 2000),
+		[],
+	);
 
 	timers.advance(5000);
 	await flushAsyncWork();
@@ -358,7 +377,10 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
 	timers.advance(1);
 	await flushAsyncWork();
 	const stateCalls = calls.filter((call) => call.method === "pane.report_agent");
-	assert.deepEqual(stateCalls.map((call) => call.params.state), ["working", "idle"]);
+	assert.deepEqual(
+		stateCalls.map((call) => call.params.state),
+		["working", "idle"],
+	);
 	assert.ok(stateCalls[1].params.seq > stateCalls[0].params.seq);
 
 	reporter.handleSessionShutdown();
@@ -693,14 +715,20 @@ test("Herdr reporter heartbeat re-sends last state with strictly increasing seq"
 	const afterFirstHeartbeat = calls.filter((c) => c.method === "pane.report_agent");
 	assert.equal(afterFirstHeartbeat.length, 2, "one heartbeat should have fired");
 	assert.equal(afterFirstHeartbeat[1].params.state, "working", "heartbeat re-sends last state");
-	assert.ok(afterFirstHeartbeat[1].params.seq > firstSeq, "heartbeat seq must be strictly greater than first report seq");
+	assert.ok(
+		afterFirstHeartbeat[1].params.seq > firstSeq,
+		"heartbeat seq must be strictly greater than first report seq",
+	);
 
 	// Advance another interval — another heartbeat fires.
 	timers.advance(1000);
 	await flushAsyncWork();
 	const afterSecondHeartbeat = calls.filter((c) => c.method === "pane.report_agent");
 	assert.equal(afterSecondHeartbeat.length, 3, "second heartbeat should fire");
-	assert.ok(afterSecondHeartbeat[2].params.seq > afterSecondHeartbeat[1].params.seq, "second heartbeat seq must be strictly greater");
+	assert.ok(
+		afterSecondHeartbeat[2].params.seq > afterSecondHeartbeat[1].params.seq,
+		"second heartbeat seq must be strictly greater",
+	);
 
 	// Switch to idle — heartbeat should re-send idle.
 	reporter.handleSnapshot({ inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
@@ -723,7 +751,9 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 	// Test shutdown.
 	const shutdownReporter = createHerdrActivityReporter({
 		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
-		sendRequest: async (request) => { calls.push(request); },
+		sendRequest: async (request) => {
+			calls.push(request);
+		},
 		now: timers.now,
 		timers,
 		idleDebounceMs: 10,
@@ -745,7 +775,9 @@ test("Herdr reporter heartbeat stops on handleSessionShutdown and dispose", asyn
 	const calls2 = [];
 	const disposeReporter = createHerdrActivityReporter({
 		env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1", HERDR_TLH_HEARTBEAT_MS: "1000" },
-		sendRequest: async (request) => { calls2.push(request); },
+		sendRequest: async (request) => {
+			calls2.push(request);
+		},
 		now: timers.now,
 		timers,
 		idleDebounceMs: 10,
@@ -776,7 +808,10 @@ test("cmux reporter uses per-surface status keys and status-only commands", asyn
 		idleDebounceMs: 25,
 	});
 
-	reporter.handleSessionStart({ mode: "tui", sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" } });
+	reporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" },
+	});
 	reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-1"] });
 	reporter.handleSnapshot({ inProgress: true, primaryReasons: [], activeAsyncJobIds: ["job-1"] });
 	await flushAsyncWork();
@@ -786,13 +821,15 @@ test("cmux reporter uses per-surface status keys and status-only commands", asyn
 	timers.advance(25);
 	await flushAsyncWork();
 	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh-pane-1-left"] });
-	assert.equal(commands.some(({ args }) => args.includes("hooks") || args.includes("prompt-submit") || args.includes("stop")), false);
+	assert.equal(
+		commands.some(({ args }) => args.includes("hooks") || args.includes("prompt-submit") || args.includes("stop")),
+		false,
+	);
 
 	reporter.handleSessionShutdown();
 	await flushAsyncWork();
 	assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh-pane-1-left"] });
 });
-
 
 test("cmux reporter falls back to session id then global key", async () => {
 	const sessionCommands = [];
@@ -839,7 +876,10 @@ test("cmux reporter no-ops without workspace env", async () => {
 			commands.push({ command, args: [...args] });
 		},
 	});
-	reporter.handleSessionStart({ mode: "tui", sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" } });
+	reporter.handleSessionStart({
+		mode: "tui",
+		sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s" },
+	});
 	reporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
 	await flushAsyncWork();
 	assert.deepEqual(commands, []);
@@ -852,7 +892,9 @@ test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc
 		const herdrCalls = [];
 		const herdrReporter = createHerdrActivityReporter({
 			env: { HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "pane-1" },
-			sendRequest: async (request) => { herdrCalls.push(request); },
+			sendRequest: async (request) => {
+				herdrCalls.push(request);
+			},
 		});
 		herdrReporter.handleSessionStart({ mode, sessionManager });
 		herdrReporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });
@@ -865,7 +907,9 @@ test("reporters no-op for non-TUI modes even when hasUI would be true (json, rpc
 		const cmuxCommands = [];
 		const cmuxReporter = createCmuxActivityReporter({
 			env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
-			runner: async (command, args) => { cmuxCommands.push({ command, args: [...args] }); },
+			runner: async (command, args) => {
+				cmuxCommands.push({ command, args: [...args] });
+			},
 		});
 		cmuxReporter.handleSessionStart({ mode, sessionManager });
 		cmuxReporter.handleSnapshot({ inProgress: true, primaryReasons: ["primary:agent-loop"], activeAsyncJobIds: [] });

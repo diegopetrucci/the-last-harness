@@ -1,4 +1,9 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import {
@@ -18,7 +23,8 @@ import type { ReasoningModel, SubagentMetadata, ThinkingLevel, TlhSettings, TlhS
 
 const SUBAGENT_SETTINGS_COMMAND = "subagent-settings";
 const INDEPENDENCE_SENSITIVE_AGENTS = new Set(["code-reviewer", "oracle", "contrarian"]);
-const INDEPENDENCE_WARNING = "Provider independence is not guaranteed when a fixed model override is configured for this role.";
+const INDEPENDENCE_WARNING =
+	"Provider independence is not guaranteed when a fixed model override is configured for this role.";
 const SETTINGS_WRITE_ERROR = "Refusing to write minor-agent settings outside the isolated TLH profile.";
 
 type AvailableModel = ProviderModelReference & Partial<ReasoningModel>;
@@ -92,7 +98,9 @@ function availableThinkingLevels(model: AvailableModel | undefined): ThinkingLev
 }
 
 function fixedModelWarning(agentName: string, override: TlhSubagentOverride | undefined): string | undefined {
-	return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName) ? INDEPENDENCE_WARNING : undefined;
+	return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName)
+		? INDEPENDENCE_WARNING
+		: undefined;
 }
 
 function notifyWriteResult(
@@ -103,7 +111,10 @@ function notifyWriteResult(
 	const changedLabel = result.changed ? "Updated" : "No change to";
 	const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
 	const warningLabel = warning ? ` ${warning}` : "";
-	ctx.ui.notify(`${changedLabel} TLH minor-agent settings at ${formatHomePath(result.settingsPath)}.${backupLabel}${warningLabel}`, "info");
+	ctx.ui.notify(
+		`${changedLabel} TLH minor-agent settings at ${formatHomePath(result.settingsPath)}.${backupLabel}${warningLabel}`,
+		"info",
+	);
 }
 
 function usageMessage(): string {
@@ -153,12 +164,15 @@ function cleanupOverrideContainers(settings: Record<string, unknown>): void {
 function writeSubagentOverridePatch(cwd: string, agentName: string, patch: OverridePatch): OverrideWriteResult {
 	return withLockedTlhSettingsWrite(cwd, SETTINGS_WRITE_ERROR, (current) => {
 		const settings = parseTlhSettingsContent(current);
-		const currentOverrides = isRecord(settings.subagents) && isRecord(settings.subagents.agentOverrides)
-			? settings.subagents.agentOverrides
-			: undefined;
+		const currentOverrides =
+			isRecord(settings.subagents) && isRecord(settings.subagents.agentOverrides)
+				? settings.subagents.agentOverrides
+				: undefined;
 		const existingValue = currentOverrides?.[agentName];
 		if (existingValue !== undefined && !isRecord(existingValue)) {
-			throw new Error(`settings.subagents.agentOverrides.${agentName} must be an object to update minor-agent settings.`);
+			throw new Error(
+				`settings.subagents.agentOverrides.${agentName} must be an object to update minor-agent settings.`,
+			);
 		}
 		const existing = isRecord(existingValue) ? existingValue : undefined;
 		const nextModel = patch.model !== undefined ? patch.model : existing?.model;
@@ -199,7 +213,7 @@ function resetSubagentOverride(cwd: string, agentName: string, field?: "model" |
 		let changed = false;
 
 		for (const key of field ? [field] : ["model", "thinking"]) {
-			if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+			if (Object.hasOwn(nextValue, key)) {
 				delete nextValue[key];
 				changed = true;
 			}
@@ -237,7 +251,7 @@ function resetAllBundledSubagentOverrides(cwd: string, bundledAgentNames: readon
 			const nextValue = { ...existingValue };
 			let entryChanged = false;
 			for (const key of ["model", "thinking"] as const) {
-				if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+				if (Object.hasOwn(nextValue, key)) {
 					delete nextValue[key];
 					entryChanged = true;
 				}
@@ -278,7 +292,10 @@ function effectiveModelForEffort(
 	).model;
 }
 
-function formatEffectiveModelAndThinking(model: ProviderModelReference | string | undefined, thinking: ThinkingLevel | undefined): string {
+function formatEffectiveModelAndThinking(
+	model: ProviderModelReference | string | undefined,
+	thinking: ThinkingLevel | undefined,
+): string {
 	if (!model) {
 		return thinking ? `no model (effort ${thinking})` : "no model";
 	}
@@ -289,16 +306,17 @@ function formatEffectiveModelAndThinking(model: ProviderModelReference | string 
 }
 
 function formatStoredOverrideValue(override: TlhSubagentOverride | undefined, field: "model" | "thinking"): string {
-	if (!override || !Object.prototype.hasOwnProperty.call(override, field)) {
+	if (!override || !Object.hasOwn(override, field)) {
 		return "default";
 	}
 	const value = override[field];
 	if (value === false) {
 		return "disabled (false)";
 	}
-	const isStandard = field === "model"
-		? typeof value === "string" && parseProviderModelReference(value) !== undefined
-		: typeof value === "string" && isThinkingLevel(value);
+	const isStandard =
+		field === "model"
+			? typeof value === "string" && parseProviderModelReference(value) !== undefined
+			: typeof value === "string" && isThinkingLevel(value);
 	if (isStandard) {
 		return String(value);
 	}
@@ -306,9 +324,18 @@ function formatStoredOverrideValue(override: TlhSubagentOverride | undefined, fi
 	return `stored nonstandard/disabled (${rendered === undefined ? String(value) : rendered})`;
 }
 
-function formatStatusForAgent(agent: SubagentMetadata, override: TlhSubagentOverride | undefined, ctx: StatusContext): string {
+function formatStatusForAgent(
+	agent: SubagentMetadata,
+	override: TlhSubagentOverride | undefined,
+	ctx: StatusContext,
+): string {
 	const models = availableModels(ctx);
-	const baseResolution = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx));
+	const baseResolution = resolveProviderAwareSubagentResolution(
+		agent,
+		models,
+		ctx.model?.provider,
+		currentModelReference(ctx),
+	);
 	const overrideResolution = resolveProviderAwareSubagentResolution(
 		agent,
 		models,
@@ -334,17 +361,18 @@ function formatStatusForAgent(agent: SubagentMetadata, override: TlhSubagentOver
 	return lines.join("\n");
 }
 
-function formatStatusMessage(ctx: StatusContext, subagents: readonly SubagentMetadata[], selectedAgentName?: string): string {
+function formatStatusMessage(
+	ctx: StatusContext,
+	subagents: readonly SubagentMetadata[],
+	selectedAgentName?: string,
+): string {
 	const overrides = getStoredOverrides(ctx.cwd);
-	const selectedAgents = selectedAgentName
-		? subagents.filter((agent) => agent.name === selectedAgentName)
-		: subagents;
+	const selectedAgents = selectedAgentName ? subagents.filter((agent) => agent.name === selectedAgentName) : subagents;
 	const currentModel = currentModelReference(ctx);
 	const header = `TLH minor-agent settings for ${currentModel ? formatProviderModelReference(currentModel) : "this session"}:`;
-	return [
-		header,
-		...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx)),
-	].join("\n");
+	return [header, ...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx))].join(
+		"\n",
+	);
 }
 
 function validateAgentName(agentName: string, subagents: ReadonlyMap<string, SubagentMetadata>): SubagentMetadata {
@@ -379,7 +407,9 @@ function validateModelEffortPair(model: AvailableModel | undefined, effort: unkn
 	}
 	const supportedLevels = availableThinkingLevels(model);
 	if (!supportedLevels.includes(effort)) {
-		throw new Error(`Effort "${effort}" is not supported by ${model ? formatProviderModelReference(model) : "the effective model"}. Available: ${supportedLevels.join(", ")}.`);
+		throw new Error(
+			`Effort "${effort}" is not supported by ${model ? formatProviderModelReference(model) : "the effective model"}. Available: ${supportedLevels.join(", ")}.`,
+		);
 	}
 }
 
@@ -406,7 +436,9 @@ function parseSetArguments(
 		if (field === "effort") {
 			const normalizedValue = value.toLowerCase();
 			if (!isThinkingLevel(normalizedValue)) {
-				throw new Error(`Unsupported effort "${value}". Available values: off, minimal, low, medium, high, xhigh, max.`);
+				throw new Error(
+					`Unsupported effort "${value}". Available values: off, minimal, low, medium, high, xhigh, max.`,
+				);
 			}
 			patch.thinking = normalizedValue;
 			continue;
@@ -436,9 +468,19 @@ async function confirmFixedModelOverride(
 	);
 }
 
-function subagentPickerOption(agent: SubagentMetadata, override: TlhSubagentOverride | undefined, ctx: StatusContext): string {
+function subagentPickerOption(
+	agent: SubagentMetadata,
+	override: TlhSubagentOverride | undefined,
+	ctx: StatusContext,
+): string {
 	const models = availableModels(ctx);
-	const effective = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx), override);
+	const effective = resolveProviderAwareSubagentResolution(
+		agent,
+		models,
+		ctx.model?.provider,
+		currentModelReference(ctx),
+		override,
+	);
 	const effectiveLabel = formatEffectiveModelAndThinking(
 		effective.unavailableModel ?? effective.model,
 		effective.unavailableModel ? undefined : effective.thinking,
@@ -449,9 +491,16 @@ function subagentPickerOption(agent: SubagentMetadata, override: TlhSubagentOver
 	return `${overrideMarker} ${agent.name} — ${effectiveLabel}${riskMarker}`;
 }
 
-function modelPickerOption(model: AvailableModel, currentOverride: string | undefined, bundledDefault: string | undefined): string {
+function modelPickerOption(
+	model: AvailableModel,
+	currentOverride: string | undefined,
+	bundledDefault: string | undefined,
+): string {
 	const label = formatProviderModelReference(model);
-	const markers = [currentOverride === label ? "current override" : undefined, bundledDefault === label ? "bundled default" : undefined]
+	const markers = [
+		currentOverride === label ? "current override" : undefined,
+		bundledDefault === label ? "bundled default" : undefined,
+	]
 		.filter(Boolean)
 		.join(", ");
 	return markers ? `${label} — ${markers}` : label;
@@ -503,11 +552,19 @@ async function runInteractivePicker(
 			continue;
 		}
 		if (action === "reset model") {
-			notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "model"), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+			notifyWriteResult(
+				ctx,
+				resetSubagentOverride(ctx.cwd, agentName, "model"),
+				fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+			);
 			continue;
 		}
 		if (action === "reset effort") {
-			notifyWriteResult(ctx, resetSubagentOverride(ctx.cwd, agentName, "thinking"), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+			notifyWriteResult(
+				ctx,
+				resetSubagentOverride(ctx.cwd, agentName, "thinking"),
+				fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+			);
 			continue;
 		}
 		if (action === "reset role") {
@@ -517,12 +574,24 @@ async function runInteractivePicker(
 
 		const models = availableModels(ctx);
 		if (action === "set model") {
-			const bundledDefault = resolveProviderAwareSubagentResolution(agent, models, ctx.model?.provider, currentModelReference(ctx)).model;
+			const bundledDefault = resolveProviderAwareSubagentResolution(
+				agent,
+				models,
+				ctx.model?.provider,
+				currentModelReference(ctx),
+			).model;
 			const optionToModel = new Map(
-				models.map((model) => [
-					modelPickerOption(model, typeof override?.model === "string" ? override.model : undefined, bundledDefault ? formatProviderModelReference(bundledDefault) : undefined),
-					formatProviderModelReference(model),
-				] as const),
+				models.map(
+					(model) =>
+						[
+							modelPickerOption(
+								model,
+								typeof override?.model === "string" ? override.model : undefined,
+								bundledDefault ? formatProviderModelReference(bundledDefault) : undefined,
+							),
+							formatProviderModelReference(model),
+						] as const,
+				),
 			);
 			const selectedModelOption = await ctx.ui.select(`Pick model for ${agentName}`, [...optionToModel.keys()]);
 			if (!selectedModelOption) {
@@ -546,17 +615,18 @@ async function runInteractivePicker(
 				ctx.ui.notify("Model override cancelled.", "info");
 				continue;
 			}
-			notifyWriteResult(ctx, writeSubagentOverridePatch(ctx.cwd, agentName, { model }), fixedModelWarning(agentName, { ...override, model }));
+			notifyWriteResult(
+				ctx,
+				writeSubagentOverridePatch(ctx.cwd, agentName, { model }),
+				fixedModelWarning(agentName, { ...override, model }),
+			);
 			continue;
 		}
 
 		const model = effectiveModelForEffort(agent, override, models, ctx);
 		const supportedLevels = availableThinkingLevels(model);
-		const currentThinkingOverride = override?.thinking === false
-			? "off"
-			: typeof override?.thinking === "string"
-				? override.thinking
-				: undefined;
+		const currentThinkingOverride =
+			override?.thinking === false ? "off" : typeof override?.thinking === "string" ? override.thinking : undefined;
 		const optionToThinking = new Map(
 			supportedLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level] as const),
 		);
@@ -569,16 +639,18 @@ async function runInteractivePicker(
 			ctx.ui.notify("Unknown effort picker selection.", "error");
 			continue;
 		}
-		notifyWriteResult(ctx, writeSubagentOverridePatch(ctx.cwd, agentName, { thinking }), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+		notifyWriteResult(
+			ctx,
+			writeSubagentOverridePatch(ctx.cwd, agentName, { thinking }),
+			fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
+		);
 	}
 }
 
 function commandCompletions(prefix: string) {
 	const values = ["status", "set", "reset", "reset-all"];
 	const normalized = prefix.trim().toLowerCase();
-	const completions = values
-		.filter((value) => value.startsWith(normalized))
-		.map((value) => ({ value, label: value }));
+	const completions = values.filter((value) => value.startsWith(normalized)).map((value) => ({ value, label: value }));
 	return completions.length > 0 ? completions : null;
 }
 
@@ -616,7 +688,10 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 					if (rawAgentName || rest.length > 0) {
 						throw new Error(usageMessage());
 					}
-					const result = resetAllBundledSubagentOverrides(ctx.cwd, subagents.map((agent) => agent.name));
+					const result = resetAllBundledSubagentOverrides(
+						ctx.cwd,
+						subagents.map((agent) => agent.name),
+					);
 					notifyWriteResult(ctx, result, undefined);
 					return;
 				}
@@ -634,13 +709,13 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 					if (field && field !== "model" && field !== "effort") {
 						throw new Error(usageMessage());
 					}
-					const resetField = field === "effort"
-						? "thinking"
-						: field === "model"
-							? "model"
-							: undefined;
+					const resetField = field === "effort" ? "thinking" : field === "model" ? "model" : undefined;
 					const result = resetSubagentOverride(ctx.cwd, rawAgentName, resetField);
-					notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, getStoredOverrides(ctx.cwd).get(rawAgentName)));
+					notifyWriteResult(
+						ctx,
+						result,
+						fixedModelWarning(rawAgentName, getStoredOverrides(ctx.cwd).get(rawAgentName)),
+					);
 					return;
 				}
 

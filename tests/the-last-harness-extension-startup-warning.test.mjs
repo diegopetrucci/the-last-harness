@@ -140,7 +140,12 @@ function readStartupState(agentDir) {
 	return JSON.parse(readFileSync(join(agentDir, "tlh", "startup-state.json"), "utf8"));
 }
 
-async function createExtensionHarness({ installState, setupWorkspace, startupResourceCollector, deferredStartupTaskScheduler }) {
+async function createExtensionHarness({
+	installState,
+	setupWorkspace,
+	startupResourceCollector,
+	deferredStartupTaskScheduler,
+}) {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
 	const agentDir = join(tempDir, "agent");
 	const cwd = join(tempDir, "workspace");
@@ -208,13 +213,18 @@ async function createExtensionHarness({ installState, setupWorkspace, startupRes
 				footerFactory,
 				buildHeader() {
 					return headerFactory
-						? headerFactory({ requestRender() { requestRenderCalls += 1; } }, theme)
+						? headerFactory(
+								{
+									requestRender() {
+										requestRenderCalls += 1;
+									},
+								},
+								theme,
+							)
 						: undefined;
 				},
 				buildFooter() {
-					return footerFactory
-						? footerFactory({ requestRender() {} }, theme, undefined)
-						: undefined;
+					return footerFactory ? footerFactory({ requestRender() {} }, theme, undefined) : undefined;
 				},
 				requestRenderCalls: () => requestRenderCalls,
 			};
@@ -227,7 +237,15 @@ async function createExtensionHarness({ installState, setupWorkspace, startupRes
 	};
 }
 
-async function runSessionStart({ reason, installState, hasUI = true, projectTrusted, setupWorkspace, startupResourceCollector, deferredStartupTaskScheduler }) {
+async function runSessionStart({
+	reason,
+	installState,
+	hasUI = true,
+	projectTrusted,
+	setupWorkspace,
+	startupResourceCollector,
+	deferredStartupTaskScheduler,
+}) {
 	const harness = await createExtensionHarness({
 		installState,
 		setupWorkspace,
@@ -269,7 +287,10 @@ function createDeferred() {
 }
 
 test("interactive startup renders the non-latest track warning in the TLH header", async () => {
-	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE });
+	const { notifications, headerLines } = await runSessionStart({
+		reason: "startup",
+		installState: PINNED_TAG_INSTALL_STATE,
+	});
 
 	assert.deepEqual(notifications, []);
 	assert.ok(headerLines);
@@ -277,7 +298,10 @@ test("interactive startup renders the non-latest track warning in the TLH header
 });
 
 test("interactive startup prefers the pinned ref label over a local package-source label", async () => {
-	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_LOCAL_INSTALL_STATE });
+	const { notifications, headerLines } = await runSessionStart({
+		reason: "startup",
+		installState: PINNED_TAG_LOCAL_INSTALL_STATE,
+	});
 
 	assert.deepEqual(notifications, []);
 	assert.ok(headerLines);
@@ -301,10 +325,16 @@ test("interactive startup renders one curated startup tip and reuses the same se
 });
 
 test("interactive startup stays quiet for latest-stable installs", async () => {
-	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: LATEST_STABLE_INSTALL_STATE });
+	const { notifications, headerLines } = await runSessionStart({
+		reason: "startup",
+		installState: LATEST_STABLE_INSTALL_STATE,
+	});
 	assert.deepEqual(notifications, []);
 	assert.ok(headerLines);
-	assert.equal(headerLines.some((line) => line.startsWith("Warning:")), false);
+	assert.equal(
+		headerLines.some((line) => line.startsWith("Warning:")),
+		false,
+	);
 });
 
 test("non-startup session reasons do not render the install-track warning or startup tip in the TLH header", async () => {
@@ -386,7 +416,11 @@ test("non-startup UI sessions defer lastSeen persistence until after header inst
 		const session = await harness.startSession({ reason: "restore", projectTrusted: true });
 		assert.ok(session.headerFactory, "expected the header to be installed synchronously for restore");
 		assert.equal(scheduledTasks.length, 1);
-		assert.deepEqual(readStartupState(harness.agentDir), initialState, "persistence must not run before the deferred task");
+		assert.deepEqual(
+			readStartupState(harness.agentDir),
+			initialState,
+			"persistence must not run before the deferred task",
+		);
 
 		scheduledTasks[0]();
 		assert.deepEqual(readStartupState(harness.agentDir), {
@@ -420,7 +454,11 @@ test("startup installs the header before delayed resource collection resolves an
 		const header = session.buildHeader();
 		assert.ok(header);
 		header.setExpanded(true);
-		assert.equal(header.render(200).includes("[Skills]"), false, "expected initial header render to use the empty snapshot");
+		assert.equal(
+			header.render(200).includes("[Skills]"),
+			false,
+			"expected initial header render to use the empty snapshot",
+		);
 		assert.equal(session.requestRenderCalls(), 0);
 
 		await scheduledTasks[0]();
@@ -429,7 +467,11 @@ test("startup installs the header before delayed resource collection resolves an
 		await deferredResources.promise;
 		await Promise.resolve();
 
-		assert.equal(session.requestRenderCalls(), 1, "expected one render request after the current session snapshot hydrated");
+		assert.equal(
+			session.requestRenderCalls(),
+			1,
+			"expected one render request after the current session snapshot hydrated",
+		);
 		assert.ok(header.render(200).includes("[Skills]"));
 		assert.ok(header.render(200).some((line) => line.includes("project-skill")));
 	} finally {
@@ -470,9 +512,19 @@ test("stale startup resource completion stays isolated from the replacement sess
 		await Promise.resolve();
 
 		assert.equal(firstSession.requestRenderCalls(), 0, "stale session completion must not request a render");
-		assert.equal(secondSession.requestRenderCalls(), 0, "stale session completion must not request a replacement-session render");
-		assert.equal(firstHeader.render(200).some((line) => line.includes("stale-skill")), false);
-		assert.equal(secondHeader.render(200).some((line) => line.includes("stale-skill")), false);
+		assert.equal(
+			secondSession.requestRenderCalls(),
+			0,
+			"stale session completion must not request a replacement-session render",
+		);
+		assert.equal(
+			firstHeader.render(200).some((line) => line.includes("stale-skill")),
+			false,
+		);
+		assert.equal(
+			secondHeader.render(200).some((line) => line.includes("stale-skill")),
+			false,
+		);
 
 		await scheduledTasks[1]();
 		secondDeferred.resolve({ context: [], skills: ["current-skill"], prompts: [], extensions: [], themes: [] });
@@ -512,7 +564,10 @@ test("non-UI replacement invalidates pending startup resource hydration", async 
 		await Promise.resolve();
 
 		assert.equal(uiSession.requestRenderCalls(), 0, "replaced UI session must not request a render");
-		assert.equal(header.render(200).some((line) => line.includes("stale-after-non-ui")), false);
+		assert.equal(
+			header.render(200).some((line) => line.includes("stale-after-non-ui")),
+			false,
+		);
 	} finally {
 		harness.cleanup();
 	}
@@ -538,12 +593,21 @@ test("session shutdown invalidates pending startup resource hydration", async ()
 		scheduledTasks[0]();
 
 		await harness.shutdownSession(session.ctx);
-		deferredResources.resolve({ context: [], skills: ["stale-after-shutdown"], prompts: [], extensions: [], themes: [] });
+		deferredResources.resolve({
+			context: [],
+			skills: ["stale-after-shutdown"],
+			prompts: [],
+			extensions: [],
+			themes: [],
+		});
 		await deferredResources.promise;
 		await Promise.resolve();
 
 		assert.equal(session.requestRenderCalls(), 0, "disposed session must not request a render");
-		assert.equal(header.render(200).some((line) => line.includes("stale-after-shutdown")), false);
+		assert.equal(
+			header.render(200).some((line) => line.includes("stale-after-shutdown")),
+			false,
+		);
 		const shortcut = harness.shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
 		await shortcut.handler(session.ctx);
 		assert.equal(session.requestRenderCalls(), 0, "shutdown must clear the active header shortcut target");
@@ -553,7 +617,11 @@ test("session shutdown invalidates pending startup resource hydration", async ()
 });
 
 test("startup without UI does not show the install-track notice", async () => {
-	const { notifications, headerLines } = await runSessionStart({ reason: "startup", installState: PINNED_TAG_INSTALL_STATE, hasUI: false });
+	const { notifications, headerLines } = await runSessionStart({
+		reason: "startup",
+		installState: PINNED_TAG_INSTALL_STATE,
+		hasUI: false,
+	});
 	assert.deepEqual(notifications, []);
 	assert.equal(headerLines, undefined);
 });
@@ -568,7 +636,10 @@ test("production footer wiring: non-release install renders install-track notice
 });
 
 test("production footer wiring: footer always shows install-track notice but header only shows it on startup", async () => {
-	const { footerLines, headerLines } = await runSessionStart({ reason: "resume", installState: PINNED_TAG_INSTALL_STATE });
+	const { footerLines, headerLines } = await runSessionStart({
+		reason: "resume",
+		installState: PINNED_TAG_INSTALL_STATE,
+	});
 
 	assert.ok(footerLines, "expected a footer to be rendered");
 	const nonEmptyFooterLines = footerLines.filter((line) => line.trim().length > 0);

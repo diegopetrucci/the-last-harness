@@ -79,7 +79,10 @@ export function assignOptionValue(
 	return match.nextIndex;
 }
 
-export function expandHomePath(path: string | undefined, { homeDir = homedir() }: TlhPathOptions = {}): string | undefined {
+export function expandHomePath(
+	path: string | undefined,
+	{ homeDir = homedir() }: TlhPathOptions = {},
+): string | undefined {
 	if (typeof path !== "string") return path;
 	if (path === "~") return homeDir;
 	if (path.startsWith("~/")) return join(homeDir, path.slice(2));
@@ -100,11 +103,17 @@ export function defaultTlhAgentDir(
 	const configured = preferTlhAgentDir
 		? firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR)
 		: firstConfiguredValue(env.PI_CODING_AGENT_DIR, env.TLH_AGENT_DIR);
-	return expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir }) || join(homeDir, ".the-last-harness", "agent");
+	return (
+		expandHomePath(configured || join(homeDir, ".the-last-harness", "agent"), { homeDir }) ||
+		join(homeDir, ".the-last-harness", "agent")
+	);
 }
 
 export function resolveTlhAgentDir(agentDir: string | undefined, options: TlhPathOptions = {}): string {
-	return expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options) || defaultTlhAgentDir(options.env, options);
+	return (
+		expandHomePath(agentDir || defaultTlhAgentDir(options.env, options), options) ||
+		defaultTlhAgentDir(options.env, options)
+	);
 }
 
 export function defaultTlhSettingsPath({
@@ -129,7 +138,9 @@ export function defaultTlhBinDir(
 	env: NodeJS.ProcessEnv = process.env,
 	{ homeDir = homedir() }: TlhPathOptions = {},
 ): string {
-	return expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin");
+	return (
+		expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin")
+	);
 }
 
 export function readJsonFile<T = unknown>(
@@ -223,7 +234,10 @@ export function renderShellWords(values: Iterable<unknown>): string {
 	return [...values].map(shellWord).join(" ");
 }
 
-export function backupTimestampSuffix(date = new Date(), { includeMilliseconds = true }: { includeMilliseconds?: boolean } = {}): string {
+export function backupTimestampSuffix(
+	date = new Date(),
+	{ includeMilliseconds = true }: { includeMilliseconds?: boolean } = {},
+): string {
 	const iso = date.toISOString();
 	if (includeMilliseconds) return iso.replace(/[:.]/g, "-");
 	return iso.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
@@ -231,7 +245,11 @@ export function backupTimestampSuffix(date = new Date(), { includeMilliseconds =
 
 export function backupPathWithTimestamp(
 	path: string,
-	{ marker = "", date = new Date(), includeMilliseconds = true }: {
+	{
+		marker = "",
+		date = new Date(),
+		includeMilliseconds = true,
+	}: {
 		marker?: string;
 		date?: Date;
 		includeMilliseconds?: boolean;
@@ -261,9 +279,7 @@ export function parseBackupTimestamp(filename: string): Date | undefined {
 	const match = /(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(?:-(\d{3}))?Z$/.exec(filename);
 	if (!match) return undefined;
 	const [, datePart, hh, mm, ss, ms] = match;
-	const iso = ms
-		? `${datePart}T${hh}:${mm}:${ss}.${ms}Z`
-		: `${datePart}T${hh}:${mm}:${ss}Z`;
+	const iso = ms ? `${datePart}T${hh}:${mm}:${ss}.${ms}Z` : `${datePart}T${hh}:${mm}:${ss}Z`;
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return undefined;
 	return date;

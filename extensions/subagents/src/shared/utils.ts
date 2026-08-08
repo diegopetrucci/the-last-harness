@@ -6,9 +6,24 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import { formatToolCall } from "./formatters.ts";
-import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "./config-dir.ts";
+import {
+	getConfigDirName,
+	getProjectConfigDir,
+	PI_CODING_AGENT_PACKAGE_ROOT_ENV,
+	resolveConfigDirName,
+} from "./config-dir.ts";
 import { getPiAgentDir } from "./profile.ts";
-import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
+import type {
+	AgentProgress,
+	AsyncStatus,
+	Details,
+	DisplayItem,
+	ErrorInfo,
+	NestedRunSummary,
+	SingleResult,
+	ToolCallSummary,
+	Usage,
+} from "./types.ts";
 import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.ts";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.ts";
 
@@ -25,9 +40,10 @@ export function getAgentDir(): string {
 const statusCache = new Map<string, { mtime: number; ctime: number; size: number; ino: number; status: AsyncStatus }>();
 
 export function invalidateStatusCache(asyncDirOrStatusPath: string): void {
-	const statusPath = path.basename(asyncDirOrStatusPath) === "status.json"
-		? path.resolve(asyncDirOrStatusPath)
-		: path.join(path.resolve(asyncDirOrStatusPath), "status.json");
+	const statusPath =
+		path.basename(asyncDirOrStatusPath) === "status.json"
+			? path.resolve(asyncDirOrStatusPath)
+			: path.join(path.resolve(asyncDirOrStatusPath), "status.json");
 	statusCache.delete(statusPath);
 }
 
@@ -41,10 +57,9 @@ export function resolveChildCwd(baseCwd: string, childCwd: string | undefined): 
 }
 
 function isNotFoundError(error: unknown): boolean {
-	return typeof error === "object"
-		&& error !== null
-		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "ENOENT";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+	);
 }
 
 /**
@@ -65,11 +80,11 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 
 	const cached = statusCache.get(statusPath);
 	if (
-		cached
-		&& cached.mtime === stat.mtimeMs
-		&& cached.ctime === stat.ctimeMs
-		&& cached.size === stat.size
-		&& cached.ino === stat.ino
+		cached &&
+		cached.mtime === stat.mtimeMs &&
+		cached.ctime === stat.ctimeMs &&
+		cached.size === stat.size &&
+		cached.ino === stat.ino
 	) {
 		return cached.status;
 	}
@@ -113,7 +128,7 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 /**
  * Get human-readable last activity time for a file
  */
-	export function getLastActivity(outputFile: string | undefined): string {
+export function getLastActivity(outputFile: string | undefined): string {
 	if (!outputFile) return "";
 	try {
 		const stat = fs.statSync(outputFile);
@@ -132,7 +147,8 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
  */
 export function findLatestSessionFile(sessionDir: string): string | null {
 	if (!fs.existsSync(sessionDir)) return null;
-	const files = fs.readdirSync(sessionDir)
+	const files = fs
+		.readdirSync(sessionDir)
 		.filter((f) => f.endsWith(".jsonl"))
 		.map((f) => {
 			const filePath = path.join(sessionDir, f);
@@ -155,7 +171,12 @@ function containsAcceptanceReport(text: string): boolean {
 	if (/ACCEPTANCE_REPORT\s*:/i.test(text)) return true;
 	for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
 		const body = match[1] ?? "";
-		if (/"criteriaSatisfied"/.test(body) && /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
+		if (
+			/"criteriaSatisfied"/.test(body) &&
+			/"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(
+				body,
+			)
+		) {
 			return true;
 		}
 	}
@@ -170,8 +191,9 @@ export function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role !== "assistant") continue;
-		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
-			|| ("stopReason" in msg && msg.stopReason === "error");
+		const hasAssistantError =
+			("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0) ||
+			("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
@@ -187,16 +209,14 @@ export function getFinalOutput(messages: Message[]): string {
 				for (let k = 0; k < j; k++) {
 					const precedingPart = msg.content[k];
 					if (
-						precedingPart.type === "text"
-						&& precedingPart.text.trim().length > 0
-						&& !containsAcceptanceReport(precedingPart.text)
+						precedingPart.type === "text" &&
+						precedingPart.text.trim().length > 0 &&
+						!containsAcceptanceReport(precedingPart.text)
 					) {
 						precedingParts.push(precedingPart.text);
 					}
 				}
-				return precedingParts.length > 0
-					? `${precedingParts.join("\n\n")}\n\n${part.text}`
-					: part.text;
+				return precedingParts.length > 0 ? `${precedingParts.join("\n\n")}\n\n${part.text}` : part.text;
 			}
 		}
 	}
@@ -219,9 +239,7 @@ export function synthesizeChildExitDiagnostic(input: {
 	exitCode?: number | null;
 	signal?: NodeJS.Signals | null;
 }): string | undefined {
-	const signal = typeof input.signal === "string" && input.signal.trim().length > 0
-		? input.signal
-		: undefined;
+	const signal = typeof input.signal === "string" && input.signal.trim().length > 0 ? input.signal : undefined;
 	if (signal) return `Child process exited after receiving ${signal}.`;
 	const exitCode = input.exitCode;
 	if (typeof exitCode !== "number" || !Number.isFinite(exitCode) || exitCode === 0) return undefined;
@@ -272,9 +290,10 @@ function extractToolCallSummaries(messages: Message[] | undefined): ToolCallSumm
 		if (msg.role !== "assistant") continue;
 		for (const part of msg.content) {
 			if (part.type !== "toolCall") continue;
-			const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
-				? part.arguments
-				: {};
+			const args =
+				typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
+					? part.arguments
+					: {};
 			summaries.push({
 				text: formatToolCall(part.name, args),
 				expandedText: formatToolCall(part.name, args, true),
@@ -337,9 +356,7 @@ export function compactForegroundDetails(details: Details): Details {
 	return {
 		...details,
 		results: details.results.map(compactForegroundResult),
-		progress: details.progress
-			? details.progress.map(compactCompletedProgress)
-			: undefined,
+		progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
 	};
 }
 
@@ -351,9 +368,11 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg.role === "assistant") {
-			const hasText = Array.isArray(msg.content) && msg.content.some(
-				(c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0,
-			);
+			const hasText =
+				Array.isArray(msg.content) &&
+				msg.content.some(
+					(c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0,
+				);
 			if (hasText) {
 				lastAssistantTextIndex = i;
 				break;
@@ -449,13 +468,14 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 	const queriesPreview = previewArray(args.queries);
 	if (queriesPreview) return truncatePreview(queriesPreview, 60);
 	if (typeof args.query === "string" && args.query.trim().length > 0) return truncatePreview(args.query, 60);
-	if (typeof args.workflow === "string" && args.workflow.trim().length > 0) return `workflow=${truncatePreview(args.workflow, 48)}`;
+	if (typeof args.workflow === "string" && args.workflow.trim().length > 0)
+		return `workflow=${truncatePreview(args.workflow, 48)}`;
 
 	if (typeof args.url === "string" && args.url.trim().length > 0) return truncatePreview(args.url, 60);
 	const urlsPreview = previewArray(args.urls);
 	if (urlsPreview) return truncatePreview(urlsPreview, 60);
 	if (typeof args.prompt === "string" && args.prompt.trim().length > 0) return truncatePreview(args.prompt, 60);
-	
+
 	const previewKeys = ["command", "path", "file_path", "pattern", "query", "url", "task", "describe", "search"];
 	for (const key of previewKeys) {
 		if (args[key] && typeof args[key] === "string") {
@@ -463,7 +483,7 @@ export function extractToolArgsPreview(args: Record<string, unknown>): string {
 			return truncatePreview(value, 60);
 		}
 	}
-	
+
 	// Fallback: show first string value found
 	for (const [key, value] of Object.entries(args)) {
 		const arrayPreview = previewArray(value);

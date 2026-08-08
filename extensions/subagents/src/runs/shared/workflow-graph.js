@@ -28,9 +28,9 @@ function resultStatus(result) {
     return result.exitCode === 0 ? "completed" : "failed";
 }
 function nodeStatus(input, flatIndex) {
-    return normalizeStatus(input.stepStatuses?.[flatIndex]?.status)
-        ?? resultStatus(input.results?.[flatIndex])
-        ?? (input.currentFlatIndex === flatIndex ? "running" : "pending");
+    return (normalizeStatus(input.stepStatuses?.[flatIndex]?.status) ??
+        resultStatus(input.results?.[flatIndex]) ??
+        (input.currentFlatIndex === flatIndex ? "running" : "pending"));
 }
 function pushPhase(phases, phase, nodeId) {
     if (!phase)

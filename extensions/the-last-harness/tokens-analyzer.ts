@@ -32,7 +32,10 @@ const MAX_DISCOVERY_OBJECT_PROPERTIES = 64;
 const MAX_DISCOVERY_ARTIFACT_PATHS = 64;
 const MAX_DISCOVERY_CONTAINERS = 512;
 
-type TokensAnalysisSessionManager = Pick<ExtensionContext["sessionManager"], "getEntries" | "getHeader" | "getLeafId" | "getSessionName">;
+type TokensAnalysisSessionManager = Pick<
+	ExtensionContext["sessionManager"],
+	"getEntries" | "getHeader" | "getLeafId" | "getSessionName"
+>;
 
 export type TlhUsageTotals = {
 	inputTokens: number;
@@ -338,7 +341,10 @@ export function analyzeSessionEntries(
 	const subagentTotals = createUsageTotals();
 	const modelUsage = new Map<string, TlhModelUsage>();
 	const toolUsage = new Map<string, TlhToolUsage>();
-	const toolSourceUsage = new Map<string, { source: TlhToolSourceEstimate; callCount: number; approxTokens: number; tools: Set<string> }>();
+	const toolSourceUsage = new Map<
+		string,
+		{ source: TlhToolSourceEstimate; callCount: number; approxTokens: number; tools: Set<string> }
+	>();
 	const subagentRuns = new Map<string, TlhDiscoveredSubagentRun>();
 	const sessionRefs = new Map<string, TlhSanitizedReference>();
 	const artifactRefs = new Map<string, TlhSanitizedReference>();
@@ -415,12 +421,20 @@ export function analyzeSessionEntries(
 			// cost to a single total and is NOT sufficient for the per-component rate math.
 			const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
 			const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
-			const cmCacheRead = numberFromUnknown(
-				rawMsgUsage?.cacheRead ?? rawMsgUsage?.cacheReadTokens ?? rawMsgUsage?.cache_read_input_tokens ?? rawMsgUsage?.cacheReadInputTokens,
-			) ?? 0;
-			const cmCacheWrite = numberFromUnknown(
-				rawMsgUsage?.cacheWrite ?? rawMsgUsage?.cacheWriteTokens ?? rawMsgUsage?.cache_creation_input_tokens ?? rawMsgUsage?.cacheWriteInputTokens,
-			) ?? 0;
+			const cmCacheRead =
+				numberFromUnknown(
+					rawMsgUsage?.cacheRead ??
+						rawMsgUsage?.cacheReadTokens ??
+						rawMsgUsage?.cache_read_input_tokens ??
+						rawMsgUsage?.cacheReadInputTokens,
+				) ?? 0;
+			const cmCacheWrite =
+				numberFromUnknown(
+					rawMsgUsage?.cacheWrite ??
+						rawMsgUsage?.cacheWriteTokens ??
+						rawMsgUsage?.cache_creation_input_tokens ??
+						rawMsgUsage?.cacheWriteInputTokens,
+				) ?? 0;
 			const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
 
 			const rawCost = isRecord(rawMsgUsage?.cost) ? rawMsgUsage.cost : undefined;
@@ -672,9 +686,7 @@ export function analyzeSessionEntries(
 		toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
 	}
 
-	const worstMisses = [...cacheMissEvents]
-		.sort((a, b) => b.missedTokens - a.missedTokens)
-		.slice(0, 10);
+	const worstMisses = [...cacheMissEvents].sort((a, b) => b.missedTokens - a.missedTokens).slice(0, 10);
 
 	return {
 		cacheMisses: {
@@ -713,7 +725,11 @@ export function analyzeSessionEntries(
 			mcpProxyCalls,
 			mcpDirectCalls,
 			byTool: [...toolUsage.values()].sort(
-				(left, right) => right.approxTokens - left.approxTokens || right.callCount - left.callCount || right.resultCount - left.resultCount || left.toolName.localeCompare(right.toolName),
+				(left, right) =>
+					right.approxTokens - left.approxTokens ||
+					right.callCount - left.callCount ||
+					right.resultCount - left.resultCount ||
+					left.toolName.localeCompare(right.toolName),
 			),
 			mcpApproxTokens: [...toolUsage.values()].reduce((sum, tool) => (tool.mcp ? sum + tool.approxTokens : sum), 0),
 			totalToolApproxTokens: [...toolUsage.values()].reduce((sum, tool) => sum + tool.approxTokens, 0),
@@ -798,9 +814,13 @@ function normalizeUsage(value: unknown): TlhUsageTotals | undefined {
 	const inputTokens = numberFromUnknown(value.input ?? value.inputTokens) ?? 0;
 	const outputTokens = numberFromUnknown(value.output ?? value.outputTokens) ?? 0;
 	const cacheReadTokens =
-		numberFromUnknown(value.cacheRead ?? value.cacheReadTokens ?? value.cache_read_input_tokens ?? value.cacheReadInputTokens) ?? 0;
+		numberFromUnknown(
+			value.cacheRead ?? value.cacheReadTokens ?? value.cache_read_input_tokens ?? value.cacheReadInputTokens,
+		) ?? 0;
 	const cacheWriteTokens =
-		numberFromUnknown(value.cacheWrite ?? value.cacheWriteTokens ?? value.cache_creation_input_tokens ?? value.cacheWriteInputTokens) ?? 0;
+		numberFromUnknown(
+			value.cacheWrite ?? value.cacheWriteTokens ?? value.cache_creation_input_tokens ?? value.cacheWriteInputTokens,
+		) ?? 0;
 	const explicitTotal = numberFromUnknown(value.total ?? value.totalTokens);
 	const costUsd = costFromUnknown(value.cost) ?? numberFromUnknown(value.costUsd) ?? 0;
 	const turns = numberFromUnknown(value.turns) ?? 0;
@@ -871,13 +891,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function *takeArrayIndices(value: readonly unknown[], limit: number): IterableIterator<number> {
+function* takeArrayIndices(value: readonly unknown[], limit: number): IterableIterator<number> {
 	for (let index = 0; index < value.length && index < limit; index += 1) {
 		yield index;
 	}
 }
 
-function *takeOwnEnumerableKeys(value: Record<string, unknown>, limit: number): IterableIterator<string> {
+function* takeOwnEnumerableKeys(value: Record<string, unknown>, limit: number): IterableIterator<string> {
 	let examined = 0;
 	let yielded = 0;
 	for (const key in value) {
@@ -925,11 +945,15 @@ function estimateToolSource(toolName: string, catalogEntry?: TlhToolCatalogEntry
 		};
 	}
 
-	const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path].filter((value) => typeof value === "string").join(" ");
+	const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path]
+		.filter((value) => typeof value === "string")
+		.join(" ");
 	if (sourceHint && /mcp/i.test(sourceHint)) {
 		return {
 			key: catalogEntry?.sourceInfo?.source ? `mcp-direct:${catalogEntry.sourceInfo.source}` : `mcp-direct:${toolName}`,
-			label: catalogEntry?.sourceInfo?.source ? `MCP direct (${catalogEntry.sourceInfo.source})` : `MCP direct (${toolName})`,
+			label: catalogEntry?.sourceInfo?.source
+				? `MCP direct (${catalogEntry.sourceInfo.source})`
+				: `MCP direct (${toolName})`,
 			kind: "mcp-direct",
 			source: catalogEntry?.sourceInfo?.source,
 			scope: catalogEntry?.sourceInfo?.scope,
@@ -1108,7 +1132,8 @@ function collectStructuredDiscoveries(value: unknown, context: DiscoveryContext)
 				[...path, key],
 				skipNestedRuns ||
 					Boolean(run) ||
-					(nestedRuns.length > 0 && PREFERRED_SUBAGENT_CHILD_KEYS.includes(key as (typeof PREFERRED_SUBAGENT_CHILD_KEYS)[number])),
+					(nestedRuns.length > 0 &&
+						PREFERRED_SUBAGENT_CHILD_KEYS.includes(key as (typeof PREFERRED_SUBAGENT_CHILD_KEYS)[number])),
 			);
 		}
 	};
@@ -1276,7 +1301,9 @@ function sanitizePathReference(value: unknown, kind: "artifact" | "session"): Tl
 	const extension = extensionIndex > 0 ? basename.slice(extensionIndex) : undefined;
 	const runId = [...segments].reverse().find((segment) => /^run-[A-Za-z0-9_-]+$/.test(segment));
 	const sessionId =
-		kind === "session" && basename.endsWith(".jsonl") && basename !== "session.jsonl" ? basename.slice(0, -6) : undefined;
+		kind === "session" && basename.endsWith(".jsonl") && basename !== "session.jsonl"
+			? basename.slice(0, -6)
+			: undefined;
 	return {
 		kind,
 		label: buildSafePathLabel(kind, segments, basename),

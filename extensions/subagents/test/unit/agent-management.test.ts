@@ -37,11 +37,15 @@ describe("agent management config parsing", () => {
 		const ctx = { cwd: tempDir };
 		const chainPath = path.join(tempDir, ".pi", "chains", "dynamic-review.chain.json");
 		fs.mkdirSync(path.dirname(chainPath), { recursive: true });
-		const original = JSON.stringify({
-			name: "dynamic-review",
-			description: "Review dynamic targets",
-			chain: [{ agent: "scout", task: "Return targets" }],
-		}, null, 2);
+		const original = JSON.stringify(
+			{
+				name: "dynamic-review",
+				description: "Review dynamic targets",
+				chain: [{ agent: "scout", task: "Return targets" }],
+			},
+			null,
+			2,
+		);
 		fs.writeFileSync(chainPath, original, "utf-8");
 		fs.writeFileSync(path.join(tempDir, ".pi", "chains", "broken.chain.json"), "{", "utf-8");
 

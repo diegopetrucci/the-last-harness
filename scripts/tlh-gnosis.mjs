@@ -108,7 +108,10 @@ function candidateCommands(agentDir) {
     return unique;
 }
 function validateGnosisCommand(command) {
-    for (const args of [["help", "plan"], ["help", "review"]]) {
+    for (const args of [
+        ["help", "plan"],
+        ["help", "review"],
+    ]) {
         const result = spawnSync(command, args, { stdio: "ignore", timeout: VALIDATION_TIMEOUT_MS });
         if (result.error || result.status !== 0)
             return false;
@@ -190,7 +193,10 @@ async function resolveGnosisVersion(args) {
     if (args.gnosisVersion && args.gnosisVersion !== "latest") {
         return args.gnosisVersion.replace(/^v/, "");
     }
-    const response = await fetchWithTimeout(`https://github.com/${args.gnosisRepo}/releases/latest`, { method: "HEAD", redirect: "follow" });
+    const response = await fetchWithTimeout(`https://github.com/${args.gnosisRepo}/releases/latest`, {
+        method: "HEAD",
+        redirect: "follow",
+    });
     const latestUrl = response.url || "";
     const version = latestUrl.split("/").pop()?.replace(/^v/, "");
     if (!version || version === "latest") {
@@ -259,7 +265,7 @@ function findFileNamed(root, name) {
 function resolvedManagedAgentDir(agentDir) {
     return realpathForCompare(resolve(expandHomePath(agentDir) ?? agentDir));
 }
-function assertManagedGnosisTempPath(path, agentDir, label, { mustExist = false, expectDirectory = false, expectFile = false } = {}) {
+function assertManagedGnosisTempPath(path, agentDir, label, { mustExist = false, expectDirectory = false, expectFile = false, } = {}) {
     const stats = lstatIfExists(path);
     if (!stats) {
         if (mustExist) {
@@ -314,9 +320,7 @@ async function installManagedGnosis(args, agentDir) {
         throw new Error(unsupportedGnosisPlatformMessage());
     if (args.dryRun) {
         logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
-        const versionLabel = args.gnosisVersion === "latest"
-            ? "latest compatible release"
-            : `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
+        const versionLabel = args.gnosisVersion === "latest" ? "latest compatible release" : `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
         logStderr(args, `Would download ${versionLabel} from https://github.com/${args.gnosisRepo}`);
         return target;
     }

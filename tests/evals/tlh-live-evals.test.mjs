@@ -96,7 +96,7 @@ test("live eval runner rejects unknown scenario ids", () => {
 test("manual live eval scenarios define meaningful null-scored rubric checks", () => {
 	const scenario = allScenarios.find((entry) => entry.id === "architect-e2e");
 	const ctx = {
-		artifactsByScenario: new Map([["architect-e2e", new Set(["artifacts/architect-e2e/README.md"] )]]),
+		artifactsByScenario: new Map([["architect-e2e", new Set(["artifacts/architect-e2e/README.md"])]]),
 	};
 	const result = createScenarioScoreResult(ctx, scenario, {
 		status: "prepared",
@@ -105,11 +105,10 @@ test("manual live eval scenarios define meaningful null-scored rubric checks", (
 
 	assert.equal(result.score.type, "manual-rubric");
 	assert.equal(result.checks.length, 3);
-	assert.deepEqual(result.checks.map((check) => check.id), [
-		"architect-orchestration-boundary",
-		"ticketed-developer-flow",
-		"fixture-repo-contained-change",
-	]);
+	assert.deepEqual(
+		result.checks.map((check) => check.id),
+		["architect-orchestration-boundary", "ticketed-developer-flow", "fixture-repo-contained-change"],
+	);
 	for (const check of result.checks) {
 		assert.equal(check.passed, null);
 		assert.equal(check.status, null);
@@ -134,19 +133,23 @@ test("manual live eval failures no longer masquerade as pending manual reviews",
 function createPassingSuiteResult() {
 	return createSuiteResult({
 		selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
-		scenarioResults: [createScenarioResult({
-			scenarioId: "install-update-smoke",
-			mode: "automated",
-			summary: "Smoke.",
-			status: "passed",
-			detail: "wrapper ready",
-			checks: [createBinaryScoreCheck({
-				id: "install-bootstrap",
-				label: "Bootstrap isolated install created the tlh wrapper",
-				passed: true,
-				details: "ok",
-			})],
-		})],
+		scenarioResults: [
+			createScenarioResult({
+				scenarioId: "install-update-smoke",
+				mode: "automated",
+				summary: "Smoke.",
+				status: "passed",
+				detail: "wrapper ready",
+				checks: [
+					createBinaryScoreCheck({
+						id: "install-bootstrap",
+						label: "Bootstrap isolated install created the tlh wrapper",
+						passed: true,
+						details: "ok",
+					}),
+				],
+			}),
+		],
 		startedAt: "2026-05-29T00:00:00.000Z",
 		finishedAt: "2026-05-29T00:00:05.000Z",
 		keepWorkspace: true,
@@ -157,16 +160,19 @@ test("workspace outputs write both README.md and results.json", () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-live-eval-workspace-"));
 	try {
 		const suiteResult = createPassingSuiteResult();
-		writeWorkspaceOutputs({
-			rootDir: tempDir,
-			homeDir: join(tempDir, "home"),
-			agentDir: join(tempDir, "agent"),
-			binDir: join(tempDir, "bin"),
-			wrapperPath: join(tempDir, "bin", "tlh"),
-			redactions: [],
-			artifactsByScenario: new Map(),
-			artifactPaths: new Set(),
-		}, suiteResult);
+		writeWorkspaceOutputs(
+			{
+				rootDir: tempDir,
+				homeDir: join(tempDir, "home"),
+				agentDir: join(tempDir, "agent"),
+				binDir: join(tempDir, "bin"),
+				wrapperPath: join(tempDir, "bin", "tlh"),
+				redactions: [],
+				artifactsByScenario: new Map(),
+				artifactPaths: new Set(),
+			},
+			suiteResult,
+		);
 
 		const summary = readFileSync(join(tempDir, "README.md"), "utf8");
 		const results = JSON.parse(readFileSync(join(tempDir, "results.json"), "utf8"));
@@ -179,47 +185,54 @@ test("workspace outputs write both README.md and results.json", () => {
 });
 
 test("workspace outputs do not globally redact short sensitive-name env flags but still redact longer secrets", () => {
-	withEnv({
-		CLAUDE_CODE_CHILD_SESSION: "1",
-		TLH_TEST_SESSION_TOKEN: "sk-live-eval-secret-1234567890",
-	}, () => {
-		const ctx = createContext({});
-		try {
-			const suiteResult = createSuiteResult({
-				selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
-				scenarioResults: [createScenarioResult({
-					scenarioId: "install-update-smoke",
-					mode: "automated",
-					summary: "Smoke.",
-					status: "passed",
-					detail: "flag=1 secret=sk-live-eval-secret-1234567890",
-					checks: [createBinaryScoreCheck({
-						id: "install-bootstrap",
-						label: "Bootstrap isolated install created the tlh wrapper",
-						passed: true,
-						details: "flag=1 secret=sk-live-eval-secret-1234567890",
-					})],
-				})],
-				startedAt: "2026-05-29T00:00:00.000Z",
-				finishedAt: "2026-05-29T00:00:05.000Z",
-				keepWorkspace: true,
-			});
+	withEnv(
+		{
+			CLAUDE_CODE_CHILD_SESSION: "1",
+			TLH_TEST_SESSION_TOKEN: "sk-live-eval-secret-1234567890",
+		},
+		() => {
+			const ctx = createContext({});
+			try {
+				const suiteResult = createSuiteResult({
+					selectedScenarios: [{ id: "install-update-smoke", mode: "automated" }],
+					scenarioResults: [
+						createScenarioResult({
+							scenarioId: "install-update-smoke",
+							mode: "automated",
+							summary: "Smoke.",
+							status: "passed",
+							detail: "flag=1 secret=sk-live-eval-secret-1234567890",
+							checks: [
+								createBinaryScoreCheck({
+									id: "install-bootstrap",
+									label: "Bootstrap isolated install created the tlh wrapper",
+									passed: true,
+									details: "flag=1 secret=sk-live-eval-secret-1234567890",
+								}),
+							],
+						}),
+					],
+					startedAt: "2026-05-29T00:00:00.000Z",
+					finishedAt: "2026-05-29T00:00:05.000Z",
+					keepWorkspace: true,
+				});
 
-			writeWorkspaceOutputs(ctx, suiteResult);
+				writeWorkspaceOutputs(ctx, suiteResult);
 
-			const resultsPath = join(ctx.rootDir, "results.json");
-			const rawResults = readFileSync(resultsPath, "utf8");
-			const parsedResults = JSON.parse(rawResults);
-			assert.equal(parsedResults.summary.checks.automated.total, 1);
-			assert.match(rawResults, /"total": 1/);
-			assert.match(rawResults, /flag=1/);
-			assert.doesNotMatch(rawResults, /<CLAUDE_CODE_CHILD_SESSION>/);
-			assert.doesNotMatch(rawResults, /sk-live-eval-secret-1234567890/);
-			assert.match(rawResults, /<TLH_TEST_SESSION_TOKEN>/);
-		} finally {
-			rmSync(ctx.rootDir, { recursive: true, force: true });
-		}
-	});
+				const resultsPath = join(ctx.rootDir, "results.json");
+				const rawResults = readFileSync(resultsPath, "utf8");
+				const parsedResults = JSON.parse(rawResults);
+				assert.equal(parsedResults.summary.checks.automated.total, 1);
+				assert.match(rawResults, /"total": 1/);
+				assert.match(rawResults, /flag=1/);
+				assert.doesNotMatch(rawResults, /<CLAUDE_CODE_CHILD_SESSION>/);
+				assert.doesNotMatch(rawResults, /sk-live-eval-secret-1234567890/);
+				assert.match(rawResults, /<TLH_TEST_SESSION_TOKEN>/);
+			} finally {
+				rmSync(ctx.rootDir, { recursive: true, force: true });
+			}
+		},
+	);
 });
 
 test("artifacts-dir uses a fresh child workspace and preserves parent README/results files", () => {
@@ -239,7 +252,10 @@ test("artifacts-dir uses a fresh child workspace and preserves parent README/res
 		assert.equal(readFileSync(parentReadmePath, "utf8"), "parent README\n");
 		assert.equal(readFileSync(parentResultsPath, "utf8"), '{"parent":true}\n');
 		assert.match(readFileSync(join(ctx.rootDir, "README.md"), "utf8"), /Structured results: results\.json/);
-		assert.equal(JSON.parse(readFileSync(join(ctx.rootDir, "results.json"), "utf8")).scenarios[0].id, "install-update-smoke");
+		assert.equal(
+			JSON.parse(readFileSync(join(ctx.rootDir, "results.json"), "utf8")).scenarios[0].id,
+			"install-update-smoke",
+		);
 	} finally {
 		rmSync(artifactsParentDir, { recursive: true, force: true });
 	}
@@ -262,15 +278,20 @@ test("packaged local development docs exclude repo-only live eval tooling", () =
 	assert.match(docs, /node scripts\/tlh-install\.mjs --dry-run/);
 });
 
-
 test("contributing docs link to the dedicated workflow eval guide and keep a concise quick reference", () => {
 	const docs = readFileSync(join(repoRoot, "CONTRIBUTING.md"), "utf8");
 
 	assert.match(docs, /\[docs\/workflow-evals\.md\]\(docs\/workflow-evals\.md\)/);
 	assert.match(docs, /Quick reference:/);
 	assert.match(docs, /Default contributor\/CI path: `npm run validate`/);
-	assert.match(docs, /Workflow-specific deterministic checks: `node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs`/);
-	assert.match(docs, /The hermetic core-workflow integration test is deterministic and included in normal `npm test` \/ `npm run validate`\./);
+	assert.match(
+		docs,
+		/Workflow-specific deterministic checks: `node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs`/,
+	);
+	assert.match(
+		docs,
+		/The hermetic core-workflow integration test is deterministic and included in normal `npm test` \/ `npm run validate`\./,
+	);
 	assert.match(docs, /Live evals are opt-in and not part of normal `npm run validate` or default CI\./);
 	assert.doesNotMatch(docs, /issue #241/);
 	assert.doesNotMatch(docs, /Scenario \| Mode \| Prerequisites \| What it checks|What it prepares or verifies/);
@@ -280,14 +301,26 @@ test("workflow eval guide owns the detailed contributor-facing eval docs", () =>
 	const docs = readFileSync(join(repoRoot, "docs", "workflow-evals.md"), "utf8");
 
 	assert.match(docs, /issue #241/i);
-	assert.match(docs, /Deterministic workflow evals \| Yes, through targeted `node --test` commands and the normal `npm test` \/ `npm run validate` path/i);
-	assert.match(docs, /node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/);
-	assert.match(docs, /`tests\/hermetic-core-workflow\.test\.mjs` is the highest-level automated workflow integration check/i);
+	assert.match(
+		docs,
+		/Deterministic workflow evals \| Yes, through targeted `node --test` commands and the normal `npm test` \/ `npm run validate` path/i,
+	);
+	assert.match(
+		docs,
+		/node --test tests\/hermetic-core-workflow\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs tests\/agent-prompt-contracts\.test\.mjs tests\/evals\/tlh-live-evals\.test\.mjs tests\/evals\/tlh-live-eval-results\.test\.mjs/,
+	);
+	assert.match(
+		docs,
+		/`tests\/hermetic-core-workflow\.test\.mjs` is the highest-level automated workflow integration check/i,
+	);
 	assert.match(docs, /It runs as part of the normal `npm test` and `npm run validate` path/i);
 	assert.match(docs, /without model credentials, network access, or manual review/i);
 	assert.match(docs, /fake provider only; no real model\/provider credentials/i);
 	assert.match(docs, /isolated temp HOME, agent profile, wrapper\/bin, and workspace paths/i);
-	assert.match(docs, /The hermetic core-workflow integration test is deterministic and part of normal `npm test` \/ `npm run validate`; live evals remain opt-in and release-tier\/manual, not part of normal `npm run validate` or default CI\./i);
+	assert.match(
+		docs,
+		/The hermetic core-workflow integration test is deterministic and part of normal `npm test` \/ `npm run validate`; live evals remain opt-in and release-tier\/manual, not part of normal `npm run validate` or default CI\./i,
+	);
 	assert.match(docs, /--results-file \/path\/to\/results\.json/);
 	assert.match(docs, /fresh `tlh-live-evals-\*` child workspace under `DIR`/i);
 	assert.match(docs, /scenario status values such as `passed`, `prepared`, or `failed`/i);
@@ -296,11 +329,23 @@ test("workflow eval guide owns the detailed contributor-facing eval docs", () =>
 	assert.match(docs, /Incident-to-fixture loop/i);
 	assert.match(docs, /repo-local contributor tooling only; it does not change packaged TLH runtime behavior/i);
 	assert.match(docs, /node tests\/evals\/trace-policy\/trace-policy-fixture-importer\.mjs/i);
-	assert.match(docs, /normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i);
+	assert.match(
+		docs,
+		/normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i,
+	);
 	assert.match(docs, /stop and clean that up before the fixture enters review/i);
-	assert.match(docs, /trace-policy-fixture-importer\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs/i);
-	assert.match(docs, /`npm run validate` remains the full-repo check documented in \[`VALIDATING\.md`\]\(\.\.\/VALIDATING\.md\)/i);
-	assert.match(docs, /Expect it to normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i);
+	assert.match(
+		docs,
+		/trace-policy-fixture-importer\.test\.mjs tests\/evals\/trace-policy\/trace-policy-evals\.test\.mjs tests\/evals\/trace-policy\/trace-policy-incident-matrix\.test\.mjs/i,
+	);
+	assert.match(
+		docs,
+		/`npm run validate` remains the full-repo check documented in \[`VALIDATING\.md`\]\(\.\.\/VALIDATING\.md\)/i,
+	);
+	assert.match(
+		docs,
+		/Expect it to normalize volatile IDs, timestamps, temp roots, home-directory paths, and generated request\/session IDs/i,
+	);
 	assert.match(docs, /use the importer-backed incident-to-fixture loop above instead of checking in raw exports/i);
 	assert.doesNotMatch(docs, /Until that normalization path exists/i);
 	assert.match(docs, /Do not commit `results\.json`, temp workspaces, or per-run score snapshots\./i);

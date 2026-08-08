@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installableSupportFiles, requiredSupportFiles, } from "./tlh-install-support-manifest.mjs";
@@ -171,10 +171,12 @@ export async function preflightRuntimeSupportFiles(config, io = {}) {
     if (!prepared)
         throw new Error(`installer support files are unavailable for ref ${config.ref}`);
     const missing = [];
-    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT || !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
         missing.push("scripts/tlh-install-state.mjs");
     }
-    if (!config.noWrapper && (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))) {
+    if (!config.noWrapper &&
+        (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))) {
         missing.push("scripts/tlh-wrapper.mjs");
     }
     if (missing.length > 0) {

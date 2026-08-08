@@ -73,16 +73,16 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 		if (!current || typeof current !== "object") return undefined;
 		current = (current as Record<string, unknown>)[key];
 	}
-	return current && typeof current === "object" ? current as JsonSchemaNode : undefined;
+	return current && typeof current === "object" ? (current as JsonSchemaNode) : undefined;
 }
 
-const schemas = await import("../../src/extension/schemas.ts") as Record<string, JsonSchemaNode>;
+const schemas = (await import("../../src/extension/schemas.ts")) as Record<string, JsonSchemaNode>;
 const SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
 type CompileSchemaFunction = (schema: unknown) => {
 	Check(value: unknown): boolean;
 	Errors(value: unknown): Iterable<{ message: string }>;
 };
-const { Compile: CompileSchema } = await import("typebox/compile") as { Compile: CompileSchemaFunction };
+const { Compile: CompileSchema } = (await import("typebox/compile")) as { Compile: CompileSchemaFunction };
 
 describe("SubagentParams schema", () => {
 	it("includes context field for fresh/fork execution mode", () => {
@@ -223,7 +223,9 @@ describe("SubagentParams schema", () => {
 		assert.ok(serialized.length < 15_000, `expected compact schema under 15k chars, got ${serialized.length}`);
 		assert.equal(serialized.includes('"$ref"'), false);
 		assert.equal(serialized.includes('"$defs"'), false);
-		const agentDescription = String((schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? "");
+		const agentDescription = String(
+			(schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? "",
+		);
 		assert.match(agentDescription, /SINGLE mode/);
 		assert.match(agentDescription, /action='get'/);
 		assert.doesNotMatch(agentDescription, /update|delete/);
@@ -235,8 +237,10 @@ describe("SubagentParams schema", () => {
 			if (!current.value || typeof current.value !== "object") continue;
 			const node = current.value as JsonSchemaNode;
 			const pathParts = current.path.split(".");
-			const isTopLevelParameter = pathParts.length === 3 && pathParts[0] === "SubagentParams" && pathParts[1] === "properties";
-			if (typeof node.description === "string" && !isTopLevelParameter) nestedDescriptionPaths.push(`${current.path}.description`);
+			const isTopLevelParameter =
+				pathParts.length === 3 && pathParts[0] === "SubagentParams" && pathParts[1] === "properties";
+			if (typeof node.description === "string" && !isTopLevelParameter)
+				nestedDescriptionPaths.push(`${current.path}.description`);
 			if (Array.isArray(current.value)) {
 				current.value.forEach((value, index) => stack.push({ path: `${current.path}[${index}]`, value }));
 			} else {
@@ -398,9 +402,25 @@ describe("SubagentParams schema", () => {
 		const schema = SubagentParams as unknown as JsonSchemaNode;
 		const actualProps = Object.keys((schema.properties as Record<string, unknown>) ?? {}).sort();
 		const expectedProps = [
-			"agent", "task", "tasks", "concurrency", "context", "async", "action",
-			"id", "index", "message", "agentScope", "output", "outputMode",
-			"model", "fallbackModels", "timeoutMs", "cwd", "artifacts", "includeProgress",
+			"agent",
+			"task",
+			"tasks",
+			"concurrency",
+			"context",
+			"async",
+			"action",
+			"id",
+			"index",
+			"message",
+			"agentScope",
+			"output",
+			"outputMode",
+			"model",
+			"fallbackModels",
+			"timeoutMs",
+			"cwd",
+			"artifacts",
+			"includeProgress",
 		].sort();
 		assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
 		const actionEnum = (schema.properties as Record<string, JsonSchemaNode>)?.action?.enum;
@@ -417,14 +437,41 @@ describe("SubagentParams schema", () => {
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
 		const removedKeys = [
-			"worktree", "clarify", "share", "schedule", "scheduleName",
-			"chain", "chainName", "config", "control", "dir", "view", "lines",
-			"sessionDir", "runId", "maxRuntimeMs", "toolBudget", "turnBudget",
-			"acceptance", "skill", "chainDir", "__unknown__",
+			"worktree",
+			"clarify",
+			"share",
+			"schedule",
+			"scheduleName",
+			"chain",
+			"chainName",
+			"config",
+			"control",
+			"dir",
+			"view",
+			"lines",
+			"sessionDir",
+			"runId",
+			"maxRuntimeMs",
+			"toolBudget",
+			"turnBudget",
+			"acceptance",
+			"skill",
+			"chainDir",
+			"__unknown__",
 		];
 		const removedNestedTaskKeys = [
-			"cwd", "worktree", "clarify", "share", "chain", "chainName",
-			"skill", "acceptance", "toolBudget", "fallbackModels", "modelFallbackNotice", "outputSchema",
+			"cwd",
+			"worktree",
+			"clarify",
+			"share",
+			"chain",
+			"chainName",
+			"skill",
+			"acceptance",
+			"toolBudget",
+			"fallbackModels",
+			"modelFallbackNotice",
+			"outputSchema",
 			"arbitrary",
 		];
 		for (const key of removedKeys) {
@@ -432,8 +479,16 @@ describe("SubagentParams schema", () => {
 			assert.equal(validator.Check(value), false, `{ ${key}: ... } should be rejected by additionalProperties: false`);
 		}
 		const removedActions = [
-			"create", "update", "delete", "eject", "disable", "enable",
-			"reset", "append-step", "schedule-list", "models",
+			"create",
+			"update",
+			"delete",
+			"eject",
+			"disable",
+			"enable",
+			"reset",
+			"append-step",
+			"schedule-list",
+			"models",
 		];
 		for (const action of removedActions) {
 			assert.equal(validator.Check({ action }), false, `action '${action}' should be rejected (not in enum)`);
@@ -446,7 +501,9 @@ describe("SubagentParams schema", () => {
 			);
 		}
 		assert.equal(
-			validator.Check({ tasks: [{ agent: "reviewer", task: "check this", output: "ok.md", nested: { surprise: true } }] }),
+			validator.Check({
+				tasks: [{ agent: "reviewer", task: "check this", output: "ok.md", nested: { surprise: true } }],
+			}),
 			false,
 			"tasks[].nested should be rejected by additionalProperties: false",
 		);

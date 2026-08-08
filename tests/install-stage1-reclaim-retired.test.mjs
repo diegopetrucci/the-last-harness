@@ -43,11 +43,7 @@ function makeConfig(t, { settings, fakePiBody = "exit 0", dryRun = false } = {})
 
 	// Write fake pi binary
 	const piPath = join(fakebin, "pi");
-	writeFileSync(
-		piPath,
-		`#!/usr/bin/env bash\nset -euo pipefail\n${fakePiBody}\n`,
-		"utf8",
-	);
+	writeFileSync(piPath, `#!/usr/bin/env bash\nset -euo pipefail\n${fakePiBody}\n`, "utf8");
 	chmodSync(piPath, 0o755);
 
 	t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -124,8 +120,11 @@ test("reclaimRetiredExtensionResidues case 1: invokes pi remove for retired npm 
 	// Successful reclaim must produce NO failure warning (success is disk-absence, not exit code)
 	assert.equal(stderr, "", `no failure warning expected for successful reclaim; got: ${stderr}`);
 	// Residue is gone from disk
-	assert.equal(existsSync(join(agentDir, "npm", "node_modules", "@ff-labs", "pi-fff")), false,
-		"npm package directory should be gone after successful reclaim");
+	assert.equal(
+		existsSync(join(agentDir, "npm", "node_modules", "@ff-labs", "pi-fff")),
+		false,
+		"npm package directory should be gone after successful reclaim",
+	);
 });
 
 test("reclaimRetiredExtensionResidues case 1: invokes pi remove for retired git source absent from settings and present on disk", (t) => {
@@ -154,8 +153,11 @@ test("reclaimRetiredExtensionResidues case 1: invokes pi remove for retired git 
 	// Successful reclaim must produce NO failure warning
 	assert.equal(stderr, "", `no failure warning expected for successful reclaim; got: ${stderr}`);
 	// Residue is gone from disk
-	assert.equal(existsSync(join(agentDir, "git", "github.com", "diegopetrucci", "pi-rtk")), false,
-		"git checkout directory should be gone after successful reclaim");
+	assert.equal(
+		existsSync(join(agentDir, "git", "github.com", "diegopetrucci", "pi-rtk")),
+		false,
+		"git checkout directory should be gone after successful reclaim",
+	);
 });
 
 // ---------------------------------------------------------------------------
@@ -242,12 +244,7 @@ test("reclaimRetiredExtensionResidues case 5: dry-run logs pi remove command wit
 test("reclaimRetiredExtensionResidues case 6: warns and continues when pi remove fails", (t) => {
 	const { config, agentDir } = makeConfig(t, {
 		settings: { packages: [] },
-		fakePiBody: [
-			`if [[ "$1" == "remove" ]]; then`,
-			`  printf 'remove failed\\n' >&2`,
-			`  exit 1`,
-			`fi`,
-		].join("\n"),
+		fakePiBody: [`if [[ "$1" == "remove" ]]; then`, `  printf 'remove failed\\n' >&2`, `  exit 1`, `fi`].join("\n"),
 	});
 	createNpmPackageDir(agentDir, "@ff-labs/pi-fff");
 
@@ -277,7 +274,10 @@ test("reclaimRetiredExtensionResidues finding 2: symlinked npm parent (npm dir) 
 	captureConsole("error", () => reclaimRetiredExtensionResidues(config));
 
 	assert.equal(existsSync(piLog), false, "pi must not be invoked when npm parent is a symlink");
-	assert.ok(existsSync(join(externalNpm, "node_modules", "@ff-labs", "pi-fff")), "external directory must not be removed");
+	assert.ok(
+		existsSync(join(externalNpm, "node_modules", "@ff-labs", "pi-fff")),
+		"external directory must not be removed",
+	);
 });
 
 test("reclaimRetiredExtensionResidues finding 2: symlinked git parent (git dir) blocks probe and prevents pi invocation", (t) => {
@@ -294,7 +294,10 @@ test("reclaimRetiredExtensionResidues finding 2: symlinked git parent (git dir) 
 	captureConsole("error", () => reclaimRetiredExtensionResidues(config));
 
 	assert.equal(existsSync(piLog), false, "pi must not be invoked when git parent is a symlink");
-	assert.ok(existsSync(join(externalGit, "github.com", "diegopetrucci", "pi-rtk")), "external directory must not be removed");
+	assert.ok(
+		existsSync(join(externalGit, "github.com", "diegopetrucci", "pi-rtk")),
+		"external directory must not be removed",
+	);
 });
 
 test("reclaimRetiredExtensionResidues finding 2: symlinked target package dir blocks probe and prevents pi invocation", (t) => {
@@ -457,8 +460,14 @@ test("reclaimRetiredExtensionResidues finding 4: object-form packages entry is p
 	reclaimRetiredExtensionResidues(config);
 
 	// pi must not be invoked: object-form entry resolves to npm:@ff-labs/pi-fff identity
-	assert.equal(existsSync(piLog), false, "pi must not be invoked when user has an object-form entry for the retired package");
+	assert.equal(
+		existsSync(piLog),
+		false,
+		"pi must not be invoked when user has an object-form entry for the retired package",
+	);
 	// Directory must still exist
-	assert.ok(existsSync(join(agentDir, "npm", "node_modules", "@ff-labs", "pi-fff")),
-		"package directory must be preserved when user-owned via object-form entry");
+	assert.ok(
+		existsSync(join(agentDir, "npm", "node_modules", "@ff-labs", "pi-fff")),
+		"package directory must be preserved when user-owned via object-form entry",
+	);
 });

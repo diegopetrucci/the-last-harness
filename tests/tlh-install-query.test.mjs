@@ -73,26 +73,25 @@ test("tlh-install-query CLI options override environment defaults", (t) => {
 	mkdirSync(cliAgentDir, { recursive: true });
 	mkdirSync(envAgentDir, { recursive: true });
 
-	const spec = runInstallQuery([
-		"critical-git-source-spec",
-		"--source=git:github.com/cli/repo@v1.2.3",
-		`--agent-dir=${cliAgentDir}`,
-	], {
-		TLH_CRITICAL_SOURCE: "git:github.com/env/repo@main",
-		TLH_PACKAGE_SOURCE_VALUE: "git:github.com/env/package@main",
-		TLH_AGENT_DIR: envAgentDir,
-	});
+	const spec = runInstallQuery(
+		["critical-git-source-spec", "--source=git:github.com/cli/repo@v1.2.3", `--agent-dir=${cliAgentDir}`],
+		{
+			TLH_CRITICAL_SOURCE: "git:github.com/env/repo@main",
+			TLH_PACKAGE_SOURCE_VALUE: "git:github.com/env/package@main",
+			TLH_AGENT_DIR: envAgentDir,
+		},
+	);
 	assert.equal(spec.status, 0, spec.stderr);
-	assert.equal(spec.stdout.trim(), `${join(cliAgentDir, "git", "github.com", "cli", "repo")}\thttps://github.com/cli/repo\tv1.2.3`);
+	assert.equal(
+		spec.stdout.trim(),
+		`${join(cliAgentDir, "git", "github.com", "cli", "repo")}\thttps://github.com/cli/repo\tv1.2.3`,
+	);
 
 	const defaultsPath = join(root, "defaults.json");
 	const envDefaultsPath = join(root, "env-defaults.json");
 	writeFileSync(defaultsPath, JSON.stringify({ subagents: { agentDirs: ["tlh/agents/subagents"] } }));
 	writeFileSync(envDefaultsPath, JSON.stringify({ subagents: { agentDirs: ["other"] } }));
-	const booleanResult = runInstallQuery([
-		"settings-require-subagent-prompts",
-		`--defaults=${defaultsPath}`,
-	], {
+	const booleanResult = runInstallQuery(["settings-require-subagent-prompts", `--defaults=${defaultsPath}`], {
 		TLH_DEFAULTS_FILE: envDefaultsPath,
 	});
 	assert.equal(booleanResult.status, 0, booleanResult.stderr);
@@ -128,7 +127,10 @@ test("tlh-install-query exposes package source compatibility commands without re
 		TLH_AGENT_DIR: agentDir,
 	});
 	assert.equal(critical.status, 0, critical.stderr);
-	assert.equal(critical.stdout.trim(), `${join(agentDir, "git", "github.com", "acme", "tool")}\thttps://github.com/acme/tool\trefs/tags/v1.2.3`);
+	assert.equal(
+		critical.stdout.trim(),
+		`${join(agentDir, "git", "github.com", "acme", "tool")}\thttps://github.com/acme/tool\trefs/tags/v1.2.3`,
+	);
 
 	const installDir = runInstallQuery([
 		"package-source-install-dir",
@@ -174,21 +176,37 @@ test("tlh-install-query boolean commands honor output and exit-status contracts"
 	assert.equal(subagentsNotNeeded.stdout, "");
 	assert.equal(subagentsNotNeeded.stderr, "");
 
-	const subagentsSkipped = runInstallQuery(["settings-require-subagent-prompts", "--defaults", settingsTrue, "--no-settings"]);
+	const subagentsSkipped = runInstallQuery([
+		"settings-require-subagent-prompts",
+		"--defaults",
+		settingsTrue,
+		"--no-settings",
+	]);
 	assert.equal(subagentsSkipped.status, 1);
 	assert.equal(subagentsSkipped.stdout, "");
 
-	const criticalNeeded = runInstallQuery(["default-extensions-require-critical-install"], { TLH_DEFAULT_EXTENSIONS_FILE: extensionsTrue });
+	const criticalNeeded = runInstallQuery(["default-extensions-require-critical-install"], {
+		TLH_DEFAULT_EXTENSIONS_FILE: extensionsTrue,
+	});
 	assert.equal(criticalNeeded.status, 0, criticalNeeded.stderr);
 	assert.equal(criticalNeeded.stdout, "");
 	assert.equal(criticalNeeded.stderr, "");
 
-	const criticalNotNeeded = runInstallQuery(["default-extensions-require-critical-install", "--defaults", extensionsFalse]);
+	const criticalNotNeeded = runInstallQuery([
+		"default-extensions-require-critical-install",
+		"--defaults",
+		extensionsFalse,
+	]);
 	assert.equal(criticalNotNeeded.status, 1);
 	assert.equal(criticalNotNeeded.stdout, "");
 	assert.equal(criticalNotNeeded.stderr, "");
 
-	const criticalSkipped = runInstallQuery(["default-extensions-require-critical-install", "--defaults", extensionsTrue, "--no-settings"]);
+	const criticalSkipped = runInstallQuery([
+		"default-extensions-require-critical-install",
+		"--defaults",
+		extensionsTrue,
+		"--no-settings",
+	]);
 	assert.equal(criticalSkipped.status, 1);
 	assert.equal(criticalSkipped.stdout, "");
 });

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { normalizeSkillInput } from "../agents/skills.js";
-import { CHAIN_RUNS_DIR } from "./types.js";
+import { CHAIN_RUNS_DIR, } from "./types.js";
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 function normalizeOutputOverride(output) {
@@ -68,15 +68,9 @@ export function resolveChainTemplates(steps) {
 }
 export function resolveStepBehavior(agentConfig, stepOverrides, chainSkills) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
-    const output = stepOutput !== undefined
-        ? stepOutput
-        : normalizeOutputOverride(agentConfig.output) ?? false;
-    const reads = stepOverrides.reads !== undefined
-        ? stepOverrides.reads
-        : agentConfig.defaultReads ?? false;
-    const progress = stepOverrides.progress !== undefined
-        ? stepOverrides.progress
-        : agentConfig.defaultProgress ?? false;
+    const output = stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
+    const reads = stepOverrides.reads !== undefined ? stepOverrides.reads : (agentConfig.defaultReads ?? false);
+    const progress = stepOverrides.progress !== undefined ? stepOverrides.progress : (agentConfig.defaultProgress ?? false);
     let skills;
     if (stepOverrides.skills === false) {
         skills = false;
@@ -107,11 +101,11 @@ export function resolveTaskTextForFileUpdatePolicy(task, originalTask) {
 export function taskDisallowsFileUpdates(task) {
     if (!task)
         return false;
-    return /\breview[- ]only\b/i.test(task)
-        || /\bread[- ]only\s+(?:review|audit|inspection|pass)\b/i.test(task)
-        || /\b(?:no|without)\s+(?:file\s+)?edits?\b/i.test(task)
-        || /\b(?:do not|don't|must not)\s+(?:edit|modify|write|touch)\b/i.test(task)
-        || /\bleave\s+files?\s+unchanged\b/i.test(task);
+    return (/\breview[- ]only\b/i.test(task) ||
+        /\bread[- ]only\s+(?:review|audit|inspection|pass)\b/i.test(task) ||
+        /\b(?:no|without)\s+(?:file\s+)?edits?\b/i.test(task) ||
+        /\b(?:do not|don't|must not)\s+(?:edit|modify|write|touch)\b/i.test(task) ||
+        /\bleave\s+files?\s+unchanged\b/i.test(task));
 }
 export function suppressProgressForReadOnlyTask(behavior, task, originalTask) {
     const policyTask = resolveTaskTextForFileUpdatePolicy(task, originalTask);
@@ -147,12 +141,8 @@ export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent,
     if (previousSummary && previousSummary.trim()) {
         suffixParts.push(`Previous step output:\n${previousSummary.trim()}`);
     }
-    const prefix = prefixParts.length > 0
-        ? prefixParts.join("\n") + "\n\n"
-        : "";
-    const suffix = suffixParts.length > 0
-        ? "\n\n---\n" + suffixParts.join("\n")
-        : "";
+    const prefix = prefixParts.length > 0 ? prefixParts.join("\n") + "\n\n" : "";
+    const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
     return { prefix, suffix };
 }
 export function resolveParallelBehaviors(tasks, agentConfigs, stepIndex, chainSkills) {
@@ -179,10 +169,8 @@ export function resolveParallelBehaviors(tasks, agentConfigs, stepIndex, chainSk
         else if (configOutput) {
             output = path.join(subdir, configOutput);
         }
-        const reads = task.reads !== undefined ? task.reads : config.defaultReads ?? false;
-        const progress = task.progress !== undefined
-            ? task.progress
-            : config.defaultProgress ?? false;
+        const reads = task.reads !== undefined ? task.reads : (config.defaultReads ?? false);
+        const progress = task.progress !== undefined ? task.progress : (config.defaultProgress ?? false);
         const taskSkillInput = normalizeSkillInput(task.skill);
         let skills;
         if (taskSkillInput === false) {

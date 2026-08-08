@@ -39,7 +39,9 @@ export function validateChainOutputBindingsWithContext(
 		const step = steps[stepIndex]!;
 		for (const name of outputNamesForStep(step)) {
 			if (!SAFE_OUTPUT_NAME_PATTERN.test(name)) {
-				throw new ChainOutputValidationError(`Invalid chain output name '${name}' at step ${displayStepIndex}. Use /^[A-Za-z_][A-Za-z0-9_]*$/.`);
+				throw new ChainOutputValidationError(
+					`Invalid chain output name '${name}' at step ${displayStepIndex}. Use /^[A-Za-z_][A-Za-z0-9_]*$/.`,
+				);
 			}
 			if (seen.has(name)) {
 				throw new ChainOutputValidationError(`Duplicate chain output name '${name}'. Each as name must be unique.`);
@@ -51,10 +53,14 @@ export function validateChainOutputBindingsWithContext(
 				const rawReference = match[0];
 				const name = match[1]!;
 				if (!SAFE_OUTPUT_NAME_PATTERN.test(name)) {
-					throw new ChainOutputValidationError(`Invalid chain output reference '${rawReference}' at step ${displayStepIndex}. Use {outputs.name} with /^[A-Za-z_][A-Za-z0-9_]*$/ names.`);
+					throw new ChainOutputValidationError(
+						`Invalid chain output reference '${rawReference}' at step ${displayStepIndex}. Use {outputs.name} with /^[A-Za-z_][A-Za-z0-9_]*$/ names.`,
+					);
 				}
 				if (!available.has(name)) {
-					throw new ChainOutputValidationError(`Unknown chain output reference '${rawReference}' at step ${displayStepIndex}. Named outputs are only available after producing step/group completes.`);
+					throw new ChainOutputValidationError(
+						`Unknown chain output reference '${rawReference}' at step ${displayStepIndex}. Named outputs are only available after producing step/group completes.`,
+					);
 				}
 			}
 		}
@@ -67,7 +73,9 @@ export function validateChainOutputBindingsWithContext(
 export function resolveOutputReferences(template: string, outputs: ChainOutputMap): string {
 	return template.replace(OUTPUT_REF_PATTERN, (rawReference, name: string) => {
 		if (!SAFE_OUTPUT_NAME_PATTERN.test(name)) {
-			throw new ChainOutputValidationError(`Invalid chain output reference '${rawReference}'. Use {outputs.name} with /^[A-Za-z_][A-Za-z0-9_]*$/ names.`);
+			throw new ChainOutputValidationError(
+				`Invalid chain output reference '${rawReference}'. Use {outputs.name} with /^[A-Za-z_][A-Za-z0-9_]*$/ names.`,
+			);
 		}
 		const entry = outputs[name];
 		if (!entry) throw new ChainOutputValidationError(`Unknown chain output reference '${rawReference}'.`);
@@ -81,14 +89,20 @@ function compactStructuredText(value: unknown): string {
 
 export function outputEntryFromResult(result: SingleResult, stepIndex: number): ChainOutputMapEntry {
 	return {
-		text: result.structuredOutput !== undefined ? compactStructuredText(result.structuredOutput) : getSingleResultOutput(result),
+		text:
+			result.structuredOutput !== undefined
+				? compactStructuredText(result.structuredOutput)
+				: getSingleResultOutput(result),
 		...(result.structuredOutput !== undefined ? { structured: result.structuredOutput } : {}),
 		agent: result.agent,
 		stepIndex,
 	};
 }
 
-export function outputEntryFromAsyncResult(result: { agent: string; output: string; structuredOutput?: unknown }, stepIndex: number): ChainOutputMapEntry {
+export function outputEntryFromAsyncResult(
+	result: { agent: string; output: string; structuredOutput?: unknown },
+	stepIndex: number,
+): ChainOutputMapEntry {
 	return {
 		text: result.structuredOutput !== undefined ? compactStructuredText(result.structuredOutput) : result.output,
 		...(result.structuredOutput !== undefined ? { structured: result.structuredOutput } : {}),

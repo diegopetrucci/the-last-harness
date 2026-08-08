@@ -31,9 +31,11 @@ const REVIEWER_REQUIRED_EDIT_PATTERNS = [
 	/\bmake\s+(?:the\s+)?code\s+changes\b/i,
 ];
 
-const NO_EDIT_PROHIBITION_PATTERN = /\b(?:do not|don't|must not)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b((?:(?!\b(?:but|and|then)\b)[^.;,:!?\n–—-])*)/gi;
+const NO_EDIT_PROHIBITION_PATTERN =
+	/\b(?:do not|don't|must not)\s+(?:edit|modify|write(?:\s+to)?|touch|change)\b((?:(?!\b(?:but|and|then)\b)[^.;,:!?\n–—-])*)/gi;
 
-const GENERIC_PROHIBITION_OBJECT = /^\s*(?:(?:any|all|the|these|those|your|our|existing|project|source|sources|repo|repository)[\s/,-]*)*(?:files?|code|codebase|sources?|anything|repo(?:sitory)?)?\s*$/i;
+const GENERIC_PROHIBITION_OBJECT =
+	/^\s*(?:(?:any|all|the|these|those|your|our|existing|project|source|sources|repo|repository)[\s/,-]*)*(?:files?|code|codebase|sources?|anything|repo(?:sitory)?)?\s*$/i;
 
 const SCOPED_NO_EDIT_CONSTRAINT_PATTERNS = [
 	/\bdo not edit files?\s+outside\b/i,
@@ -67,7 +69,8 @@ const RESEARCH_AGENT_PATTERNS = [
 	/\bcontrarian\b/i,
 ];
 
-const FIX_OR_PATCH_IMPLEMENTATION_PATTERN = /\b(?:fix|patch)\s+(?:(?:it|this|that|them|each|any|all|these|those)\b|(?:(?:a|an|the|any|all)\s+)?(?:(?:failing|failed|broken|flaky|red|cold|start|current|existing|reported|approved|known|regression|unit|integration|e2e|source|type-?script|ts|type-?check|compiler)\s+)*(?:bug|defect|issues?|problems?|failures?|regressions?|tests?|errors?|items?|typos?|code|source|implementation|component|function|module|class|method|logic|file|files|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command|lint(?:ing)?|build|ci|type-?check|type\s+checking)\b)/i;
+const FIX_OR_PATCH_IMPLEMENTATION_PATTERN =
+	/\b(?:fix|patch)\s+(?:(?:it|this|that|them|each|any|all|these|those)\b|(?:(?:a|an|the|any|all)\s+)?(?:(?:failing|failed|broken|flaky|red|cold|start|current|existing|reported|approved|known|regression|unit|integration|e2e|source|type-?script|ts|type-?check|compiler)\s+)*(?:bug|defect|issues?|problems?|failures?|regressions?|tests?|errors?|items?|typos?|code|source|implementation|component|function|module|class|method|logic|file|files|readme|docs?|changelog|package\.json|config|manifest|extension|prompt|command|lint(?:ing)?|build|ci|type-?check|type\s+checking)\b)/i;
 
 const WORKER_IMPLEMENTATION_PATTERNS = [
 	/\b(?:implement|edit|modify|refactor|delete)\b/i,
@@ -96,7 +99,12 @@ function stripFrameworkInstructions(task: string): string {
 		.filter((line) => !/^\s*\[(?:Write to|Read from):/i.test(line))
 		.filter((line) => !/^\s*\*\*Output:\*\*\s*$/i.test(line))
 		.filter((line) => !SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN.test(line))
-		.filter((line) => !/^\s*(?:Create and maintain progress at:|Update progress at:|Write your findings to(?: exactly this path)?:|Return the complete artifact in your final response\.|The runtime will persist it to exactly this path:|Do not call contact_supervisor merely because no write-capable tool is available\.|This path is authoritative for this run\.|Ignore any other output filename or output path mentioned elsewhere)/i.test(line))
+		.filter(
+			(line) =>
+				!/^\s*(?:Create and maintain progress at:|Update progress at:|Write your findings to(?: exactly this path)?:|Return the complete artifact in your final response\.|The runtime will persist it to exactly this path:|Do not call contact_supervisor merely because no write-capable tool is available\.|This path is authoritative for this run\.|Ignore any other output filename or output path mentioned elsewhere)/i.test(
+					line,
+				),
+		)
 		.join("\n");
 }
 
@@ -116,15 +124,19 @@ interface NoEditProhibitionAnalysis {
 }
 
 function analyzeNoEditProhibitions(taskText: string): NoEditProhibitionAnalysis {
-	let present = REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText))
-		|| NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
+	let present =
+		REVIEW_ONLY_PATTERNS.some((pattern) => pattern.test(taskText)) ||
+		NO_TOOL_INTENT_PATTERNS.some((pattern) => pattern.test(taskText));
 	let blanket = present;
 	let strippedText = stripPatterns(taskText, [...REVIEW_ONLY_PATTERNS, ...NO_TOOL_INTENT_PATTERNS]);
-	strippedText = strippedText.replace(new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags), (_match, object: string) => {
-		present = true;
-		if (GENERIC_PROHIBITION_OBJECT.test(object)) blanket = true;
-		return " ";
-	});
+	strippedText = strippedText.replace(
+		new RegExp(NO_EDIT_PROHIBITION_PATTERN.source, NO_EDIT_PROHIBITION_PATTERN.flags),
+		(_match, object: string) => {
+			present = true;
+			if (GENERIC_PROHIBITION_OBJECT.test(object)) blanket = true;
+			return " ";
+		},
+	);
 	return { present, blanket, strippedText };
 }
 
@@ -144,7 +156,9 @@ export function classifyTaskMutationIntent(agent: string, task: string): TaskMut
 	const prohibitions = analyzeNoEditProhibitions(taskTextWithoutScopedConstraints);
 	if (prohibitions.present) {
 		if (prohibitions.blanket) return { kind: "read-only" };
-		return hasImplementationIntent(agent, prohibitions.strippedText) ? { kind: "implementation" } : { kind: "read-only" };
+		return hasImplementationIntent(agent, prohibitions.strippedText)
+			? { kind: "implementation" }
+			: { kind: "read-only" };
 	}
 
 	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return { kind: "read-only" };
@@ -160,7 +174,9 @@ function legacyClassifyTaskMutationIntent(agent: string, task: string): TaskMuta
 	if (prohibitions.present) return { kind: "read-only" };
 	if (RESEARCH_AGENT_PATTERNS.some((pattern) => pattern.test(agent))) return { kind: "read-only" };
 	if (/\breviewer\b/i.test(agent)) {
-		return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText)) ? { kind: "implementation" } : { kind: "read-only" };
+		return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText))
+			? { kind: "implementation" }
+			: { kind: "read-only" };
 	}
 	if (hasImplementationIntent(agent, taskText)) return { kind: "implementation" };
 	return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints) ? { kind: "read-only" } : { kind: "unknown" };

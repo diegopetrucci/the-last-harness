@@ -11,7 +11,7 @@ import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfile
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, packageIdentity, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
 import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
-import { assertGitSourceTargetSafe, refreshGitCheckout, } from "./lib/tlh-install-git.mjs";
+import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
@@ -57,7 +57,10 @@ function spawnErrorCode(error) {
     return error.code;
 }
 function parseNodeVersion(version) {
-    const match = String(version).trim().replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)/);
+    const match = String(version)
+        .trim()
+        .replace(/^v/, "")
+        .match(/^(\d+)\.(\d+)\.(\d+)/);
     if (!match)
         return null;
     return match.slice(1).map((part) => Number.parseInt(part, 10));
@@ -291,10 +294,8 @@ function buildInstallConfig(parsedArgs, env = process.env) {
     // named defaults so that main-track installs don't collide with release-tag installs.
     // Explicit values (tracked via parsedArgs.*Explicit booleans) always win.
     const isMainRef = parsedArgs.ref === DEFAULT_REF;
-    const effectiveWrapperName = (isMainRef && !parsedArgs.wrapperNameExplicit)
-        ? "tlh-main"
-        : parsedArgs.wrapperName;
-    const effectiveAgentDirInput = (isMainRef && !parsedArgs.agentDirExplicit)
+    const effectiveWrapperName = isMainRef && !parsedArgs.wrapperNameExplicit ? "tlh-main" : parsedArgs.wrapperName;
+    const effectiveAgentDirInput = isMainRef && !parsedArgs.agentDirExplicit
         ? join(homedir(), ".the-last-harness-main", "agent")
         : parsedArgs.agentDirInput;
     const agentDir = resolve(expandPath(effectiveAgentDirInput));
@@ -442,7 +443,7 @@ function runInDir(config, dir, commandArgs) {
     runCommand(config, commandArgs, { cwd: dir });
 }
 function commandExists(config, command) {
-    const result = spawnSync("sh", ["-c", "command -v -- \"$1\"", "sh", command], {
+    const result = spawnSync("sh", ["-c", 'command -v -- "$1"', "sh", command], {
         env: inheritedCommandEnv(config),
         stdio: "ignore",
     });
@@ -654,9 +655,7 @@ function assertSupportedPiVersion(config, { piCommand = "pi", sourceDescription 
     verboseLog(config, `Pi version (${sourceDescription}): ${currentVersion}`);
 }
 function preferBinDirOnPathForCurrentInstall(config, binDir, { addMessage, prependMessage }) {
-    const currentEntries = (config.env.PATH || "")
-        .split(delimiter)
-        .filter(Boolean);
+    const currentEntries = (config.env.PATH || "").split(delimiter).filter(Boolean);
     if (currentEntries[0] === binDir)
         return;
     const alreadyPresent = currentEntries.includes(binDir);
@@ -776,15 +775,7 @@ function installPiIfNeeded(config) {
         log(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
     }
     verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
-    runCommand(config, [
-        "npm",
-        "install",
-        "-g",
-        "--ignore-scripts",
-        "--prefix",
-        prefix,
-        PI_PACKAGE_SPEC,
-    ]);
+    runCommand(config, ["npm", "install", "-g", "--ignore-scripts", "--prefix", prefix, PI_PACKAGE_SPEC]);
     if (config.dryRun) {
         // Log marker intent in dry-run; the prefix may not exist yet.
         writeRuntimeMarker(config, prefix, origin);
@@ -813,19 +804,12 @@ function installPiIfNeeded(config) {
 // Retired files that TLH seeded in older isolated profiles.
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent files are silently skipped.
-export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze([
-    "bin/rtk",
-    "tlh/tlh-rtk.mjs",
-]);
-export const RETIRED_PROFILE_FILES = Object.freeze([
-    "extensions/librarian.json",
-]);
+export const LEGACY_MANAGED_PROFILE_ARTIFACTS = Object.freeze(["bin/rtk", "tlh/tlh-rtk.mjs"]);
+export const RETIRED_PROFILE_FILES = Object.freeze(["extensions/librarian.json"]);
 // Retired state directories left by retired default extensions.
 // Each path is relative to config.agentDir and must not contain '..' components.
 // The cleanup is idempotent: absent directories are silently skipped.
-export const RETIRED_PROFILE_DIRECTORIES = Object.freeze([
-    "intercom",
-]);
+export const RETIRED_PROFILE_DIRECTORIES = Object.freeze(["intercom"]);
 /**
  * Walk agentDir → relativePath, guarding against symlinks at agentDir and at
  * every existing intermediate directory component.
@@ -1235,7 +1219,8 @@ async function installSupportFilesToProfile(config) {
     }
 }
 async function writeInstallState(config) {
-    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT || !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
         if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
             if (config.dryRun) {
                 log(config, `Would write tlh update metadata: ${config.statePath}`);
@@ -1244,7 +1229,8 @@ async function writeInstallState(config) {
             throw new Error(`install-state support files are unavailable for ref ${config.ref}`);
         }
     }
-    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT || !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
         if (config.dryRun) {
             log(config, `Would write tlh update metadata: ${config.statePath}`);
             return;
@@ -1274,15 +1260,11 @@ async function writeInstallState(config) {
         config.wrapperName,
     ];
     const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
-    const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true
-        ? true
-        : config.piInstalledByTlh;
+    const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true ? true : config.piInstalledByTlh;
     // Write piInstalledByTlh when: (a) this run installed Pi, (b) TLH ownership is already
     // known to be true and must survive the full install-state rewrite, (c) an explicit override
     // was provided, or (d) the state file does not yet exist (genuine fresh install).
-    const writePiInstalledByTlh = piInstalledByTlhForWrite === true
-        || config.piInstalledByTlhOverride !== undefined
-        || !existsSync(config.statePath);
+    const writePiInstalledByTlh = piInstalledByTlhForWrite === true || config.piInstalledByTlhOverride !== undefined || !existsSync(config.statePath);
     if (writePiInstalledByTlh && piInstalledByTlhForWrite !== undefined) {
         args.push("--pi-installed-by-tlh", String(piInstalledByTlhForWrite));
     }
@@ -1293,7 +1275,10 @@ async function writeInstallState(config) {
     runNodeScript(config, config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT, args);
 }
 function outputLines(output) {
-    return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
 }
 function splitDefaultExtensionSources(sourcesOutput, criticalSourcesOutput) {
     const criticalSourceSet = new Set(outputLines(criticalSourcesOutput));
@@ -1404,13 +1389,7 @@ function installDefaultExtensions(config) {
     let sourcesOutput;
     let criticalSourcesOutput;
     try {
-        sourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, [
-            "--settings",
-            config.settingsPath,
-            "--defaults",
-            config.supportFilePaths.DEFAULT_EXTENSIONS_FILE,
-            "sources",
-        ], { captureStdout: true });
+        sourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, ["--settings", config.settingsPath, "--defaults", config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, "sources"], { captureStdout: true });
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1480,7 +1459,9 @@ function configureGnosis(config) {
     if (config.quiet)
         args.push("--quiet");
     try {
-        config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, { captureStdout: true }).trimEnd();
+        config.gnosisSummary = runNodeScript(config, config.supportFilePaths.TLH_GNOSIS_SCRIPT, args, {
+            captureStdout: true,
+        }).trimEnd();
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1512,7 +1493,9 @@ function configureTickets(config) {
         args.push("--detail");
     if (config.quiet)
         args.push("--quiet");
-    config.ticketsSummary = runNodeScript(config, config.supportFilePaths.TLH_TICKETS_SCRIPT, args, { captureStdout: true }).trimEnd();
+    config.ticketsSummary = runNodeScript(config, config.supportFilePaths.TLH_TICKETS_SCRIPT, args, {
+        captureStdout: true,
+    }).trimEnd();
 }
 function wrapperIsManaged(config) {
     if (!existsSync(config.wrapperPath))
@@ -1747,12 +1730,8 @@ async function runInstallFlow(config) {
     config.piCmd = piCmd;
     installHarnessPackage(config);
     await installSupportFilesToProfile(config);
-    const retiredSubagentPackages = config.noSettings
-        ? []
-        : captureManagedRetiredSubagentPackages(config.settingsPath);
-    const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0
-        ? captureRetiredSubagentNpmCommand(config.settingsPath)
-        : undefined;
+    const retiredSubagentPackages = config.noSettings ? [] : captureManagedRetiredSubagentPackages(config.settingsPath);
+    const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0 ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined;
     if (!config.noSettings) {
         cleanupManagedRetiredSubagentPackages({ ...config, npmCommand: retiredSubagentNpmCommand }, retiredSubagentPackages);
     }

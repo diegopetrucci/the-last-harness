@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord } from "./common.js";
 import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
@@ -61,7 +61,9 @@ function availableThinkingLevels(model) {
     return getAvailableThinkingLevels(model);
 }
 function fixedModelWarning(agentName, override) {
-    return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName) ? INDEPENDENCE_WARNING : undefined;
+    return typeof override?.model === "string" && INDEPENDENCE_SENSITIVE_AGENTS.has(agentName)
+        ? INDEPENDENCE_WARNING
+        : undefined;
 }
 function notifyWriteResult(ctx, result, warning) {
     const changedLabel = result.changed ? "Updated" : "No change to";
@@ -158,7 +160,7 @@ function resetSubagentOverride(cwd, agentName, field) {
         const nextValue = { ...existingValue };
         let changed = false;
         for (const key of field ? [field] : ["model", "thinking"]) {
-            if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+            if (Object.hasOwn(nextValue, key)) {
                 delete nextValue[key];
                 changed = true;
             }
@@ -196,7 +198,7 @@ function resetAllBundledSubagentOverrides(cwd, bundledAgentNames) {
             const nextValue = { ...existingValue };
             let entryChanged = false;
             for (const key of ["model", "thinking"]) {
-                if (Object.prototype.hasOwnProperty.call(nextValue, key)) {
+                if (Object.hasOwn(nextValue, key)) {
                     delete nextValue[key];
                     entryChanged = true;
                 }
@@ -235,7 +237,7 @@ function formatEffectiveModelAndThinking(model, thinking) {
     return formatResolvedProviderModelReference(model, thinking);
 }
 function formatStoredOverrideValue(override, field) {
-    if (!override || !Object.prototype.hasOwnProperty.call(override, field)) {
+    if (!override || !Object.hasOwn(override, field)) {
         return "default";
     }
     const value = override[field];
@@ -274,15 +276,10 @@ function formatStatusForAgent(agent, override, ctx) {
 }
 function formatStatusMessage(ctx, subagents, selectedAgentName) {
     const overrides = getStoredOverrides(ctx.cwd);
-    const selectedAgents = selectedAgentName
-        ? subagents.filter((agent) => agent.name === selectedAgentName)
-        : subagents;
+    const selectedAgents = selectedAgentName ? subagents.filter((agent) => agent.name === selectedAgentName) : subagents;
     const currentModel = currentModelReference(ctx);
     const header = `TLH minor-agent settings for ${currentModel ? formatProviderModelReference(currentModel) : "this session"}:`;
-    return [
-        header,
-        ...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx)),
-    ].join("\n");
+    return [header, ...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx))].join("\n");
 }
 function validateAgentName(agentName, subagents) {
     const agent = subagents.get(agentName);
@@ -366,7 +363,10 @@ function subagentPickerOption(agent, override, ctx) {
 }
 function modelPickerOption(model, currentOverride, bundledDefault) {
     const label = formatProviderModelReference(model);
-    const markers = [currentOverride === label ? "current override" : undefined, bundledDefault === label ? "bundled default" : undefined]
+    const markers = [
+        currentOverride === label ? "current override" : undefined,
+        bundledDefault === label ? "bundled default" : undefined,
+    ]
         .filter(Boolean)
         .join(", ");
     return markers ? `${label} — ${markers}` : label;
@@ -455,11 +455,7 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
         }
         const model = effectiveModelForEffort(agent, override, models, ctx);
         const supportedLevels = availableThinkingLevels(model);
-        const currentThinkingOverride = override?.thinking === false
-            ? "off"
-            : typeof override?.thinking === "string"
-                ? override.thinking
-                : undefined;
+        const currentThinkingOverride = override?.thinking === false ? "off" : typeof override?.thinking === "string" ? override.thinking : undefined;
         const optionToThinking = new Map(supportedLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level]));
         const selectedThinkingOption = await ctx.ui.select(`Pick effort for ${agentName}`, [...optionToThinking.keys()]);
         if (!selectedThinkingOption) {
@@ -476,9 +472,7 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
 function commandCompletions(prefix) {
     const values = ["status", "set", "reset", "reset-all"];
     const normalized = prefix.trim().toLowerCase();
-    const completions = values
-        .filter((value) => value.startsWith(normalized))
-        .map((value) => ({ value, label: value }));
+    const completions = values.filter((value) => value.startsWith(normalized)).map((value) => ({ value, label: value }));
     return completions.length > 0 ? completions : null;
 }
 export function registerSubagentSettingsCommand(pi) {
@@ -528,11 +522,7 @@ export function registerSubagentSettingsCommand(pi) {
                     if (field && field !== "model" && field !== "effort") {
                         throw new Error(usageMessage());
                     }
-                    const resetField = field === "effort"
-                        ? "thinking"
-                        : field === "model"
-                            ? "model"
-                            : undefined;
+                    const resetField = field === "effort" ? "thinking" : field === "model" ? "model" : undefined;
                     const result = resetSubagentOverride(ctx.cwd, rawAgentName, resetField);
                     notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, getStoredOverrides(ctx.cwd).get(rawAgentName)));
                     return;

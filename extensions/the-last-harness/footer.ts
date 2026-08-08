@@ -117,7 +117,9 @@ function hasPersistedDirectMcpResultDetails(toolName: string, details: unknown):
 	}
 	const serverPrefix = candidate.server.replaceAll("-", "_");
 	const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-	return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(toolName);
+	return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(
+		toolName,
+	);
 }
 
 function getMcpToolKind(toolName: string, toolInfo?: Pick<ToolInfo, "sourceInfo">): "proxy" | "direct" | undefined {
@@ -138,7 +140,11 @@ function estimateMcpDefinitionTokens(toolInfo: ToolInfo): number {
 	);
 }
 
-function buildMcpContextEstimateCacheKey(activeToolNames: string[], ctx: ExtensionContext, contextTokens: number): string {
+function buildMcpContextEstimateCacheKey(
+	activeToolNames: string[],
+	ctx: ExtensionContext,
+	contextTokens: number,
+): string {
 	const leafId = ctx.sessionManager.getLeafId?.() ?? "";
 	return `${leafId}::${contextTokens}::${activeToolNames.join("|")}`;
 }
@@ -203,7 +209,8 @@ function getMcpContextEstimateSuffix(
 			continue;
 		}
 		if (message.role === "toolResult" && typeof message.toolName === "string") {
-			const pendingCall = typeof message.toolCallId === "string" ? pendingToolCallsById.get(message.toolCallId) : undefined;
+			const pendingCall =
+				typeof message.toolCallId === "string" ? pendingToolCallsById.get(message.toolCallId) : undefined;
 			const hasPairedDirectResultProvenance =
 				message.toolName !== "mcp" &&
 				pendingCall?.toolName === message.toolName &&
@@ -282,9 +289,7 @@ export function createTlhFooter(
 			const primaryName = getPrimaryName();
 			const dimSep = theme.fg("dim", " • ");
 			const nameSegment =
-				primaryName === DEFAULT_PRIMARY_AGENT
-					? theme.fg("dim", primaryName)
-					: theme.fg("accent", primaryName);
+				primaryName === DEFAULT_PRIMARY_AGENT ? theme.fg("dim", primaryName) : theme.fg("accent", primaryName);
 
 			let agentLine2Str = theme.fg("dim", "agent: ") + nameSegment + dimSep + theme.fg("dim", modelPart);
 
@@ -294,7 +299,9 @@ export function createTlhFooter(
 			}
 
 			const contextPercentDisplay =
-				contextPercent === "?" ? `?/${formatCompactTokenCount(contextWindow)}` : `${contextPercent}%/${formatCompactTokenCount(contextWindow)}`;
+				contextPercent === "?"
+					? `?/${formatCompactTokenCount(contextWindow)}`
+					: `${contextPercent}%/${formatCompactTokenCount(contextWindow)}`;
 			let contextPercentStr: string;
 			if (contextPercentValue > 90) {
 				contextPercentStr = theme.fg("error", contextPercentDisplay);
@@ -350,7 +357,9 @@ export function createTlhFooter(
 				const queueKey = keyText("app.message.followUp") || "alt+enter";
 				const steeringHint = `${theme.fg("dim", steerKey)}${theme.fg("muted", " steer")}`;
 				const queueHint = `${theme.fg("dim", queueKey)}${theme.fg("muted", " queue follow-up")}`;
-				lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
+				lines.push(
+					truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")),
+				);
 			}
 
 			// Extension status line (conditional on registered extension statuses)

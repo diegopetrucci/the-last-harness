@@ -168,10 +168,7 @@ test("aggregateSessionUsage: single file with one in-window assistant message", 
 // ---------------------------------------------------------------------------
 
 test("aggregateSessionUsage: message at window start (startMs) is included", () => {
-	const entries = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_AT_START, { input: 10, output: 5 }),
-	];
+	const entries = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_AT_START, { input: 10, output: 5 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -180,10 +177,7 @@ test("aggregateSessionUsage: message at window start (startMs) is included", () 
 });
 
 test("aggregateSessionUsage: message at window end (endMs) is included", () => {
-	const entries = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_AT_END, { input: 10, output: 5 }),
-	];
+	const entries = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_AT_END, { input: 10, output: 5 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -191,10 +185,7 @@ test("aggregateSessionUsage: message at window end (endMs) is included", () => {
 });
 
 test("aggregateSessionUsage: message before window start is excluded", () => {
-	const entries = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_BEFORE, { input: 100, output: 50 }),
-	];
+	const entries = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_BEFORE, { input: 100, output: 50 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -203,10 +194,7 @@ test("aggregateSessionUsage: message before window start is excluded", () => {
 });
 
 test("aggregateSessionUsage: message after window end is excluded", () => {
-	const entries = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_AFTER, { input: 100, output: 50 }),
-	];
+	const entries = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_AFTER, { input: 100, output: 50 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -253,7 +241,7 @@ test("aggregateSessionUsage: provider switch — model_change before window does
 	const entries = [
 		modelChange("anthropic", "claude-3-5-sonnet"),
 		assistantMsg(TS_BEFORE, { input: 99, output: 99 }), // out-of-window, ignored
-		assistantMsg(TS_INSIDE, { input: 10, output: 5 }),   // in-window, should use anthropic
+		assistantMsg(TS_INSIDE, { input: 10, output: 5 }), // in-window, should use anthropic
 	];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
@@ -349,9 +337,7 @@ test("aggregateSessionUsage: assistant messages without usage are counted in cov
 });
 
 test("aggregateSessionUsage: missing usage turns still increment windowTotals.turns", () => {
-	const entries = [
-		assistantMsgNoUsage(TS_INSIDE),
-	];
+	const entries = [assistantMsgNoUsage(TS_INSIDE)];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -426,9 +412,7 @@ test("aggregateSessionUsage: perProviderTotals are sorted by totalTokens descend
 // ---------------------------------------------------------------------------
 
 test("aggregateSessionUsage: assistant message with no prior model_change uses 'unknown' provider", () => {
-	const entries = [
-		assistantMsg(TS_INSIDE, { input: 50, output: 20 }),
-	];
+	const entries = [assistantMsg(TS_INSIDE, { input: 50, output: 20 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -441,14 +425,8 @@ test("aggregateSessionUsage: assistant message with no prior model_change uses '
 // ---------------------------------------------------------------------------
 
 test("aggregateSessionUsage: per-provider totals accumulate across multiple files", () => {
-	const entries1 = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_INSIDE, { input: 100, output: 50 }),
-	];
-	const entries2 = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_INSIDE, { input: 200, output: 80 }),
-	];
+	const entries1 = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_INSIDE, { input: 100, output: 50 })];
+	const entries2 = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_INSIDE, { input: 200, output: 80 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: `${PROJECT_PATH}/file1.jsonl`, entries: entries1, malformedLineCount: 0 },
 		{ filePath: `${PROJECT_PATH}/file2.jsonl`, entries: entries2, malformedLineCount: 0 },
@@ -551,9 +529,7 @@ test("aggregateSessionUsage: projectLabel uses basename of cwd from session_info
 });
 
 test("aggregateSessionUsage: projectLabel falls back to dir-name decode when no cwd in any entry", () => {
-	const entries = [
-		{ type: "session", id: "sess-001", timestamp: "2026-05-01T10:00:00.000Z" },
-	];
+	const entries = [{ type: "session", id: "sess-001", timestamp: "2026-05-01T10:00:00.000Z" }];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -648,10 +624,7 @@ test("aggregateSessionUsage: per-message modelId is reflected in providerTotals.
 
 test("aggregateSessionUsage: falls back to model_change when message has no provider/model fields", () => {
 	// Standard shape without per-message provider/model — must still use model_change.
-	const entries = [
-		modelChange("anthropic", "claude-3-5-sonnet"),
-		assistantMsg(TS_INSIDE, { input: 100, output: 50 }),
-	];
+	const entries = [modelChange("anthropic", "claude-3-5-sonnet"), assistantMsg(TS_INSIDE, { input: 100, output: 50 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);
@@ -665,9 +638,7 @@ test("aggregateSessionUsage: falls back to model_change when message has no prov
 
 test("aggregateSessionUsage: falls back to 'unknown' when neither per-message nor model_change is present", () => {
 	// No model_change, no per-message fields — must fall back to 'unknown'.
-	const entries = [
-		assistantMsg(TS_INSIDE, { input: 50, output: 20 }),
-	];
+	const entries = [assistantMsg(TS_INSIDE, { input: 50, output: 20 })];
 	const result = aggregateSessionUsage(WINDOW, SESSIONS_ROOT, [
 		{ filePath: PRIMARY_FILE, entries, malformedLineCount: 0 },
 	]);

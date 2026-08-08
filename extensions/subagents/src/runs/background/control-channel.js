@@ -58,7 +58,8 @@ function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
     if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
         throw new Error(`${type} targetIndex must be a non-negative integer.`);
     }
-    if (payload.deliveryDeadlineAt !== undefined && (!Number.isFinite(payload.deliveryDeadlineAt) || payload.deliveryDeadlineAt <= 0)) {
+    if (payload.deliveryDeadlineAt !== undefined &&
+        (!Number.isFinite(payload.deliveryDeadlineAt) || payload.deliveryDeadlineAt <= 0)) {
         throw new Error(`${type} deliveryDeadlineAt must be a positive finite timestamp.`);
     }
     const request = {
@@ -94,7 +95,8 @@ export function acceptChildMessageRequest(input) {
     const targets = input.request.targetIndex !== undefined ? [input.request.targetIndex] : runningIndexes;
     const acceptedIndexes = [];
     const rejected = [];
-    if (input.request.deliveryDeadlineAt !== undefined && (input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt) {
+    if (input.request.deliveryDeadlineAt !== undefined &&
+        (input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt) {
         return { acceptedIndexes, rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })) };
     }
     for (const index of targets) {
@@ -111,7 +113,10 @@ export function acceptChildMessageRequest(input) {
             input.enqueue(index, input.request);
         }
         catch (error) {
-            rejected.push({ index, reason: `leaf inbox enqueue failed: ${error instanceof Error ? error.message : String(error)}` });
+            rejected.push({
+                index,
+                reason: `leaf inbox enqueue failed: ${error instanceof Error ? error.message : String(error)}`,
+            });
             continue;
         }
         acceptedIndexes.push(index);
@@ -139,7 +144,10 @@ function parseChildMessageAcceptance(raw, requestId) {
         return undefined;
     if (input.status !== "accepted" && input.status !== "rejected")
         return undefined;
-    if (typeof input.ts !== "number" || !Number.isFinite(input.ts) || !Array.isArray(input.acceptedIndexes) || !input.acceptedIndexes.every(Number.isInteger))
+    if (typeof input.ts !== "number" ||
+        !Number.isFinite(input.ts) ||
+        !Array.isArray(input.acceptedIndexes) ||
+        !input.acceptedIndexes.every(Number.isInteger))
         return undefined;
     return input;
 }
@@ -156,7 +164,8 @@ export function consumeChildMessageAcceptance(asyncDir, requestId) {
         try {
             fs.rmSync(acceptancePath, { force: true });
         }
-        catch { }
+        catch {
+        }
         return undefined;
     }
 }
@@ -190,7 +199,10 @@ function parseChildMessageRequest(raw) {
         return undefined;
     if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
         return undefined;
-    if (input.deliveryDeadlineAt !== undefined && (typeof input.deliveryDeadlineAt !== "number" || !Number.isFinite(input.deliveryDeadlineAt) || input.deliveryDeadlineAt <= 0))
+    if (input.deliveryDeadlineAt !== undefined &&
+        (typeof input.deliveryDeadlineAt !== "number" ||
+            !Number.isFinite(input.deliveryDeadlineAt) ||
+            input.deliveryDeadlineAt <= 0))
         return undefined;
     return {
         type: input.type,
@@ -206,7 +218,10 @@ function consumeMatchingChildMessageRequestsFromDir(dir, matches, fsImpl = fs) {
     if (!fsImpl.existsSync(dir))
         return [];
     const requests = [];
-    for (const entry of fsImpl.readdirSync(dir).filter((name) => name.endsWith(".json")).sort()) {
+    for (const entry of fsImpl
+        .readdirSync(dir)
+        .filter((name) => name.endsWith(".json"))
+        .sort()) {
         const requestPath = path.join(dir, entry);
         let parsed;
         try {
@@ -274,7 +289,9 @@ export function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     return true;
 }
 export function deliverInterruptRequest(input) {
-    const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+    const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, {
+        now: input.now,
+    });
     if (typeof input.pid === "number" && input.pid > 0) {
         try {
             (input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);

@@ -18,7 +18,11 @@ import {
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
 import type { AgentModelDefaults, ProviderModelReference } from "./model-defaults.js";
-import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import {
+	formatProviderModelReference,
+	parseProviderModelReference,
+	selectProviderAwareAgentDefaults,
+} from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
@@ -140,11 +144,14 @@ type TlhLaunchSettings = {
  * Extract `subagents.agentOverrides` from an already-parsed settings object, keeping only the
  * eight bundled subagent names so a user-authored agent name can never become a telemetry key.
  */
-function extractBundledSubagentOverrides(settings: Record<string, unknown>): Record<string, SubagentOverrideEntry> | undefined {
+function extractBundledSubagentOverrides(
+	settings: Record<string, unknown>,
+): Record<string, SubagentOverrideEntry> | undefined {
 	const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-	const rawOverrides = isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
-		? subagentsSection.agentOverrides
-		: undefined;
+	const rawOverrides =
+		isPlainObject(subagentsSection) && isPlainObject(subagentsSection.agentOverrides)
+			? subagentsSection.agentOverrides
+			: undefined;
 	if (!rawOverrides) return undefined;
 
 	let subagentOverrides: Record<string, SubagentOverrideEntry> | undefined;
@@ -152,7 +159,8 @@ function extractBundledSubagentOverrides(settings: Record<string, unknown>): Rec
 		const entry = rawOverrides[name];
 		if (!isPlainObject(entry)) continue;
 		const overrideEntry: SubagentOverrideEntry = {};
-		if (typeof entry.thinking === "string" || entry.thinking === false) overrideEntry.thinking = entry.thinking as string | false;
+		if (typeof entry.thinking === "string" || entry.thinking === false)
+			overrideEntry.thinking = entry.thinking as string | false;
 		if (typeof entry.model === "string" || entry.model === false) overrideEntry.model = entry.model as string | false;
 		if (typeof entry.disabled === "boolean") overrideEntry.disabled = entry.disabled;
 		if (Object.keys(overrideEntry).length > 0) {
@@ -302,19 +310,26 @@ function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok
 	if (enabled !== undefined && typeof enabled !== "boolean") {
 		return { ok: false };
 	}
-	const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? (tlh.experimental as TlhExperimentalConfig) : undefined;
+	const experimental =
+		isPlainObject(tlh) && isPlainObject(tlh.experimental) ? (tlh.experimental as TlhExperimentalConfig) : undefined;
 
 	// Extract subagents.agentOverrides — the whole settings object is already parsed above;
 	// this avoids a second file read. Only retain overrides for bundled subagent names so
 	// user-authored agent names can never appear as telemetry keys.
 	const subagentOverrides = extractBundledSubagentOverrides(settings);
 
-	return { ok: true, config: { telemetry: telemetry as TlhTelemetryConfig | undefined, experimental, subagentOverrides } };
+	return {
+		ok: true,
+		config: { telemetry: telemetry as TlhTelemetryConfig | undefined, experimental, subagentOverrides },
+	};
 }
 
-export function shouldSkipTlhLaunchTelemetry(launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings()): boolean {
+export function shouldSkipTlhLaunchTelemetry(
+	launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings(),
+): boolean {
 	if (!tlhTelemetryStatePath()) return true;
-	if (!configuredTlhTelemetryNamespace() || !configuredTlhTelemetryAppId() || !configuredTlhTelemetryIngestBaseUrl()) return true;
+	if (!configuredTlhTelemetryNamespace() || !configuredTlhTelemetryAppId() || !configuredTlhTelemetryIngestBaseUrl())
+		return true;
 	if (isTruthyEnvFlag(process.env.PI_OFFLINE)) return true;
 	if (isTruthyEnvFlag(process.env.TLH_SKIP_TELEMETRY)) return true;
 	if (isTruthyEnvFlag(process.env.TLH_TELEMETRY_DISABLED)) return true;
@@ -324,7 +339,10 @@ export function shouldSkipTlhLaunchTelemetry(launchSettings: ReturnType<typeof r
 }
 
 function isUuid(value: unknown): value is string {
-	return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+	return (
+		typeof value === "string" &&
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+	);
 }
 
 function readTlhTelemetryState(): TlhTelemetryState | undefined {
@@ -353,7 +371,6 @@ function writeTlhTelemetryState(state: TlhTelemetryState): boolean {
 	}
 }
 
-
 function getOrCreateTlhTelemetryInstallId(): string | undefined {
 	const existing = readTlhTelemetryState();
 	if (existing?.schemaVersion === TLH_TELEMETRY_STATE_SCHEMA_VERSION && isUuid(existing.installId)) {
@@ -361,7 +378,9 @@ function getOrCreateTlhTelemetryInstallId(): string | undefined {
 	}
 
 	const installId = randomUUID();
-	return writeTlhTelemetryState({ schemaVersion: TLH_TELEMETRY_STATE_SCHEMA_VERSION, installId }) ? installId : undefined;
+	return writeTlhTelemetryState({ schemaVersion: TLH_TELEMETRY_STATE_SCHEMA_VERSION, installId })
+		? installId
+		: undefined;
 }
 
 function hashTlhTelemetryClientUser(installId: string): string {
@@ -565,7 +584,10 @@ function readSubagentFrontmatterConfig(
 
 	// Split comma-separated model lists (e.g. "openai-codex/gpt-5.6-luna, openai/gpt-4o")
 	const splitList = (val: string | undefined): string[] =>
-		(val ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+		(val ?? "")
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean);
 
 	const agentDefaults: AgentModelDefaults = {
 		name,
@@ -573,12 +595,26 @@ function readSubagentFrontmatterConfig(
 		tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
 		tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
 		thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking) ? frontmatter.thinking : undefined,
-		tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking) ? frontmatter.tlhOpenaiThinking : undefined,
-		tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking) ? frontmatter.tlhAnthropicThinking : undefined,
-		preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true" ? true
-			: frontmatter.preferOppositeProvider?.trim() === "false" ? false : undefined,
-		preferCurrentOpenaiModel: frontmatter.preferCurrentOpenaiModel?.trim() === "true" ? true
-			: frontmatter.preferCurrentOpenaiModel?.trim() === "false" ? false : undefined,
+		tlhOpenaiThinking:
+			frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
+				? frontmatter.tlhOpenaiThinking
+				: undefined,
+		tlhAnthropicThinking:
+			frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
+				? frontmatter.tlhAnthropicThinking
+				: undefined,
+		preferOppositeProvider:
+			frontmatter.preferOppositeProvider?.trim() === "true"
+				? true
+				: frontmatter.preferOppositeProvider?.trim() === "false"
+					? false
+					: undefined,
+		preferCurrentOpenaiModel:
+			frontmatter.preferCurrentOpenaiModel?.trim() === "true"
+				? true
+				: frontmatter.preferCurrentOpenaiModel?.trim() === "false"
+					? false
+					: undefined,
 	};
 
 	// Resolve against the real available-models list captured at schedule time rather than
@@ -595,8 +631,8 @@ function readSubagentFrontmatterConfig(
 	const model = result.model
 		? formatProviderModelReference(result.model)
 		: parseProviderModelReference(agentDefaults.model) === undefined
-			? agentDefaults.model   // bare name: cannot verify, report as-is
-			: undefined;            // provider-qualified but not in available list: report unknown
+			? agentDefaults.model // bare name: cannot verify, report as-is
+			: undefined; // provider-qualified but not in available list: report unknown
 
 	return { thinking, model };
 }
@@ -643,8 +679,8 @@ function buildSubagentTelemetryPayload(
 		// Read frontmatter only when at least one key is not covered by an override.
 		// false overrides count as resolved (they clear the value explicitly), so we skip
 		// frontmatter only when BOTH keys are set (to string or false).
-		const needFrontmatter = agentDir !== undefined
-			&& (override?.thinking === undefined || override?.model === undefined);
+		const needFrontmatter =
+			agentDir !== undefined && (override?.thinking === undefined || override?.model === undefined);
 		const fm = needFrontmatter ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) : undefined;
 
 		// "cleared" is the telemetry sentinel for an explicit false override.
@@ -652,12 +688,12 @@ function buildSubagentTelemetryPayload(
 		// pattern, making it unambiguous as a telemetry value. It is emitted directly
 		// (not routed through the privacy filter) because false is a boolean, not a
 		// user-authored string, and "cleared" is a controlled sentinel we define.
-		payload[`Tlh.Subagent.${name}.thinking`] = override?.thinking === false
-			? "cleared"
-			: privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
-		payload[`Tlh.Subagent.${name}.model`] = override?.model === false
-			? "cleared"
-			: privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+		payload[`Tlh.Subagent.${name}.thinking`] =
+			override?.thinking === false
+				? "cleared"
+				: privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
+		payload[`Tlh.Subagent.${name}.model`] =
+			override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
 	}
 	return payload;
 }
@@ -689,8 +725,15 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
 					"Tlh.Device.osName": osMetadata.osName,
 					"Tlh.Device.osVersion": osMetadata.osVersion,
 					"Tlh.Device.osArch": osMetadata.osArch,
-					...buildExperimentalFeatureTelemetryPayload(launchSettings.ok ? launchSettings.config.experimental : undefined),
-					...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
+					...buildExperimentalFeatureTelemetryPayload(
+						launchSettings.ok ? launchSettings.config.experimental : undefined,
+					),
+					...buildSubagentTelemetryPayload(
+						effectiveSubagentOverrides,
+						agentDir,
+						snapshot.providerId,
+						snapshot.availableModels ?? [],
+					),
 				},
 			},
 		],

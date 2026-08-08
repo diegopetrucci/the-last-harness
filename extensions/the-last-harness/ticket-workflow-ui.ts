@@ -1,7 +1,12 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
@@ -29,7 +34,7 @@ type TkWorkflowSnapshot =
 			ready: string[];
 			blocked: string[];
 			inProgress: TkWorkflowInProgressTicket[];
-		};
+	  };
 
 type TkCommandResult = SpawnSyncReturns<string>;
 type TkCommandRunner = (command: string, cwd: string, args: string[], timeoutMs: number) => TkCommandResult;
@@ -338,7 +343,9 @@ function shouldRefreshFromBashCommand(command: string): boolean {
 			return true;
 		}
 		if (/^(?:bash|sh|zsh)$/.test(token)) {
-			const nextIndex = tokens.findIndex((candidate, candidateIndex) => candidateIndex > index && /^-[^-]*c/.test(candidate));
+			const nextIndex = tokens.findIndex(
+				(candidate, candidateIndex) => candidateIndex > index && /^-[^-]*c/.test(candidate),
+			);
 			if (nextIndex > index && nextIndex + 1 < tokens.length) {
 				const nested = tokens[nextIndex + 1]?.replace(/^['"]|['"]$/g, "") ?? "";
 				if (nested && shouldRefreshFromBashCommand(nested)) {

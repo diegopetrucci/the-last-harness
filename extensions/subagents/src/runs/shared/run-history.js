@@ -36,7 +36,10 @@ export function loadRunsForAgent(agent) {
     catch {
         return [];
     }
-    let lines = raw.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+    let lines = raw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
     if (lines.length > ROTATE_READ_THRESHOLD) {
         lines = lines.slice(-ROTATE_KEEP);
         try {
@@ -47,12 +50,14 @@ export function loadRunsForAgent(agent) {
         }
     }
     return lines
-        .map((line) => { try {
-        return JSON.parse(line);
-    }
-    catch {
-        return undefined;
-    } })
+        .map((line) => {
+        try {
+            return JSON.parse(line);
+        }
+        catch {
+            return undefined;
+        }
+    })
         .filter((entry) => entry != null && entry.agent === agent)
         .reverse();
 }

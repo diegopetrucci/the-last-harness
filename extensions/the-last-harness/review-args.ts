@@ -20,9 +20,7 @@ export const REVIEW_MODE_DESCRIPTIONS: Record<ReviewMode, string> = {
 /** Action returned by the pure branch-mismatch decision helper. */
 export type BranchDecisionAction = "proceed" | "abort-dirty" | "switch" | "abort-cancelled";
 
-export type ParsedReviewArgs =
-	| { pickerRequested: true }
-	| { pickerRequested: false; message: string };
+export type ParsedReviewArgs = { pickerRequested: true } | { pickerRequested: false; message: string };
 
 export type ReviewDispatchArgs =
 	| { mode: "uncommitted"; extra: string | undefined }

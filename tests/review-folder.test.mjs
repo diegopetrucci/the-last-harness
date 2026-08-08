@@ -1,4 +1,15 @@
-import { assert, assertNoStandaloneLine, assertRenderedPathLine, chmodSync, createReviewHarness, join, makeTempDir, mkdirSync, test, writeFileSync } from "./review-test-helpers.mjs";
+import {
+	assert,
+	assertNoStandaloneLine,
+	assertRenderedPathLine,
+	chmodSync,
+	createReviewHarness,
+	join,
+	makeTempDir,
+	mkdirSync,
+	test,
+	writeFileSync,
+} from "./review-test-helpers.mjs";
 
 test("/review folder keeps empty git ls-files results instead of walking ignored-only directories", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-folder-git-");
@@ -95,7 +106,6 @@ test("/review folder escapes snapshot fence lines found in file content", async 
 	assert.match(harness.sentMessages[0], /\n--- end snapshot ---$/);
 });
 
-
 test("/review folder skips per-file lstat and binary-check failures while continuing", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-folder-problematic-");
 	if (process.getuid?.() === 0) {
@@ -140,11 +150,7 @@ test("/review folder skips per-file lstat and binary-check failures while contin
 	assert.equal(harness.notifications.length, 0);
 	assert.equal(harness.sentMessages.length, 1);
 	assertRenderedPathLine(harness.sentMessages[0], /^\[skipped lstat failure: (".*")\]$/, "docs/missing.md");
-	assertRenderedPathLine(
-		harness.sentMessages[0],
-		/^\[skipped binary detection failure: (".*")\]$/,
-		"docs/secret.txt",
-	);
+	assertRenderedPathLine(harness.sentMessages[0], /^\[skipped binary detection failure: (".*")\]$/, "docs/secret.txt");
 	assert.match(harness.sentMessages[0], /--- file: "docs\/guide\.md" ---\n# Guide/);
 });
 

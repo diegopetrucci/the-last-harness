@@ -53,7 +53,10 @@ test("subagents runtime is a first-party root entrypoint without an external def
 	const defaults = readJson(join(repoRoot, "config", "default-extensions.json"));
 	assert.ok(packageJson.pi.extensions.includes("./extensions/subagents/src/extension/index.js"));
 	assert.equal(
-		defaults.some((entry) => entry.id === "subagents" || entry.aliases?.includes("pi-subagents") || /pi-subagents/i.test(entry.source)),
+		defaults.some(
+			(entry) =>
+				entry.id === "subagents" || entry.aliases?.includes("pi-subagents") || /pi-subagents/i.test(entry.source),
+		),
 		false,
 	);
 });
@@ -80,11 +83,12 @@ test("immutable subagent history archive matches its manifest and exact ledgers"
 	assert.equal(manifest.scope.gitBundleIncluded, false);
 
 	const expectedPaths = new Set(historicalEntries.map((entry) => entry.destinationPath));
-	const actualPaths = new Set(
-		listFiles(join(historyRoot, "source")).map((path) => relative(repoRoot, path)),
-	);
+	const actualPaths = new Set(listFiles(join(historyRoot, "source")).map((path) => relative(repoRoot, path)));
 	assert.deepEqual([...actualPaths].sort(), [...expectedPaths].sort());
-	assert.equal([...actualPaths].some((path) => /\.(?:bundle|pack)$/i.test(path)), false);
+	assert.equal(
+		[...actualPaths].some((path) => /\.(?:bundle|pack)$/i.test(path)),
+		false,
+	);
 
 	for (const entry of historicalEntries) {
 		const path = join(repoRoot, entry.destinationPath);

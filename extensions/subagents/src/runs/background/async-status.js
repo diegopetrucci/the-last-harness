@@ -5,21 +5,18 @@ import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-
 import {} from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
-import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents } from "../shared/nested-events.js";
+import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
-import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError } from "./async-status-corruption.js";
+import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
 function isNotFoundError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "ENOENT";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
 }
 function isAsyncRunDir(root, entry) {
     const entryPath = path.join(root, entry);
@@ -51,11 +48,19 @@ function outputFileMtime(outputFile) {
 function deriveAsyncActivityState(asyncDir, status) {
     if (status.state !== "running")
         return { activityState: status.activityState, lastActivityAt: status.lastActivityAt };
-    const outputPath = status.outputFile ? (path.isAbsolute(status.outputFile) ? status.outputFile : path.join(asyncDir, status.outputFile)) : undefined;
+    const outputPath = status.outputFile
+        ? path.isAbsolute(status.outputFile)
+            ? status.outputFile
+            : path.join(asyncDir, status.outputFile)
+        : undefined;
     const currentStep = typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
     return {
         activityState: status.activityState,
-        lastActivityAt: status.lastActivityAt ?? outputFileMtime(outputPath) ?? currentStep?.lastActivityAt ?? currentStep?.startedAt ?? status.startedAt,
+        lastActivityAt: status.lastActivityAt ??
+            outputFileMtime(outputPath) ??
+            currentStep?.lastActivityAt ??
+            currentStep?.startedAt ??
+            status.startedAt,
     };
 }
 export function validatePersistedAsyncStatus(asyncDir, status) {
@@ -184,14 +189,22 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
 function sortRuns(runs) {
     const rank = (state) => {
         switch (state) {
-            case "running": return 0;
-            case "pausing": return 0;
-            case "queued": return 1;
-            case "failed": return 2;
-            case "paused": return 2;
-            case "cancelled": return 2;
-            case "continued": return 2;
-            case "complete": return 3;
+            case "running":
+                return 0;
+            case "pausing":
+                return 0;
+            case "queued":
+                return 1;
+            case "failed":
+                return 2;
+            case "paused":
+                return 2;
+            case "cancelled":
+                return 2;
+            case "continued":
+                return 2;
+            case "complete":
+                return 3;
         }
     };
     return [...runs].sort((a, b) => {
@@ -245,7 +258,11 @@ function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict
         try {
             nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
             if (nestedRoute)
-                reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+                reconcileNestedAsyncDescendants(nestedRoute, {
+                    resultsDir: options.resultsDir,
+                    kill: options.kill,
+                    now: options.now,
+                });
         }
         catch (error) {
             nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
@@ -318,7 +335,10 @@ function formatActivityFacts(input) {
 function formatStepLine(step, privacySafe = false) {
     const display = step.label ? `${step.label} (${step.agent})` : step.agent;
     const phase = step.phase ? `[${step.phase}] ` : "";
-    const parts = [`${step.index + 1}. ${phase}${display}`, step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status];
+    const parts = [
+        `${step.index + 1}. ${phase}${display}`,
+        step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status,
+    ];
     const activity = formatActivityFacts({ ...step, privacySafe });
     if (activity)
         parts.push(activity);
@@ -349,7 +369,9 @@ export function formatAsyncRunProgressLabel(run) {
             const pausing = groupSteps.filter((step) => step.status === "running").length;
             const done = groupSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
             const groupLabel = `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${activeGroup.count} done`;
-            return run.mode === "parallel" ? groupLabel : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
+            return run.mode === "parallel"
+                ? groupLabel
+                : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
         }
         const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, { showRunning: run.state === "running" });
         if (run.mode === "parallel")
@@ -375,8 +397,12 @@ function formatRunHeader(run) {
     const stepLabel = formatAsyncRunProgressLabel(run);
     const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
     const activity = formatActivityFacts({ ...run, privacySafe });
-    const pending = run.pendingAppends ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}` : "";
-    const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running") ? "pausing" : run.state;
+    const pending = run.pendingAppends
+        ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
+        : "";
+    const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
+        ? "pausing"
+        : run.state;
     return privacySafe
         ? `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending}`
         : `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
@@ -390,7 +416,11 @@ export function formatAsyncRunList(runs, heading = "Active async runs") {
         lines.push(`- ${formatRunHeader(run)}`);
         for (const step of run.steps) {
             lines.push(`  ${formatStepLine(step, privacySafe)}`);
-            lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", maxLines: 12, redactSensitiveDetails: privacySafe }));
+            lines.push(...formatNestedRunStatusLines(step.children, {
+                indent: "    ",
+                maxLines: 12,
+                redactSensitiveDetails: privacySafe,
+            }));
         }
         const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
         const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];

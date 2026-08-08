@@ -5,9 +5,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { formatVersionOutput, registerVersionCommand } = await jiti.import(
-	"../extensions/the-last-harness/version.ts",
-);
+const { formatVersionOutput, registerVersionCommand } = await jiti.import("../extensions/the-last-harness/version.ts");
 
 const extensionSource = readFileSync(new URL("../extensions/the-last-harness.ts", import.meta.url), "utf8");
 const versionSource = readFileSync(new URL("../extensions/the-last-harness/version.ts", import.meta.url), "utf8");
@@ -29,7 +27,7 @@ test("formatVersionOutput includes both provided version strings verbatim", () =
 test("formatVersionOutput is concise plain text without markup", () => {
 	const output = formatVersionOutput("0.15.0", "0.79.1");
 	assert.equal(typeof output, "string");
-	assert.doesNotMatch(output, /[<>]/);  // no HTML-like markup
+	assert.doesNotMatch(output, /[<>]/); // no HTML-like markup
 	// Should be a single short line, not a multi-paragraph block
 	assert.ok(output.length < 200, "version output should be concise");
 });

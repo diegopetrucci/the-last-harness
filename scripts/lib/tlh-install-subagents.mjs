@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, rmdirSync, rmSync } f
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./default-extensions.mjs";
 import { criticalGitSourceSpec, packageSourceInstallDir } from "./tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, copySafeProfileFile, ensureSafeProfileDir, isSymlink } from "./tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, copySafeProfileFile, ensureSafeProfileDir, isSymlink, } from "./tlh-install-paths.mjs";
 import { readJsonFile } from "./tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
@@ -230,7 +230,9 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
         const install = sourceInstallPath(config.agentDir, candidate.source);
         if (!install)
             continue;
-        if (!pathWithin(config.agentDir, install.path) || hasSymlinkedParent(config.agentDir, install.path) || isSymlink(install.path)) {
+        if (!pathWithin(config.agentDir, install.path) ||
+            hasSymlinkedParent(config.agentDir, install.path) ||
+            isSymlink(install.path)) {
             warnRetiredSubagentCleanup(`skipping retired subagent package cleanup for unsafe path: ${install.path}`);
             continue;
         }
@@ -248,7 +250,8 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
             continue;
         }
         if (install.kind === "npm") {
-            if (!npmPackageStillDeclared(install.path, install.packageName) && !npmPackageStillInstalled(install.path, install.packageName)) {
+            if (!npmPackageStillDeclared(install.path, install.packageName) &&
+                !npmPackageStillInstalled(install.path, install.packageName)) {
                 continue;
             }
             if (config.dryRun) {
@@ -257,7 +260,10 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
                 continue;
             }
             const npmCommand = packageManagerCommand(config);
-            const args = [...npmCommand.args, ...packageManagerUninstallArgs(install.packageName, install.path, npmCommand.name)];
+            const args = [
+                ...npmCommand.args,
+                ...packageManagerUninstallArgs(install.packageName, install.path, npmCommand.name),
+            ];
             const runner = config.runPackageManager ?? defaultPackageManagerRunner;
             const commandResult = runner(npmCommand.command, args, {
                 cwd: config.agentDir,
@@ -272,7 +278,8 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
             if (commandResult.status !== 0) {
                 throw new Error(`failed to uninstall retired TLH subagent npm package ${install.packageName}: ${commandFailureSummary(commandResult)}`);
             }
-            if (npmPackageStillDeclared(install.path, install.packageName) || npmPackageStillInstalled(install.path, install.packageName)) {
+            if (npmPackageStillDeclared(install.path, install.packageName) ||
+                npmPackageStillInstalled(install.path, install.packageName)) {
                 throw new Error(`package manager reported success but retired TLH subagent npm package remains installed: ${install.packageName}`);
             }
             cleanupResult.uninstalledNpmPackages.push(install.packageName);
@@ -335,8 +342,7 @@ export function defaultExtensionsRequireCriticalInstall(defaultExtensionsFile, {
         return false;
     try {
         const defaults = readJsonFile(defaultExtensionsFile);
-        return Array.isArray(defaults)
-            && defaults.some((extension) => isPlainObject(extension) && extension.critical === true);
+        return (Array.isArray(defaults) && defaults.some((extension) => isPlainObject(extension) && extension.critical === true));
     }
     catch {
         return false;
@@ -422,8 +428,8 @@ function activeNoticeCanBeProvisioned(existing) {
     return !("control" in existing) || isPlainObject(existing.control);
 }
 function activeNoticeIsMissing(existing) {
-    return activeNoticeCanBeProvisioned(existing)
-        && (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control));
+    return (activeNoticeCanBeProvisioned(existing) &&
+        (!isPlainObject(existing.control) || !("activeNoticeAfterMs" in existing.control)));
 }
 function readExistingSubagentExtensionConfig(config) {
     const configPath = join(config.agentDir, "extensions/subagent/config.json");

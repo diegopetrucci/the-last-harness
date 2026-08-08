@@ -28,20 +28,13 @@ const normalizeSkillInput = skills?.normalizeSkillInput;
 
 describe("resolveChainTemplates", { skip: !available ? "pi packages not available" : undefined }, () => {
 	it("uses step task for first step", () => {
-		const chain = [
-			{ agent: "a", task: "Analyze {task}" },
-			{ agent: "b" },
-		];
+		const chain = [{ agent: "a", task: "Analyze {task}" }, { agent: "b" }];
 		const templates = resolveChainTemplates(chain);
 		assert.equal(templates[0], "Analyze {task}");
 	});
 
 	it("defaults to {previous} for subsequent steps without task", () => {
-		const chain = [
-			{ agent: "a", task: "Start" },
-			{ agent: "b" },
-			{ agent: "c" },
-		];
+		const chain = [{ agent: "a", task: "Start" }, { agent: "b" }, { agent: "c" }];
 		const templates = resolveChainTemplates(chain);
 		assert.equal(templates[1], "{previous}");
 		assert.equal(templates[2], "{previous}");
@@ -76,10 +69,7 @@ describe("resolveChainTemplates", { skip: !available ? "pi packages not availabl
 		const chain = [
 			{ agent: "scout", task: "Scan" },
 			{
-				parallel: [
-					{ agent: "rev-a", task: "Deep review A" },
-					{ agent: "rev-b" },
-				],
+				parallel: [{ agent: "rev-a", task: "Deep review A" }, { agent: "rev-b" }],
 			},
 			{ agent: "writer" },
 		];
@@ -154,7 +144,10 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 		const inlineBehavior = resolveStepBehavior({ name: "test", output: "report.md" }, {});
 		assert.equal(inlineBehavior.outputMode, "inline");
 
-		const stepOverrideBehavior = resolveStepBehavior({ name: "test", output: "report.md" }, { outputMode: "file-only" });
+		const stepOverrideBehavior = resolveStepBehavior(
+			{ name: "test", output: "report.md" },
+			{ outputMode: "file-only" },
+		);
 		assert.equal(stepOverrideBehavior.outputMode, "file-only");
 	});
 
@@ -199,7 +192,10 @@ describe("read-only progress suppression", { skip: !available ? "pi packages not
 		assert.equal(taskDisallowsFileUpdates("Implement read-only mode for config files."), false);
 		assert.equal(taskDisallowsFileUpdates("This task is not read-only; edit files."), false);
 		assert.equal(suppressProgressForReadOnlyTask(behavior, "Review-only. Do not edit files.").progress, false);
-		assert.equal(suppressProgressForReadOnlyTask(behavior, "{task}", "Review-only. Do not edit files.").progress, false);
+		assert.equal(
+			suppressProgressForReadOnlyTask(behavior, "{task}", "Review-only. Do not edit files.").progress,
+			false,
+		);
 		assert.equal(suppressProgressForReadOnlyTask(behavior, "Implement the approved fix.").progress, true);
 	});
 });
@@ -218,7 +214,13 @@ describe("buildChainInstructions", { skip: !available ? "pi packages not availab
 	});
 
 	it("adds [Write to:] prefix for output", () => {
-		const behavior = { reads: undefined, output: "output.md", outputMode: "inline", progress: false, skills: undefined };
+		const behavior = {
+			reads: undefined,
+			output: "output.md",
+			outputMode: "inline",
+			progress: false,
+			skills: undefined,
+		};
 		const dir = createTempDir("chain-test-");
 		try {
 			const { prefix } = buildChainInstructions(behavior, dir, false);
@@ -234,10 +236,7 @@ describe("buildChainInstructions", { skip: !available ? "pi packages not availab
 		const dir = createTempDir("chain-test-");
 		try {
 			const { suffix } = buildChainInstructions(behavior, dir, true);
-			assert.ok(
-				suffix.includes("progress.md"),
-				`should reference progress.md: ${suffix}`,
-			);
+			assert.ok(suffix.includes("progress.md"), `should reference progress.md: ${suffix}`);
 			assert.ok(
 				suffix.includes("Create") || suffix.includes("maintain"),
 				`should say create/maintain for first progress step: ${suffix}`,
@@ -252,10 +251,7 @@ describe("buildChainInstructions", { skip: !available ? "pi packages not availab
 		const dir = createTempDir("chain-test-");
 		try {
 			const { suffix } = buildChainInstructions(behavior, dir, false, "Previous step output here");
-			assert.ok(
-				suffix.includes("Previous step output here"),
-				"should include previous output",
-			);
+			assert.ok(suffix.includes("Previous step output here"), "should include previous output");
 		} finally {
 			removeTempDir(dir);
 		}

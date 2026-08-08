@@ -9,20 +9,24 @@ function assistantContent(content: unknown[]): Message {
 
 describe("getFinalOutput", () => {
 	it("uses the last non-empty text part in the latest assistant message", () => {
-		const messages = [assistantContent([
-			{ type: "text", text: "" },
-			{ type: "text", text: "Summary" },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: "" },
+				{ type: "text", text: "Summary" },
+			]),
+		];
 
 		assert.equal(getFinalOutput(messages), "Summary");
 	});
 
 	it("prefers final text over progress text in a multi-part assistant message", () => {
-		const messages = [assistantContent([
-			{ type: "text", text: "Working on the fix..." },
-			{ type: "thinking", thinking: "Cursor shell: shell $ npm test" },
-			{ type: "text", text: "Implemented: patch applied." },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: "Working on the fix..." },
+				{ type: "thinking", thinking: "Cursor shell: shell $ npm test" },
+				{ type: "text", text: "Implemented: patch applied." },
+			]),
+		];
 
 		assert.equal(getFinalOutput(messages), "Implemented: patch applied.");
 	});
@@ -148,26 +152,27 @@ describe("getFinalOutput acceptance-report part selection", () => {
 		// Regression for the reverse-iteration early return: the prose part was never
 		// visited, so a narrative written in an earlier part was silently dropped.
 		const prose = "Here is the detailed summary of what changed and why.";
-		const messages = [assistantContent([
-			{ type: "text", text: prose },
-			{ type: "text", text: REPORT_BLOCK },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: prose },
+				{ type: "text", text: REPORT_BLOCK },
+			]),
+		];
 
 		assert.equal(getFinalOutput(messages), `${prose}\n\n${REPORT_BLOCK}`);
 	});
 
 	it("joins multiple preceding prose parts in document order and keeps the block last", () => {
-		const messages = [assistantContent([
-			{ type: "text", text: "First paragraph." },
-			{ type: "thinking", thinking: "scratchpad reasoning" },
-			{ type: "text", text: "Second paragraph." },
-			{ type: "text", text: REPORT_BLOCK },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: "First paragraph." },
+				{ type: "thinking", thinking: "scratchpad reasoning" },
+				{ type: "text", text: "Second paragraph." },
+				{ type: "text", text: REPORT_BLOCK },
+			]),
+		];
 
-		assert.equal(
-			getFinalOutput(messages),
-			`First paragraph.\n\nSecond paragraph.\n\n${REPORT_BLOCK}`,
-		);
+		assert.equal(getFinalOutput(messages), `First paragraph.\n\nSecond paragraph.\n\n${REPORT_BLOCK}`);
 	});
 
 	it("does not walk back into earlier assistant messages for preceding prose", () => {
@@ -196,10 +201,12 @@ describe("getFinalOutput draft-block filtering", () => {
 		// Regression: a draft acceptance-report part preceding the real final block was
 		// previously collected as prose and joined in, causing the stale draft to leak
 		// into result.finalOutput and drive acceptance evaluation.
-		const messages = [assistantContent([
-			{ type: "text", text: DRAFT_REPORT_BLOCK },
-			{ type: "text", text: REPORT_BLOCK },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: DRAFT_REPORT_BLOCK },
+				{ type: "text", text: REPORT_BLOCK },
+			]),
+		];
 
 		assert.equal(getFinalOutput(messages), REPORT_BLOCK);
 	});
@@ -207,11 +214,13 @@ describe("getFinalOutput draft-block filtering", () => {
 	it("returns prose + final block when the message is shaped [prose, draft-block, final-block]", () => {
 		// Prose before a draft must be preserved; the draft itself must be dropped.
 		const prose = "Here is the final summary of changes.";
-		const messages = [assistantContent([
-			{ type: "text", text: prose },
-			{ type: "text", text: DRAFT_REPORT_BLOCK },
-			{ type: "text", text: REPORT_BLOCK },
-		])];
+		const messages = [
+			assistantContent([
+				{ type: "text", text: prose },
+				{ type: "text", text: DRAFT_REPORT_BLOCK },
+				{ type: "text", text: REPORT_BLOCK },
+			]),
+		];
 
 		assert.equal(getFinalOutput(messages), `${prose}\n\n${REPORT_BLOCK}`);
 	});

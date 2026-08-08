@@ -6,10 +6,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-	createTlhEffectiveActivityTracker,
-	registerTlhEffectiveActivityTracker,
-} = await jiti.import("../extensions/the-last-harness/activity-tracker.ts");
+const { createTlhEffectiveActivityTracker, registerTlhEffectiveActivityTracker } = await jiti.import(
+	"../extensions/the-last-harness/activity-tracker.ts",
+);
 
 function createFakeTimers() {
 	let now = 0;
@@ -80,7 +79,6 @@ test("tracker keeps primary activity busy through retry grace and compaction ret
 	assert.equal(tracker.isInProgress(), false);
 });
 
-
 test("tracker treats duplicate retry-grace scheduling for the same key as idempotent", () => {
 	const timers = createFakeTimers();
 	const tracker = createTlhEffectiveActivityTracker({
@@ -104,7 +102,6 @@ test("tracker treats duplicate retry-grace scheduling for the same key as idempo
 	timers.advance(25);
 	assert.equal(tracker.isInProgress(), false);
 });
-
 
 test("tracker clears retry grace after concurrent distinct grace keys expire", () => {
 	const timers = createFakeTimers();
@@ -161,7 +158,6 @@ test("tracker keeps concurrent async jobs active across duplicate, out-of-order,
 	assert.deepEqual(tracker.getSnapshot(), { inProgress: false, primaryReasons: [], activeAsyncJobIds: [] });
 });
 
-
 test("tracker ignores foreground control notices and only tracks safe async control contexts", () => {
 	const tracker = createTlhEffectiveActivityTracker();
 
@@ -186,10 +182,38 @@ test("tracker rehydrates only matching running async jobs and ignores malformed 
 	};
 
 	try {
-		writeStatus("run-1", { runId: "run-1", state: "running", cwd: "/repo", sessionId: "session-1", mode: "single", startedAt: 1 });
-		writeStatus("run-2", { runId: "run-2", state: "running", cwd: "/elsewhere", sessionId: "session-1", mode: "single", startedAt: 1 });
-		writeStatus("run-3", { runId: "run-3", state: "running", cwd: "/repo", sessionId: "session-2", mode: "single", startedAt: 1 });
-		writeStatus("run-4", { runId: "run-4", state: "complete", cwd: "/repo", sessionId: "session-1", mode: "single", startedAt: 1 });
+		writeStatus("run-1", {
+			runId: "run-1",
+			state: "running",
+			cwd: "/repo",
+			sessionId: "session-1",
+			mode: "single",
+			startedAt: 1,
+		});
+		writeStatus("run-2", {
+			runId: "run-2",
+			state: "running",
+			cwd: "/elsewhere",
+			sessionId: "session-1",
+			mode: "single",
+			startedAt: 1,
+		});
+		writeStatus("run-3", {
+			runId: "run-3",
+			state: "running",
+			cwd: "/repo",
+			sessionId: "session-2",
+			mode: "single",
+			startedAt: 1,
+		});
+		writeStatus("run-4", {
+			runId: "run-4",
+			state: "complete",
+			cwd: "/repo",
+			sessionId: "session-1",
+			mode: "single",
+			startedAt: 1,
+		});
 		mkdirSync(join(asyncDir, "bad-json"), { recursive: true });
 		writeFileSync(join(asyncDir, "bad-json", "status.json"), "{not json\n");
 
@@ -242,7 +266,10 @@ test("registered tracker listens to pi events and cleans up on session shutdown"
 			on(channel, handler) {
 				channelHandlers.set(channel, [...(channelHandlers.get(channel) ?? []), handler]);
 				return () => {
-					channelHandlers.set(channel, (channelHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler));
+					channelHandlers.set(
+						channel,
+						(channelHandlers.get(channel) ?? []).filter((candidate) => candidate !== handler),
+					);
 				};
 			},
 		},

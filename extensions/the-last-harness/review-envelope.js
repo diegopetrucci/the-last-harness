@@ -51,11 +51,11 @@ export function escapeContentDelimiters(content) {
     return content
         .split("\n")
         .map((line) => {
-        if (line === "--- begin snapshot ---"
-            || line === "--- end snapshot ---"
-            || line === REVIEW_UNTRACKED_BEGIN_DELIMITER
-            || line === REVIEW_UNTRACKED_END_DELIMITER
-            || /^--- (?:file|untracked file): .* ---$/.test(line)) {
+        if (line === "--- begin snapshot ---" ||
+            line === "--- end snapshot ---" ||
+            line === REVIEW_UNTRACKED_BEGIN_DELIMITER ||
+            line === REVIEW_UNTRACKED_END_DELIMITER ||
+            /^--- (?:file|untracked file): .* ---$/.test(line)) {
             return escapeDelimitedContentLine(line);
         }
         return line;

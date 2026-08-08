@@ -24,7 +24,9 @@ describe("cleanupOwnedProcessGroup", () => {
 				if (signal === "SIGKILL") gone = true;
 				return true;
 			},
-			sleep: async (ms) => { now += ms; },
+			sleep: async (ms) => {
+				now += ms;
+			},
 			now: () => now,
 			intWaitMs: 3,
 			termWaitMs: 3,
@@ -35,8 +37,14 @@ describe("cleanupOwnedProcessGroup", () => {
 		assert.equal(result.terminated, true);
 		assert.equal(result.escalatedToSigkill, true);
 		assert.deepEqual(result.signals, ["SIGINT", "SIGTERM", "SIGKILL"]);
-		assert.deepEqual(calls.filter((entry) => entry.signal !== 0).map((entry) => entry.signal), ["SIGINT", "SIGTERM", "SIGKILL"]);
-		assert.equal(calls.every((entry) => entry.pid === -4321), true);
+		assert.deepEqual(
+			calls.filter((entry) => entry.signal !== 0).map((entry) => entry.signal),
+			["SIGINT", "SIGTERM", "SIGKILL"],
+		);
+		assert.equal(
+			calls.every((entry) => entry.pid === -4321),
+			true,
+		);
 		assert.match(formatOwnedProcessGroupCleanup(result), /SIGKILL/);
 	});
 
@@ -57,7 +65,9 @@ describe("cleanupOwnedProcessGroup", () => {
 		let now = 0;
 		const result = await cleanupOwnedProcessGroup(9876, {
 			kill: () => true,
-			sleep: async (ms) => { now += ms; },
+			sleep: async (ms) => {
+				now += ms;
+			},
 			now: () => now,
 			intWaitMs: 2,
 			termWaitMs: 2,

@@ -1,21 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.js";
-import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.js";
+import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, } from "./async-status.js";
+import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet, } from "./fleet-view.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { formatModelThinking, shortenPath } from "../../shared/formatters.js";
 import { formatActivityLabel } from "../../shared/status-format.js";
-import { ASYNC_DIR, RESULTS_DIR } from "../../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
 import { resolveAsyncRunLocation } from "./async-resume.js";
 import { resolveSubagentRunId } from "./run-id-resolver.js";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
-import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot } from "../shared/nested-events.js";
+import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, } from "../shared/nested-events.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.js";
-import { formatProtectedLifecycleCleanup, isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
+import { formatProtectedLifecycleCleanup, isProtectedPausedLifecycle, protectedLifecycleText, } from "../shared/lifecycle-privacy.js";
 function hasExistingSessionFile(value) {
     return typeof value === "string" && fs.existsSync(value);
 }
@@ -39,14 +39,10 @@ function isPausedAwaitingSupervisorStatus(status) {
     return status.state === "paused" && status.pause?.kind === "awaiting_supervisor";
 }
 function isPausedAwaitingSupervisorStep(status, step) {
-    return status.state === "paused"
-        && step.status === "paused"
-        && step.pause?.kind === "awaiting_supervisor";
+    return status.state === "paused" && step.status === "paused" && step.pause?.kind === "awaiting_supervisor";
 }
 function isPausedCohortStep(status, step) {
-    return status.state === "paused"
-        && step.status === "paused"
-        && step.pause?.kind === "cohort_pause";
+    return status.state === "paused" && step.status === "paused" && step.pause?.kind === "cohort_pause";
 }
 function isPausingLifecycleStep(status, step) {
     return Boolean(step.pause?.kind) && (status.state === "pausing" || step.status === "pausing");
@@ -101,7 +97,10 @@ function formatRememberedForegroundStatus(run) {
         `Updated: ${new Date(run.updatedAt).toISOString()}`,
     ];
     for (const child of run.children) {
-        const output = rememberedForegroundChildOutput(child).trim().split(/\r?\n/).find((line) => line.trim());
+        const output = rememberedForegroundChildOutput(child)
+            .trim()
+            .split(/\r?\n/)
+            .find((line) => line.trim());
         const statusLabel = child.cancel?.cancelledAt ? "cancelled" : child.status;
         const parts = [
             `${child.index + 1}. ${child.agent} ${statusLabel}`,
@@ -126,7 +125,9 @@ function formatRememberedForegroundStatus(run) {
                 agent: child.agent,
                 requestSummary: child.pause.summary,
                 index: child.index,
-            }).split("\n").map((line) => `  ${line}`));
+            })
+                .split("\n")
+                .map((line) => `  ${line}`));
         }
     }
     lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
@@ -164,7 +165,10 @@ function formatRememberedForegroundTranscript(run, options) {
         throw new Error(`Transcript index ${index} is out of range for ${run.children.length} foreground children.`);
     const child = run.children[index];
     const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
-    const outputLines = rememberedForegroundChildOutput(child).split(/\r?\n/).filter((line) => line.trim()).slice(-lineLimit);
+    const outputLines = rememberedForegroundChildOutput(child)
+        .split(/\r?\n/)
+        .filter((line) => line.trim())
+        .slice(-lineLimit);
     const lines = [
         `Run: ${run.runId}`,
         `State: ${child.cancel?.cancelledAt ? "cancelled" : child.status}`,
@@ -186,11 +190,17 @@ function formatNestedExactStatus(rootRunId, run) {
         `Root: ${rootRunId}`,
         `Parent: ${run.parentRunId}${run.parentStepIndex !== undefined ? ` step ${run.parentStepIndex + 1}` : ""}`,
         `State: ${run.state}`,
-        run.activityState || run.lastActivityAt ? `Activity: ${formatActivityLabel(run.lastActivityAt, run.activityState)}` : undefined,
+        run.activityState || run.lastActivityAt
+            ? `Activity: ${formatActivityLabel(run.lastActivityAt, run.activityState)}`
+            : undefined,
         run.mode ? `Mode: ${run.mode}` : undefined,
         `Agent: ${nestedRunDisplayName(run)}`,
-        run.currentStep !== undefined ? `Progress: step ${run.currentStep + 1}/${run.chainStepCount ?? run.steps?.length ?? 1}` : undefined,
-        run.turnBudget ? `Turn budget: ${run.turnBudget.turnCount}/${run.turnBudget.maxTurns}+${run.turnBudget.graceTurns} (${run.turnBudget.outcome})` : undefined,
+        run.currentStep !== undefined
+            ? `Progress: step ${run.currentStep + 1}/${run.chainStepCount ?? run.steps?.length ?? 1}`
+            : undefined,
+        run.turnBudget
+            ? `Turn budget: ${run.turnBudget.turnCount}/${run.turnBudget.maxTurns}+${run.turnBudget.graceTurns} (${run.turnBudget.outcome})`
+            : undefined,
         run.asyncDir ? `Dir: ${run.asyncDir}` : undefined,
         run.sessionFile ? `Session: ${run.sessionFile}` : undefined,
         run.error ? `Error: ${run.error}` : undefined,
@@ -202,7 +212,9 @@ function formatNestedExactStatus(rootRunId, run) {
         lines.push("Steps:");
         for (const [index, step] of run.steps.entries()) {
             const activity = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
-            const budget = step.turnBudget ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})` : "";
+            const budget = step.turnBudget
+                ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
+                : "";
             lines.push(`  ${index + 1}. ${step.agent} ${step.status}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${step.error}` : ""}`);
             lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true }));
         }
@@ -223,23 +235,45 @@ export function inspectSubagentStatus(params, deps = {}) {
         };
     }
     if (params.view === "fleet") {
-        return inspectSubagentFleet(params, { asyncDirRoot, resultsDir, kill: deps.kill, now: deps.now, state: deps.state, childSafe: Boolean(deps.nested) });
+        return inspectSubagentFleet(params, {
+            asyncDirRoot,
+            resultsDir,
+            kill: deps.kill,
+            now: deps.now,
+            state: deps.state,
+            childSafe: Boolean(deps.nested),
+        });
     }
     if (!params.id && !params.runId && !params.dir) {
         if (deps.nested) {
             return {
-                content: [{ type: "text", text: "Child-safe subagent status requires an id when no foreground run is active." }],
+                content: [
+                    { type: "text", text: "Child-safe subagent status requires an id when no foreground run is active." },
+                ],
                 isError: true,
                 details: { mode: "single", results: [] },
             };
         }
         try {
-            const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now });
+            const runs = listAsyncRuns(asyncDirRoot, {
+                states: ["queued", "running"],
+                sessionId: currentSessionId,
+                resultsDir,
+                kill: deps.kill,
+                now: deps.now,
+            });
             if (params.view === "transcript") {
                 if (runs.length === 1)
                     return inspectSubagentStatus({ ...params, id: runs[0].id }, deps);
                 return {
-                    content: [{ type: "text", text: runs.length === 0 ? "No active async run transcript is available." : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.` }],
+                    content: [
+                        {
+                            type: "text",
+                            text: runs.length === 0
+                                ? "No active async run transcript is available."
+                                : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.`,
+                        },
+                    ],
                     isError: true,
                     details: { mode: "single", results: [] },
                 };
@@ -262,36 +296,76 @@ export function inspectSubagentStatus(params, deps = {}) {
     try {
         const requestedId = params.id ?? params.runId;
         if (!params.dir && requestedId) {
-            const resolved = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
+            const resolved = resolveSubagentRunId(requestedId, {
+                asyncDirRoot,
+                resultsDir,
+                state: deps.state,
+                nested: deps.nested,
+            });
             if (resolved?.kind === "foreground") {
                 const run = deps.state?.foregroundRuns?.get(resolved.id);
                 if (run) {
                     try {
                         return {
-                            content: [{ type: "text", text: params.view === "transcript" ? formatRememberedForegroundTranscript(run, { index: params.index, lines: params.lines }) : formatRememberedForegroundStatus(run) }],
+                            content: [
+                                {
+                                    type: "text",
+                                    text: params.view === "transcript"
+                                        ? formatRememberedForegroundTranscript(run, { index: params.index, lines: params.lines })
+                                        : formatRememberedForegroundStatus(run),
+                                },
+                            ],
                             details: { mode: "single", results: [] },
                         };
                     }
                     catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
-                        return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+                        return {
+                            content: [{ type: "text", text: message }],
+                            isError: true,
+                            details: { mode: "single", results: [] },
+                        };
                     }
                 }
             }
             if (resolved?.kind === "nested") {
                 reconcileNestedAsyncDescendants(resolved.match.route, { resultsDir, kill: deps.kill, now: deps.now });
-                const refreshed = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
+                const refreshed = resolveSubagentRunId(requestedId, {
+                    asyncDirRoot,
+                    resultsDir,
+                    state: deps.state,
+                    nested: deps.nested,
+                });
                 const nested = refreshed?.kind === "nested" ? refreshed : resolved;
                 if (params.view === "transcript") {
                     try {
-                        return { content: [{ type: "text", text: formatNestedRunTranscript(nested.match.run, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: formatNestedRunTranscript(nested.match.run, {
+                                        index: params.index,
+                                        lines: params.lines,
+                                        sessionRoots: deps.sessionRoots,
+                                    }),
+                                },
+                            ],
+                            details: { mode: "single", results: [] },
+                        };
                     }
                     catch (error) {
                         const message = error instanceof Error ? error.message : String(error);
-                        return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+                        return {
+                            content: [{ type: "text", text: message }],
+                            isError: true,
+                            details: { mode: "single", results: [] },
+                        };
                     }
                 }
-                return { content: [{ type: "text", text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run) }], details: { mode: "single", results: [] } };
+                return {
+                    content: [{ type: "text", text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run) }],
+                    details: { mode: "single", results: [] },
+                };
             }
             if (resolved?.kind === "async")
                 location = resolved.location;
@@ -339,17 +413,35 @@ export function inspectSubagentStatus(params, deps = {}) {
             if (params.view === "transcript") {
                 if (currentSessionId && status.sessionId !== currentSessionId) {
                     return {
-                        content: [{ type: "text", text: "Transcript view is only available for async runs owned by the current session." }],
+                        content: [
+                            { type: "text", text: "Transcript view is only available for async runs owned by the current session." },
+                        ],
                         isError: true,
                         details: { mode: "single", results: [] },
                     };
                 }
                 try {
-                    return { content: [{ type: "text", text: formatAsyncRunTranscript(status, asyncDir, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: formatAsyncRunTranscript(status, asyncDir, {
+                                    index: params.index,
+                                    lines: params.lines,
+                                    sessionRoots: deps.sessionRoots,
+                                }),
+                            },
+                        ],
+                        details: { mode: "single", results: [] },
+                    };
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
-                    return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+                    return {
+                        content: [{ type: "text", text: message }],
+                        isError: true,
+                        details: { mode: "single", results: [] },
+                    };
                 }
             }
             let nestedChildren = [];
@@ -382,7 +474,9 @@ export function inspectSubagentStatus(params, deps = {}) {
             const lines = [
                 `Run: ${status.runId}`,
                 `State: ${status.state}`,
-                status.error ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : status.error}` : undefined,
+                status.error
+                    ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : status.error}`
+                    : undefined,
                 statusActivityText ? `Activity: ${statusActivityText}` : undefined,
                 steeringText ? `Steering: ${steeringText}` : undefined,
                 `Mode: ${status.mode}`,
@@ -392,11 +486,17 @@ export function inspectSubagentStatus(params, deps = {}) {
                 status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
                 `Started: ${started}`,
                 `Updated: ${updated}`,
-                status.turnBudget ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})` : undefined,
+                status.turnBudget
+                    ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})`
+                    : undefined,
                 !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${asyncDir}` : undefined,
                 !privacySafeAwaitingSupervisorLifecycle && outputPath ? `Output: ${outputPath}` : undefined,
-                reconciliation.message ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}` : undefined,
-                !privacySafeAwaitingSupervisorLifecycle && reconciliation.resultPath && fs.existsSync(reconciliation.resultPath) ? `Result: ${reconciliation.resultPath}` : undefined,
+                reconciliation.message
+                    ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}`
+                    : undefined,
+                !privacySafeAwaitingSupervisorLifecycle && reconciliation.resultPath && fs.existsSync(reconciliation.resultPath)
+                    ? `Result: ${reconciliation.resultPath}`
+                    : undefined,
             ].filter((line) => Boolean(line));
             for (const [index, step] of (status.steps ?? []).entries()) {
                 const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
@@ -404,9 +504,13 @@ export function inspectSubagentStatus(params, deps = {}) {
                 const modelText = modelThinking ? ` (${modelThinking})` : "";
                 const steeringText = formatSteeringSummary(step);
                 const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";
-                const errorText = step.error ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}` : "";
+                const errorText = step.error
+                    ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}`
+                    : "";
                 const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
-                const budgetText = step.turnBudget ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})` : "";
+                const budgetText = step.turnBudget
+                    ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
+                    : "";
                 const display = step.label ? `${step.label} (${step.agent})` : step.agent;
                 const phase = step.phase ? `[${step.phase}] ` : "";
                 lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
@@ -448,7 +552,12 @@ export function inspectSubagentStatus(params, deps = {}) {
                         for (const warning of step.processCleanup.warnings ?? [])
                             lines.push(`  Cleanup warning: ${warning}`);
                 }
-                lines.push(...formatNestedRunStatusLines(step.children, { indent: "  ", commandHints: true, maxLines: 20, redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle }));
+                lines.push(...formatNestedRunStatusLines(step.children, {
+                    indent: "  ",
+                    commandHints: true,
+                    maxLines: 20,
+                    redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
+                }));
                 const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
                 if (!privacySafeAwaitingSupervisorLifecycle && stepOutputPath !== outputPath && fs.existsSync(stepOutputPath))
                     lines.push(`  Output: ${stepOutputPath}`);
@@ -459,7 +568,12 @@ export function inspectSubagentStatus(params, deps = {}) {
             }
             const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
             const unattached = nestedChildren.filter((child) => !attached.has(child.id));
-            lines.push(...formatNestedRunStatusLines(unattached, { indent: "", commandHints: true, maxLines: 20, redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle }));
+            lines.push(...formatNestedRunStatusLines(unattached, {
+                indent: "",
+                commandHints: true,
+                maxLines: 20,
+                redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
+            }));
             if (nestedWarning)
                 lines.push(`Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : nestedWarning}`);
             if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
@@ -472,7 +586,8 @@ export function inspectSubagentStatus(params, deps = {}) {
                     runId: status.runId,
                     agent: status.steps?.[0]?.agent ?? "subagent",
                     requestSummary: status.pause?.summary,
-                    claimUnavailable: typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" && lifecycleContinuationForIndex(status, 0).claimToken.length > 0,
+                    claimUnavailable: typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" &&
+                        lifecycleContinuationForIndex(status, 0).claimToken.length > 0,
                     index: params.index,
                 }).split("\n"));
             }
@@ -499,11 +614,23 @@ export function inspectSubagentStatus(params, deps = {}) {
             const data = JSON.parse(raw);
             if (params.view === "transcript") {
                 try {
-                    return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }),
+                            },
+                        ],
+                        details: { mode: "single", results: [] },
+                    };
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
-                    return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
+                    return {
+                        content: [{ type: "text", text: message }],
+                        isError: true,
+                        details: { mode: "single", results: [] },
+                    };
                 }
             }
             const status = data.success
@@ -516,7 +643,11 @@ export function inspectSubagentStatus(params, deps = {}) {
             const runId = data.runId ?? data.id ?? resolvedId;
             const privacySafeResult = isProtectedPausedLifecycle({ state: data.state, pause: data.pause });
             const lines = [`Run: ${runId}`, `State: ${status}`, ...(privacySafeResult ? [] : [`Result: ${resultPath}`])];
-            const children = Array.isArray(data.results) ? data.results : data.agent ? [{ agent: data.agent, sessionFile: data.sessionFile }] : [];
+            const children = Array.isArray(data.results)
+                ? data.results
+                : data.agent
+                    ? [{ agent: data.agent, sessionFile: data.sessionFile }]
+                    : [];
             lines.push(formatResumeGuidance(runId, children, data.sessionFile));
             if (data.summary)
                 lines.push("", privacySafeResult ? "Paused awaiting supervisor." : data.summary);

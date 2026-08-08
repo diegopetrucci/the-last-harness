@@ -1,4 +1,9 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath } from "./common.js";
 import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";

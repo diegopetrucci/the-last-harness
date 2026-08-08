@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
-import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeMetadata, } from "../../shared/artifacts.js";
+import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.js";
 import { createChildTranscriptWriter } from "../../shared/child-transcript.js";
 import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
@@ -14,16 +14,16 @@ import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit
 import { scheduleDeadline } from "../shared/deadline-timer.js";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.js";
 import { readStructuredOutput } from "../shared/structured-output.js";
-import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode } from "../shared/single-output.js";
+import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, resolveEffectiveAcceptance, stripAcceptanceReport } from "../shared/acceptance.js";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, resolveEffectiveAcceptance, stripAcceptanceReport, } from "../shared/acceptance.js";
+import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
-import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
+import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
 import { resolveSupervisorChannelDir } from "../../intercom/native-supervisor-channel.js";
-import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.js";
+import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 const artifactOutputByResult = new WeakMap();
 const acceptanceOutputByResult = new WeakMap();
 const FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE = "Foreground pause process cleanup could not be confirmed. Status does not claim the child stopped.";
@@ -153,7 +153,11 @@ function snapshotProgress(progress) {
 function snapshotResult(result, progress) {
     return {
         ...result,
-        messages: result.outputMode === "file-only" && result.savedOutputPath ? undefined : result.messages ? [...result.messages] : undefined,
+        messages: result.outputMode === "file-only" && result.savedOutputPath
+            ? undefined
+            : result.messages
+                ? [...result.messages]
+                : undefined,
         usage: { ...result.usage },
         skills: result.skills ? [...result.skills] : undefined,
         attemptedModels: result.attemptedModels ? [...result.attemptedModels] : undefined,
@@ -210,7 +214,8 @@ function resolveSupervisorPauseMetadata(input) {
             },
         };
     }
-    if (input.toolName === "contact_supervisor" && (input.toolArgs.reason === "need_decision" || input.toolArgs.reason === "interview_request")) {
+    if (input.toolName === "contact_supervisor" &&
+        (input.toolArgs.reason === "need_decision" || input.toolArgs.reason === "interview_request")) {
         const request = findSupervisorRequestMetadata({
             runId: input.runId,
             agent: input.agent,
@@ -253,7 +258,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     if (thinkingDropNote && !shared.attemptNotes.includes(thinkingDropNote))
         shared.attemptNotes.push(thinkingDropNote);
     const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
-    const { args, env: sharedEnv, tempDir } = buildPiArgs({
+    const { args, env: sharedEnv, tempDir, } = buildPiArgs({
         baseArgs: ["--mode", "json", "-p"],
         task,
         sessionEnabled: shared.sessionEnabled,
@@ -460,7 +465,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             progress.activityState = undefined;
             progress.durationMs = Date.now() - startTime;
             try {
-                options.onSupervisorPauseTransition?.({ stage: "pausing", result: snapshotResult(result, snapshotProgress(progress)), ownerPid });
+                options.onSupervisorPauseTransition?.({
+                    stage: "pausing",
+                    result: snapshotResult(result, snapshotProgress(progress)),
+                    ownerPid,
+                });
             }
             catch {
                 result.pause = undefined;
@@ -506,7 +515,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     return;
                 forcedTerminationSignal = true;
                 if (!cleanTerminalAssistantStopReceived && !assistantError) {
-                    result.error = result.error ?? `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
+                    result.error =
+                        result.error ??
+                            `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
                 }
                 finalHardKillTimer = setTimeout(() => {
                     if (settled || processClosed || detached)
@@ -616,7 +627,13 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         };
         const requestTurnBudgetAbort = (turnCount) => {
             const budget = options.turnBudget;
-            if (!budget || result.timedOut || result.turnBudgetExceeded || interruptedByControl || processClosed || settled || detached)
+            if (!budget ||
+                result.timedOut ||
+                result.turnBudgetExceeded ||
+                interruptedByControl ||
+                processClosed ||
+                settled ||
+                detached)
                 return;
             const message = turnBudgetExceededMessage(budget, turnCount);
             result.turnBudgetExceeded = true;
@@ -701,7 +718,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (!options.onUpdate || processClosed)
                 return;
             progress.durationMs = Date.now() - startTime;
-            const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput ? result.finalOutput : getFinalOutput(result.messages ?? []);
+            const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput
+                ? result.finalOutput
+                : getFinalOutput(result.messages ?? []);
             emitUpdateSnapshot(output || "(running...)");
         };
         const processLine = (line) => {
@@ -729,8 +748,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 let supervisorPause;
                 if (options.allowIntercomDetach && (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
                     intercomStarted = true;
-                    shouldDetachForBlockingIntercom = (evt.toolName === "intercom" && toolArgs.action === "ask")
-                        || (evt.toolName === "contact_supervisor" && (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
+                    shouldDetachForBlockingIntercom =
+                        (evt.toolName === "intercom" && toolArgs.action === "ask") ||
+                            (evt.toolName === "contact_supervisor" &&
+                                (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
                     if (options.pauseBlockingSupervisor && shouldDetachForBlockingIntercom && typeof evt.toolName === "string") {
                         supervisorPause = resolveSupervisorPauseMetadata({
                             runId: options.runId,
@@ -755,7 +776,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 observedMutationAttempt = observedMutationAttempt || mutates;
                 pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
                 fireUpdate();
-                if (options.pauseBlockingSupervisor && supervisorPause?.kind === "awaiting_supervisor" && !detached && !processClosed) {
+                if (options.pauseBlockingSupervisor &&
+                    supervisorPause?.kind === "awaiting_supervisor" &&
+                    !detached &&
+                    !processClosed) {
                     pauseForSupervisor(supervisorPause);
                 }
                 else if (shouldDetachForBlockingIntercom && !detached && !processClosed) {
@@ -783,8 +807,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     result.usage.turns++;
                     progress.turnCount = result.usage.turns;
                     const stopReason = evt.message.stopReason;
-                    const hasToolCall = Array.isArray(evt.message.content)
-                        && evt.message.content.some((part) => part.type === "toolCall");
+                    const hasToolCall = Array.isArray(evt.message.content) &&
+                        evt.message.content.some((part) => part.type === "toolCall");
                     const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
                     updateTurnBudget(result.usage.turns, terminalAssistantStop);
                     const u = evt.message.usage;
@@ -826,7 +850,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     recordMutatingFailure(mutatingFailures, {
                         tool: toolSnapshot.tool,
                         path: toolSnapshot.path,
-                        error: resultText.split("\n").find((line) => line.trim())?.trim().slice(0, 180) ?? "mutating tool failed",
+                        error: resultText
+                            .split("\n")
+                            .find((line) => line.trim())
+                            ?.trim()
+                            .slice(0, 180) ?? "mutating tool failed",
                         ts: now,
                     }, mutatingFailureWindowMs);
                     if (shouldEscalateMutatingFailures(mutatingFailures, controlConfig.failedToolAttemptsBeforeAttention)) {
@@ -916,7 +944,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
                 result.error = stderrBuf.trim();
             }
-            const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+            const finalCode = forcedDrainAfterFinalSuccess
+                ? 0
+                : forcedTerminationSignal || signal
+                    ? (code ?? 1)
+                    : (code ?? 0);
             if (supervisorPauseRequested) {
                 void (async () => {
                     const cleanup = await beginSupervisorPauseCleanup();
@@ -948,7 +980,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     };
                     resolveResultSessionFile(result, options, shared.sessionEnabled);
                     try {
-                        options.onSupervisorPauseTransition?.({ stage: "paused", result: snapshotResult(result, snapshotProgress(progress)) });
+                        options.onSupervisorPauseTransition?.({
+                            stage: "paused",
+                            result: snapshotResult(result, snapshotProgress(progress)),
+                        });
                     }
                     catch {
                         supervisorPauseRequested = false;
@@ -998,8 +1033,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     durationMs: progress.durationMs,
                 };
                 const finalOutput = getFinalOutput(result.messages ?? []);
-                result.finalOutput = finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
-                if (result.artifactPaths && options.artifactConfig?.enabled !== false && options.artifactConfig?.includeOutput !== false) {
+                result.finalOutput =
+                    finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+                if (result.artifactPaths &&
+                    options.artifactConfig?.enabled !== false &&
+                    options.artifactConfig?.includeOutput !== false) {
                     try {
                         writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
                     }
@@ -1080,12 +1118,14 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         result.error = undefined;
         if (result.pause)
             result.pause = { ...result.pause, ownerPid: undefined };
-        result.finalOutput = result.finalOutput || formatForegroundSupervisorPauseMessage({
-            headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-            runId: options.runId,
-            agent: agent.name,
-            requestSummary: result.pause?.summary,
-        });
+        result.finalOutput =
+            result.finalOutput ||
+                formatForegroundSupervisorPauseMessage({
+                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
+                    runId: options.runId,
+                    agent: agent.name,
+                    requestSummary: result.pause?.summary,
+                });
         result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
         progress.activityState = undefined;
         progress.durationMs = Date.now() - startTime;
@@ -1114,15 +1154,16 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     }
     if (result.detached) {
         result.exitCode = 0;
-        result.finalOutput = result.pause?.kind === "awaiting_supervisor"
-            ? formatForegroundSupervisorPauseMessage({
-                headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-                runId: options.runId,
-                agent: agent.name,
-                requestSummary: result.pause.summary,
-                ...(options.index !== undefined ? { index: options.index } : {}),
-            })
-            : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
+        result.finalOutput =
+            result.pause?.kind === "awaiting_supervisor"
+                ? formatForegroundSupervisorPauseMessage({
+                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
+                    runId: options.runId,
+                    agent: agent.name,
+                    requestSummary: result.pause.summary,
+                    ...(options.index !== undefined ? { index: options.index } : {}),
+                })
+                : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
         return result;
     }
     if (result.error && result.exitCode === 0) {
@@ -1145,9 +1186,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     }
     if (result.exitCode === 0 && !result.error) {
         const finalText = getFinalOutput(result.messages ?? []);
-        const missingStructuredOutput = options.structuredOutput
-            ? !existsSync(options.structuredOutput.outputPath)
-            : false;
+        const missingStructuredOutput = options.structuredOutput ? !existsSync(options.structuredOutput.outputPath) : false;
         if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
             result.exitCode = 1;
             result.error = "Subagent produced no output (possible model cold-start or empty response).";
@@ -1208,7 +1247,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         : undefined;
     if (completionGuard?.triggered && !observedMutationAttempt) {
         result.exitCode = 1;
-        result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
+        result.error =
+            "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
         progress.status = "failed";
         progress.error = result.error;
         emitControlEvent(buildControlEvent({
@@ -1242,10 +1282,14 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     acceptanceOutputByResult.set(result, acceptanceOutput);
     result.outputMode = options.outputMode ?? "inline";
     const preservedFinalOutput = result.finalOutput;
-    result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
-        ? result.outputReference.message
-        : fullOutput;
-    if (result.exitCode !== 0 && !result.finalOutput.trim() && typeof preservedFinalOutput === "string" && preservedFinalOutput.trim()) {
+    result.finalOutput =
+        options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
+            ? result.outputReference.message
+            : fullOutput;
+    if (result.exitCode !== 0 &&
+        !result.finalOutput.trim() &&
+        typeof preservedFinalOutput === "string" &&
+        preservedFinalOutput.trim()) {
         result.finalOutput = preservedFinalOutput;
     }
     result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
@@ -1404,14 +1448,15 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         }
         attemptNotes.push(formatModelAttemptNote(attempt, modelsToTry[i + 1]));
     }
-    const result = lastResult ?? {
-        agent: agentName,
-        task,
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        error: "Subagent did not produce a result.",
-    };
+    const result = lastResult ??
+        {
+            agent: agentName,
+            task,
+            exitCode: 1,
+            messages: [],
+            usage: emptyUsage(),
+            error: "Subagent did not produce a result.",
+        };
     result.usage = aggregateUsage;
     result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
     result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
@@ -1542,7 +1587,12 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     }
     const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
     stripAcceptanceReportsFromMessages(result.messages);
-    if (acceptanceFailure && result.acceptance.explicit && result.exitCode === 0 && !result.detached && !result.interrupted && !result.timedOut) {
+    if (acceptanceFailure &&
+        result.acceptance.explicit &&
+        result.exitCode === 0 &&
+        !result.detached &&
+        !result.interrupted &&
+        !result.timedOut) {
         result.exitCode = 1;
         result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
         if (result.progress) {

@@ -49,7 +49,8 @@ export function serializeAgent(config, options = {}) {
     const fallbackModelsValue = joinComma(config.fallbackModels);
     if (fallbackModelsValue || preserve("fallbackModels"))
         lines.push(`fallbackModels: ${fallbackModelsValue ?? ""}`);
-    if ((config.thinking && (config.thinking !== "off" || preserve("thinking"))) || (!config.thinking && preserve("thinking"))) {
+    if ((config.thinking && (config.thinking !== "off" || preserve("thinking"))) ||
+        (!config.thinking && preserve("thinking"))) {
         lines.push(`thinking: ${config.thinking ?? ""}`);
     }
     if (!preservingExistingFrontmatter || preserve("systemPromptMode"))

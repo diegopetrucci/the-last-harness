@@ -97,8 +97,14 @@ test("model visibility matches canonical and bare-id glob patterns with visible 
 		unhide: ["claude-haiku-4-5"],
 	});
 
-	assert.equal(matchesTlhModelVisibilityPattern({ provider: "anthropic", id: "claude-opus-4-5" }, "anthropic/claude-opus-4-*"), true);
-	assert.equal(matchesTlhModelVisibilityPattern({ provider: "anthropic", id: "claude-opus-4-5" }, "claude-opus-4-*"), true);
+	assert.equal(
+		matchesTlhModelVisibilityPattern({ provider: "anthropic", id: "claude-opus-4-5" }, "anthropic/claude-opus-4-*"),
+		true,
+	);
+	assert.equal(
+		matchesTlhModelVisibilityPattern({ provider: "anthropic", id: "claude-opus-4-5" }, "claude-opus-4-*"),
+		true,
+	);
 	assert.equal(matchesTlhModelVisibilityPattern({ provider: "openai-codex", id: "gpt-5.5" }, "claude-opus-4-*"), false);
 
 	const defaultsOnlyConfig = normalizeTlhModelVisibilityConfig({});
@@ -116,16 +122,20 @@ test("model visibility settings are isolated-profile only and normalize hidden/v
 	const settingsPath = join(fixture.agent, "settings.json");
 	writeFileSync(
 		settingsPath,
-		`${JSON.stringify({
-			tlh: {
-				modelVisibility: {
-					disabled: true,
-					hidden: [" anthropic/claude-opus-4-* ", 42, ""],
-					visible: ["anthropic/claude-opus-4-6", false],
-					unhide: [" claude-haiku-4-5 ", null],
+		`${JSON.stringify(
+			{
+				tlh: {
+					modelVisibility: {
+						disabled: true,
+						hidden: [" anthropic/claude-opus-4-* ", 42, ""],
+						visible: ["anthropic/claude-opus-4-6", false],
+						unhide: [" claude-haiku-4-5 ", null],
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -222,32 +232,38 @@ test("ModelRuntime filters async availability and current/refreshed snapshots wh
 		assert.equal(ModelRuntime.prototype.getAvailable, patchedGetAvailable);
 		assert.equal(ModelRuntime.prototype.getAvailableSnapshot, patchedGetAvailableSnapshot);
 
-		const runtime = await createTestModelRuntime(
-			["hidden-current", "visible-current"],
-			() => refreshedModels,
-		);
+		const runtime = await createTestModelRuntime(["hidden-current", "visible-current"], () => refreshedModels);
 		const registry = new ModelRegistry(runtime);
 
-		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-current"]);
+		assert.deepEqual(
+			modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/visible-current"],
+		);
 		assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test")), ["tlh-test/visible-current"]);
-		assert.deepEqual(modelKeys(registry.getAvailable()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-current"]);
-		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(runtime)).filter((key) => key.startsWith("tlh-test/")), [
-			"tlh-test/hidden-current",
-			"tlh-test/visible-current",
-		]);
-		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")), [
-			"tlh-test/hidden-current",
-			"tlh-test/visible-current",
-		]);
+		assert.deepEqual(
+			modelKeys(registry.getAvailable()).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/visible-current"],
+		);
+		assert.deepEqual(
+			modelKeys(getUnfilteredAvailableModels(runtime)).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/hidden-current", "tlh-test/visible-current"],
+		);
+		assert.deepEqual(
+			modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/hidden-current", "tlh-test/visible-current"],
+		);
 
 		refreshedModels = ["hidden-after-refresh", "visible-after-refresh"];
 		await runtime.refresh({ allowNetwork: false, force: true });
-		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible-after-refresh"]);
+		assert.deepEqual(
+			modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/visible-after-refresh"],
+		);
 		assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test")), ["tlh-test/visible-after-refresh"]);
-		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")), [
-			"tlh-test/hidden-after-refresh",
-			"tlh-test/visible-after-refresh",
-		]);
+		assert.deepEqual(
+			modelKeys(getUnfilteredAvailableModels(registry)).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/hidden-after-refresh", "tlh-test/visible-after-refresh"],
+		);
 	});
 });
 
@@ -304,13 +320,20 @@ test("exact /model provider/model lookup uses the unfiltered ModelRuntime snapsh
 		);
 		assert.equal(`${hiddenExactMatch?.provider}/${hiddenExactMatch?.id}`, "tlh-test/hidden-exact");
 		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "hidden-exact"), undefined);
-		assert.deepEqual(modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")), ["tlh-test/visible"]);
+		assert.deepEqual(
+			modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")),
+			["tlh-test/visible"],
+		);
 
-		interactiveMode.runtimeHost.session.scopedModels = [
-			{ model: runtime.getModel("tlh-test", "hidden-scoped") },
-		];
-		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/hidden-exact"), undefined);
-		const scopedMatch = await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/hidden-scoped");
+		interactiveMode.runtimeHost.session.scopedModels = [{ model: runtime.getModel("tlh-test", "hidden-scoped") }];
+		assert.equal(
+			await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/hidden-exact"),
+			undefined,
+		);
+		const scopedMatch = await InteractiveMode.prototype.findExactModelMatch.call(
+			interactiveMode,
+			"tlh-test/hidden-scoped",
+		);
 		assert.equal(`${scopedMatch?.provider}/${scopedMatch?.id}`, "tlh-test/hidden-scoped");
 	});
 });

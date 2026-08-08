@@ -111,7 +111,13 @@ function requiredValue(argv: readonly string[], index: number, flag: string): st
 	return value;
 }
 
-function assignOptionValue(target: CliArgs, key: StringOptionKey, argv: readonly string[], index: number, flags: string | readonly string[]): number | undefined {
+function assignOptionValue(
+	target: CliArgs,
+	key: StringOptionKey,
+	argv: readonly string[],
+	index: number,
+	flags: string | readonly string[],
+): number | undefined {
 	const arg = argv[index];
 	for (const flag of Array.isArray(flags) ? flags : [flags]) {
 		if (arg === flag) {
@@ -157,7 +163,10 @@ function firstConfiguredValue(...values: Array<string | undefined>): string | un
 
 function defaultTlhAgentDir(env: ProcessEnvMap = process.env, options: { homeDir?: string } = {}): string | undefined {
 	const homeDir = options.homeDir ?? env.HOME ?? homedir();
-	return expandHomePath(firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) || join(homeDir, ".the-last-harness", "agent"), { homeDir });
+	return expandHomePath(
+		firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) || join(homeDir, ".the-last-harness", "agent"),
+		{ homeDir },
+	);
 }
 
 function defaultTlhBinDir(env: ProcessEnvMap = process.env, options: { homeDir?: string } = {}): string | undefined {
@@ -309,7 +318,10 @@ function pathWithinOrEqual(root: string, child: string): boolean {
 	return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
 }
 
-function pathIsProtectedPiConfig(pathValue: string, options: { homeDir?: string; alreadyNormalized?: boolean } = {}): boolean {
+function pathIsProtectedPiConfig(
+	pathValue: string,
+	options: { homeDir?: string; alreadyNormalized?: boolean } = {},
+): boolean {
 	const homeDir = options.homeDir ?? process.env.HOME ?? homedir();
 	const normalizedPath = options.alreadyNormalized ? stripTrailingSlashes(pathValue) : realpathForCompare(pathValue);
 	const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
@@ -375,7 +387,9 @@ function normalizeState(raw: unknown): NormalizedInstallState | undefined {
 		ref,
 		packageSource,
 		packageSourceIsDefault: readBooleanProperty(raw, "packageSourceIsDefault") === true,
-		...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean" ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") } : {}),
+		...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean"
+			? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") }
+			: {}),
 	};
 }
 
@@ -402,7 +416,10 @@ function loadState(args: CliArgs): NormalizedInstallState | undefined {
 }
 
 function encodePathRef(ref: string): string {
-	return ref.split("/").map((part) => encodeURIComponent(part)).join("/");
+	return ref
+		.split("/")
+		.map((part) => encodeURIComponent(part))
+		.join("/");
 }
 
 function resolvePlan(state: NormalizedInstallState | undefined, args: CliArgs): UpdatePlan {
@@ -414,7 +431,9 @@ function resolvePlan(state: NormalizedInstallState | undefined, args: CliArgs): 
 	const changesStoredCustomTarget =
 		state?.packageSourceIsDefault === false &&
 		!args.packageSource &&
-		((args.ref && args.ref !== state.ref) || (args.repo && args.repo !== state.repo) || (args.track && args.track !== state.track));
+		((args.ref && args.ref !== state.ref) ||
+			(args.repo && args.repo !== state.repo) ||
+			(args.track && args.track !== state.track));
 	if (changesStoredCustomTarget) {
 		throw new Error(
 			"This install uses a custom package source. Pass --package-source with any --track, --repo, or --ref override so package code and update metadata stay aligned.",
@@ -547,11 +566,13 @@ function assertPackageUpdateTargetSafe(agentDir: string): void {
 }
 
 function assertPackageUpdateArgs(args: CliArgs): void {
-	const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS
-		.filter(([key]) => args.explicitOptions.has(key))
-		.map(([, flag]) => flag);
+	const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS.filter(([key]) => args.explicitOptions.has(key)).map(
+		([, flag]) => flag,
+	);
 	if (unsupported.length > 0) {
-		throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
+		throw new Error(
+			`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`,
+		);
 	}
 }
 
@@ -628,7 +649,9 @@ function resolveCommand(command: string, env: ProcessEnvMap): string {
 function printPackageUpdateDryRun(piCommand: string, args: CliArgs): void {
 	console.log("The Last Harness extension update plan");
 	console.log(`Agent dir: ${args.agentDir}`);
-	console.log(`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`);
+	console.log(
+		`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`,
+	);
 }
 
 function runPackageUpdate(args: CliArgs): void {
@@ -643,7 +666,9 @@ function runPackageUpdate(args: CliArgs): void {
 		return;
 	}
 	if (!existsSync(piCommand)) {
-		throw new Error(`The Last Harness private runtime pi not found at ${piCommand}. Run \`tlh update\` (without --extensions) to repair the private runtime.`);
+		throw new Error(
+			`The Last Harness private runtime pi not found at ${piCommand}. Run \`tlh update\` (without --extensions) to repair the private runtime.`,
+		);
 	}
 	if (isTruthyEnv(process.env.PI_OFFLINE)) {
 		throw new Error("PI_OFFLINE is set; refusing to run a network update.");

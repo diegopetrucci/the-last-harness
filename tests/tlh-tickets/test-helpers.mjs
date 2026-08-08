@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -42,7 +52,9 @@ function sha256File(path) {
 }
 
 function writeValidTkLikeCommand(path, { sentinel } = {}) {
-	writeFileSync(path, `#!/bin/sh
+	writeFileSync(
+		path,
+		`#!/bin/sh
 ${sentinel ? `printf called > ${JSON.stringify(sentinel)}\n` : ""}case "\${1:-}" in
   help|--help|-h)
     echo "tk - minimal ticket system"
@@ -54,7 +66,8 @@ ${sentinel ? `printf called > ${JSON.stringify(sentinel)}\n` : ""}case "\${1:-}"
     exit 0
     ;;
 esac
-`);
+`,
+	);
 	chmodSync(path, 0o755);
 }
 
@@ -67,10 +80,13 @@ function writeValidTkForEnable(fixture) {
 
 function ticketEnableArgs(fixture, settings, extraArgs = []) {
 	return [
-		"--settings", settings,
-		"--agent-dir", fixture.agent,
+		"--settings",
+		settings,
+		"--agent-dir",
+		fixture.agent,
 		...extraArgs,
-		"--install-path", writeValidTkForEnable(fixture),
+		"--install-path",
+		writeValidTkForEnable(fixture),
 		"enable",
 	];
 }
@@ -79,9 +95,12 @@ const fixtureTicketSourceUrl = "https://example.test/wedow-ticket.tar.gz";
 
 function unsafeTicketSourceArgs({ checksum, archiveEntry = "ticket-0.3.2/ticket" }) {
 	return [
-		"--unsafe-test-ticket-source-url", fixtureTicketSourceUrl,
-		"--unsafe-test-ticket-source-sha256", checksum,
-		"--unsafe-test-ticket-archive-entry", archiveEntry,
+		"--unsafe-test-ticket-source-url",
+		fixtureTicketSourceUrl,
+		"--unsafe-test-ticket-source-sha256",
+		checksum,
+		"--unsafe-test-ticket-archive-entry",
+		archiveEntry,
 	];
 }
 
@@ -90,7 +109,9 @@ function createTicketArchive(fixture, { ticketContent } = {}) {
 	const root = join(archiveSource, "ticket-0.3.2");
 	mkdirSync(root, { recursive: true });
 	const ticket = join(root, "ticket");
-	const content = ticketContent || `#!/usr/bin/env bash
+	const content =
+		ticketContent ||
+		`#!/usr/bin/env bash
 set -euo pipefail
 command_name="$(basename "$0")"
 case "\${1:-}" in
@@ -118,29 +139,37 @@ esac
 function writePoisonCommand(dir, name, sentinel) {
 	mkdirSync(dir, { recursive: true });
 	const commandPath = join(dir, name);
-	writeFileSync(commandPath, `#!/bin/sh
+	writeFileSync(
+		commandPath,
+		`#!/bin/sh
 printf intercepted > ${JSON.stringify(sentinel)}
 exit 88
-`);
+`,
+	);
 	chmodSync(commandPath, 0o755);
 }
 
 function writeFetchPreload(fixture) {
 	const preload = join(fixture.dir, "stub-ticket-fetch.mjs");
-	writeFileSync(preload, `import { readFileSync, writeFileSync } from "node:fs";
+	writeFileSync(
+		preload,
+		`import { readFileSync, writeFileSync } from "node:fs";
 const archive = readFileSync(process.env.TLH_TEST_ARCHIVE);
 const archiveBytes = archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength);
 globalThis.fetch = async (url) => {
 	writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
 	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
 };
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapTargetParentBeforeOpenPreload(fixture) {
 	const preload = join(fixture.dir, "swap-target-parent-before-open.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -158,13 +187,16 @@ fs.openSync = (path, flags, mode) => {
 	return originalOpenSync(path, flags, mode);
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
 function writeFetchAndSwapTargetParentBeforeOpenPreload(fixture) {
 	const preload = join(fixture.dir, "fetch-and-swap-target-parent-before-open.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -189,13 +221,16 @@ globalThis.fetch = async (url) => {
 	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
 	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
 };
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapParentBeforeMkdirPreload(fixture) {
 	const preload = join(fixture.dir, "swap-parent-before-mkdir.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -212,13 +247,16 @@ fs.mkdirSync = (path, ...args) => {
 	return originalMkdirSync(path, ...args);
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapParentAfterMkdirPreload(fixture) {
 	const preload = join(fixture.dir, "swap-parent-after-mkdir.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -236,13 +274,16 @@ fs.mkdirSync = (path, ...args) => {
 	return result;
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
 function writeFetchAndSwapParentBeforeMkdirPreload(fixture) {
 	const preload = join(fixture.dir, "fetch-and-swap-parent-before-mkdir.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -266,13 +307,16 @@ globalThis.fetch = async (url) => {
 	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
 	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
 };
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapSettingsBackupParentBeforeOpenPreload(fixture) {
 	const preload = join(fixture.dir, "swap-settings-backup-parent-before-open.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { basename, dirname } from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 
@@ -290,13 +334,16 @@ fs.openSync = (path, flags, mode) => {
 	return originalOpenSync(path, flags, mode);
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapSettingsParentBeforeRealpathPreload(fixture) {
 	const preload = join(fixture.dir, "swap-settings-parent-before-realpath.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 
 const originalMkdirSync = fs.mkdirSync;
@@ -318,13 +365,16 @@ fs.realpathSync = (path, ...args) => {
 	return originalRealpathSync(path, ...args);
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
 function writeFetchAndSwapTargetParentBeforeSecondRealpathPreload(fixture) {
 	const preload = join(fixture.dir, "fetch-and-swap-target-parent-before-second-realpath.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 
 const originalMkdirSync = fs.mkdirSync;
@@ -357,13 +407,16 @@ globalThis.fetch = async (url) => {
 	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, String(url));
 	return { ok: true, status: 200, statusText: "OK", arrayBuffer: async () => archiveBytes };
 };
-`);
+`,
+	);
 	return preload;
 }
 
 function writeSwapAgentRootBeforeLstatPreload(fixture) {
 	const preload = join(fixture.dir, "swap-agent-root-before-lstat.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 
 const originalLstatSync = fs.lstatSync;
@@ -383,10 +436,10 @@ globalThis.fetch = async () => {
 	fs.writeFileSync(process.env.TLH_TEST_FETCH_SENTINEL, "called");
 	throw new Error("fetch should not be called");
 };
-`);
+`,
+	);
 	return preload;
 }
-
 
 export {
 	assert,

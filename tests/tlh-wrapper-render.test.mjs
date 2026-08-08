@@ -31,10 +31,7 @@ test("renderWrapper: NODE_COMPILE_CACHE export is present exactly once in the pi
 		1,
 		`expected exactly one NODE_COMPILE_CACHE line; got: ${JSON.stringify(compileCacheLines)}`,
 	);
-	assert.equal(
-		compileCacheLines[0],
-		'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"',
-	);
+	assert.equal(compileCacheLines[0], 'export NODE_COMPILE_CACHE="${tlh_pinned_dir%/*}/node-compile-cache"');
 });
 
 test("renderWrapper: NODE_COMPILE_CACHE export appears immediately before exec of pinned pi", () => {
@@ -46,11 +43,7 @@ test("renderWrapper: NODE_COMPILE_CACHE export appears immediately before exec o
 
 	assert.ok(ncIndex >= 0, "NODE_COMPILE_CACHE export line must be present");
 	assert.ok(execIndex >= 0, 'exec "${default_pi_cmd}" "$@" line must be present');
-	assert.equal(
-		ncIndex + 1,
-		execIndex,
-		"NODE_COMPILE_CACHE export must be the line immediately before the pi exec",
-	);
+	assert.equal(ncIndex + 1, execIndex, "NODE_COMPILE_CACHE export must be the line immediately before the pi exec");
 });
 
 test("renderWrapper: helper branch exec lines do not include NODE_COMPILE_CACHE", () => {
@@ -62,10 +55,7 @@ test("renderWrapper: helper branch exec lines do not include NODE_COMPILE_CACHE"
 	const helperExecLines = lines.filter((line) => line.includes('exec "${tlh_node_cmd}"'));
 	assert.ok(helperExecLines.length > 0, "at least one helper exec line must exist");
 	for (const line of helperExecLines) {
-		assert.ok(
-			!line.includes("NODE_COMPILE_CACHE"),
-			`helper exec line must not include NODE_COMPILE_CACHE: ${line}`,
-		);
+		assert.ok(!line.includes("NODE_COMPILE_CACHE"), `helper exec line must not include NODE_COMPILE_CACHE: ${line}`);
 	}
 });
 
@@ -92,7 +82,7 @@ test("renderWrapper: sessions subcommand block is present with correct structure
 		"sessions block must check guard before proceeding",
 	);
 	assert.ok(
-		rendered.includes('tlh sessions package support files are missing or corrupt; run `tlh update` to recover.'),
+		rendered.includes("tlh sessions package support files are missing or corrupt; run `tlh update` to recover."),
 		"sessions block must emit correct error message when guard fails",
 	);
 	assert.ok(
@@ -124,10 +114,7 @@ test("renderWrapper: sessions subcommand block appears before the pinned pi runt
 	const piExecIndex = rendered.indexOf('exec "${default_pi_cmd}" "$@"');
 	assert.ok(sessionsIndex >= 0, "sessions block must be present");
 	assert.ok(piExecIndex >= 0, "pi exec line must be present");
-	assert.ok(
-		sessionsIndex < piExecIndex,
-		"sessions block must appear before the pinned pi runtime exec",
-	);
+	assert.ok(sessionsIndex < piExecIndex, "sessions block must appear before the pinned pi runtime exec");
 });
 
 test("renderWrapper: NODE_COMPILE_CACHE export uses tlh_pinned_dir%/* (strip bin dir → runtime prefix)", () => {

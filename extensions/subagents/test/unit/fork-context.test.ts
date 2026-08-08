@@ -8,7 +8,11 @@ import { createForkContextResolver, resolveSubagentContext } from "../../src/sha
 
 function writeMinimalSessionFile(filePath: string, id = "session"): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, `{"type":"session","version":1,"id":"${id}","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n`, "utf-8");
+	fs.writeFileSync(
+		filePath,
+		`{"type":"session","version":1,"id":"${id}","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n`,
+		"utf-8",
+	);
 }
 
 function writeSessionJsonl(filePath: string, entries: unknown[]): void {
@@ -30,17 +34,21 @@ describe("resolveSubagentContext", () => {
 describe("createForkContextResolver", () => {
 	it("fresh mode never calls createBranchedSession", () => {
 		let calls = 0;
-		const resolver = createForkContextResolver({
-			getSessionFile: () => "/tmp/parent.jsonl",
-			getLeafId: () => "leaf-123",
-		}, "fresh", {
-			openSession: () => ({
-				createBranchedSession: () => {
-					calls++;
-					return "/tmp/child.jsonl";
-				},
-			}),
-		});
+		const resolver = createForkContextResolver(
+			{
+				getSessionFile: () => "/tmp/parent.jsonl",
+				getLeafId: () => "leaf-123",
+			},
+			"fresh",
+			{
+				openSession: () => ({
+					createBranchedSession: () => {
+						calls++;
+						return "/tmp/child.jsonl";
+					},
+				}),
+			},
+		);
 
 		assert.equal(resolver.sessionFileForIndex(0), undefined);
 		assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
@@ -49,20 +57,30 @@ describe("createForkContextResolver", () => {
 
 	it("fails fast when parent session file is missing", () => {
 		assert.throws(
-			() => createForkContextResolver({
-				getSessionFile: () => undefined,
-				getLeafId: () => "leaf-123",
-			}, "fork", { openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
+			() =>
+				createForkContextResolver(
+					{
+						getSessionFile: () => undefined,
+						getLeafId: () => "leaf-123",
+					},
+					"fork",
+					{ openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) },
+				),
 			/Forked subagent context requires a persisted parent session\./,
 		);
 	});
 
 	it("fails fast when leaf id is missing", () => {
 		assert.throws(
-			() => createForkContextResolver({
-				getSessionFile: () => "/tmp/parent.jsonl",
-				getLeafId: () => null,
-			}, "fork", { openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) }),
+			() =>
+				createForkContextResolver(
+					{
+						getSessionFile: () => "/tmp/parent.jsonl",
+						getLeafId: () => null,
+					},
+					"fork",
+					{ openSession: () => ({ createBranchedSession: () => "/tmp/child.jsonl" }) },
+				),
 			/Forked subagent context requires a current leaf to fork from\./,
 		);
 	});
@@ -74,22 +92,26 @@ describe("createForkContextResolver", () => {
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			const openedPaths: string[] = [];
 			const seenLeafIds: string[] = [];
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-xyz",
-			}, "fork", {
-				openSession: (sessionFile: string) => {
-					openedPaths.push(sessionFile);
-					return {
-						createBranchedSession: (leafId: string) => {
-							seenLeafIds.push(leafId);
-							const childSessionFile = path.join(tempDir, `child-${seenLeafIds.length}.jsonl`);
-							writeMinimalSessionFile(childSessionFile, `child-${seenLeafIds.length}`);
-							return childSessionFile;
-						},
-					};
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-xyz",
 				},
-			});
+				"fork",
+				{
+					openSession: (sessionFile: string) => {
+						openedPaths.push(sessionFile);
+						return {
+							createBranchedSession: (leafId: string) => {
+								seenLeafIds.push(leafId);
+								const childSessionFile = path.join(tempDir, `child-${seenLeafIds.length}.jsonl`);
+								writeMinimalSessionFile(childSessionFile, `child-${seenLeafIds.length}`);
+								return childSessionFile;
+							},
+						};
+					},
+				},
+			);
 
 			resolver.sessionFileForIndex(0);
 			resolver.sessionFileForIndex(1);
@@ -115,11 +137,14 @@ describe("createForkContextResolver", () => {
 			assert.ok(parentSessionFile);
 			assert.ok(leafId);
 
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => leafId,
-				getSessionDir: () => sessionDir,
-			}, "fork");
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => leafId,
+					getSessionDir: () => sessionDir,
+				},
+				"fork",
+			);
 
 			const childSessionFile = resolver.sessionFileForIndex(0);
 			assert.ok(childSessionFile);
@@ -162,19 +187,23 @@ describe("createForkContextResolver", () => {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			let count = 0;
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-abc",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => {
-						count++;
-						const childSessionFile = path.join(tempDir, `fork-${count}.jsonl`);
-						writeMinimalSessionFile(childSessionFile, `child-${count}`);
-						return childSessionFile;
-					},
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-abc",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => {
+							count++;
+							const childSessionFile = path.join(tempDir, `fork-${count}.jsonl`);
+							writeMinimalSessionFile(childSessionFile, `child-${count}`);
+							return childSessionFile;
+						},
+					}),
+				},
+			);
 
 			const singleSession = resolver.sessionFileForIndex(0);
 			const parallelSessions = [resolver.sessionFileForIndex(1), resolver.sessionFileForIndex(2)];
@@ -195,19 +224,23 @@ describe("createForkContextResolver", () => {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			let calls = 0;
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-abc",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => {
-						calls++;
-						const childSessionFile = path.join(tempDir, `fork-${calls}.jsonl`);
-						writeMinimalSessionFile(childSessionFile, `child-${calls}`);
-						return childSessionFile;
-					},
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-abc",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => {
+							calls++;
+							const childSessionFile = path.join(tempDir, `fork-${calls}.jsonl`);
+							writeMinimalSessionFile(childSessionFile, `child-${calls}`);
+							return childSessionFile;
+						},
+					}),
+				},
+			);
 
 			const first = resolver.sessionFileForIndex(7);
 			const second = resolver.sessionFileForIndex(7);
@@ -224,23 +257,46 @@ describe("createForkContextResolver", () => {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			const childSessionFile = path.join(tempDir, "nested", "child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
-			const header = { type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile };
-			const entries = [{ type: "message", id: "leaf-abc", parentId: null, timestamp: "2026-04-16T00:00:01.000Z", message: { role: "user", content: "first turn" } }];
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-abc",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => childSessionFile,
-					getHeader: () => header,
-					getEntries: () => entries,
-				}),
-			});
+			const header = {
+				type: "session",
+				version: 1,
+				id: "child",
+				timestamp: "2026-04-16T00:00:00.000Z",
+				cwd: "/tmp",
+				parentSession: parentSessionFile,
+			};
+			const entries = [
+				{
+					type: "message",
+					id: "leaf-abc",
+					parentId: null,
+					timestamp: "2026-04-16T00:00:01.000Z",
+					message: { role: "user", content: "first turn" },
+				},
+			];
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-abc",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => childSessionFile,
+						getHeader: () => header,
+						getEntries: () => entries,
+					}),
+				},
+			);
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
 			assert.equal(fs.existsSync(childSessionFile), true);
 			assert.deepEqual(
-				fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line)),
+				fs
+					.readFileSync(childSessionFile, "utf-8")
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line)),
 				[header, ...entries],
 			);
 		} finally {
@@ -255,22 +311,58 @@ describe("createForkContextResolver", () => {
 			const childSessionFile = path.join(tempDir, "child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			writeSessionJsonl(childSessionFile, [
-				{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
-				{ type: "message", id: "user-1", parentId: null, timestamp: "2026-04-16T00:00:01.000Z", message: { role: "user", content: "prompt" } },
-				{ type: "message", id: "assistant-1", parentId: "user-1", timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4", content: [{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" }, { type: "text", text: "answer" }] } },
+				{
+					type: "session",
+					version: 1,
+					id: "child",
+					timestamp: "2026-04-16T00:00:00.000Z",
+					cwd: "/tmp",
+					parentSession: parentSessionFile,
+				},
+				{
+					type: "message",
+					id: "user-1",
+					parentId: null,
+					timestamp: "2026-04-16T00:00:01.000Z",
+					message: { role: "user", content: "prompt" },
+				},
+				{
+					type: "message",
+					id: "assistant-1",
+					parentId: "user-1",
+					timestamp: "2026-04-16T00:00:02.000Z",
+					message: {
+						role: "assistant",
+						provider: "anthropic",
+						api: "anthropic-messages",
+						model: "anthropic/claude-sonnet-4",
+						content: [
+							{ type: "thinking", thinking: "private chain", thinkingSignature: "signed" },
+							{ type: "text", text: "answer" },
+						],
+					},
+				},
 			]);
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "assistant-1",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => childSessionFile,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "assistant-1",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => childSessionFile,
+					}),
+				},
+			);
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
 			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
-			const entries = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			const entries = fs
+				.readFileSync(childSessionFile, "utf-8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line));
 			assert.deepEqual(entries[2].message.content, [{ type: "text", text: "answer" }]);
 			assert.equal(entries[3].type, "thinking_level_change");
 			assert.equal(entries[3].thinkingLevel, "off");
@@ -287,17 +379,43 @@ describe("createForkContextResolver", () => {
 			const childSessionFile = path.join(tempDir, "child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			writeSessionJsonl(childSessionFile, [
-				{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
-				{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "anthropic", api: "anthropic-messages", model: "anthropic/claude-sonnet-4", content: [{ type: "thinking", thinking: "summary without provider signature" }, { type: "text", text: "answer" }] } },
+				{
+					type: "session",
+					version: 1,
+					id: "child",
+					timestamp: "2026-04-16T00:00:00.000Z",
+					cwd: "/tmp",
+					parentSession: parentSessionFile,
+				},
+				{
+					type: "message",
+					id: "assistant-1",
+					parentId: null,
+					timestamp: "2026-04-16T00:00:02.000Z",
+					message: {
+						role: "assistant",
+						provider: "anthropic",
+						api: "anthropic-messages",
+						model: "anthropic/claude-sonnet-4",
+						content: [
+							{ type: "thinking", thinking: "summary without provider signature" },
+							{ type: "text", text: "answer" },
+						],
+					},
+				},
 			]);
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "assistant-1",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => childSessionFile,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "assistant-1",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => childSessionFile,
+					}),
+				},
+			);
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
 			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
@@ -313,17 +431,43 @@ describe("createForkContextResolver", () => {
 			const childSessionFile = path.join(tempDir, "child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
 			writeSessionJsonl(childSessionFile, [
-				{ type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile },
-				{ type: "message", id: "assistant-1", parentId: null, timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", provider: "openai", api: "openai-responses", model: "openai/gpt-5.5", content: [{ type: "thinking", thinking: "reasoning summary", thinkingSignature: "rs_123" }, { type: "text", text: "answer" }] } },
+				{
+					type: "session",
+					version: 1,
+					id: "child",
+					timestamp: "2026-04-16T00:00:00.000Z",
+					cwd: "/tmp",
+					parentSession: parentSessionFile,
+				},
+				{
+					type: "message",
+					id: "assistant-1",
+					parentId: null,
+					timestamp: "2026-04-16T00:00:02.000Z",
+					message: {
+						role: "assistant",
+						provider: "openai",
+						api: "openai-responses",
+						model: "openai/gpt-5.5",
+						content: [
+							{ type: "thinking", thinking: "reasoning summary", thinkingSignature: "rs_123" },
+							{ type: "text", text: "answer" },
+						],
+					},
+				},
 			]);
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "assistant-1",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => childSessionFile,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "assistant-1",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => childSessionFile,
+					}),
+				},
+			);
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
 			assert.equal(resolver.thinkingOverrideForIndex(0), undefined);
@@ -338,25 +482,58 @@ describe("createForkContextResolver", () => {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			const childSessionFile = path.join(tempDir, "child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
-			const header = { type: "session", version: 1, id: "child", timestamp: "2026-04-16T00:00:00.000Z", cwd: "/tmp", parentSession: parentSessionFile };
+			const header = {
+				type: "session",
+				version: 1,
+				id: "child",
+				timestamp: "2026-04-16T00:00:00.000Z",
+				cwd: "/tmp",
+				parentSession: parentSessionFile,
+			};
 			const entries = [
-				{ type: "message", id: "user-1", parentId: null, timestamp: "2026-04-16T00:00:01.000Z", message: { role: "user", content: "prompt" } },
-				{ type: "message", id: "assistant-1", parentId: "user-1", timestamp: "2026-04-16T00:00:02.000Z", message: { role: "assistant", content: [{ type: "redacted_thinking", data: "encrypted" }, { type: "text", text: "answer" }] } },
+				{
+					type: "message",
+					id: "user-1",
+					parentId: null,
+					timestamp: "2026-04-16T00:00:01.000Z",
+					message: { role: "user", content: "prompt" },
+				},
+				{
+					type: "message",
+					id: "assistant-1",
+					parentId: "user-1",
+					timestamp: "2026-04-16T00:00:02.000Z",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "redacted_thinking", data: "encrypted" },
+							{ type: "text", text: "answer" },
+						],
+					},
+				},
 			];
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "assistant-1",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => childSessionFile,
-					getHeader: () => header,
-					getEntries: () => entries,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "assistant-1",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => childSessionFile,
+						getHeader: () => header,
+						getEntries: () => entries,
+					}),
+				},
+			);
 
 			assert.equal(resolver.sessionFileForIndex(0), childSessionFile);
 			assert.equal(resolver.thinkingOverrideForIndex(0), "off");
-			const written = fs.readFileSync(childSessionFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+			const written = fs
+				.readFileSync(childSessionFile, "utf-8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line));
 			assert.deepEqual(written[2].message.content, [{ type: "text", text: "answer" }]);
 			assert.equal(written[3].type, "thinking_level_change");
 			assert.equal(written[3].thinkingLevel, "off");
@@ -372,14 +549,18 @@ describe("createForkContextResolver", () => {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			const missingChildSessionFile = path.join(tempDir, "missing-child.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-abc",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => missingChildSessionFile,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-abc",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => missingChildSessionFile,
+					}),
+				},
+			);
 
 			assert.throws(
 				() => resolver.sessionFileForIndex(0),
@@ -395,14 +576,18 @@ describe("createForkContextResolver", () => {
 		try {
 			const parentSessionFile = path.join(tempDir, "parent.jsonl");
 			writeMinimalSessionFile(parentSessionFile, "parent");
-			const resolver = createForkContextResolver({
-				getSessionFile: () => parentSessionFile,
-				getLeafId: () => "leaf-abc",
-			}, "fork", {
-				openSession: () => ({
-					createBranchedSession: () => undefined,
-				}),
-			});
+			const resolver = createForkContextResolver(
+				{
+					getSessionFile: () => parentSessionFile,
+					getLeafId: () => "leaf-abc",
+				},
+				"fork",
+				{
+					openSession: () => ({
+						createBranchedSession: () => undefined,
+					}),
+				},
+			);
 
 			assert.throws(
 				() => resolver.sessionFileForIndex(0),

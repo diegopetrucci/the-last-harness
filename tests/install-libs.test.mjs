@@ -49,10 +49,7 @@ import {
 	subagentExtensionConfigMissingDefaults,
 	settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
-import {
-	installableSupportFiles,
-	supportFileManifest,
-} from "../scripts/lib/tlh-install-support-manifest.mjs";
+import { installableSupportFiles, supportFileManifest } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 function tempFixture(t, prefix = "tlh-install-lib-test-") {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -143,7 +140,10 @@ test("package-source parsing resolves git, hash-pinned, and local package source
 		gitSourceInstallSource("https://github.com/acme/tool.git#v1.2.3", { agentDir }),
 		"git:https://github.com/acme/tool.git@v1.2.3",
 	);
-	assert.equal(packageSourceInstallDir("../local-package", { agentDir, homeDir }), resolve(agentDir, "../local-package"));
+	assert.equal(
+		packageSourceInstallDir("../local-package", { agentDir, homeDir }),
+		resolve(agentDir, "../local-package"),
+	);
 	assert.equal(packageSourceInstallDir("~/local-package", { agentDir, homeDir }), join(homeDir, "local-package"));
 	const checkoutDir = resolve(root, "checkout");
 	assert.equal(packageSourceInstallDir(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
@@ -155,9 +155,15 @@ test("package-source parsing resolves git, hash-pinned, and local package source
 	);
 	assert.equal(packageSourcePiSource(`file:${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
 	assert.equal(packageSourcePiSource(`file://localhost${checkoutDir}`, { agentDir, homeDir }), checkoutDir);
-	assert.equal(packageSourcePiSource(`file://remotehost${checkoutDir}`, { agentDir, homeDir }), `file://remotehost${checkoutDir}`);
+	assert.equal(
+		packageSourcePiSource(`file://remotehost${checkoutDir}`, { agentDir, homeDir }),
+		`file://remotehost${checkoutDir}`,
+	);
 	assert.equal(packageSourcePiSource("../local-package", { agentDir, homeDir }), "../local-package");
-	assert.equal(packageSourceInstallDir("file:../local-package", { agentDir, homeDir }), resolve(agentDir, "file:../local-package"));
+	assert.equal(
+		packageSourceInstallDir("file:../local-package", { agentDir, homeDir }),
+		resolve(agentDir, "file:../local-package"),
+	);
 	assert.equal(packageSourceInstallDir("github:owner/repo", { agentDir, homeDir }), "");
 });
 
@@ -184,46 +190,69 @@ test("normal Pi config guards reject agent, wrapper, and profile writes under ~/
 	assert.equal(pathIsProtectedPiConfig(join(homeDir, ".pi-other", "agent"), { homeDir }), false);
 
 	assert.throws(
-		() => validateInstallerTargets({
-			agentDir: join(homeDir, ".pi", "agent"),
-			binDir: join(root, "bin"),
-			wrapperPath: join(root, "bin", "tlh"),
-			wrapperName: "tlh",
-			updateTrack: "ref",
-		}, { homeDir }),
+		() =>
+			validateInstallerTargets(
+				{
+					agentDir: join(homeDir, ".pi", "agent"),
+					binDir: join(root, "bin"),
+					wrapperPath: join(root, "bin", "tlh"),
+					wrapperName: "tlh",
+					updateTrack: "ref",
+				},
+				{ homeDir },
+			),
 		/refusing to place The Last Harness agent dir under normal Pi config root/,
 	);
 	assert.throws(
-		() => validateInstallerTargets({
-			agentDir: join(root, "agent"),
-			binDir: join(homeDir, ".pi", "agent"),
-			wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
-			wrapperName: "tlh",
-			updateTrack: "ref",
-		}, { homeDir }),
+		() =>
+			validateInstallerTargets(
+				{
+					agentDir: join(root, "agent"),
+					binDir: join(homeDir, ".pi", "agent"),
+					wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
+					wrapperName: "tlh",
+					updateTrack: "ref",
+				},
+				{ homeDir },
+			),
 		/refusing to place The Last Harness wrapper dir under normal Pi config root/,
 	);
 	assert.throws(
-		() => validateInstallerTargets({
-			agentDir: join(root, "agent"),
-			binDir: join(root, "bin"),
-			wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
-			wrapperName: "tlh",
-			updateTrack: "ref",
-		}, { homeDir }),
+		() =>
+			validateInstallerTargets(
+				{
+					agentDir: join(root, "agent"),
+					binDir: join(root, "bin"),
+					wrapperPath: join(homeDir, ".pi", "agent", "tlh"),
+					wrapperName: "tlh",
+					updateTrack: "ref",
+				},
+				{ homeDir },
+			),
 		/refusing to place The Last Harness wrapper under normal Pi config root/,
 	);
-	assert.doesNotThrow(() => validateInstallerTargets({
-		agentDir: join(root, "agent"),
-		binDir: join(root, "bin"),
-		wrapperPath: join(root, "bin", "tlh"),
-		wrapperName: "tlh",
-		updateTrack: "ref",
-	}, { homeDir }));
+	assert.doesNotThrow(() =>
+		validateInstallerTargets(
+			{
+				agentDir: join(root, "agent"),
+				binDir: join(root, "bin"),
+				wrapperPath: join(root, "bin", "tlh"),
+				wrapperName: "tlh",
+				updateTrack: "ref",
+			},
+			{ homeDir },
+		),
+	);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 
 	assert.throws(
-		() => assertProfilePathWithinAgent({ agentDir: join(root, "agent") }, join(root, "outside", "settings.json"), "test file", { homeDir }),
+		() =>
+			assertProfilePathWithinAgent(
+				{ agentDir: join(root, "agent") },
+				join(root, "outside", "settings.json"),
+				"test file",
+				{ homeDir },
+			),
 		/refusing to write test file outside the isolated TLH profile/,
 	);
 });
@@ -253,20 +282,19 @@ test("writeSafeProfileFile writes root profile files with safe temp dirs and exp
 	mkdirSync(externalDir, { recursive: true });
 	symlinkSync(join(externalDir, "legacy-target.json"), legacyTempPath);
 
-	writeSafeProfileFile(
-		{ agentDir },
-		"settings.json",
-		"{\n  \"tlh\": true\n}\n",
-		"isolated settings",
-		{ homeDir, mode: 0o600 },
-	);
+	writeSafeProfileFile({ agentDir }, "settings.json", '{\n  "tlh": true\n}\n', "isolated settings", {
+		homeDir,
+		mode: 0o600,
+	});
 
-	assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), "{\n  \"tlh\": true\n}\n");
+	assert.equal(readFileSync(join(agentDir, "settings.json"), "utf8"), '{\n  "tlh": true\n}\n');
 	assert.equal(lstatSync(join(agentDir, "settings.json")).mode & 0o777, 0o600);
 	assert.equal(lstatSync(legacyTempPath).isSymbolicLink(), true);
-	assert.deepEqual(readdirSync(agentDir).filter((entry) => entry.startsWith(".settings.json.tmp.")), []);
+	assert.deepEqual(
+		readdirSync(agentDir).filter((entry) => entry.startsWith(".settings.json.tmp.")),
+		[],
+	);
 });
-
 
 test("writeSafeProfileFile preserves existing file mode when overwriting", (t) => {
 	const root = tempFixture(t);
@@ -282,7 +310,6 @@ test("writeSafeProfileFile preserves existing file mode when overwriting", (t) =
 	assert.equal(lstatSync(join(agentDir, "settings.json")).mode & 0o777, 0o640);
 });
 
-
 test("writeSafeProfileFile preserves resolved modes under restrictive umask", { concurrency: false }, (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");
@@ -297,13 +324,10 @@ test("writeSafeProfileFile preserves resolved modes under restrictive umask", { 
 		process.umask(previousUmask);
 	});
 
-	writeSafeProfileFile(
-		{ agentDir },
-		"settings.json",
-		"{\n  \"tlh\": true\n}\n",
-		"isolated settings",
-		{ homeDir, mode: 0o640 },
-	);
+	writeSafeProfileFile({ agentDir }, "settings.json", '{\n  "tlh": true\n}\n', "isolated settings", {
+		homeDir,
+		mode: 0o640,
+	});
 	assert.equal(lstatSync(explicitTarget).mode & 0o777, 0o640);
 
 	writeFileSync(preservedTarget, "before\n");
@@ -313,7 +337,6 @@ test("writeSafeProfileFile preserves resolved modes under restrictive umask", { 
 	assert.equal(lstatSync(preservedTarget).mode & 0o777, 0o640);
 });
 
-
 test("writeSafeProfileFile rejects protected normal Pi targets before creating them", (t) => {
 	const root = tempFixture(t);
 	const homeDir = join(root, "home");
@@ -321,13 +344,13 @@ test("writeSafeProfileFile rejects protected normal Pi targets before creating t
 	mkdirSync(homeDir, { recursive: true });
 
 	assert.throws(
-		() => writeSafeProfileFile({ agentDir: protectedAgentDir }, "settings.json", "{}\n", "isolated settings", { homeDir }),
+		() =>
+			writeSafeProfileFile({ agentDir: protectedAgentDir }, "settings.json", "{}\n", "isolated settings", { homeDir }),
 		/refusing to write isolated settings parent directory under normal Pi config root/,
 	);
 	assert.equal(existsSync(protectedAgentDir), false);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
-
 
 test("writeSafeProfileFile rejects symlinked profile roots, parents, and final targets", (t) => {
 	const root = tempFixture(t);
@@ -346,7 +369,10 @@ test("writeSafeProfileFile rejects symlinked profile roots, parents, and final t
 		/refusing to write isolated settings parent directory through symlinked TLH profile path/,
 	);
 	assert.throws(
-		() => writeSafeProfileFile({ agentDir: linkedAgentDir }, "tlh/install-state.json", "{}\n", "install state", { homeDir }),
+		() =>
+			writeSafeProfileFile({ agentDir: linkedAgentDir }, "tlh/install-state.json", "{}\n", "install state", {
+				homeDir,
+			}),
 		/refusing to write install state parent directory through symlinked TLH profile path/,
 	);
 	assert.throws(
@@ -364,7 +390,6 @@ test("writeSafeProfileFile rejects symlinked profile roots, parents, and final t
 	assert.equal(existsSync(join(externalDir, "settings.json")), false);
 });
 
-
 test("writeSafeProfileFile rejects temp target symlink swaps before commit", (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");
@@ -379,26 +404,20 @@ test("writeSafeProfileFile rejects temp target symlink swaps before commit", (t)
 	writeFileSync(attackerTarget, "attacker\n");
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"settings.json",
-			"safe\n",
-			"isolated settings",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "settings.json", "safe\n", "isolated settings", {
 				homeDir,
 				beforeCommit({ tempTarget }) {
 					unlinkSync(tempTarget);
 					symlinkSync(attackerTarget, tempTarget);
 				},
-			},
-		),
+			}),
 		/refusing to commit unexpected temp file type/,
 	);
 	assert.equal(readFileSync(target, "utf8"), "original\n");
 	assert.equal(lstatSync(target).isSymbolicLink(), false);
 	assert.equal(readFileSync(attackerTarget, "utf8"), "attacker\n");
 });
-
 
 test("writeSafeProfileFile rejects temp dir swaps to attacker-controlled content", (t) => {
 	const root = tempFixture(t);
@@ -413,27 +432,21 @@ test("writeSafeProfileFile rejects temp dir swaps to attacker-controlled content
 	writeFileSync(target, "original\n", { mode: 0o600 });
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"settings.json",
-			"safe\n",
-			"isolated settings",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "settings.json", "safe\n", "isolated settings", {
 				homeDir,
 				beforeCommit({ tempDir }) {
 					rmSync(tempDir, { recursive: true, force: true });
 					symlinkSync(externalDir, tempDir, "dir");
 					writeFileSync(externalTempTarget, "attacker\n");
 				},
-			},
-		),
+			}),
 		/refusing to commit unexpected temp directory type/,
 	);
 	assert.equal(readFileSync(target, "utf8"), "original\n");
 	assert.equal(lstatSync(target).isSymbolicLink(), false);
 	assert.equal(readFileSync(externalTempTarget, "utf8"), "attacker\n");
 });
-
 
 test("writeSafeProfileFile preserves temp dirs with unexpected extra content during cleanup", (t) => {
 	const root = tempFixture(t);
@@ -444,27 +457,21 @@ test("writeSafeProfileFile preserves temp dirs with unexpected extra content dur
 	mkdirSync(agentDir, { recursive: true });
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"settings.json",
-			"{}\n",
-			"isolated settings",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "settings.json", "{}\n", "isolated settings", {
 				homeDir,
 				beforeCommit({ tempDir }) {
 					tempDirWithSentinel = tempDir;
 					writeFileSync(join(tempDir, "sentinel.txt"), "keep\n");
 					throw new Error("stop before commit");
 				},
-			},
-		),
+			}),
 		/stop before commit/,
 	);
 	assert.equal(existsSync(join(agentDir, "settings.json")), false);
 	assert.equal(existsSync(join(tempDirWithSentinel, "settings.json")), false);
 	assert.equal(readFileSync(join(tempDirWithSentinel, "sentinel.txt"), "utf8"), "keep\n");
 });
-
 
 test("writeSafeProfileFile skips cleanup when the helper temp dir path is recreated", (t) => {
 	const root = tempFixture(t);
@@ -475,12 +482,8 @@ test("writeSafeProfileFile skips cleanup when the helper temp dir path is recrea
 	mkdirSync(agentDir, { recursive: true });
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"settings.json",
-			"{}\n",
-			"isolated settings",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "settings.json", "{}\n", "isolated settings", {
 				homeDir,
 				beforeCommit({ tempDir }) {
 					recreatedTempDir = tempDir;
@@ -488,14 +491,12 @@ test("writeSafeProfileFile skips cleanup when the helper temp dir path is recrea
 					mkdirSync(tempDir, { recursive: true });
 					writeFileSync(join(tempDir, "sentinel.txt"), "keep\n");
 				},
-			},
-		),
+			}),
 		/refusing to commit (replaced temp directory|missing temp file)/,
 	);
 	assert.equal(existsSync(join(agentDir, "settings.json")), false);
 	assert.equal(readFileSync(join(recreatedTempDir, "sentinel.txt"), "utf8"), "keep\n");
 });
-
 
 test("writeSafeProfileFile detects swapped parents and avoids unsafe cleanup", (t) => {
 	const root = tempFixture(t);
@@ -508,12 +509,8 @@ test("writeSafeProfileFile detects swapped parents and avoids unsafe cleanup", (
 	mkdirSync(externalDir, { recursive: true });
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"tlh/install-state.json",
-			"{}\n",
-			"TLH install state",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "tlh/install-state.json", "{}\n", "TLH install state", {
 				homeDir,
 				beforeCommit({ parent, tempDir }) {
 					externalTempDir = join(externalDir, basename(tempDir));
@@ -522,14 +519,12 @@ test("writeSafeProfileFile detects swapped parents and avoids unsafe cleanup", (
 					mkdirSync(externalTempDir, { recursive: true });
 					writeFileSync(join(externalTempDir, "sentinel.txt"), "keep\n");
 				},
-			},
-		),
+			}),
 		/symlinked TLH profile path/,
 	);
 	assert.equal(existsSync(join(externalDir, "install-state.json")), false);
 	assert.equal(readFileSync(join(externalTempDir, "sentinel.txt"), "utf8"), "keep\n");
 });
-
 
 test("writeSafeProfileFile preserves temp dirs when the profile root is moved aside and symlinked back", (t) => {
 	const root = tempFixture(t);
@@ -542,12 +537,8 @@ test("writeSafeProfileFile preserves temp dirs when the profile root is moved as
 	mkdirSync(agentDir, { recursive: true });
 
 	assert.throws(
-		() => writeSafeProfileFile(
-			{ agentDir },
-			"settings.json",
-			"safe\n",
-			"isolated settings",
-			{
+		() =>
+			writeSafeProfileFile({ agentDir }, "settings.json", "safe\n", "isolated settings", {
 				homeDir,
 				beforeCommit({ tempDir }) {
 					movedTempDir = join(movedAgentDir, basename(tempDir));
@@ -555,15 +546,13 @@ test("writeSafeProfileFile preserves temp dirs when the profile root is moved as
 					renameSync(agentDir, movedAgentDir);
 					symlinkSync(movedAgentDir, agentDir, "dir");
 				},
-			},
-		),
+			}),
 		/symlinked TLH profile path/,
 	);
 	assert.equal(lstatSync(agentDir).isSymbolicLink(), true);
 	assert.equal(readFileSync(movedTempTarget, "utf8"), "safe\n");
 	assert.equal(lstatSync(movedTempDir).isDirectory(), true);
 });
-
 
 test("ensureSafeProfileDir rejects protected profile roots before creating them", (t) => {
 	const root = tempFixture(t);
@@ -587,19 +576,25 @@ test("refreshGitCheckout preserves ignored local files without creating backup r
 	mkdirSync(join(targetDir, "build"), { recursive: true });
 	writeFileSync(ignoredFile, "keep me\n");
 
-	refreshGitCheckout({ agentDir }, {
-		targetDir,
-		repo: originDir,
-		ref: "main",
-		label: "test checkout",
-		missingMessage: `missing checkout: ${targetDir}`,
-	}, gitCheckoutIo(warnings));
+	refreshGitCheckout(
+		{ agentDir },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		gitCheckoutIo(warnings),
+	);
 
 	assert.equal(readFileSync(ignoredFile, "utf8"), "keep me\n");
 	assert.deepEqual(listBackupRefs(targetDir), []);
-	assert.equal(warnings.some((message) => message.includes("dirty checkout")), false);
+	assert.equal(
+		warnings.some((message) => message.includes("dirty checkout")),
+		false,
+	);
 });
-
 
 test("refreshGitCheckout keeps dirty-checkout backup output concise by default", (t) => {
 	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
@@ -607,23 +602,35 @@ test("refreshGitCheckout keeps dirty-checkout backup output concise by default",
 
 	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
 
-	refreshGitCheckout({ agentDir }, {
-		targetDir,
-		repo: originDir,
-		ref: "main",
-		label: "test checkout",
-		missingMessage: `missing checkout: ${targetDir}`,
-	}, gitCheckoutIo(warnings));
+	refreshGitCheckout(
+		{ agentDir },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		gitCheckoutIo(warnings),
+	);
 
 	const backupRefs = listBackupRefs(targetDir);
 	assert.equal(backupRefs.length, 1);
 	assert.equal(runGit(["-C", targetDir, "show", `${backupRefs[0]}:tracked.txt`]), "tracked local");
 	assert.equal(readFileSync(join(targetDir, "tracked.txt"), "utf8"), "tracked v1\n");
-	assert.equal(warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])), true);
-	assert.equal(warnings.some((message) => message.includes("diff --git")), false);
-	assert.equal(warnings.some((message) => message.includes("@@")), false);
+	assert.equal(
+		warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])),
+		true,
+	);
+	assert.equal(
+		warnings.some((message) => message.includes("diff --git")),
+		false,
+	);
+	assert.equal(
+		warnings.some((message) => message.includes("@@")),
+		false,
+	);
 });
-
 
 test("refreshGitCheckout emits dirty-checkout diff details only in verbose mode", (t) => {
 	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
@@ -631,21 +638,33 @@ test("refreshGitCheckout emits dirty-checkout diff details only in verbose mode"
 
 	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
 
-	refreshGitCheckout({ agentDir, verbose: true }, {
-		targetDir,
-		repo: originDir,
-		ref: "main",
-		label: "test checkout",
-		missingMessage: `missing checkout: ${targetDir}`,
-	}, gitCheckoutIo(warnings));
+	refreshGitCheckout(
+		{ agentDir, verbose: true },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		gitCheckoutIo(warnings),
+	);
 
 	const backupRefs = listBackupRefs(targetDir);
 	assert.equal(backupRefs.length, 1);
-	assert.equal(warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])), true);
-	assert.equal(warnings.some((message) => message.includes("diff --git a/tracked.txt b/tracked.txt")), true);
-	assert.equal(warnings.some((message) => message.includes("-tracked v1") && message.includes("+tracked local")), true);
+	assert.equal(
+		warnings.some((message) => message.includes("dirty checkout") && message.includes(backupRefs[0])),
+		true,
+	);
+	assert.equal(
+		warnings.some((message) => message.includes("diff --git a/tracked.txt b/tracked.txt")),
+		true,
+	);
+	assert.equal(
+		warnings.some((message) => message.includes("-tracked v1") && message.includes("+tracked local")),
+		true,
+	);
 });
-
 
 test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode", (t) => {
 	const { agentDir, targetDir, originDir } = createManagedGitCheckout(t);
@@ -653,13 +672,17 @@ test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode"
 
 	writeFileSync(join(targetDir, "tracked.txt"), "tracked local\n");
 
-	refreshGitCheckout({ agentDir, quiet: true }, {
-		targetDir,
-		repo: originDir,
-		ref: "main",
-		label: "test checkout",
-		missingMessage: `missing checkout: ${targetDir}`,
-	}, gitCheckoutIo(warnings));
+	refreshGitCheckout(
+		{ agentDir, quiet: true },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		gitCheckoutIo(warnings),
+	);
 
 	const backupRefs = listBackupRefs(targetDir);
 	assert.equal(backupRefs.length, 1);
@@ -668,14 +691,21 @@ test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode"
 	assert.deepEqual(warnings, []);
 });
 
-
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");
 	const localRepo = join(root, "local-repo");
 	const localPrompts = join(localRepo, "agents", "subagents");
 	const customPrompts = join(agentDir, "git", "github.com", "custom", "pkg", "agents", "subagents");
-	const defaultPrompts = join(agentDir, "git", "github.com", "diegopetrucci", "the-last-harness", "agents", "subagents");
+	const defaultPrompts = join(
+		agentDir,
+		"git",
+		"github.com",
+		"diegopetrucci",
+		"the-last-harness",
+		"agents",
+		"subagents",
+	);
 	writePromptSet(localPrompts, "local");
 	writePromptSet(customPrompts, "custom");
 	writePromptSet(defaultPrompts, "default");
@@ -731,50 +761,63 @@ test("support manifests preserve current-ref packaging while keeping stage-0 boo
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-support-files.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-safe-profile-write.mjs"));
 	assert.ok(relativePaths.includes("scripts/lib/tlh-install-utils.mjs"));
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"), {
-		variable: "TLH_INSTALL_PATHS_LIB",
-		requirement: "required",
-		relativePath: "scripts/lib/tlh-install-paths.mjs",
-		tempPath: "lib/tlh-install-paths.mjs",
-		installName: "",
-	});
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_SAFE_PROFILE_WRITE_LIB"), {
-		variable: "TLH_SAFE_PROFILE_WRITE_LIB",
-		requirement: "required",
-		relativePath: "scripts/lib/tlh-safe-profile-write.mjs",
-		tempPath: "lib/tlh-safe-profile-write.mjs",
-		installName: "",
-	});
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"), {
-		variable: "TLH_INSTALL_UTILS_LIB",
-		requirement: "required",
-		relativePath: "scripts/lib/tlh-install-utils.mjs",
-		tempPath: "lib/tlh-install-utils.mjs",
-		installName: "",
-	});
+	assert.deepEqual(
+		manifest.find((file) => file.variable === "TLH_INSTALL_PATHS_LIB"),
+		{
+			variable: "TLH_INSTALL_PATHS_LIB",
+			requirement: "required",
+			relativePath: "scripts/lib/tlh-install-paths.mjs",
+			tempPath: "lib/tlh-install-paths.mjs",
+			installName: "",
+		},
+	);
+	assert.deepEqual(
+		manifest.find((file) => file.variable === "TLH_SAFE_PROFILE_WRITE_LIB"),
+		{
+			variable: "TLH_SAFE_PROFILE_WRITE_LIB",
+			requirement: "required",
+			relativePath: "scripts/lib/tlh-safe-profile-write.mjs",
+			tempPath: "lib/tlh-safe-profile-write.mjs",
+			installName: "",
+		},
+	);
+	assert.deepEqual(
+		manifest.find((file) => file.variable === "TLH_INSTALL_UTILS_LIB"),
+		{
+			variable: "TLH_INSTALL_UTILS_LIB",
+			requirement: "required",
+			relativePath: "scripts/lib/tlh-install-utils.mjs",
+			tempPath: "lib/tlh-install-utils.mjs",
+			installName: "",
+		},
+	);
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.requirement, "required");
 	assert.equal(manifest.find((file) => file.variable === "TLH_GNOSIS_SCRIPT")?.installName, "");
-	assert.deepEqual(manifest.find((file) => file.variable === "TLH_RECOVER_UPDATE_SCRIPT"), {
-		variable: "TLH_RECOVER_UPDATE_SCRIPT",
-		requirement: "required",
-		relativePath: "scripts/tlh-recover-update.mjs",
-		tempPath: "tlh-recover-update.mjs",
-		installName: "recover-update.mjs",
-	});
-	assert.deepEqual(manifest.find((file) => file.variable === "DEFAULT_EXTENSIONS_LIB"), {
-		variable: "DEFAULT_EXTENSIONS_LIB",
-		requirement: "required",
-		relativePath: "scripts/lib/default-extensions.mjs",
-		tempPath: "lib/default-extensions.mjs",
-		installName: "",
-	});
+	assert.deepEqual(
+		manifest.find((file) => file.variable === "TLH_RECOVER_UPDATE_SCRIPT"),
+		{
+			variable: "TLH_RECOVER_UPDATE_SCRIPT",
+			requirement: "required",
+			relativePath: "scripts/tlh-recover-update.mjs",
+			tempPath: "tlh-recover-update.mjs",
+			installName: "recover-update.mjs",
+		},
+	);
+	assert.deepEqual(
+		manifest.find((file) => file.variable === "DEFAULT_EXTENSIONS_LIB"),
+		{
+			variable: "DEFAULT_EXTENSIONS_LIB",
+			requirement: "required",
+			relativePath: "scripts/lib/default-extensions.mjs",
+			tempPath: "lib/default-extensions.mjs",
+			installName: "",
+		},
+	);
 	assert.equal(manifest.find((file) => file.variable === "TLH_WRAPPER_SCRIPT")?.installName, "");
 	assert.equal(manifest.find((file) => file.variable === "TLH_INSTALL_STATE_SCRIPT")?.installName, "");
 
 	const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
-	for (const variable of [
-		"TLH_RECOVER_UPDATE_SCRIPT",
-	]) {
+	for (const variable of ["TLH_RECOVER_UPDATE_SCRIPT"]) {
 		assert.equal(installableVariables.has(variable), true, variable);
 	}
 	for (const variable of [
@@ -823,10 +866,11 @@ test("subagentExtensionConfigMissingDefaults describes only writable defaults", 
 	const config = { agentDir };
 	const configPath = join(agentDir, "extensions", "subagent", "config.json");
 
-	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [
-		"toolDescriptionMode: compact",
-		"control.activeNoticeAfterMs: 270000 (4m30)",
-	], "missing config reports both defaults");
+	assert.deepEqual(
+		subagentExtensionConfigMissingDefaults(config),
+		["toolDescriptionMode: compact", "control.activeNoticeAfterMs: 270000 (4m30)"],
+		"missing config reports both defaults",
+	);
 
 	mkdirSync(join(agentDir, "extensions", "subagent"), { recursive: true });
 	writeFileSync(configPath, JSON.stringify({ control: null }) + "\n");
@@ -837,7 +881,11 @@ test("subagentExtensionConfigMissingDefaults describes only writable defaults", 
 	);
 
 	writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: null }) + "\n");
-	assert.deepEqual(subagentExtensionConfigMissingDefaults(config), [], "complete writable defaults report no provisioning");
+	assert.deepEqual(
+		subagentExtensionConfigMissingDefaults(config),
+		[],
+		"complete writable defaults report no provisioning",
+	);
 });
 
 test("provisionSubagentExtensionConfig sets TLH defaults independently and is idempotent", (t) => {
@@ -858,23 +906,33 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
 	assert.deepEqual(afterRerun, created, "re-running leaves the completed config unchanged");
 
 	// A user override is preserved while the independently missing default is added.
-	writeFileSync(configPath, JSON.stringify({
-		control: { activeNoticeAfterMs: 123456, nestedKey: "preserve" },
-		topLevelKey: true,
-	}) + "\n");
+	writeFileSync(
+		configPath,
+		JSON.stringify({
+			control: { activeNoticeAfterMs: 123456, nestedKey: "preserve" },
+			topLevelKey: true,
+		}) + "\n",
+	);
 	provisionSubagentExtensionConfig(config);
 	const afterActiveNoticeOverride = JSON.parse(readFileSync(configPath, "utf8"));
-	assert.equal(afterActiveNoticeOverride.toolDescriptionMode, "compact", "compact added when toolDescriptionMode is missing");
+	assert.equal(
+		afterActiveNoticeOverride.toolDescriptionMode,
+		"compact",
+		"compact added when toolDescriptionMode is missing",
+	);
 	assert.equal(afterActiveNoticeOverride.control.activeNoticeAfterMs, 123456, "active notice override is preserved");
 	assert.equal(afterActiveNoticeOverride.control.nestedKey, "preserve", "nested control keys are preserved");
 	assert.equal(afterActiveNoticeOverride.topLevelKey, true, "top-level user keys are preserved");
 
 	// The other direction is independent too: an existing tool override does not block
 	// provisioning the missing active-notice default.
-	writeFileSync(configPath, JSON.stringify({
-		toolDescriptionMode: "full",
-		control: { nestedKey: "preserve" },
-	}) + "\n");
+	writeFileSync(
+		configPath,
+		JSON.stringify({
+			toolDescriptionMode: "full",
+			control: { nestedKey: "preserve" },
+		}) + "\n",
+	);
 	provisionSubagentExtensionConfig(config);
 	const afterToolDescriptionOverride = JSON.parse(readFileSync(configPath, "utf8"));
 	assert.equal(afterToolDescriptionOverride.toolDescriptionMode, "full", "tool description override is preserved");
@@ -999,9 +1057,12 @@ test("captureManagedRetiredSubagentPackages returns empty for non-JSON file", (t
 test("captureManagedRetiredSubagentPackages reads candidates from a real settings file", (t) => {
 	const dir = tempFixture(t);
 	const settingsPath = join(dir, "settings.json");
-	writeFileSync(settingsPath, JSON.stringify({
-		packages: ["npm:@diegopetrucci/pi-subagents@0.31.14", "npm:other"],
-	}));
+	writeFileSync(
+		settingsPath,
+		JSON.stringify({
+			packages: ["npm:@diegopetrucci/pi-subagents@0.31.14", "npm:other"],
+		}),
+	);
 	const result = captureManagedRetiredSubagentPackages(settingsPath);
 	assert.equal(result.length, 1);
 	assert.equal(result[0].identity, "npm:@diegopetrucci/pi-subagents");
@@ -1014,13 +1075,23 @@ function createRetiredNpmState(agentDir, packageName = "@diegopetrucci/pi-subage
 	const packageDir = join(installRoot, "node_modules", packageName);
 	mkdirSync(packageDir, { recursive: true });
 	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: packageName }));
-	writeFileSync(join(installRoot, "package.json"), JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2));
-	writeFileSync(join(installRoot, "package-lock.json"), JSON.stringify({
-		packages: {
-			"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
-			[`node_modules/${packageName}`]: { version: "0.31.14" },
-		},
-	}, null, 2));
+	writeFileSync(
+		join(installRoot, "package.json"),
+		JSON.stringify({ dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } }, null, 2),
+	);
+	writeFileSync(
+		join(installRoot, "package-lock.json"),
+		JSON.stringify(
+			{
+				packages: {
+					"": { dependencies: { [packageName]: "^0.31.10", keep: "1.0.0" } },
+					[`node_modules/${packageName}`]: { version: "0.31.14" },
+				},
+			},
+			null,
+			2,
+		),
+	);
 	return { installRoot, packageDir };
 }
 
@@ -1066,14 +1137,25 @@ test("cleanupManagedRetiredSubagentPackages uses npm uninstall and converges man
 		[{ source: "npm:@diegopetrucci/pi-subagents@0.31.14", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 
-	assert.deepEqual(calls, [{
-		command: "npm",
-		args: ["uninstall", packageName, "--prefix", installRoot, "--legacy-peer-deps"],
-	}]);
+	assert.deepEqual(calls, [
+		{
+			command: "npm",
+			args: ["uninstall", packageName, "--prefix", installRoot, "--legacy-peer-deps"],
+		},
+	]);
 	assert.deepEqual(cleanup.uninstalledNpmPackages, [packageName]);
 	assert.equal(existsSync(packageDir), false, "package-manager uninstall must remove node_modules package");
-	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName), false);
-	assert.equal(Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies, packageName), false);
+	assert.equal(
+		Object.hasOwn(JSON.parse(readFileSync(join(installRoot, "package.json"), "utf8")).dependencies, packageName),
+		false,
+	);
+	assert.equal(
+		Object.hasOwn(
+			JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8")).packages[""].dependencies,
+			packageName,
+		),
+		false,
+	);
 });
 
 test("cleanupManagedRetiredSubagentPackages honors configured pnpm command semantics", (t) => {
@@ -1093,10 +1175,12 @@ test("cleanupManagedRetiredSubagentPackages honors configured pnpm command seman
 		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 
-	assert.deepEqual(calls, [{
-		command: "corepack",
-		args: ["--", "pnpm", "uninstall", packageName, "--prefix", installRoot],
-	}]);
+	assert.deepEqual(calls, [
+		{
+			command: "corepack",
+			args: ["--", "pnpm", "uninstall", packageName, "--prefix", installRoot],
+		},
+	]);
 });
 
 test("cleanupManagedRetiredSubagentPackages honors configured bun command semantics", (t) => {
@@ -1111,10 +1195,12 @@ test("cleanupManagedRetiredSubagentPackages honors configured bun command semant
 		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 
-	assert.deepEqual(calls, [{
-		command: "bun",
-		args: ["uninstall", packageName, "--cwd", installRoot],
-	}]);
+	assert.deepEqual(calls, [
+		{
+			command: "bun",
+			args: ["uninstall", packageName, "--cwd", installRoot],
+		},
+	]);
 });
 
 test("cleanupManagedRetiredSubagentPackages is a no-op when npm install root does not exist", (t) => {
@@ -1124,7 +1210,14 @@ test("cleanupManagedRetiredSubagentPackages is a no-op when npm install root doe
 	let called = false;
 
 	cleanupManagedRetiredSubagentPackages(
-		{ agentDir, quiet: true, runPackageManager: () => { called = true; return { status: 0 }; } },
+		{
+			agentDir,
+			quiet: true,
+			runPackageManager: () => {
+				called = true;
+				return { status: 0 };
+			},
+		},
 		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 	assert.equal(called, false);
@@ -1143,13 +1236,20 @@ test("cleanupManagedRetiredSubagentPackages skips pnpm when the npm root is alre
 			agentDir,
 			npmCommand: ["corepack", "--", "pnpm"],
 			quiet: true,
-			runPackageManager: () => { called = true; throw new Error("package manager must not run for converged state"); },
+			runPackageManager: () => {
+				called = true;
+				throw new Error("package manager must not run for converged state");
+			},
 		},
 		[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 	);
 
 	assert.equal(called, false);
-	assert.deepEqual(cleanup.uninstalledNpmPackages, [], "already-absent package must not be reported as newly uninstalled");
+	assert.deepEqual(
+		cleanup.uninstalledNpmPackages,
+		[],
+		"already-absent package must not be reported as newly uninstalled",
+	);
 	assert.deepEqual(cleanup.plannedNpmPackages, [], "already-absent package must not be reported as planned cleanup");
 });
 
@@ -1160,10 +1260,11 @@ test("cleanupManagedRetiredSubagentPackages fails before refresh when package-ma
 	createRetiredNpmState(agentDir, packageName);
 
 	assert.throws(
-		() => cleanupManagedRetiredSubagentPackages(
-			{ agentDir, quiet: true, runPackageManager: () => ({ status: 42, stderr: "uninstall failed" }) },
-			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
-		),
+		() =>
+			cleanupManagedRetiredSubagentPackages(
+				{ agentDir, quiet: true, runPackageManager: () => ({ status: 42, stderr: "uninstall failed" }) },
+				[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
+			),
 		/failed to uninstall retired TLH subagent npm package.*uninstall failed/,
 	);
 });
@@ -1182,7 +1283,9 @@ test("cleanupManagedRetiredSubagentPackages dry-run logs uninstall without invok
 				agentDir,
 				dryRun: true,
 				quiet: false,
-				runPackageManager: () => { throw new Error("package manager must not run during dry-run"); },
+				runPackageManager: () => {
+					throw new Error("package manager must not run during dry-run");
+				},
 			},
 			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
 		);
@@ -1192,7 +1295,10 @@ test("cleanupManagedRetiredSubagentPackages dry-run logs uninstall without invok
 	}
 
 	assert.ok(existsSync(packageDir), "dry-run must not delete the package dir");
-	assert.ok(logged.some((msg) => msg.includes("Would uninstall")), "dry-run must log a would-uninstall message");
+	assert.ok(
+		logged.some((msg) => msg.includes("Would uninstall")),
+		"dry-run must log a would-uninstall message",
+	);
 });
 
 test("cleanupManagedRetiredSubagentPackages skips when agentDir is a symlink and emits a warning", (t) => {
@@ -1206,15 +1312,17 @@ test("cleanupManagedRetiredSubagentPackages skips when agentDir is a symlink and
 	const origErr = console.error;
 	console.error = (msg) => warnings.push(msg);
 	try {
-		cleanupManagedRetiredSubagentPackages(
-			{ agentDir: symlinkDir, dryRun: false, quiet: false },
-			[{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" }],
-		);
+		cleanupManagedRetiredSubagentPackages({ agentDir: symlinkDir, dryRun: false, quiet: false }, [
+			{ source: "npm:@diegopetrucci/pi-subagents", identity: "npm:@diegopetrucci/pi-subagents" },
+		]);
 	} finally {
 		console.error = origErr;
 	}
 
-	assert.ok(warnings.some((w) => w.includes("unsafe agent dir")), "symlinked agentDir must produce a safety warning");
+	assert.ok(
+		warnings.some((w) => w.includes("unsafe agent dir")),
+		"symlinked agentDir must produce a safety warning",
+	);
 });
 
 test("cleanupManagedRetiredSubagentPackages removes owned git checkout and empty parent dirs", (t) => {
@@ -1226,10 +1334,9 @@ test("cleanupManagedRetiredSubagentPackages removes owned git checkout and empty
 	mkdirSync(repoDir, { recursive: true });
 	mkdirSync(join(repoDir, ".git"), { recursive: true }); // simulates a managed git checkout
 
-	cleanupManagedRetiredSubagentPackages(
-		{ agentDir, dryRun: false, quiet: true },
-		[{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" }],
-	);
+	cleanupManagedRetiredSubagentPackages({ agentDir, dryRun: false, quiet: true }, [
+		{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" },
+	]);
 
 	assert.equal(existsSync(repoDir), false, "git checkout dir must be removed");
 	// Empty intermediate parent under git root must also be cleaned up.
@@ -1247,10 +1354,9 @@ test("cleanupManagedRetiredSubagentPackages does not remove non-empty sibling gi
 	mkdirSync(join(repoDir, ".git"), { recursive: true });
 	mkdirSync(siblingDir, { recursive: true });
 
-	cleanupManagedRetiredSubagentPackages(
-		{ agentDir, dryRun: false, quiet: true },
-		[{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" }],
-	);
+	cleanupManagedRetiredSubagentPackages({ agentDir, dryRun: false, quiet: true }, [
+		{ source: "git:github.com/nicobailon/pi-subagents@v0.31.0", identity: "git:github.com/nicobailon/pi-subagents" },
+	]);
 
 	assert.equal(existsSync(repoDir), false, "managed git checkout must be removed");
 	// Owner dir still has the sibling, so it must NOT be removed.

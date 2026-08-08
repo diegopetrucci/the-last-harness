@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-works/pi-coding-agent";
+import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
@@ -21,7 +21,7 @@ import { registerSlashCommands } from "../slash/slash-commands.js";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.js";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.js";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
-import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots } from "../slash/slash-live-state.js";
+import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, } from "../slash/slash-live-state.js";
 import registerSubagentNotify, { boundedReference } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
@@ -80,14 +80,14 @@ function ensureAccessibleDir(dirPath) {
     }
 }
 function isSlashResultRunning(result) {
-    return result.details?.progress?.some((entry) => entry.status === "running")
-        || result.details?.results.some((entry) => entry.progress?.status === "running")
-        || false;
+    return (result.details?.progress?.some((entry) => entry.status === "running") ||
+        result.details?.results.some((entry) => entry.progress?.status === "running") ||
+        false);
 }
 function subagentResultIsRunning(result) {
-    return result.details?.progress?.some((entry) => entry.status === "running")
-        || result.details?.results.some((entry) => entry.progress?.status === "running")
-        || false;
+    return (result.details?.progress?.some((entry) => entry.status === "running") ||
+        result.details?.results.some((entry) => entry.progress?.status === "running") ||
+        false);
 }
 function ensureSubagentResultAnimation(context) {
     const state = context.state;
@@ -116,7 +116,11 @@ function isStaleExtensionContextError(error) {
 function rebuildSlashResultContainer(container, result, expanded, theme) {
     container.clear();
     container.addChild(new Spacer(1));
-    const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
+    const boxTheme = isSlashResultRunning(result)
+        ? "toolPendingBg"
+        : isSlashResultError(result)
+            ? "toolErrorBg"
+            : "toolSuccessBg";
     const box = new Box(1, 1, (text) => theme.bg(boxTheme, text));
     box.addChild(renderSubagentResult(result, { expanded }, theme));
     container.addChild(box);
@@ -468,12 +472,12 @@ export default function registerSubagentExtension(pi) {
         },
         renderResult(result, options, theme, context) {
             const rendererState = context.state;
-            const isLiveToolRow = state.lastUiContext?.hasUI === true
-                && Boolean(context.toolCallId)
-                && typeof rendererState === "object"
-                && rendererState !== null
-                && typeof context.invalidate === "function"
-                && liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
+            const isLiveToolRow = state.lastUiContext?.hasUI === true &&
+                Boolean(context.toolCallId) &&
+                typeof rendererState === "object" &&
+                rendererState !== null &&
+                typeof context.invalidate === "function" &&
+                liveDetailController.registerToolRow(context.toolCallId, rendererState, context.invalidate);
             if (subagentResultIsRunning(result) && isLiveToolRow) {
                 ensureSubagentResultAnimation(context);
             }

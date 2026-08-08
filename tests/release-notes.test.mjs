@@ -42,54 +42,60 @@ test("release-notes rejects missing and empty option values consistently", () =>
 	for (const flag of ["--tag", "--changelog", "--output", "--repository", "--ref"]) {
 		const missing = runReleaseNotes([flag]);
 		assert.equal(missing.status, 1, `${flag} missing value should fail`);
-		assert.match(missing.stderr, new RegExp(`release-notes: ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} requires a value\\.`));
+		assert.match(
+			missing.stderr,
+			new RegExp(`release-notes: ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} requires a value\\.`),
+		);
 
 		const empty = runReleaseNotes([`${flag}=`]);
 		assert.equal(empty.status, 1, `${flag}= should fail`);
-		assert.match(empty.stderr, new RegExp(`release-notes: ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} requires a value\\.`));
+		assert.match(
+			empty.stderr,
+			new RegExp(`release-notes: ${flag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} requires a value\\.`),
+		);
 	}
 });
 
 test("release-notes uses CLI values over environment defaults", (t) => {
 	const root = tempFixture(t);
 	const changelogPath = join(root, "CHANGELOG.md");
-	writeFileSync(changelogPath, [
-		"## [1.2.3] - 2026-07-18",
-		"",
-		"CLI body",
-		"",
-	].join("\n"));
+	writeFileSync(changelogPath, ["## [1.2.3] - 2026-07-18", "", "CLI body", ""].join("\n"));
 
-	const result = runReleaseNotes([
-		"--tag=v1.2.3",
-		`--changelog=${changelogPath}`,
-		"--repository=cli/repo",
-		"--ref=refs/tags/v1.2.3",
-	], {
-		GITHUB_REF_NAME: "v9.9.9",
-		GITHUB_REPOSITORY: "env/repo",
-	});
+	const result = runReleaseNotes(
+		["--tag=v1.2.3", `--changelog=${changelogPath}`, "--repository=cli/repo", "--ref=refs/tags/v1.2.3"],
+		{
+			GITHUB_REF_NAME: "v9.9.9",
+			GITHUB_REPOSITORY: "env/repo",
+		},
+	);
 
 	assert.equal(result.status, 0, result.stderr);
-	assert.match(result.stdout, /^CLI body\n\n---\n\nFull changelog: https:\/\/github.com\/cli\/repo\/blob\/refs\/tags\/v1\.2\.3\/CHANGELOG\.md\n$/);
+	assert.match(
+		result.stdout,
+		/^CLI body\n\n---\n\nFull changelog: https:\/\/github.com\/cli\/repo\/blob\/refs\/tags\/v1\.2\.3\/CHANGELOG\.md\n$/,
+	);
 	assert.equal(result.stderr, "");
 });
 
 test("release-notes extracts exactly one bracketed or unbracketed section across CRLF changelogs", (t) => {
 	const root = tempFixture(t);
 	const changelogPath = join(root, "CHANGELOG.md");
-	writeFileSync(changelogPath, [
-		"## [1.2.3] - 2026-07-18",
-		"",
-		"Bracketed body",
-		"",
-		"## 1.2.4",
-		"- Unbracketed body",
-		"",
-		"## [1.2.40] - 2026-07-20",
-		"",
-		"Should not match 1.2.4",
-	].join("\r\n"), "utf8");
+	writeFileSync(
+		changelogPath,
+		[
+			"## [1.2.3] - 2026-07-18",
+			"",
+			"Bracketed body",
+			"",
+			"## 1.2.4",
+			"- Unbracketed body",
+			"",
+			"## [1.2.40] - 2026-07-20",
+			"",
+			"Should not match 1.2.4",
+		].join("\r\n"),
+		"utf8",
+	);
 
 	const bracketed = runReleaseNotes([`--changelog=${changelogPath}`], { GITHUB_REF_NAME: "v1.2.3" });
 	assert.equal(bracketed.status, 0, bracketed.stderr);
@@ -103,13 +109,7 @@ test("release-notes extracts exactly one bracketed or unbracketed section across
 test("release-notes treats version strings literally and rejects malformed headings", (t) => {
 	const root = tempFixture(t);
 	const literalPath = join(root, "literal.md");
-	writeFileSync(literalPath, [
-		"## [1.2.3+build(7)?.*] - 2026-07-18",
-		"",
-		"Literal version body",
-		"",
-		"##",
-	].join("\n"));
+	writeFileSync(literalPath, ["## [1.2.3+build(7)?.*] - 2026-07-18", "", "Literal version body", "", "##"].join("\n"));
 
 	const literal = runReleaseNotes(["--tag", "v1.2.3+build(7)?.*", "--changelog", literalPath]);
 	assert.equal(literal.status, 0, literal.stderr);
@@ -121,11 +121,7 @@ test("release-notes treats version strings literally and rejects malformed headi
 		["split-heading", "##\n[1.2.3] - 2026-07-18"],
 	]) {
 		const halfBracketedPath = join(root, `${name}.md`);
-		writeFileSync(halfBracketedPath, [
-			heading,
-			"",
-			"Broken heading",
-		].join("\n"));
+		writeFileSync(halfBracketedPath, [heading, "", "Broken heading"].join("\n"));
 
 		const halfBracketed = runReleaseNotes(["--tag", "v1.2.3", "--changelog", halfBracketedPath]);
 		assert.equal(halfBracketed.status, 1, `${name} heading should fail`);
@@ -137,18 +133,21 @@ test("release-notes treats version strings literally and rejects malformed headi
 test("release-notes rejects missing tags, blank tags, empty v tags, missing sections, and empty sections", (t) => {
 	const root = tempFixture(t);
 	const changelogPath = join(root, "CHANGELOG.md");
-	writeFileSync(changelogPath, [
-		"## [1.2.3] - 2026-07-18",
-		"",
-		"Filled section",
-		"",
-		"## [] - 2026-07-18",
-		"",
-		"Must not be release notes for tag v",
-		"",
-		"## [1.2.4] - 2026-07-19",
-		"",
-	].join("\n"));
+	writeFileSync(
+		changelogPath,
+		[
+			"## [1.2.3] - 2026-07-18",
+			"",
+			"Filled section",
+			"",
+			"## [] - 2026-07-18",
+			"",
+			"Must not be release notes for tag v",
+			"",
+			"## [1.2.4] - 2026-07-19",
+			"",
+		].join("\n"),
+	);
 
 	const missingTag = runReleaseNotes(["--changelog", changelogPath]);
 	assert.equal(missingTag.status, 1);
@@ -179,11 +178,7 @@ test("release-notes writes output files on success and leaves existing files unt
 	const root = tempFixture(t);
 	const changelogPath = join(root, "CHANGELOG.md");
 	const outputPath = join(root, "notes.md");
-	writeFileSync(changelogPath, [
-		"## [1.2.3] - 2026-07-18",
-		"",
-		"Saved body",
-	].join("\n"));
+	writeFileSync(changelogPath, ["## [1.2.3] - 2026-07-18", "", "Saved body"].join("\n"));
 
 	const success = runReleaseNotes(["--tag=v1.2.3", `--changelog=${changelogPath}`, `--output=${outputPath}`]);
 	assert.equal(success.status, 0, success.stderr);

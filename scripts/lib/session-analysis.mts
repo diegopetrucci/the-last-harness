@@ -412,10 +412,7 @@ export async function extractSubagentCorrelations(
  * Pass `extra` to include counters gathered outside the per-file scan
  * (e.g. files discovered, failed scans, unreadable directories).
  */
-export function aggregateCoverage(
-	results: SessionScanResult[],
-	extra: ExtraCoverageData = {},
-): ScanCoverage {
+export function aggregateCoverage(results: SessionScanResult[], extra: ExtraCoverageData = {}): ScanCoverage {
 	let totalMalformedLines = 0;
 	let totalUnmatchedToolCalls = 0;
 	let totalUnmatchedToolResults = 0;

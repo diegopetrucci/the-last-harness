@@ -120,7 +120,10 @@ function loadCustomToolDescription(options) {
             stat = fs.statSync(filePath);
         }
         catch (error) {
-            if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+            if (typeof error === "object" &&
+                error !== null &&
+                "code" in error &&
+                error.code === "ENOENT")
                 continue;
             warn(options, `Failed to inspect custom tool description '${filePath}': ${error instanceof Error ? error.message : String(error)}`);
             continue;
@@ -158,9 +161,7 @@ function withMandatorySafetyGuidance(description) {
         .map((part) => part.trim())
         .filter(Boolean)
         .join("\n\n");
-    return customDescription
-        ? `${customDescription}\n\n${SUBAGENT_SAFETY_GUIDANCE}`
-        : SUBAGENT_SAFETY_GUIDANCE;
+    return customDescription ? `${customDescription}\n\n${SUBAGENT_SAFETY_GUIDANCE}` : SUBAGENT_SAFETY_GUIDANCE;
 }
 export function buildSubagentToolDescription(config = {}, options) {
     const mode = resolveToolDescriptionMode(config, options);

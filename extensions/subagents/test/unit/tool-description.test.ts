@@ -61,7 +61,10 @@ describe("registered subagent tool description", () => {
 			assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
 		}
 		assertMinimalContract(description);
-		assert.ok(description.length >= 2500 && description.length <= 3900, `expected 2500-3900 chars, got ${description.length}`);
+		assert.ok(
+			description.length >= 2500 && description.length <= 3900,
+			`expected 2500-3900 chars, got ${description.length}`,
+		);
 		assert.match(description, /SINGLE mode: \{ agent, task\? \ }|SINGLE mode: \{ agent, task\? \}/i);
 		assert.match(description, /PARALLEL mode:/i);
 		assert.match(description, /fallbackModels/i);
@@ -85,7 +88,10 @@ describe("registered subagent tool description", () => {
 		const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
 
 		assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-		assert.ok(description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length * 0.8, "compact mode should be materially shorter than full mode");
+		assert.ok(
+			description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length * 0.8,
+			"compact mode should be materially shorter than full mode",
+		);
 		assertMinimalContract(description);
 		assert.match(description, /SINGLE/);
 		assert.match(description, /PARALLEL/);
@@ -176,10 +182,9 @@ describe("registered subagent tool description", () => {
 	it("falls back to full mode when toolDescriptionMode is invalid", () => {
 		const warnings: string[] = [];
 
-		const description = buildSubagentToolDescription(
-			{ toolDescriptionMode: "tiny" } as never,
-			{ warn: (message) => warnings.push(message) },
-		);
+		const description = buildSubagentToolDescription({ toolDescriptionMode: "tiny" } as never, {
+			warn: (message) => warnings.push(message),
+		});
 
 		assert.equal(description, FULL_SUBAGENT_TOOL_DESCRIPTION);
 		assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
@@ -239,7 +244,11 @@ describe("registered subagent tool description", () => {
 
 		const customAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-tool-desc-custom-"));
 		writeExtensionConfig(customAgentDir, { toolDescriptionMode: "custom" });
-		fs.writeFileSync(path.join(customAgentDir, "subagent-tool-description.md"), "Registered custom description.", "utf-8");
+		fs.writeFileSync(
+			path.join(customAgentDir, "subagent-tool-description.md"),
+			"Registered custom description.",
+			"utf-8",
+		);
 		const customDescription = readRegisteredDescription(customAgentDir);
 		assert.match(customDescription, /Registered custom description/);
 		assert.match(customDescription, /SAFETY-CRITICAL SUBAGENT GUIDANCE/);

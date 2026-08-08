@@ -3,9 +3,7 @@ export function computeMedian(values) {
         return null;
     const sorted = [...values].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? ((sorted[mid - 1] + sorted[mid]) / 2)
-        : sorted[mid];
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 const MAX_SUBAGENT_RESULTS = 64;
 function isObject(value) {

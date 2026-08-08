@@ -3,7 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildBuiltinOverrideConfig, discoverAgents, discoverAgentsAll, removeBuiltinAgentOverride } from "../../src/agents/agents.ts";
+import {
+	buildBuiltinOverrideConfig,
+	discoverAgents,
+	discoverAgentsAll,
+	removeBuiltinAgentOverride,
+} from "../../src/agents/agents.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -80,9 +85,21 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
-		writeProjectAgent(tempProject, "auditor", `---\nname: auditor\ndescription: Audit code\nmodel: google/gemini-3-pro\n---\n\nAudit the code.\n`);
-		writeProjectAgent(tempProject, "scout-copy", `---\nname: scout-copy\ndescription: Scout code\n---\n\nScout the code.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
+		writeProjectAgent(
+			tempProject,
+			"auditor",
+			`---\nname: auditor\ndescription: Audit code\nmodel: google/gemini-3-pro\n---\n\nAudit the code.\n`,
+		);
+		writeProjectAgent(
+			tempProject,
+			"scout-copy",
+			`---\nname: scout-copy\ndescription: Scout code\n---\n\nScout the code.\n`,
+		);
 
 		const agents = discoverAgents(tempProject, "both").agents;
 		assert.equal(agents.find((agent) => agent.name === "implementer")?.model, "deepseek-v4-pro");
@@ -98,8 +115,16 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
-		writeProjectAgent(tempProject, "auditor", `---\nname: auditor\ndescription: Audit code\nmaxExecutionTimeMs: 600\n---\n\nAudit the code.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
+		writeProjectAgent(
+			tempProject,
+			"auditor",
+			`---\nname: auditor\ndescription: Audit code\nmaxExecutionTimeMs: 600\n---\n\nAudit the code.\n`,
+		);
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
 			subagents: {
 				agentOverrides: {
@@ -123,9 +148,8 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("defaultModel"),
+			(error: unknown) =>
+				error instanceof Error && error.message.includes(settingsPath) && error.message.includes("defaultModel"),
 		);
 	});
 
@@ -166,7 +190,11 @@ describe("builtin agent overrides", () => {
 			},
 		});
 		writeProjectAgent(tempProject, "auditor", `---\nname: auditor\ndescription: Audit code\n---\n\nAudit the code.\n`);
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const agents = discoverAgents(tempProject, "both").agents;
 		assert.equal(agents.find((agent) => agent.name === "auditor")?.acceptanceRole, "writer");
@@ -223,7 +251,11 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
 			subagents: { agentOverrides: { auditor: { model: "openai/gpt-5.4" } } },
 		});
-		writeProjectAgent(tempProject, "auditor", `---\nname: auditor\ndescription: Project auditor\nmodel: google/gemini-3-pro\n---\n\nUse the project auditor.\n`);
+		writeProjectAgent(
+			tempProject,
+			"auditor",
+			`---\nname: auditor\ndescription: Project auditor\nmodel: google/gemini-3-pro\n---\n\nUse the project auditor.\n`,
+		);
 
 		const auditor = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "auditor");
 		assert.ok(auditor);
@@ -254,7 +286,11 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -279,7 +315,11 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
 		});
-		writeUserAgent(tempHome, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeUserAgent(
+			tempHome,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -292,7 +332,11 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: { agentOverrides: { implementer: { model: "anthropic/claude-sonnet-4-6" } } },
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -309,7 +353,11 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(tempProject, ".pi", "settings.json"), {
 			subagents: { agentOverrides: { implementer: { model: "openai/gpt-5.4" } } },
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -335,7 +383,11 @@ describe("builtin agent overrides", () => {
 				},
 			},
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -354,7 +406,11 @@ describe("builtin agent overrides", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: { agentOverrides: { reviewer: { model: "openai/gpt-5.4" } } },
 		});
-		writeProjectAgent(tempProject, "implementer", `---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`);
+		writeProjectAgent(
+			tempProject,
+			"implementer",
+			`---\nname: implementer\ndescription: TDD implementer\n---\n\nDrive the failing test first.\n`,
+		);
 
 		const implementer = discoverAgents(tempProject, "both").agents.find((agent) => agent.name === "implementer");
 		assert.ok(implementer);
@@ -376,9 +432,10 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("Failed to parse settings file"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("Failed to parse settings file"),
 		);
 	});
 
@@ -388,9 +445,10 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("Failed to read settings file"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("Failed to read settings file"),
 		);
 	});
 
@@ -408,10 +466,11 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("reviewer")
-				&& error.message.includes("inheritProjectContext"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("reviewer") &&
+				error.message.includes("inheritProjectContext"),
 		);
 	});
 
@@ -429,10 +488,11 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("reviewer")
-				&& error.message.includes("acceptanceRole"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("reviewer") &&
+				error.message.includes("acceptanceRole"),
 		);
 	});
 
@@ -450,10 +510,11 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("reviewer")
-				&& error.message.includes("maxExecutionTimeMs"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("reviewer") &&
+				error.message.includes("maxExecutionTimeMs"),
 		);
 	});
 
@@ -471,10 +532,11 @@ describe("builtin agent overrides", () => {
 
 		assert.throws(
 			() => discoverAgents(tempProject, "both"),
-			(error: unknown) => error instanceof Error
-				&& error.message.includes(settingsPath)
-				&& error.message.includes("reviewer")
-				&& error.message.includes("completionGuard"),
+			(error: unknown) =>
+				error instanceof Error &&
+				error.message.includes(settingsPath) &&
+				error.message.includes("reviewer") &&
+				error.message.includes("completionGuard"),
 		);
 	});
 

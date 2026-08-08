@@ -179,9 +179,7 @@ export function aggregateSessionUsage(
 	rows.sort((a, b) => b.windowTotals.totalTokens - a.windowTotals.totalTokens);
 
 	// Sort per-provider totals descending.
-	const perProviderTotals = [...providerTotalsMap.values()].sort(
-		(a, b) => b.usage.totalTokens - a.usage.totalTokens,
-	);
+	const perProviderTotals = [...providerTotalsMap.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens);
 
 	return { rows, perProviderTotals, grandTotals, caveats };
 }
@@ -270,8 +268,14 @@ function aggregateFile(
 
 			// Prefer per-message provider/model (authoritative, branch-aware); fall back
 			// to the most recent model_change tracking when the message fields are absent.
-			const msgProvider = typeof message.provider === "string" && (message.provider as string).length > 0 ? message.provider as string : undefined;
-			const msgModel = typeof message.model === "string" && (message.model as string).length > 0 ? message.model as string : undefined;
+			const msgProvider =
+				typeof message.provider === "string" && (message.provider as string).length > 0
+					? (message.provider as string)
+					: undefined;
+			const msgModel =
+				typeof message.model === "string" && (message.model as string).length > 0
+					? (message.model as string)
+					: undefined;
 			const turnProvider = msgProvider ?? currentProvider;
 			const turnModelId = msgModel ?? currentModelId;
 
@@ -310,15 +314,11 @@ function aggregateFile(
 	}
 
 	// Sort per-provider totals descending.
-	const providerTotals = [...providerUsageMap.values()].sort(
-		(a, b) => b.usage.totalTokens - a.usage.totalTokens,
-	);
+	const providerTotals = [...providerUsageMap.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens);
 
 	// Derive project label: prefer basename of cwd (real path) from header/session_info;
 	// fall back to decoding the Pi-escaped directory name when no cwd is available.
-	const projectLabel = sessionCwd
-		? basename(sessionCwd)
-		: deriveProjectLabel(filePath, sessionsRoot);
+	const projectLabel = sessionCwd ? basename(sessionCwd) : deriveProjectLabel(filePath, sessionsRoot);
 
 	// Session name: session_info name wins over header name (later renames take precedence).
 	const sessionName = sessionInfoName ?? sessionHeaderName;

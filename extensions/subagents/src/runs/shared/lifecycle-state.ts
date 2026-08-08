@@ -56,17 +56,19 @@ interface TransitionLockSnapshot {
 }
 
 function replaceControlCharacters(value: string): string {
-	return [...value].map((character) => {
-		const code = character.codePointAt(0) ?? 0;
-		return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f ? " " : character;
-	}).join("");
+	return [...value]
+		.map((character) => {
+			const code = character.codePointAt(0) ?? 0;
+			return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f
+				? " "
+				: character;
+		})
+		.join("");
 }
 
 export function boundSupervisorSummary(summary: unknown, maxBytes = DEFAULT_MAX_SUMMARY_BYTES): string | undefined {
 	if (typeof summary !== "string") return undefined;
-	const normalized = replaceControlCharacters(summary)
-		.replace(/\s+/g, " ")
-		.trim();
+	const normalized = replaceControlCharacters(summary).replace(/\s+/g, " ").trim();
 	if (!normalized) return undefined;
 	let bounded = normalized;
 	while (Buffer.byteLength(bounded, "utf-8") > maxBytes && bounded.length > 1) {
@@ -100,9 +102,10 @@ function normalizeSupervisorRequestMetadata(request: unknown): ForegroundSupervi
 	const tool = raw.tool === "intercom" || raw.tool === "contact_supervisor" ? raw.tool : undefined;
 	if (!tool) return undefined;
 	const action = tool === "intercom" && raw.action === "ask" ? "ask" : undefined;
-	const reason = tool === "contact_supervisor" && (raw.reason === "need_decision" || raw.reason === "interview_request")
-		? raw.reason
-		: undefined;
+	const reason =
+		tool === "contact_supervisor" && (raw.reason === "need_decision" || raw.reason === "interview_request")
+			? raw.reason
+			: undefined;
 	const requestId = boundLifecycleToken(raw.requestId);
 	const summary = boundSupervisorSummary(raw.summary);
 	return {
@@ -161,7 +164,16 @@ function normalizeContinuationMetadata(continuation: unknown): AsyncLifecycleCon
 	const launchedAt = parseTimestamp(raw.launchedAt);
 	const continuedAt = parseTimestamp(raw.continuedAt);
 	const continuationRunId = boundLifecycleToken(raw.continuationRunId);
-	if (!phase && !claimToken && claimedAt === undefined && ownerPid === undefined && launchedAt === undefined && continuedAt === undefined && !continuationRunId) return undefined;
+	if (
+		!phase &&
+		!claimToken &&
+		claimedAt === undefined &&
+		ownerPid === undefined &&
+		launchedAt === undefined &&
+		continuedAt === undefined &&
+		!continuationRunId
+	)
+		return undefined;
 	return {
 		...(phase ? { phase } : {}),
 		...(claimToken ? { claimToken } : {}),
@@ -185,13 +197,16 @@ function normalizeContinuationMap(value: unknown): Record<string, AsyncLifecycle
 		.map(([key, continuation]) => {
 			const normalizedKey = normalizeContinuationIndexKey(key);
 			const normalizedContinuation = normalizeContinuationMetadata(continuation);
-			return normalizedKey && normalizedContinuation ? [normalizedKey, normalizedContinuation] as const : undefined;
+			return normalizedKey && normalizedContinuation ? ([normalizedKey, normalizedContinuation] as const) : undefined;
 		})
 		.filter((entry): entry is readonly [string, AsyncLifecycleContinuationMetadata] => entry !== undefined);
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-export function lifecycleContinuationForIndex(status: AsyncStatus | null | undefined, index: number): AsyncLifecycleContinuationMetadata | undefined {
+export function lifecycleContinuationForIndex(
+	status: AsyncStatus | null | undefined,
+	index: number,
+): AsyncLifecycleContinuationMetadata | undefined {
 	const normalizedIndex = normalizeContinuationIndexKey(index);
 	if (!normalizedIndex) return undefined;
 	const indexed = status?.lifecycle?.continuationsByIndex?.[normalizedIndex];
@@ -218,16 +233,28 @@ export function withLifecycleContinuation(
 }
 
 function hasActionablePausedChildren(status: AsyncStatus["steps"] | undefined): boolean {
-	return status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false;
+	return (
+		status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false
+	);
 }
 
-export function finalizeLifecycleContinuationStatus(status: AsyncStatus, index: number, continuation: AsyncLifecycleContinuationMetadata, continuedAt: number, continuationRunId: string): AsyncStatus {
-	const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === index
-		? { ...step, status: "continued" as const, endedAt: continuedAt, exitCode: 0, pause: undefined }
-		: step);
+export function finalizeLifecycleContinuationStatus(
+	status: AsyncStatus,
+	index: number,
+	continuation: AsyncLifecycleContinuationMetadata,
+	continuedAt: number,
+	continuationRunId: string,
+): AsyncStatus {
+	const nextSteps = status.steps?.map((step, stepIndex) =>
+		stepIndex === index
+			? { ...step, status: "continued" as const, endedAt: continuedAt, exitCode: 0, pause: undefined }
+			: step,
+	);
 	const remainingActionable = hasActionablePausedChildren(nextSteps);
 	const nextRootPause = remainingActionable
-		? nextSteps?.find((step) => step.pause?.kind === "awaiting_supervisor" && (step.status === "paused" || step.status === "pausing"))?.pause
+		? nextSteps?.find(
+				(step) => step.pause?.kind === "awaiting_supervisor" && (step.status === "paused" || step.status === "pausing"),
+			)?.pause
 		: (status.steps?.length ?? 0) <= 1
 			? status.pause
 			: undefined;
@@ -238,25 +265,35 @@ export function finalizeLifecycleContinuationStatus(status: AsyncStatus, index: 
 		endedAt: continuedAt,
 		lastUpdate: continuedAt,
 		pause: nextRootPause,
-		lifecycle: withLifecycleContinuation(status, index, remainingActionable ? undefined : {
-			...continuation,
-			phase: "continued",
-			ownerPid: undefined,
-			continuedAt,
-			continuationRunId,
-		}),
+		lifecycle: withLifecycleContinuation(
+			status,
+			index,
+			remainingActionable
+				? undefined
+				: {
+						...continuation,
+						phase: "continued",
+						ownerPid: undefined,
+						continuedAt,
+						continuationRunId,
+					},
+		),
 		steps: nextSteps,
 	};
 }
 
-export function checkPidLiveness(pid: number, kill: (pid: number, signal?: NodeJS.Signals | 0) => boolean = process.kill): PidLiveness {
+export function checkPidLiveness(
+	pid: number,
+	kill: (pid: number, signal?: NodeJS.Signals | 0) => boolean = process.kill,
+): PidLiveness {
 	try {
 		kill(pid, 0);
 		return "alive";
 	} catch (error) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as NodeJS.ErrnoException).code
-			: undefined;
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
 		if (code === "ESRCH") return "dead";
 		if (code === "EPERM") return "unknown";
 		return "unknown";
@@ -276,7 +313,9 @@ export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus 
 	const generation = lifecycleGeneration(status);
 	return {
 		...status,
-		...(typeof status.state === "string" ? { state: status.state as AsyncStatus["state"] } : { state: "failed" as const }),
+		...(typeof status.state === "string"
+			? { state: status.state as AsyncStatus["state"] }
+			: { state: "failed" as const }),
 		...(pause ? { pause } : {}),
 		...(pause ? {} : { pause: undefined }),
 		...(cancel ? { cancel } : {}),
@@ -297,9 +336,10 @@ function readLifecycleStatus(asyncDir: string): AsyncStatus | null {
 	try {
 		return normalizeAsyncLifecycleStatus(JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8")) as AsyncStatus);
 	} catch (error) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as NodeJS.ErrnoException).code
-			: undefined;
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
 		if (code === "ENOENT") return null;
 		throw error;
 	}
@@ -353,7 +393,11 @@ function transitionLockOwnerSummary(owner: TransitionLockOwnerRecord): string | 
 
 function readTransitionLockOwner(asyncDir: string): TransitionLockOwnerRecord {
 	try {
-		const raw = JSON.parse(fs.readFileSync(transitionLockInfoPath(asyncDir), "utf-8")) as { token?: unknown; pid?: unknown; acquiredAt?: unknown };
+		const raw = JSON.parse(fs.readFileSync(transitionLockInfoPath(asyncDir), "utf-8")) as {
+			token?: unknown;
+			pid?: unknown;
+			acquiredAt?: unknown;
+		};
 		return {
 			token: boundLifecycleToken(raw.token),
 			pid: parsePid(raw.pid),
@@ -372,18 +416,22 @@ function readTransitionLockSnapshot(asyncDir: string): TransitionLockSnapshot | 
 			owner: readTransitionLockOwner(asyncDir),
 		};
 	} catch (error) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as NodeJS.ErrnoException).code
-			: undefined;
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
 		if (code === "ENOENT") return undefined;
 		throw error;
 	}
 }
 
 function isCompleteTransitionLockOwner(owner: TransitionLockOwnerRecord): owner is Required<TransitionLockOwnerRecord> {
-	return typeof owner.token === "string" && owner.token.length > 0
-		&& typeof owner.pid === "number"
-		&& typeof owner.acquiredAt === "number";
+	return (
+		typeof owner.token === "string" &&
+		owner.token.length > 0 &&
+		typeof owner.pid === "number" &&
+		typeof owner.acquiredAt === "number"
+	);
 }
 
 function tryRecoverStaleTransitionLock(asyncDir: string, options: LifecycleLockOptions = {}): boolean {
@@ -395,22 +443,27 @@ function tryRecoverStaleTransitionLock(asyncDir: string, options: LifecycleLockO
 		if (checkPidLiveness(snapshot.owner.pid, options.kill) !== "dead") return false;
 		const latest = readTransitionLockSnapshot(asyncDir);
 		if (!latest || !isCompleteTransitionLockOwner(latest.owner)) return false;
-		if (latest.owner.token !== snapshot.owner.token || latest.owner.pid !== snapshot.owner.pid || latest.owner.acquiredAt !== snapshot.owner.acquiredAt) {
+		if (
+			latest.owner.token !== snapshot.owner.token ||
+			latest.owner.pid !== snapshot.owner.pid ||
+			latest.owner.acquiredAt !== snapshot.owner.acquiredAt
+		) {
 			return false;
 		}
 	} else {
-		if ((now - snapshot.mtimeMs) < ownerlessStaleMs) return false;
+		if (now - snapshot.mtimeMs < ownerlessStaleMs) return false;
 		const latest = readTransitionLockSnapshot(asyncDir);
 		if (!latest || isCompleteTransitionLockOwner(latest.owner)) return false;
-		if (latest.mtimeMs !== snapshot.mtimeMs || ((now - latest.mtimeMs) < ownerlessStaleMs)) return false;
+		if (latest.mtimeMs !== snapshot.mtimeMs || now - latest.mtimeMs < ownerlessStaleMs) return false;
 	}
 	try {
 		fs.rmSync(transitionLockDir(asyncDir), { recursive: true, force: false });
 		return true;
 	} catch (error) {
-		const code = typeof error === "object" && error !== null && "code" in error
-			? (error as NodeJS.ErrnoException).code
-			: undefined;
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
 		if (code === "ENOENT") return false;
 		throw error;
 	}
@@ -430,9 +483,10 @@ function acquireTransitionLock(asyncDir: string, options: LifecycleLockOptions =
 			fs.mkdirSync(lockDir);
 			break;
 		} catch (error) {
-			const code = typeof error === "object" && error !== null && "code" in error
-				? (error as NodeJS.ErrnoException).code
-				: undefined;
+			const code =
+				typeof error === "object" && error !== null && "code" in error
+					? (error as NodeJS.ErrnoException).code
+					: undefined;
 			if (code !== "EEXIST") throw error;
 			if (tryRecoverStaleTransitionLock(asyncDir, options)) continue;
 			const delayMs = retryDelaysMs[attempt];
@@ -466,7 +520,11 @@ function acquireTransitionLock(asyncDir: string, options: LifecycleLockOptions =
 	};
 }
 
-export function withLifecycleStatusLock<T>(asyncDir: string, operation: (status: AsyncStatus | null) => T, options: LifecycleLockOptions = {}): T {
+export function withLifecycleStatusLock<T>(
+	asyncDir: string,
+	operation: (status: AsyncStatus | null) => T,
+	options: LifecycleLockOptions = {},
+): T {
 	const releaseLock = acquireTransitionLock(asyncDir, options);
 	try {
 		return operation(readLifecycleStatus(asyncDir));
@@ -476,31 +534,44 @@ export function withLifecycleStatusLock<T>(asyncDir: string, operation: (status:
 }
 
 export function transitionLifecycleStatus(options: LifecycleTransitionOptions): LifecycleTransitionResult {
-	return withLifecycleStatusLock(options.asyncDir, (current) => {
-		if (!current) throw new Error(`Cannot transition lifecycle state for run '${runLabel(options.asyncDir)}': persisted status was not found.`);
-		const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
-		const currentGeneration = lifecycleGeneration(normalizedCurrent);
-		if (currentGeneration !== options.expectedGeneration) {
-			throw new Error(`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`);
-		}
-		const mutated = normalizeAsyncLifecycleStatus(options.mutate(normalizedCurrent));
-		const nextStatus: AsyncStatus = {
-			...mutated,
-			lifecycle: {
-				...mutated.lifecycle,
-				generation: currentGeneration + 1,
-			},
-		};
-		writeNormalizedLifecycleStatus(options.asyncDir, nextStatus);
-		return {
-			previousGeneration: currentGeneration,
-			nextGeneration: currentGeneration + 1,
-			status: nextStatus,
-		};
-	}, options.lockOptions);
+	return withLifecycleStatusLock(
+		options.asyncDir,
+		(current) => {
+			if (!current)
+				throw new Error(
+					`Cannot transition lifecycle state for run '${runLabel(options.asyncDir)}': persisted status was not found.`,
+				);
+			const normalizedCurrent = normalizeAsyncLifecycleStatus(current);
+			const currentGeneration = lifecycleGeneration(normalizedCurrent);
+			if (currentGeneration !== options.expectedGeneration) {
+				throw new Error(
+					`Lifecycle transition rejected for run '${runLabel(options.asyncDir)}': expected generation ${options.expectedGeneration}, found ${currentGeneration}.`,
+				);
+			}
+			const mutated = normalizeAsyncLifecycleStatus(options.mutate(normalizedCurrent));
+			const nextStatus: AsyncStatus = {
+				...mutated,
+				lifecycle: {
+					...mutated.lifecycle,
+					generation: currentGeneration + 1,
+				},
+			};
+			writeNormalizedLifecycleStatus(options.asyncDir, nextStatus);
+			return {
+				previousGeneration: currentGeneration,
+				nextGeneration: currentGeneration + 1,
+				status: nextStatus,
+			};
+		},
+		options.lockOptions,
+	);
 }
 
-function continuationTargetExists(sourceAsyncDir: string, continuationRunId: string, options: { asyncDirRoot?: string; resultsDir?: string }): boolean {
+function continuationTargetExists(
+	sourceAsyncDir: string,
+	continuationRunId: string,
+	options: { asyncDirRoot?: string; resultsDir?: string },
+): boolean {
 	const asyncDirRoot = path.resolve(options.asyncDirRoot ?? path.dirname(path.resolve(sourceAsyncDir)));
 	const asyncTargetDir = path.join(asyncDirRoot, continuationRunId);
 	if (fs.existsSync(asyncTargetDir)) return true;
@@ -576,7 +647,8 @@ export function finalizeLifecycleContinuationLaunch(
 		const transitioned = transitionLifecycleStatus({
 			asyncDir,
 			expectedGeneration: lifecycleGeneration(current),
-			mutate: (status) => finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId),
+			mutate: (status) =>
+				finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId),
 		});
 		return { status: transitioned.status, finalized: true, lost: false };
 	} catch (error) {
@@ -590,13 +662,23 @@ export function finalizeLifecycleContinuationLaunch(
 export function recoverStaleLifecycleContinuationClaim(
 	asyncDir: string,
 	index: number,
-	options: { kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean; now?: () => number; asyncDirRoot?: string; resultsDir?: string } = {},
+	options: {
+		kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+		now?: () => number;
+		asyncDirRoot?: string;
+		resultsDir?: string;
+	} = {},
 ): { status: AsyncStatus | null; recovered: boolean; liveness: ContinuationClaimLiveness } {
 	const current = readLifecycleStatus(asyncDir);
 	if (!current) return { status: null, recovered: false, liveness: "unclaimed" };
 	const continuation = lifecycleContinuationForIndex(current, index);
 	if (!continuation?.claimToken) return { status: current, recovered: false, liveness: "unclaimed" };
-	if (continuation.continuedAt !== undefined || continuation.phase === "continued" || current.state === "continued" || current.steps?.[index]?.status === "continued") {
+	if (
+		continuation.continuedAt !== undefined ||
+		continuation.phase === "continued" ||
+		current.state === "continued" ||
+		current.steps?.[index]?.status === "continued"
+	) {
 		return { status: current, recovered: false, liveness: "completed" };
 	}
 	if (continuation.ownerPid === undefined) {
@@ -629,25 +711,35 @@ export function recoverStaleLifecycleContinuationClaim(
 	}
 }
 
-export function recoverStoppedLifecycleOwnership(status: AsyncStatus, options: { kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean; now?: () => number } = {}): { status: AsyncStatus; repaired: boolean; pidLiveness?: PidLiveness } {
+export function recoverStoppedLifecycleOwnership(
+	status: AsyncStatus,
+	options: { kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean; now?: () => number } = {},
+): { status: AsyncStatus; repaired: boolean; pidLiveness?: PidLiveness } {
 	const normalized = normalizeAsyncLifecycleStatus(status);
-	if ((normalized.state !== "paused" && normalized.state !== "cancelled" && normalized.state !== "continued" && normalized.state !== "pausing") || typeof normalized.pid !== "number") {
+	if (
+		(normalized.state !== "paused" &&
+			normalized.state !== "cancelled" &&
+			normalized.state !== "continued" &&
+			normalized.state !== "pausing") ||
+		typeof normalized.pid !== "number"
+	) {
 		return { status: normalized, repaired: false };
 	}
 	const now = options.now?.() ?? normalized.lastUpdate;
 	const pidLiveness = checkPidLiveness(normalized.pid, options.kill);
 	const pause = normalized.pause
 		? {
-			...normalized.pause,
-			ownerPid: undefined,
-		}
+				...normalized.pause,
+				ownerPid: undefined,
+			}
 		: undefined;
 	if (normalized.state === "pausing") {
 		if (pidLiveness !== "dead") return { status: normalized, repaired: false, pidLiveness };
 		const hasResumeCheckpoint = Boolean(
-			pause?.kind
-			&& (pause.requestedAt !== undefined || pause.pausedAt !== undefined)
-			&& (normalized.sessionFile || normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)),
+			pause?.kind &&
+				(pause.requestedAt !== undefined || pause.pausedAt !== undefined) &&
+				(normalized.sessionFile ||
+					normalized.steps?.some((step) => typeof step.sessionFile === "string" && step.sessionFile.length > 0)),
 		);
 		if (!hasResumeCheckpoint) return { status: normalized, repaired: false, pidLiveness };
 		const pausedAt = pause?.pausedAt ?? now ?? Date.now();
@@ -659,9 +751,11 @@ export function recoverStoppedLifecycleOwnership(status: AsyncStatus, options: {
 				endedAt: normalized.endedAt ?? pausedAt,
 				lastUpdate: now ?? pausedAt,
 				...(pause ? { pause: { ...pause, pausedAt } } : {}),
-				steps: normalized.steps?.map((step) => step.status === "pausing"
-					? { ...step, status: "paused", endedAt: step.endedAt ?? pausedAt, exitCode: 0 }
-					: step),
+				steps: normalized.steps?.map((step) =>
+					step.status === "pausing"
+						? { ...step, status: "paused", endedAt: step.endedAt ?? pausedAt, exitCode: 0 }
+						: step,
+				),
 			},
 			repaired: true,
 			pidLiveness,

@@ -94,16 +94,17 @@ export function createTlhHeader(
 
 		const bodyWidth = width - prefixWidth;
 		const continuationIndent = " ".repeat(prefixWidth);
-		return wrapTextWithAnsi(options.startupTip, bodyWidth).map((line, index) => index === 0
-			? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
-			: color.dim(`${continuationIndent}${line}`));
+		return wrapTextWithAnsi(options.startupTip, bodyWidth).map((line, index) =>
+			index === 0
+				? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
+				: color.dim(`${continuationIndent}${line}`),
+		);
 	};
 
 	const collapsedContextHintLines = (width: number): string[] => {
 		const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-		const plainText = startupResources.context.length === 0
-			? hint
-			: `Context: ${startupResources.context.join(", ")}. ${hint}`;
+		const plainText =
+			startupResources.context.length === 0 ? hint : `Context: ${startupResources.context.join(", ")}. ${hint}`;
 		return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
 	};
 
@@ -113,7 +114,13 @@ export function createTlhHeader(
 	];
 
 	const renderCollapsed = (width: number) => {
-		const lines = [logo, "", ...installWarningLine(width), ...collapsedContextHintLines(width), ...startupTipLine(width)];
+		const lines = [
+			logo,
+			"",
+			...installWarningLine(width),
+			...collapsedContextHintLines(width),
+			...startupTipLine(width),
+		];
 		return lines;
 	};
 

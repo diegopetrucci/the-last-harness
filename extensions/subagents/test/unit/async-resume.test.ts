@@ -14,7 +14,14 @@ const pausedCheckedAcceptance = {
 	level: "checked",
 	explicit: true,
 	inferredReason: ["async write-capable or risky run"],
-	criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+	criteria: [
+		{
+			id: "criterion-1",
+			must: "Implement the requested change without widening scope",
+			evidence: ["changed-files"],
+			severity: "required",
+		},
+	],
 	evidence: ["changed-files", "commands-run", "no-staged-files"],
 	verify: [{ id: "tests", command: "npm test" }],
 	stopRules: ["Do not widen scope"],
@@ -36,7 +43,14 @@ function skippedPausedAcceptanceLedger(effectiveAcceptance = pausedCheckedAccept
 		effectiveAcceptance,
 		inferredReason: effectiveAcceptance.inferredReason,
 		criteria: effectiveAcceptance.criteria,
-		runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
+		runtimeChecks: [
+			{
+				id: "paused",
+				status: "not-applicable",
+				message:
+					"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+			},
+		],
 		verifyRuns: [],
 	};
 }
@@ -47,7 +61,13 @@ function notRequiredPausedAcceptanceLedger(effectiveAcceptance = pausedNoneAccep
 		effectiveAcceptance,
 		inferredReason: effectiveAcceptance.inferredReason,
 		criteria: effectiveAcceptance.criteria,
-		runtimeChecks: [{ id: "acceptance-disabled", status: "not-applicable", message: "Acceptance level none does not require evaluation." }],
+		runtimeChecks: [
+			{
+				id: "acceptance-disabled",
+				status: "not-applicable",
+				message: "Acceptance level none does not require evaluation.",
+			},
+		],
 		verifyRuns: [],
 	};
 }
@@ -71,7 +91,10 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "worker", status: "complete" }],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-a" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-a" },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 
 			assert.equal(target.kind, "revive");
 			assert.equal(target.runId, "run-abc");
@@ -101,14 +124,16 @@ describe("async resume lookup", () => {
 				cwd: root,
 				sessionFile,
 				pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					activeRuntimeMs: 75,
-					pause: { kind: "awaiting_supervisor", pausedAt: 200 },
-					acceptance: skippedPausedAcceptanceLedger(),
-				}],
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						activeRuntimeMs: 75,
+						pause: { kind: "awaiting_supervisor", pausedAt: 200 },
+						acceptance: skippedPausedAcceptanceLedger(),
+					},
+				],
 			});
 
 			const target = resolveAsyncResumeTarget(
@@ -138,12 +163,23 @@ describe("async resume lookup", () => {
 				cwd: root,
 				sessionFile,
 				pause: { kind: "awaiting_supervisor", summary: "Need a decision", pausedAt: 150 },
-				lifecycle: { continuation: { claimToken: "claim-run-continued", claimedAt: 160, continuedAt: 200, continuationRunId: "revived-123" } },
+				lifecycle: {
+					continuation: {
+						claimToken: "claim-run-continued",
+						claimedAt: 160,
+						continuedAt: 200,
+						continuationRunId: "revived-123",
+					},
+				},
 				steps: [{ agent: "worker", status: "continued", sessionFile }],
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-continued" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-continued" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/already launched continuation 'revived-123'/,
 			);
 		} finally {
@@ -165,27 +201,50 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: {
-							level: "checked",
-							explicit: true,
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: {
+								level: "checked",
+								explicit: true,
+								inferredReason: ["async write-capable or risky run"],
+								criteria: [
+									{
+										id: "criterion-1",
+										must: "Implement the requested change without widening scope",
+										evidence: ["changed-files"],
+										severity: "required",
+									},
+								],
+								evidence: ["changed-files", "commands-run", "no-staged-files"],
+								verify: [{ id: "tests", command: "npm test" }],
+								stopRules: ["Do not widen scope"],
+							},
 							inferredReason: ["async write-capable or risky run"],
-							criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-							evidence: ["changed-files", "commands-run", "no-staged-files"],
-							verify: [{ id: "tests", command: "npm test" }],
-							stopRules: ["Do not widen scope"],
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
 						},
-						inferredReason: ["async write-capable or risky run"],
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
 					},
-				}],
+				],
 				lifecycle: { continuation: { claimToken: "claim-dead", claimedAt: 150, ownerPid: 4444 } },
 			});
 
@@ -194,13 +253,19 @@ describe("async resume lookup", () => {
 				{
 					asyncDirRoot: asyncRoot,
 					resultsDir: path.join(root, "results"),
-					kill: () => { const error = new Error("dead") as NodeJS.ErrnoException; error.code = "ESRCH"; throw error; },
+					kill: () => {
+						const error = new Error("dead") as NodeJS.ErrnoException;
+						error.code = "ESRCH";
+						throw error;
+					},
 					now: () => 250,
 				},
 			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.runId, "run-claimed-dead");
-			const persisted = JSON.parse(fs.readFileSync(path.join(asyncRoot, "run-claimed-dead", "status.json"), "utf-8")) as { lifecycle?: { continuation?: object; generation?: number } };
+			const persisted = JSON.parse(
+				fs.readFileSync(path.join(asyncRoot, "run-claimed-dead", "status.json"), "utf-8"),
+			) as { lifecycle?: { continuation?: object; generation?: number } };
 			assert.equal(persisted.lifecycle?.continuation, undefined);
 			assert.equal(persisted.lifecycle?.generation, 1);
 		} finally {
@@ -223,10 +288,22 @@ describe("async resume lookup", () => {
 				cwd: root,
 				sessionFile,
 				steps: [{ agent: "worker", status: "paused", sessionFile }],
-				lifecycle: { continuation: { phase: "launched", claimToken: "claim-launched", claimedAt: 150, ownerPid: 5555, continuationRunId: "revived-123" } },
+				lifecycle: {
+					continuation: {
+						phase: "launched",
+						claimToken: "claim-launched",
+						claimedAt: 150,
+						ownerPid: 5555,
+						continuationRunId: "revived-123",
+					},
+				},
 			});
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-launched" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-launched" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+					),
 				/already launched continuation 'revived-123'/,
 			);
 		} finally {
@@ -248,39 +325,74 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: {
-							level: "checked",
-							explicit: true,
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: {
+								level: "checked",
+								explicit: true,
+								inferredReason: ["async write-capable or risky run"],
+								criteria: [
+									{
+										id: "criterion-1",
+										must: "Implement the requested change without widening scope",
+										evidence: ["changed-files"],
+										severity: "required",
+									},
+								],
+								evidence: ["changed-files", "commands-run", "no-staged-files"],
+								verify: [{ id: "tests", command: "npm test" }],
+								stopRules: ["Do not widen scope"],
+							},
 							inferredReason: ["async write-capable or risky run"],
-							criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-							evidence: ["changed-files", "commands-run", "no-staged-files"],
-							verify: [{ id: "tests", command: "npm test" }],
-							stopRules: ["Do not widen scope"],
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
 						},
-						inferredReason: ["async write-capable or risky run"],
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
 					},
-				}],
+				],
 				lifecycle: { continuation: { claimToken: "claim-live", claimedAt: 150, ownerPid: 5555 } },
 			});
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-claimed-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-claimed-live" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+					),
 				/already claimed for continuation/,
 			);
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-claimed-live" }, {
-					asyncDirRoot: asyncRoot,
-					resultsDir: path.join(root, "results"),
-					kill: () => { const error = new Error("unknown") as NodeJS.ErrnoException; error.code = "EPERM"; throw error; },
-				}),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-claimed-live" },
+						{
+							asyncDirRoot: asyncRoot,
+							resultsDir: path.join(root, "results"),
+							kill: () => {
+								const error = new Error("unknown") as NodeJS.ErrnoException;
+								error.code = "EPERM";
+								throw error;
+							},
+						},
+					),
 				/already claimed for continuation/,
 			);
 			writeJson(path.join(asyncRoot, "run-claimed-live", "status.json"), {
@@ -291,34 +403,63 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: {
-							level: "checked",
-							explicit: true,
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: {
+								level: "checked",
+								explicit: true,
+								inferredReason: ["async write-capable or risky run"],
+								criteria: [
+									{
+										id: "criterion-1",
+										must: "Implement the requested change without widening scope",
+										evidence: ["changed-files"],
+										severity: "required",
+									},
+								],
+								evidence: ["changed-files", "commands-run", "no-staged-files"],
+								verify: [{ id: "tests", command: "npm test" }],
+								stopRules: ["Do not widen scope"],
+							},
 							inferredReason: ["async write-capable or risky run"],
-							criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-							evidence: ["changed-files", "commands-run", "no-staged-files"],
-							verify: [{ id: "tests", command: "npm test" }],
-							stopRules: ["Do not widen scope"],
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
 						},
-						inferredReason: ["async write-capable or risky run"],
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
 					},
-				}],
+				],
 				lifecycle: { continuation: { claimToken: "claim-legacy", claimedAt: 150 } },
 			});
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-claimed-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-claimed-live" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/already claimed for continuation/,
 			);
-			const persisted = JSON.parse(fs.readFileSync(path.join(asyncRoot, "run-claimed-live", "status.json"), "utf-8")) as { lifecycle?: { continuation?: { ownerPid?: number; claimToken?: string } } };
+			const persisted = JSON.parse(
+				fs.readFileSync(path.join(asyncRoot, "run-claimed-live", "status.json"), "utf-8"),
+			) as { lifecycle?: { continuation?: { ownerPid?: number; claimToken?: string } } };
 			assert.equal(persisted.lifecycle?.continuation?.ownerPid, undefined);
 			assert.equal(persisted.lifecycle?.continuation?.claimToken, "claim-legacy");
 		} finally {
@@ -341,30 +482,56 @@ describe("async resume lookup", () => {
 				cwd: root,
 				sessionFile,
 				tkTicket: { id: "psr-raw4", title: "Paused\u009b ticket\u001b[31m title\u001b[0m" },
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: {
-							level: "checked",
-							explicit: true,
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: {
+								level: "checked",
+								explicit: true,
+								inferredReason: ["async write-capable or risky run"],
+								criteria: [
+									{
+										id: "criterion-1",
+										must: "Implement the requested change without widening scope",
+										evidence: ["changed-files"],
+										severity: "required",
+									},
+								],
+								evidence: ["changed-files", "commands-run", "no-staged-files"],
+								verify: [{ id: "tests", command: "npm test" }],
+								stopRules: ["Do not widen scope"],
+							},
 							inferredReason: ["async write-capable or risky run"],
-							criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-							evidence: ["changed-files", "commands-run", "no-staged-files"],
-							verify: [{ id: "tests", command: "npm test" }],
-							stopRules: ["Do not widen scope"],
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
 						},
-						inferredReason: ["async write-capable or risky run"],
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
 					},
-				}],
+				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-paused" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-paused" },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.state, "paused");
 			assert.deepEqual(target.tkTicket, { id: "psr-raw4", title: "Paused ticket title" });
@@ -372,7 +539,14 @@ describe("async resume lookup", () => {
 				level: "checked",
 				explicit: true,
 				inferredReason: ["async write-capable or risky run"],
-				criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+				criteria: [
+					{
+						id: "criterion-1",
+						must: "Implement the requested change without widening scope",
+						evidence: ["changed-files"],
+						severity: "required",
+					},
+				],
 				evidence: ["changed-files", "commands-run", "no-staged-files"],
 				verify: [{ id: "tests", command: "npm test" }],
 				stopRules: ["Do not widen scope"],
@@ -399,7 +573,9 @@ describe("async resume lookup", () => {
 						lastUpdate: 200,
 						cwd: root,
 						sessionFile,
-						steps: [{ agent: "worker", status: "paused", sessionFile, acceptance: notRequiredPausedAcceptanceLedger() }],
+						steps: [
+							{ agent: "worker", status: "paused", sessionFile, acceptance: notRequiredPausedAcceptanceLedger() },
+						],
 					});
 				} else {
 					writeJson(path.join(resultsDir, "run-paused-none.json"), {
@@ -408,7 +584,15 @@ describe("async resume lookup", () => {
 						success: false,
 						state: "paused",
 						cwd: root,
-						results: [{ agent: "worker", interrupted: true, success: false, sessionFile, acceptance: notRequiredPausedAcceptanceLedger() }],
+						results: [
+							{
+								agent: "worker",
+								interrupted: true,
+								success: false,
+								sessionFile,
+								acceptance: notRequiredPausedAcceptanceLedger(),
+							},
+						],
 					});
 				}
 
@@ -452,7 +636,9 @@ describe("async resume lookup", () => {
 					message: /status 'rejected' is incompatible with continuation resume; expected 'skipped' or 'not-required'/,
 				},
 			]) {
-				const root = fs.mkdtempSync(path.join(os.tmpdir(), `pi-async-resume-paused-incompatible-${persistedAs}-${label}-`));
+				const root = fs.mkdtempSync(
+					path.join(os.tmpdir(), `pi-async-resume-paused-incompatible-${persistedAs}-${label}-`),
+				);
 				try {
 					const asyncRoot = path.join(root, "runs");
 					const resultsDir = path.join(root, "results");
@@ -504,29 +690,55 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{
-					agent: "worker",
-					status: "paused",
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: {
-							level: "checked",
-							explicit: true,
-							inferredReason: [],
-							criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-							evidence: ["changed-files", "commands-run", "no-staged-files"],
-							verify: [],
-							stopRules: ["Do not widen scope"],
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: {
+								level: "checked",
+								explicit: true,
+								inferredReason: [],
+								criteria: [
+									{
+										id: "criterion-1",
+										must: "Implement the requested change without widening scope",
+										evidence: ["changed-files"],
+										severity: "required",
+									},
+								],
+								evidence: ["changed-files", "commands-run", "no-staged-files"],
+								verify: [],
+								stopRules: ["Do not widen scope"],
+							},
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
 						},
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
 					},
-				}],
+				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-paused-missing-session" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-paused-missing-session" },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.state, "paused");
 			assert.equal(target.sessionFile, undefined);
@@ -534,7 +746,14 @@ describe("async resume lookup", () => {
 				level: "checked",
 				explicit: true,
 				inferredReason: [],
-				criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+				criteria: [
+					{
+						id: "criterion-1",
+						must: "Implement the requested change without widening scope",
+						evidence: ["changed-files"],
+						severity: "required",
+					},
+				],
 				evidence: ["changed-files", "commands-run", "no-staged-files"],
 				verify: [],
 				stopRules: ["Do not widen scope"],
@@ -562,7 +781,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-paused-window" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-paused-window" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/skipped acceptance ledger has not been persisted yet/,
 			);
 		} finally {
@@ -590,7 +813,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-a" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-a" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/Ambiguous async run id prefix 'run-a' matched: run-aa, run-ab/,
 			);
 		} finally {
@@ -603,11 +830,19 @@ describe("async resume lookup", () => {
 		try {
 			const asyncRoot = path.join(root, "runs");
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "../run" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "../run" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/id must be an async run id or prefix, not a path/,
 			);
 			assert.throws(
-				() => resolveAsyncResumeTarget({ dir: path.join(root, "outside") }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ dir: path.join(root, "outside") },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/Async run directory must be inside/,
 			);
 		} finally {
@@ -631,7 +866,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-terminal-missing-session" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-terminal-missing-session" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/session file does not exist/,
 			);
 		} finally {
@@ -653,12 +892,21 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				steps: [
 					{ agent: "worker-a", status: "complete", sessionFile: completedSessionFile },
-					{ agent: "worker-b", status: "paused", sessionFile: pausedSessionFile, acceptance: { status: "skipped", effectiveAcceptance: { level: "checked" } } },
+					{
+						agent: "worker-b",
+						status: "paused",
+						sessionFile: pausedSessionFile,
+						acceptance: { status: "skipped", effectiveAcceptance: { level: "checked" } },
+					},
 				],
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-paused-terminal-missing-session", index: 0 }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-paused-terminal-missing-session", index: 0 },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/session file does not exist/,
 			);
 		} finally {
@@ -683,7 +931,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-session" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-session" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/session file must be a \.jsonl file/,
 			);
 		} finally {
@@ -726,7 +978,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-session-id" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-session-id" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/sessionId must be a string/,
 			);
 		} finally {
@@ -747,7 +1003,10 @@ describe("async resume lookup", () => {
 				steps: [{ agent: "scout", status: "running" }],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-live" },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 
 			assert.equal(target.kind, "live");
 			assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
@@ -774,7 +1033,10 @@ describe("async resume lookup", () => {
 				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-partial", index: 0 }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-partial", index: 0 },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.agent, "done");
 			assert.equal(target.sessionFile, sessionFile);
@@ -802,7 +1064,11 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-pending", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-pending", index: 1 },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/pending and has not started yet/,
 			);
 		} finally {
@@ -831,10 +1097,17 @@ describe("async resume lookup", () => {
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-multi" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-multi" },
+						{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+					),
 				/Provide index to choose one/,
 			);
-			const target = resolveAsyncResumeTarget({ id: "run-multi", index: 1 }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-multi", index: 1 },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.agent, "b");
 			assert.equal(target.index, 1);
@@ -854,7 +1127,14 @@ describe("async resume lookup", () => {
 				level: "checked",
 				explicit: true,
 				inferredReason: [],
-				criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+				criteria: [
+					{
+						id: "criterion-1",
+						must: "Implement the requested change without widening scope",
+						evidence: ["changed-files"],
+						severity: "required",
+					},
+				],
 				evidence: ["changed-files", "commands-run", "no-staged-files"],
 				verify: [],
 				stopRules: ["Do not widen scope"],
@@ -865,24 +1145,43 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					interrupted: true,
-					success: false,
-					exitCode: 0,
-					sessionFile,
-					activeRuntimeMs: 375,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance,
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion." }],
-						verifyRuns: [],
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						activeRuntimeMs: 375,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance,
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message:
+										"Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+								},
+							],
+							verifyRuns: [],
+						},
 					},
-				}],
+				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-result-only-paused" }, { asyncDirRoot: path.join(root, "runs"), resultsDir });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-result-only-paused" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.state, "paused");
 			// F3: paused correctly identified via interrupted
@@ -907,18 +1206,23 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					// success: false but NOT interrupted — should not be treated as paused
-					success: false,
-					exitCode: 1,
-					sessionFile,
-				}],
+				results: [
+					{
+						agent: "worker",
+						// success: false but NOT interrupted — should not be treated as paused
+						success: false,
+						exitCode: 1,
+						sessionFile,
+					},
+				],
 			});
 
 			// Without a status file, a non-interrupted child must not be misidentified as paused.
 			// Since it is not paused, the fail-closed guard must not fire (no acceptance needed).
-			const target = resolveAsyncResumeTarget({ id: "run-result-only-terminal" }, { asyncDirRoot: path.join(root, "runs"), resultsDir });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-result-only-terminal" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.continuationAcceptance, undefined);
 		} finally {
@@ -938,18 +1242,24 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					interrupted: true,
-					success: false,
-					exitCode: 0,
-					sessionFile,
-					// No acceptance field — should trigger fail-closed guard
-				}],
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						// No acceptance field — should trigger fail-closed guard
+					},
+				],
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-result-only-no-acceptance" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-result-only-no-acceptance" },
+						{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+					),
 				/skipped acceptance ledger has not been persisted yet/,
 			);
 		} finally {
@@ -971,7 +1281,14 @@ describe("async resume lookup", () => {
 				level: "checked",
 				explicit: true,
 				inferredReason: [],
-				criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+				criteria: [
+					{
+						id: "criterion-1",
+						must: "Implement the requested change without widening scope",
+						evidence: ["changed-files"],
+						severity: "required",
+					},
+				],
 				evidence: ["changed-files", "commands-run", "no-staged-files"],
 				verify: [{ id: "tests", command: "npm test" }],
 				stopRules: ["Do not widen scope"],
@@ -982,23 +1299,41 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					interrupted: true,
-					success: false,
-					exitCode: 0,
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance: strictAcceptance,
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted." }],
-						verifyRuns: [],
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance: strictAcceptance,
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message: "Acceptance was not evaluated because the run was paused/interrupted.",
+								},
+							],
+							verifyRuns: [],
+						},
 					},
-				}],
+				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-result-only-monotonic" }, { asyncDirRoot: path.join(root, "runs"), resultsDir });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-result-only-monotonic" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.state, "paused");
 			// continuationAcceptance carries the full strict contract from the result artifact:
@@ -1026,31 +1361,50 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					interrupted: true,
-					success: false,
-					exitCode: 0,
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						// Malformed/partial: status is skipped (so the presence guard passes) but
-						// effectiveAcceptance is missing the required arrays
-						// (criteria/evidence/verify/stopRules/inferredReason). Must fail closed with
-						// the incomplete/malformed error, NOT a raw TypeError from mergeContinuationAcceptance.
-						effectiveAcceptance: { level: "checked" },
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted." }],
-						verifyRuns: [],
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							// Malformed/partial: status is skipped (so the presence guard passes) but
+							// effectiveAcceptance is missing the required arrays
+							// (criteria/evidence/verify/stopRules/inferredReason). Must fail closed with
+							// the incomplete/malformed error, NOT a raw TypeError from mergeContinuationAcceptance.
+							effectiveAcceptance: { level: "checked" },
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message: "Acceptance was not evaluated because the run was paused/interrupted.",
+								},
+							],
+							verifyRuns: [],
+						},
 					},
-				}],
+				],
 			});
 
 			assert.throws(
-				() => resolveAsyncResumeTarget({ id: "run-result-only-malformed" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }),
+				() =>
+					resolveAsyncResumeTarget(
+						{ id: "run-result-only-malformed" },
+						{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+					),
 				(err) => {
 					assert.ok(err instanceof Error, "must throw an Error");
-					assert.match(err.message, /incomplete or malformed; refusing to resume with an unverified acceptance contract/);
-					assert.doesNotMatch(err.message, /is not iterable|Cannot read propert|undefined is not/, "must be a clean fail-closed error, not a raw TypeError");
+					assert.match(
+						err.message,
+						/incomplete or malformed; refusing to resume with an unverified acceptance contract/,
+					);
+					assert.doesNotMatch(
+						err.message,
+						/is not iterable|Cannot read propert|undefined is not/,
+						"must be a clean fail-closed error, not a raw TypeError",
+					);
 					return true;
 				},
 			);
@@ -1102,27 +1456,47 @@ describe("async resume lookup", () => {
 					success: false,
 					state: "paused",
 					cwd: root,
-					results: [{
-						agent: "worker",
-						interrupted: true,
-						success: false,
-						exitCode: 0,
-						sessionFile,
-						acceptance: {
-							status: "skipped",
-							effectiveAcceptance,
-							runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted." }],
-							verifyRuns: [],
+					results: [
+						{
+							agent: "worker",
+							interrupted: true,
+							success: false,
+							exitCode: 0,
+							sessionFile,
+							acceptance: {
+								status: "skipped",
+								effectiveAcceptance,
+								runtimeChecks: [
+									{
+										id: "paused",
+										status: "not-applicable",
+										message: "Acceptance was not evaluated because the run was paused/interrupted.",
+									},
+								],
+								verifyRuns: [],
+							},
 						},
-					}],
+					],
 				});
 
 				assert.throws(
-					() => resolveAsyncResumeTarget({ id: "run-result-only-badelem" }, { asyncDirRoot: path.join(root, "runs"), resultsDir }),
+					() =>
+						resolveAsyncResumeTarget(
+							{ id: "run-result-only-badelem" },
+							{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+						),
 					(err) => {
 						assert.ok(err instanceof Error, `[${label}] must throw an Error`);
-						assert.match(err.message, /incomplete or malformed; refusing to resume with an unverified acceptance contract/, `[${label}] must be the clean fail-closed error`);
-						assert.doesNotMatch(err.message, /is not iterable|Cannot read propert|undefined is not/, `[${label}] must not be a raw TypeError`);
+						assert.match(
+							err.message,
+							/incomplete or malformed; refusing to resume with an unverified acceptance contract/,
+							`[${label}] must be the clean fail-closed error`,
+						);
+						assert.doesNotMatch(
+							err.message,
+							/is not iterable|Cannot read propert|undefined is not/,
+							`[${label}] must not be a raw TypeError`,
+						);
 						return true;
 					},
 				);
@@ -1142,7 +1516,14 @@ describe("async resume lookup", () => {
 				level: "checked",
 				explicit: true,
 				inferredReason: [],
-				criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
+				criteria: [
+					{
+						id: "criterion-1",
+						must: "Implement the requested change without widening scope",
+						evidence: ["changed-files"],
+						severity: "required",
+					},
+				],
 				evidence: ["changed-files", "commands-run", "no-staged-files"],
 				verify: [],
 				stopRules: ["Do not widen scope"],
@@ -1153,23 +1534,41 @@ describe("async resume lookup", () => {
 				success: false,
 				state: "paused",
 				cwd: root,
-				results: [{
-					agent: "worker",
-					interrupted: true,
-					success: false,
-					exitCode: 0,
-					sessionFile,
-					acceptance: {
-						status: "skipped",
-						effectiveAcceptance,
-						criteria: [{ id: "criterion-1", must: "Implement the requested change without widening scope", evidence: ["changed-files"], severity: "required" }],
-						runtimeChecks: [{ id: "paused", status: "not-applicable", message: "Acceptance was not evaluated because the run was paused/interrupted." }],
-						verifyRuns: [],
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						acceptance: {
+							status: "skipped",
+							effectiveAcceptance,
+							criteria: [
+								{
+									id: "criterion-1",
+									must: "Implement the requested change without widening scope",
+									evidence: ["changed-files"],
+									severity: "required",
+								},
+							],
+							runtimeChecks: [
+								{
+									id: "paused",
+									status: "not-applicable",
+									message: "Acceptance was not evaluated because the run was paused/interrupted.",
+								},
+							],
+							verifyRuns: [],
+						},
 					},
-				}],
+				],
 			});
 
-			const target = resolveAsyncResumeTarget({ id: "run-result-only-wellformed" }, { asyncDirRoot: path.join(root, "runs"), resultsDir });
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-result-only-wellformed" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
 			assert.equal(target.kind, "revive");
 			assert.equal(target.state, "paused");
 			assert.deepEqual(target.continuationAcceptance, effectiveAcceptance);
@@ -1179,15 +1578,18 @@ describe("async resume lookup", () => {
 	});
 
 	it("frames the revived follow-up with original run context", () => {
-		const task = buildRevivedAsyncTask({
-			kind: "revive",
-			runId: "run-old",
-			state: "complete",
-			agent: "worker",
-			index: 0,
-			intercomTarget: "subagent-worker-run-old-1",
-			sessionFile: "/tmp/session.jsonl",
-		}, "What changed?");
+		const task = buildRevivedAsyncTask(
+			{
+				kind: "revive",
+				runId: "run-old",
+				state: "complete",
+				agent: "worker",
+				index: 0,
+				intercomTarget: "subagent-worker-run-old-1",
+				sessionFile: "/tmp/session.jsonl",
+			},
+			"What changed?",
+		);
 
 		assert.match(task, /Original run: run-old/);
 		assert.doesNotMatch(task, /async subagent conversation/);

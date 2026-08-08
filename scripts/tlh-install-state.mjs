@@ -2,11 +2,7 @@
 import { relative, resolve, sep } from "node:path";
 import process from "node:process";
 
-import {
-	assertNotInNormalPiConfig,
-	assignOptionValue,
-	readOptionValue,
-} from "./lib/tlh-install-utils.mjs";
+import { assertNotInNormalPiConfig, assignOptionValue, readOptionValue } from "./lib/tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 
 function usage() {
@@ -89,7 +85,13 @@ function parseArgs(argv) {
 			index = packageSourceIndex;
 			continue;
 		}
-		const packageSourceIsDefaultIndex = assignOptionValue(args, "packageSourceIsDefault", argv, index, "--package-source-is-default");
+		const packageSourceIsDefaultIndex = assignOptionValue(
+			args,
+			"packageSourceIsDefault",
+			argv,
+			index,
+			"--package-source-is-default",
+		);
 		if (packageSourceIsDefaultIndex !== undefined) {
 			index = packageSourceIsDefaultIndex;
 			continue;
@@ -191,9 +193,7 @@ function stateRelativePath(args) {
 
 function writeInstallState(args) {
 	if (args.dryRun) {
-		const piField = args.piInstalledByTlh !== undefined
-			? ` (piInstalledByTlh: ${args.piInstalledByTlh})`
-			: "";
+		const piField = args.piInstalledByTlh !== undefined ? ` (piInstalledByTlh: ${args.piInstalledByTlh})` : "";
 		log(args, `Would write tlh update metadata: ${args.statePath}${piField}`);
 		return;
 	}

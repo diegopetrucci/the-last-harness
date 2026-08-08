@@ -84,14 +84,15 @@ const codexAvailable = [
 	{ provider: "openai-codex", id: "gpt-5.6-sol" },
 ];
 
-const openaiAvailable = [
-	{ provider: "openai", id: "gpt-5.6" },
-];
+const openaiAvailable = [{ provider: "openai", id: "gpt-5.6" }];
 
 const reducedIndependenceNotice = "TLH fell back to a same-provider review model; review independence is reduced.";
 
 test("provider-aware model resolver follows active Anthropic provider for non-review subagents", () => {
-	assert.equal(selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"), "anthropic/claude-sonnet-4-6");
+	assert.equal(
+		selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"),
+		"anthropic/claude-sonnet-4-6",
+	);
 
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 1);
@@ -178,7 +179,10 @@ test("provider-aware opposite-provider preference does not inject regular OpenAI
 	const agents = new Map([[anthropicParentPrefersCodexReviewer.name, anthropicParentPrefersCodexReviewer]]);
 	const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
 
-	assert.equal(selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, openaiAvailable, "anthropic"), undefined);
+	assert.equal(
+		selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, openaiAvailable, "anthropic"),
+		undefined,
+	);
 	assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "anthropic"), 0);
 	assert.equal(input.model, undefined);
 });
@@ -210,13 +214,10 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
 
 	const reviewerInput = { agent: "code-reviewer" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			reviewerInput,
-			agents,
-			available,
-			"anthropic",
-			{ provider: "anthropic", id: "claude-sonnet-4-6" },
-		),
+		applyProviderAwareSubagentModels(reviewerInput, agents, available, "anthropic", {
+			provider: "anthropic",
+			id: "claude-sonnet-4-6",
+		}),
 		1,
 	);
 	assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol");
@@ -225,13 +226,10 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
 
 	const oracleInput = { agent: "oracle" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			oracleInput,
-			agents,
-			available,
-			"openai-codex",
-			{ provider: "openai-codex", id: "gpt-5.6-luna" },
-		),
+		applyProviderAwareSubagentModels(oracleInput, agents, available, "openai-codex", {
+			provider: "openai-codex",
+			id: "gpt-5.6-luna",
+		}),
 		1,
 	);
 	assert.equal(oracleInput.model, "anthropic/claude-opus-5");
@@ -244,10 +242,13 @@ test("provider-aware primary defaults switch Rush-like thinking to the bundled C
 		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
 		thinking: "medium",
 	});
-	assert.deepEqual(selectProviderAwareAgentDefaults(rushLikePrimary, [...codexAvailable, ...openaiAvailable], "openai"), {
-		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
-		thinking: "medium",
-	});
+	assert.deepEqual(
+		selectProviderAwareAgentDefaults(rushLikePrimary, [...codexAvailable, ...openaiAvailable], "openai"),
+		{
+			model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+			thinking: "medium",
+		},
+	);
 });
 
 test("provider-aware primary defaults keep Anthropic when regular OpenAI is available without bundled Codex", () => {
@@ -278,10 +279,17 @@ test("provider-aware primary defaults fall back to Anthropic thinking when OpenA
 		model: { provider: "anthropic", id: "claude-sonnet-4-6" },
 		thinking: "low",
 	});
-	assert.deepEqual(selectProviderAwareAgentDefaults({ ...rushLikePrimary, tlhOpenaiThinking: undefined }, codexAvailable, "openai-codex"), {
-		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
-		thinking: "low",
-	});
+	assert.deepEqual(
+		selectProviderAwareAgentDefaults(
+			{ ...rushLikePrimary, tlhOpenaiThinking: undefined },
+			codexAvailable,
+			"openai-codex",
+		),
+		{
+			model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+			thinking: "low",
+		},
+	);
 });
 
 // --- tlhAnthropicModels: new tests (ticket tlht-k7h8) ---
@@ -337,10 +345,7 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
 		"openai-codex/gpt-5.6-luna",
 	);
 	// Anthropic-only environment: no tlhAnthropicModels declared → returns undefined
-	assert.equal(
-		selectProviderAwareAgentModelId(agentOpenaiOnly, anthropicAvailable, "anthropic"),
-		undefined,
-	);
+	assert.equal(selectProviderAwareAgentModelId(agentOpenaiOnly, anthropicAvailable, "anthropic"), undefined);
 	// applyProviderAwareSubagentModels: developer still gets the provider-aware Codex default.
 	const input = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 1);
@@ -383,7 +388,11 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
 	assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
 	// Explicit model still prevents all injection regardless of other fallback fields.
-	const withExplicitModel = { agent: "code-reviewer", model: "anthropic/claude-sonnet-4-6", fallbackModels: ["my/fallback"] };
+	const withExplicitModel = {
+		agent: "code-reviewer",
+		model: "anthropic/claude-sonnet-4-6",
+		fallbackModels: ["my/fallback"],
+	};
 	assert.equal(applyProviderAwareSubagentModels(withExplicitModel, agents, available, "anthropic"), 0);
 	assert.equal(withExplicitModel.model, "anthropic/claude-sonnet-4-6");
 	assert.deepEqual(withExplicitModel.fallbackModels, ["my/fallback"]);
@@ -542,9 +551,7 @@ test("tlhAnthropicThinking: no thinking suffix when thinking is undefined for ag
 // Reasoning model fixtures for override tests
 const reasoningAnthropicAvailable = anthropicAvailable.map((model) => ({ ...model, reasoning: true }));
 const reasoningCodexAvailable = codexAvailable.map((model) => ({ ...model, reasoning: true }));
-const reasoningOpenaiAvailable = [
-	{ provider: "openai", id: "gpt-5.6", reasoning: true },
-];
+const reasoningOpenaiAvailable = [{ provider: "openai", id: "gpt-5.6", reasoning: true }];
 const limitedReasoningAvailable = [
 	{ provider: "anthropic", id: "claude-opus-5", reasoning: true, thinkingLevelMap: { xhigh: null } },
 	{ provider: "openai-codex", id: "gpt-5.6-sol", reasoning: true, thinkingLevelMap: { xhigh: null } },
@@ -585,13 +592,9 @@ test("exact suffix-like model IDs win shared lookup, resolution, and mutation", 
 	];
 	assert.equal(findAvailableProviderModel(available, "openrouter/reasoner:high"), available[1]);
 
-	const resolution = resolveProviderAwareSubagentResolution(
-		overrideDeveloper,
-		available,
-		"openrouter",
-		undefined,
-		{ model: "openrouter/reasoner:high" },
-	);
+	const resolution = resolveProviderAwareSubagentResolution(overrideDeveloper, available, "openrouter", undefined, {
+		model: "openrouter/reasoner:high",
+	});
 	assert.equal(resolution.model, available[1]);
 
 	const input = { agent: "developer", task: "Implement the ticket" };
@@ -648,13 +651,9 @@ test("model-only exact suffix-like IDs receive bundled effort after the full mod
 	const mediumDeveloper = { ...overrideDeveloper, thinking: "medium" };
 	const mediumDeveloperAgents = new Map([[mediumDeveloper.name, mediumDeveloper]]);
 	const available = [{ provider: "openrouter", id: "reasoner:high", reasoning: true }];
-	const resolution = resolveProviderAwareSubagentResolution(
-		mediumDeveloper,
-		available,
-		"openrouter",
-		undefined,
-		{ model: "openrouter/reasoner:high" },
-	);
+	const resolution = resolveProviderAwareSubagentResolution(mediumDeveloper, available, "openrouter", undefined, {
+		model: "openrouter/reasoner:high",
+	});
 	assert.equal(resolution.model, available[0]);
 	assert.equal(resolution.thinking, "medium");
 
@@ -707,13 +706,10 @@ test("saved effort can use the current custom-provider session model only when n
 
 	const noEffortInput = { agent: "developer", task: "Implement the ticket" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			noEffortInput,
-			overrideAgents,
-			available,
-			"custom-provider",
-			{ provider: "custom-provider", id: "reasoner" },
-		),
+		applyProviderAwareSubagentModels(noEffortInput, overrideAgents, available, "custom-provider", {
+			provider: "custom-provider",
+			id: "reasoner",
+		}),
 		0,
 	);
 	assert.equal(noEffortInput.model, undefined);
@@ -740,7 +736,8 @@ test("saved effort can use the current custom-provider session model only when n
 	assert.equal(unsupportedInput.model, "custom-provider/limited:off");
 	assert.equal(applyRuntimeThinkingSuffix(unsupportedInput.model, "high", false), unsupportedInput.model);
 	assert.equal(warnings.length, 1);
-	const expectedWarning = "TLH stored minor-agent effort \"high\" is not supported by custom-provider/limited; using explicit off for this run.";
+	const expectedWarning =
+		'TLH stored minor-agent effort "high" is not supported by custom-provider/limited; using explicit off for this run.';
 	assert.equal(warnings[0], expectedWarning);
 	const unsupportedResolution = resolveProviderAwareSubagentResolution(
 		overrideDeveloper,
@@ -757,32 +754,22 @@ test("saved effort can use the current custom-provider session model only when n
 test("thinking-only overrides warn when no bundled or current-session model is available", () => {
 	const input = { agent: "developer", task: "Implement the ticket" };
 	const warnings = [];
-	const expectedWarning = "TLH stored minor-agent effort \"high\" for developer could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.";
+	const expectedWarning =
+		'TLH stored minor-agent effort "high" for developer could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.';
 	const currentModel = { provider: "custom-provider", id: "not-listed" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			agents,
-			[],
-			"custom-provider",
-			currentModel,
-			{
-				agentOverrides: new Map([["developer", { thinking: "high" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, agents, [], "custom-provider", currentModel, {
+			agentOverrides: new Map([["developer", { thinking: "high" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		0,
 	);
 	assert.equal(input.model, undefined);
 	assert.deepEqual(warnings, [expectedWarning]);
 
-	const resolution = resolveProviderAwareSubagentResolution(
-		developer,
-		[],
-		"custom-provider",
-		currentModel,
-		{ thinking: "high" },
-	);
+	const resolution = resolveProviderAwareSubagentResolution(developer, [], "custom-provider", currentModel, {
+		thinking: "high",
+	});
 	assert.equal(resolution.model, undefined);
 	assert.equal(resolution.thinking, undefined);
 	assert.equal(resolution.warning, expectedWarning);
@@ -834,7 +821,10 @@ test("model false leaves an implicit dispatch and caller fallback fields untouch
 });
 
 test("false and saved thinking use the inherited current model when model is false", () => {
-	for (const [thinking, suffix] of [[false, "off"], ["high", "high"]]) {
+	for (const [thinking, suffix] of [
+		[false, "off"],
+		["high", "high"],
+	]) {
 		const warnings = [];
 		const input = { agent: "developer", task: "Implement", fallbackModels: ["caller/fallback"] };
 		assert.equal(
@@ -861,10 +851,17 @@ test("thinking false applies off without warning while explicit caller model and
 	const warnings = [];
 	const implicitInput = { agent: "developer", task: "Implement" };
 	assert.equal(
-		applyProviderAwareSubagentModels(implicitInput, overrideAgents, reasoningCodexAvailable, "openai-codex", undefined, {
-			agentOverrides: new Map([["developer", { thinking: false }]]),
-			onWarning: (warning) => warnings.push(warning.message),
-		}),
+		applyProviderAwareSubagentModels(
+			implicitInput,
+			overrideAgents,
+			reasoningCodexAvailable,
+			"openai-codex",
+			undefined,
+			{
+				agentOverrides: new Map([["developer", { thinking: false }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
 		1,
 	);
 	assert.equal(implicitInput.model, "openai-codex/gpt-5.6-luna:off");
@@ -876,10 +873,17 @@ test("thinking false applies off without warning while explicit caller model and
 		fallbackModels: ["caller/fallback"],
 	};
 	assert.equal(
-		applyProviderAwareSubagentModels(explicitInput, overrideAgents, reasoningCodexAvailable, "openai-codex", undefined, {
-			agentOverrides: new Map([["developer", { model: false, thinking: false }]]),
-			onWarning: (warning) => warnings.push(warning.message),
-		}),
+		applyProviderAwareSubagentModels(
+			explicitInput,
+			overrideAgents,
+			reasoningCodexAvailable,
+			"openai-codex",
+			undefined,
+			{
+				agentOverrides: new Map([["developer", { model: false, thinking: false }]]),
+				onWarning: (warning) => warnings.push(warning.message),
+			},
+		),
 		1,
 	);
 	assert.equal(explicitInput.model, "openai-codex/gpt-5.6-luna:off");
@@ -887,9 +891,16 @@ test("thinking false applies off without warning while explicit caller model and
 
 	const suffixedInput = { agent: "developer", task: "Implement", model: "openai-codex/gpt-5.6-luna:high" };
 	assert.equal(
-		applyProviderAwareSubagentModels(suffixedInput, overrideAgents, reasoningCodexAvailable, "openai-codex", undefined, {
-			agentOverrides: new Map([["developer", { thinking: false }]]),
-		}),
+		applyProviderAwareSubagentModels(
+			suffixedInput,
+			overrideAgents,
+			reasoningCodexAvailable,
+			"openai-codex",
+			undefined,
+			{
+				agentOverrides: new Map([["developer", { thinking: false }]]),
+			},
+		),
 		0,
 	);
 	assert.equal(suffixedInput.model, "openai-codex/gpt-5.6-luna:high");
@@ -935,7 +946,7 @@ test("unavailable persisted string pins stay authoritative without predicting fa
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH saved minor-agent model override \"openai-codex/gpt-5.999\" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.",
+		'TLH saved minor-agent model override "openai-codex/gpt-5.999" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.',
 	);
 
 	const resolution = resolveProviderAwareSubagentResolution(
@@ -977,7 +988,8 @@ test("unavailable persisted string pins preserve caller-owned fallback fields an
 	assert.deepEqual(callerFallbackInput.fallbackModels, ["caller/fallback"]);
 	assert.equal(callerFallbackInput.modelFallbackNotice, "caller notice");
 	assert.equal(callerWarnings.length, 1);
-	const unavailableWarning = "TLH saved minor-agent model override \"openai-codex/gpt-5.999\" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.";
+	const unavailableWarning =
+		'TLH saved minor-agent model override "openai-codex/gpt-5.999" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.';
 	assert.equal(callerWarnings[0], unavailableWarning);
 
 	const emptyFallbackWarnings = [];
@@ -1126,17 +1138,10 @@ test("unsupported stored effort is neutralized on the primary and generated fall
 	const warnings = [];
 	const input = { agent: "code-reviewer", task: "Review the diff" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			overrideAgents,
-			limitedReasoningAvailable,
-			"anthropic",
-			undefined,
-			{
-				agentOverrides: new Map([["code-reviewer", { thinking: "xhigh" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, overrideAgents, limitedReasoningAvailable, "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "xhigh" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		1,
 	);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol:off");
@@ -1151,7 +1156,7 @@ test("unsupported stored effort is neutralized on the primary and generated fall
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH stored minor-agent effort \"xhigh\" is not supported by openai-codex/gpt-5.6-sol; using explicit off for this run.",
+		'TLH stored minor-agent effort "xhigh" is not supported by openai-codex/gpt-5.6-sol; using explicit off for this run.',
 	);
 });
 
@@ -1166,17 +1171,10 @@ test("nonstandard stored effort prefers provider-resolved bundled suffixes on bo
 	const warnings = [];
 	const input = { agent: bundledReviewer.name, task: "Review the diff" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			bundledAgents,
-			limitedReasoningAvailable,
-			"anthropic",
-			undefined,
-			{
-				agentOverrides: new Map([[bundledReviewer.name, { thinking: "turbo" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, bundledAgents, limitedReasoningAvailable, "anthropic", undefined, {
+			agentOverrides: new Map([[bundledReviewer.name, { thinking: "turbo" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		1,
 	);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
@@ -1186,7 +1184,7 @@ test("nonstandard stored effort prefers provider-resolved bundled suffixes on bo
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH ignored unsupported stored minor-agent effort \"turbo\" for bundled-reviewer; using bundled defaults for this run.",
+		'TLH ignored unsupported stored minor-agent effort "turbo" for bundled-reviewer; using bundled defaults for this run.',
 	);
 });
 
@@ -1207,17 +1205,10 @@ test("unsupported stored effort remains bare only when no supported neutralizer 
 	const warnings = [];
 	const input = { agent: noNeutralizerAgent.name, task: "Review the diff" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			noNeutralizerAgents,
-			[noNeutralizerModel],
-			"anthropic",
-			undefined,
-			{
-				agentOverrides: new Map([[noNeutralizerAgent.name, { thinking: "xhigh" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, noNeutralizerAgents, [noNeutralizerModel], "anthropic", undefined, {
+			agentOverrides: new Map([[noNeutralizerAgent.name, { thinking: "xhigh" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		1,
 	);
 	assert.equal(input.model, "anthropic/no-neutralizer");
@@ -1228,7 +1219,7 @@ test("unsupported stored effort remains bare only when no supported neutralizer 
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH stored minor-agent effort \"xhigh\" is not supported by anthropic/no-neutralizer; no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run.",
+		'TLH stored minor-agent effort "xhigh" is not supported by anthropic/no-neutralizer; no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run.',
 	);
 });
 
@@ -1236,17 +1227,10 @@ test("supported primary saved effort survives an incompatible generated fallback
 	const warnings = [];
 	const input = { agent: "code-reviewer", task: "Review the diff" };
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			overrideAgents,
-			primaryOnlyReasoningAvailable,
-			"anthropic",
-			undefined,
-			{
-				agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, overrideAgents, primaryOnlyReasoningAvailable, "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		1,
 	);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
@@ -1254,7 +1238,7 @@ test("supported primary saved effort survives an incompatible generated fallback
 	assert.equal(warnings.length, 1);
 	assert.equal(
 		warnings[0],
-		"TLH stored minor-agent effort \"high\" is not supported by generated fallback anthropic/claude-opus-5; that fallback will use explicit off for this run.",
+		'TLH stored minor-agent effort "high" is not supported by generated fallback anthropic/claude-opus-5; that fallback will use explicit off for this run.',
 	);
 });
 
@@ -1266,17 +1250,10 @@ test("caller-supplied fallbacks suppress warnings for an unused generated fallba
 		fallbackModels: ["custom/provider-model"],
 	};
 	assert.equal(
-		applyProviderAwareSubagentModels(
-			input,
-			overrideAgents,
-			primaryOnlyReasoningAvailable,
-			"anthropic",
-			undefined,
-			{
-				agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
-				onWarning: (warning) => warnings.push(warning.message),
-			},
-		),
+		applyProviderAwareSubagentModels(input, overrideAgents, primaryOnlyReasoningAvailable, "anthropic", undefined, {
+			agentOverrides: new Map([["code-reviewer", { thinking: "high" }]]),
+			onWarning: (warning) => warnings.push(warning.message),
+		}),
 		1,
 	);
 	assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
@@ -1294,13 +1271,9 @@ test("subagent resolution reports independence state for bundled and overridden 
 		"preferred",
 	);
 	assert.equal(
-		resolveProviderAwareSubagentResolution(
-			overrideCodeReviewer,
-			reasoningAnthropicAvailable,
-			"anthropic",
-			undefined,
-			{ model: "anthropic/claude-opus-5" },
-		).independence,
+		resolveProviderAwareSubagentResolution(overrideCodeReviewer, reasoningAnthropicAvailable, "anthropic", undefined, {
+			model: "anthropic/claude-opus-5",
+		}).independence,
 		"degraded",
 	);
 });
@@ -1331,13 +1304,9 @@ test("bundled max effort emits an explicit :max suffix when the model supports i
 
 	// Model-only override: bundled thinking is "max" and the model advertises it,
 	// so it must be emitted as a suffix rather than dropped or collapsed to "off".
-	const resolution = resolveProviderAwareSubagentResolution(
-		agentWithMaxBundled,
-		available,
-		"anthropic",
-		undefined,
-		{ model: "anthropic/max-model" },
-	);
+	const resolution = resolveProviderAwareSubagentResolution(agentWithMaxBundled, available, "anthropic", undefined, {
+		model: "anthropic/max-model",
+	});
 	assert.equal(resolution.thinking, "max");
 
 	const overrideInput = { agent: "max-dev", task: "Do" };
@@ -1370,15 +1339,12 @@ test("stored max effort warns and falls back when the model's thinkingLevelMap l
 	const noMaxAgent = { name: "max-dev", tlhAnthropicModels: ["anthropic/plain-reasoner"] };
 	const noMaxAgents = new Map([[noMaxAgent.name, noMaxAgent]]);
 
-	const resolution = resolveProviderAwareSubagentResolution(
-		noMaxAgent,
-		[noMaxModel],
-		"anthropic",
-		undefined,
-		{ thinking: "max" },
-	);
+	const resolution = resolveProviderAwareSubagentResolution(noMaxAgent, [noMaxModel], "anthropic", undefined, {
+		thinking: "max",
+	});
 	assert.equal(resolution.thinking, "off");
-	const expectedWarning = "TLH stored minor-agent effort \"max\" is not supported by anthropic/plain-reasoner; using explicit off for this run.";
+	const expectedWarning =
+		'TLH stored minor-agent effort "max" is not supported by anthropic/plain-reasoner; using explicit off for this run.';
 	assert.equal(resolution.warning, expectedWarning);
 
 	const warnings = [];

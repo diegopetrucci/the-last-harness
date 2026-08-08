@@ -46,7 +46,10 @@ function parseArgs(argv) {
             index = settingsIndex;
             continue;
         }
-        const defaultsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, ["--defaults", "--default-extensions"]);
+        const defaultsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, [
+            "--defaults",
+            "--default-extensions",
+        ]);
         if (defaultsIndex !== undefined) {
             index = defaultsIndex;
             continue;
@@ -158,9 +161,9 @@ function replacedPackageSource(settings, extension) {
     return undefined;
 }
 function isDefaultSourceDeferred(settings, extension) {
-    return extension.migrateReplacements !== true
-        && findPackageIndex(settings, extension.source) === -1
-        && Boolean(replacedPackageSource(settings, extension));
+    return (extension.migrateReplacements !== true &&
+        findPackageIndex(settings, extension.source) === -1 &&
+        Boolean(replacedPackageSource(settings, extension)));
 }
 function isDefaultDisabled(settings, extension, defaultExtensions) {
     if (disabledIdsFromSettings(settings, defaultExtensions).has(extension.id))

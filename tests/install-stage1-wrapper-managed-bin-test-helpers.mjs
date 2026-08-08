@@ -25,11 +25,7 @@ function runHelper(scriptRelativePath, args, { homeDir }) {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(
-		result.status,
-		0,
-		`${scriptRelativePath} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-	);
+	assert.equal(result.status, 0, `${scriptRelativePath} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 }
 
 function writeFakeCommand(fakebin, name, body) {
@@ -60,35 +56,43 @@ export function setupTicketsEnabledWrapperFixture(t) {
 	mkdirSync(cwdDir, { recursive: true });
 	t.after(() => rmSync(root, { recursive: true, force: true }));
 
-	writeFakePi(fakebin, [
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.83.0\\n'; exit 0; fi",
-		"printf 'path=%s\\n' \"${PATH:-}\" >\"${PI_WRAPPER_LOG}\"",
-	].join("\n"));
+	writeFakePi(
+		fakebin,
+		[
+			'if [[ "${1:-}" == "--version" ]]; then printf \'0.83.0\\n\'; exit 0; fi',
+			'printf \'path=%s\\n\' "${PATH:-}" >"${PI_WRAPPER_LOG}"',
+		].join("\n"),
+	);
 
-	runHelper("scripts/tlh-wrapper.mjs", [
-		"--agent-dir",
-		agentDir,
-		"--bin-dir",
-		binDir,
-		"--wrapper-name",
-		"tlh",
-		"--package-root",
-		packageRoot,
-		"--pi-cmd",
-		join(fakebin, "pi"),
-	], { homeDir });
+	runHelper(
+		"scripts/tlh-wrapper.mjs",
+		[
+			"--agent-dir",
+			agentDir,
+			"--bin-dir",
+			binDir,
+			"--wrapper-name",
+			"tlh",
+			"--package-root",
+			packageRoot,
+			"--pi-cmd",
+			join(fakebin, "pi"),
+		],
+		{ homeDir },
+	);
 
 	const wrapper = join(binDir, "tlh");
-	const runWrapper = () => spawnSync(wrapper, ["chat"], {
-		cwd: cwdDir,
-		env: scrubInstallerEnv({
-			HOME: homeDir,
-			PATH: [fakebin, process.env.PATH || ""].join(":"),
-			PI_WRAPPER_LOG: piLog,
-		}),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const runWrapper = () =>
+		spawnSync(wrapper, ["chat"], {
+			cwd: cwdDir,
+			env: scrubInstallerEnv({
+				HOME: homeDir,
+				PATH: [fakebin, process.env.PATH || ""].join(":"),
+				PI_WRAPPER_LOG: piLog,
+			}),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 	const readPiPath = () => readFileSync(piLog, "utf8").trim().slice("path=".length).split(":");
 
 	return { agentDir, agentBin, runWrapper, readPiPath };

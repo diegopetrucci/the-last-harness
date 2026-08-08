@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -35,8 +45,10 @@ function runMerge(fixture, { dryRun = false, force = false, quiet = true, packag
 	const args = [
 		mergeScript,
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 	];
 	if (packageSource) args.push("--package-source", packageSource);
 	if (dryRun) args.push("--dry-run");
@@ -69,7 +81,9 @@ function symlinkFile(target, path) {
 
 function writeSwapBackupSourceToSymlinkAfterOpenPreload(dir) {
 	const preload = join(dir, "swap-backup-source-to-symlink-after-open.mjs");
-	writeFileSync(preload, `import fs from "node:fs";
+	writeFileSync(
+		preload,
+		`import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 
 const originalOpenSync = fs.openSync;
@@ -86,7 +100,8 @@ fs.openSync = (path, flags, mode) => {
 	return originalOpenSync(path, flags, mode);
 };
 syncBuiltinESMExports();
-`);
+`,
+	);
 	return preload;
 }
 
@@ -106,10 +121,7 @@ test("packaged defaults keep the isolated startup/privacy guardrails enabled", (
 });
 
 test("merge adds the changelog sentinel when isolated settings omit it", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] });
 
 	runMerge(fixture);
 
@@ -117,10 +129,7 @@ test("merge adds the changelog sentinel when isolated settings omit it", () => {
 });
 
 test("merge preserves settings and backup file modes when rewriting settings", () => {
-	const fixture = tempFixture(
-		{ packages: [], quietStartup: true },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [], quietStartup: true }, { packages: [harnessPackage] });
 	chmodSync(fixture.settings, 0o640);
 
 	runMerge(fixture);
@@ -132,58 +141,60 @@ test("merge preserves settings and backup file modes when rewriting settings", (
 });
 
 test("merge rejects symlinked settings targets before creating backups", () => {
-	const fixture = tempFixture(
-		{ packages: [], quietStartup: true },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [], quietStartup: true }, { packages: [harnessPackage] });
 	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-symlink-target-"));
 	const externalSettings = join(externalDir, "settings.json");
 	writeFileSync(externalSettings, JSON.stringify({ packages: [harnessPackage] }, null, 2));
 	rmSync(fixture.settings);
 	symlinkFile(externalSettings, fixture.settings);
 
-	const result = spawnSync(process.execPath, [
-		mergeScript,
-		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
-	], {
-		cwd: repoRoot,
-		env: process.env,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[mergeScript, fixture.defaults, "--settings", fixture.settings, "--default-extensions", fixture.extensions],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /symlinked Pi settings source/);
 	assert.deepEqual(backupFiles(fixture.settings), []);
 });
 
-test("merge rejects settings sources swapped to a symlink during backup read before creating backups", { skip: process.platform === "win32" }, () => {
-	const fixture = tempFixture(
-		{ packages: [], quietStartup: true },
-		{ packages: [harnessPackage] },
-	);
+test("merge rejects settings sources swapped to a symlink during backup read before creating backups", {
+	skip: process.platform === "win32",
+}, () => {
+	const fixture = tempFixture({ packages: [], quietStartup: true }, { packages: [harnessPackage] });
 	const externalDir = mkdtempSync(join(tmpdir(), "tlh-merge-settings-backup-source-swap-"));
 	const externalSettings = join(externalDir, "settings.json");
 	const externalSource = { packages: ["npm:attacker"] };
 	writeFileSync(externalSettings, JSON.stringify(externalSource, null, 2));
 	const preload = writeSwapBackupSourceToSymlinkAfterOpenPreload(dirname(fixture.settings));
 
-	const result = spawnSync(process.execPath, [
-		"--import", preload,
-		mergeScript,
-		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
-	], {
-		cwd: repoRoot,
-		env: {
-			...process.env,
-			TLH_TEST_SWAP_BACKUP_SOURCE_PATH: fixture.settings,
-			TLH_TEST_SWAP_BACKUP_SOURCE_TARGET: externalSettings,
+	const result = spawnSync(
+		process.execPath,
+		[
+			"--import",
+			preload,
+			mergeScript,
+			fixture.defaults,
+			"--settings",
+			fixture.settings,
+			"--default-extensions",
+			fixture.extensions,
+		],
+		{
+			cwd: repoRoot,
+			env: {
+				...process.env,
+				TLH_TEST_SWAP_BACKUP_SOURCE_PATH: fixture.settings,
+				TLH_TEST_SWAP_BACKUP_SOURCE_TARGET: externalSettings,
+			},
+			encoding: "utf8",
 		},
-		encoding: "utf8",
-	});
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /symlinked Pi settings source/);
@@ -192,10 +203,7 @@ test("merge rejects settings sources swapped to a symlink during backup read bef
 });
 
 test("merge migrates existing lastChangelogVersion to the changelog sentinel", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage], lastChangelogVersion: "0.10.0" },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage], lastChangelogVersion: "0.10.0" });
 
 	runMerge(fixture);
 
@@ -203,10 +211,7 @@ test("merge migrates existing lastChangelogVersion to the changelog sentinel", (
 });
 
 test("merge dry-run reports changelog sentinel migration without writing settings", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage], lastChangelogVersion: "0.10.0" },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage], lastChangelogVersion: "0.10.0" });
 	const before = readFileSync(fixture.settings, "utf8");
 
 	const output = runMerge(fixture, { dryRun: true, quiet: false });
@@ -217,44 +222,43 @@ test("merge dry-run reports changelog sentinel migration without writing setting
 });
 
 test("merge treats a missing default-extension manifest as empty", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] });
 
-	execFileSync(process.execPath, [
-		mergeScript,
-		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", `${fixture.extensions}.missing`,
-		"--quiet",
-	], {
-		cwd: repoRoot,
-		env: process.env,
-		encoding: "utf8",
-	});
+	execFileSync(
+		process.execPath,
+		[
+			mergeScript,
+			fixture.defaults,
+			"--settings",
+			fixture.settings,
+			"--default-extensions",
+			`${fixture.extensions}.missing`,
+			"--quiet",
+		],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			encoding: "utf8",
+		},
+	);
 
 	assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage]);
 });
 
 test("merge refuses to mutate normal Pi config paths", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] });
 	const homeDir = join(dirname(fixture.settings), "home");
 	const protectedSettings = join(homeDir, ".pi", "agent", "settings.json");
 
-	const result = spawnSync(process.execPath, [
-		mergeScript,
-		fixture.defaults,
-		"--settings", protectedSettings,
-		"--default-extensions", fixture.extensions,
-	], {
-		cwd: repoRoot,
-		env: { ...process.env, HOME: homeDir },
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[mergeScript, fixture.defaults, "--settings", protectedSettings, "--default-extensions", fixture.extensions],
+		{
+			cwd: repoRoot,
+			env: { ...process.env, HOME: homeDir },
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /Refusing to modify normal Pi config from The Last Harness installer/);
@@ -277,7 +281,6 @@ test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
 
 	assert.deepEqual(readJson(fixture.settings).subagents.agentDirs, ["./tlh/agents/subagents/"]);
 });
-
 
 for (const [name, malformedValue] of [
 	["scalar", "nope"],
@@ -339,10 +342,7 @@ test("merge keeps exact append semantics for unrelated arrays", () => {
 
 	runMerge(fixture);
 
-	assert.deepEqual(readJson(fixture.settings).otherAgentDirs, [
-		"./tlh/agents/subagents",
-		"tlh/agents/subagents",
-	]);
+	assert.deepEqual(readJson(fixture.settings).otherAgentDirs, ["./tlh/agents/subagents", "tlh/agents/subagents"]);
 });
 
 test("merge scrubs tlh.gnosis from existing settings while preserving other fields", () => {
@@ -388,11 +388,7 @@ test("merge removes the retired plannotator package from isolated settings and l
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredPlannotatorPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredPlannotatorPackage, "npm:unrelated-package"],
 		},
 	);
 
@@ -400,10 +396,7 @@ test("merge removes the retired plannotator package from isolated settings and l
 	const settings = readJson(fixture.settings);
 
 	assert.match(output, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:unrelated-package",
-	]);
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:unrelated-package"]);
 	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
@@ -411,10 +404,7 @@ test("merge dry-run reports retired plannotator cleanup without writing settings
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				{ source: retiredPlannotatorPackage, extensions: ["legacy-filter"] },
-			],
+			packages: [harnessPackage, { source: retiredPlannotatorPackage, extensions: ["legacy-filter"] }],
 		},
 	);
 	const before = readFileSync(fixture.settings, "utf8");
@@ -462,38 +452,37 @@ test("merge reruns preserve user-owned settings and stay idempotent", () => {
 });
 
 test("merge records provenance for managed default-extension package identities", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage] },
-		[
-			{
-				id: "notify",
-				source: "npm:@diegopetrucci/pi-notify",
-			},
-		],
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] }, [
+		{
+			id: "notify",
+			source: "npm:@diegopetrucci/pi-notify",
+		},
+	]);
 
 	runMerge(fixture);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
 		"npm:@diegopetrucci/pi-notify",
 	]);
-	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("merge does not remove a manually re-added retired default after provenance migration", () => {
-	const fixture = tempFixture(
-		{ packages: [] },
-		{ packages: [harnessPackage, retiredPlannotatorPackage] },
-	);
+	const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage, retiredPlannotatorPackage] });
 
 	runMerge(fixture);
-	writeFileSync(fixture.settings, JSON.stringify({
-		...readJson(fixture.settings),
-		packages: [harnessPackage, retiredPlannotatorPackage],
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				...readJson(fixture.settings),
+				packages: [harnessPackage, retiredPlannotatorPackage],
+			},
+			null,
+			2,
+		),
+	);
 
 	runMerge(fixture);
 
@@ -531,10 +520,7 @@ test("merge migrates existing unpinned managed npm default package sources to bu
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:@diegopetrucci/pi-notify",
-			],
+			packages: [harnessPackage, "npm:@diegopetrucci/pi-notify"],
 		},
 		[
 			{
@@ -547,21 +533,17 @@ test("merge migrates existing unpinned managed npm default package sources to bu
 	runMerge(fixture);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify@0.1.5",
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
+		"npm:@diegopetrucci/pi-notify",
 	]);
-	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("merge updates managed pinned npm default package sources when the bundled manifest pin changes", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:@diegopetrucci/pi-notify@0.1.5",
-			],
+			packages: [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
@@ -579,21 +561,17 @@ test("merge updates managed pinned npm default package sources when the bundled 
 	runMerge(fixture);
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify@0.1.6",
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.6"]);
+	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
+		"npm:@diegopetrucci/pi-notify",
 	]);
-	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("merge preserves older pinned npm package sources without managed default provenance", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:@diegopetrucci/pi-notify@0.1.5",
-			],
+			packages: [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"],
 		},
 		[
 			{
@@ -608,10 +586,7 @@ test("merge preserves older pinned npm package sources without managed default p
 	const afterFirstRaw = readFileSync(fixture.settings, "utf8");
 
 	assert.doesNotMatch(firstOutput, /update default extension package source/);
-	assert.deepEqual(afterFirst.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify@0.1.5",
-	]);
+	assert.deepEqual(afterFirst.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
 	assert.deepEqual(afterFirst.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 
 	const secondOutput = runMerge(fixture, { quiet: false });
@@ -620,10 +595,7 @@ test("merge preserves older pinned npm package sources without managed default p
 	assert.match(secondOutput, /No settings changes needed\./);
 	assert.doesNotMatch(secondOutput, /update default extension package source/);
 	assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstRaw);
-	assert.deepEqual(afterSecond.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify@0.1.5",
-	]);
+	assert.deepEqual(afterSecond.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
 	assert.deepEqual(afterSecond.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 });
 
@@ -650,11 +622,7 @@ test("critical source updates dedupe stale same-identity filtered packages", () 
 
 	runMerge(fixture);
 
-	assert.deepEqual(readJson(fixture.settings).packages, [
-		harnessPackage,
-		criticalSource,
-		"npm:unrelated-package",
-	]);
+	assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, criticalSource, "npm:unrelated-package"]);
 });
 
 test("merge replaces the harness package when a slash ref keeps the same git identity", () => {
@@ -674,12 +642,7 @@ test("merge dedupes duplicate harness entries when rerun with a branch package s
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				branchHarnessPackage,
-				harnessPackage,
-				"npm:unrelated-package@1.0.0",
-				"npm:unrelated-package",
-			],
+			packages: [branchHarnessPackage, harnessPackage, "npm:unrelated-package@1.0.0", "npm:unrelated-package"],
 		},
 	);
 
@@ -696,12 +659,7 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				branchHarnessPackage,
-				harnessPackage,
-				"npm:unrelated-package@1.0.0",
-				"npm:unrelated-package",
-			],
+			packages: [branchHarnessPackage, harnessPackage, "npm:unrelated-package@1.0.0", "npm:unrelated-package"],
 		},
 	);
 
@@ -718,10 +676,7 @@ test("merge dedupes duplicate harness entries when rerun from main", () => {
 
 test("merge with a local path source registers exactly one TLH entry and omits the canonical git entry", () => {
 	const localSource = "/Users/test/tlh-repo";
-	const fixture = tempFixture(
-		{ packages: [harnessPackage] },
-		{ packages: [] },
-	);
+	const fixture = tempFixture({ packages: [harnessPackage] }, { packages: [] });
 
 	runMerge(fixture, { packageSource: localSource });
 
@@ -733,10 +688,7 @@ test("merge with a local path source registers exactly one TLH entry and omits t
 });
 
 test("merge with the canonical git source is unchanged by the non-canonical dedup logic", () => {
-	const fixture = tempFixture(
-		{ packages: [harnessPackage] },
-		{ packages: [] },
-	);
+	const fixture = tempFixture({ packages: [harnessPackage] }, { packages: [] });
 
 	runMerge(fixture);
 
@@ -746,10 +698,7 @@ test("merge with the canonical git source is unchanged by the non-canonical dedu
 
 test("merge with a local path source over existing settings containing the canonical entry removes the canonical entry", () => {
 	const localSource = "/Users/test/tlh-repo";
-	const fixture = tempFixture(
-		{ packages: [harnessPackage] },
-		{ packages: [harnessPackage] },
-	);
+	const fixture = tempFixture({ packages: [harnessPackage] }, { packages: [harnessPackage] });
 
 	runMerge(fixture, { packageSource: localSource });
 
@@ -764,10 +713,7 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:pi-web-access",
-			],
+			packages: [harnessPackage, "npm:pi-web-access"],
 		},
 		[
 			{
@@ -780,10 +726,7 @@ test("merge defers bundled pi-web-access when an upstream package is already ins
 
 	runMerge(fixture);
 
-	assert.deepEqual(readJson(fixture.settings).packages, [
-		harnessPackage,
-		"npm:pi-web-access",
-	]);
+	assert.deepEqual(readJson(fixture.settings).packages, [harnessPackage, "npm:pi-web-access"]);
 });
 
 test("merge force-removes retired confirmation packages by identity while preserving unrelated packages", () => {
@@ -802,10 +745,7 @@ test("merge force-removes retired confirmation packages by identity while preser
 	const output = runMerge(fixture, { quiet: false });
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify",
-	]);
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
 	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-permission-gate/);
 	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-confirm-destructive/);
 });
@@ -814,11 +754,7 @@ test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a change
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:@diegopetrucci/pi-context-cap",
-				"npm:@diegopetrucci/pi-notify",
-			],
+			packages: [harnessPackage, "npm:@diegopetrucci/pi-context-cap", "npm:@diegopetrucci/pi-notify"],
 		},
 	);
 
@@ -842,7 +778,11 @@ test("merge prunes context-cap from tlh.disabledDefaultExtensions and emits a ch
 	const output = runMerge(fixture, { quiet: false });
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "context-cap should be pruned, other entries preserved");
+	assert.deepEqual(
+		settings.tlh.disabledDefaultExtensions,
+		["notify"],
+		"context-cap should be pruned, other entries preserved",
+	);
 	assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
 });
 
@@ -858,7 +798,11 @@ test("merge prunes whitespace-padded context-cap entry from tlh.disabledDefaultE
 	const output = runMerge(fixture, { quiet: false });
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "whitespace-padded context-cap should be pruned");
+	assert.deepEqual(
+		settings.tlh.disabledDefaultExtensions,
+		["notify"],
+		"whitespace-padded context-cap should be pruned",
+	);
 	assert.match(output, /remove stale context-cap opt-out from tlh\.disabledDefaultExtensions/);
 });
 
@@ -884,11 +828,7 @@ test("merge cleanup of retired confirmation packages is idempotent after first r
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredPermissionGatePackage,
-				retiredConfirmDestructivePackage,
-			],
+			packages: [harnessPackage, retiredPermissionGatePackage, retiredConfirmDestructivePackage],
 		},
 	);
 
@@ -919,10 +859,7 @@ test("merge force-removes pi-oracle package while preserving unrelated packages"
 	const output = runMerge(fixture, { quiet: false });
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:@diegopetrucci/pi-notify",
-	]);
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
 	assert.match(output, /force-remove retired default extension package: npm:@diegopetrucci\/pi-oracle/);
 });
 
@@ -938,7 +875,11 @@ test("merge prunes oracle from tlh.disabledDefaultExtensions and emits a changes
 	const output = runMerge(fixture, { quiet: false });
 
 	const settings = readJson(fixture.settings);
-	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["notify"], "oracle should be pruned, other entries preserved");
+	assert.deepEqual(
+		settings.tlh.disabledDefaultExtensions,
+		["notify"],
+		"oracle should be pruned, other entries preserved",
+	);
 	assert.match(output, /remove stale oracle opt-out from tlh\.disabledDefaultExtensions/);
 });
 
@@ -962,10 +903,7 @@ test("merge cleanup of pi-oracle is idempotent after first run", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredOraclePackage,
-			],
+			packages: [harnessPackage, retiredOraclePackage],
 			tlh: { disabledDefaultExtensions: ["oracle", "notify"] },
 		},
 	);
@@ -986,10 +924,7 @@ test("merge cleanup of pi-context-cap is idempotent after first run", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				"npm:@diegopetrucci/pi-context-cap",
-			],
+			packages: [harnessPackage, "npm:@diegopetrucci/pi-context-cap"],
 			tlh: { disabledDefaultExtensions: ["context-cap", "notify"] },
 		},
 	);
@@ -998,7 +933,10 @@ test("merge cleanup of pi-context-cap is idempotent after first run", () => {
 
 	const afterFirst = readFileSync(fixture.settings, "utf8");
 	const firstSettings = readJson(fixture.settings);
-	assert.ok(!firstSettings.packages.includes("npm:@diegopetrucci/pi-context-cap"), "pi-context-cap removed on first run");
+	assert.ok(
+		!firstSettings.packages.includes("npm:@diegopetrucci/pi-context-cap"),
+		"pi-context-cap removed on first run",
+	);
 	assert.deepEqual(firstSettings.tlh.disabledDefaultExtensions, ["notify"], "context-cap opt-out pruned on first run");
 
 	const secondOutput = runMerge(fixture, { quiet: false });
@@ -1053,11 +991,7 @@ test("merge removes the TLH-managed librarian package from isolated settings and
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredLibrarianPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredLibrarianPackage, "npm:unrelated-package"],
 		},
 	);
 
@@ -1065,10 +999,7 @@ test("merge removes the TLH-managed librarian package from isolated settings and
 	const settings = readJson(fixture.settings);
 
 	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-librarian/);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:unrelated-package",
-	]);
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:unrelated-package"]);
 	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
@@ -1079,10 +1010,7 @@ test("merge preserves a user-added librarian package that TLH did not install", 
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredLibrarianPackage,
-			],
+			packages: [harnessPackage, retiredLibrarianPackage],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [], // provenance exists but librarian is NOT managed
@@ -1094,10 +1022,7 @@ test("merge preserves a user-added librarian package that TLH did not install", 
 	const output = runMerge(fixture, { quiet: false });
 	const settings = readJson(fixture.settings);
 
-	assert.ok(
-		settings.packages.includes(retiredLibrarianPackage),
-		"user-added librarian package must be preserved",
-	);
+	assert.ok(settings.packages.includes(retiredLibrarianPackage), "user-added librarian package must be preserved");
 	assert.doesNotMatch(output, /pi-librarian/);
 });
 
@@ -1111,11 +1036,7 @@ test("merge removes TLH-managed librarian from a modern profile where provenance
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredLibrarianPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredLibrarianPackage, "npm:unrelated-package"],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [retiredLibrarianPackage],
@@ -1147,10 +1068,7 @@ test("merge dry-run reports retired librarian cleanup without writing settings",
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredLibrarianPackage,
-			],
+			packages: [harnessPackage, retiredLibrarianPackage],
 		},
 	);
 	const before = readFileSync(fixture.settings, "utf8");
@@ -1165,10 +1083,7 @@ test("merge librarian retirement cleanup is idempotent after first run", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredLibrarianPackage,
-			],
+			packages: [harnessPackage, retiredLibrarianPackage],
 		},
 	);
 
@@ -1194,11 +1109,7 @@ test("merge removes the TLH-managed fff package from isolated settings and logs 
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredFffPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredFffPackage, "npm:unrelated-package"],
 		},
 	);
 
@@ -1206,10 +1117,7 @@ test("merge removes the TLH-managed fff package from isolated settings and logs 
 	const settings = readJson(fixture.settings);
 
 	assert.match(output, /Will remove retired TLH default package: npm:@ff-labs\/pi-fff/);
-	assert.deepEqual(settings.packages, [
-		harnessPackage,
-		"npm:unrelated-package",
-	]);
+	assert.deepEqual(settings.packages, [harnessPackage, "npm:unrelated-package"]);
 	assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, []);
 });
 
@@ -1220,10 +1128,7 @@ test("merge preserves a user-added fff package that TLH did not install", () => 
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredFffPackage,
-			],
+			packages: [harnessPackage, retiredFffPackage],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [], // provenance exists but fff is NOT managed
@@ -1235,10 +1140,7 @@ test("merge preserves a user-added fff package that TLH did not install", () => 
 	const output = runMerge(fixture, { quiet: false });
 	const settings = readJson(fixture.settings);
 
-	assert.ok(
-		settings.packages.includes(retiredFffPackage),
-		"user-added fff package must be preserved",
-	);
+	assert.ok(settings.packages.includes(retiredFffPackage), "user-added fff package must be preserved");
 	assert.doesNotMatch(output, /pi-fff/);
 });
 
@@ -1249,11 +1151,7 @@ test("merge removes TLH-managed fff from a modern profile where provenance alrea
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredFffPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredFffPackage, "npm:unrelated-package"],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [retiredFffPackage],
@@ -1273,10 +1171,7 @@ test("merge removes TLH-managed fff from a modern profile where provenance alrea
 	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
 
 	const resynced = settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [];
-	assert.ok(
-		!resynced.includes(retiredFffPackage),
-		"resynced provenance must not list the retired fff identity",
-	);
+	assert.ok(!resynced.includes(retiredFffPackage), "resynced provenance must not list the retired fff identity");
 });
 
 test("merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
@@ -1308,10 +1203,7 @@ test("merge fff retirement cleanup is idempotent after first run", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredFffPackage,
-			],
+			packages: [harnessPackage, retiredFffPackage],
 		},
 	);
 
@@ -1338,11 +1230,7 @@ test("merge removes the TLH-managed subagents npm package from isolated settings
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredSubagentsNpmPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredSubagentsNpmPackage, "npm:unrelated-package"],
 		},
 	);
 
@@ -1351,7 +1239,9 @@ test("merge removes the TLH-managed subagents npm package from isolated settings
 
 	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-subagents/);
 	assert.ok(
-		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage),
+		!settings.packages.some(
+			(entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage,
+		),
 		"TLH-managed subagents npm package must be removed",
 	);
 	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
@@ -1364,10 +1254,7 @@ test("merge preserves a user-added subagents npm package that TLH did not instal
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredSubagentsNpmPackage,
-			],
+			packages: [harnessPackage, retiredSubagentsNpmPackage],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [], // provenance exists but subagents is NOT managed
@@ -1394,11 +1281,7 @@ test("merge removes TLH-managed subagents from a modern profile where provenance
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredSubagentsNpmPackage,
-				"npm:unrelated-package",
-			],
+			packages: [harnessPackage, retiredSubagentsNpmPackage, "npm:unrelated-package"],
 			tlh: {
 				defaultExtensionProvenance: {
 					managedPackageIdentities: [retiredSubagentsNpmPackage],
@@ -1412,7 +1295,9 @@ test("merge removes TLH-managed subagents from a modern profile where provenance
 
 	assert.match(output, /Will remove retired TLH default package: npm:@diegopetrucci\/pi-subagents/);
 	assert.ok(
-		!settings.packages.some((entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage),
+		!settings.packages.some(
+			(entry) => (typeof entry === "string" ? entry : entry.source) === retiredSubagentsNpmPackage,
+		),
 		"TLH-managed subagents npm package must be removed",
 	);
 	assert.ok(settings.packages.includes("npm:unrelated-package"), "unrelated package must be preserved");
@@ -1453,10 +1338,7 @@ test("merge subagents retirement cleanup is idempotent after first run", () => {
 	const fixture = tempFixture(
 		{ packages: [] },
 		{
-			packages: [
-				harnessPackage,
-				retiredSubagentsNpmPackage,
-			],
+			packages: [harnessPackage, retiredSubagentsNpmPackage],
 		},
 	);
 
@@ -1495,7 +1377,11 @@ test("merge prune removes subagents.disableBuiltins while preserving sibling sub
 
 	const settings = readJson(fixture.settings);
 	assert.equal(Object.hasOwn(settings.subagents, "disableBuiltins"), false, "disableBuiltins must be pruned");
-	assert.deepEqual(settings.subagents.agentDirs, ["custom/subagents", "tlh/agents/subagents"], "agentDirs must survive");
+	assert.deepEqual(
+		settings.subagents.agentDirs,
+		["custom/subagents", "tlh/agents/subagents"],
+		"agentDirs must survive",
+	);
 	assert.deepEqual(settings.subagents.agentOverrides, { developer: { model: "kept" } }, "agentOverrides must survive");
 });
 
@@ -1519,7 +1405,11 @@ test("merge prune for subagents.disableBuiltins is idempotent on second run", ()
 	runMerge(fixture);
 
 	const afterFirstPrune = readFileSync(fixture.settings, "utf8");
-	assert.equal(Object.hasOwn(readJson(fixture.settings).subagents, "disableBuiltins"), false, "disableBuiltins removed on first run");
+	assert.equal(
+		Object.hasOwn(readJson(fixture.settings).subagents, "disableBuiltins"),
+		false,
+		"disableBuiltins removed on first run",
+	);
 
 	const secondOutput = runMerge(fixture, { quiet: false });
 	assert.match(secondOutput, /No settings changes needed\./);

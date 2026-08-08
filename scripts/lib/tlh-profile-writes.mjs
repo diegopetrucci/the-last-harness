@@ -29,7 +29,9 @@ function relativeProfilePath(agentDir, targetPath, label) {
 		throw new Error(`refusing to write ${label} over the configured TLH profile directory: ${resolvedTargetPath}`);
 	}
 	if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath)) {
-		throw new Error(`refusing to write ${label} outside the configured TLH profile path: ${resolvedTargetPath} (profile: ${resolvedAgentDir})`);
+		throw new Error(
+			`refusing to write ${label} outside the configured TLH profile path: ${resolvedTargetPath} (profile: ${resolvedAgentDir})`,
+		);
 	}
 	const relativePath = relative(resolvedAgentDir, resolvedTargetPath);
 	if (!relativePath || relativePath === ".") {
@@ -96,7 +98,12 @@ function validatedPlanPaths(plan, label) {
 	return { agentDir, relativePath: derivedRelativePath };
 }
 
-export function createSafeTlhProfileWritePlan({ agentDir, targetPath, label = "TLH profile file", homeDir = homedir() }) {
+export function createSafeTlhProfileWritePlan({
+	agentDir,
+	targetPath,
+	label = "TLH profile file",
+	homeDir = homedir(),
+}) {
 	const resolvedAgentDir = resolve(agentDir);
 	const resolvedTargetPath = resolve(targetPath);
 	const normalizedAgentDir = realpathForCompare(resolvedAgentDir);
@@ -125,14 +132,10 @@ export function writeSafeTlhProfileFile(plan, content, { mode = 0o600, exclusive
 	const label = plan?.label || "TLH profile file";
 	const validatedMode = validateMode(mode, label);
 	if (exclusive) {
-		throw new Error(`refusing to write ${label} with exclusive mode through the stale compatibility shim because atomic exclusive writes are unsupported`);
+		throw new Error(
+			`refusing to write ${label} with exclusive mode through the stale compatibility shim because atomic exclusive writes are unsupported`,
+		);
 	}
 	const { agentDir, relativePath } = validatedPlanPaths(plan, label);
-	return writeSafeProfileFile(
-		{ agentDir },
-		relativePath,
-		content,
-		label,
-		{ mode: validatedMode },
-	);
+	return writeSafeProfileFile({ agentDir }, relativePath, content, label, { mode: validatedMode });
 }

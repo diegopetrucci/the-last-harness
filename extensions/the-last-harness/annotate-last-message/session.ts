@@ -1,6 +1,10 @@
 import type { SessionEntry, SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 
-import type { LastAssistantMessageData, LastAssistantMessageLookupResult, LastAssistantMessageSection } from "./types.js";
+import type {
+	LastAssistantMessageData,
+	LastAssistantMessageLookupResult,
+	LastAssistantMessageSection,
+} from "./types.js";
 
 const SECTION_PREVIEW_LIMIT = 96;
 

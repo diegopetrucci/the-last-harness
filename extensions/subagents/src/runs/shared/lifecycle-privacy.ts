@@ -13,15 +13,19 @@ export function isProtectedPausedLifecycle(input: LifecyclePrivacyInput | null |
 
 export function protectedLifecycleText(label: "error" | "diagnosis" | "nested_warning"): string {
 	switch (label) {
-		case "error": return "Lifecycle status requires attention.";
-		case "nested_warning": return "Nested status unavailable during the paused lifecycle.";
+		case "error":
+			return "Lifecycle status requires attention.";
+		case "nested_warning":
+			return "Nested status unavailable during the paused lifecycle.";
 		case "diagnosis":
-		default: return "Lifecycle state was refreshed for this paused run.";
+		default:
+			return "Lifecycle state was refreshed for this paused run.";
 	}
 }
 
 export function formatProtectedLifecycleCleanup(cleanup: ChildProcessCleanupResult): string {
 	if (cleanup.terminated) return "confirmed.";
-	if (cleanup.attempted || cleanup.escalatedToSigkill || cleanup.liveProcessesDetected !== undefined) return "unconfirmed.";
+	if (cleanup.attempted || cleanup.escalatedToSigkill || cleanup.liveProcessesDetected !== undefined)
+		return "unconfirmed.";
 	return "pending confirmation.";
 }

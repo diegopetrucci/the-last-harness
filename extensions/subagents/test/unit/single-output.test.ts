@@ -75,7 +75,12 @@ describe("resolveSingleOutputPath", () => {
 	});
 
 	it("resolves relative output paths against an explicit artifact base", () => {
-		const resolved = resolveSingleOutputPath("reviews/report.md", "/runtime", "/requested", "/repo/.pi-subagents/artifacts/outputs/run-1");
+		const resolved = resolveSingleOutputPath(
+			"reviews/report.md",
+			"/runtime",
+			"/requested",
+			"/repo/.pi-subagents/artifacts/outputs/run-1",
+		);
 		assert.equal(resolved, path.resolve("/repo/.pi-subagents/artifacts/outputs/run-1", "reviews/report.md"));
 	});
 });
@@ -97,10 +102,7 @@ describe("injectSingleOutputInstruction", () => {
 			extractSingleOutputInstructionTarget("**Output:** The harness will save your final response to: /tmp/legacy.md"),
 			"/tmp/legacy.md",
 		);
-		assert.equal(
-			extractSingleOutputInstructionTarget("Write your findings to: /tmp/short.md"),
-			"/tmp/short.md",
-		);
+		assert.equal(extractSingleOutputInstructionTarget("Write your findings to: /tmp/short.md"), "/tmp/short.md");
 		assert.equal(extractSingleOutputInstructionTarget("No output instruction here"), undefined);
 	});
 });
@@ -181,7 +183,10 @@ describe("formatSavedOutputReference", () => {
 
 describe("validateFileOnlyOutputMode", () => {
 	it("requires an output path for file-only mode", () => {
-		assert.match(validateFileOnlyOutputMode("file-only", undefined, "Single run") ?? "", /Single run sets outputMode: "file-only"/);
+		assert.match(
+			validateFileOnlyOutputMode("file-only", undefined, "Single run") ?? "",
+			/Single run sets outputMode: "file-only"/,
+		);
 		assert.equal(validateFileOnlyOutputMode("file-only", "/tmp/report.md", "Single run"), undefined);
 		assert.equal(validateFileOnlyOutputMode("inline", undefined, "Single run"), undefined);
 	});

@@ -73,13 +73,15 @@ describe("async runner execution", () => {
 
 	it("preserves independent agent ceilings while a shorter caller timeout remains global", () => {
 		const result = buildAsyncRunnerSteps("run-mixed-ceilings", {
-			chain: [{
-				parallel: [
-					{ agent: "fast", task: "short ceiling" },
-					{ agent: "slow", task: "long ceiling" },
-					{ agent: "caller-bound", task: "caller bound" },
-				],
-			}],
+			chain: [
+				{
+					parallel: [
+						{ agent: "fast", task: "short ceiling" },
+						{ agent: "slow", task: "long ceiling" },
+						{ agent: "caller-bound", task: "caller bound" },
+					],
+				},
+			],
 			agents: [agent("fast", undefined, 100), agent("slow", undefined, 300), agent("caller-bound", undefined, 900)],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
@@ -90,7 +92,10 @@ describe("async runner execution", () => {
 		assert.ok("steps" in result, "expected successful step build");
 		const parallel = result.steps[0];
 		assert.ok(parallel && "parallel" in parallel && Array.isArray(parallel.parallel));
-		assert.deepEqual(parallel.parallel.map((step) => step.timeoutMs), [100, undefined, undefined]);
+		assert.deepEqual(
+			parallel.parallel.map((step) => step.timeoutMs),
+			[100, undefined, undefined],
+		);
 	});
 
 	it("uses config default when no step, run, or agent budget exists", () => {

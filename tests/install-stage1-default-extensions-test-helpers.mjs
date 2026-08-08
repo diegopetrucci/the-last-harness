@@ -29,7 +29,10 @@ function writeFakePi(fakebin, body) {
 	writeFakeCommand(fakebin, "pi", body);
 }
 
-export function makeDefaultExtensionInstallConfig(t, { defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" }) {
+export function makeDefaultExtensionInstallConfig(
+	t,
+	{ defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" },
+) {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -63,6 +66,9 @@ export function makeDefaultExtensionInstallConfig(t, { defaultExtensions, settin
 
 export function assertPiCommands(path, agentDir, commands) {
 	const records = readPiLogRecords(path);
-	assert.deepEqual(records.map((record) => [record.agentDir, record.command]), commands.map((command) => [agentDir, command]));
+	assert.deepEqual(
+		records.map((record) => [record.agentDir, record.command]),
+		commands.map((command) => [agentDir, command]),
+	);
 	for (const record of records) assert.equal(realpathSync(record.cwd), realpathSync(agentDir));
 }

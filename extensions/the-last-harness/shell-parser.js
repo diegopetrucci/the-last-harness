@@ -393,7 +393,9 @@ export function isSupportedEnvOptionWithValue(token) {
 }
 export function isSupportedEnvOptionWithAttachedValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return normalizedToken.startsWith("--argv0=") || normalizedToken.startsWith("--chdir=") || normalizedToken.startsWith("--unset=");
+    return (normalizedToken.startsWith("--argv0=") ||
+        normalizedToken.startsWith("--chdir=") ||
+        normalizedToken.startsWith("--unset="));
 }
 export function isEnvSplitStringOption(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
@@ -578,12 +580,12 @@ export function renderPrintfCycle(format, args, startIndex) {
     for (let index = 0; index < format.length; index += 1) {
         const character = format[index];
         if (character === "\\") {
-            const escape = renderPrintfEscape(format, index);
-            if (!escape) {
+            const escapeResult = renderPrintfEscape(format, index);
+            if (!escapeResult) {
                 return undefined;
             }
-            output += escape.output;
-            index = escape.nextIndex;
+            output += escapeResult.output;
+            index = escapeResult.nextIndex;
             continue;
         }
         if (character !== "%") {

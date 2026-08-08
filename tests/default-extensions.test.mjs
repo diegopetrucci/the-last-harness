@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -109,13 +118,20 @@ test("shared package identity keeps npm, git, and local source semantics", () =>
 
 test("shared default-extension reader trims descriptions and can allow missing manifests", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			description: "  Helpful default  ",
-			source: "npm:helper",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					description: "  Helpful default  ",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
 
 	assert.deepEqual(readDefaultExtensions(fixture.extensions), [
 		{
@@ -128,7 +144,10 @@ test("shared default-extension reader trims descriptions and can allow missing m
 			description: "Helpful default",
 		},
 	]);
-	assert.deepEqual(readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json"), { allowMissing: true }), []);
+	assert.deepEqual(
+		readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json"), { allowMissing: true }),
+		[],
+	);
 	assert.throws(
 		() => readDefaultExtensions(join(fixture.dir, "missing-default-extensions.json")),
 		/File does not exist:/,
@@ -182,16 +201,22 @@ test("tlh-defaults errors when the default-extension manifest is missing", () =>
 	const fixture = tempFixture();
 	writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
 
-	const result = spawnSync(process.execPath, [
-		defaultsScript,
-		"--settings", fixture.settings,
-		"--defaults", join(fixture.dir, "missing-default-extensions.json"),
-		"list",
-	], {
-		cwd: repoRoot,
-		env: process.env,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[
+			defaultsScript,
+			"--settings",
+			fixture.settings,
+			"--defaults",
+			join(fixture.dir, "missing-default-extensions.json"),
+			"list",
+		],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /File does not exist:/);
@@ -216,30 +241,46 @@ test("installable support files no longer include the legacy defaults helper tre
 
 test("merge force-removes all pi-intercom package identities (string and object entries, duplicates, idempotent)", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
 	// Cover all 4 force-removed identities, both string and object forms, and a duplicate entry.
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"npm:@diegopetrucci/pi-intercom@0.8.0",
-			"npm:pi-intercom@0.7.0",
-			{ source: "git:github.com/nicobailon/pi-intercom@v0.6.0", owner: "preserve" },
-			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
-			"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
-			"npm:helper",
-		],
-		tlh: { disabledDefaultExtensions: ["intercom", "pi-intercom", "helper"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [
+					harnessPackage,
+					"npm:@diegopetrucci/pi-intercom@0.8.0",
+					"npm:pi-intercom@0.7.0",
+					{ source: "git:github.com/nicobailon/pi-intercom@v0.6.0", owner: "preserve" },
+					"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
+					"git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6",
+					"npm:helper",
+				],
+				tlh: { disabledDefaultExtensions: ["intercom", "pi-intercom", "helper"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
@@ -253,39 +294,53 @@ test("merge force-removes all pi-intercom package identities (string and object 
 	// Second merge is idempotent — no changes reported.
 	const secondOutput = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 	]);
 	assert.match(secondOutput, /No settings changes needed\./);
 });
 
 test("merge force-removes pi-intercom and post-merge sources/critical-sources contain no intercom entry", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			"npm:@diegopetrucci/pi-intercom@0.8.0",
-			"npm:helper",
-		],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@diegopetrucci/pi-intercom@0.8.0", "npm:helper"],
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
-	const sources = runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"sources",
-	]).trim().split("\n").filter(Boolean);
+	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
 	assert.equal(
 		sources.some((s) => s.includes("pi-intercom")),
 		false,
@@ -293,10 +348,15 @@ test("merge force-removes pi-intercom and post-merge sources/critical-sources co
 	);
 
 	const criticalSources = runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
 		"critical-sources",
-	]).trim().split("\n").filter(Boolean);
+	])
+		.trim()
+		.split("\n")
+		.filter(Boolean);
 	assert.equal(
 		criticalSources.some((s) => s.includes("pi-intercom")),
 		false,
@@ -306,28 +366,44 @@ test("merge force-removes pi-intercom and post-merge sources/critical-sources co
 
 test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-			"npm:pi-rtk",
-			"npm:@sherif-fanous/pi-rtk",
-			"git:github.com/sherif-fanous/pi-rtk@v0.5.0",
-			"npm:helper",
-		],
-		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [
+					harnessPackage,
+					"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+					"npm:pi-rtk",
+					"npm:@sherif-fanous/pi-rtk",
+					"git:github.com/sherif-fanous/pi-rtk@v0.5.0",
+					"npm:helper",
+				],
+				tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk", "helper"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
@@ -339,28 +415,44 @@ test("merge force-removes legacy pi-rtk packages and prunes stale rtk opt-outs",
 
 test("merge no longer reorders quiet-tools around retired rtk packages", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "quiet-tools",
-			aliases: ["compact-bash"],
-			replaces: ["npm:@diegopetrucci/pi-compact-bash"],
-			source: bundledSource("quiet-tools"),
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"npm:before",
-			"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
-			"npm:@diegopetrucci/pi-quiet-tools",
-			"npm:after",
-		],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "quiet-tools",
+					aliases: ["compact-bash"],
+					replaces: ["npm:@diegopetrucci/pi-compact-bash"],
+					source: bundledSource("quiet-tools"),
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [
+					harnessPackage,
+					"npm:before",
+					"git:github.com/diegopetrucci/pi-rtk@tlh-v0.6.0-5",
+					"npm:@diegopetrucci/pi-quiet-tools",
+					"npm:after",
+				],
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 	]);
 
 	assert.doesNotMatch(output, /reorder targeted default extension packages for load order/);
@@ -374,34 +466,47 @@ test("merge no longer reorders quiet-tools around retired rtk packages", () => {
 
 test("tlh-defaults rejects disabling critical defaults without changing settings", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "subagents",
-			aliases: ["pi-subagents"],
-			critical: true,
-			source: "npm:subagents",
-		},
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:subagents", "npm:helper"],
-		tlh: { disabledDefaultExtensions: ["helper"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "subagents",
+					aliases: ["pi-subagents"],
+					critical: true,
+					source: "npm:subagents",
+				},
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:subagents", "npm:helper"],
+				tlh: { disabledDefaultExtensions: ["helper"] },
+			},
+			null,
+			2,
+		),
+	);
 	const before = readFileSync(fixture.settings, "utf8");
 
-	const result = spawnSync(process.execPath, [
-		defaultsScript,
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "pi-subagents",
-	], {
-		cwd: repoRoot,
-		env: process.env,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[defaultsScript, "--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "pi-subagents"],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /critical default extension 'subagents' cannot be disabled/i);
@@ -412,23 +517,29 @@ test("tlh-defaults refuses to mutate normal Pi config paths", () => {
 	const fixture = tempFixture();
 	const homeDir = join(fixture.dir, "home");
 	const protectedSettings = join(homeDir, ".pi", "agent", "settings.json");
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
 
-	const result = spawnSync(process.execPath, [
-		defaultsScript,
-		"--settings", protectedSettings,
-		"--defaults", fixture.extensions,
-		"disable", "helper",
-	], {
-		cwd: repoRoot,
-		env: { ...process.env, HOME: homeDir },
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[defaultsScript, "--settings", protectedSettings, "--defaults", fixture.extensions, "disable", "helper"],
+		{
+			cwd: repoRoot,
+			env: { ...process.env, HOME: homeDir },
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /Refusing to modify normal Pi config from The Last Harness defaults command/);
@@ -437,28 +548,38 @@ test("tlh-defaults refuses to mutate normal Pi config paths", () => {
 
 test("tlh-defaults enable cleans stale critical opt-outs while preserving non-critical opt-outs", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "subagents",
-			aliases: ["pi-subagents"],
-			critical: true,
-			source: "npm:subagents",
-		},
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:subagents"],
-		tlh: { disabledDefaultExtensions: ["pi-subagents", "helper"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "subagents",
+					aliases: ["pi-subagents"],
+					critical: true,
+					source: "npm:subagents",
+				},
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:subagents"],
+				tlh: { disabledDefaultExtensions: ["pi-subagents", "helper"] },
+			},
+			null,
+			2,
+		),
+	);
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "subagents",
-	]);
+	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "enable", "subagents"]);
 
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.tlh.disabledDefaultExtensions, ["helper"]);
@@ -467,20 +588,23 @@ test("tlh-defaults enable cleans stale critical opt-outs while preserving non-cr
 
 test("tlh-defaults preserves settings and backup file modes when rewriting settings", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
 	writeFileSync(fixture.settings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
 	chmodSync(fixture.settings, 0o640);
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "helper",
-	]);
+	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "helper"]);
 
 	assert.equal(lstatSync(fixture.settings).mode & 0o777, 0o640);
 	const backups = backupFiles(fixture.settings);
@@ -492,25 +616,31 @@ test("tlh-defaults rejects symlinked settings targets before creating backups", 
 	const fixture = tempFixture();
 	const externalDir = mkdtempSync(join(tmpdir(), "tlh-defaults-symlink-target-"));
 	const externalSettings = join(externalDir, "settings.json");
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
 	writeFileSync(externalSettings, JSON.stringify({ packages: ["npm:helper"] }, null, 2));
 	symlinkFile(externalSettings, fixture.settings);
 
-	const result = spawnSync(process.execPath, [
-		defaultsScript,
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "helper",
-	], {
-		cwd: repoRoot,
-		env: process.env,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		[defaultsScript, "--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "helper"],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			encoding: "utf8",
+		},
+	);
 
 	assert.notEqual(result.status, 0);
 	assert.match(result.stderr, /symlinked TLH defaults settings source/);
@@ -519,22 +649,32 @@ test("tlh-defaults rejects symlinked settings targets before creating backups", 
 
 test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:helper"],
-		tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:helper"],
+				tlh: { rtk: { disabled: true }, disabledDefaultExtensions: ["rtk", "pi-rtk"] },
+			},
+			null,
+			2,
+		),
+	);
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "helper",
-	]);
+	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "helper"]);
 
 	const settings = readJson(fixture.settings);
 	assert.deepEqual(settings.packages, []);
@@ -544,23 +684,40 @@ test("tlh-defaults prunes legacy rtk opt-outs while mutating other defaults", ()
 
 test("tlh-defaults persists retired tlh.rtk cleanup even when disable is otherwise a no-op", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		tlh: {
-			rtk: { disabled: true },
-			disabledDefaultExtensions: ["helper"],
-		},
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				tlh: {
+					rtk: { disabled: true },
+					disabledDefaultExtensions: ["helper"],
+				},
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "helper",
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"disable",
+		"helper",
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -579,19 +736,28 @@ test("tlh-defaults persists retired tlh.rtk cleanup even when disable is otherwi
 
 test("merge updates critical package pins without --force", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "subagents",
-			critical: true,
-			source: "git:github.com/tlh/pi-subagents@new-pin",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "subagents",
+					critical: true,
+					source: "git:github.com/tlh/pi-subagents@new-pin",
+				},
+			],
+			null,
+			2,
+		),
+	);
 	writeFileSync(fixture.settings, JSON.stringify({ packages: ["git:github.com/tlh/pi-subagents@old-pin"] }, null, 2));
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
@@ -605,21 +771,37 @@ test("merge repairs critical same-identity package entries with disabling extens
 		const fixture = tempFixture();
 		const criticalSource = "git:github.com/tlh/pi-subagents@new-pin";
 		const oldSource = "git:github.com/tlh/pi-subagents@old-pin";
-		writeFileSync(fixture.extensions, JSON.stringify([
-			{
-				id: "subagents",
-				critical: true,
-				source: criticalSource,
-			},
-		], null, 2));
-		writeFileSync(fixture.settings, JSON.stringify({
-			packages: [{ source: oldSource, extensions, owner: "preserve" }],
-		}, null, 2));
+		writeFileSync(
+			fixture.extensions,
+			JSON.stringify(
+				[
+					{
+						id: "subagents",
+						critical: true,
+						source: criticalSource,
+					},
+				],
+				null,
+				2,
+			),
+		);
+		writeFileSync(
+			fixture.settings,
+			JSON.stringify(
+				{
+					packages: [{ source: oldSource, extensions, owner: "preserve" }],
+				},
+				null,
+				2,
+			),
+		);
 
 		runNode(mergeScript, [
 			fixture.defaults,
-			"--settings", fixture.settings,
-			"--default-extensions", fixture.extensions,
+			"--settings",
+			fixture.settings,
+			"--default-extensions",
+			fixture.extensions,
 			"--quiet",
 		]);
 
@@ -628,28 +810,48 @@ test("merge repairs critical same-identity package entries with disabling extens
 		assert(repaired, `${name}: critical package source was not repaired`);
 		assert.equal(repaired.owner, "preserve", `${name}: unrelated package fields should be preserved`);
 		assert.equal(Object.hasOwn(repaired, "extensions"), false, `${name}: disabling extension filter should be removed`);
-		assert.equal(packages.some((entry) => packageSourceOf(entry) === oldSource), false, `${name}: old source should be removed`);
+		assert.equal(
+			packages.some((entry) => packageSourceOf(entry) === oldSource),
+			false,
+			`${name}: old source should be removed`,
+		);
 	}
 });
 
 test("merge removes critical package extension filters even when source is already canonical", () => {
 	const fixture = tempFixture();
 	const criticalSource = "git:github.com/tlh/pi-subagents@new-pin";
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "subagents",
-			critical: true,
-			source: criticalSource,
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [{ source: criticalSource, extensions: ["-src/extension/index.ts"], owner: "preserve" }],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "subagents",
+					critical: true,
+					source: criticalSource,
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [{ source: criticalSource, extensions: ["-src/extension/index.ts"], owner: "preserve" }],
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
@@ -659,18 +861,27 @@ test("merge removes critical package extension filters even when source is alrea
 
 test("merge --force updates non-critical package source when identity matches a new pinned source", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "git:github.com/tlh/helper@new-pin",
-		},
-	], null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "git:github.com/tlh/helper@new-pin",
+				},
+			],
+			null,
+			2,
+		),
+	);
 	writeFileSync(fixture.settings, JSON.stringify({ packages: ["git:github.com/tlh/helper@old-pin"] }, null, 2));
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--force",
 		"--quiet",
 	]);
@@ -684,24 +895,50 @@ test("tlh-defaults emits critical sources despite disabling package extension fi
 	for (const { name, extensions } of disablingExtensionFilterCases) {
 		const fixture = tempFixture();
 		const criticalSource = "git:github.com/tlh/critical@new-pin";
-		writeFileSync(fixture.extensions, JSON.stringify([
-			{
-				id: "critical",
-				critical: true,
-				source: criticalSource,
-			},
-		], null, 2));
-		writeFileSync(fixture.settings, JSON.stringify({
-			packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
-		}, null, 2));
+		writeFileSync(
+			fixture.extensions,
+			JSON.stringify(
+				[
+					{
+						id: "critical",
+						critical: true,
+						source: criticalSource,
+					},
+				],
+				null,
+				2,
+			),
+		);
+		writeFileSync(
+			fixture.settings,
+			JSON.stringify(
+				{
+					packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
+				},
+				null,
+				2,
+			),
+		);
 
-		const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
+		const sources = runNode(defaultsScript, [
+			"--settings",
+			fixture.settings,
+			"--defaults",
+			fixture.extensions,
+			"sources",
+		])
 			.trim()
 			.split("\n")
 			.filter(Boolean);
 		assert.deepEqual(sources, [criticalSource], `${name}: sources should include critical default`);
 
-		const criticalSources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "critical-sources"])
+		const criticalSources = runNode(defaultsScript, [
+			"--settings",
+			fixture.settings,
+			"--defaults",
+			fixture.extensions,
+			"critical-sources",
+		])
 			.trim()
 			.split("\n")
 			.filter(Boolean);
@@ -713,34 +950,66 @@ test("tlh-defaults list does not report critical defaults as disabled by package
 	for (const { name, extensions } of disablingExtensionFilterCases) {
 		const fixture = tempFixture();
 		const criticalSource = "git:github.com/tlh/critical@new-pin";
-		writeFileSync(fixture.extensions, JSON.stringify([
-			{
-				id: "critical",
-				critical: true,
-				source: criticalSource,
-			},
-		], null, 2));
-		writeFileSync(fixture.settings, JSON.stringify({
-			packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
-		}, null, 2));
+		writeFileSync(
+			fixture.extensions,
+			JSON.stringify(
+				[
+					{
+						id: "critical",
+						critical: true,
+						source: criticalSource,
+					},
+				],
+				null,
+				2,
+			),
+		);
+		writeFileSync(
+			fixture.settings,
+			JSON.stringify(
+				{
+					packages: [{ source: "git:github.com/tlh/critical@old-pin", extensions }],
+				},
+				null,
+				2,
+			),
+		);
 
 		const output = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "list"]);
 		assert.match(output, /enabled\s+critical/, `${name}: critical default should be listed as enabled`);
-		assert.doesNotMatch(output, /disabled by package filter/, `${name}: critical package filter should not disable status`);
+		assert.doesNotMatch(
+			output,
+			/disabled by package filter/,
+			`${name}: critical package filter should not disable status`,
+		);
 	}
 });
 
 test("tlh-defaults keeps non-critical allowlisted package entrypoints enabled", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "helper",
-			source: "npm:helper",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [{ source: "npm:helper", extensions: ["index.ts"] }],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "helper",
+					source: "npm:helper",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [{ source: "npm:helper", extensions: ["index.ts"] }],
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "list"]);
 	assert.match(output, /enabled\s+helper/, "non-critical allowlist should be listed as enabled");
@@ -755,15 +1024,29 @@ test("tlh-defaults keeps non-critical allowlisted package entrypoints enabled", 
 
 test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned managed defaults", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:@diegopetrucci/pi-oracle"],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "oracle",
+					source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@diegopetrucci/pi-oracle"],
+			},
+			null,
+			2,
+		),
+	);
 
 	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
 		.trim()
@@ -774,15 +1057,29 @@ test("tlh-defaults sources emit bundled pinned npm sources for existing unpinned
 
 test("tlh-defaults sources emit the bundled npm pin when the installed managed package has an older same-identity pin", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle@0.1.13",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:@diegopetrucci/pi-oracle@0.1.12"],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "oracle",
+					source: "npm:@diegopetrucci/pi-oracle@0.1.13",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@diegopetrucci/pi-oracle@0.1.12"],
+			},
+			null,
+			2,
+		),
+	);
 
 	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
 		.trim()
@@ -793,30 +1090,40 @@ test("tlh-defaults sources emit the bundled npm pin when the installed managed p
 
 test("tlh-defaults sources still respect disabled defaults while migrating pi-web-access replacements to the managed npm pin", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "oracle",
-			source: "npm:@diegopetrucci/pi-oracle@0.1.12",
-		},
-		{
-			id: "notify",
-			source: "npm:@diegopetrucci/pi-notify@0.1.5",
-		},
-		{
-			id: "pi-web-access",
-			replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
-			migrateReplacements: true,
-			source: bundledSource("pi-web-access"),
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			"npm:@diegopetrucci/pi-oracle",
-			"npm:@diegopetrucci/pi-notify",
-			"npm:pi-web-access",
-		],
-		tlh: { disabledDefaultExtensions: ["notify"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "oracle",
+					source: "npm:@diegopetrucci/pi-oracle@0.1.12",
+				},
+				{
+					id: "notify",
+					source: "npm:@diegopetrucci/pi-notify@0.1.5",
+				},
+				{
+					id: "pi-web-access",
+					replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+					migrateReplacements: true,
+					source: bundledSource("pi-web-access"),
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@diegopetrucci/pi-oracle", "npm:@diegopetrucci/pi-notify", "npm:pi-web-access"],
+				tlh: { disabledDefaultExtensions: ["notify"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
 		.trim()
@@ -827,32 +1134,46 @@ test("tlh-defaults sources still respect disabled defaults while migrating pi-we
 
 test("tlh-defaults sources defers non-migrating replacements and ignores stale/manual critical opt-outs", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "deferred",
-			replaces: ["npm:old-default"],
-			critical: true,
-			source: "npm:new-default",
-		},
-		{
-			id: "critical-enabled",
-			critical: true,
-			source: "git:github.com/tlh/critical@pin",
-		},
-		{
-			id: "critical-disabled",
-			critical: true,
-			source: "git:github.com/tlh/disabled@pin",
-		},
-		{
-			id: "non-critical-disabled",
-			source: "npm:non-critical",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:old-default", "git:github.com/tlh/critical@old-pin"],
-		tlh: { disabledDefaultExtensions: ["critical-disabled", "non-critical-disabled"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "deferred",
+					replaces: ["npm:old-default"],
+					critical: true,
+					source: "npm:new-default",
+				},
+				{
+					id: "critical-enabled",
+					critical: true,
+					source: "git:github.com/tlh/critical@pin",
+				},
+				{
+					id: "critical-disabled",
+					critical: true,
+					source: "git:github.com/tlh/disabled@pin",
+				},
+				{
+					id: "non-critical-disabled",
+					source: "npm:non-critical",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:old-default", "git:github.com/tlh/critical@old-pin"],
+				tlh: { disabledDefaultExtensions: ["critical-disabled", "non-critical-disabled"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	const sources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "sources"])
 		.trim()
@@ -860,7 +1181,13 @@ test("tlh-defaults sources defers non-migrating replacements and ignores stale/m
 		.filter(Boolean);
 	assert.deepEqual(sources, ["git:github.com/tlh/critical@pin", "git:github.com/tlh/disabled@pin"]);
 
-	const criticalSources = runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "critical-sources"])
+	const criticalSources = runNode(defaultsScript, [
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"critical-sources",
+	])
 		.trim()
 		.split("\n")
 		.filter(Boolean);
@@ -874,29 +1201,48 @@ for (const replacementSource of [
 ]) {
 	test(`tlh-defaults enable switches ${replacementSource} to the bundled TLH source`, () => {
 		const fixture = tempFixture();
-		writeFileSync(fixture.extensions, JSON.stringify([
-			{
-				id: "pi-web-access",
-				replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
-				migrateReplacements: true,
-				source: bundledSource("pi-web-access"),
-			},
-		], null, 2));
-		writeFileSync(fixture.settings, JSON.stringify({
-			packages: [replacementSource],
-			tlh: { disabledDefaultExtensions: ["pi-web-access"] },
-		}, null, 2));
+		writeFileSync(
+			fixture.extensions,
+			JSON.stringify(
+				[
+					{
+						id: "pi-web-access",
+						replaces: ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+						migrateReplacements: true,
+						source: bundledSource("pi-web-access"),
+					},
+				],
+				null,
+				2,
+			),
+		);
+		writeFileSync(
+			fixture.settings,
+			JSON.stringify(
+				{
+					packages: [replacementSource],
+					tlh: { disabledDefaultExtensions: ["pi-web-access"] },
+				},
+				null,
+				2,
+			),
+		);
 
 		runNode(defaultsScript, [
-			"--settings", fixture.settings,
-			"--defaults", fixture.extensions,
-			"enable", "pi-web-access",
+			"--settings",
+			fixture.settings,
+			"--defaults",
+			fixture.extensions,
+			"enable",
+			"pi-web-access",
 		]);
 
 		const settings = readJson(fixture.settings);
 		assert.deepEqual(settings.packages, [bundledSource("pi-web-access")]);
 		assert.deepEqual(settings.tlh.disabledDefaultExtensions, []);
-		assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-web-access"]);
+		assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+			"npm:@diegopetrucci/pi-web-access",
+		]);
 	});
 }
 
@@ -923,27 +1269,42 @@ for (const scenario of [
 ]) {
 	test(`tlh-defaults ${scenario.command} preserves legacy retired default cleanup for merge`, () => {
 		const fixture = tempFixture();
-		writeFileSync(fixture.extensions, JSON.stringify([
-			{
-				id: "notify",
-				source: "npm:@diegopetrucci/pi-notify",
-			},
-		], null, 2));
+		writeFileSync(
+			fixture.extensions,
+			JSON.stringify(
+				[
+					{
+						id: "notify",
+						source: "npm:@diegopetrucci/pi-notify",
+					},
+				],
+				null,
+				2,
+			),
+		);
 		writeFileSync(fixture.settings, JSON.stringify(scenario.initialSettings, null, 2));
 
 		runNode(defaultsScript, [
-			"--settings", fixture.settings,
-			"--defaults", fixture.extensions,
-			scenario.command, "notify",
+			"--settings",
+			fixture.settings,
+			"--defaults",
+			fixture.extensions,
+			scenario.command,
+			"notify",
 		]);
 
 		const afterDefaults = readJson(fixture.settings);
-		assert(afterDefaults.packages.includes(retiredPlannotatorPackage), "legacy retired package should still be present before merge cleanup");
+		assert(
+			afterDefaults.packages.includes(retiredPlannotatorPackage),
+			"legacy retired package should still be present before merge cleanup",
+		);
 
 		const firstMergeOutput = runNode(mergeScript, [
 			fixture.defaults,
-			"--settings", fixture.settings,
-			"--default-extensions", fixture.extensions,
+			"--settings",
+			fixture.settings,
+			"--default-extensions",
+			fixture.extensions,
 		]);
 		assert.match(firstMergeOutput, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
 
@@ -957,43 +1318,51 @@ for (const scenario of [
 
 		const secondMergeOutput = runNode(mergeScript, [
 			fixture.defaults,
-			"--settings", fixture.settings,
-			"--default-extensions", fixture.extensions,
+			"--settings",
+			fixture.settings,
+			"--default-extensions",
+			fixture.extensions,
 		]);
 		assert.match(secondMergeOutput, /No settings changes needed\./);
-		assert.equal(secondMergeOutput.includes("retired TLH default package"), false, "retired cleanup should remain one-time");
+		assert.equal(
+			secondMergeOutput.includes("retired TLH default package"),
+			false,
+			"retired cleanup should remain one-time",
+		);
 	});
 }
 
 test("tlh-defaults preserves pending retired default provenance across multiple mutations before merge", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "notify",
-			source: "npm:@diegopetrucci/pi-notify",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "notify",
+					source: "npm:@diegopetrucci/pi-notify",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
+			},
+			null,
+			2,
+		),
+	);
 
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "notify",
-	]);
-	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "notify",
-	]);
+	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "notify"]);
+	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "enable", "notify"]);
 
 	const afterDefaults = readJson(fixture.settings);
-	assert.deepEqual(afterDefaults.packages, [
-		harnessPackage,
-		retiredPlannotatorPackage,
-		"npm:@diegopetrucci/pi-notify",
-	]);
+	assert.deepEqual(afterDefaults.packages, [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"]);
 	assert.deepEqual(afterDefaults.tlh?.disabledDefaultExtensions ?? [], []);
 	assert.deepEqual(afterDefaults.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], [
 		"npm:@diegopetrucci/pi-notify",
@@ -1002,36 +1371,54 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
 
 	const firstMergeOutput = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 	]);
 	assert.match(firstMergeOutput, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
 
 	const afterMerge = readJson(fixture.settings);
-	assert.deepEqual(afterMerge.packages, [
-		harnessPackage,
+	assert.deepEqual(afterMerge.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+	assert.deepEqual(afterMerge.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], [
 		"npm:@diegopetrucci/pi-notify",
 	]);
-	assert.deepEqual(afterMerge.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], ["npm:@diegopetrucci/pi-notify"]);
 });
 
 test("tlh-defaults disable anthropic-auth removes package and drops warnings.anthropicExtraUsage when it is the tlh default", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "anthropic-auth",
-			source: "npm:@gotgenes/pi-anthropic-auth",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:@gotgenes/pi-anthropic-auth"],
-		warnings: { anthropicExtraUsage: false },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "anthropic-auth",
+					source: "npm:@gotgenes/pi-anthropic-auth",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@gotgenes/pi-anthropic-auth"],
+				warnings: { anthropicExtraUsage: false },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "anthropic-auth",
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"disable",
+		"anthropic-auth",
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1042,46 +1429,82 @@ test("tlh-defaults disable anthropic-auth removes package and drops warnings.ant
 
 test("tlh-defaults enable anthropic-auth restores warnings.anthropicExtraUsage when no warnings object is present", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "anthropic-auth",
-			source: "npm:@gotgenes/pi-anthropic-auth",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [],
-		tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "anthropic-auth",
+					source: "npm:@gotgenes/pi-anthropic-auth",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [],
+				tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"enable", "anthropic-auth",
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"enable",
+		"anthropic-auth",
 	]);
 
 	const settings = readJson(fixture.settings);
 	assert(settings.packages.includes("npm:@gotgenes/pi-anthropic-auth"), "package should be added");
 	assert.equal(settings.warnings?.anthropicExtraUsage, false, "warnings.anthropicExtraUsage should be set to false");
-	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@gotgenes/pi-anthropic-auth"]);
+	assert.deepEqual(settings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+		"npm:@gotgenes/pi-anthropic-auth",
+	]);
 });
 
 test("tlh-defaults disable anthropic-auth preserves explicit warnings.anthropicExtraUsage: true set by the user", () => {
 	const fixture = tempFixture();
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "anthropic-auth",
-			source: "npm:@gotgenes/pi-anthropic-auth",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["npm:@gotgenes/pi-anthropic-auth"],
-		warnings: { anthropicExtraUsage: true },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "anthropic-auth",
+					source: "npm:@gotgenes/pi-anthropic-auth",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@gotgenes/pi-anthropic-auth"],
+				warnings: { anthropicExtraUsage: true },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(defaultsScript, [
-		"--settings", fixture.settings,
-		"--defaults", fixture.extensions,
-		"disable", "anthropic-auth",
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"disable",
+		"anthropic-auth",
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1094,26 +1517,46 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
 	const fixture = tempFixture();
 	// Synthetic defaults with the warnings suppression that ships in config/settings.defaults.json.
 	writeFileSync(fixture.defaults, JSON.stringify({ packages: [], warnings: { anthropicExtraUsage: false } }, null, 2));
-	writeFileSync(fixture.extensions, JSON.stringify([
-		{
-			id: "anthropic-auth",
-			source: "npm:@gotgenes/pi-anthropic-auth",
-		},
-	], null, 2));
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [],
-		tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.extensions,
+		JSON.stringify(
+			[
+				{
+					id: "anthropic-auth",
+					source: "npm:@gotgenes/pi-anthropic-auth",
+				},
+			],
+			null,
+			2,
+		),
+	);
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [],
+				tlh: { disabledDefaultExtensions: ["anthropic-auth"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", fixture.extensions,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		fixture.extensions,
 		"--quiet",
 	]);
 
 	const settings = readJson(fixture.settings);
-	assert.equal(settings.warnings?.anthropicExtraUsage, undefined, "warnings.anthropicExtraUsage should not be introduced by merge");
+	assert.equal(
+		settings.warnings?.anthropicExtraUsage,
+		undefined,
+		"warnings.anthropicExtraUsage should not be introduced by merge",
+	);
 	assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
@@ -1123,11 +1566,11 @@ test("bundled manifest contains pi-web-access entry with migration metadata", ()
 
 	assert.ok(webAccess, "bundled pi-web-access entry should exist");
 	assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
-	assert.deepEqual(webAccess.replaces, [
-		"npm:pi-web-access",
-		"git:github.com/nicobailon/pi-web-access",
-		previousPiWebAccessSource,
-	], "pi-web-access should migrate upstream and prior TLH replacement sources");
+	assert.deepEqual(
+		webAccess.replaces,
+		["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
+		"pi-web-access should migrate upstream and prior TLH replacement sources",
+	);
 	assert.equal(webAccess.migrateReplacements, true, "pi-web-access replacements must stay enabled for migration");
 	assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
 });
@@ -1141,7 +1584,11 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	assert.equal(mcporter.critical, false, "mcporter must not be critical");
 	assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
 	assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter", previousMcporterSource]);
-	assert.equal(mcporter.migrateReplacements, true, "mcporter should migrate both upstream npm and previous TLH git installs");
+	assert.equal(
+		mcporter.migrateReplacements,
+		true,
+		"mcporter should migrate both upstream npm and previous TLH git installs",
+	);
 
 	const replacementMergeFixture = tempFixture();
 	writeFileSync(replacementMergeFixture.extensions, JSON.stringify([mcporter], null, 2));
@@ -1149,30 +1596,43 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 
 	runNode(mergeScript, [
 		replacementMergeFixture.defaults,
-		"--settings", replacementMergeFixture.settings,
-		"--default-extensions", replacementMergeFixture.extensions,
+		"--settings",
+		replacementMergeFixture.settings,
+		"--default-extensions",
+		replacementMergeFixture.extensions,
 		"--quiet",
 	]);
 
 	const replacementMergedSettings = readJson(replacementMergeFixture.settings);
 	assert.deepEqual(replacementMergedSettings.packages, [harnessPackage, bundledSource("mcporter")]);
-	assert.deepEqual(replacementMergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+	assert.deepEqual(replacementMergedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+		"npm:@diegopetrucci/pi-mcp-adapter",
+	]);
 
 	const managedPinnedFixture = tempFixture();
 	writeFileSync(managedPinnedFixture.extensions, JSON.stringify([mcporter], null, 2));
-	writeFileSync(managedPinnedFixture.settings, JSON.stringify({
-		packages: [previousBundledMcporterSource],
-		tlh: {
-			defaultExtensionProvenance: {
-				managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
+	writeFileSync(
+		managedPinnedFixture.settings,
+		JSON.stringify(
+			{
+				packages: [previousBundledMcporterSource],
+				tlh: {
+					defaultExtensionProvenance: {
+						managedPackageIdentities: ["npm:@diegopetrucci/pi-mcp-adapter"],
+					},
+				},
 			},
-		},
-	}, null, 2));
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		managedPinnedFixture.defaults,
-		"--settings", managedPinnedFixture.settings,
-		"--default-extensions", managedPinnedFixture.extensions,
+		"--settings",
+		managedPinnedFixture.settings,
+		"--default-extensions",
+		managedPinnedFixture.extensions,
 		"--quiet",
 	]);
 
@@ -1180,7 +1640,9 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	assert.equal(managedPinnedSettings.packages.includes(bundledSource("mcporter")), true);
 	assert.equal(managedPinnedSettings.packages.includes(previousBundledMcporterSource), false);
 	assert.equal(managedPinnedSettings.packages.includes(harnessPackage), true);
-	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-mcp-adapter"]);
+	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+		"npm:@diegopetrucci/pi-mcp-adapter",
+	]);
 
 	const manualPinnedFixture = tempFixture();
 	writeFileSync(manualPinnedFixture.extensions, JSON.stringify([mcporter], null, 2));
@@ -1188,8 +1650,10 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 
 	runNode(mergeScript, [
 		manualPinnedFixture.defaults,
-		"--settings", manualPinnedFixture.settings,
-		"--default-extensions", manualPinnedFixture.extensions,
+		"--settings",
+		manualPinnedFixture.settings,
+		"--default-extensions",
+		manualPinnedFixture.extensions,
 		"--quiet",
 	]);
 
@@ -1202,11 +1666,7 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	const disableFixture = tempFixture();
 	writeFileSync(disableFixture.settings, JSON.stringify({ packages: [previousMcporterSource] }, null, 2));
 
-	runNode(defaultsScript, [
-		"--settings", disableFixture.settings,
-		"--defaults", bundledPath,
-		"disable", "mcp-adapter",
-	]);
+	runNode(defaultsScript, ["--settings", disableFixture.settings, "--defaults", bundledPath, "disable", "mcp-adapter"]);
 
 	const disabledSettings = readJson(disableFixture.settings);
 	assert.deepEqual(disabledSettings.tlh.disabledDefaultExtensions, ["mcporter"]);
@@ -1221,37 +1681,57 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 
 	const managedPinnedFixture = tempFixture();
 	writeFileSync(managedPinnedFixture.extensions, JSON.stringify([fixtureExtension], null, 2));
-	writeFileSync(managedPinnedFixture.settings, JSON.stringify({
-		packages: [previousBundledNotifySource],
-		tlh: {
-			defaultExtensionProvenance: {
-				managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+	writeFileSync(
+		managedPinnedFixture.settings,
+		JSON.stringify(
+			{
+				packages: [previousBundledNotifySource],
+				tlh: {
+					defaultExtensionProvenance: {
+						managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+					},
+				},
 			},
-		},
-	}, null, 2));
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		managedPinnedFixture.defaults,
-		"--settings", managedPinnedFixture.settings,
-		"--default-extensions", managedPinnedFixture.extensions,
+		"--settings",
+		managedPinnedFixture.settings,
+		"--default-extensions",
+		managedPinnedFixture.extensions,
 		"--quiet",
 	]);
 
 	const managedPinnedSettings = readJson(managedPinnedFixture.settings);
 	assert.equal(managedPinnedSettings.packages.includes(bundledSource("notify")), true);
 	assert.equal(managedPinnedSettings.packages.includes(previousBundledNotifySource), false);
-	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, ["npm:@diegopetrucci/pi-notify"]);
+	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+		"npm:@diegopetrucci/pi-notify",
+	]);
 
 	const manualPinnedFixture = tempFixture();
 	writeFileSync(manualPinnedFixture.extensions, JSON.stringify([fixtureExtension], null, 2));
-	writeFileSync(manualPinnedFixture.settings, JSON.stringify({
-		packages: [previousBundledNotifySource],
-	}, null, 2));
+	writeFileSync(
+		manualPinnedFixture.settings,
+		JSON.stringify(
+			{
+				packages: [previousBundledNotifySource],
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		manualPinnedFixture.defaults,
-		"--settings", manualPinnedFixture.settings,
-		"--default-extensions", manualPinnedFixture.extensions,
+		"--settings",
+		manualPinnedFixture.settings,
+		"--default-extensions",
+		manualPinnedFixture.extensions,
 		"--quiet",
 	]);
 
@@ -1277,20 +1757,29 @@ test("bundled merge removes legacy upstream and TLH subagents git installs via r
 	// the first-party bundled extension is now registered directly via package.json.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"git:github.com/nicobailon/pi-subagents@v0.31.0",
-			"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
-			"npm:unrelated-ext",
-		],
-		tlh: { disabledDefaultExtensions: ["pi-subagents", "other-ext"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [
+					harnessPackage,
+					"git:github.com/nicobailon/pi-subagents@v0.31.0",
+					"git:github.com/diegopetrucci/pi-subagents@tlh-v0.31.1",
+					"npm:unrelated-ext",
+				],
+				tlh: { disabledDefaultExtensions: ["pi-subagents", "other-ext"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 		"--quiet",
 	]);
 
@@ -1313,7 +1802,10 @@ test("bundled merge removes legacy upstream and TLH subagents git installs via r
 		"no npm subagents source may be added by retirement migration",
 	);
 	// Unrelated package must survive.
-	assert.ok(settings.packages.some((entry) => packageIdentity(entry) === "npm:unrelated-ext"), "unrelated package must be preserved");
+	assert.ok(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:unrelated-ext"),
+		"unrelated package must be preserved",
+	);
 	// pi-subagents opt-out must be pruned; unrelated opt-out must survive.
 	assert.equal(
 		(settings.tlh?.disabledDefaultExtensions ?? []).some((v) => v === "subagents" || v === "pi-subagents"),
@@ -1331,22 +1823,28 @@ test("bundled merge preserves a manually installed subagents npm package (modern
 	// the package must be treated as user-added and preserved.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"npm:@diegopetrucci/pi-subagents@0.31.14",
-		],
-		tlh: {
-			defaultExtensionProvenance: {
-				managedPackageIdentities: [], // provenance exists but subagents is NOT managed
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, "npm:@diegopetrucci/pi-subagents@0.31.14"],
+				tlh: {
+					defaultExtensionProvenance: {
+						managedPackageIdentities: [], // provenance exists but subagents is NOT managed
+					},
+				},
 			},
-		},
-	}, null, 2));
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1360,15 +1858,24 @@ test("bundled merge preserves a manually installed subagents npm package (modern
 test("bundled merge prunes stale subagents and pi-subagents opt-outs from tlh.disabledDefaultExtensions", () => {
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [harnessPackage],
-		tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage],
+				tlh: { disabledDefaultExtensions: ["subagents", "pi-subagents", "notify"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1378,24 +1885,30 @@ test("bundled merge prunes stale subagents and pi-subagents opt-outs from tlh.di
 		false,
 		"stale subagents opt-outs must be removed",
 	);
-	assert.ok(
-		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
-		"unrelated opt-out must be preserved",
-	);
+	assert.ok((settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"), "unrelated opt-out must be preserved");
 });
 
 test("bundled merge force-removes legacy TLH intercom git installs via the retirement list", () => {
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: ["git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"],
-		tlh: { disabledDefaultExtensions: ["pi-intercom"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["git:github.com/diegopetrucci/pi-intercom@tlh-v0.6.0-6"],
+				tlh: { disabledDefaultExtensions: ["pi-intercom"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 		"--quiet",
 	]);
 
@@ -1425,18 +1938,23 @@ test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy 
 	// treats any retired package present as managed and enqueues it for removal.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"npm:@ff-labs/pi-fff@0.10.1",
-			"npm:@diegopetrucci/pi-notify@0.1.14",
-		],
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, "npm:@ff-labs/pi-fff@0.10.1", "npm:@diegopetrucci/pi-notify@0.1.14"],
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1459,22 +1977,28 @@ test("bundled merge preserves a manually added fff package (provenance block exi
 	// is treated as user-added and must be preserved.
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [
-			harnessPackage,
-			"npm:@ff-labs/pi-fff@0.10.1",
-		],
-		tlh: {
-			defaultExtensionProvenance: {
-				managedPackageIdentities: [], // provenance exists but fff is NOT managed
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, "npm:@ff-labs/pi-fff@0.10.1"],
+				tlh: {
+					defaultExtensionProvenance: {
+						managedPackageIdentities: [], // provenance exists but fff is NOT managed
+					},
+				},
 			},
-		},
-	}, null, 2));
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 		"--quiet",
 	]);
 
@@ -1490,15 +2014,24 @@ test("bundled merge preserves a manually added fff package (provenance block exi
 test("bundled merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaultExtensions", () => {
 	const fixture = tempFixture();
 	const bundledPath = bundledExtensionsPath;
-	writeFileSync(fixture.settings, JSON.stringify({
-		packages: [harnessPackage],
-		tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
-	}, null, 2));
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage],
+				tlh: { disabledDefaultExtensions: ["fff", "pi-fff", "notify"] },
+			},
+			null,
+			2,
+		),
+	);
 
 	const output = runNode(mergeScript, [
 		fixture.defaults,
-		"--settings", fixture.settings,
-		"--default-extensions", bundledPath,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
 	]);
 
 	const settings = readJson(fixture.settings);
@@ -1526,5 +2059,9 @@ test("bundled manifest has no duplicate ids or alias conflicts", () => {
 
 	// All ids plus all aliases must form a unique set so a new entry cannot accidentally alias an existing id.
 	const allNames = [...ids, ...bundled.flatMap(({ aliases }) => aliases)];
-	assert.equal(new Set(allNames).size, allNames.length, "bundled manifest ids and aliases must all be unique (no alias may shadow an existing id)");
+	assert.equal(
+		new Set(allNames).size,
+		allNames.length,
+		"bundled manifest ids and aliases must all be unique (no alias may shadow an existing id)",
+	);
 });

@@ -112,7 +112,13 @@ function parseArgs(argv: readonly string[]): CliArgs {
 			index = packageSourceIndex;
 			continue;
 		}
-		const defaultExtensionsIndex = assignOptionValue(args, "defaultExtensionsPath", argv, index, "--default-extensions");
+		const defaultExtensionsIndex = assignOptionValue(
+			args,
+			"defaultExtensionsPath",
+			argv,
+			index,
+			"--default-extensions",
+		);
 		if (defaultExtensionsIndex !== undefined) {
 			index = defaultExtensionsIndex;
 			continue;
@@ -170,7 +176,10 @@ function shouldMigrateManagedDefaultExtensionSource(
 	return managedPackageIdentities.has(identity);
 }
 
-function shouldMigrateDefaultExtensionReplacements(extension: DefaultExtensionEntry, { force }: { force: boolean }): boolean {
+function shouldMigrateDefaultExtensionReplacements(
+	extension: DefaultExtensionEntry,
+	{ force }: { force: boolean },
+): boolean {
 	return force || extension.migrateReplacements === true;
 }
 
@@ -209,7 +218,8 @@ function prepareDefaults(
 	}
 
 	const ensuredSource = packageSource || DEFAULT_PACKAGE_SOURCE;
-	const existingPackages = isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
+	const existingPackages =
+		isPlainObject(existingSettings) && Array.isArray(existingSettings.packages) ? existingSettings.packages : [];
 	const ensuredPackages = [
 		ensuredSource,
 		...defaultExtensions
@@ -217,7 +227,9 @@ function prepareDefaults(
 			.filter((extension) => shouldEnsureDefaultExtensionSource(existingPackages, extension, { force }))
 			.map((extension) => extension.source),
 	];
-	const ensuredIdentities = new Set(ensuredPackages.map(packageIdentity).filter((value): value is string => Boolean(value)));
+	const ensuredIdentities = new Set(
+		ensuredPackages.map(packageIdentity).filter((value): value is string => Boolean(value)),
+	);
 	// When the ensured source is non-canonical (local path, file: URL, etc.), add the
 	// canonical TLH identity to the exclusion set so the defaults' canonical entry is
 	// not carried through into packages. Without this, two TLH entries reach the
@@ -252,7 +264,7 @@ function removeDuplicatePackagesByIdentity(settings: JsonObject, identity: strin
 	if (!identity || !Array.isArray(settings.packages)) return [];
 	const removedSources: string[] = [];
 	let seen = false;
-	for (let index = 0; index < settings.packages.length;) {
+	for (let index = 0; index < settings.packages.length; ) {
 		if (packageIdentity(settings.packages[index]) !== identity) {
 			index += 1;
 			continue;
@@ -275,11 +287,7 @@ function applyHarnessPackageDedupes(settings: JsonObject, ensuredSource: string,
 	}
 }
 
-function applyNonCanonicalHarnessCleanup(
-	settings: JsonObject,
-	ensuredSource: string,
-	changes: string[],
-): void {
+function applyNonCanonicalHarnessCleanup(settings: JsonObject, ensuredSource: string, changes: string[]): void {
 	// When re-installing or updating from a non-canonical source (local path,
 	// file: URL, etc.) over a profile that already contains the canonical TLH
 	// package entry, remove that canonical entry. Without this, mergePackages
@@ -324,20 +332,23 @@ function applyDefaultExtensionPackageDedupes(
 	defaultExtensions: readonly DefaultExtensionEntry[],
 	disabledIds: Set<string>,
 	changes: string[],
-	{
-		force,
-		sourceUpdatedIdentities = new Set<string>(),
-	}: { force: boolean; sourceUpdatedIdentities?: Set<string> },
+	{ force, sourceUpdatedIdentities = new Set<string>() }: { force: boolean; sourceUpdatedIdentities?: Set<string> },
 ): void {
 	if (!Array.isArray(settings.packages)) return;
 
 	for (const extension of defaultExtensions) {
 		const identity = packageIdentity(extension.source);
-		if (!shouldMigrateDefaultExtensionReplacements(extension, { force }) && !sourceUpdatedIdentities.has(identity || "")) continue;
+		if (
+			!shouldMigrateDefaultExtensionReplacements(extension, { force }) &&
+			!sourceUpdatedIdentities.has(identity || "")
+		)
+			continue;
 		if (disabledIds.has(extension.id)) continue;
 		const removedSources = removeDuplicatePackagesByIdentity(settings, identity);
 		for (const removedSource of removedSources) {
-			changes.push(`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`);
+			changes.push(
+				`remove duplicate default extension package: ${removedSource} (same identity as ${extension.source})`,
+			);
 		}
 	}
 }
@@ -347,10 +358,7 @@ function applyDefaultExtensionSourceUpdates(
 	defaultExtensions: readonly DefaultExtensionEntry[],
 	disabledIds: Set<string>,
 	changes: string[],
-	{
-		force,
-		managedPackageIdentities = new Set<string>(),
-	}: { force: boolean; managedPackageIdentities?: Set<string> },
+	{ force, managedPackageIdentities = new Set<string>() }: { force: boolean; managedPackageIdentities?: Set<string> },
 ): Set<string> {
 	const updatedIdentities = new Set<string>();
 	if (!Array.isArray(settings.packages)) return updatedIdentities;
@@ -365,20 +373,18 @@ function applyDefaultExtensionSourceUpdates(
 		const current = settings.packages[index];
 		const currentSource = packageSourceOf(current);
 		if (!currentSource) continue;
-		if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities })) continue;
+		if (!shouldMigrateManagedDefaultExtensionSource(currentSource, extension, { force, managedPackageIdentities }))
+			continue;
 
 		const sourceNeedsUpdate = currentSource !== extension.source;
-		const removesCriticalExtensionFilter = extension.critical === true
-			&& isPlainObject(current)
-			&& Object.hasOwn(current, "extensions");
+		const removesCriticalExtensionFilter =
+			extension.critical === true && isPlainObject(current) && Object.hasOwn(current, "extensions");
 		if (!sourceNeedsUpdate && !removesCriticalExtensionFilter) continue;
 
 		if (isPlainObject(current)) {
 			const next: JsonObject = { ...clone(current), source: extension.source };
 			if (removesCriticalExtensionFilter) delete next.extensions;
-			settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string"
-				? next.source
-				: next;
+			settings.packages[index] = Object.keys(next).length === 1 && typeof next.source === "string" ? next.source : next;
 		} else {
 			settings.packages[index] = extension.source;
 		}
@@ -417,7 +423,11 @@ function applyDisabledDefaultExtensions(
 	}
 }
 
-function applyRetiredTlhDefaultPackageCleanup(settings: JsonObject, changes: string[], managedPackageIdentities: Set<string>): void {
+function applyRetiredTlhDefaultPackageCleanup(
+	settings: JsonObject,
+	changes: string[],
+	managedPackageIdentities: Set<string>,
+): void {
 	if (!Array.isArray(settings.packages)) return;
 
 	for (const source of RETIRED_TLH_DEFAULT_PACKAGE_SOURCES) {
@@ -443,8 +453,6 @@ function applyDefaultExtensionLoadOrder(
 		`reorder targeted default extension packages for load order: ${loadOrderRepair.previous.join(", ")} -> ${loadOrderRepair.next.join(", ")}`,
 	);
 }
-
-
 
 function purgeForceRemovedRetiredDefaultExtensionPackages(settings: JsonObject, changes: string[]): void {
 	if (!Array.isArray(settings.packages)) return;
@@ -481,7 +489,9 @@ function pruneRtkDisabledDefaultExtension(settings: JsonObject, changes: string[
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	const values = settings.tlh.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value: unknown) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())));
+	const nextValues = values.filter(
+		(value: unknown) => !(typeof value === "string" && ["rtk", "pi-rtk"].includes(value.trim())),
+	);
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale rtk opt-out from tlh.disabledDefaultExtensions");
@@ -491,7 +501,9 @@ function pruneIntercomDisabledDefaultExtension(settings: JsonObject, changes: st
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	const values = settings.tlh.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value: unknown) => !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())));
+	const nextValues = values.filter(
+		(value: unknown) => !(typeof value === "string" && ["intercom", "pi-intercom"].includes(value.trim())),
+	);
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale intercom opt-out from tlh.disabledDefaultExtensions");
@@ -501,7 +513,9 @@ function pruneFffDisabledDefaultExtension(settings: JsonObject, changes: string[
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	const values = settings.tlh.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value: unknown) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())));
+	const nextValues = values.filter(
+		(value: unknown) => !(typeof value === "string" && ["fff", "pi-fff"].includes(value.trim())),
+	);
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale fff opt-out from tlh.disabledDefaultExtensions");
@@ -511,7 +525,9 @@ function pruneSubagentsDisabledDefaultExtension(settings: JsonObject, changes: s
 	if (!isPlainObject(settings) || !isPlainObject(settings.tlh)) return;
 	const values = settings.tlh.disabledDefaultExtensions;
 	if (!Array.isArray(values)) return;
-	const nextValues = values.filter((value: unknown) => !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())));
+	const nextValues = values.filter(
+		(value: unknown) => !(typeof value === "string" && ["subagents", "pi-subagents"].includes(value.trim())),
+	);
 	if (nextValues.length === values.length) return;
 	settings.tlh.disabledDefaultExtensions = nextValues;
 	changes.push("remove stale subagents opt-out from tlh.disabledDefaultExtensions");
@@ -573,19 +589,28 @@ function syncDefaultExtensionProvenance(
 ): void {
 	const previous = readDefaultExtensionProvenance(settings);
 	const tlh = isPlainObject(settings) && isPlainObject(settings.tlh) ? settings.tlh : undefined;
-	const previousRaw = tlh && Object.hasOwn(tlh, "defaultExtensionProvenance")
-		? JSON.stringify(tlh.defaultExtensionProvenance)
-		: undefined;
+	const previousRaw =
+		tlh && Object.hasOwn(tlh, "defaultExtensionProvenance")
+			? JSON.stringify(tlh.defaultExtensionProvenance)
+			: undefined;
 	const nextManagedIdentities = managedDefaultExtensionPackageIdentities(settings, defaultExtensions, disabledIds);
 	if (!setDefaultExtensionProvenance(settings, nextManagedIdentities)) return;
 	const nextTlh = isPlainObject(settings.tlh) ? settings.tlh : undefined;
 	const nextRaw = JSON.stringify(nextTlh?.defaultExtensionProvenance);
-	if (previousRaw !== nextRaw || !previous.exists || !sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)) {
+	if (
+		previousRaw !== nextRaw ||
+		!previous.exists ||
+		!sameIdentitySets(previous.managedPackageIdentities, nextManagedIdentities)
+	) {
 		changes.push("update TLH default extension provenance metadata");
 	}
 }
 
-function mergeSettings(existing: unknown, defaults: unknown, { force }: { force: boolean }): { next: JsonObject; changes: string[] } {
+function mergeSettings(
+	existing: unknown,
+	defaults: unknown,
+	{ force }: { force: boolean },
+): { next: JsonObject; changes: string[] } {
 	if (!isPlainObject(existing)) {
 		throw new Error("Existing settings must be a JSON object");
 	}
@@ -740,13 +765,9 @@ function assertNotNormalPiSettings(settingsPath: string): void {
 
 function writeExistingProfileBackup(settingsPath: string, backupPath: string): void {
 	const { content, mode } = readRegularFileForBackup(settingsPath, "Pi settings");
-	writeSafeProfileFile(
-		{ agentDir: dirname(settingsPath) },
-		basename(backupPath),
-		content,
-		"Pi settings backup",
-		{ mode },
-	);
+	writeSafeProfileFile({ agentDir: dirname(settingsPath) }, basename(backupPath), content, "Pi settings backup", {
+		mode,
+	});
 }
 
 function writeSettings(
@@ -782,7 +803,9 @@ function main(): void {
 	const defaultExtensionsPath = resolve(
 		expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()) || defaultDefaultExtensionsPath(),
 	);
-	const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath());
+	const settingsPath = resolve(
+		expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath(),
+	);
 	assertNotNormalPiSettings(settingsPath);
 	const existed = existsSync(settingsPath);
 	const existing = readJsonFile<JsonObject>(settingsPath, { missingValue: {} });
@@ -790,7 +813,9 @@ function main(): void {
 	const defaultExtensions = readDefaultExtensions(defaultExtensionsPath, { allowMissing: true });
 	const disabledIds = disabledDefaultExtensionIds(existing, defaultExtensions);
 	const ensuredHarnessSource = args.packageSource || DEFAULT_PACKAGE_SOURCE;
-	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, { force: args.force });
+	const defaults = prepareDefaults(rawDefaults, args.packageSource, defaultExtensions, disabledIds, existing, {
+		force: args.force,
+	});
 	const { next, changes } = mergeSettings(existing, defaults, { force: args.force });
 	applyHarnessPackageDedupes(next, ensuredHarnessSource, changes);
 	applyNonCanonicalHarnessCleanup(next, ensuredHarnessSource, changes);
@@ -800,7 +825,10 @@ function main(): void {
 		managedPackageIdentities: managedDefaultExtensionProvenance,
 	});
 	applyReplacedDefaultExtensions(next, defaultExtensions, disabledIds, changes, { force: args.force });
-	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, { force: args.force, sourceUpdatedIdentities });
+	applyDefaultExtensionPackageDedupes(next, defaultExtensions, disabledIds, changes, {
+		force: args.force,
+		sourceUpdatedIdentities,
+	});
 	applyDisabledDefaultExtensions(next, defaultExtensions, disabledIds, changes);
 	applyRetiredTlhDefaultPackageCleanup(
 		next,

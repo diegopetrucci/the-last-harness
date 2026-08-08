@@ -145,8 +145,8 @@ function selectOppositeProviderFallbackModel(agent, availableModels, currentProv
             return availableCurrentModel;
         }
     }
-    return currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-        ?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+    return (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+        currentProviderAnthropicCandidate(agent, availableModels, currentProvider));
 }
 function selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider) {
     if (!agent) {
@@ -156,8 +156,8 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     if (defaultModel) {
         return defaultModel;
     }
-    const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-        ?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+    const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+        currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
     if (currentProviderModel) {
         return currentProviderModel;
     }
@@ -176,8 +176,8 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     return undefined;
 }
 export function selectProviderAwareAgentModel(agent, availableModels, currentProvider) {
-    return selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider)
-        ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
+    return (selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
+        selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider));
 }
 function resolveThinkingForProvider(agent, provider) {
     if (!agent)
@@ -193,8 +193,8 @@ function resolveThinkingForProvider(agent, provider) {
 export function selectProviderAwareAgentDefaults(agent, availableModels, currentProvider) {
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
     const standardModel = agent?.preferCurrentOpenaiModel
-        ? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-            ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+        ? (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+            selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider))
         : selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
     const model = oppositeProviderModel ?? standardModel;
     const thinking = resolveThinkingForProvider(agent, model?.provider ?? currentProvider);
@@ -205,15 +205,12 @@ export function selectProviderAwareAgentModelId(agent, availableModels, currentP
     return model ? formatProviderModelReference(model) : undefined;
 }
 function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback) {
-    const storedThinking = rawThinking === false
-        ? "off"
-        : String(rawThinking);
+    const storedThinking = rawThinking === false ? "off" : String(rawThinking);
     const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
-    const standardStoredThinking = rawThinking === false
-        || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
+    const standardStoredThinking = rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
     const subject = standardStoredThinking
         ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : agent?.name ?? "this subagent"}`;
+        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : (agent?.name ?? "this subagent")}`;
     if (neutralizingThinking === undefined) {
         const residual = rawThinking === false
             ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
@@ -330,10 +327,10 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         };
     }
     const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
-    let selectedModel = oppositeProviderModel
-        ?? (agent?.preferCurrentOpenaiModel
-            ? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-                ?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+    let selectedModel = oppositeProviderModel ??
+        (agent?.preferCurrentOpenaiModel
+            ? (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+                selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider))
             : selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider));
     let currentSessionThinkingResolution;
     if (!selectedModel && override?.thinking !== undefined) {
@@ -353,8 +350,8 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     const fallbackModel = oppositeProviderModel
         ? selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel)
         : undefined;
-    const fallbackModels = fallbackModel
-        && (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
+    const fallbackModels = fallbackModel &&
+        (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
         ? [fallbackModel]
         : [];
     const resolveThinkingResult = (m, generatedFallback = false) => override === undefined
@@ -362,7 +359,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
     const primaryThinkingResolution = selectedModel
         ? resolveThinkingResult(selectedModel)
-        : currentSessionThinkingResolution ?? {};
+        : (currentSessionThinkingResolution ?? {});
     const resolvedFallbackThinking = fallbackModels.map((m) => ({
         model: m,
         resolution: resolveThinkingResult(m, true),
@@ -407,9 +404,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     const agent = agentName ? agents.get(agentName) : undefined;
     const override = agentName ? options.agentOverrides?.get(agentName) : undefined;
     if (hasExplicitModel(target)) {
-        if (typeof target.model !== "string"
-            || splitKnownThinkingSuffix(target.model).thinkingSuffix
-            || override?.thinking === undefined) {
+        if (typeof target.model !== "string" ||
+            splitKnownThinkingSuffix(target.model).thinkingSuffix ||
+            override?.thinking === undefined) {
             return 0;
         }
         const explicitModel = findAvailableProviderModel(availableModels, target.model);
@@ -438,9 +435,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
             const fallbackModelBase = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
             if (fallbackModelBase && fallbackModelBase !== selectedModel) {
                 const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel.provider);
-                const fallbackModelId = fallbackThinking
-                    ? `${fallbackModelBase}:${fallbackThinking}`
-                    : fallbackModelBase;
+                const fallbackModelId = fallbackThinking ? `${fallbackModelBase}:${fallbackThinking}` : fallbackModelBase;
                 if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
                     target.fallbackModels = [fallbackModelId];
                 }

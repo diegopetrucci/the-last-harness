@@ -73,7 +73,9 @@ function notifyExperimentalWriteResult(pi, ctx, featureId, result) {
     const changedLabel = result.changed ? "Updated" : "No change to";
     const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
     const stateLabel = result.enabled ? "enabled" : "disabled";
-    const undoLabel = result.enabled ? `Undo with /experimental disable ${featureId}.` : `Undo with /experimental enable ${featureId}.`;
+    const undoLabel = result.enabled
+        ? `Undo with /experimental disable ${featureId}.`
+        : `Undo with /experimental enable ${featureId}.`;
     pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
         cwd: ctx.cwd,
         enabled: result.enabled,
@@ -92,7 +94,9 @@ async function showExperimentalFeaturePicker(pi, ctx) {
             const option = experimentalFeaturePickerOption(feature.id, isTlhExperimentalFeatureEnabled(config, feature.id));
             return [option, feature.id];
         }));
-        const selectedOption = await ctx.ui.select("Toggle TLH experimental features (Esc to close)", [...featureIdsByOption.keys()]);
+        const selectedOption = await ctx.ui.select("Toggle TLH experimental features (Esc to close)", [
+            ...featureIdsByOption.keys(),
+        ]);
         if (!selectedOption) {
             return;
         }
@@ -144,9 +148,7 @@ function writeExperimentalFeaturePreference(cwd, featureId, action) {
 }
 export function getExperimentalCommandCompletions(prefix) {
     const normalizedPrefix = prefix.trim().toLowerCase();
-    const completions = EXPERIMENTAL_COMMAND_COMPLETIONS
-        .filter((option) => option.value.startsWith(normalizedPrefix))
-        .map((option) => ({ value: option.value, label: option.value, description: option.description }));
+    const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({ value: option.value, label: option.value, description: option.description }));
     return completions.length > 0 ? completions : null;
 }
 export async function handleExperimentalCommand(pi, args, ctx) {

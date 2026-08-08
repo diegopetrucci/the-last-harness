@@ -7,11 +7,8 @@ import { createJiti } from "jiti";
 import { makeTempDir } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const {
-	buildSessionLimitReportHtml,
-	createSessionLimitReportCommandHandler,
-	SESSION_LIMIT_REPORT_COMMAND_NAME,
-} = await jiti.import("../extensions/the-last-harness/session-limit-report.ts");
+const { buildSessionLimitReportHtml, createSessionLimitReportCommandHandler, SESSION_LIMIT_REPORT_COMMAND_NAME } =
+	await jiti.import("../extensions/the-last-harness/session-limit-report.ts");
 
 // Verify that /tokens is still intact after changes to tokens.ts
 const { registerTokensCommand } = await jiti.import("../extensions/the-last-harness/tokens.ts");
@@ -57,11 +54,10 @@ function createPiHarness() {
  * Create a minimal sessions root with one primary session file.
  * Returns the sessionsRoot path.
  */
-function createSessionsFixture(baseDir, {
-	includeTranscript = false,
-	includeCwd = false,
-	includeSessionInfo = false,
-} = {}) {
+function createSessionsFixture(
+	baseDir,
+	{ includeTranscript = false, includeCwd = false, includeSessionInfo = false } = {},
+) {
 	const sessionsRoot = join(baseDir, "sessions");
 	const projDir = "--Users-foo-my-project--";
 	const projPath = join(sessionsRoot, projDir);
@@ -94,9 +90,7 @@ function createSessionsFixture(baseDir, {
 			timestamp: IN_WIN,
 			message: {
 				role: "assistant",
-				content: includeTranscript
-					? [{ type: "text", text: "SECRET TRANSCRIPT TEXT" }]
-					: [{ type: "text", text: "" }],
+				content: includeTranscript ? [{ type: "text", text: "SECRET TRANSCRIPT TEXT" }] : [{ type: "text", text: "" }],
 				usage: realUsage,
 			},
 		},
@@ -413,7 +407,9 @@ test(`/${SESSION_LIMIT_REPORT_COMMAND_NAME} unreadable session file: report gene
 	let openedPath;
 	const pi = createPiHarness();
 	const handler = createSessionLimitReportCommandHandler(pi, {
-		openReport: async (p) => { openedPath = p; },
+		openReport: async (p) => {
+			openedPath = p;
+		},
 		now: () => new Date("2026-05-01T13:00:00.000Z"),
 		getSnapshot: () => makeSnapshot(),
 	});
@@ -456,7 +452,9 @@ test(`/${SESSION_LIMIT_REPORT_COMMAND_NAME} session_info name appears in report`
 	let openedPath;
 	const pi = createPiHarness();
 	const handler = createSessionLimitReportCommandHandler(pi, {
-		openReport: async (p) => { openedPath = p; },
+		openReport: async (p) => {
+			openedPath = p;
+		},
 		now: () => new Date("2026-05-01T13:00:00.000Z"),
 		getSnapshot: () => makeSnapshot(),
 	});
@@ -486,7 +484,9 @@ test(`/${SESSION_LIMIT_REPORT_COMMAND_NAME} cwd-derived project label appears in
 	let openedPath;
 	const pi = createPiHarness();
 	const handler = createSessionLimitReportCommandHandler(pi, {
-		openReport: async (p) => { openedPath = p; },
+		openReport: async (p) => {
+			openedPath = p;
+		},
 		now: () => new Date("2026-05-01T13:00:00.000Z"),
 		getSnapshot: () => makeSnapshot(),
 	});
@@ -531,7 +531,9 @@ test(`/${SESSION_LIMIT_REPORT_COMMAND_NAME} slimming: transcript content does no
 	let openedPath;
 	const pi = createPiHarness();
 	const handler = createSessionLimitReportCommandHandler(pi, {
-		openReport: async (p) => { openedPath = p; },
+		openReport: async (p) => {
+			openedPath = p;
+		},
 		now: () => nowDate,
 		getSnapshot: () => snapshot,
 	});
@@ -562,7 +564,16 @@ test("buildSessionLimitReportHtml renders required sections", () => {
 	const result = {
 		rows: [],
 		perProviderTotals: [],
-		grandTotals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+		grandTotals: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 0,
+			costUsd: 0,
+			turns: 0,
+			assistantMessages: 0,
+		},
 		caveats: [],
 	};
 	const snapshot = makeSnapshot();
@@ -585,7 +596,16 @@ test("buildSessionLimitReportHtml includes fallback caveat when source is 'fallb
 	const result = {
 		rows: [],
 		perProviderTotals: [],
-		grandTotals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+		grandTotals: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 0,
+			costUsd: 0,
+			turns: 0,
+			assistantMessages: 0,
+		},
 		caveats: [],
 	};
 	const html = buildSessionLimitReportHtml(window, result, undefined, Date.now(), {
@@ -606,15 +626,48 @@ test("buildSessionLimitReportHtml renders sessions table with token breakdown an
 			sessionId: "id-1",
 			sessionName: "Cost session",
 			providerTotals: [],
-			windowTotals: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100, totalTokens: 1800, costUsd: 0.0123, turns: 5, assistantMessages: 5 },
+			windowTotals: {
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 200,
+				cacheWriteTokens: 100,
+				totalTokens: 1800,
+				costUsd: 0.0123,
+				turns: 5,
+				assistantMessages: 5,
+			},
 			coverage: { assistantMessages: 5, withUsage: 5, withoutUsage: 0 },
 			malformedLineCount: 0,
 		},
 	];
 	const result = {
 		rows,
-		perProviderTotals: [{ provider: "anthropic", modelId: "claude", usage: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100, totalTokens: 1800, costUsd: 0.0123, turns: 5, assistantMessages: 5 } }],
-		grandTotals: { inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheWriteTokens: 100, totalTokens: 1800, costUsd: 0.0123, turns: 5, assistantMessages: 5 },
+		perProviderTotals: [
+			{
+				provider: "anthropic",
+				modelId: "claude",
+				usage: {
+					inputTokens: 1000,
+					outputTokens: 500,
+					cacheReadTokens: 200,
+					cacheWriteTokens: 100,
+					totalTokens: 1800,
+					costUsd: 0.0123,
+					turns: 5,
+					assistantMessages: 5,
+				},
+			},
+		],
+		grandTotals: {
+			inputTokens: 1000,
+			outputTokens: 500,
+			cacheReadTokens: 200,
+			cacheWriteTokens: 100,
+			totalTokens: 1800,
+			costUsd: 0.0123,
+			turns: 5,
+			assistantMessages: 5,
+		},
 		caveats: [],
 	};
 	const html = buildSessionLimitReportHtml(window, result, makeSnapshot(), Date.now(), {
@@ -646,10 +699,28 @@ test("buildSessionLimitReportHtml omits model attribution from provider totals w
 			{
 				provider: "anthropic",
 				modelId: "claude-opus-4-1",
-				usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 40, cacheWriteTokens: 10, totalTokens: 1550, costUsd: 0.0456, turns: 7, assistantMessages: 7 },
+				usage: {
+					inputTokens: 1200,
+					outputTokens: 300,
+					cacheReadTokens: 40,
+					cacheWriteTokens: 10,
+					totalTokens: 1550,
+					costUsd: 0.0456,
+					turns: 7,
+					assistantMessages: 7,
+				},
 			},
 		],
-		grandTotals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 40, cacheWriteTokens: 10, totalTokens: 1550, costUsd: 0.0456, turns: 7, assistantMessages: 7 },
+		grandTotals: {
+			inputTokens: 1200,
+			outputTokens: 300,
+			cacheReadTokens: 40,
+			cacheWriteTokens: 10,
+			totalTokens: 1550,
+			costUsd: 0.0456,
+			turns: 7,
+			assistantMessages: 7,
+		},
 		caveats: [],
 	};
 	const html = buildSessionLimitReportHtml(window, result, makeSnapshot(), Date.now(), {
@@ -675,8 +746,32 @@ test("buildSessionLimitReportHtml renders session rows ranked by total tokens", 
 			projectLabel: "proj-b",
 			sessionId: "id-large",
 			sessionName: "Large session",
-			providerTotals: [{ provider: "anthropic", modelId: "claude", usage: { totalTokens: 5000, turns: 10, inputTokens: 4000, outputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, assistantMessages: 10 } }],
-			windowTotals: { inputTokens: 4000, outputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 5000, costUsd: 0, turns: 10, assistantMessages: 10 },
+			providerTotals: [
+				{
+					provider: "anthropic",
+					modelId: "claude",
+					usage: {
+						totalTokens: 5000,
+						turns: 10,
+						inputTokens: 4000,
+						outputTokens: 1000,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						costUsd: 0,
+						assistantMessages: 10,
+					},
+				},
+			],
+			windowTotals: {
+				inputTokens: 4000,
+				outputTokens: 1000,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				totalTokens: 5000,
+				costUsd: 0,
+				turns: 10,
+				assistantMessages: 10,
+			},
 			coverage: { assistantMessages: 10, withUsage: 10, withoutUsage: 0 },
 			malformedLineCount: 0,
 		},
@@ -686,8 +781,32 @@ test("buildSessionLimitReportHtml renders session rows ranked by total tokens", 
 			projectLabel: "proj-a",
 			sessionId: "id-small",
 			sessionName: "Small session",
-			providerTotals: [{ provider: "anthropic", modelId: "claude", usage: { totalTokens: 100, turns: 1, inputTokens: 80, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, assistantMessages: 1 } }],
-			windowTotals: { inputTokens: 80, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 100, costUsd: 0, turns: 1, assistantMessages: 1 },
+			providerTotals: [
+				{
+					provider: "anthropic",
+					modelId: "claude",
+					usage: {
+						totalTokens: 100,
+						turns: 1,
+						inputTokens: 80,
+						outputTokens: 20,
+						cacheReadTokens: 0,
+						cacheWriteTokens: 0,
+						costUsd: 0,
+						assistantMessages: 1,
+					},
+				},
+			],
+			windowTotals: {
+				inputTokens: 80,
+				outputTokens: 20,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				totalTokens: 100,
+				costUsd: 0,
+				turns: 1,
+				assistantMessages: 1,
+			},
 			coverage: { assistantMessages: 1, withUsage: 1, withoutUsage: 0 },
 			malformedLineCount: 0,
 		},
@@ -695,7 +814,16 @@ test("buildSessionLimitReportHtml renders session rows ranked by total tokens", 
 	const result = {
 		rows,
 		perProviderTotals: [],
-		grandTotals: { inputTokens: 4080, outputTokens: 1020, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 5100, costUsd: 0, turns: 11, assistantMessages: 11 },
+		grandTotals: {
+			inputTokens: 4080,
+			outputTokens: 1020,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 5100,
+			costUsd: 0,
+			turns: 11,
+			assistantMessages: 11,
+		},
 		caveats: [],
 	};
 	const html = buildSessionLimitReportHtml(window, result, makeSnapshot(), Date.now(), {
@@ -723,13 +851,46 @@ test("buildSessionLimitReportHtml escapes dynamic content to prevent XSS", () =>
 				sessionId: "id-1",
 				sessionName: "<img src=x onerror=alert(2)>",
 				providerTotals: [],
-				windowTotals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+				windowTotals: {
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					totalTokens: 0,
+					costUsd: 0,
+					turns: 0,
+					assistantMessages: 0,
+				},
 				coverage: { assistantMessages: 0, withUsage: 0, withoutUsage: 0 },
 				malformedLineCount: 0,
 			},
 		],
-		perProviderTotals: [{ provider: "<b>evil</b>", modelId: undefined, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 } }],
-		grandTotals: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, assistantMessages: 0 },
+		perProviderTotals: [
+			{
+				provider: "<b>evil</b>",
+				modelId: undefined,
+				usage: {
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					cacheWriteTokens: 0,
+					totalTokens: 0,
+					costUsd: 0,
+					turns: 0,
+					assistantMessages: 0,
+				},
+			},
+		],
+		grandTotals: {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheWriteTokens: 0,
+			totalTokens: 0,
+			costUsd: 0,
+			turns: 0,
+			assistantMessages: 0,
+		},
 		caveats: ["<b>user-controlled caveat</b>"],
 	};
 	const html = buildSessionLimitReportHtml(window, result, undefined, Date.now(), {

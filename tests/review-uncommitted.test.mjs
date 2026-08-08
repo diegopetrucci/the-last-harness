@@ -1,4 +1,16 @@
-import { assert, assertNoStandaloneLine, assertRenderedPathLine, assertStandaloneLineCount, createReviewHarness, join, makeTempDir, mkdirSync, symlinkSync, test, writeFileSync } from "./review-test-helpers.mjs";
+import {
+	assert,
+	assertNoStandaloneLine,
+	assertRenderedPathLine,
+	assertStandaloneLineCount,
+	createReviewHarness,
+	join,
+	makeTempDir,
+	mkdirSync,
+	symlinkSync,
+	test,
+	writeFileSync,
+} from "./review-test-helpers.mjs";
 
 test("/review uncommitted appends untracked non-gitignored file content", async (t) => {
 	const cwd = makeTempDir(t, "tlh-review-uncommitted-");
@@ -17,7 +29,11 @@ test("/review uncommitted appends untracked non-gitignored file content", async 
 			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
 				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === cwd
+			) {
 				return { code: 0, stdout: "new-file.ts\0", stderr: "" };
 			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
@@ -33,7 +49,7 @@ test("/review uncommitted appends untracked non-gitignored file content", async 
 	assert.match(harness.sentMessages[0], /--- untracked file: "new-file\.ts" ---\nexport const fresh = true;/);
 	assert.ok(
 		harness.sentMessages[0].indexOf("diff --git a/app.ts b/app.ts") <
-			harness.sentMessages[0].indexOf("--- untracked file: \"new-file.ts\" ---"),
+			harness.sentMessages[0].indexOf('--- untracked file: "new-file.ts" ---'),
 		"untracked content should be appended after the diff body",
 	);
 });
@@ -74,13 +90,17 @@ test("/review uncommitted scans untracked files from the repo root when invoked 
 	assert.match(harness.sentMessages[0], /--- untracked file: "outside\.ts" ---\nexport const outside = true;/);
 	assert.doesNotMatch(harness.sentMessages[0], /--- untracked file: "\.\.\/outside\.ts" ---/);
 	assert.ok(
-		harness.execCalls.some(({ command, args, cwd: callCwd }) =>
-			command === "git" && args.join(" ") === "rev-parse --show-toplevel" && callCwd === cwd),
+		harness.execCalls.some(
+			({ command, args, cwd: callCwd }) =>
+				command === "git" && args.join(" ") === "rev-parse --show-toplevel" && callCwd === cwd,
+		),
 		"should resolve the repository root from the invocation cwd",
 	);
 	assert.ok(
-		harness.execCalls.some(({ command, args, cwd: callCwd }) =>
-			command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && callCwd === repoRoot),
+		harness.execCalls.some(
+			({ command, args, cwd: callCwd }) =>
+				command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && callCwd === repoRoot,
+		),
 		"should scan untracked files from the repository root",
 	);
 });
@@ -103,7 +123,11 @@ test("/review uncommitted preserves exact git-reported paths with leading or tra
 			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
 				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === cwd
+			) {
 				return { code: 0, stdout: " leading.ts\0trailing .ts\0", stderr: "" };
 			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
@@ -113,8 +137,8 @@ test("/review uncommitted preserves exact git-reported paths with leading or tra
 	await harness.handler("", harness.ctx);
 
 	assert.equal(harness.sentMessages.length, 1);
-	assert.ok(harness.sentMessages[0].includes("--- untracked file: \" leading.ts\" ---"));
-	assert.ok(harness.sentMessages[0].includes("--- untracked file: \"trailing .ts\" ---"));
+	assert.ok(harness.sentMessages[0].includes('--- untracked file: " leading.ts" ---'));
+	assert.ok(harness.sentMessages[0].includes('--- untracked file: "trailing .ts" ---'));
 });
 
 test("/review uncommitted renders newline/control/delimiter-like untracked paths as escaped labels", async (t) => {
@@ -135,7 +159,11 @@ test("/review uncommitted renders newline/control/delimiter-like untracked paths
 			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
 				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === cwd
+			) {
 				return { code: 0, stdout: `${weirdPath}\0`, stderr: "" };
 			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
@@ -169,7 +197,11 @@ test("/review uncommitted skips symlinked untracked files instead of reading tar
 			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
 				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === cwd
+			) {
 				return { code: 0, stdout: "outside-link.txt\0", stderr: "" };
 			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);
@@ -204,7 +236,11 @@ test("/review uncommitted renders escaped symlink skip markers for newline/delim
 			if (command === "git" && args.join(" ") === "rev-parse --show-toplevel" && options.cwd === cwd) {
 				return { code: 0, stdout: `${cwd}\n`, stderr: "" };
 			}
-			if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- ." && options.cwd === cwd) {
+			if (
+				command === "git" &&
+				args.join(" ") === "ls-files -z --others --exclude-standard -- ." &&
+				options.cwd === cwd
+			) {
 				return { code: 0, stdout: `${weirdLinkPath}\0`, stderr: "" };
 			}
 			throw new Error(`Unexpected exec: ${command} ${args.join(" ")} @ ${options.cwd ?? ""}`);

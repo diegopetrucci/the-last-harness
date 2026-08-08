@@ -110,7 +110,7 @@ function oracleInstallState(stateContent) {
  */
 function buildFixture({
 	installStateContent = JSON.stringify({ piInstalledByTlh: true }),
-	markerContent = undefined,   // undefined → skip writing marker; null → no marker file
+	markerContent = undefined, // undefined → skip writing marker; null → no marker file
 	withRuntime = false,
 	hasPiLayout = true,
 } = {}) {
@@ -134,10 +134,7 @@ function buildFixture({
 		if (hasPiLayout) {
 			mkdirSync(join(runtimeDir, "bin"), { recursive: true });
 			writeFileSync(join(runtimeDir, "bin", "pi"), "#!/usr/bin/env bash\necho pi\n", "utf8");
-			mkdirSync(
-				join(runtimeDir, "lib", "node_modules", PI_PACKAGE_NAME),
-				{ recursive: true },
-			);
+			mkdirSync(join(runtimeDir, "lib", "node_modules", PI_PACKAGE_NAME), { recursive: true });
 		}
 		if (markerContent !== null && markerContent !== undefined) {
 			writeFileSync(join(runtimeDir, RUNTIME_MARKER_FILENAME), markerContent, "utf8");
@@ -166,16 +163,12 @@ function runDryRun(agentDir, binDir, homeDir) {
 	const minimalPath = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(delimiter);
 	const env = { HOME: homeDir, PATH: minimalPath };
 
-	return spawnSync(
-		"bash",
-		["uninstall.sh", "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
-		{
-			cwd: repoRoot,
-			env,
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		},
-	);
+	return spawnSync("bash", ["uninstall.sh", "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
+		cwd: repoRoot,
+		env,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
 }
 
 // ── Plan-class matchers ────────────────────────────────────────────────────────
@@ -558,10 +551,7 @@ test("uninstall-oracle: install-state piInstalledByTlh absent (no field) → ora
 	const oracleValue = oracleInstallState(installStateContent);
 	assert.equal(oracleValue, "absent", "oracle sanity check");
 	assertPlanClass(result.stdout, "skip", "piInstalledByTlh absent");
-	assert.ok(
-		result.stdout.includes("absent"),
-		`expected skip reason to mention 'absent'\nstdout:\n${result.stdout}`,
-	);
+	assert.ok(result.stdout.includes("absent"), `expected skip reason to mention 'absent'\nstdout:\n${result.stdout}`);
 });
 
 test("uninstall-oracle: malformed install-state JSON → oracle=absent, skip", (t) => {
@@ -641,10 +631,7 @@ test("uninstall-oracle: install-state missing (file absent) → oracle=absent, s
 	const oracleValue = oracleInstallState(null);
 	assert.equal(oracleValue, "absent", "oracle sanity check");
 	// When nothing exists, uninstall says "Nothing to remove."
-	assert.ok(
-		result.stdout.includes("Nothing to remove"),
-		`expected "Nothing to remove"\nstdout:\n${result.stdout}`,
-	);
+	assert.ok(result.stdout.includes("Nothing to remove"), `expected "Nothing to remove"\nstdout:\n${result.stdout}`);
 });
 
 // ── Grammar-only-malformed marker: intentional lenient behavior ────────────────

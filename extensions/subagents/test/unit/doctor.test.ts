@@ -49,13 +49,21 @@ describe("buildDoctorReport", () => {
 			};
 			for (const dir of Object.values(paths)) fs.mkdirSync(dir, { recursive: true });
 			fs.mkdirSync(path.join(paths.asyncDir, "run-active"), { recursive: true });
-			fs.writeFileSync(path.join(paths.asyncDir, "run-active", "status.json"), JSON.stringify({
-				runId: "run-active",
-				mode: "single",
-				state: "running",
-				startedAt: 1000,
-				lastUpdate: 1500,
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(paths.asyncDir, "run-active", "status.json"),
+				JSON.stringify(
+					{
+						runId: "run-active",
+						mode: "single",
+						state: "running",
+						startedAt: 1000,
+						lastUpdate: 1500,
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const report = buildDoctorReport({
 				cwd: root,
@@ -101,7 +109,10 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /- configured session dir: .*subagent-sessions/);
 			assert.match(report, /- current session file: .*parent\.jsonl/);
 			assert.match(report, /- temp root: ok /);
-			assert.match(report, /- runtime dir counts: async 1 \(top-level 1, nested 0, active\/live 1, stale 0\); nested event routes 0 \(unreferenced 0\)/);
+			assert.match(
+				report,
+				/- runtime dir counts: async 1 \(top-level 1, nested 0, active\/live 1, stale 0\); nested event routes 0 \(unreferenced 0\)/,
+			);
 			assert.match(report, /- agents: total 4 \(builtin 1, package 0, user 1, project 2\)/);
 			assert.doesNotMatch(report, /- chains:/);
 			assert.match(report, /- skills: total 2 \(project 1, user-package 1\)/);

@@ -26,7 +26,10 @@ describe("prompt-template delegation adapter", () => {
 		const parallel = promptTemplateDelegationParams({
 			agent: "",
 			task: "",
-			tasks: [{ agent: "worker", task: "Do work" }, { agent: "reviewer", task: "Review work" }],
+			tasks: [
+				{ agent: "worker", task: "Do work" },
+				{ agent: "reviewer", task: "Review work" },
+			],
 			context: "fork",
 			model: "openai/gpt-5",
 			cwd: "/repo",
@@ -44,7 +47,10 @@ describe("prompt-template delegation adapter", () => {
 			async: false,
 		});
 		assert.deepEqual(parallel, {
-			tasks: [{ agent: "worker", task: "Do work" }, { agent: "reviewer", task: "Review work" }],
+			tasks: [
+				{ agent: "worker", task: "Do work" },
+				{ agent: "reviewer", task: "Review work" },
+			],
 			context: "fork",
 			cwd: "/repo",
 			worktree: true,
@@ -587,5 +593,4 @@ describe("subagent extension child mode", () => {
 			{ cwd: projectRoot, stdio: "pipe" },
 		);
 	});
-
 });

@@ -7,19 +7,18 @@ import { parseGitSource } from "./lib/tlh-install-package-source.mjs";
 import { requiredValue } from "./lib/tlh-install-utils.mjs";
 
 const EXACT_VERSION_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const VERSION_TOKEN_RE = /(?:^|[^0-9A-Za-z])((?:v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?))(?=$|[^0-9A-Za-z])/;
+const VERSION_TOKEN_RE =
+	/(?:^|[^0-9A-Za-z])((?:v?(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?))(?=$|[^0-9A-Za-z])/;
 const COMMIT_SHA_GIT_REF_RE = /^[0-9a-f]{7,40}$/i;
 const FLOATING_GIT_REF_RE = /^(?:head|latest|main|master|trunk|develop)$/i;
-const BRANCH_LIKE_GIT_REF_RE = /^(?:feature|features|release|releases|hotfix|bugfix|fix|feat|chore|develop|dev)(?:$|[/-])/i;
+const BRANCH_LIKE_GIT_REF_RE =
+	/^(?:feature|features|release|releases|hotfix|bugfix|fix|feat|chore|develop|dev)(?:$|[/-])/i;
 const DEFAULT_GNOSIS_SCRIPT_PATHS = Object.freeze([
 	"scripts/tlh-gnosis.mts",
 	"scripts/tlh-gnosis.mjs",
 	"scripts/tlh-install.mjs",
 ]);
-const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
-	"scripts/tlh-install.mts",
-	"scripts/tlh-install.mjs",
-]);
+const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze(["scripts/tlh-install.mts", "scripts/tlh-install.mjs"]);
 const DEFAULT_INSTALL_SH_PATH = "install.sh";
 const MANAGED_PI_DEPENDENCIES = Object.freeze([
 	{ field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
@@ -30,11 +29,7 @@ const MANAGED_PI_DEPENDENCIES = Object.freeze([
 	{ field: "devDependencies", name: "@earendil-works/pi-tui" },
 ]);
 const PI_CODING_AGENT_LOCK_PATH = "node_modules/@earendil-works/pi-coding-agent";
-const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze([
-	"file:",
-	"link:",
-	"workspace:",
-]);
+const ALLOWED_LOCAL_DEPENDENCY_PREFIXES = Object.freeze(["file:", "link:", "workspace:"]);
 
 function usage() {
 	return `Usage: node scripts/check-package-versions.mjs [options]
@@ -207,9 +202,7 @@ function assertMatchingVersions(entries) {
 	const distinctVersions = new Set(entries.map(({ value }) => value));
 	if (distinctVersions.size <= 1) return entries[0].value;
 
-	const details = entries
-		.map(({ label, value }) => `  - ${label}: ${JSON.stringify(value)}`)
-		.join("\n");
+	const details = entries.map(({ label, value }) => `  - ${label}: ${JSON.stringify(value)}`).join("\n");
 	throw new Error(`Version metadata mismatch:\n${details}`);
 }
 
@@ -218,7 +211,10 @@ function isPinnedExactVersion(value) {
 }
 
 function splitNpmPackageSpec(spec) {
-	const text = String(spec ?? "").trim().replace(/^npm:/, "").trim();
+	const text = String(spec ?? "")
+		.trim()
+		.replace(/^npm:/, "")
+		.trim();
 	if (!text) return { name: "", version: "" };
 	if (text.startsWith("@")) {
 		const secondAt = text.indexOf("@", 1);
@@ -361,7 +357,9 @@ function validatePinnedDependencyMap(value, label, problems, allowNested) {
 			continue;
 		}
 		if (!isPinnedDependencySpec(spec)) {
-			problems.push(`${dependencyLabel} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`);
+			problems.push(
+				`${dependencyLabel} must use an exact version or pinned non-registry source, found ${JSON.stringify(spec)}`,
+			);
 		}
 	}
 }
@@ -403,7 +401,9 @@ function validateDefaultExtensionPins(defaultExtensionsPath, problems) {
 			continue;
 		}
 		if (!isPinnedGitRef(gitSource.ref)) {
-			problems.push(`${label} must pin git defaults to a tag- or commit-like ref, found ${JSON.stringify(extension.source)}`);
+			problems.push(
+				`${label} must pin git defaults to a tag- or commit-like ref, found ${JSON.stringify(extension.source)}`,
+			);
 		}
 	}
 }
@@ -450,9 +450,7 @@ function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, p
 
 	const distinctVersions = new Set(versions.map(({ version }) => version));
 	if (versions.length > 1 && distinctVersions.size > 1) {
-		const details = versions
-			.map(({ path, version }) => `  - ${path}: ${JSON.stringify(version)}`)
-			.join("\n");
+		const details = versions.map(({ path, version }) => `  - ${path}: ${JSON.stringify(version)}`).join("\n");
 		problems.push(`${label} defaults must stay in sync:\n${details}`);
 	}
 }
@@ -475,7 +473,9 @@ function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
 		return;
 	}
 	if (typeof directSpec === "string" && isPinnedExactVersion(directSpec) && directSpec.trim() !== piSpec.trim()) {
-		problems.push(`TLH's direct typebox dependency must match Pi's pinned typebox version:\n  - ${directLabel}: ${JSON.stringify(directSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`);
+		problems.push(
+			`TLH's direct typebox dependency must match Pi's pinned typebox version:\n  - ${directLabel}: ${JSON.stringify(directSpec.trim())}\n  - ${piLabel}: ${JSON.stringify(piSpec.trim())}`,
+		);
 	}
 }
 
@@ -499,7 +499,9 @@ function validateManagedPiPins(args, packageJson, problems) {
 	try {
 		const installShVersion = readShellStringVariable(args.installShPath, "TLH_PINNED_PI_VERSION");
 		if (!isPinnedExactVersion(installShVersion)) {
-			problems.push(`${args.installShPath}#TLH_PINNED_PI_VERSION must use an exact version, found ${JSON.stringify(installShVersion)}`);
+			problems.push(
+				`${args.installShPath}#TLH_PINNED_PI_VERSION must use an exact version, found ${JSON.stringify(installShVersion)}`,
+			);
 		} else {
 			versions.push({ label: `${args.installShPath}#TLH_PINNED_PI_VERSION`, version: installShVersion });
 		}
@@ -522,9 +524,7 @@ function validateManagedPiPins(args, packageJson, problems) {
 
 	const distinctVersions = new Set(versions.map(({ version }) => version));
 	if (versions.length > 1 && distinctVersions.size > 1) {
-		const details = versions
-			.map(({ label, version }) => `  - ${label}: ${JSON.stringify(version)}`)
-			.join("\n");
+		const details = versions.map(({ label, version }) => `  - ${label}: ${JSON.stringify(version)}`).join("\n");
 		problems.push(`Managed Pi pins must stay in sync:\n${details}`);
 	}
 }
@@ -563,7 +563,9 @@ function main() {
 		throw new Error(problems.join("\n\n"));
 	}
 
-	process.stdout.write(`check-package-versions: all tracked version fields match (${version}), and managed dependency pins are valid.\n`);
+	process.stdout.write(
+		`check-package-versions: all tracked version fields match (${version}), and managed dependency pins are valid.\n`,
+	);
 }
 
 try {

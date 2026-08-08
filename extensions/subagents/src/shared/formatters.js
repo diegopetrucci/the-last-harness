@@ -56,9 +56,9 @@ export function buildChainSummary(steps, results, chainDir, status, failedStep) 
             r.skills.forEach((s) => allSkills.add(s));
     }
     const skillsLine = allSkills.size > 0 ? `🔧 Skills: ${[...allSkills].join(", ")}` : "";
-    const fallbackNotices = [...new Set(results
-            .map((result) => result.modelFallbackNotice?.trim())
-            .filter((notice) => Boolean(notice)))];
+    const fallbackNotices = [
+        ...new Set(results.map((result) => result.modelFallbackNotice?.trim()).filter((notice) => Boolean(notice))),
+    ];
     const fallbackLine = fallbackNotices.length > 0 ? `ℹ️ Fallbacks: ${fallbackNotices.join("; ")}` : "";
     if (status === "completed") {
         const stepWord = results.length === 1 ? "step" : "steps";
@@ -86,11 +86,7 @@ export function formatToolCall(name, args, expanded = false) {
         case "read":
         case "write":
         case "edit": {
-            const target = typeof args.path === "string"
-                ? args.path
-                : typeof args.file_path === "string"
-                    ? args.file_path
-                    : "";
+            const target = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
             return `${name} ${shortenPath(target)}`;
         }
         default: {

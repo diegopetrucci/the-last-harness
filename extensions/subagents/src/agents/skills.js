@@ -38,9 +38,7 @@ function readOptionalJsonFile(filePath, label) {
         return JSON.parse(fs.readFileSync(filePath, "utf-8"));
     }
     catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
+        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
         if (code === "ENOENT")
             return null;
         const message = error instanceof Error ? error.message : String(error);
@@ -168,9 +166,9 @@ function collectSettingsSkillPaths(cwd, agentDir) {
     return results;
 }
 function isSafePackagePath(value) {
-    return value.length > 0
-        && !path.isAbsolute(value)
-        && value.split(/[\\/]/).every((part) => part.length > 0 && part !== "." && part !== "..");
+    return (value.length > 0 &&
+        !path.isAbsolute(value) &&
+        value.split(/[\\/]/).every((part) => part.length > 0 && part !== "." && part !== ".."));
 }
 function parseNpmPackageName(source) {
     const spec = source.slice(4).trim();
@@ -214,8 +212,13 @@ function parseGitPackagePath(source) {
         host = spec.slice(0, slashIndex);
         repoPath = spec.slice(slashIndex + 1);
     }
-    const normalizedPath = stripGitRef(repoPath).replace(/\.git$/, "").replace(/^\/+/, "");
-    if (!host || !isSafePackagePath(host) || !isSafePackagePath(normalizedPath) || normalizedPath.split(/[\\/]/).length < 2) {
+    const normalizedPath = stripGitRef(repoPath)
+        .replace(/\.git$/, "")
+        .replace(/^\/+/, "");
+    if (!host ||
+        !isSafePackagePath(host) ||
+        !isSafePackagePath(normalizedPath) ||
+        normalizedPath.split(/[\\/]/).length < 2) {
         return undefined;
     }
     return { host, repoPath: normalizedPath };
@@ -280,7 +283,9 @@ function buildSkillPaths(cwd, agentDir) {
     const projectLegacyAgentsDir = path.join(cwd, ".agents");
     const skillPaths = [
         { path: path.join(projectConfigDir, "skills"), source: "project" },
-        ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir) ? [] : [{ path: path.join(projectLegacyAgentsDir, "skills"), source: "project" }]),
+        ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
+            ? []
+            : [{ path: path.join(projectLegacyAgentsDir, "skills"), source: "project" }]),
         { path: path.join(agentDir, "skills"), source: "user" },
         ...(legacyGlobalAgentsDir ? [{ path: path.join(legacyGlobalAgentsDir, "skills"), source: "user" }] : []),
         ...collectInstalledPackageSkillPaths(cwd, agentDir),
@@ -399,7 +404,7 @@ function collectFilesystemSkills(cwd, agentDir, skillPaths) {
         catch {
             resolvedDir = path.resolve(dirPath);
         }
-        const priority = sourceHint ? SOURCE_PRIORITY[sourceHint] ?? 0 : SOURCE_PRIORITY.unknown;
+        const priority = sourceHint ? (SOURCE_PRIORITY[sourceHint] ?? 0) : SOURCE_PRIORITY.unknown;
         const previousPriority = visitedDirectories.get(resolvedDir);
         if (previousPriority !== undefined && previousPriority >= priority)
             return false;
@@ -502,7 +507,10 @@ function collectFilesystemSkills(cwd, agentDir, skillPaths) {
 function getCachedSkills(cwd) {
     const now = Date.now();
     const agentDir = getAgentDir();
-    if (loadSkillsCache && loadSkillsCache.cwd === cwd && loadSkillsCache.agentDir === agentDir && now - loadSkillsCache.timestamp < LOAD_SKILLS_CACHE_TTL_MS) {
+    if (loadSkillsCache &&
+        loadSkillsCache.cwd === cwd &&
+        loadSkillsCache.agentDir === agentDir &&
+        now - loadSkillsCache.timestamp < LOAD_SKILLS_CACHE_TTL_MS) {
         return loadSkillsCache.skills;
     }
     const skillPaths = buildSkillPaths(cwd, agentDir);
@@ -611,10 +619,7 @@ export function buildSkillInjection(skills) {
     return lines.join("\n");
 }
 function escapeXmlText(value) {
-    return value
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+    return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 export function normalizeSkillInput(input) {
     if (input === false)
@@ -635,7 +640,12 @@ export function normalizeSkillInput(input) {
         catch {
         }
     }
-    return [...new Set(input.split(",").map((s) => s.trim()).filter((s) => s.length > 0))];
+    return [
+        ...new Set(input
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)),
+    ];
 }
 export function discoverAvailableSkills(cwd) {
     const skills = getCachedSkills(cwd);

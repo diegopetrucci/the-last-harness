@@ -39,24 +39,25 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
 function toolMutationCapability(tools) {
     if (tools === undefined || tools.length === 0)
         return { kind: "mutation-capable" };
-    return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool)) ? { kind: "read-only" } : { kind: "mutation-capable" };
+    return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool))
+        ? { kind: "read-only" }
+        : { kind: "mutation-capable" };
 }
 function isConditionalValidationNoSourceChangeTask(task) {
-    return VALIDATION_ONLY_TASK_PATTERNS.some((pattern) => pattern.test(task))
-        && CONDITIONAL_NO_SOURCE_CHANGE_PATTERNS.some((pattern) => pattern.test(task))
-        && VALIDATION_CONDITIONAL_MUTATION_PATTERNS.some((pattern) => pattern.test(task));
+    return (VALIDATION_ONLY_TASK_PATTERNS.some((pattern) => pattern.test(task)) &&
+        CONDITIONAL_NO_SOURCE_CHANGE_PATTERNS.some((pattern) => pattern.test(task)) &&
+        VALIDATION_CONDITIONAL_MUTATION_PATTERNS.some((pattern) => pattern.test(task)));
 }
 function hasExplicitNonSourceEditRequest(task) {
-    return NON_SOURCE_EDIT_TARGET_PATTERNS.some((pattern) => pattern.test(task))
-        && NON_SOURCE_EDIT_REQUEST_PATTERNS.some((pattern) => pattern.test(task));
+    return (NON_SOURCE_EDIT_TARGET_PATTERNS.some((pattern) => pattern.test(task)) &&
+        NON_SOURCE_EDIT_REQUEST_PATTERNS.some((pattern) => pattern.test(task)));
 }
 function localAgentName(agent) {
     const lastDot = agent.lastIndexOf(".");
     return lastDot === -1 ? agent : agent.slice(lastDot + 1);
 }
 export function expectsImplementationMutation(agent, task) {
-    if (isConditionalValidationNoSourceChangeTask(task)
-        && !hasExplicitNonSourceEditRequest(task))
+    if (isConditionalValidationNoSourceChangeTask(task) && !hasExplicitNonSourceEditRequest(task))
         return false;
     return sharedExpectsImplementationMutation(localAgentName(agent), task);
 }

@@ -69,11 +69,7 @@ export function runHelper(scriptRelativePath, args, { homeDir }) {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
-	assert.equal(
-		result.status,
-		0,
-		`${scriptRelativePath} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-	);
+	assert.equal(result.status, 0, `${scriptRelativePath} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -96,28 +92,38 @@ export function writeFakeTk(fakebin) {
 }
 
 export function writeFakeNpmInstaller(fakebin, { npmLog, templatePiPath, installedPiPath }) {
-	writeFakeCommand(fakebin, "npm", [
-		`printf '%s\\n' "$*" >>"${npmLog}"`,
-		`mkdir -p "${dirname(installedPiPath)}"`,
-		`cp "${templatePiPath}" "${installedPiPath}"`,
-		`chmod +x "${installedPiPath}"`,
-	].join("\n"));
+	writeFakeCommand(
+		fakebin,
+		"npm",
+		[
+			`printf '%s\\n' "$*" >>"${npmLog}"`,
+			`mkdir -p "${dirname(installedPiPath)}"`,
+			`cp "${templatePiPath}" "${installedPiPath}"`,
+			`chmod +x "${installedPiPath}"`,
+		].join("\n"),
+	);
 }
 
 export function writeLoggingPi(commandDir, logPath, version = TLH_PINNED_PI_VERSION) {
-	writeFakePi(commandDir, [
-		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		commandDir,
+		[
+			`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${logPath}"`,
+			`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
+			"exit 0",
+		].join("\n"),
+	);
 }
 
 export function writeVersionedWrapperPi(commandDir, logPath, version = TLH_PINNED_PI_VERSION) {
-	writeFakePi(commandDir, [
-		`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
-		`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${logPath}"`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		commandDir,
+		[
+			`if [[ "\${1:-}" == "--version" ]]; then printf '${version}\\n'; exit 0; fi`,
+			`{ printf 'cmd=%s\\n' "$0"; printf 'argv=%s\\n' "$*"; printf 'agent=%s\\n' "\${PI_CODING_AGENT_DIR:-}"; printf 'path=%s\\n' "\${PATH:-}"; } >"${logPath}"`,
+			"exit 0",
+		].join("\n"),
+	);
 }
 
 export function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {
@@ -133,16 +139,19 @@ export function writeWrapperHelperLogger(scriptPath, logEnvVar, source) {
 // High-level test orchestration helpers
 // ---------------------------------------------------------------------------
 
-export function runStage1LocalPackageInstall(t, {
-	dryRun = false,
-	noSettings = false,
-	force = false,
-	verbose = false,
-	existingSupportFiles,
-	existingLibrarianConfig,
-	existingManagedRtk = false,
-	envOverrides = {},
-} = {}) {
+export function runStage1LocalPackageInstall(
+	t,
+	{
+		dryRun = false,
+		noSettings = false,
+		force = false,
+		verbose = false,
+		existingSupportFiles,
+		existingLibrarianConfig,
+		existingManagedRtk = false,
+		envOverrides = {},
+	} = {},
+) {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
 	const agentDir = join(root, "agent");

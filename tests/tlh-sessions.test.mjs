@@ -71,11 +71,10 @@ function writeSessionFile(sessionsDir, slug, filename, lines) {
 }
 
 function runSessions(agentDir, extraArgs = []) {
-	return spawnSync(
-		process.execPath,
-		[sessionsScript, "--agent-dir", agentDir, ...extraArgs],
-		{ encoding: "utf8", cwd: repoRoot },
-	);
+	return spawnSync(process.execPath, [sessionsScript, "--agent-dir", agentDir, ...extraArgs], {
+		encoding: "utf8",
+		cwd: repoRoot,
+	});
 }
 
 function parseJsonOutput(result) {
@@ -138,7 +137,10 @@ test("tlh-sessions: default output contains no raw file paths", (t) => {
 	assert.equal(output.provenance.toolName, "tlh-sessions", "provenance.toolName must be set");
 	// Fix 8: --agent-dir was passed, so profileSource must be "flag"
 	assert.equal(output.provenance.profileSource, "flag", "profileSource must be 'flag' when --agent-dir is passed");
-	assert.ok(typeof output.provenance.profileId === "string" && output.provenance.profileId.length === 12, "provenance.profileId must be 12-char hex");
+	assert.ok(
+		typeof output.provenance.profileId === "string" && output.provenance.profileId.length === 12,
+		"provenance.profileId must be 12-char hex",
+	);
 	// provenance must not contain agentDir or sessionsDir in default mode
 	assert.ok(!("agentDir" in output.provenance), "provenance.agentDir must not appear in default output");
 	assert.ok(!("sessionsDir" in output.provenance), "provenance.sessionsDir must not appear in default output");
@@ -256,18 +258,12 @@ test("tlh-sessions: enumerates child session files nested deeper than one level"
 	const { agentDir, sessionsDir } = makeAgentFixture(t);
 
 	// Top-level session
-	writeSessionFile(sessionsDir, "project-a", "session.jsonl", [
-		sessionHeaderLine("sess-parent"),
-	]);
+	writeSessionFile(sessionsDir, "project-a", "session.jsonl", [sessionHeaderLine("sess-parent")]);
 
 	// Child session nested under <cwd-slug>/<parent-session-stem>/<runId>/run-N/session.jsonl
 	const childDir = join(sessionsDir, "project-a", "sess-parent", "run-001", "run-1");
 	mkdirSync(childDir, { recursive: true });
-	writeFileSync(
-		join(childDir, "session.jsonl"),
-		sessionHeaderLine("sess-child") + "\n",
-		"utf8",
-	);
+	writeFileSync(join(childDir, "session.jsonl"), sessionHeaderLine("sess-child") + "\n", "utf8");
 
 	const result = runSessions(agentDir);
 	const output = parseJsonOutput(result);
@@ -285,9 +281,7 @@ test("tlh-sessions: never reads run-history.jsonl", (t) => {
 	writeFileSync(join(slugDir, "run-history.jsonl"), "INVALID_SHOULD_NOT_BE_READ\n", "utf8");
 
 	// Also write a valid session file
-	writeSessionFile(sessionsDir, slug, "session.jsonl", [
-		sessionHeaderLine("sess-ok"),
-	]);
+	writeSessionFile(sessionsDir, slug, "session.jsonl", [sessionHeaderLine("sess-ok")]);
 
 	const result = runSessions(agentDir);
 	// Must succeed (exit 0) and not report any malformed lines from run-history.jsonl
@@ -321,9 +315,7 @@ test("tlh-sessions: coverage reflects scanned files", (t) => {
 // Fix 5: coverage reports filesDiscovered, failedScans, unreadableDirectories
 test("tlh-sessions: coverage reports filesDiscovered and failedScans fields", (t) => {
 	const { agentDir, sessionsDir } = makeAgentFixture(t);
-	writeSessionFile(sessionsDir, "slug", "session.jsonl", [
-		sessionHeaderLine(),
-	]);
+	writeSessionFile(sessionsDir, "slug", "session.jsonl", [sessionHeaderLine()]);
 
 	const result = runSessions(agentDir);
 	const output = parseJsonOutput(result);
@@ -500,10 +492,7 @@ test("tlh-sessions: default provenance contains no path or username substrings",
 			`provenance must not contain the resolved agentDir path: ${agentDirResolved}`,
 		);
 		// profileId must be hex only — no slashes or path separators
-		assert.ok(
-			!/[/\\]/.test(output.provenance.profileId),
-			"profileId must not contain path separators",
-		);
+		assert.ok(!/[/\\]/.test(output.provenance.profileId), "profileId must not contain path separators");
 	}
 });
 
@@ -552,9 +541,5 @@ test("tlh-sessions: profileId differs for different agentDirs", (t) => {
 	const out1 = parseJsonOutput(runSessions(fixture1.agentDir));
 	const out2 = parseJsonOutput(runSessions(fixture2.agentDir));
 
-	assert.notEqual(
-		out1.provenance.profileId,
-		out2.provenance.profileId,
-		"profileId must differ for distinct agentDirs",
-	);
+	assert.notEqual(out1.provenance.profileId, out2.provenance.profileId, "profileId must differ for distinct agentDirs");
 });

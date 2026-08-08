@@ -76,9 +76,11 @@ export function buildChainSummary(
 		if (r.skills) r.skills.forEach((s) => allSkills.add(s));
 	}
 	const skillsLine = allSkills.size > 0 ? `🔧 Skills: ${[...allSkills].join(", ")}` : "";
-	const fallbackNotices = [...new Set(results
-		.map((result) => result.modelFallbackNotice?.trim())
-		.filter((notice): notice is string => Boolean(notice)))];
+	const fallbackNotices = [
+		...new Set(
+			results.map((result) => result.modelFallbackNotice?.trim()).filter((notice): notice is string => Boolean(notice)),
+		),
+	];
 	const fallbackLine = fallbackNotices.length > 0 ? `ℹ️ Fallbacks: ${fallbackNotices.join("; ")}` : "";
 
 	if (status === "completed") {
@@ -110,11 +112,8 @@ export function formatToolCall(name: string, args: Record<string, unknown>, expa
 		case "read":
 		case "write":
 		case "edit": {
-			const target = typeof args.path === "string"
-				? args.path
-				: typeof args.file_path === "string"
-					? args.file_path
-					: "";
+			const target =
+				typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
 			return `${name} ${shortenPath(target)}`;
 		}
 		default: {

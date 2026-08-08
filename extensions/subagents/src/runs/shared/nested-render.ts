@@ -16,7 +16,10 @@ export function countNestedRuns(children: NestedRunSummary[] | undefined): Neste
 	for (const child of children ?? []) {
 		counts.total++;
 		counts[child.state]++;
-		const nested = countNestedRuns([...(child.children ?? []), ...(child.steps?.flatMap((step) => step.children ?? []) ?? [])]);
+		const nested = countNestedRuns([
+			...(child.children ?? []),
+			...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
+		]);
 		counts.total += nested.total;
 		counts.running += nested.running;
 		counts.paused += nested.paused;
@@ -42,7 +45,10 @@ export function formatNestedAggregate(children: NestedRunSummary[] | undefined):
 
 function nestedRunLabel(run: NestedRunSummary): string {
 	if (run.agent) return run.agent;
-	if (run.agents?.length) return run.agents.length === 1 ? run.agents[0]! : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
+	if (run.agents?.length)
+		return run.agents.length === 1
+			? run.agents[0]!
+			: `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
 	return run.id;
 }
 
@@ -58,7 +64,8 @@ function formatNestedActivity(input: {
 	redactSensitiveDetails?: boolean;
 }): string | undefined {
 	const facts: string[] = [];
-	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+	if (input.currentTool && input.currentToolStartedAt !== undefined)
+		facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
 	else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
 	if (!input.redactSensitiveDetails && input.currentPath) facts.push(shortenPath(input.currentPath));
 	if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
@@ -68,7 +75,16 @@ function formatNestedActivity(input: {
 	return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 
-function formatNestedRunLines(children: NestedRunSummary[] | undefined, options: { indent: string; maxDepth: number; maxLines: number; commandHints?: boolean; redactSensitiveDetails?: boolean }): string[] {
+function formatNestedRunLines(
+	children: NestedRunSummary[] | undefined,
+	options: {
+		indent: string;
+		maxDepth: number;
+		maxLines: number;
+		commandHints?: boolean;
+		redactSensitiveDetails?: boolean;
+	},
+): string[] {
 	const lines: string[] = [];
 	const append = (items: NestedRunSummary[] | undefined, depth: number, indent: string): void => {
 		if (!items?.length || lines.length >= options.maxLines) return;
@@ -84,19 +100,35 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 				if (aggregate) lines[lines.length - 1] = `${indent}↳ ${aggregate}`;
 				return;
 			}
-			const activity = child.state === "running" ? formatNestedActivity({ ...child, redactSensitiveDetails: options.redactSensitiveDetails }) : undefined;
-			const error = child.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : child.error}` : "";
-			lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${activity ? ` | ${activity}` : ""}${error}`);
-			if (options.commandHints && lines.length < options.maxLines) lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
+			const activity =
+				child.state === "running"
+					? formatNestedActivity({ ...child, redactSensitiveDetails: options.redactSensitiveDetails })
+					: undefined;
+			const error = child.error
+				? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : child.error}`
+				: "";
+			lines.push(
+				`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${activity ? ` | ${activity}` : ""}${error}`,
+			);
+			if (options.commandHints && lines.length < options.maxLines)
+				lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
 			if (depth === options.maxDepth) {
-				const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
+				const aggregate = formatNestedAggregate([
+					...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
+					...(child.children ?? []),
+				]);
 				if (aggregate && lines.length < options.maxLines) lines.push(`${indent}  ↳ ${aggregate}`);
 				continue;
 			}
 			for (const [stepIndex, step] of (child.steps ?? []).entries()) {
 				if (lines.length >= options.maxLines) return;
-				const stepActivity = step.status === "running" ? formatNestedActivity({ ...step, redactSensitiveDetails: options.redactSensitiveDetails }) : undefined;
-				lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : step.error}` : ""}`);
+				const stepActivity =
+					step.status === "running"
+						? formatNestedActivity({ ...step, redactSensitiveDetails: options.redactSensitiveDetails })
+						: undefined;
+				lines.push(
+					`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : step.error}` : ""}`,
+				);
 				append(step.children, depth + 1, `${indent}    `);
 			}
 			append(child.children, depth + 1, `${indent}  `);
@@ -106,7 +138,16 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 	return lines;
 }
 
-export function formatNestedRunStatusLines(children: NestedRunSummary[] | undefined, options: { indent?: string; maxDepth?: number; maxLines?: number; commandHints?: boolean; redactSensitiveDetails?: boolean } = {}): string[] {
+export function formatNestedRunStatusLines(
+	children: NestedRunSummary[] | undefined,
+	options: {
+		indent?: string;
+		maxDepth?: number;
+		maxLines?: number;
+		commandHints?: boolean;
+		redactSensitiveDetails?: boolean;
+	} = {},
+): string[] {
 	return formatNestedRunLines(children, {
 		indent: options.indent ?? "  ",
 		maxDepth: options.maxDepth ?? 2,

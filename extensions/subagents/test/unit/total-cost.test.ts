@@ -36,24 +36,24 @@ describe("sumResultsCost", () => {
 
 	it("returns zero totals when all aggregated fields are zero", () => {
 		assert.deepEqual(
-			sumResultsCost([
-				resultWithUsage({ input: 0, output: 0, cacheRead: 10, cacheWrite: 5, cost: 0, turns: 2 }),
-			]),
+			sumResultsCost([resultWithUsage({ input: 0, output: 0, cacheRead: 10, cacheWrite: 5, cost: 0, turns: 2 })]),
 			{ inputTokens: 0, outputTokens: 0, costUsd: 0 },
 		);
 	});
 
 	it("includes attached nested subagent costs", () => {
 		const parent = resultWithUsage({ input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01, turns: 1 });
-		parent.children = [{
-			id: "nested-run",
-			parentRunId: "parent-run",
-			parentStepIndex: 0,
-			depth: 1,
-			path: [{ runId: "parent-run", stepIndex: 0 }],
-			state: "complete",
-			totalCost: { inputTokens: 20, outputTokens: 7, costUsd: 0.03 },
-		}];
+		parent.children = [
+			{
+				id: "nested-run",
+				parentRunId: "parent-run",
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: "parent-run", stepIndex: 0 }],
+				state: "complete",
+				totalCost: { inputTokens: 20, outputTokens: 7, costUsd: 0.03 },
+			},
+		];
 
 		assert.deepEqual(sumResultsCost([parent]), { inputTokens: 30, outputTokens: 12, costUsd: 0.04 });
 	});

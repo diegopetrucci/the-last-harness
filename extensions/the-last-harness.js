@@ -20,7 +20,7 @@ import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-set
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
-import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion } from "./the-last-harness/update-check.js";
+import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
 const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
@@ -111,7 +111,9 @@ export default function theLastHarness(pi) {
     const getTokensCommandHandler = () => {
         if (!tokensCommandHandlerPromise) {
             tokensCommandHandlerPromise = loadTokensModule()
-                .then((module) => module.createTokensCommandHandler(pi, { getPrimaryAgentLabel: () => primaryAgentRuntime.currentPrimaryAgentLabel() }))
+                .then((module) => module.createTokensCommandHandler(pi, {
+                getPrimaryAgentLabel: () => primaryAgentRuntime.currentPrimaryAgentLabel(),
+            }))
                 .catch((error) => {
                 tokensCommandHandlerPromise = undefined;
                 throw error;

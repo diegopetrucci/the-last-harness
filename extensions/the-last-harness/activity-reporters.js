@@ -285,7 +285,9 @@ export function createHerdrActivityReporter(options = {}) {
                 await sendStateCore(state);
                 lastReportedState = state;
             });
-            void heartbeatDelivery.catch(() => undefined).finally(() => {
+            void heartbeatDelivery
+                .catch(() => undefined)
+                .finally(() => {
                 if (!heartbeatStopped && rootSession && !disposed)
                     scheduleHeartbeat();
             });

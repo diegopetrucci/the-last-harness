@@ -16,11 +16,7 @@ let tempDir = "";
 
 function writeSkillFile(skillDir: string, body: string, description = "Test description"): void {
 	fs.mkdirSync(skillDir, { recursive: true });
-	fs.writeFileSync(
-		path.join(skillDir, "SKILL.md"),
-		`---\ndescription: ${description}\n---\n\n${body}\n`,
-		"utf-8",
-	);
+	fs.writeFileSync(path.join(skillDir, "SKILL.md"), `---\ndescription: ${description}\n---\n\n${body}\n`, "utf-8");
 }
 
 function makeProjectSkill(cwd: string, name: string, body: string, description = "Test description"): void {
@@ -48,7 +44,9 @@ async function importSkillsFresh() {
 	const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 	const modulePath = path.resolve(projectRoot, "src/agents/skills.ts");
 	const bust = `${Date.now()}-${Math.random()}`;
-	return await import(`${pathToFileURL(modulePath).href}?bust=${bust}`) as typeof import("../../src/agents/skills.ts");
+	return (await import(
+		`${pathToFileURL(modulePath).href}?bust=${bust}`
+	)) as typeof import("../../src/agents/skills.ts");
 }
 
 describe("skills filesystem fallback", () => {
@@ -133,10 +131,7 @@ describe("skills filesystem fallback", () => {
 	});
 
 	it("keeps nested skills from higher-priority explicit settings roots after parent recursion", () => {
-		writeSkillFile(
-			path.join(tempDir, "skills", "group", "issue-262-settings-nested"),
-			"Use settings nested skill.",
-		);
+		writeSkillFile(path.join(tempDir, "skills", "group", "issue-262-settings-nested"), "Use settings nested skill.");
 		fs.writeFileSync(
 			path.join(tempDir, "package.json"),
 			JSON.stringify({ name: "fixture", version: "1.0.0", pi: { skills: ["./skills"] } }, null, 2),
@@ -228,7 +223,10 @@ describe("skills filesystem fallback", () => {
 
 		const { resolved, missing } = resolveSkills(["pi-subagents", "safe-bash"], tempDir);
 		assert.deepEqual(missing, ["pi-subagents"]);
-		assert.deepEqual(resolved.map((skill) => skill.name), ["safe-bash"]);
+		assert.deepEqual(
+			resolved.map((skill) => skill.name),
+			["safe-bash"],
+		);
 	});
 
 	it("classifies package-provided skills as project-package", () => {

@@ -55,7 +55,8 @@ test("declared read-only builtin tools suppress implementation-word false positi
 });
 
 test("read-only issue drafting tasks do not trigger on suggested fix wording", () => {
-	const task = "Draft GitHub issue for pi-subagents bug from current conversation. Include title, environment/context, reproduction steps, actual/expected, logs excerpt, suspected cause, suggested fix. Terse but complete. No tools needed.";
+	const task =
+		"Draft GitHub issue for pi-subagents bug from current conversation. Include title, environment/context, reproduction steps, actual/expected, logs excerpt, suspected cause, suggested fix. Terse but complete. No tools needed.";
 	const result = evaluateCompletionMutationGuard({
 		agent: "delegate",
 		task,
@@ -107,15 +108,30 @@ test("worker with mutating-capable tools still triggers when no mutation is obse
 test("review-only, research, and framework output instructions do not expect mutation", () => {
 	assert.equal(expectsImplementationMutation("worker", "Review only: return findings, do not edit"), false);
 	assert.equal(expectsImplementationMutation("worker", "Do not edit files. Tell me how to fix the bug."), false);
-	assert.equal(expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."), false);
-	assert.equal(expectsImplementationMutation("worker", "Implement this. Do not edit files outside this repo. Do not edit files."), false);
+	assert.equal(
+		expectsImplementationMutation("worker", "Review the diff and suggest fixes only. Do not edit files."),
+		false,
+	);
+	assert.equal(
+		expectsImplementationMutation("worker", "Implement this. Do not edit files outside this repo. Do not edit files."),
+		false,
+	);
 	assert.equal(expectsImplementationMutation("worker", "Investigate why this failed"), false);
 	assert.equal(expectsImplementationMutation("researcher", "Research the API behavior"), false);
 	assert.equal(expectsImplementationMutation("researcher", "Research this and patch the bug"), false);
 	assert.equal(expectsImplementationMutation("reviewer", "Review this and fix any real issues"), false);
-	assert.equal(expectsImplementationMutation("reviewer", "Review this and fix any real issues; regardless of findings, apply changes directly"), true);
+	assert.equal(
+		expectsImplementationMutation(
+			"reviewer",
+			"Review this and fix any real issues; regardless of findings, apply changes directly",
+		),
+		true,
+	);
 	assert.equal(expectsImplementationMutation("worker", "[Write to: /tmp/result.md]\n\nSummarize findings"), false);
-	assert.equal(expectsImplementationMutation("worker", injectSingleOutputInstruction("Summarize findings", "/tmp/fix.md")), false);
+	assert.equal(
+		expectsImplementationMutation("worker", injectSingleOutputInstruction("Summarize findings", "/tmp/fix.md")),
+		false,
+	);
 	assert.equal(expectsImplementationMutation("worker", "Write report"), false);
 	assert.equal(expectsImplementationMutation("worker", "Create a report"), false);
 	assert.equal(expectsImplementationMutation("worker", "Create a summary"), false);
@@ -123,11 +139,17 @@ test("review-only, research, and framework output instructions do not expect mut
 	assert.equal(expectsImplementationMutation("worker", "Update a summary"), false);
 	assert.equal(expectsImplementationMutation("worker", "Write to {chain_dir}"), false);
 	assert.equal(
-		expectsImplementationMutation("worker", "Do async work\nUpdate progress at: /tmp/progress.md\n**Output:**\nWrite your findings to exactly this path: /tmp/out.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere."),
+		expectsImplementationMutation(
+			"worker",
+			"Do async work\nUpdate progress at: /tmp/progress.md\n**Output:**\nWrite your findings to exactly this path: /tmp/out.md\nThis path is authoritative for this run.\nIgnore any other output filename or output path mentioned elsewhere.",
+		),
 		false,
 	);
 	assert.equal(
-		expectsImplementationMutation("worker", "Do async work\nThe harness will save your final response to: /tmp/legacy-out.md"),
+		expectsImplementationMutation(
+			"worker",
+			"Do async work\nThe harness will save your final response to: /tmp/legacy-out.md",
+		),
 		false,
 	);
 	assert.equal(
@@ -159,11 +181,15 @@ test("developer validation-only tasks with conditional source-change exceptions 
 			messages: [assistantText("Validation complete; no issues found.")],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: false,
-			attemptedMutation: false,
-			triggered: false,
-		}, task);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: false,
+				attemptedMutation: false,
+				triggered: false,
+			},
+			task,
+		);
 	}
 });
 
@@ -179,11 +205,15 @@ test("developer validation-only tasks do not treat observational docs/config/pac
 			messages: [assistantText("Validation complete; no issues found.")],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: false,
-			attemptedMutation: false,
-			triggered: false,
-		}, task);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: false,
+				attemptedMutation: false,
+				triggered: false,
+			},
+			task,
+		);
 	}
 });
 
@@ -200,16 +230,23 @@ test("developer validation and docs tasks still expect mutation when repair or n
 			messages: [assistantText("Plan: inspect and report back.")],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: true,
-			attemptedMutation: false,
-			triggered: true,
-		}, task);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: true,
+				attemptedMutation: false,
+				triggered: true,
+			},
+			task,
+		);
 	}
 });
 
 test("worker implementation verbs win over investigative wording", () => {
-	assert.equal(expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"), true);
+	assert.equal(
+		expectsImplementationMutation("worker", "Investigate why the worker did not edit files and fix it"),
+		true,
+	);
 	assert.equal(expectsImplementationMutation("worker", "Research the current code path and patch the bug"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix the bug where no edits were made"), true);
 	assert.equal(expectsImplementationMutation("worker", "Fix lint"), true);
@@ -223,7 +260,10 @@ test("worker implementation verbs win over investigative wording", () => {
 
 test("non-worker implementation tasks still expect mutation", () => {
 	assert.equal(expectsImplementationMutation("delegate", "Fix the bug where no edits were made"), true);
-	assert.equal(expectsImplementationMutation("delegate", "Apply the suggested fix to src/runs/shared/completion-guard.ts"), true);
+	assert.equal(
+		expectsImplementationMutation("delegate", "Apply the suggested fix to src/runs/shared/completion-guard.ts"),
+		true,
+	);
 	assert.equal(expectsImplementationMutation("worker", "Draft a GitHub issue, then implement the fix"), true);
 });
 
@@ -233,7 +273,10 @@ test("worker edit intent covers common docs, config, and source tasks", () => {
 	assert.equal(expectsImplementationMutation("worker", "Replace the registered command with a render tool"), true);
 	assert.equal(expectsImplementationMutation("worker", "Create completion-guard.ts"), true);
 	assert.equal(expectsImplementationMutation("worker", "Add tests for the completion guard"), true);
-	assert.equal(expectsImplementationMutation("worker", "Implement the approved fixes. Do not edit files outside this repo."), true);
+	assert.equal(
+		expectsImplementationMutation("worker", "Implement the approved fixes. Do not edit files outside this repo."),
+		true,
+	);
 	assert.equal(expectsImplementationMutation("worker", "Implement the fix. Do not edit unrelated files."), true);
 });
 
@@ -243,20 +286,52 @@ test("edit and write tool calls count as mutation attempts", () => {
 });
 
 test("obvious mutating bash commands count as mutation attempts", () => {
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "mkdir -p src && cat > src/file.ts <<'EOF'\nhi\nEOF" })]), true);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF' > src/file.ts\nhi\nEOF" })]), true);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "python3 -c \"from pathlib import Path; Path('x').write_text('hi')\"" })]), true);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "python3 <<'PY'\nfrom pathlib import Path\nPath('x').write_text('hi')\nPY" })]), true);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "node <<'JS'\nfs.writeFileSync('x', 'hi')\nJS" })]), true);
+	assert.equal(
+		hasMutationToolCall([assistantToolCall("bash", { command: "mkdir -p src && cat > src/file.ts <<'EOF'\nhi\nEOF" })]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF' > src/file.ts\nhi\nEOF" })]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([
+			assistantToolCall("bash", { command: "python3 -c \"from pathlib import Path; Path('x').write_text('hi')\"" }),
+		]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([
+			assistantToolCall("bash", {
+				command: "python3 <<'PY'\nfrom pathlib import Path\nPath('x').write_text('hi')\nPY",
+			}),
+		]),
+		true,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantToolCall("bash", { command: "node <<'JS'\nfs.writeFileSync('x', 'hi')\nJS" })]),
+		true,
+	);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "node script.js > generated.txt" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "echo 'a > b'" })]), false);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "node -e \"console.log(a > b)\"" })]), false);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "python3 <<'PY'\nprint('inspect only')\nPY" })]), false);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF'\nfrom pathlib import Path\nPath('x').write_text('hi')\nEOF" })]), false);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF'\ngh pr create --fill\nEOF" })]), false);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'node -e "console.log(a > b)"' })]), false);
+	assert.equal(
+		hasMutationToolCall([assistantToolCall("bash", { command: "python3 <<'PY'\nprint('inspect only')\nPY" })]),
+		false,
+	);
+	assert.equal(
+		hasMutationToolCall([
+			assistantToolCall("bash", { command: "cat <<'EOF'\nfrom pathlib import Path\nPath('x').write_text('hi')\nEOF" }),
+		]),
+		false,
+	);
+	assert.equal(
+		hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF'\ngh pr create --fill\nEOF" })]),
+		false,
+	);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "cat <<'EOF'\nrm -rf build\nEOF" })]), false);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "echo 'rm file'" })]), false);
-	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "printf \"mkdir x\"" })]), false);
+	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: 'printf "mkdir x"' })]), false);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "git apply patch.diff" })]), true);
 	assert.equal(hasMutationToolCall([assistantToolCall("bash", { command: "patch -p0 < fix.patch" })]), true);
 });
@@ -367,11 +442,15 @@ test("evaluateCompletionMutationGuard returns triggered:false for advisory runs 
 			messages: [assistantText("Here is my analysis of the failure...")],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: false,
-			attemptedMutation: false,
-			triggered: false,
-		}, agent);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: false,
+				attemptedMutation: false,
+				triggered: false,
+			},
+			agent,
+		);
 	}
 });
 
@@ -400,11 +479,15 @@ test("implementation task completed through VCS or PR bash mutations does not tr
 			messages: [assistantToolCall("bash", { command })],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: true,
-			attemptedMutation: true,
-			triggered: false,
-		}, command);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: true,
+				attemptedMutation: true,
+				triggered: false,
+			},
+			command,
+		);
 	}
 });
 
@@ -422,11 +505,15 @@ test("read-only git and gh bash commands do not satisfy the completion guard", (
 			messages: [assistantToolCall("bash", { command })],
 		});
 
-		assert.deepEqual(result, {
-			expectedMutation: true,
-			attemptedMutation: false,
-			triggered: true,
-		}, command);
+		assert.deepEqual(
+			result,
+			{
+				expectedMutation: true,
+				attemptedMutation: false,
+				triggered: true,
+			},
+			command,
+		);
 	}
 });
 
@@ -435,7 +522,13 @@ test("qualified agent names are classified by local name", () => {
 	assert.equal(expectsImplementationMutation("librarian.editor", "Implement the change"), true);
 	assert.equal(expectsImplementationMutation("code-analysis.scout", "Fix the indexer"), false);
 	assert.equal(expectsImplementationMutation("code-analysis.reviewer", "Review and fix issues"), false);
-	assert.equal(expectsImplementationMutation("code-analysis.reviewer", "Review and fix issues; regardless of findings, apply changes directly"), true);
+	assert.equal(
+		expectsImplementationMutation(
+			"code-analysis.reviewer",
+			"Review and fix issues; regardless of findings, apply changes directly",
+		),
+		true,
+	);
 	assert.equal(expectsImplementationMutation("reviewer.worker", "Fix the bug"), true);
 	assert.equal(expectsImplementationMutation("contrarian.worker", "Fix the bug"), true);
 });

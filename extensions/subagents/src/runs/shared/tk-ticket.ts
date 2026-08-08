@@ -89,7 +89,13 @@ function sanitizeTerminalText(raw: string): string {
 			}
 			continue;
 		}
-		if (code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) {
+		if (
+			code <= 0x08 ||
+			code === 0x0b ||
+			code === 0x0c ||
+			(code >= 0x0e && code <= 0x1f) ||
+			(code >= 0x7f && code <= 0x9f)
+		) {
 			cleaned += " ";
 			continue;
 		}
@@ -99,14 +105,15 @@ function sanitizeTerminalText(raw: string): string {
 }
 
 export function sanitizeTkTicketTitle(raw: string, maxWidth = MAX_TK_TICKET_TITLE_WIDTH): string | undefined {
-	const cleaned = sanitizeTerminalText(raw)
-		.replace(/\s+/g, " ")
-		.trim();
+	const cleaned = sanitizeTerminalText(raw).replace(/\s+/g, " ").trim();
 	if (!cleaned) return undefined;
 	return truncatePlainTextToWidth(cleaned, maxWidth);
 }
 
-export function normalizeTkTicketMetadata(raw: unknown, maxWidth = MAX_TK_TICKET_TITLE_WIDTH): TkTicketMetadata | undefined {
+export function normalizeTkTicketMetadata(
+	raw: unknown,
+	maxWidth = MAX_TK_TICKET_TITLE_WIDTH,
+): TkTicketMetadata | undefined {
 	if (!raw || typeof raw !== "object") return undefined;
 	const { id, title } = raw as Partial<TkTicketMetadata>;
 	if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id)) return undefined;
@@ -116,7 +123,10 @@ export function normalizeTkTicketMetadata(raw: unknown, maxWidth = MAX_TK_TICKET
 	return { id, title: sanitizedTitle };
 }
 
-export function resolveTkTicketMetadata(task: string | undefined, options: ResolveTkTicketMetadataOptions = {}): TkTicketMetadata | undefined {
+export function resolveTkTicketMetadata(
+	task: string | undefined,
+	options: ResolveTkTicketMetadataOptions = {},
+): TkTicketMetadata | undefined {
 	const requestedId = detectTkTicketId(task);
 	if (!requestedId) return undefined;
 	try {

@@ -1,10 +1,4 @@
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -68,11 +62,15 @@ export function supportFilePathsArePrepared(config: SupportFilesConfig): boolean
 }
 
 export function installableSupportFilesArePrepared(config: SupportFilesConfig): boolean {
-	return installableSupportFiles({ noSettings: config.noSettings }).some((file) => Boolean(config.supportFilePaths[file.variable]));
+	return installableSupportFiles({ noSettings: config.noSettings }).some((file) =>
+		Boolean(config.supportFilePaths[file.variable]),
+	);
 }
 
 export function localRepoHasRequiredSupportFiles(config: SupportFilesConfig, dir: string): boolean {
-	return requiredSupportFiles({ noSettings: config.noSettings }).every((file) => existsSync(join(dir, file.relativePath)));
+	return requiredSupportFiles({ noSettings: config.noSettings }).every((file) =>
+		existsSync(join(dir, file.relativePath)),
+	);
 }
 
 export function findLocalRepoDir(config: SupportFilesConfig): string | undefined {
@@ -106,11 +104,17 @@ export function warnMissingOptionalSupportFile(
 	io: SupportFilesIo = {},
 ): void {
 	if (variable === "TLH_UPDATE_SCRIPT") {
-		callWarn(`tlh update support script not found for ref ${config.ref}; the wrapper update helper will be unavailable`, io);
+		callWarn(
+			`tlh update support script not found for ref ${config.ref}; the wrapper update helper will be unavailable`,
+			io,
+		);
 	} else if (variable === "TLH_WRAPPER_SCRIPT") {
 		callWarn(`tlh wrapper support script not found for ref ${config.ref}; wrapper creation will be unavailable`, io);
 	} else if (variable === "TLH_INSTALL_STATE_SCRIPT") {
-		callWarn(`tlh install-state support script not found for ref ${config.ref}; update metadata helper will be unavailable`, io);
+		callWarn(
+			`tlh install-state support script not found for ref ${config.ref}; update metadata helper will be unavailable`,
+			io,
+		);
 	} else {
 		callWarn(`optional installer support file not found for ref ${config.ref}: ${relativePath}`, io);
 	}
@@ -130,7 +134,10 @@ export async function fetchToFile(
 	writeFileSync(path, Buffer.from(await response.arrayBuffer()));
 }
 
-export async function prepareSupportFilesFromRemote(config: SupportFilesConfig, io: SupportFilesIo = {}): Promise<void> {
+export async function prepareSupportFilesFromRemote(
+	config: SupportFilesConfig,
+	io: SupportFilesIo = {},
+): Promise<void> {
 	if (typeof io.requireCommand === "function") io.requireCommand(config, "curl");
 	config.tmpDir = mkdtempSync(join(tmpdir(), "tlh-install-"));
 	callVerboseLog(config, `Fetching installer support files from ${config.rawBase}`, io);
@@ -151,9 +158,11 @@ export async function prepareSupportFilesFromRemote(config: SupportFilesConfig, 
 		}
 	}
 
-	if (settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-		noSettings: config.noSettings,
-	})) {
+	if (
+		settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
+			noSettings: config.noSettings,
+		})
+	) {
 		const targetDir = join(config.tmpDir, "agents", "subagents");
 		mkdirSync(targetDir, { recursive: true });
 		for (const prompt of config.subagentPrompts) {
@@ -161,7 +170,10 @@ export async function prepareSupportFilesFromRemote(config: SupportFilesConfig, 
 			try {
 				await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
 			} catch {
-				callWarn(`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`, io);
+				callWarn(
+					`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`,
+					io,
+				);
 				rmSync(targetPath, { force: true });
 			}
 		}
@@ -200,7 +212,10 @@ export function prepareSupportFilesForDryRun(config: SupportFilesConfig, io: Sup
 	return false;
 }
 
-export async function ensureSupportFilesPrepared(config: SupportFilesConfig, io: SupportFilesIo = {}): Promise<boolean> {
+export async function ensureSupportFilesPrepared(
+	config: SupportFilesConfig,
+	io: SupportFilesIo = {},
+): Promise<boolean> {
 	if (supportFilePathsArePrepared(config)) return true;
 	if (config.dryRun) return prepareSupportFilesForDryRun(config, io);
 	return prepareSupportFiles(config, io);
@@ -212,10 +227,16 @@ export async function preflightRuntimeSupportFiles(config: SupportFilesConfig, i
 	if (!prepared) throw new Error(`installer support files are unavailable for ref ${config.ref}`);
 
 	const missing = [] as string[];
-	if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT || !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
+	if (
+		!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
+		!existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)
+	) {
 		missing.push("scripts/tlh-install-state.mjs");
 	}
-	if (!config.noWrapper && (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))) {
+	if (
+		!config.noWrapper &&
+		(!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))
+	) {
 		missing.push("scripts/tlh-wrapper.mjs");
 	}
 	if (missing.length > 0) {

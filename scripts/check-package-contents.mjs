@@ -51,7 +51,9 @@ const PUBLIC_DOCS = [
 const unknownDocs = [...files].filter((f) => f.startsWith("docs/") && !PUBLIC_DOCS.includes(f));
 if (unknownDocs.length > 0) {
 	console.error("Published package contains unexpected docs/ files not on the PUBLIC_DOCS allowlist.");
-	console.error("Add them to PUBLIC_DOCS in scripts/check-package-contents.mjs, or exclude them via the package.json files negations.");
+	console.error(
+		"Add them to PUBLIC_DOCS in scripts/check-package-contents.mjs, or exclude them via the package.json files negations.",
+	);
 	for (const file of unknownDocs.sort()) console.error(`  - ${file}`);
 	process.exit(1);
 }
@@ -66,13 +68,10 @@ if (missingDocs.length > 0) {
 }
 
 const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
-const forbiddenExactPaths = [
-	"scripts/check-package-contents.mjs",
-	"scripts/run-subagents-tests.mjs",
-];
-const forbiddenFiles = [...files].filter((file) =>
-	forbiddenExactPaths.includes(file)
-	|| forbiddenPrefixes.some((prefix) => file.startsWith(prefix)));
+const forbiddenExactPaths = ["scripts/check-package-contents.mjs", "scripts/run-subagents-tests.mjs"];
+const forbiddenFiles = [...files].filter(
+	(file) => forbiddenExactPaths.includes(file) || forbiddenPrefixes.some((prefix) => file.startsWith(prefix)),
+);
 if (forbiddenFiles.length > 0) {
 	console.error("Published package contains contributor-only files:");
 	for (const file of forbiddenFiles.sort()) console.error(`  - ${file}`);

@@ -38,7 +38,9 @@ function makeState(cwd: string) {
 	};
 }
 
-describe("doctor action executor routing", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, () => {
+describe("doctor action executor routing", {
+	skip: !createSubagentExecutor ? "executor not importable" : undefined,
+}, () => {
 	let tempDir = "";
 	let tempHome = "";
 

@@ -46,7 +46,10 @@ class FakeEvents {
 		this.#handlers.set(event, handlers);
 		return () => {
 			const current = this.#handlers.get(event) ?? [];
-			this.#handlers.set(event, current.filter((candidate) => candidate !== handler));
+			this.#handlers.set(
+				event,
+				current.filter((candidate) => candidate !== handler),
+			);
 		};
 	}
 
@@ -112,7 +115,10 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
 			sessionContext,
 		);
 		assert.equal(result.isError, undefined);
-		const text = result.content.filter((entry) => entry.type === "text").map((entry) => entry.text).join("\n");
+		const text = result.content
+			.filter((entry) => entry.type === "text")
+			.map((entry) => entry.text)
+			.join("\n");
 		assert.match(text, new RegExp(marker));
 		const evidence = JSON.parse(readFileSync(extensionEvidencePath, "utf8"));
 		assert.deepEqual(evidence.errors, []);
@@ -124,7 +130,9 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
 		assert.ok(resolvedChildExtensionPaths.every((path) => path.startsWith(realPackageRoot) && path.endsWith(".js")));
 		return {
 			marker,
-			childExtensionPaths: resolvedChildExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
+			childExtensionPaths: resolvedChildExtensionPaths.map((path) =>
+				relative(realPackageRoot, path).replaceAll("\\", "/"),
+			),
 		};
 	} finally {
 		for (const [key, value] of Object.entries(previousChildEnv)) {
@@ -142,7 +150,10 @@ function inspectLoad() {
 		resolvedEntrypoints.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
 		expectedEntrypoints,
 	);
-	assert.equal(resolvedEntrypoints.some((path) => path.endsWith(".ts")), false);
+	assert.equal(
+		resolvedEntrypoints.some((path) => path.endsWith(".ts")),
+		false,
+	);
 	const resolvedPackageRoots = result.extensions.map((extension) => {
 		assert.equal(extension.sourceInfo?.scope, "user");
 		assert.equal(extension.sourceInfo?.origin, "package");
@@ -271,15 +282,18 @@ assert.match(failedSubagentResult.content[0].text, /Unknown agent/);
 assert.equal(failedSubagentResult.details.mode, "single");
 const [subagentToolResultHandler] = subagentExtension.handlers.get("tool_result") ?? [];
 assert.equal(typeof subagentToolResultHandler, "function");
-const failedSubagentPatch = await subagentToolResultHandler({
-	type: "tool_result",
-	toolName: "subagent",
-	toolCallId: "package-smoke-failure",
-	input: { agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch" },
-	content: failedSubagentResult.content,
-	details: failedSubagentResult.details,
-	isError: false,
-}, secondSession.context);
+const failedSubagentPatch = await subagentToolResultHandler(
+	{
+		type: "tool_result",
+		toolName: "subagent",
+		toolCallId: "package-smoke-failure",
+		input: { agent: "__tlh_missing_agent__", task: "exercise Pi 0.83 failure patch" },
+		content: failedSubagentResult.content,
+		details: failedSubagentResult.details,
+		isError: false,
+	},
+	secondSession.context,
+);
 assert.deepEqual(failedSubagentPatch, { isError: true });
 const childEnvSentinels = {
 	PI_SUBAGENT_PI_BINARY: "restore-packed-pi-binary",
@@ -325,12 +339,23 @@ const childPiArgs = buildPiArgs({
 	inheritSkills: false,
 	tools: ["subagent"],
 }).args;
-const childExtensionPaths = childPiArgs.flatMap((arg, index) => arg === "--extension" ? [childPiArgs[index + 1]] : []);
+const childExtensionPaths = childPiArgs.flatMap((arg, index) =>
+	arg === "--extension" ? [childPiArgs[index + 1]] : [],
+);
 const builtChildExtensionPaths = childExtensionPaths.map((path) => realpathSync(path));
 assert.equal(builtChildExtensionPaths.length, 1);
-assert.equal(builtChildExtensionPaths.every((path) => path.endsWith(".js") && path.startsWith(realPackageRoot)), true);
-assert.equal(builtChildExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")), true);
-assert.equal(builtChildExtensionPaths.every((path) => !path.endsWith("fanout-child.js")), true);
+assert.equal(
+	builtChildExtensionPaths.every((path) => path.endsWith(".js") && path.startsWith(realPackageRoot)),
+	true,
+);
+assert.equal(
+	builtChildExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")),
+	true,
+);
+assert.equal(
+	builtChildExtensionPaths.every((path) => !path.endsWith("fanout-child.js")),
+	true,
+);
 
 const { buildReviewHtml } = await import(pathToFileURL(reviewUiPath).href);
 const { buildAnnotateLastMessageHtml } = await import(pathToFileURL(annotateUiPath).href);
@@ -345,19 +370,23 @@ for (const handler of subagentExtension.handlers.get("session_shutdown") ?? []) 
 	await handler({ type: "session_shutdown", reason: "quit" }, secondSession.context);
 }
 
-process.stdout.write(`${JSON.stringify({
-	piVersion: piPackage.version,
-	entrypoints: expectedEntrypoints,
-	commands: expectedTlhCommands,
-	packageResolution: second.packageResolution,
-	toolCounts: second.toolCounts,
-	factoryExecutions: 3,
-	failedSubagentPatched: failedSubagentPatch.isError,
-	childExecution: packagedChild,
-	childEnvRestored,
-	childExtensionPaths: packagedChild.childExtensionPaths,
-	builtChildExtensionPaths: builtChildExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
-	changelogBytes: sentMessages[0].content.length,
-	reviewHtmlBytes: reviewHtml.length,
-	annotateHtmlBytes: annotateHtml.length,
-})}\n`);
+process.stdout.write(
+	`${JSON.stringify({
+		piVersion: piPackage.version,
+		entrypoints: expectedEntrypoints,
+		commands: expectedTlhCommands,
+		packageResolution: second.packageResolution,
+		toolCounts: second.toolCounts,
+		factoryExecutions: 3,
+		failedSubagentPatched: failedSubagentPatch.isError,
+		childExecution: packagedChild,
+		childEnvRestored,
+		childExtensionPaths: packagedChild.childExtensionPaths,
+		builtChildExtensionPaths: builtChildExtensionPaths.map((path) =>
+			relative(realPackageRoot, path).replaceAll("\\", "/"),
+		),
+		changelogBytes: sentMessages[0].content.length,
+		reviewHtmlBytes: reviewHtml.length,
+		annotateHtmlBytes: annotateHtml.length,
+	})}\n`,
+);

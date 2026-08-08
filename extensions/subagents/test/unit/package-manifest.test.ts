@@ -146,8 +146,16 @@ test("Pi package resolution stays export-map safe", () => {
 		...collectTsFiles(path.join(repositoryRoot, "extensions/subagents/test")),
 	]) {
 		const source = fs.readFileSync(file, "utf-8");
-		assert.equal(piPackageJsonSubpathPattern.test(source), false, `${file} should not resolve unexported package.json subpaths`);
-		assert.equal(cjsPiPackageResolutionPattern.test(source), false, `${file} should not use CommonJS resolution for ESM-only Pi packages`);
+		assert.equal(
+			piPackageJsonSubpathPattern.test(source),
+			false,
+			`${file} should not resolve unexported package.json subpaths`,
+		);
+		assert.equal(
+			cjsPiPackageResolutionPattern.test(source),
+			false,
+			`${file} should not use CommonJS resolution for ESM-only Pi packages`,
+		);
 	}
 });
 
@@ -167,6 +175,10 @@ test("README does not advertise removed slash workflow surfaces", () => {
 	const docPath = path.join(repositoryRoot, "README.md");
 	const source = fs.readFileSync(docPath, "utf-8");
 	for (const removedSurface of removedSlashSurfaces) {
-		assert.equal(removedSurface.pattern.test(source), false, `${path.relative(repositoryRoot, docPath)} should not advertise ${removedSurface.label}`);
+		assert.equal(
+			removedSurface.pattern.test(source),
+			false,
+			`${path.relative(repositoryRoot, docPath)} should not advertise ${removedSurface.label}`,
+		);
 	}
 });

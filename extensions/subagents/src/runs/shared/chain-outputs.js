@@ -67,7 +67,9 @@ function compactStructuredText(value) {
 }
 export function outputEntryFromResult(result, stepIndex) {
     return {
-        text: result.structuredOutput !== undefined ? compactStructuredText(result.structuredOutput) : getSingleResultOutput(result),
+        text: result.structuredOutput !== undefined
+            ? compactStructuredText(result.structuredOutput)
+            : getSingleResultOutput(result),
         ...(result.structuredOutput !== undefined ? { structured: result.structuredOutput } : {}),
         agent: result.agent,
         stepIndex,

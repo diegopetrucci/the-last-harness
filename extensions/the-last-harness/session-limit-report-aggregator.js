@@ -83,8 +83,12 @@ function aggregateFile(window, sessionsRoot, file, caveats) {
         const usage = normalizeUsage(message.usage);
         if (usage) {
             coverage.withUsage += 1;
-            const msgProvider = typeof message.provider === "string" && message.provider.length > 0 ? message.provider : undefined;
-            const msgModel = typeof message.model === "string" && message.model.length > 0 ? message.model : undefined;
+            const msgProvider = typeof message.provider === "string" && message.provider.length > 0
+                ? message.provider
+                : undefined;
+            const msgModel = typeof message.model === "string" && message.model.length > 0
+                ? message.model
+                : undefined;
             const turnProvider = msgProvider ?? currentProvider;
             const turnModelId = msgModel ?? currentModelId;
             const existing = providerUsageMap.get(turnProvider);
@@ -116,9 +120,7 @@ function aggregateFile(window, sessionsRoot, file, caveats) {
         caveats.push(`${basename(filePath)}: ${malformedLineCount} malformed line(s) skipped`);
     }
     const providerTotals = [...providerUsageMap.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens);
-    const projectLabel = sessionCwd
-        ? basename(sessionCwd)
-        : deriveProjectLabel(filePath, sessionsRoot);
+    const projectLabel = sessionCwd ? basename(sessionCwd) : deriveProjectLabel(filePath, sessionsRoot);
     const sessionName = sessionInfoName ?? sessionHeaderName;
     return {
         filePath,

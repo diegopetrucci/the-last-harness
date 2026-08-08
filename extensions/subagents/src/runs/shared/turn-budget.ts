@@ -4,7 +4,8 @@ export const DEFAULT_TURN_BUDGET_GRACE_TURNS = 1;
 
 export function appendTurnBudgetSystemPrompt(systemPrompt: string, budget: ResolvedTurnBudget | undefined): string {
 	if (!budget) return systemPrompt;
-	const grace = budget.graceTurns === 1 ? "1 additional assistant turn" : `${budget.graceTurns} additional assistant turns`;
+	const grace =
+		budget.graceTurns === 1 ? "1 additional assistant turn" : `${budget.graceTurns} additional assistant turns`;
 	const block = [
 		"## Turn budget",
 		`This child run has a soft budget of ${budget.maxTurns} assistant turn${budget.maxTurns === 1 ? "" : "s"}.`,
@@ -25,9 +26,7 @@ export function turnBudgetExceededMessage(budget: ResolvedTurnBudget, turnCount:
 }
 
 export function formatTurnBudgetOutput(message: string, output: string): string {
-	return output.trim()
-		? `${message}\n\nPartial output before turn-budget abort:\n${output}`
-		: message;
+	return output.trim() ? `${message}\n\nPartial output before turn-budget abort:\n${output}` : message;
 }
 
 export function initialTurnBudgetState(budget: ResolvedTurnBudget): TurnBudgetState {
@@ -44,7 +43,11 @@ export function turnBudgetState(budget: ResolvedTurnBudget, turnCount: number, e
 	};
 }
 
-export function shouldAbortForTurnBudget(budget: ResolvedTurnBudget, turnCount: number, terminalAssistantStop: boolean): boolean {
+export function shouldAbortForTurnBudget(
+	budget: ResolvedTurnBudget,
+	turnCount: number,
+	terminalAssistantStop: boolean,
+): boolean {
 	const hardLimit = budget.maxTurns + budget.graceTurns;
 	if (turnCount < hardLimit) return false;
 	if (turnCount > hardLimit) return true;

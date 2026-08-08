@@ -23,10 +23,28 @@ function errno(code: string): NodeJS.ErrnoException {
 
 describe("async stale-run reconciliation", () => {
 	it("classifies pid liveness without treating EPERM as dead", () => {
-		assert.equal(checkPidLiveness(123, () => true), "alive");
-		assert.equal(checkPidLiveness(123, () => { throw errno("ESRCH"); }), "dead");
-		assert.equal(checkPidLiveness(123, () => { throw errno("EPERM"); }), "unknown");
-		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
+		assert.equal(
+			checkPidLiveness(123, () => true),
+			"alive",
+		);
+		assert.equal(
+			checkPidLiveness(123, () => {
+				throw errno("ESRCH");
+			}),
+			"dead",
+		);
+		assert.equal(
+			checkPidLiveness(123, () => {
+				throw errno("EPERM");
+			}),
+			"unknown",
+		);
+		assert.equal(
+			checkPidLiveness(123, () => {
+				throw new Error("boom");
+			}),
+			"unknown",
+		);
 	});
 
 	it("marks a running async run failed when the runner pid is dead and no result exists", () => {
@@ -48,7 +66,9 @@ describe("async stale-run reconciliation", () => {
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -70,7 +90,11 @@ describe("async stale-run reconciliation", () => {
 			assert.match(resultJson.summary, /process 12345 exited or disappeared/);
 			assert.match(fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8"), /subagent\.run\.repaired_stale/);
 			fs.rmSync(asyncDir, { recursive: true, force: true });
-			const resultOnlyTarget = resolveAsyncResumeTarget({ id: "run-dead" }, { asyncDirRoot: root, resultsDir }, { requireSessionFile: false });
+			const resultOnlyTarget = resolveAsyncResumeTarget(
+				{ id: "run-dead" },
+				{ asyncDirRoot: root, resultsDir },
+				{ requireSessionFile: false },
+			);
 			assert.equal(resultOnlyTarget.kind, "revive");
 			assert.equal(resultOnlyTarget.activeRuntimeMs, 1250);
 		} finally {
@@ -97,7 +121,9 @@ describe("async stale-run reconciliation", () => {
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -132,14 +158,19 @@ describe("async stale-run reconciliation", () => {
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
 			assert.equal(result.repaired, true);
 			assert.equal(result.status?.state, "failed");
 			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "failed");
-			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-events-dir.json"), "utf-8")).success, false);
+			assert.equal(
+				JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-events-dir.json"), "utf-8")).success,
+				false,
+			);
 			assert.equal(fs.statSync(path.join(asyncDir, "events.jsonl")).isDirectory(), true);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
@@ -166,19 +197,29 @@ describe("async stale-run reconciliation", () => {
 			});
 			const scoutSession = path.join(root, "scout.jsonl");
 			const workerSession = path.join(root, "worker.jsonl");
-			fs.writeFileSync(path.join(resultsDir, "run-mixed.json"), JSON.stringify({
-				id: "run-mixed",
-				success: false,
-				state: "failed",
-				results: [
-					{ agent: "scout", success: true, sessionFile: scoutSession, model: "fast" },
-					{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful" },
-				],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-mixed.json"),
+				JSON.stringify(
+					{
+						id: "run-mixed",
+						success: false,
+						state: "failed",
+						results: [
+							{ agent: "scout", success: true, sessionFile: scoutSession, model: "fast" },
+							{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful" },
+						],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -250,7 +291,9 @@ describe("async stale-run reconciliation", () => {
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -280,19 +323,35 @@ describe("async stale-run reconciliation", () => {
 				startedAt: 1000,
 				lastUpdate: 1500,
 				pause: { kind: "awaiting_supervisor", ownerPid: 12345, requestedAt: 1400 },
-				steps: [{ agent: "worker", status: "paused", pause: { kind: "awaiting_supervisor", requestedAt: 1400, pausedAt: 1500 } }],
+				steps: [
+					{
+						agent: "worker",
+						status: "paused",
+						pause: { kind: "awaiting_supervisor", requestedAt: 1400, pausedAt: 1500 },
+					},
+				],
 			});
-			fs.writeFileSync(path.join(resultsDir, "run-pausing-result.json"), JSON.stringify({
-				id: "run-pausing-result",
-				success: false,
-				state: "paused",
-				pause: { kind: "awaiting_supervisor" },
-				results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor." }],
-			}, null, 2), "utf-8");
+			fs.writeFileSync(
+				path.join(resultsDir, "run-pausing-result.json"),
+				JSON.stringify(
+					{
+						id: "run-pausing-result",
+						success: false,
+						state: "paused",
+						pause: { kind: "awaiting_supervisor" },
+						results: [{ agent: "worker", success: false, interrupted: true, output: "Paused awaiting supervisor." }],
+					},
+					null,
+					2,
+				),
+				"utf-8",
+			);
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -322,7 +381,9 @@ describe("async stale-run reconciliation", () => {
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -330,7 +391,10 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.status?.state, "failed");
 			assert.match(result.message ?? "", /safe resume metadata was incomplete/);
 			assert.equal(result.status?.steps?.[0]?.status, "failed");
-			assert.equal(JSON.parse(fs.readFileSync(path.join(resultsDir, "run-pausing-incomplete.json"), "utf-8")).state, "failed");
+			assert.equal(
+				JSON.parse(fs.readFileSync(path.join(resultsDir, "run-pausing-incomplete.json"), "utf-8")).state,
+				"failed",
+			);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -382,11 +446,17 @@ describe("async stale-run reconciliation", () => {
 				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
 			});
 			const resultPath = path.join(resultsDir, "run-result.json");
-			fs.writeFileSync(resultPath, JSON.stringify({ id: "run-result", success: true, state: "complete", summary: "already done" }, null, 2), "utf-8");
+			fs.writeFileSync(
+				resultPath,
+				JSON.stringify({ id: "run-result", success: true, state: "complete", summary: "already done" }, null, 2),
+				"utf-8",
+			);
 
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 
@@ -436,7 +506,9 @@ describe("async stale-run reconciliation", () => {
 			});
 			const deadPidResult = reconcileAsyncRun(asyncDir, {
 				resultsDir,
-				kill: () => { throw errno("ESRCH"); },
+				kill: () => {
+					throw errno("ESRCH");
+				},
 				now: () => 2000,
 			});
 			assert.equal(deadPidResult.repaired, true);

@@ -32,7 +32,13 @@ export function validateToolBudgetConfig(raw, label = "toolBudget") {
                 return { error: `${label}.block must contain non-empty tool names.` };
         }
     }
-    return { budget: { hard: value.hard, ...(value.soft !== undefined ? { soft: value.soft } : {}), block: normalizeToolBudgetBlock(value.block) } };
+    return {
+        budget: {
+            hard: value.hard,
+            ...(value.soft !== undefined ? { soft: value.soft } : {}),
+            block: normalizeToolBudgetBlock(value.block),
+        },
+    };
 }
 export function initialToolBudgetState(budget) {
     return { ...budget, toolCount: 0, outcome: "within-budget" };

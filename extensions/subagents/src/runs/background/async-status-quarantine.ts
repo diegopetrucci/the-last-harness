@@ -23,8 +23,18 @@ export interface AsyncStatusQuarantineOptions {
 export type AsyncStatusQuarantineResult =
 	| { outcome: "quarantined"; kind: AsyncRunCorruptEntryIssue["kind"]; quarantineDir: string }
 	| { outcome: "skipped"; reason: "missing" | "repaired"; kind: AsyncRunCorruptEntryIssue["kind"] }
-	| { outcome: "deferred"; reason: "missing_fingerprint" | "changed" | "unstable"; kind: AsyncRunCorruptEntryIssue["kind"]; dedupeKey: string }
-	| { outcome: "failed"; reason: "invalid_path" | "stat" | "read" | "mkdir" | "rename"; kind: AsyncRunCorruptEntryIssue["kind"]; dedupeKey: string };
+	| {
+			outcome: "deferred";
+			reason: "missing_fingerprint" | "changed" | "unstable";
+			kind: AsyncRunCorruptEntryIssue["kind"];
+			dedupeKey: string;
+	  }
+	| {
+			outcome: "failed";
+			reason: "invalid_path" | "stat" | "read" | "mkdir" | "rename";
+			kind: AsyncRunCorruptEntryIssue["kind"];
+			dedupeKey: string;
+	  };
 
 interface StatusSnapshot {
 	dev?: number;
@@ -35,10 +45,9 @@ interface StatusSnapshot {
 }
 
 function isNotFoundError(error: unknown): boolean {
-	return typeof error === "object"
-		&& error !== null
-		&& "code" in error
-		&& (error as NodeJS.ErrnoException).code === "ENOENT";
+	return (
+		typeof error === "object" && error !== null && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT"
+	);
 }
 
 function snapshotStatus(stat: fs.Stats): StatusSnapshot {
@@ -52,11 +61,13 @@ function snapshotStatus(stat: fs.Stats): StatusSnapshot {
 }
 
 function sameSnapshot(left: StatusSnapshot, right: StatusSnapshot): boolean {
-	return left.dev === right.dev
-		&& left.ino === right.ino
-		&& left.size === right.size
-		&& left.mtimeMs === right.mtimeMs
-		&& left.ctimeMs === right.ctimeMs;
+	return (
+		left.dev === right.dev &&
+		left.ino === right.ino &&
+		left.size === right.size &&
+		left.mtimeMs === right.mtimeMs &&
+		left.ctimeMs === right.ctimeMs
+	);
 }
 
 function confirmCorruption(issue: AsyncRunCorruptEntryIssue, content: string): "confirmed" | "repaired" | "changed" {
@@ -91,9 +102,10 @@ function buildDedupeKey(issue: AsyncRunCorruptEntryIssue, reason: string): strin
 	return `${issue.entry}\u0000${issue.fingerprint?.value ?? "missing-fingerprint"}\u0000${reason}`;
 }
 
-function isValidFingerprint(issue: AsyncRunCorruptEntryIssue): issue is AsyncRunCorruptEntryIssue & { fingerprint: { algorithm: "sha256"; value: string } } {
-	return issue.fingerprint?.algorithm === "sha256"
-		&& /^[a-f0-9]{64}$/u.test(issue.fingerprint.value);
+function isValidFingerprint(
+	issue: AsyncRunCorruptEntryIssue,
+): issue is AsyncRunCorruptEntryIssue & { fingerprint: { algorithm: "sha256"; value: string } } {
+	return issue.fingerprint?.algorithm === "sha256" && /^[a-f0-9]{64}$/u.test(issue.fingerprint.value);
 }
 
 function validateIssuePaths(asyncDirRoot: string, issue: AsyncRunCorruptEntryIssue): boolean {
@@ -102,20 +114,34 @@ function validateIssuePaths(asyncDirRoot: string, issue: AsyncRunCorruptEntryIss
 	const expectedAsyncDir = path.resolve(asyncDirRoot, issue.entry);
 	const expectedStatusPath = path.resolve(expectedAsyncDir, "status.json");
 	const asyncDirWithinRoot = path.relative(resolvedRoot, expectedAsyncDir);
-	if (asyncDirWithinRoot === "" || asyncDirWithinRoot.startsWith("..") || path.isAbsolute(asyncDirWithinRoot)) return false;
-	return path.resolve(issue.asyncDir) === expectedAsyncDir
-		&& path.resolve(issue.statusPath) === expectedStatusPath;
+	if (asyncDirWithinRoot === "" || asyncDirWithinRoot.startsWith("..") || path.isAbsolute(asyncDirWithinRoot))
+		return false;
+	return path.resolve(issue.asyncDir) === expectedAsyncDir && path.resolve(issue.statusPath) === expectedStatusPath;
 }
 
-export function quarantineCorruptAsyncRun(asyncDirRoot: string, issue: AsyncRunCorruptEntryIssue, options: AsyncStatusQuarantineOptions = {}): AsyncStatusQuarantineResult {
+export function quarantineCorruptAsyncRun(
+	asyncDirRoot: string,
+	issue: AsyncRunCorruptEntryIssue,
+	options: AsyncStatusQuarantineOptions = {},
+): AsyncStatusQuarantineResult {
 	const fsApi = options.fs ?? fs;
 	const now = options.now ?? Date.now;
 	const createUniqueSuffix = options.createUniqueSuffix ?? (() => `${now()}-${Math.random().toString(36).slice(2, 8)}`);
 	if (!isValidFingerprint(issue)) {
-		return { outcome: "deferred", reason: "missing_fingerprint", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "missing_fingerprint") };
+		return {
+			outcome: "deferred",
+			reason: "missing_fingerprint",
+			kind: issue.kind,
+			dedupeKey: buildDedupeKey(issue, "missing_fingerprint"),
+		};
 	}
 	if (!validateIssuePaths(asyncDirRoot, issue)) {
-		return { outcome: "failed", reason: "invalid_path", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "invalid_path") };
+		return {
+			outcome: "failed",
+			reason: "invalid_path",
+			kind: issue.kind,
+			dedupeKey: buildDedupeKey(issue, "invalid_path"),
+		};
 	}
 
 	let before: StatusSnapshot;
@@ -142,12 +168,15 @@ export function quarantineCorruptAsyncRun(asyncDirRoot: string, issue: AsyncRunC
 		return { outcome: "failed", reason: "stat", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "stat") };
 	}
 
-	if (!sameSnapshot(before, after)) return { outcome: "deferred", reason: "unstable", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "unstable") };
+	if (!sameSnapshot(before, after))
+		return { outcome: "deferred", reason: "unstable", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "unstable") };
 	const fingerprint = fingerprintAsyncStatusContent(content);
-	if (fingerprint.value !== issue.fingerprint.value) return { outcome: "deferred", reason: "changed", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "changed") };
+	if (fingerprint.value !== issue.fingerprint.value)
+		return { outcome: "deferred", reason: "changed", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "changed") };
 	const confirmation = confirmCorruption(issue, content);
 	if (confirmation === "repaired") return { outcome: "skipped", reason: "repaired", kind: issue.kind };
-	if (confirmation === "changed") return { outcome: "deferred", reason: "changed", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "changed") };
+	if (confirmation === "changed")
+		return { outcome: "deferred", reason: "changed", kind: issue.kind, dedupeKey: buildDedupeKey(issue, "changed") };
 
 	const quarantineDir = buildQuarantinePath(asyncDirRoot, issue.entry, createUniqueSuffix());
 	// This minimizes, but cannot remove, the final TOCTOU gap between confirming

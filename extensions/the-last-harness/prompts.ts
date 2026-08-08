@@ -2,13 +2,23 @@ import { lstatSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import { allowedSubagentsForExperimentalConfig, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled } from "../the-last-harness-subagent-safety.mjs";
+import {
+	allowedSubagentsForExperimentalConfig,
+	isEmbeddedSubagentTarget,
+	isExperimentalFeatureEnabled,
+} from "../the-last-harness-subagent-safety.mjs";
 import { EMBEDDED_SUBAGENTS_FEATURE } from "./experimental.js";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText, uniqueSorted } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
-import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhExperimentalConfig, TlhPrimaryAgentSelection } from "./types.js";
+import type {
+	AgentPrompt,
+	SubagentMetadata,
+	ThinkingLevel,
+	TlhExperimentalConfig,
+	TlhPrimaryAgentSelection,
+} from "./types.js";
 
 export function parseFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
 	if (!content.startsWith("---")) {
@@ -232,7 +242,11 @@ export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir: string): st
 	);
 }
 
-function formatAllowedSubagents(primary: AgentPrompt | undefined, subagents: SubagentMetadata[], experimentalConfig: TlhExperimentalConfig | undefined): string {
+function formatAllowedSubagents(
+	primary: AgentPrompt | undefined,
+	subagents: SubagentMetadata[],
+	experimentalConfig: TlhExperimentalConfig | undefined,
+): string {
 	const allowed = new Set(allowedSubagentsForExperimentalConfig(experimentalConfig));
 	const lines = subagents
 		.filter((agent) => allowed.has(agent.name))

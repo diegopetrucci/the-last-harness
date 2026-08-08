@@ -63,7 +63,9 @@ export function registerTokensCommand(pi, dependencies = {}) {
 }
 export function buildTokensReportHtml(analysis, options = {}) {
     const generatedAt = options.generatedAt ?? new Date().toISOString();
-    const primaryLabel = (options.primaryAgentLabel && options.primaryAgentLabel.trim()) ? options.primaryAgentLabel.trim() : "Primary assistant";
+    const primaryLabel = options.primaryAgentLabel && options.primaryAgentLabel.trim()
+        ? options.primaryAgentLabel.trim()
+        : "Primary assistant";
     const coverage = analysis.primaryAssistant.usageCoverage;
     const combinedCacheTotal = analysis.totals.combined.cacheReadTokens + analysis.totals.combined.cacheWriteTokens;
     const cacheTurns = analysis.primaryAssistant.timeline.filter((turn) => turn.usage.cacheReadTokens > 0 || turn.usage.cacheWriteTokens > 0);
@@ -71,26 +73,28 @@ export function buildTokensReportHtml(analysis, options = {}) {
     const coverageCaveat = coverage.withoutUsage > 0
         ? `${coverage.withoutUsage} assistant turn${coverage.withoutUsage === 1 ? " was" : "s were"} missing provider usage data, so some totals may be incomplete.`
         : "All assistant turns on this session had provider usage data recorded.";
-    const title = analysis.session.sessionName ? `TLH tokens report • ${analysis.session.sessionName}` : "TLH tokens report";
+    const title = analysis.session.sessionName
+        ? `TLH tokens report • ${analysis.session.sessionName}`
+        : "TLH tokens report";
     return [
         "<!doctype html>",
-        "<html lang=\"en\">",
+        '<html lang="en">',
         "<head>",
-        "<meta charset=\"utf-8\">",
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
         `<title>${escapeHtml(title)}</title>`,
         `<style>${TOKENS_REPORT_CSS}</style>`,
         "</head>",
         "<body>",
-        "<main class=\"page\">",
-        "<header class=\"hero\">",
+        '<main class="page">',
+        '<header class="hero">',
         `<p class="eyebrow">${escapeHtml("Local/private TLH report")}</p>`,
         `<h1>${escapeHtml(title)}</h1>`,
         `<p class="lede">${escapeHtml("Built from sanitized session analysis only. No raw transcript text or raw tool payloads are embedded in this HTML.")}</p>`,
         `<p class="meta">Generated ${escapeHtml(generatedAt)}</p>`,
         "</header>",
         renderSection("Overview", [
-            "<div class=\"grid cards three\">",
+            '<div class="grid cards three">',
             renderMetricCard("Combined total", formatInteger(analysis.totals.combined.totalTokens), `${formatCurrency(analysis.totals.combined.costUsd)} • ${formatInteger(analysis.totals.combined.turns)} turns`),
             renderMetricCard(primaryLabel, formatInteger(analysis.totals.primary.totalTokens), `${formatCurrency(analysis.totals.primary.costUsd)} • ${formatCoverage(coverage)}`),
             renderMetricCard("Subagents", formatInteger(analysis.totals.subagents.totalTokens), `${formatCurrency(analysis.totals.subagents.costUsd)} • ${formatInteger(analysis.subagents.runCount)} discovered runs`),
@@ -106,12 +110,15 @@ export function buildTokensReportHtml(analysis, options = {}) {
                     `${formatInteger(analysis.session.assistantTurnsOnActiveBranch)} active-branch • ${formatInteger(analysis.session.assistantTurnsOffActiveBranch)} off-branch`,
                 ],
                 ["Tool calls", formatInteger(analysis.tools.totalCalls)],
-                ["Cache tokens", `${formatInteger(combinedCacheTotal)} total • ${formatCacheShare(combinedCacheTotal, analysis.totals.combined.totalTokens)}`],
+                [
+                    "Cache tokens",
+                    `${formatInteger(combinedCacheTotal)} total • ${formatCacheShare(combinedCacheTotal, analysis.totals.combined.totalTokens)}`,
+                ],
             ]),
             renderUsageTotalsTable(analysis, primaryLabel),
         ].join("")),
         renderSection("Tools/MCP", [
-            "<div class=\"grid cards four\">",
+            '<div class="grid cards four">',
             renderMetricCard("Tool calls", formatInteger(analysis.tools.totalCalls), `${formatInteger(analysis.tools.totalResults)} results`),
             renderMetricCard("Tool errors", formatInteger(analysis.tools.totalErrors), `${formatErrorRate(analysis.tools.totalErrors, analysis.tools.totalResults)} result error rate`),
             renderMetricCard("MCP calls", formatInteger(analysis.tools.mcpCalls), `${formatInteger(analysis.tools.mcpProxyCalls)} proxy • ${formatInteger(analysis.tools.mcpDirectCalls)} direct`),
@@ -138,8 +145,8 @@ export function buildTokensReportHtml(analysis, options = {}) {
             renderCacheTimelineTable(cacheTurns),
         ].join("")),
         renderSection("Caveats", [
-            "<ul class=\"caveats\">",
-            ...([privacyCaveat, coverageCaveat, ...analysis.caveats].map((item) => `<li>${escapeHtml(item)}</li>`)),
+            '<ul class="caveats">',
+            ...[privacyCaveat, coverageCaveat, ...analysis.caveats].map((item) => `<li>${escapeHtml(item)}</li>`),
             "</ul>",
         ].join("")),
         "</main>",
@@ -216,9 +223,9 @@ function renderModelUsageTable(title, models) {
 }
 function renderSubagentRunsTable(analysis) {
     const rows = analysis.subagents.runs.map((run) => [
-        run.agent ?? (run.agents?.join(", ") ?? "—"),
+        run.agent ?? run.agents?.join(", ") ?? "—",
         run.mode ?? "—",
-        run.model ?? (run.attemptedModels?.join(", ") ?? "—"),
+        run.model ?? run.attemptedModels?.join(", ") ?? "—",
         run.usage ? formatInteger(run.usage.totalTokens) : "—",
         run.usage ? formatCurrency(run.usage.costUsd) : "—",
         run.session?.label ?? "—",
@@ -303,14 +310,11 @@ function renderCacheMissesSection(analysis) {
     const { cacheMisses } = analysis;
     const explanatoryNote = `<p class="section-note">${escapeHtml("A cache miss is prompt content that was sent on an earlier turn but had to be re-sent and re-billed at full price instead of being served from the provider's prompt cache. Misses commonly happen after an idle gap longer than the cache TTL (~5 min), when the model is switched mid-session, or after a context reset (compaction). Only misses above a small noise floor are counted.")}</p>`;
     if (cacheMisses.missCount === 0) {
-        return renderSection("Cache misses", [
-            explanatoryNote,
-            `<p class="section-note">${escapeHtml("No significant cache misses detected.")}</p>`,
-        ].join(""));
+        return renderSection("Cache misses", [explanatoryNote, `<p class="section-note">${escapeHtml("No significant cache misses detected.")}</p>`].join(""));
     }
     return renderSection("Cache misses", [
         explanatoryNote,
-        "<div class=\"grid cards three\">",
+        '<div class="grid cards three">',
         renderMetricCard("Missed tokens", formatInteger(cacheMisses.missedTokens), ""),
         renderMetricCard("Extra cost", formatCurrency(cacheMisses.missedCost), ""),
         renderMetricCard("Miss count", formatInteger(cacheMisses.missCount), ""),
@@ -348,7 +352,7 @@ export function renderTable(headers, rows, emptyMessage) {
         return `<p class="empty">${escapeHtml(emptyMessage)}</p>`;
     }
     return [
-        "<div class=\"table-wrap\"><table><thead><tr>",
+        '<div class="table-wrap"><table><thead><tr>',
         ...headers.map((header) => `<th>${escapeHtml(header)}</th>`),
         "</tr></thead><tbody>",
         ...rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`),

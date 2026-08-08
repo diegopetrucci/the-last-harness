@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
 
@@ -67,23 +76,33 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
 	mkdirSync(binDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
 	// Seed a stale private runtime binary at the expected path (version 0.80.2 is below pin).
-	writeFakePi(runtimeBinDir, [
-		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.2\\n'; exit 0; fi",
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		runtimeBinDir,
+		[
+			`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
+			'if [[ "${1:-}" == "--version" ]]; then printf \'0.80.2\\n\'; exit 0; fi',
+			"exit 0",
+		].join("\n"),
+	);
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
 	writeFakeNpmInstaller(fakebin, {
 		npmLog,
@@ -97,12 +116,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
@@ -112,12 +126,14 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
 	]);
 	// The stale pi was only probed for --version; the repaired pi is first validated
 	// for --version (post-install check) and then ran install+update.
-	assert.deepEqual(readPiLogRecords(stalePiCallLog).map((record) => record.command), ["--version"]);
-	assert.deepEqual(readPiLogRecords(repairedPiLog).map((record) => record.command), [
-		"--version",
-		`install ${packageDir}`,
-		`update ${packageDir}`,
-	]);
+	assert.deepEqual(
+		readPiLogRecords(stalePiCallLog).map((record) => record.command),
+		["--version"],
+	);
+	assert.deepEqual(
+		readPiLogRecords(repairedPiLog).map((record) => record.command),
+		["--version", `install ${packageDir}`, `update ${packageDir}`],
+	);
 	const state = readJson(join(agentDir, "tlh", "install-state.json"));
 	assert.equal(state.piInstalledByTlh, true);
 });
@@ -144,29 +160,42 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	mkdirSync(binDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
 	// A non-pinned PATH pi — the installer must never use it (private runtime only).
-	writeFakePi(supportedPiDir, [
-		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${pathPiLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		supportedPiDir,
+		[
+			`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${pathPiLog}"`,
+			`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_NON_PINNED_PI_VERSION}\\n'; exit 0; fi`,
+			"exit 0",
+		].join("\n"),
+	);
 	// Stale private runtime at 0.80.7 (above pin) triggers repair.
-	writeFakePi(runtimeBinDir, [
-		`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
-		"if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.7\\n'; exit 0; fi",
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		runtimeBinDir,
+		[
+			`printf '%s|%s|%s\\n' "\${PI_CODING_AGENT_DIR:-}" "$PWD" "$*" >>"${stalePiCallLog}"`,
+			'if [[ "${1:-}" == "--version" ]]; then printf \'0.80.7\\n\'; exit 0; fi',
+			"exit 0",
+		].join("\n"),
+	);
 	writeLoggingPi(templateDir, repairedPiLog, TLH_PINNED_PI_VERSION);
 	writeFakeNpmInstaller(fakebin, {
 		npmLog,
@@ -180,12 +209,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
@@ -196,13 +220,15 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	// PATH pi must never be invoked — the installer is private-runtime-only.
 	assert.equal(existsSync(pathPiLog), false, output);
 	// Stale runtime pi was only probed for --version.
-	assert.deepEqual(readPiLogRecords(stalePiCallLog).map((record) => record.command), ["--version"]);
+	assert.deepEqual(
+		readPiLogRecords(stalePiCallLog).map((record) => record.command),
+		["--version"],
+	);
 	// Repaired pi is first validated for --version (post-install check) then ran install+update.
-	assert.deepEqual(readPiLogRecords(repairedPiLog).map((record) => record.command), [
-		"--version",
-		`install ${packageDir}`,
-		`update ${packageDir}`,
-	]);
+	assert.deepEqual(
+		readPiLogRecords(repairedPiLog).map((record) => record.command),
+		["--version", `install ${packageDir}`, `update ${packageDir}`],
+	);
 	const state = readJson(join(agentDir, "tlh", "install-state.json"));
 	assert.equal(state.piInstalledByTlh, true);
 });
@@ -224,15 +250,22 @@ test("stage-1 preserves piInstalledByTlh=true when rerunning with a valid privat
 	mkdirSync(binDir, { recursive: true });
 	mkdirSync(packageDir, { recursive: true });
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 	writeFakeCommand(fakebin, "git", "exit 0");
 	// npm fails loudly if invoked — must NOT be called when runtime is already valid.
 	writeFakeCommand(fakebin, "npm", `printf '%s\\n' "$*" >>"${npmLog}"\nexit 97`);
@@ -246,22 +279,18 @@ test("stage-1 preserves piInstalledByTlh=true when rerunning with a valid privat
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-		"--pi-installed-by-tlh", "true",
-	], env);
+	const result = runInstaller(
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper", "--pi-installed-by-tlh", "true"],
+		env,
+	);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
 	assert.equal(existsSync(npmLog), false, output);
-	assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command), [
-		"--version",
-		`install ${packageDir}`,
-		`update ${packageDir}`,
-	]);
+	assert.deepEqual(
+		readPiLogRecords(piLog).map((record) => record.command),
+		["--version", `install ${packageDir}`, `update ${packageDir}`],
+	);
 	const state = readJson(join(agentDir, "tlh", "install-state.json"));
 	assert.equal(state.piInstalledByTlh, true);
 });
@@ -327,30 +356,27 @@ test("stage-1 records piInstalledByTlh=true when installing the private runtime"
 			TLH_PACKAGE_SOURCE: packageDir,
 			TLH_SKIP_GNOSIS_INSTALL: "1",
 		});
-		const result = runInstaller([
-			"--agent-dir", agentDir,
-			"--bin-dir", binDir,
-			"--no-settings",
-			"--no-wrapper",
-			...scenario.args,
-		], env);
+		const result = runInstaller(
+			["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper", ...scenario.args],
+			env,
+		);
 		const output = `${result.stdout}\n${result.stderr}`;
 
 		assert.equal(result.status, 0, `${scenario.name}\n${output}`);
-		assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
-			`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
-		], scenario.name);
+		assert.deepEqual(
+			readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean),
+			[`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`],
+			scenario.name,
+		);
 		const state = readJson(join(agentDir, "tlh", "install-state.json"));
 		assert.equal(state.piInstalledByTlh, true, scenario.name);
-		assert.deepEqual(readPiLogRecords(piLog).map((record) => record.command), [
-			"--version",
-			`install ${packageDir}`,
-			`update ${packageDir}`,
-		], scenario.name);
+		assert.deepEqual(
+			readPiLogRecords(piLog).map((record) => record.command),
+			["--version", `install ${packageDir}`, `update ${packageDir}`],
+			scenario.name,
+		);
 	}
 });
-
-
 
 test("declared Node minimum stays aligned across installer metadata", () => {
 	const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
@@ -385,21 +411,31 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	mkdirSync(legacyBin, { recursive: true });
 
 	// Install-state: piInstalledByTlh=true
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 
 	// Legacy pi at ~/.local/bin/pi — must NOT be removed when install fails.
-	writeFakePi(legacyBin, `if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`);
+	writeFakePi(
+		legacyBin,
+		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi\nexit 0`,
+	);
 
 	// Template pi with a clearly wrong non-pinned version (0.80.7) — simulates a broken npm install.
-	writeFakePi(templateDir, "if [[ \"${1:-}\" == \"--version\" ]]; then printf '0.80.7\\n'; exit 0; fi\nexit 0");
+	writeFakePi(templateDir, 'if [[ "${1:-}" == "--version" ]]; then printf \'0.80.7\\n\'; exit 0; fi\nexit 0');
 
 	// Fake npm: always installs the wrong-version template pi.
 	writeFakeNpmInstaller(fakebin, {
@@ -416,13 +452,10 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-		"--pi-installed-by-tlh", "true",
-	], env);
+	const result = runInstaller(
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper", "--pi-installed-by-tlh", "true"],
+		env,
+	);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	// Installer must fail: freshly installed pi has wrong version.
@@ -433,9 +466,7 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was removed despite installer throwing");
 
 	// npm uninstall must NOT have been called.
-	const npmLinesC = existsSync(npmLog)
-		? readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean)
-		: [];
+	const npmLinesC = existsSync(npmLog) ? readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean) : [];
 	assert.equal(
 		npmLinesC.filter((line) => line.startsWith("uninstall ")).length,
 		0,
@@ -470,38 +501,52 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 
 	// Install-state: piInstalledByTlh=true (the blocker scenario: set by old model or stale state).
 	// No private runtime exists at start — runtimeDir is absent.
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 
 	// User-owned ~/.local/bin/pi@0.83.0 — must NOT be removed or invoked by the installer.
-	writeFakePi(legacyBin, [
-		`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
-		`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
-		"exit 0",
-	].join("\n"));
+	writeFakePi(
+		legacyBin,
+		[
+			`printf '%s\\n' "$*" >>"${legacyPiInvocationLog}"`,
+			`if [[ "\${1:-}" == "--version" ]]; then printf '${TLH_PINNED_PI_VERSION}\\n'; exit 0; fi`,
+			"exit 0",
+		].join("\n"),
+	);
 
 	// Template pi for npm to install as the new private runtime (correct pinned version).
 	writeLoggingPi(templateDir, piLog, TLH_PINNED_PI_VERSION);
 
 	// Fake npm: logs all invocations, handles install only (copies template to runtime path).
 	// Any npm uninstall call would indicate the installer is (incorrectly) trying to remove ~/.local.
-	writeFakeCommand(fakebin, "npm", [
-		`printf '%s\\n' "$*" >>"${npmLog}"`,
-		`case "$1" in`,
-		`  install)`,
-		`    mkdir -p "${join(runtimeDir, "bin")}"`,
-		`    cp "${join(templateDir, "pi")}" "${installedPiPath}"`,
-		`    chmod +x "${installedPiPath}"`,
-		`    ;;`,
-		`esac`,
-	].join("\n"));
+	writeFakeCommand(
+		fakebin,
+		"npm",
+		[
+			`printf '%s\\n' "$*" >>"${npmLog}"`,
+			`case "$1" in`,
+			`  install)`,
+			`    mkdir -p "${join(runtimeDir, "bin")}"`,
+			`    cp "${join(templateDir, "pi")}" "${installedPiPath}"`,
+			`    chmod +x "${installedPiPath}"`,
+			`    ;;`,
+			`esac`,
+		].join("\n"),
+	);
 	writeFakeCommand(fakebin, "git", "exit 0");
 	writeFakeTk(fakebin);
 
@@ -511,13 +556,10 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-		"--pi-installed-by-tlh", "true",
-	], env);
+	const result = runInstaller(
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper", "--pi-installed-by-tlh", "true"],
+		env,
+	);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	// Installer must succeed — the private runtime was freshly installed.
@@ -528,9 +570,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 	assert.equal(existsSync(legacyPiPath), true, "user-owned ~/.local/bin/pi was incorrectly removed by the installer");
 
 	// npm uninstall must NOT have been called for the ~/.local prefix.
-	const npmCalls = existsSync(npmLog)
-		? readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean)
-		: [];
+	const npmCalls = existsSync(npmLog) ? readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean) : [];
 	const uninstallCalls = npmCalls.filter((line) => line.startsWith("uninstall "));
 	assert.equal(
 		uninstallCalls.length,
@@ -563,23 +603,34 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	// NO private runtime (runtimeDir does not exist).
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
 	mkdirSync(legacyBin, { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 
 	// User-owned legacy pi at ~/.local/bin/pi.
 	writeFileSync(join(legacyBin, "pi"), "#!/bin/sh\nprintf '0.83.0\\n'\n", "utf8");
 	chmodSync(join(legacyBin, "pi"), 0o755);
 
 	// ── (d1) dry-run without --force-include-pi: hint printed, pi NOT removed ──
-	const dryResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
-		cwd: repoRoot,
-		env: scrubInstallerEnv({ HOME: homeDir }),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const dryResult = spawnSync(
+		"bash",
+		[join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
+		{
+			cwd: repoRoot,
+			env: scrubInstallerEnv({ HOME: homeDir }),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	const dryOutput = `${dryResult.stdout}\n${dryResult.stderr}`;
 
 	assert.equal(dryResult.status, 0, `dry-run failed:\n${dryOutput}`);
@@ -589,37 +640,55 @@ test("uninstall.sh does not remove legacy ~/.local/bin/pi without --force-includ
 	// ── (d2) with --force-include-pi: npm uninstall called, pi removed ─────────
 	// Fake npm: log the call and remove the legacy pi binary.
 	mkdirSync(fakeNpmDir, { recursive: true });
-	writeFileSync(join(fakeNpmDir, "npm"), [
-		"#!/usr/bin/env bash",
-		"set -euo pipefail",
-		`printf '%s\\n' "$*" >>"${npmLog}"`,
-		`if [[ "$1" == "uninstall" ]]; then`,
-		`  rm -f "${join(legacyBin, "pi")}"`,
-		`fi`,
-	].join("\n"), "utf8");
+	writeFileSync(
+		join(fakeNpmDir, "npm"),
+		[
+			"#!/usr/bin/env bash",
+			"set -euo pipefail",
+			`printf '%s\\n' "$*" >>"${npmLog}"`,
+			`if [[ "$1" == "uninstall" ]]; then`,
+			`  rm -f "${join(legacyBin, "pi")}"`,
+			`fi`,
+		].join("\n"),
+		"utf8",
+	);
 	chmodSync(join(fakeNpmDir, "npm"), 0o755);
 
 	// Re-create the agent dir with marker (the dry-run left it intact; we need it for the real run).
 	mkdirSync(join(agentDir, "tlh"), { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 
-	const forceResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--force-include-pi", "--agent-dir", agentDir, "--bin-dir", binDir], {
-		cwd: repoRoot,
-		env: scrubInstallerEnv({ HOME: homeDir, PATH: `${fakeNpmDir}:${process.env.PATH || ""}` }),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const forceResult = spawnSync(
+		"bash",
+		[join(repoRoot, "uninstall.sh"), "--force-include-pi", "--agent-dir", agentDir, "--bin-dir", binDir],
+		{
+			cwd: repoRoot,
+			env: scrubInstallerEnv({ HOME: homeDir, PATH: `${fakeNpmDir}:${process.env.PATH || ""}` }),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	const forceOutput = `${forceResult.stdout}\n${forceResult.stderr}`;
 
 	assert.equal(forceResult.status, 0, `force-include-pi uninstall failed:\n${forceOutput}`);
 	// npm must have been called for uninstall.
 	assert.equal(existsSync(npmLog), true, "npm uninstall was not called with --force-include-pi");
 	const npmCalls = readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean);
-	assert.ok(npmCalls.some((line) => line.startsWith("uninstall ")), `expected npm uninstall; got: ${npmCalls.join(", ")}`);
+	assert.ok(
+		npmCalls.some((line) => line.startsWith("uninstall ")),
+		`expected npm uninstall; got: ${npmCalls.join(", ")}`,
+	);
 	// Legacy pi must have been removed.
 	assert.equal(existsSync(join(legacyBin, "pi")), false, "legacy pi should have been removed with --force-include-pi");
 });
@@ -644,44 +713,68 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	mkdirSync(tlhPackageDir, { recursive: true });
 	mkdirSync(foreignPackageDir, { recursive: true });
 	mkdirSync(binDir, { recursive: true });
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 	writeFileSync(join(runtimeDir, "bin", "pi"), "#!/bin/sh\n", "utf8");
 	chmodSync(join(runtimeDir, "bin", "pi"), 0o755);
-	writeFileSync(markerPath, JSON.stringify({
-		schemaVersion: 1,
-		packageName: "@earendil-works/pi-coding-agent",
-		runtimeAbsPath: realpathSync(runtimeDir),
-		origin: "migrated",
-	}), "utf8");
-	writeFileSync(join(tlhPackageDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }, null, 2));
+	writeFileSync(
+		markerPath,
+		JSON.stringify({
+			schemaVersion: 1,
+			packageName: "@earendil-works/pi-coding-agent",
+			runtimeAbsPath: realpathSync(runtimeDir),
+			origin: "migrated",
+		}),
+		"utf8",
+	);
+	writeFileSync(
+		join(tlhPackageDir, "package.json"),
+		JSON.stringify({ name: "@earendil-works/pi-coding-agent" }, null, 2),
+	);
 	writeFileSync(join(foreignPackageDir, "package.json"), JSON.stringify({ name: "foreign-package" }, null, 2));
 
-	const dryResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], {
-		cwd: repoRoot,
-		env: scrubInstallerEnv({ HOME: homeDir }),
-		encoding: "utf8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const dryResult = spawnSync(
+		"bash",
+		[join(repoRoot, "uninstall.sh"), "--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
+		{
+			cwd: repoRoot,
+			env: scrubInstallerEnv({ HOME: homeDir }),
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	const dryOutput = `${dryResult.stdout}\n${dryResult.stderr}`;
 
 	assert.equal(dryResult.status, 0, `dry-run failed:\n${dryOutput}`);
 	assert.match(
 		dryOutput,
-		new RegExp(`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegExp(runtimeDir)}" @earendil-works/pi-coding-agent`),
+		new RegExp(
+			`would remove migrated TLH pi from shared runtime \\(npm\\): npm uninstall -g --ignore-scripts --prefix "${escapeRegExp(runtimeDir)}" @earendil-works/pi-coding-agent`,
+		),
 	);
 	assert.doesNotMatch(dryOutput, new RegExp(`would remove private runtime: rm -rf ${escapeRegExp(runtimeDir)}`));
 	assert.equal(existsSync(foreignPackageDir), true, "dry-run must not remove nested foreign package");
 
-	writeFakeCommand(fakeNpmDir, "npm", [
-		`printf '%s\\n' "$*" >>"${npmLog}"`,
-		`if [[ "$1" != "uninstall" ]]; then printf 'unexpected npm command: %s\\n' "$*" >&2; exit 98; fi`,
-		`rm -f "${join(runtimeDir, "bin", "pi")}"`,
-		`rm -rf "${tlhPackageDir}"`,
-	].join("\n"));
+	writeFakeCommand(
+		fakeNpmDir,
+		"npm",
+		[
+			`printf '%s\\n' "$*" >>"${npmLog}"`,
+			`if [[ "$1" != "uninstall" ]]; then printf 'unexpected npm command: %s\\n' "$*" >&2; exit 98; fi`,
+			`rm -f "${join(runtimeDir, "bin", "pi")}"`,
+			`rm -rf "${tlhPackageDir}"`,
+		].join("\n"),
+	);
 
 	const realResult = spawnSync("bash", [join(repoRoot, "uninstall.sh"), "--agent-dir", agentDir, "--bin-dir", binDir], {
 		cwd: repoRoot,
@@ -700,7 +793,10 @@ test("uninstall.sh regression (tlht-h7vq): migrated runtime marker preserves nes
 	assert.equal(existsSync(tlhPackageDir), false, "TLH runtime package should be removed surgically");
 	assert.equal(existsSync(markerPath), false, "migrated runtime ownership marker should be cleared after uninstall");
 	assert.equal(existsSync(foreignPackageDir), true, "nested foreign package must survive migrated runtime uninstall");
-	assert.equal(readFileSync(join(foreignPackageDir, "package.json"), "utf8"), JSON.stringify({ name: "foreign-package" }, null, 2));
+	assert.equal(
+		readFileSync(join(foreignPackageDir, "package.json"), "utf8"),
+		JSON.stringify({ name: "foreign-package" }, null, 2),
+	);
 	assert.equal(existsSync(runtimeDir), true, "shared runtime prefix must survive migrated runtime uninstall");
 });
 
@@ -756,8 +852,16 @@ test("stage-1 refuses to install into a runtime prefix containing a foreign top-
 		assert.match(output, /is not TLH-owned/, `${scenario.label}: error must name the ownership problem`);
 		assert.match(output, /--agent-dir/, `${scenario.label}: error must mention --agent-dir`);
 		// Foreign file must be left untouched.
-		assert.equal(existsSync(foreignPath), true, `${scenario.label}: foreign file must still exist after refused install`);
-		assert.equal(readFileSync(foreignPath, "utf8"), "user content\n", `${scenario.label}: foreign file content must be unchanged`);
+		assert.equal(
+			existsSync(foreignPath),
+			true,
+			`${scenario.label}: foreign file must still exist after refused install`,
+		);
+		assert.equal(
+			readFileSync(foreignPath, "utf8"),
+			"user content\n",
+			`${scenario.label}: foreign file content must be unchanged`,
+		);
 		// npm must not have been invoked.
 		assert.equal(existsSync(npmLog), false, `${scenario.label}: npm must not be invoked when guard refuses`);
 	}
@@ -795,10 +899,7 @@ test("stage-1 installs normally when runtime prefix exists but is empty", (t) =>
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller(
-		["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"],
-		env,
-	);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-wrapper", "--no-settings"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, `install into empty runtime prefix failed:\n${output}`);
@@ -812,7 +913,10 @@ test("stage-1 installs normally when runtime prefix exists but is empty", (t) =>
 
 test("RUNTIME_MARKER_FILENAME .tlh-runtime-owned is in RUNTIME_OWNED_TOPLEVEL", () => {
 	assert.equal(RUNTIME_MARKER_FILENAME, ".tlh-runtime-owned");
-	assert.ok(RUNTIME_OWNED_TOPLEVEL.has(RUNTIME_MARKER_FILENAME), "marker filename must be in RUNTIME_OWNED_TOPLEVEL allow-list");
+	assert.ok(
+		RUNTIME_OWNED_TOPLEVEL.has(RUNTIME_MARKER_FILENAME),
+		"marker filename must be in RUNTIME_OWNED_TOPLEVEL allow-list",
+	);
 });
 
 test("runtime ownership: pristine/absent prefix is accepted and marker origin=created is written", (t) => {
@@ -860,12 +964,7 @@ test("runtime ownership: non-empty unmarked prefix without provenance is refused
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.notEqual(result.status, 0, `expected failure but installer succeeded\n${output}`);
@@ -902,12 +1001,16 @@ test("runtime ownership: existing valid marker (path-matched) is accepted on reu
 
 	// Write a valid ownership marker into the pre-existing runtime.
 	const realRuntimeDir = realpathSync(runtimeDir);
-	writeFileSync(join(runtimeDir, ".tlh-runtime-owned"), JSON.stringify({
-		schemaVersion: 1,
-		packageName: "@earendil-works/pi-coding-agent",
-		runtimeAbsPath: realRuntimeDir,
-		origin: "created",
-	}), "utf8");
+	writeFileSync(
+		join(runtimeDir, ".tlh-runtime-owned"),
+		JSON.stringify({
+			schemaVersion: 1,
+			packageName: "@earendil-works/pi-coding-agent",
+			runtimeAbsPath: realRuntimeDir,
+			origin: "created",
+		}),
+		"utf8",
+	);
 
 	const env = scrubInstallerEnv({
 		HOME: homeDir,
@@ -915,12 +1018,7 @@ test("runtime ownership: existing valid marker (path-matched) is accepted on reu
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
@@ -928,7 +1026,10 @@ test("runtime ownership: existing valid marker (path-matched) is accepted on reu
 	assert.equal(existsSync(npmLog), false, "npm must not be called when valid marker present and pi is valid");
 	// pi --version was called (reuse path version check).
 	const piRecords = readPiLogRecords(piLog);
-	assert.ok(piRecords.some((r) => r.command === "--version"), "pi --version must be called on reuse");
+	assert.ok(
+		piRecords.some((r) => r.command === "--version"),
+		"pi --version must be called on reuse",
+	);
 	// Marker must be refreshed (still present) after reuse.
 	const marker = JSON.parse(readFileSync(join(runtimeDir, ".tlh-runtime-owned"), "utf8"));
 	assert.equal(marker.origin, "created", "marker origin must be preserved on refresh");
@@ -958,15 +1059,22 @@ test("runtime ownership: non-empty unmarked prefix with piInstalledByTlh=true is
 	writeLoggingPi(join(runtimeDir, "bin"), piLog, TLH_PINNED_PI_VERSION);
 
 	// Install-state carries piInstalledByTlh=true (provenance from a prior install).
-	writeFileSync(join(agentDir, "tlh", "install-state.json"), JSON.stringify({
-		schemaVersion: 1,
-		repo: "diegopetrucci/the-last-harness",
-		track: "ref",
-		ref: "main",
-		packageSource: packageDir,
-		packageSourceIsDefault: false,
-		piInstalledByTlh: true,
-	}, null, 2));
+	writeFileSync(
+		join(agentDir, "tlh", "install-state.json"),
+		JSON.stringify(
+			{
+				schemaVersion: 1,
+				repo: "diegopetrucci/the-last-harness",
+				track: "ref",
+				ref: "main",
+				packageSource: packageDir,
+				packageSourceIsDefault: false,
+				piInstalledByTlh: true,
+			},
+			null,
+			2,
+		),
+	);
 	// No marker file exists yet.
 
 	const env = scrubInstallerEnv({
@@ -975,12 +1083,7 @@ test("runtime ownership: non-empty unmarked prefix with piInstalledByTlh=true is
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
@@ -1026,12 +1129,7 @@ test("runtime ownership: symlinked runtime prefix is refused", (t) => {
 		TLH_PACKAGE_SOURCE: packageDir,
 		TLH_SKIP_GNOSIS_INSTALL: "1",
 	});
-	const result = runInstaller([
-		"--agent-dir", agentDir,
-		"--bin-dir", binDir,
-		"--no-settings",
-		"--no-wrapper",
-	], env);
+	const result = runInstaller(["--agent-dir", agentDir, "--bin-dir", binDir, "--no-settings", "--no-wrapper"], env);
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.notEqual(result.status, 0, `expected failure on symlinked runtime but installer succeeded\n${output}`);
@@ -1114,10 +1212,7 @@ test("uninstall.sh: marked TLH runtime is planned and removed (valid marker + la
 	assert.equal(existsSync(runtimeDir), true, "dry-run must not remove runtime dir");
 
 	// ── real run: runtime dir is removed ──
-	const { result, output } = runUninstall(
-		["--agent-dir", agentDir, "--bin-dir", binDir],
-		homeDir,
-	);
+	const { result, output } = runUninstall(["--agent-dir", agentDir, "--bin-dir", binDir], homeDir);
 	assert.equal(result.status, 0, `uninstall failed:\n${output}`);
 	assert.equal(existsSync(runtimeDir), false, "runtime dir must be removed for marked TLH runtime");
 });
@@ -1139,10 +1234,7 @@ test("uninstall.sh: shared/unmarked runtime prefix is SKIPPED with conditional h
 	mkdirSync(join(runtimeDir, "lib", "node_modules", "some-other-tool"), { recursive: true });
 	writeFileSync(join(runtimeDir, "lib", "node_modules", "some-other-tool", "index.js"), "// user content\n", "utf8");
 
-	const { result, output } = runUninstall(
-		["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
-		homeDir,
-	);
+	const { result, output } = runUninstall(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], homeDir);
 	assert.equal(result.status, 0, `uninstall failed:\n${output}`);
 	// Must NOT plan rm -rf (no marker)
 	assert.doesNotMatch(output, /would remove private runtime/, "must not plan runtime removal without marker");
@@ -1162,9 +1254,33 @@ test("uninstall.sh: malformed or missing marker causes SKIP (fail-closed)", (t) 
 		{ label: "missing marker file", markerContent: null },
 		{ label: "empty marker file", markerContent: "" },
 		{ label: "non-JSON content", markerContent: "not json at all" },
-		{ label: "wrong schemaVersion", markerContent: JSON.stringify({ schemaVersion: 99, packageName: "@earendil-works/pi-coding-agent", runtimeAbsPath: "/tmp", origin: "created" }) },
-		{ label: "wrong packageName", markerContent: JSON.stringify({ schemaVersion: 1, packageName: "@other/package", runtimeAbsPath: "/tmp", origin: "created" }) },
-		{ label: "invalid origin", markerContent: JSON.stringify({ schemaVersion: 1, packageName: "@earendil-works/pi-coding-agent", runtimeAbsPath: "/tmp", origin: "alien" }) },
+		{
+			label: "wrong schemaVersion",
+			markerContent: JSON.stringify({
+				schemaVersion: 99,
+				packageName: "@earendil-works/pi-coding-agent",
+				runtimeAbsPath: "/tmp",
+				origin: "created",
+			}),
+		},
+		{
+			label: "wrong packageName",
+			markerContent: JSON.stringify({
+				schemaVersion: 1,
+				packageName: "@other/package",
+				runtimeAbsPath: "/tmp",
+				origin: "created",
+			}),
+		},
+		{
+			label: "invalid origin",
+			markerContent: JSON.stringify({
+				schemaVersion: 1,
+				packageName: "@earendil-works/pi-coding-agent",
+				runtimeAbsPath: "/tmp",
+				origin: "alien",
+			}),
+		},
 	];
 
 	for (const scenario of scenarios) {
@@ -1182,13 +1298,14 @@ test("uninstall.sh: malformed or missing marker causes SKIP (fail-closed)", (t) 
 			writeFileSync(join(runtimeDir, ".tlh-runtime-owned"), scenario.markerContent, "utf8");
 		}
 
-		const { result, output } = runUninstall(
-			["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
-			homeDir,
-		);
+		const { result, output } = runUninstall(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], homeDir);
 		// Must not plan removal
 		assert.equal(result.status, 0, `${scenario.label}: uninstall failed:\n${output}`);
-		assert.doesNotMatch(output, /would remove private runtime/, `${scenario.label}: must not plan rm -rf when marker is malformed/missing`);
+		assert.doesNotMatch(
+			output,
+			/would remove private runtime/,
+			`${scenario.label}: must not plan rm -rf when marker is malformed/missing`,
+		);
 		// Must emit conditional hint
 		assert.match(output, /leave it/i, `${scenario.label}: must include conditional hint on skip`);
 	}
@@ -1218,10 +1335,7 @@ test("uninstall.sh: runtimeAbsPath mismatch in marker causes SKIP", (t) => {
 		"utf8",
 	);
 
-	const { result, output } = runUninstall(
-		["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
-		homeDir,
-	);
+	const { result, output } = runUninstall(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], homeDir);
 	assert.equal(result.status, 0, `uninstall failed:\n${output}`);
 	// Must NOT plan removal
 	assert.doesNotMatch(output, /would remove private runtime/, "must not plan rm -rf when runtimeAbsPath mismatches");
@@ -1245,10 +1359,7 @@ test("uninstall.sh: marker dotfile is in exclusivity allow-list; runtime with bi
 	mkdirSync(join(runtimeDir, "node-compile-cache"), { recursive: true });
 	writeRuntimeMarker(runtimeDir);
 
-	const { result, output } = runUninstall(
-		["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir],
-		homeDir,
-	);
+	const { result, output } = runUninstall(["--dry-run", "--agent-dir", agentDir, "--bin-dir", binDir], homeDir);
 	assert.equal(result.status, 0, `dry-run failed:\n${output}`);
 	// All four allowed entries present: must plan rm -rf (not SKIP)
 	assert.match(output, /rm -rf/, "runtime with bin+lib+node-compile-cache+marker must be planned for rm -rf");

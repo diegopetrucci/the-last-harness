@@ -61,18 +61,36 @@ test("shared CLI option helpers parse split, equals, alias, and default path val
 		value: "manifest.json",
 		nextIndex: 0,
 	});
-	assert.throws(() => readOptionValue(["--flag="], 0, "--flag", { requireEqualsValue: true }), /--flag requires a value/);
+	assert.throws(
+		() => readOptionValue(["--flag="], 0, "--flag", { requireEqualsValue: true }),
+		/--flag requires a value/,
+	);
 
 	const args = {};
 	assert.equal(assignOptionValue(args, "path", ["--path", "~/value"], 0, "--path"), 1);
 	assert.deepEqual(args, { path: "~/value" });
 
 	assert.equal(expandHomePath("~/agent", { homeDir: "/tmp/home" }), "/tmp/home/agent");
-	assert.equal(defaultTlhAgentDir({ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" }, { homeDir: "/tmp/home" }), "/tmp/home/pi-agent");
-	assert.equal(defaultTlhAgentDir({ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" }, { homeDir: "/tmp/home", preferTlhAgentDir: true }), "/tmp/home/tlh-agent");
+	assert.equal(
+		defaultTlhAgentDir({ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" }, { homeDir: "/tmp/home" }),
+		"/tmp/home/pi-agent",
+	);
+	assert.equal(
+		defaultTlhAgentDir(
+			{ PI_CODING_AGENT_DIR: "~/pi-agent", TLH_AGENT_DIR: "~/tlh-agent" },
+			{ homeDir: "/tmp/home", preferTlhAgentDir: true },
+		),
+		"/tmp/home/tlh-agent",
+	);
 	assert.equal(resolveTlhAgentDir("~/custom-agent", { homeDir: "/tmp/home" }), "/tmp/home/custom-agent");
-	assert.equal(defaultTlhSettingsPath({ env: { TLH_AGENT_DIR: "~/tlh-agent" }, homeDir: "/tmp/home" }), "/tmp/home/tlh-agent/settings.json");
-	assert.equal(defaultTlhKeybindingsPath({ env: { PI_CODING_AGENT_DIR: "~/pi-agent" }, homeDir: "/tmp/home" }), "/tmp/home/pi-agent/keybindings.json");
+	assert.equal(
+		defaultTlhSettingsPath({ env: { TLH_AGENT_DIR: "~/tlh-agent" }, homeDir: "/tmp/home" }),
+		"/tmp/home/tlh-agent/settings.json",
+	);
+	assert.equal(
+		defaultTlhKeybindingsPath({ env: { PI_CODING_AGENT_DIR: "~/pi-agent" }, homeDir: "/tmp/home" }),
+		"/tmp/home/pi-agent/keybindings.json",
+	);
 	assert.equal(defaultTlhBinDir({ TLH_BIN_DIR: "~/bin" }, { homeDir: "/tmp/home" }), "/tmp/home/bin");
 });
 
@@ -82,7 +100,7 @@ test("readJsonFile handles BOM, empty files, missing fallbacks, and parse errors
 	const emptyJson = join(root, "empty.json");
 	const invalidJson = join(root, "invalid.json");
 
-	writeFileSync(bomJson, "\uFEFF{\"ok\":true}\n");
+	writeFileSync(bomJson, '\uFEFF{"ok":true}\n');
 	writeFileSync(emptyJson, "  \n\t");
 	writeFileSync(invalidJson, "{");
 
@@ -119,11 +137,12 @@ test("normal Pi config helpers guard paths under only the normal ~/.pi root", (t
 	assert.equal(pathIsInNormalPiConfig(join(homeDir, ".pi", "agent", "settings.json"), { homeDir }), true);
 	assert.equal(pathIsInNormalPiConfig(join(homeDir, ".pi-other", "agent"), { homeDir }), false);
 	assert.throws(
-		() => assertNotInNormalPiConfig(
-			join(homeDir, ".pi", "agent", "settings.json"),
-			(path) => `Refusing test path: ${path}`,
-			{ homeDir },
-		),
+		() =>
+			assertNotInNormalPiConfig(
+				join(homeDir, ".pi", "agent", "settings.json"),
+				(path) => `Refusing test path: ${path}`,
+				{ homeDir },
+			),
 		/Refusing test path:/,
 	);
 });
@@ -191,18 +210,24 @@ test("selectExpiredBackups: only selects backups strictly older than maxAgeMs", 
 	const maxAgeMs = 28 * msPerDay;
 
 	// Exactly 28 days old — NOT strictly older, must not be selected
-	const exactEdge = new Date(now.getTime() - maxAgeMs).toISOString()
-		.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+	const exactEdge = new Date(now.getTime() - maxAgeMs)
+		.toISOString()
+		.replace(/\.\d{3}Z$/, "Z")
+		.replace(/:/g, "-");
 	const edgeFile = `settings.json.backup-${exactEdge}`;
 
 	// 29 days old — strictly older, eligible
-	const staleDate = new Date(now.getTime() - 29 * msPerDay).toISOString()
-		.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+	const staleDate = new Date(now.getTime() - 29 * msPerDay)
+		.toISOString()
+		.replace(/\.\d{3}Z$/, "Z")
+		.replace(/:/g, "-");
 	const staleFile = `settings.json.backup-${staleDate}`;
 
 	// 1 day old — not stale
-	const freshDate = new Date(now.getTime() - 1 * msPerDay).toISOString()
-		.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+	const freshDate = new Date(now.getTime() - 1 * msPerDay)
+		.toISOString()
+		.replace(/\.\d{3}Z$/, "Z")
+		.replace(/:/g, "-");
 	const freshFile = `settings.json.backup-${freshDate}`;
 
 	const result = selectExpiredBackups([edgeFile, staleFile, freshFile], { now, keepNewest: 1 });
@@ -215,7 +240,7 @@ test("selectExpiredBackups: falls back to mtimeFallback when filename timestamp 
 	const msPerDay = 24 * 60 * 60 * 1000;
 
 	const oldMtime = now.getTime() - 40 * msPerDay; // 40 days ago
-	const newMtime = now.getTime() - 1 * msPerDay;  // 1 day ago
+	const newMtime = now.getTime() - 1 * msPerDay; // 1 day ago
 
 	const unknownOld = "settings.json.bak-old";
 	const unknownNew = "settings.json.bak-new";
@@ -235,8 +260,10 @@ test("selectExpiredBackups: unparseable file with no mtime fallback is treated a
 	const now = new Date("2026-08-01T00:00:00Z");
 	const msPerDay = 24 * 60 * 60 * 1000;
 
-	const staleDate = new Date(now.getTime() - 40 * msPerDay).toISOString()
-		.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+	const staleDate = new Date(now.getTime() - 40 * msPerDay)
+		.toISOString()
+		.replace(/\.\d{3}Z$/, "Z")
+		.replace(/:/g, "-");
 	const staleFile = `settings.json.backup-${staleDate}`;
 	const unknownFile = "settings.json.bak-unknown";
 
@@ -249,8 +276,10 @@ test("selectExpiredBackups: mixed parseable and unparseable filenames, all fresh
 	const now = new Date("2026-08-01T00:00:00Z");
 	const msPerDay = 24 * 60 * 60 * 1000;
 
-	const freshDate = new Date(now.getTime() - 5 * msPerDay).toISOString()
-		.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
+	const freshDate = new Date(now.getTime() - 5 * msPerDay)
+		.toISOString()
+		.replace(/\.\d{3}Z$/, "Z")
+		.replace(/:/g, "-");
 	const freshFile = `settings.json.backup-${freshDate}`;
 	const unknownFile = "settings.json.bak-unknown";
 
@@ -263,11 +292,20 @@ test("isTlhOwnedBackupFilename: accepts all four known TLH marker forms", () => 
 	// Empty marker (with milliseconds)
 	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-2026-07-11T17-01-16-155Z", "settings.json"), true);
 	// before-install marker
-	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-before-install-2026-07-10T20-58-04Z", "settings.json"), true);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-before-install-2026-07-10T20-58-04Z", "settings.json"),
+		true,
+	);
 	// tlh-defaults marker
-	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-tlh-defaults-2026-07-10T09-42-45-504Z", "settings.json"), true);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-tlh-defaults-2026-07-10T09-42-45-504Z", "settings.json"),
+		true,
+	);
 	// tlh-tickets marker
-	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-tlh-tickets-2026-07-10T09-42-45-504Z", "settings.json"), true);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-tlh-tickets-2026-07-10T09-42-45-504Z", "settings.json"),
+		true,
+	);
 	// keybindings base name
 	assert.equal(isTlhOwnedBackupFilename("keybindings.json.backup-2026-07-11T17-01-16-155Z", "keybindings.json"), true);
 });
@@ -280,7 +318,10 @@ test("isTlhOwnedBackupFilename: rejects unknown marker even with a parseable tra
 		"unknown marker with valid timestamp must be rejected",
 	);
 	// Another unknown marker
-	assert.equal(isTlhOwnedBackupFilename("settings.json.backup-work-project-2026-07-11T17-01-16Z", "settings.json"), false);
+	assert.equal(
+		isTlhOwnedBackupFilename("settings.json.backup-work-project-2026-07-11T17-01-16Z", "settings.json"),
+		false,
+	);
 });
 
 test("isTlhOwnedBackupFilename: rejects filenames with no timestamp or wrong base", () => {

@@ -323,11 +323,7 @@ test("discoverSessionFiles: discovers files across multiple project dirs", () =>
 test("parseSessionJsonl: parses a well-formed session file", async () => {
 	const root = makeTempSessionsRoot();
 	const filePath = join(root, "session.jsonl");
-	const content = [
-		sessionHeader("sess-1"),
-		assistantEntry("msg-1", { input: 200, output: 100 }),
-		"",
-	].join("\n");
+	const content = [sessionHeader("sess-1"), assistantEntry("msg-1", { input: 200, output: 100 }), ""].join("\n");
 	writeFileSync(filePath, content, "utf8");
 
 	const result = await parseSessionJsonl(filePath);
@@ -345,8 +341,8 @@ test("parseSessionJsonl: skips malformed lines and counts them", async () => {
 		sessionHeader("sess-2"),
 		"this is not json {{{",
 		assistantEntry("msg-2"),
-		"null",         // valid JSON but not an object with type
-		"[1,2,3]",     // array — no type string field
+		"null", // valid JSON but not an object with type
+		"[1,2,3]", // array — no type string field
 		'{"no-type": true}', // object but no `type` string
 		assistantEntry("msg-3"),
 	].join("\n");

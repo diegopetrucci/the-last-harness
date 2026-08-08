@@ -1,19 +1,23 @@
 #!/usr/bin/env node
-import { accessSync, chmodSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	accessSync,
+	chmodSync,
+	constants,
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
-import {
-	pathIsProtectedPiConfig,
-} from "./lib/tlh-install-paths.mjs";
-import {
-	assignOptionValue,
-	defaultTlhAgentDir,
-	defaultTlhBinDir,
-	expandHomePath,
-} from "./lib/tlh-install-utils.mjs";
+import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
+import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath } from "./lib/tlh-install-utils.mjs";
 
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
@@ -200,7 +204,9 @@ function parseArgs(argv: readonly string[]): CliArgs {
 			i = repoIndex;
 			continue;
 		}
-		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, i, "--package-source") as number | undefined;
+		const packageSourceIndex = assignOptionValue(args, "packageSource", argv, i, "--package-source") as
+			| number
+			| undefined;
 		if (packageSourceIndex !== undefined) {
 			args.explicitOptions.add("packageSource");
 			i = packageSourceIndex;
@@ -361,14 +367,20 @@ function trackForPackageRef(ref: string | undefined): Exclude<ValidTrack, "lates
 	return isSemverTag(ref) ? "pinned-tag" : "ref";
 }
 
-function normalizeState(raw: unknown, fallback: Partial<NormalizedInstallState> = {}): NormalizedInstallState | undefined {
+function normalizeState(
+	raw: unknown,
+	fallback: Partial<NormalizedInstallState> = {},
+): NormalizedInstallState | undefined {
 	if (!raw || typeof raw !== "object") return undefined;
 	const record = raw as JsonRecord;
 	const repo = typeof record.repo === "string" && record.repo.trim() ? record.repo.trim() : fallback.repo;
-	const track = typeof record.track === "string" && record.track.trim() ? record.track.trim() as ValidTrack : fallback.track;
+	const track =
+		typeof record.track === "string" && record.track.trim() ? (record.track.trim() as ValidTrack) : fallback.track;
 	const ref = typeof record.ref === "string" && record.ref.trim() ? record.ref.trim() : fallback.ref;
 	const packageSource =
-		typeof record.packageSource === "string" && record.packageSource.trim() ? record.packageSource.trim() : fallback.packageSource;
+		typeof record.packageSource === "string" && record.packageSource.trim()
+			? record.packageSource.trim()
+			: fallback.packageSource;
 	if (!repo || !track || !VALID_TRACKS.has(track)) return undefined;
 	return {
 		schemaVersion: Number.isInteger(record.schemaVersion) ? (record.schemaVersion as number) : undefined,
@@ -383,7 +395,10 @@ function normalizeState(raw: unknown, fallback: Partial<NormalizedInstallState> 
 	};
 }
 
-function inferStateFromSettings(agentDir: string, requestedRepo: string | undefined): NormalizedInstallState | undefined {
+function inferStateFromSettings(
+	agentDir: string,
+	requestedRepo: string | undefined,
+): NormalizedInstallState | undefined {
 	const path = settingsPath(agentDir);
 	if (!existsSync(path)) return undefined;
 	const settings = readJson(path);
@@ -432,10 +447,16 @@ function loadState(args: Pick<CliArgs, "agentDir" | "repo" | "quiet">): Normaliz
 }
 
 function encodePathRef(ref: string): string {
-	return ref.split("/").map((part) => encodeURIComponent(part)).join("/");
+	return ref
+		.split("/")
+		.map((part) => encodeURIComponent(part))
+		.join("/");
 }
 
-function resolvePlan(state: NormalizedInstallState | undefined, args: Pick<CliArgs, "repo" | "track" | "ref" | "packageSource">): UpdatePlan {
+function resolvePlan(
+	state: NormalizedInstallState | undefined,
+	args: Pick<CliArgs, "repo" | "track" | "ref" | "packageSource">,
+): UpdatePlan {
 	const repo = args.repo || state?.repo || DEFAULT_REPO;
 	const track = args.track || state?.track;
 	const ref = args.ref || state?.ref;
@@ -444,7 +465,9 @@ function resolvePlan(state: NormalizedInstallState | undefined, args: Pick<CliAr
 	const changesStoredCustomTarget =
 		state?.packageSourceIsDefault === false &&
 		!args.packageSource &&
-		((args.ref && args.ref !== state.ref) || (args.repo && args.repo !== state.repo) || (args.track && args.track !== state.track));
+		((args.ref && args.ref !== state.ref) ||
+			(args.repo && args.repo !== state.repo) ||
+			(args.track && args.track !== state.track));
 	if (changesStoredCustomTarget) {
 		throw new Error(
 			"This install uses a custom package source. Pass --package-source with any --track, --repo, or --ref override so package code and update metadata stay aligned.",
@@ -452,7 +475,9 @@ function resolvePlan(state: NormalizedInstallState | undefined, args: Pick<CliAr
 	}
 
 	if (!track || !VALID_TRACKS.has(track)) {
-		throw new Error("Could not determine update track. Re-run the installer with --track latest-release, --track pinned-tag, or --track ref.");
+		throw new Error(
+			"Could not determine update track. Re-run the installer with --track latest-release, --track pinned-tag, or --track ref.",
+		);
 	}
 	if (track === "custom") {
 		throw new Error(
@@ -497,7 +522,14 @@ function resolvePlan(state: NormalizedInstallState | undefined, args: Pick<CliAr
 	};
 }
 
-function buildInstallerArgs(plan: UpdatePlan, args: Pick<CliArgs, "agentDir" | "binDir" | "wrapperName" | "force" | "noSettings" | "noWrapper" | "quiet" | "verbose">, state: NormalizedInstallState | undefined): string[] {
+function buildInstallerArgs(
+	plan: UpdatePlan,
+	args: Pick<
+		CliArgs,
+		"agentDir" | "binDir" | "wrapperName" | "force" | "noSettings" | "noWrapper" | "quiet" | "verbose"
+	>,
+	state: NormalizedInstallState | undefined,
+): string[] {
 	const installerArgs = [
 		"--agent-dir",
 		args.agentDir,
@@ -554,18 +586,22 @@ function assertPackageUpdateTargetSafe(agentDir: string): void {
 }
 
 function assertPackageUpdateArgs(args: Pick<CliArgs, "explicitOptions">): void {
-	const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS
-		.filter(([key]) => args.explicitOptions.has(key))
-		.map(([, flag]) => flag);
+	const unsupported = PACKAGE_UPDATE_UNSUPPORTED_OPTIONS.filter(([key]) => args.explicitOptions.has(key)).map(
+		([, flag]) => flag,
+	);
 	if (unsupported.length > 0) {
-		throw new Error(`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`);
+		throw new Error(
+			`--extensions does not support ${unsupported.join(", ")}. Run plain tlh update for installer updates.`,
+		);
 	}
 }
 
 function printPackageUpdateDryRun(piCommand: string, args: Pick<CliArgs, "agentDir">): void {
 	console.log("The Last Harness extension update plan");
 	console.log(`Agent dir: ${args.agentDir}`);
-	console.log(`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`);
+	console.log(
+		`Would run: PI_CODING_AGENT_DIR=${shellQuote(args.agentDir)} ${shellQuote(piCommand)} ${PACKAGE_UPDATE_ARGS.map(shellQuote).join(" ")}`,
+	);
 }
 
 function runPackageUpdate(args: CliArgs): void {
@@ -580,7 +616,9 @@ function runPackageUpdate(args: CliArgs): void {
 		return;
 	}
 	if (!existsSync(piCommand)) {
-		throw new Error(`The Last Harness private runtime pi not found at ${piCommand}. Run \`tlh update\` (without --extensions) to repair the private runtime.`);
+		throw new Error(
+			`The Last Harness private runtime pi not found at ${piCommand}. Run \`tlh update\` (without --extensions) to repair the private runtime.`,
+		);
 	}
 	if (isTruthyEnv(process.env.PI_OFFLINE)) {
 		throw new Error("PI_OFFLINE is set; refusing to run a network update.");

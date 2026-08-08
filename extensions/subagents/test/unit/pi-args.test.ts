@@ -131,7 +131,6 @@ describe("buildPiArgs model wiring", () => {
 		assert.ok(!args.includes("--models"));
 	});
 
-
 	it("preserves thinking suffixes on model args", () => {
 		const { args } = buildPiArgs({
 			baseArgs: ["-p"],
@@ -167,28 +166,35 @@ describe("buildPiArgs model wiring", () => {
 	});
 
 	it("reports only capability-gated thinking drops", () => {
-		const availableModels = [{
-			provider: "openai",
-			id: "gpt-5",
-			fullId: "openai/gpt-5",
-			reasoning: true,
-			thinkingLevelMap: { high: "high", max: null },
-		}];
+		const availableModels = [
+			{
+				provider: "openai",
+				id: "gpt-5",
+				fullId: "openai/gpt-5",
+				reasoning: true,
+				thinkingLevelMap: { high: "high", max: null },
+			},
+		];
 		const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
-		assert.equal(note, "Notice: Thinking level \"max\" was dropped for model \"openai/gpt-5\" because the model registry does not advertise support.");
+		assert.equal(
+			note,
+			'Notice: Thinking level "max" was dropped for model "openai/gpt-5" because the model registry does not advertise support.',
+		);
 		assert.equal(getThinkingLevelDropNote("openai/gpt-5", "high", false, { availableModels }), undefined);
 		assert.equal(getThinkingLevelDropNote("openai/not-listed", "max", false, { availableModels }), undefined);
 		assert.equal(getThinkingLevelDropNote("openai/gpt-5", "max", true, { availableModels }), undefined);
 	});
 
 	it("drops known-unsupported thinking levels when model capabilities are available", () => {
-		const availableModels = [{
-			provider: "openai",
-			id: "gpt-5",
-			fullId: "openai/gpt-5",
-			reasoning: true,
-			thinkingLevelMap: { max: null },
-		}];
+		const availableModels = [
+			{
+				provider: "openai",
+				id: "gpt-5",
+				fullId: "openai/gpt-5",
+				reasoning: true,
+				thinkingLevelMap: { max: null },
+			},
+		];
 		const model = applyThinkingSuffix("openai/gpt-5", "max", false, { availableModels });
 		assert.equal(model, "openai/gpt-5");
 
@@ -206,15 +212,14 @@ describe("buildPiArgs model wiring", () => {
 	});
 
 	it("fails open for resolved models without a thinking-level map", () => {
-		const availableModels = [{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5", reasoning: true }];
+		const availableModels = [
+			{ provider: "anthropic", id: "claude-sonnet-4-5", fullId: "anthropic/claude-sonnet-4-5", reasoning: true },
+		];
 		assert.equal(
 			applyThinkingSuffix("anthropic/claude-sonnet-4-5", "max", false, { availableModels }),
 			"anthropic/claude-sonnet-4-5:max",
 		);
-		assert.equal(
-			getThinkingLevelDropNote("anthropic/claude-sonnet-4-5", "max", false, { availableModels }),
-			undefined,
-		);
+		assert.equal(getThinkingLevelDropNote("anthropic/claude-sonnet-4-5", "max", false, { availableModels }), undefined);
 	});
 
 	it("fails open for unknown and unavailable model capabilities", () => {
@@ -223,39 +228,72 @@ describe("buildPiArgs model wiring", () => {
 			applyThinkingSuffix("openai/not-listed", "high", false, { availableModels }),
 			"openai/not-listed:high",
 		);
-		assert.equal(
-			applyThinkingSuffix("openai/gpt-5", "high", false, { availableModels: [] }),
-			"openai/gpt-5:high",
-		);
+		assert.equal(applyThinkingSuffix("openai/gpt-5", "high", false, { availableModels: [] }), "openai/gpt-5:high");
 	});
 
 	it("gates positive capability metadata and keeps drop notes in lockstep", () => {
 		const cases = [
 			{
 				thinking: "max",
-				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { xhigh: "xhigh" } }],
+				availableModels: [
+					{
+						provider: "openai",
+						id: "gpt-5",
+						fullId: "openai/gpt-5",
+						reasoning: true,
+						thinkingLevelMap: { xhigh: "xhigh" },
+					},
+				],
 				dropped: true,
 			},
 			{
 				thinking: "xhigh",
-				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { max: "max" } }],
+				availableModels: [
+					{
+						provider: "openai",
+						id: "gpt-5",
+						fullId: "openai/gpt-5",
+						reasoning: true,
+						thinkingLevelMap: { max: "max" },
+					},
+				],
 				dropped: true,
 			},
 			{
 				thinking: "high",
-				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { high: null } }],
+				availableModels: [
+					{
+						provider: "openai",
+						id: "gpt-5",
+						fullId: "openai/gpt-5",
+						reasoning: true,
+						thinkingLevelMap: { high: null },
+					},
+				],
 				dropped: true,
 			},
 			{
 				thinking: "high",
-				availableModels: [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: true, thinkingLevelMap: { high: "high" } }],
+				availableModels: [
+					{
+						provider: "openai",
+						id: "gpt-5",
+						fullId: "openai/gpt-5",
+						reasoning: true,
+						thinkingLevelMap: { high: "high" },
+					},
+				],
 				dropped: false,
 			},
 		];
 
 		for (const testCase of cases) {
-			const model = applyThinkingSuffix("openai/gpt-5", testCase.thinking, false, { availableModels: testCase.availableModels });
-			const note = getThinkingLevelDropNote("openai/gpt-5", testCase.thinking, false, { availableModels: testCase.availableModels });
+			const model = applyThinkingSuffix("openai/gpt-5", testCase.thinking, false, {
+				availableModels: testCase.availableModels,
+			});
+			const note = getThinkingLevelDropNote("openai/gpt-5", testCase.thinking, false, {
+				availableModels: testCase.availableModels,
+			});
 			assert.equal(model === "openai/gpt-5", testCase.dropped);
 			assert.equal(Boolean(note), testCase.dropped);
 		}
@@ -272,25 +310,21 @@ describe("buildPiArgs model wiring", () => {
 	});
 
 	it("preserves an already-suffixed model before capability checks", () => {
-		const availableModels = [{
-			provider: "openai",
-			id: "gpt-5",
-			fullId: "openai/gpt-5",
-			reasoning: true,
-			thinkingLevelMap: { high: null, max: null },
-		}];
-		assert.equal(
-			applyThinkingSuffix("openai/gpt-5:high", "max", false, { availableModels }),
-			"openai/gpt-5:high",
-		);
+		const availableModels = [
+			{
+				provider: "openai",
+				id: "gpt-5",
+				fullId: "openai/gpt-5",
+				reasoning: true,
+				thinkingLevelMap: { high: null, max: null },
+			},
+		];
+		assert.equal(applyThinkingSuffix("openai/gpt-5:high", "max", false, { availableModels }), "openai/gpt-5:high");
 	});
 
 	it("leaves explicit thinking overrides ungated", () => {
 		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5", reasoning: false }];
-		assert.equal(
-			applyThinkingSuffix("openai/gpt-5", "high", true, { availableModels }),
-			"openai/gpt-5:high",
-		);
+		assert.equal(applyThinkingSuffix("openai/gpt-5", "high", true, { availableModels }), "openai/gpt-5:high");
 	});
 
 	it("passes explicit thinking off through to the model arg", () => {
@@ -387,8 +421,10 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: true,
 		});
 
-		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
-		assert.ok(extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))));
+		const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
+		assert.ok(
+			extensionArgs.some((arg) => arg.endsWith(path.join("src", "runs", "shared", "subagent-prompt-runtime.ts"))),
+		);
 		assert.equal(env.PI_SUBAGENT_CHILD, "1");
 		assert.equal(env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT, "0");
 		assert.equal(env.PI_SUBAGENT_INHERIT_SKILLS, "1");
@@ -518,7 +554,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			subagentOnlyExtensions: ["./child-tool.ts"],
 		});
 
-		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
 		assert.ok(args.includes("--no-extensions"));
 		assert.equal(args[args.indexOf("--tools") + 1], "read");
 		assert.ok(extensionArgs.includes("./main-allowed-ext.ts"));
@@ -548,7 +584,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 		// SUBAGENT_CHILD_ENV must be set so the child knows it is a child.
 		assert.equal(env[SUBAGENT_CHILD_ENV], "1");
 		// The fanout-child extension must NOT be added to the extension list.
-		const extensionArgs = args.filter((arg, index) => args[index - 1] === "--extension");
+		const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
 		assert.ok(!extensionArgs.some((arg) => arg.includes("fanout-child")));
 		// Only the prompt-runtime extension is added.
 		assert.ok(extensionArgs.some((arg) => arg.includes("subagent-prompt-runtime")));

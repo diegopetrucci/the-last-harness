@@ -48,7 +48,11 @@ test("architect prompt keeps bounded REST CI polling guidance", () => {
 		"architect cleanup guidance",
 		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
 	);
-	assertBodyPattern(agent, "architect cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
+	assertBodyPattern(
+		agent,
+		"architect cleanup guidance",
+		/do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i,
+	);
 });
 
 test("rush prompt keeps bounded REST CI polling guidance", () => {
@@ -59,7 +63,11 @@ test("rush prompt keeps bounded REST CI polling guidance", () => {
 		"rush cleanup guidance",
 		/use bounded REST `gh api` polling for check-runs and commit statuses rather than `gh pr checks --watch`/i,
 	);
-	assertBodyPattern(agent, "rush cleanup guidance", /do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i);
+	assertBodyPattern(
+		agent,
+		"rush cleanup guidance",
+		/do not investigate the failure, edit code, commit, or push follow-up changes unless the user explicitly asks/i,
+	);
 });
 
 test("scout and research subagent prompts keep bounded scope and tool budgets", () => {
@@ -110,7 +118,11 @@ test("scout and research subagent prompts keep bounded scope and tool budgets", 
 	]);
 	assertBodyPattern(librarian, "avoid statusCheckRollup", /avoid `?statusCheckRollup`?/i);
 	assertBodyPattern(librarian, "ban gh pr checks watch", /avoid `gh pr checks --watch`/i);
-	assertBodyPattern(librarian, "REST fallback on GraphQL failure", /fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i);
+	assertBodyPattern(
+		librarian,
+		"REST fallback on GraphQL failure",
+		/fall back to `gh api` GET requests against REST endpoints or to local `git` evidence when possible/i,
+	);
 });
 
 test("architect prompt preserves pre-existing changes and async steering guidance", () => {

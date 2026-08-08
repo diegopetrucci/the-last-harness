@@ -29,25 +29,23 @@ function parseControlList(value, allowed) {
 }
 export function resolveControlConfig(globalConfig, override) {
     const enabled = override?.enabled ?? globalConfig?.enabled ?? DEFAULT_CONTROL_CONFIG.enabled;
-    const needsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs)
-        ?? parsePositiveInt(globalConfig?.needsAttentionAfterMs)
-        ?? DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
-    const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs)
-        ?? parsePositiveInt(globalConfig?.activeNoticeAfterMs)
-        ?? DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
-    const activeNoticeAfterTurns = parsePositiveInt(override?.activeNoticeAfterTurns)
-        ?? parsePositiveInt(globalConfig?.activeNoticeAfterTurns);
-    const activeNoticeAfterTokens = parsePositiveInt(override?.activeNoticeAfterTokens)
-        ?? parsePositiveInt(globalConfig?.activeNoticeAfterTokens);
-    const failedToolAttemptsBeforeAttention = parsePositiveInt(override?.failedToolAttemptsBeforeAttention)
-        ?? parsePositiveInt(globalConfig?.failedToolAttemptsBeforeAttention)
-        ?? DEFAULT_CONTROL_CONFIG.failedToolAttemptsBeforeAttention;
-    const notifyOn = parseControlList(override?.notifyOn, CONTROL_EVENT_TYPES)
-        ?? parseControlList(globalConfig?.notifyOn, CONTROL_EVENT_TYPES)
-        ?? DEFAULT_CONTROL_CONFIG.notifyOn;
-    const notifyChannels = parseControlList(override?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS)
-        ?? parseControlList(globalConfig?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS)
-        ?? DEFAULT_CONTROL_CONFIG.notifyChannels;
+    const needsAttentionAfterMs = parsePositiveInt(override?.needsAttentionAfterMs) ??
+        parsePositiveInt(globalConfig?.needsAttentionAfterMs) ??
+        DEFAULT_CONTROL_CONFIG.needsAttentionAfterMs;
+    const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs) ??
+        parsePositiveInt(globalConfig?.activeNoticeAfterMs) ??
+        DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
+    const activeNoticeAfterTurns = parsePositiveInt(override?.activeNoticeAfterTurns) ?? parsePositiveInt(globalConfig?.activeNoticeAfterTurns);
+    const activeNoticeAfterTokens = parsePositiveInt(override?.activeNoticeAfterTokens) ?? parsePositiveInt(globalConfig?.activeNoticeAfterTokens);
+    const failedToolAttemptsBeforeAttention = parsePositiveInt(override?.failedToolAttemptsBeforeAttention) ??
+        parsePositiveInt(globalConfig?.failedToolAttemptsBeforeAttention) ??
+        DEFAULT_CONTROL_CONFIG.failedToolAttemptsBeforeAttention;
+    const notifyOn = parseControlList(override?.notifyOn, CONTROL_EVENT_TYPES) ??
+        parseControlList(globalConfig?.notifyOn, CONTROL_EVENT_TYPES) ??
+        DEFAULT_CONTROL_CONFIG.notifyOn;
+    const notifyChannels = parseControlList(override?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS) ??
+        parseControlList(globalConfig?.notifyChannels, CONTROL_NOTIFICATION_CHANNELS) ??
+        DEFAULT_CONTROL_CONFIG.notifyChannels;
     return {
         enabled,
         needsAttentionAfterMs,
@@ -72,11 +70,12 @@ export function buildControlEvent(input) {
     const type = input.type ?? (input.to === "active_long_running" ? "active_long_running" : "needs_attention");
     const elapsedMs = input.elapsedMs ?? (input.lastActivityAt ? Math.max(0, ts - input.lastActivityAt) : undefined);
     const elapsedSeconds = elapsedMs !== undefined ? Math.floor(elapsedMs / 1000) : undefined;
-    const message = input.message ?? (type === "active_long_running"
-        ? `${input.agent} is still active but long-running`
-        : elapsedSeconds !== undefined
-            ? `${input.agent} needs attention (no observed activity for ${elapsedSeconds}s)`
-            : `${input.agent} needs attention`);
+    const message = input.message ??
+        (type === "active_long_running"
+            ? `${input.agent} is still active but long-running`
+            : elapsedSeconds !== undefined
+                ? `${input.agent} needs attention (no observed activity for ${elapsedSeconds}s)`
+                : `${input.agent} needs attention`);
     return {
         type,
         ...(input.from ? { from: input.from } : {}),
@@ -138,7 +137,9 @@ export function formatControlNoticeMessage(event, childIntercomTarget) {
             `Signal: ${event.message}`,
             "Next: read the output artifact or session from the subagent result, then retry with a more explicit implementation prompt or handle the fix directly.",
             childIntercomTarget ? `Run intercom target (may be inactive): ${childIntercomTarget}` : undefined,
-        ].filter((line) => Boolean(line)).join("\n");
+        ]
+            .filter((line) => Boolean(line))
+            .join("\n");
     }
     const nudgeMessage = "What are you blocked on? Reply with the smallest next step or ask for a decision.";
     const nudgeCommand = `subagent({ action: "resume", id: "${runTarget}", ${event.index !== undefined ? `index: ${event.index}, ` : ""}message: "${nudgeMessage}" })`;
@@ -154,7 +155,9 @@ export function formatControlNoticeMessage(event, childIntercomTarget) {
             childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
             `Status: subagent({ action: "status", id: "${runTarget}" })`,
             `Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
-        ].filter((line) => Boolean(line)).join("\n");
+        ]
+            .filter((line) => Boolean(line))
+            .join("\n");
     }
     return [
         `Subagent needs attention: ${event.agent}`,
@@ -166,7 +169,9 @@ export function formatControlNoticeMessage(event, childIntercomTarget) {
         childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
         `Status: subagent({ action: "status", id: "${runTarget}" })`,
         `Interrupt: subagent({ action: "interrupt", id: "${runTarget}" })`,
-    ].filter((line) => Boolean(line)).join("\n");
+    ]
+        .filter((line) => Boolean(line))
+        .join("\n");
 }
 export function formatControlIntercomMessage(event, childIntercomTarget) {
     const statusLabel = event.reason === "completion_guard"

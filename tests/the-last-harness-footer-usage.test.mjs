@@ -194,7 +194,6 @@ test("footer renders OpenAI/Codex session usage and hides weekly by default", ()
 	assert.match(agentLine, /12\.3%\/200k/);
 });
 
-
 test("footer formats an exact seven-day OpenAI primary window as weekly without showing secondary usage", () => {
 	const snapshot = openAiPrimaryWeeklySnapshot({ resetsAt: "2026-05-24T01:00:00.000Z" });
 	const ctx = createCtx({ provider: "openai-codex" });
@@ -203,14 +202,20 @@ test("footer formats an exact seven-day OpenAI primary window as weekly without 
 		shouldShowWeekly: () => false,
 	});
 
-	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS }), "weekly 42% used, resets in 4d 6h");
+	assert.equal(
+		formatTlhSubscriptionUsageFooterSegment(snapshot, { nowMs: NOW_MS }),
+		"weekly 42% used, resets in 4d 6h",
+	);
 	assert.equal(sessionLine, "weekly 42% used");
 });
 
 test("footer includes Anthropic weekly usage only when the preference enables it", () => {
 	const snapshot = anthropicSnapshot();
 	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: false }), "5h session 42% used");
-	assert.equal(formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true }), "5h session 42% used · weekly 88.9% used");
+	assert.equal(
+		formatTlhSubscriptionUsageFooterSegment(snapshot, { showWeekly: true }),
+		"5h session 42% used · weekly 88.9% used",
+	);
 
 	const ctx = createCtx({ provider: "anthropic" });
 	const usageOptions = {
@@ -222,7 +227,6 @@ test("footer includes Anthropic weekly usage only when the preference enables it
 	assert.match(sessionLine, /5h session 42% used/);
 	assert.match(sessionLine, /weekly 88\.9% used/);
 });
-
 
 test("footer auto-shows weekly by default only below 25% remaining", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
@@ -244,7 +248,6 @@ test("footer auto-shows weekly by default only below 25% remaining", () => {
 	assert.doesNotMatch(aboveThresholdLine, /weekly/);
 });
 
-
 test("footer auto-show prefers explicit weekly percent over conflicting counts", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
 	const sessionLine = renderSessionStatsLine(ctx, {
@@ -254,7 +257,6 @@ test("footer auto-show prefers explicit weekly percent over conflicting counts",
 
 	assert.match(sessionLine, /weekly 80% used/);
 });
-
 
 test("footer auto-show derives weekly remaining from counts when percent is absent", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
@@ -266,7 +268,6 @@ test("footer auto-show derives weekly remaining from counts when percent is abse
 	assert.match(sessionLine, /weekly 90\/100 used/);
 });
 
-
 test("footer explicit weekly on always shows weekly even above the default threshold", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
 	const sessionLine = renderSessionStatsLine(ctx, {
@@ -276,7 +277,6 @@ test("footer explicit weekly on always shows weekly even above the default thres
 
 	assert.match(sessionLine, /weekly 21\.5% used/);
 });
-
 
 test("footer explicit weekly off hides weekly even below the default threshold", () => {
 	const ctx = createCtx({ provider: "openai-codex" });
@@ -573,8 +573,18 @@ function anthropicSnapshotWithResets({ sessionResetsAt, weeklyResetsAt } = {}) {
 		provider: "anthropic",
 		fetchedAt: NOW_MS,
 		windows: {
-			session: { key: "five_hour", label: "session", percent: 42, ...(sessionResetsAt ? { resetsAt: sessionResetsAt } : {}) },
-			weekly: { key: "seven_day", label: "weekly", percent: 88.9, ...(weeklyResetsAt ? { resetsAt: weeklyResetsAt } : {}) },
+			session: {
+				key: "five_hour",
+				label: "session",
+				percent: 42,
+				...(sessionResetsAt ? { resetsAt: sessionResetsAt } : {}),
+			},
+			weekly: {
+				key: "seven_day",
+				label: "weekly",
+				percent: 88.9,
+				...(weeklyResetsAt ? { resetsAt: weeklyResetsAt } : {}),
+			},
 		},
 	};
 }
@@ -764,10 +774,11 @@ test("tk workflow status renders as dim footer lines between agent and usage wit
 	const footerData = {
 		getGitBranch: () => undefined,
 		getAvailableProviderCount: () => 1,
-		getExtensionStatuses: () => new Map([
-			["tlh-ticket-workflow", "ticket: Implement read-only ticket workflow status UI (/tickets)"],
-			["my-ext", "my-ext: active"],
-		]),
+		getExtensionStatuses: () =>
+			new Map([
+				["tlh-ticket-workflow", "ticket: Implement read-only ticket workflow status UI (/tickets)"],
+				["my-ext", "my-ext: active"],
+			]),
 	};
 	const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {});
 	const lines = footer.render(COLOR_WIDTH);
@@ -792,7 +803,6 @@ test("non-context-cap extension statuses are still rendered in the footer", () =
 	assert.equal(lines.length, 3);
 	assert.match(lines[2] ?? "", /my-ext: active/);
 });
-
 
 // ---------------------------------------------------------------------------
 // NEW: install notice warning line (last line of footer)
@@ -859,10 +869,19 @@ test("footer warning line stays within narrow widths", () => {
 	const footer = createTlhFooter(pi, ctx, theme, () => "architect", createFooterData(), {}, null, notice);
 	const width = 20;
 	const lines = footer.render(width);
-	assert.ok(lines.every((line) => visibleWidth(line) <= width), `all lines must fit in ${width} chars`);
+	assert.ok(
+		lines.every((line) => visibleWidth(line) <= width),
+		`all lines must fit in ${width} chars`,
+	);
 });
 
-function renderMcpStatus({ activeTools = [], allTools = [], contextEntries = [], contextTokens = 100000, status = "MCP: 0/1 servers" } = {}) {
+function renderMcpStatus({
+	activeTools = [],
+	allTools = [],
+	contextEntries = [],
+	contextTokens = 100000,
+	status = "MCP: 0/1 servers",
+} = {}) {
 	const mcpPi = {
 		...pi,
 		getActiveTools: () => activeTools,
@@ -877,7 +896,11 @@ function renderMcpStatus({ activeTools = [], allTools = [], contextEntries = [],
 		...createFooterData(),
 		getExtensionStatuses: () => new Map([["mcp-status", status]]),
 	};
-	return createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(WIDTH).at(-1) ?? "";
+	return (
+		createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {})
+			.render(WIDTH)
+			.at(-1) ?? ""
+	);
 }
 
 function mcpStatusPercent(options) {
@@ -894,7 +917,10 @@ test("footer appends a one-decimal MCP context estimate to the existing status",
 });
 
 test("footer independently attributes proxy and direct MCP definitions, arguments, and results", () => {
-	const proxyTool = { ...createToolInfo("mcp", "npm:pi-mcp-adapter", "extensions/mcp.mjs"), description: "p".repeat(4000) };
+	const proxyTool = {
+		...createToolInfo("mcp", "npm:pi-mcp-adapter", "extensions/mcp.mjs"),
+		description: "p".repeat(4000),
+	};
 	const directTool = {
 		...createToolInfo("jiraSearch", "npm:@diegopetrucci/pi-mcp-adapter@2.10.1", "extensions/direct-tools/jira.mjs"),
 		description: "d".repeat(4000),
@@ -911,14 +937,26 @@ test("footer independently attributes proxy and direct MCP definitions, argument
 		activeTools: ["mcp"],
 		allTools,
 		contextEntries: [
-			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "mcp", arguments: { payload: "x".repeat(4000) } }] } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "mcp", arguments: { payload: "x".repeat(4000) } }],
+				},
+			},
 		],
 	});
 	const directCall = mcpStatusPercent({
 		activeTools: ["jiraSearch"],
 		allTools,
 		contextEntries: [
-			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }],
+				},
+			},
 		],
 	});
 	assert.equal(proxyCall - proxyDefinition, 1, "proxy call arguments contribute independently");
@@ -928,14 +966,20 @@ test("footer independently attributes proxy and direct MCP definitions, argument
 		activeTools: ["mcp"],
 		allTools,
 		contextEntries: [
-			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "x".repeat(4000) }] } },
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "x".repeat(4000) }] },
+			},
 		],
 	});
 	const directResult = mcpStatusPercent({
 		activeTools: ["jiraSearch"],
 		allTools,
 		contextEntries: [
-			{ type: "message", message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] } },
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] },
+			},
 		],
 	});
 	assert.equal(proxyResult - proxyDefinition, 1, "proxy result content contributes independently");
@@ -950,14 +994,23 @@ test("footer ignores unrelated non-adapter provenance even when source paths inc
 		activeTools: ["jiraSearch"],
 		allTools: [misleadingTool],
 		contextEntries: [
-			{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] } },
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					content: [{ type: "toolCall", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }],
+				},
+			},
 		],
 	});
 	const result = mcpStatusPercent({
 		activeTools: ["jiraSearch"],
 		allTools: [misleadingTool],
 		contextEntries: [
-			{ type: "message", message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] } },
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "jiraSearch", content: [{ type: "text", text: "x".repeat(4000) }] },
+			},
 		],
 	});
 
@@ -1015,7 +1068,12 @@ test("footer rejects generic paired server/tool details that do not match adapte
 		contextEntries: [
 			{
 				type: "message",
-				message: { role: "assistant", content: [{ type: "toolCall", id: "other-call", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } }] },
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "other-call", name: "jiraSearch", arguments: { payload: "x".repeat(4000) } },
+					],
+				},
 			},
 			{
 				type: "message",
@@ -1039,7 +1097,10 @@ test("footer clamps MCP context share to a finite 0–100% range", () => {
 		renderMcpStatus({ activeTools: ["mcp"], allTools: [tool], contextTokens: 1 }),
 		"MCP: 0/1 servers • (100.0% of context)",
 	);
-	assert.equal(renderMcpStatus({ activeTools: ["mcp"], allTools: [tool], contextTokens: Number.NaN }), "MCP: 0/1 servers");
+	assert.equal(
+		renderMcpStatus({ activeTools: ["mcp"], allTools: [tool], contextTokens: Number.NaN }),
+		"MCP: 0/1 servers",
+	);
 });
 
 test("footer MCP context estimate counts each tool-result image as 1200 tokens", () => {
@@ -1058,7 +1119,10 @@ test("footer MCP context estimate counts each tool-result image as 1200 tokens",
 			contextUsage: { tokens: 120000, contextWindow: 200000, percent: 60 },
 			contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content } }],
 		});
-		const status = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(WIDTH).at(-1) ?? "";
+		const status =
+			createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {})
+				.render(WIDTH)
+				.at(-1) ?? "";
 		return Number(status.match(/\((\d+\.\d)% of context\)$/)?.[1]);
 	};
 
@@ -1084,11 +1148,17 @@ test("footer MCP context estimate uses active compaction-aware entries and omits
 	};
 	const ctx = createCtx({
 		entries: [
-			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: archivedPayload }] } },
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: archivedPayload }] },
+			},
 		],
 		contextEntries: [
 			{ type: "compaction", summary: "older history compacted" },
-			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: activePayload }] } },
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: activePayload }] },
+			},
 		],
 		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
 	});
@@ -1100,7 +1170,9 @@ test("footer MCP context estimate uses active compaction-aware entries and omits
 		contextEntries: ctx.sessionManager.buildContextEntries(),
 		contextUsage: { tokens: null, contextWindow: 200000, percent: null },
 	});
-	const unknownLines = createTlhFooter(mcpPi, unknownContextCtx, theme, () => "architect", footerData, {}).render(WIDTH);
+	const unknownLines = createTlhFooter(mcpPi, unknownContextCtx, theme, () => "architect", footerData, {}).render(
+		WIDTH,
+	);
 	assert.equal(unknownLines.at(-1), "MCP: 1/1 servers");
 });
 
@@ -1120,12 +1192,16 @@ test("footer caches repeated MCP context estimates until the active context chan
 		entries: [],
 		leafId: leafState.current,
 		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
-		contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }],
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } },
+		],
 	});
 	ctx.sessionManager.getLeafId = () => leafState.current;
 	ctx.sessionManager.buildContextEntries = () => {
 		buildContextEntriesCalls += 1;
-		return [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }];
+		return [
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } },
+		];
 	};
 	const footerData = {
 		...createFooterData(),
@@ -1157,7 +1233,9 @@ test("footer keeps the MCP status estimate within narrow widths", () => {
 	const ctx = createCtx({
 		entries: [],
 		contextUsage: { tokens: 1000, contextWindow: 200000, percent: 12.3 },
-		contextEntries: [{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } }],
+		contextEntries: [
+			{ type: "message", message: { role: "toolResult", toolName: "mcp", content: [{ type: "text", text: "ok" }] } },
+		],
 	});
 	const lines = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(24);
 	assert.ok(lines.every((line) => visibleWidth(line) <= 24));

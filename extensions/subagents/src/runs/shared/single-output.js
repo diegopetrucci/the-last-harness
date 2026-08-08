@@ -26,7 +26,9 @@ export function resolveSingleOutputPath(output, runtimeCwd, requestedCwd, relati
     if (relativeBaseDir)
         return path.resolve(relativeBaseDir, output);
     const baseCwd = requestedCwd
-        ? (path.isAbsolute(requestedCwd) ? requestedCwd : path.resolve(runtimeCwd, requestedCwd))
+        ? path.isAbsolute(requestedCwd)
+            ? requestedCwd
+            : path.resolve(runtimeCwd, requestedCwd)
         : runtimeCwd;
     return path.resolve(baseCwd, output);
 }
@@ -112,9 +114,7 @@ export function resolveSingleOutput(outputPath, fallbackOutput, beforeRun) {
     let changedSinceStart = false;
     try {
         const stat = fs.statSync(outputPath);
-        changedSinceStart = !beforeRun?.exists
-            || stat.mtimeMs !== beforeRun.mtimeMs
-            || stat.size !== beforeRun.size;
+        changedSinceStart = !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
     }
     catch (error) {
         const code = error && typeof error === "object" && "code" in error ? error.code : undefined;

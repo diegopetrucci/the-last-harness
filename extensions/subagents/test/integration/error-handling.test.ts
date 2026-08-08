@@ -10,14 +10,7 @@
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import type { MockPi } from "../support/helpers.ts";
-import {
-	createMockPi,
-	createTempDir,
-	removeTempDir,
-	makeAgentConfigs,
-	events,
-	tryImport,
-} from "../support/helpers.ts";
+import { createMockPi, createTempDir, removeTempDir, makeAgentConfigs, events, tryImport } from "../support/helpers.ts";
 
 // Top-level await
 const utils = await tryImport<any>("./src/shared/utils.ts");

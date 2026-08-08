@@ -98,15 +98,19 @@ test("subagent-settings set preserves unrelated settings and applies on the next
 
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			tlh: { experimental: { enabledFeatures: ["contrarian"] } },
-			subagents: {
-				agentOverrides: {
-					developer: { note: "keep-me" },
-					external: { model: "openai-codex/gpt-5.4", thinking: "low" },
+		`${JSON.stringify(
+			{
+				tlh: { experimental: { enabledFeatures: ["contrarian"] } },
+				subagents: {
+					agentOverrides: {
+						developer: { note: "keep-me" },
+						external: { model: "openai-codex/gpt-5.4", thinking: "low" },
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -131,7 +135,9 @@ test("subagent-settings set preserves unrelated settings and applies on the next
 		await toolCall(event, {
 			cwd: fixture.cwd,
 			sessionManager: {
-				getBranch: () => [{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+				getBranch: () => [
+					{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
+				],
 			},
 			ui: { notify() {} },
 			modelRegistry: ctx.modelRegistry,
@@ -149,14 +155,18 @@ test("subagent tool-call runtime honors persisted false model and thinking senti
 	assert.equal(typeof toolCall, "function");
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: {
-				agentOverrides: {
-					developer: { model: false },
-					librarian: { thinking: false },
+		`${JSON.stringify(
+			{
+				subagents: {
+					agentOverrides: {
+						developer: { model: false },
+						librarian: { thinking: false },
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -203,10 +213,13 @@ test("subagent-settings status reports effective overrides and fixed-model indep
 		assert.match(message, /effective openai-codex\/gpt-5\.5/i);
 		assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
 		// "max" is recognized but not supported by these test models (no thinkingLevelMap entry)
-		assert.ok(messageLines.includes("  TLH stored minor-agent effort \"max\" is not supported by openai-codex/gpt-5.5; using bundled defaults for this run."));
+		assert.ok(
+			messageLines.includes(
+				'  TLH stored minor-agent effort "max" is not supported by openai-codex/gpt-5.5; using bundled defaults for this run.',
+			),
+		);
 	});
 });
-
 
 test("subagent-settings status shows saved effort after the full exact suffix-like model identity", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
@@ -236,7 +249,6 @@ test("subagent-settings status shows saved effort after the full exact suffix-li
 	});
 });
 
-
 test("subagent-settings status reports unavailable stored pins and update/reset guidance", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
 	const pi = createPiHarness();
@@ -257,8 +269,16 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
 		assert.match(message, /override model=openai-codex\/gpt-5\.999, effort=stored nonstandard\/disabled \("turbo"\)/i);
 		assert.match(message, /effective openai-codex\/gpt-5\.999/i);
 		assert.ok(messageLines.includes(`  ${INDEPENDENCE_WARNING}`));
-		assert.ok(messageLines.includes("  TLH saved minor-agent model override \"openai-codex/gpt-5.999\" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model."));
-		assert.ok(messageLines.includes("  TLH ignored unsupported stored minor-agent effort \"turbo\" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched."));
+		assert.ok(
+			messageLines.includes(
+				'  TLH saved minor-agent model override "openai-codex/gpt-5.999" for code-reviewer is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults. Update it with /subagent-settings set code-reviewer model <provider/id> or clear it with /subagent-settings reset code-reviewer model.',
+			),
+		);
+		assert.ok(
+			messageLines.includes(
+				'  TLH ignored unsupported stored minor-agent effort "turbo" for code-reviewer; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.',
+			),
+		);
 		assert.equal(messageLines.filter((line) => line.includes("not currently available")).length, 1);
 		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].model, "openai-codex/gpt-5.999");
@@ -267,7 +287,6 @@ test("subagent-settings status reports unavailable stored pins and update/reset 
 		assert.equal(settings.subagents.agentOverrides["code-reviewer"].note, "keep");
 	});
 });
-
 
 test("subagent-settings status shows effective off for model-only overrides on non-reasoning models", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
@@ -306,15 +325,19 @@ test("subagent-settings reset and reset-all only clear bundled model and effort 
 
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: {
-				agentOverrides: {
-					developer: { model: "openai-codex/gpt-5.4", thinking: "high", note: "keep-me" },
-					"code-reviewer": { model: "openai-codex/gpt-5.5" },
-					external: { model: "anthropic/claude-opus-4-8", thinking: "low", keep: true },
+		`${JSON.stringify(
+			{
+				subagents: {
+					agentOverrides: {
+						developer: { model: "openai-codex/gpt-5.4", thinking: "high", note: "keep-me" },
+						"code-reviewer": { model: "openai-codex/gpt-5.5" },
+						external: { model: "anthropic/claude-opus-4-8", thinking: "low", keep: true },
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -360,7 +383,11 @@ test("interactive subagent-settings flow requires confirmation before setting fi
 		assert.equal(confirms.length, 1);
 		assert.match(confirms[0].message, /Provider independence is not guaranteed/i);
 		assert.match(notifications.at(-1)?.message ?? "", /Model override cancelled/i);
-		assert.equal(existsSync(join(fixture.agent, "settings.json")), false, "cancelled confirmation should not write settings");
+		assert.equal(
+			existsSync(join(fixture.agent, "settings.json")),
+			false,
+			"cancelled confirmation should not write settings",
+		);
 	});
 });
 
@@ -393,12 +420,14 @@ test("subagent-settings accepts exact colon-bearing model IDs for typed and inte
 		];
 		interactive.ctx.ui.select = async (_title, options) => selections.shift()?.(options);
 		await command.handler("", interactive.ctx);
-		assert.match(interactive.notifications.at(-1)?.message ?? "", /No change to TLH minor-agent settings|Updated TLH minor-agent settings/i);
+		assert.match(
+			interactive.notifications.at(-1)?.message ?? "",
+			/No change to TLH minor-agent settings|Updated TLH minor-agent settings/i,
+		);
 		settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
 		assert.equal(settings.subagents.agentOverrides.developer.model, "openrouter/reasoner:high");
 	});
 });
-
 
 test("subagent-settings keeps suffix guidance for non-exact recognized effort suffixes", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
@@ -413,7 +442,6 @@ test("subagent-settings keeps suffix guidance for non-exact recognized effort su
 		assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
 	});
 });
-
 
 test("interactive subagent-settings reports model parse failures through notifications", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
@@ -439,7 +467,10 @@ test("interactive subagent-settings reports model parse failures through notific
 		];
 		ctx.ui.select = async (_title, options) => selections.shift()?.(options);
 		await command.handler("", ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /Model "openrouter\/available-while-picked" is not currently available/i);
+		assert.match(
+			notifications.at(-1)?.message ?? "",
+			/Model "openrouter\/available-while-picked" is not currently available/i,
+		);
 		assert.equal(existsSync(join(fixture.agent, "settings.json")), false);
 	});
 });
@@ -520,14 +551,18 @@ test("subagent-settings status and picker show false sentinels with inherited mo
 	const command = pi.commands.get("subagent-settings");
 	writeFileSync(
 		join(fixture.agent, "settings.json"),
-		`${JSON.stringify({
-			subagents: {
-				agentOverrides: {
-					developer: { model: false, note: "keep" },
-					librarian: { model: false, thinking: false },
+		`${JSON.stringify(
+			{
+				subagents: {
+					agentOverrides: {
+						developer: { model: false, note: "keep" },
+						librarian: { model: false, thinking: false },
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -563,14 +598,18 @@ test("subagent-settings set and field reset preserve unrelated false sentinels",
 	const settingsPath = join(fixture.agent, "settings.json");
 	writeFileSync(
 		settingsPath,
-		`${JSON.stringify({
-			subagents: {
-				agentOverrides: {
-					developer: { model: false, note: "keep-model" },
-					"code-reviewer": { thinking: false, note: "keep-thinking" },
+		`${JSON.stringify(
+			{
+				subagents: {
+					agentOverrides: {
+						developer: { model: false, note: "keep-model" },
+						"code-reviewer": { thinking: false, note: "keep-thinking" },
+					},
 				},
 			},
-		}, null, 2)}\n`,
+			null,
+			2,
+		)}\n`,
 	);
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

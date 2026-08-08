@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatToolCall } from "./formatters.js";
-import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "./config-dir.js";
+import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, } from "./config-dir.js";
 import { getPiAgentDir } from "./profile.js";
 import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
@@ -25,10 +25,7 @@ export function resolveChildCwd(baseCwd, childCwd) {
     return path.isAbsolute(childCwd) ? childCwd : path.resolve(baseCwd, childCwd);
 }
 function isNotFoundError(error) {
-    return typeof error === "object"
-        && error !== null
-        && "code" in error
-        && error.code === "ENOENT";
+    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
 }
 export function readStatus(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
@@ -44,11 +41,11 @@ export function readStatus(asyncDir) {
         });
     }
     const cached = statusCache.get(statusPath);
-    if (cached
-        && cached.mtime === stat.mtimeMs
-        && cached.ctime === stat.ctimeMs
-        && cached.size === stat.size
-        && cached.ino === stat.ino) {
+    if (cached &&
+        cached.mtime === stat.mtimeMs &&
+        cached.ctime === stat.ctimeMs &&
+        cached.size === stat.size &&
+        cached.ino === stat.ino) {
         return cached.status;
     }
     let content;
@@ -107,7 +104,8 @@ export function getLastActivity(outputFile) {
 export function findLatestSessionFile(sessionDir) {
     if (!fs.existsSync(sessionDir))
         return null;
-    const files = fs.readdirSync(sessionDir)
+    const files = fs
+        .readdirSync(sessionDir)
         .filter((f) => f.endsWith(".jsonl"))
         .map((f) => {
         const filePath = path.join(sessionDir, f);
@@ -126,7 +124,8 @@ function containsAcceptanceReport(text) {
         return true;
     for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
         const body = match[1] ?? "";
-        if (/"criteriaSatisfied"/.test(body) && /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
+        if (/"criteriaSatisfied"/.test(body) &&
+            /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
             return true;
         }
     }
@@ -138,8 +137,8 @@ export function getFinalOutput(messages) {
         const msg = messages[i];
         if (msg.role !== "assistant")
             continue;
-        const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
-            || ("stopReason" in msg && msg.stopReason === "error");
+        const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0) ||
+            ("stopReason" in msg && msg.stopReason === "error");
         if (hasAssistantError)
             continue;
         for (let j = msg.content.length - 1; j >= 0; j--) {
@@ -151,15 +150,13 @@ export function getFinalOutput(messages) {
                 const precedingParts = [];
                 for (let k = 0; k < j; k++) {
                     const precedingPart = msg.content[k];
-                    if (precedingPart.type === "text"
-                        && precedingPart.text.trim().length > 0
-                        && !containsAcceptanceReport(precedingPart.text)) {
+                    if (precedingPart.type === "text" &&
+                        precedingPart.text.trim().length > 0 &&
+                        !containsAcceptanceReport(precedingPart.text)) {
                         precedingParts.push(precedingPart.text);
                     }
                 }
-                return precedingParts.length > 0
-                    ? `${precedingParts.join("\n\n")}\n\n${part.text}`
-                    : part.text;
+                return precedingParts.length > 0 ? `${precedingParts.join("\n\n")}\n\n${part.text}` : part.text;
             }
         }
     }
@@ -176,9 +173,7 @@ export function formatErrorWithOutput(error, output) {
     return normalizedOutput || "(no output)";
 }
 export function synthesizeChildExitDiagnostic(input) {
-    const signal = typeof input.signal === "string" && input.signal.trim().length > 0
-        ? input.signal
-        : undefined;
+    const signal = typeof input.signal === "string" && input.signal.trim().length > 0 ? input.signal : undefined;
     if (signal)
         return `Child process exited after receiving ${signal}.`;
     const exitCode = input.exitCode;
@@ -294,9 +289,7 @@ export function compactForegroundDetails(details) {
     return {
         ...details,
         results: details.results.map(compactForegroundResult),
-        progress: details.progress
-            ? details.progress.map(compactCompletedProgress)
-            : undefined,
+        progress: details.progress ? details.progress.map(compactCompletedProgress) : undefined,
     };
 }
 export function detectSubagentError(messages) {
@@ -304,7 +297,8 @@ export function detectSubagentError(messages) {
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         if (msg.role === "assistant") {
-            const hasText = Array.isArray(msg.content) && msg.content.some((c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0);
+            const hasText = Array.isArray(msg.content) &&
+                msg.content.some((c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0);
             if (hasText) {
                 lastAssistantTextIndex = i;
                 break;

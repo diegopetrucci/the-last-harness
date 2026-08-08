@@ -22,9 +22,7 @@ import {
 	registerNativeSupervisorClient,
 	resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
-import {
-	handleSubagentControlNotice,
-} from "../../src/extension/control-notices.ts";
+import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
@@ -32,10 +30,7 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import {
-	SUBAGENT_CONTROL_INTERCOM_EVENT,
-	SUBAGENT_RESULT_INTERCOM_EVENT,
-} from "../../src/shared/types.ts";
+import { SUBAGENT_CONTROL_INTERCOM_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT } from "../../src/shared/types.ts";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 // ─── env save/restore ────────────────────────────────────────────────────────
@@ -158,10 +153,16 @@ describe("no-pi-intercom regression guard", () => {
 			process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 
 			// Child side: mock pi with NO 'intercom' tool pre-installed
-			const childTools = new Map<string, { execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }>();
+			const childTools = new Map<
+				string,
+				{ execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }
+			>();
 			const childPi = {
 				getAllTools: () => [...childTools.keys()].map((name) => ({ name })),
-				registerTool: (tool: { name: string; execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }) => {
+				registerTool: (tool: {
+					name: string;
+					execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown>;
+				}) => {
 					childTools.set(tool.name, tool);
 				},
 				sendMessage: () => {},
@@ -178,7 +179,10 @@ describe("no-pi-intercom regression guard", () => {
 			// orchestrator session id the child env points at. No intercom tool
 			// pre-installed here either; sendMessage is a recorder no-op for the
 			// proactive parent notice channel.start()/polling may deliver.
-			const parentTools = new Map<string, { execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }>();
+			const parentTools = new Map<
+				string,
+				{ execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }
+			>();
 			const parentCtx = {
 				cwd: process.cwd(),
 				hasUI: false,
@@ -190,13 +194,19 @@ describe("no-pi-intercom regression guard", () => {
 			};
 			const parentPi = {
 				getAllTools: () => [...parentTools.keys()].map((name) => ({ name })),
-				registerTool: (tool: { name: string; execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }) => {
+				registerTool: (tool: {
+					name: string;
+					execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown>;
+				}) => {
 					parentTools.set(tool.name, tool);
 				},
 				sendMessage: () => {},
 				getSessionName: () => "parent-session",
 			};
-			const parentChannel = createNativeSupervisorChannel(parentPi as never, makeParentState(orchestratorSessionId, parentCtx));
+			const parentChannel = createNativeSupervisorChannel(
+				parentPi as never,
+				makeParentState(orchestratorSessionId, parentCtx),
+			);
 
 			try {
 				parentChannel.start();
@@ -252,11 +262,17 @@ describe("no-pi-intercom regression guard", () => {
 				assert.ok(fs.existsSync(path.join(repliesDir, `${requestId}.json`)), "parent reply file should exist");
 
 				// Child side receives reply
-				const result = await resultPromise as { content?: Array<{ type: string; text: string }>; details?: { requestId?: string; reason?: string } };
+				const result = (await resultPromise) as {
+					content?: Array<{ type: string; text: string }>;
+					details?: { requestId?: string; reason?: string };
+				};
 
 				assert.ok(Array.isArray(result.content) && result.content.length > 0, "Result should have content");
 				const text = result.content![0]!.text;
-				assert.ok(text.includes("Proceed with option A — approved."), `Reply text should contain supervisor message; got: ${text}`);
+				assert.ok(
+					text.includes("Proceed with option A — approved."),
+					`Reply text should contain supervisor message; got: ${text}`,
+				);
 				assert.equal(result.details?.requestId, requestId);
 				assert.equal(result.details?.reason, "need_decision");
 			} finally {

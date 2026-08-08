@@ -58,7 +58,13 @@ describe("resolveCompletionBatchConfig", () => {
 	});
 
 	it("rejects invalid booleans and non-positive or fractional integers", () => {
-		const resolved = resolveCompletionBatchConfig({ enabled: "false", debounceMs: 0, maxWaitMs: -5, stragglerDebounceMs: 1.5, stragglerWindowMs: Number.NaN } as never);
+		const resolved = resolveCompletionBatchConfig({
+			enabled: "false",
+			debounceMs: 0,
+			maxWaitMs: -5,
+			stragglerDebounceMs: 1.5,
+			stragglerWindowMs: Number.NaN,
+		} as never);
 		assert.equal(resolved.enabled, DEFAULT_COMPLETION_BATCH_CONFIG.enabled);
 		assert.equal(resolved.debounceMs, DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs);
 		assert.equal(resolved.maxWaitMs, DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs);
@@ -67,10 +73,10 @@ describe("resolveCompletionBatchConfig", () => {
 	});
 
 	it("ignores invalid overrides instead of masking valid global config", () => {
-		const resolved = resolveCompletionBatchConfig(
-			{ enabled: false, debounceMs: 80 },
-			{ enabled: "false", debounceMs: "bad" } as never,
-		);
+		const resolved = resolveCompletionBatchConfig({ enabled: false, debounceMs: 80 }, {
+			enabled: "false",
+			debounceMs: "bad",
+		} as never);
 		assert.equal(resolved.enabled, false);
 		assert.equal(resolved.debounceMs, 80);
 	});
@@ -93,7 +99,14 @@ describe("createCompletionBatcher", () => {
 		const clock = createFakeClock();
 		const emitted: string[][] = [];
 		const batcher = createCompletionBatcher<{ label: string }>({
-			config: { enabled: true, debounceMs: 150, maxWaitMs: 1000, stragglerDebounceMs: 75, stragglerMaxWaitMs: 400, stragglerWindowMs: 2000 },
+			config: {
+				enabled: true,
+				debounceMs: 150,
+				maxWaitMs: 1000,
+				stragglerDebounceMs: 75,
+				stragglerMaxWaitMs: 400,
+				stragglerWindowMs: 2000,
+			},
 			emit: (items) => emitted.push(items.map((i) => i.label)),
 			timers: clock.api,
 			now: clock.now,
@@ -115,7 +128,14 @@ describe("createCompletionBatcher", () => {
 		const clock = createFakeClock();
 		const emitted: string[][] = [];
 		const batcher = createCompletionBatcher<{ label: string }>({
-			config: { enabled: true, debounceMs: 100, maxWaitMs: 300, stragglerDebounceMs: 50, stragglerMaxWaitMs: 150, stragglerWindowMs: 2000 },
+			config: {
+				enabled: true,
+				debounceMs: 100,
+				maxWaitMs: 300,
+				stragglerDebounceMs: 50,
+				stragglerMaxWaitMs: 150,
+				stragglerWindowMs: 2000,
+			},
 			emit: (items) => emitted.push(items.map((i) => i.label)),
 			timers: clock.api,
 			now: clock.now,
@@ -181,7 +201,14 @@ describe("createCompletionBatcher", () => {
 		const clock = createFakeClock();
 		const emitted: string[][] = [];
 		const batcher = createCompletionBatcher<{ label: string }>({
-			config: { enabled: true, debounceMs: 200, maxWaitMs: 1000, stragglerDebounceMs: 50, stragglerMaxWaitMs: 150, stragglerWindowMs: 2000 },
+			config: {
+				enabled: true,
+				debounceMs: 200,
+				maxWaitMs: 1000,
+				stragglerDebounceMs: 50,
+				stragglerMaxWaitMs: 150,
+				stragglerWindowMs: 2000,
+			},
 			emit: (items) => emitted.push(items.map((i) => i.label)),
 			timers: clock.api,
 			now: clock.now,
@@ -206,7 +233,14 @@ describe("createCompletionBatcher", () => {
 		const clock = createFakeClock();
 		const emitted: string[][] = [];
 		const batcher = createCompletionBatcher<{ label: string }>({
-			config: { enabled: true, debounceMs: 200, maxWaitMs: 1000, stragglerDebounceMs: 50, stragglerMaxWaitMs: 150, stragglerWindowMs: 500 },
+			config: {
+				enabled: true,
+				debounceMs: 200,
+				maxWaitMs: 1000,
+				stragglerDebounceMs: 50,
+				stragglerMaxWaitMs: 150,
+				stragglerWindowMs: 500,
+			},
 			emit: (items) => emitted.push(items.map((i) => i.label)),
 			timers: clock.api,
 			now: clock.now,

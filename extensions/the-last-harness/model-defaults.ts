@@ -89,7 +89,10 @@ export function formatResolvedProviderModelReference(
  * as a suffix; otherwise the entire string is the base model. This mirrors
  * `splitKnownThinkingSuffix` in the subagents runtime (shared/model-info.ts).
  */
-export function splitKnownThinkingSuffix(model: string | undefined): { baseModel: string | undefined; thinkingSuffix: string } {
+export function splitKnownThinkingSuffix(model: string | undefined): {
+	baseModel: string | undefined;
+	thinkingSuffix: string;
+} {
 	if (!model) {
 		return { baseModel: model, thinkingSuffix: "" };
 	}
@@ -270,8 +273,10 @@ function selectOppositeProviderFallbackModel<T extends ProviderModelReference>(
 		}
 	}
 
-	return currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-		?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+	return (
+		currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+		currentProviderAnthropicCandidate(agent, availableModels, currentProvider)
+	);
 }
 
 function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>(
@@ -289,8 +294,8 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
 	}
 
 	const currentProviderModel =
-		currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-		?? currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+		currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+		currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
 	if (currentProviderModel) {
 		return currentProviderModel;
 	}
@@ -317,8 +322,10 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
 	availableModels: readonly T[],
 	currentProvider?: string,
 ): T | undefined {
-	return selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider)
-		?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
+	return (
+		selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
+		selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+	);
 }
 
 /**
@@ -347,8 +354,8 @@ export function selectProviderAwareAgentDefaults<T extends ProviderModelReferenc
 ): ProviderAwareAgentDefaults<T> {
 	const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
 	const standardModel = agent?.preferCurrentOpenaiModel
-		? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-			?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+		? (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+			selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider))
 		: selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
 	const model = oppositeProviderModel ?? standardModel;
 	const thinking = resolveThinkingForProvider(agent, model?.provider ?? currentProvider);
@@ -391,19 +398,18 @@ function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
 	neutralizingThinking: ThinkingLevel | undefined,
 	generatedFallback: boolean,
 ): string {
-	const storedThinking = rawThinking === false
-		? "off"
-		: String(rawThinking);
+	const storedThinking = rawThinking === false ? "off" : String(rawThinking);
 	const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
-	const standardStoredThinking = rawThinking === false
-		|| (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
+	const standardStoredThinking =
+		rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
 	const subject = standardStoredThinking
 		? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-		: `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : agent?.name ?? "this subagent"}`;
+		: `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : (agent?.name ?? "this subagent")}`;
 	if (neutralizingThinking === undefined) {
-		const residual = rawThinking === false
-			? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-			: "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
+		const residual =
+			rawThinking === false
+				? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
+				: "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
 		return `${subject}; ${residual}.`;
 	}
 	if (neutralizingThinking === "off") {
@@ -418,10 +424,7 @@ function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
 	return `${subject}; ${action}.`;
 }
 
-function formatUnresolvedStoredThinkingWarning(
-	agent: AgentModelDefaults | undefined,
-	rawThinking: string,
-): string {
+function formatUnresolvedStoredThinkingWarning(agent: AgentModelDefaults | undefined, rawThinking: string): string {
 	return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
 }
 
@@ -440,11 +443,12 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
 ): { thinking?: ThinkingLevel; warning?: string } {
 	const rawThinking = override?.thinking;
 	const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
-	const requestedThinking = rawThinking === false
-		? "off"
-		: typeof rawThinking === "string" && isThinkingLevel(rawThinking)
-			? rawThinking
-			: undefined;
+	const requestedThinking =
+		rawThinking === false
+			? "off"
+			: typeof rawThinking === "string" && isThinkingLevel(rawThinking)
+				? rawThinking
+				: undefined;
 
 	if (rawThinking === undefined) {
 		if (!bundledThinking) {
@@ -477,11 +481,12 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
 	// Prefer a recognized suffix when the model supports one: this pins the intended
 	// bundled effort instead of merely letting the runtime drop to model default.
 	// The runtime capability gate remains the fallback when neither suffix is supported.
-	const neutralizingThinking = bundledThinking && supportedLevels.includes(bundledThinking)
-		? bundledThinking
-		: supportedLevels.includes("off")
-			? "off"
-			: undefined;
+	const neutralizingThinking =
+		bundledThinking && supportedLevels.includes(bundledThinking)
+			? bundledThinking
+			: supportedLevels.includes("off")
+				? "off"
+				: undefined;
 	return {
 		thinking: neutralizingThinking,
 		warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback),
@@ -507,10 +512,7 @@ function resolveIndependence(
 	return currentFamily === modelFamily ? "degraded" : "preferred";
 }
 
-export function formatUnavailableStoredModelWarning(
-	agentName: string | undefined,
-	model: string,
-): string {
+export function formatUnavailableStoredModelWarning(agentName: string | undefined, model: string): string {
 	const roleLabel = agentName ?? "this minor-agent role";
 	const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
 	// Fallbacks can come from the dispatch, preserved role settings, or bundled
@@ -577,10 +579,11 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 
 	// 4. No stored model override — use bundled provider-aware defaults.
 	const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
-	let selectedModel: T | undefined = oppositeProviderModel
-		?? (agent?.preferCurrentOpenaiModel
-			? currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
-				?? selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
+	let selectedModel: T | undefined =
+		oppositeProviderModel ??
+		(agent?.preferCurrentOpenaiModel
+			? (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
+				selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider))
 			: selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider));
 
 	// When there is a thinking-only override and no bundled model matched, try the
@@ -603,10 +606,11 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 	const fallbackModel = oppositeProviderModel
 		? selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel)
 		: undefined;
-	const fallbackModels = fallbackModel
-		&& (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
-		? [fallbackModel]
-		: [];
+	const fallbackModels =
+		fallbackModel &&
+		(!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
+			? [fallbackModel]
+			: [];
 
 	// For the pure bundled path (no override at all), use resolveThinkingForProvider
 	// directly without model-capability gating, preserving main's existing behavior:
@@ -623,7 +627,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 
 	const primaryThinkingResolution = selectedModel
 		? resolveThinkingResult(selectedModel)
-		: currentSessionThinkingResolution ?? {};
+		: (currentSessionThinkingResolution ?? {});
 
 	const resolvedFallbackThinking = fallbackModels.map((m) => ({
 		model: m,
@@ -634,9 +638,10 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 		thinking: resolution.thinking,
 	}));
 
-	const fallbackWarning = override?.thinking !== undefined
-		? resolvedFallbackThinking.find((entry) => entry.resolution.warning)?.resolution.warning
-		: undefined;
+	const fallbackWarning =
+		override?.thinking !== undefined
+			? resolvedFallbackThinking.find((entry) => entry.resolution.warning)?.resolution.warning
+			: undefined;
 
 	return {
 		model: selectedModel,
@@ -691,9 +696,9 @@ function applyModelToRunnableTarget(
 		// If the model already carries a known thinking suffix, or there is no
 		// stored thinking preference, leave it untouched.
 		if (
-			typeof target.model !== "string"
-			|| splitKnownThinkingSuffix(target.model).thinkingSuffix
-			|| override?.thinking === undefined
+			typeof target.model !== "string" ||
+			splitKnownThinkingSuffix(target.model).thinkingSuffix ||
+			override?.thinking === undefined
 		) {
 			return 0;
 		}
@@ -725,18 +730,11 @@ function applyModelToRunnableTarget(
 
 		const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
 		if (oppositeProviderModel) {
-			const fallbackModel = selectOppositeProviderFallbackModel(
-				agent,
-				availableModels,
-				currentProvider,
-				currentModel,
-			);
+			const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
 			const fallbackModelBase = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
 			if (fallbackModelBase && fallbackModelBase !== selectedModel) {
 				const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel!.provider);
-				const fallbackModelId = fallbackThinking
-					? `${fallbackModelBase}:${fallbackThinking}`
-					: fallbackModelBase;
+				const fallbackModelId = fallbackThinking ? `${fallbackModelBase}:${fallbackThinking}` : fallbackModelBase;
 				if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
 					target.fallbackModels = [fallbackModelId];
 				}

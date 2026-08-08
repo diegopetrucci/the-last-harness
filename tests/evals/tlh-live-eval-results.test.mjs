@@ -114,9 +114,15 @@ test("live eval results schema aggregates detailed automated checks and manual r
 	assert.deepEqual(suite.summary.checks.automated, { passed: 4, total: 4 });
 	assert.deepEqual(suite.summary.checks.manual, { pending: 3, total: 3 });
 	assert.equal(suite.scenarios[0].score.type, "manual-rubric");
-	assert.deepEqual(suite.scenarios[0].checks.map((check) => check.status), [null, null, null]);
+	assert.deepEqual(
+		suite.scenarios[0].checks.map((check) => check.status),
+		[null, null, null],
+	);
 	assert.equal(suite.scenarios[1].score.type, "automated-binary");
-	assert.deepEqual(suite.scenarios[1].checks.map((check) => check.id), ["install-bootstrap", "defaults-list", "update", "install-state"]);
+	assert.deepEqual(
+		suite.scenarios[1].checks.map((check) => check.id),
+		["install-bootstrap", "defaults-list", "update", "install-state"],
+	);
 	assert.deepEqual(suite.artifacts.shared, ["artifacts/install-bootstrap/install.log"]);
 });
 
@@ -139,11 +145,12 @@ test("writeResultsFile writes redacted external results and rejects workspace pa
 		assert.equal(existsSync(outputPath), true);
 		assert.match(readFileSync(outputPath, "utf8"), /<REDACTED_ROOT>\/workspace\/private/);
 		assert.throws(
-			() => writeResultsFile({
-				results,
-				filePath: join(tmpRoot, "workspace", "results.json"),
-				rootDir: join(tmpRoot, "workspace"),
-			}),
+			() =>
+				writeResultsFile({
+					results,
+					filePath: join(tmpRoot, "workspace", "results.json"),
+					rootDir: join(tmpRoot, "workspace"),
+				}),
 			/--results-file must be outside the live eval workspace/,
 		);
 	} finally {

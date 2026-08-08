@@ -7,13 +7,8 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const { readTlhInstallStateAsync } = await jiti.import(
-	"../extensions/the-last-harness/profile-state.ts",
-);
-const { readTlhInstallNoticeAsync } = await jiti.import(
-	"../extensions/the-last-harness/install-state.ts",
-);
-
+const { readTlhInstallStateAsync } = await jiti.import("../extensions/the-last-harness/profile-state.ts");
+const { readTlhInstallNoticeAsync } = await jiti.import("../extensions/the-last-harness/install-state.ts");
 
 /**
  * Set up a temp isolated profile so safeTlhProfileFilePath returns a valid path.

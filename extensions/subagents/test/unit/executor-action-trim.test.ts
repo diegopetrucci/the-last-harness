@@ -45,13 +45,25 @@ function createState(): SubagentState {
 
 function makeExecutor(state: SubagentState) {
 	return createSubagentExecutor({
-		pi: { events: { emit() {}, on() { return () => {}; } }, getSessionName() { return "parent"; } } as any,
+		pi: {
+			events: {
+				emit() {},
+				on() {
+					return () => {};
+				},
+			},
+			getSessionName() {
+				return "parent";
+			},
+		} as any,
 		state,
 		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
 		asyncByDefault: false,
 		tempArtifactsDir: os.tmpdir(),
 		getSubagentSessionRoot: (parentSessionFile) =>
-			parentSessionFile ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl")) : os.tmpdir(),
+			parentSessionFile
+				? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
+				: os.tmpdir(),
 		expandTilde: (value) => value,
 		discoverAgents: () => ({ agents: [] }),
 		kill: () => true,
@@ -62,8 +74,19 @@ function ctx() {
 	return {
 		cwd: os.tmpdir(),
 		hasUI: false,
-		sessionManager: { getSessionId() { return "session"; }, getSessionFile() { return null; } },
-		modelRegistry: { getAvailable() { return []; } },
+		sessionManager: {
+			getSessionId() {
+				return "session";
+			},
+			getSessionFile() {
+				return null;
+			},
+		},
+		modelRegistry: {
+			getAvailable() {
+				return [];
+			},
+		},
 	} as any;
 }
 
@@ -165,15 +188,18 @@ describe("executor: direct saved-chain inputs fail closed", () => {
 		for (const testCase of [
 			{
 				params: { chain: [{ agent: "worker", task: "Do work" }] },
-				expected: "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chain'.",
+				expected:
+					"Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chain'.",
 			},
 			{
 				params: { action: "get", chainName: "legacy-chain" },
-				expected: "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chainName'.",
+				expected:
+					"Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chainName'.",
 			},
 			{
 				params: { chainDir: "/tmp/legacy-chain" },
-				expected: "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chainDir'.",
+				expected:
+					"Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched. Omit 'chainDir'.",
 			},
 		]) {
 			const result = await executor.execute(

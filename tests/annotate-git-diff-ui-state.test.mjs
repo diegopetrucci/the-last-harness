@@ -26,7 +26,12 @@ function file(id) {
 test("review-data commit reconciliation preserves only retained immutable success and pending state", () => {
 	const reconcile = loadReconcileHelper();
 	const workingTreeSha = "__tlh_working_tree__";
-	const previousCommits = [commit("retained"), commit("completed-removed"), commit("pending-removed"), commit(workingTreeSha, "working-tree")];
+	const previousCommits = [
+		commit("retained"),
+		commit("completed-removed"),
+		commit("pending-removed"),
+		commit(workingTreeSha, "working-tree"),
+	];
 	const nextCommits = [commit("retained"), commit(workingTreeSha, "working-tree")];
 	const state = {
 		commitFilesBySha: {

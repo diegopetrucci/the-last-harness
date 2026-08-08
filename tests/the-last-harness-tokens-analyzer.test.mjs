@@ -73,13 +73,16 @@ function usage({ input, output, cacheRead = 0, cacheWrite = 0, cost, turns = 0, 
 }
 
 function analyzeSingleSubagentResult(details) {
-	return analyzeSessionEntries([
-		assistantEntry("a1", null, "2026-06-16T00:00:00Z", {
-			stopReason: "tool_use",
-			content: [{ type: "toolCall", id: "call-subagent-1", name: "subagent", arguments: { task: "task" } }],
-		}),
-		toolResultEntry("tr1", "a1", "2026-06-16T00:00:01Z", "subagent", details),
-	], { toolCatalog });
+	return analyzeSessionEntries(
+		[
+			assistantEntry("a1", null, "2026-06-16T00:00:00Z", {
+				stopReason: "tool_use",
+				content: [{ type: "toolCall", id: "call-subagent-1", name: "subagent", arguments: { task: "task" } }],
+			}),
+			toolResultEntry("tr1", "a1", "2026-06-16T00:00:01Z", "subagent", details),
+		],
+		{ toolCatalog },
+	);
 }
 
 const toolCatalog = [
@@ -97,7 +100,12 @@ const toolCatalog = [
 	},
 	{
 		name: "exa_search",
-		sourceInfo: { source: "npm:pi-mcp-adapter", path: "extensions/direct-tools/exa.mjs", scope: "user", origin: "package" },
+		sourceInfo: {
+			source: "npm:pi-mcp-adapter",
+			path: "extensions/direct-tools/exa.mjs",
+			scope: "user",
+			origin: "package",
+		},
 	},
 ];
 
@@ -133,7 +141,15 @@ test("analyzeSessionEntries summarizes exact assistant usage, estimated tool att
 					{
 						model: "openai-codex/gpt-5.4",
 						success: true,
-						usage: usage({ input: 50, output: 10, cacheRead: 4, cacheWrite: 1, cost: 0.12, turns: 1, assistantMessages: 1 }),
+						usage: usage({
+							input: 50,
+							output: 10,
+							cacheRead: 4,
+							cacheWrite: 1,
+							cost: 0.12,
+							turns: 1,
+							assistantMessages: 1,
+						}),
 					},
 				],
 				output: "raw scratchpad",
@@ -244,7 +260,9 @@ test("analyzeSessionEntries prefers nested pi-subagents foreground results over 
 	const entries = [
 		assistantEntry("a1", null, "2026-06-15T12:30:00Z", {
 			stopReason: "tool_use",
-			content: [{ type: "toolCall", id: "call-subagent-1", name: "subagent", arguments: { task: "RAW SUBAGENT TASK" } }],
+			content: [
+				{ type: "toolCall", id: "call-subagent-1", name: "subagent", arguments: { task: "RAW SUBAGENT TASK" } },
+			],
 			usage: usage({ input: 40, output: 10, cost: 0.11 }),
 		}),
 		toolResultEntry(
@@ -288,7 +306,12 @@ test("analyzeSessionEntries prefers nested pi-subagents foreground results over 
 	assert.equal(analysis.primaryAssistant.timeline[0].discoveries.subagentRuns, 2);
 	assert.equal(analysis.subagents.runCount, 2);
 	assert.deepEqual(
-		analysis.subagents.runs.map((run) => ({ agent: run.agent, mode: run.mode, runId: run.runId, session: run.session?.label })),
+		analysis.subagents.runs.map((run) => ({
+			agent: run.agent,
+			mode: run.mode,
+			runId: run.runId,
+			session: run.session?.label,
+		})),
 		[
 			{ agent: "developer", mode: "parallel", runId: "run-77", session: "run-77/developer.jsonl" },
 			{ agent: "researcher", mode: "parallel", runId: "run-77", session: "run-77/researcher.jsonl" },
@@ -324,7 +347,15 @@ test("analyzeCurrentSessionUsage reads session metadata and avoids false subagen
 		assistantEntry("a1", null, "2026-06-15T13:00:00Z", {
 			content: [{ type: "toolCall", id: "call-bash-1", name: "bash", arguments: { command: "pwd" } }],
 		}),
-		toolResultEntry("tr1", "a1", "2026-06-15T13:00:01Z", "bash", { exitCode: 0, cwd: "/tmp/private" }, false, "pwd output"),
+		toolResultEntry(
+			"tr1",
+			"a1",
+			"2026-06-15T13:00:01Z",
+			"bash",
+			{ exitCode: 0, cwd: "/tmp/private" },
+			false,
+			"pwd output",
+		),
 	];
 	const sessionManager = {
 		getEntries: () => entries,
@@ -434,9 +465,7 @@ test("subagents.byAgent splits one agent across two providers into separate grou
 	const entries = [
 		assistantEntry("a1", null, "2026-06-15T16:00:00Z", {
 			stopReason: "tool_use",
-			content: [
-				{ type: "toolCall", id: "call-sub-1", name: "subagent", arguments: { task: "task" } },
-			],
+			content: [{ type: "toolCall", id: "call-sub-1", name: "subagent", arguments: { task: "task" } }],
 			usage: usage({ input: 10, output: 2, cost: 0.01 }),
 		}),
 		toolResultEntry(
@@ -469,12 +498,8 @@ test("subagents.byAgent splits one agent across two providers into separate grou
 	assert.equal(analysis.subagents.byAgent.length, 2);
 
 	// Both entries are for "developer" but different providers
-	const anthropicEntry = analysis.subagents.byAgent.find(
-		(e) => e.agent === "developer" && e.provider === "anthropic",
-	);
-	const openaiEntry = analysis.subagents.byAgent.find(
-		(e) => e.agent === "developer" && e.provider === "openai",
-	);
+	const anthropicEntry = analysis.subagents.byAgent.find((e) => e.agent === "developer" && e.provider === "anthropic");
+	const openaiEntry = analysis.subagents.byAgent.find((e) => e.agent === "developer" && e.provider === "openai");
 
 	assert.ok(anthropicEntry, "developer:anthropic group should exist");
 	assert.equal(anthropicEntry.usage.inputTokens, 80);
@@ -495,9 +520,7 @@ test("subagents.byAgent excludes runs missing usage and does not affect total", 
 	const entries = [
 		assistantEntry("a1", null, "2026-06-15T17:00:00Z", {
 			stopReason: "tool_use",
-			content: [
-				{ type: "toolCall", id: "call-sub-1", name: "subagent", arguments: { task: "task" } },
-			],
+			content: [{ type: "toolCall", id: "call-sub-1", name: "subagent", arguments: { task: "task" } }],
 			usage: usage({ input: 10, output: 2, cost: 0.01 }),
 		}),
 		toolResultEntry(
@@ -562,12 +585,13 @@ test("discovery traversal tolerates cycles and processes the exact depth without
 	root.cycle = root;
 	let current = root;
 	for (let depth = 1; depth <= 7; depth += 1) {
-		current.next = depth === 7
-			? {
-				agent: "developer",
-				sessionFile: "/Users/me/.the-last-harness/agent/sessions/--repo--/run-depth/within.jsonl",
-			}
-			: {};
+		current.next =
+			depth === 7
+				? {
+						agent: "developer",
+						sessionFile: "/Users/me/.the-last-harness/agent/sessions/--repo--/run-depth/within.jsonl",
+					}
+				: {};
 		current = current.next;
 	}
 	Object.defineProperty(current, "deeper", {
@@ -813,7 +837,16 @@ test("discovery traversal processes the exact container-budget boundary without 
  * The existing `usage()` helper always sets cost.cacheRead/cacheWrite to 0,
  * which is insufficient for cache-miss cost precision tests.
  */
-function usageRaw({ input = 0, output = 0, cacheRead = 0, cacheWrite = 0, costInput = 0, costOutput = 0, costCacheRead = 0, costCacheWrite = 0 } = {}) {
+function usageRaw({
+	input = 0,
+	output = 0,
+	cacheRead = 0,
+	cacheWrite = 0,
+	costInput = 0,
+	costOutput = 0,
+	costCacheRead = 0,
+	costCacheWrite = 0,
+} = {}) {
 	return {
 		input,
 		output,
@@ -980,7 +1013,11 @@ test("cacheMisses: two turns with no cache activity ever are not flagged (no-cac
 
 	const analysis = analyzeSessionEntries(entries);
 
-	assert.equal(analysis.cacheMisses.missCount, 0, "no-cache provider: skip when cacheRead+cacheWrite==0 and prev never reported cache");
+	assert.equal(
+		analysis.cacheMisses.missCount,
+		0,
+		"no-cache provider: skip when cacheRead+cacheWrite==0 and prev never reported cache",
+	);
 });
 
 test("cacheMisses: modelRegistry-absent means readPerToken falls back to 0 (cost computed without cache-read discount)", () => {
@@ -1139,18 +1176,30 @@ test("cacheMisses: cacheReadInputTokens/cacheWriteInputTokens aliases produce sa
 	const canonicalAnalysis = analyzeSessionEntries(entriesCanonical);
 
 	// Both should detect exactly 1 miss.
-	assert.equal(aliasAnalysis.cacheMisses.missCount, 1,
-		"cacheReadInputTokens/cacheWriteInputTokens aliases: should detect 1 miss");
-	assert.equal(aliasAnalysis.cacheMisses.missCount, canonicalAnalysis.cacheMisses.missCount,
-		"alias and canonical keys must produce the same missCount");
-	assert.equal(aliasAnalysis.cacheMisses.missedTokens, canonicalAnalysis.cacheMisses.missedTokens,
-		"alias and canonical keys must produce the same missedTokens");
+	assert.equal(
+		aliasAnalysis.cacheMisses.missCount,
+		1,
+		"cacheReadInputTokens/cacheWriteInputTokens aliases: should detect 1 miss",
+	);
+	assert.equal(
+		aliasAnalysis.cacheMisses.missCount,
+		canonicalAnalysis.cacheMisses.missCount,
+		"alias and canonical keys must produce the same missCount",
+	);
+	assert.equal(
+		aliasAnalysis.cacheMisses.missedTokens,
+		canonicalAnalysis.cacheMisses.missedTokens,
+		"alias and canonical keys must produce the same missedTokens",
+	);
 
 	// Turn 0 baseline: promptTokens = 5000 + 2000 + 500 = 7500; reportedCache = true.
 	// Turn 1: promptTokens = 7500; cacheRead = 0.
 	// missedTokens = min(7500, 7500) - 0 = 7500.
-	assert.equal(aliasAnalysis.cacheMisses.missedTokens, 7500,
-		"missedTokens should be 7500 when cacheReadInputTokens/cacheWriteInputTokens are read correctly");
+	assert.equal(
+		aliasAnalysis.cacheMisses.missedTokens,
+		7500,
+		"missedTokens should be 7500 when cacheReadInputTokens/cacheWriteInputTokens are read correctly",
+	);
 });
 
 test("cacheMisses: analyzeCurrentSessionUsage accepts optional priceSource and forwards it", () => {
@@ -1301,23 +1350,44 @@ test("analyzeSessionEntries computes median observedLatency correctly across mul
 			id: "tr1",
 			parentId: "a1",
 			timestamp: "2026-07-10T11:00:01.000Z",
-			message: { role: "toolResult", toolName: "bash", toolCallId: "tc1", isError: false, content: [{ type: "text", text: "1" }] },
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "tc1",
+				isError: false,
+				content: [{ type: "text", text: "1" }],
+			},
 		},
 		{
 			type: "message",
 			id: "tr2",
 			parentId: "a1",
 			timestamp: "2026-07-10T11:00:03.000Z",
-			message: { role: "toolResult", toolName: "bash", toolCallId: "tc2", isError: false, content: [{ type: "text", text: "2" }] },
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "tc2",
+				isError: false,
+				content: [{ type: "text", text: "2" }],
+			},
 		},
 		{
 			type: "message",
 			id: "tr3",
 			parentId: "a1",
 			timestamp: "2026-07-10T11:00:05.000Z",
-			message: { role: "toolResult", toolName: "bash", toolCallId: "tc3", isError: false, content: [{ type: "text", text: "3" }] },
+			message: {
+				role: "toolResult",
+				toolName: "bash",
+				toolCallId: "tc3",
+				isError: false,
+				content: [{ type: "text", text: "3" }],
+			},
 		},
-		assistantEntry("a2", "tr3", "2026-07-10T11:00:10.000Z", { text: "done.", usage: usage({ input: 50, output: 5, cost: 0.1 }) }),
+		assistantEntry("a2", "tr3", "2026-07-10T11:00:10.000Z", {
+			text: "done.",
+			usage: usage({ input: 50, output: 5, cost: 0.1 }),
+		}),
 	];
 
 	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
@@ -1338,7 +1408,10 @@ test("analyzeSessionEntries leaves observedLatency absent when no toolCallId pai
 			usage: usage({ input: 50, output: 5, cost: 0.1 }),
 		}),
 		toolResultEntry("tr1", "a1", "2026-07-10T12:00:01.000Z", "bash", {}, false, "ok"),
-		assistantEntry("a2", "tr1", "2026-07-10T12:00:05.000Z", { text: "done.", usage: usage({ input: 30, output: 5, cost: 0.05 }) }),
+		assistantEntry("a2", "tr1", "2026-07-10T12:00:05.000Z", {
+			text: "done.",
+			usage: usage({ input: 30, output: 5, cost: 0.05 }),
+		}),
 	];
 	const analysis = analyzeSessionEntries(entries, { activeLeafId: "a2" });
 	const bashTool = analysis.tools.byTool.find((t) => t.toolName === "bash");

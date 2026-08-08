@@ -5,7 +5,10 @@ export function countNestedRuns(children) {
     for (const child of children ?? []) {
         counts.total++;
         counts[child.state]++;
-        const nested = countNestedRuns([...(child.children ?? []), ...(child.steps?.flatMap((step) => step.children ?? []) ?? [])]);
+        const nested = countNestedRuns([
+            ...(child.children ?? []),
+            ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
+        ]);
         counts.total += nested.total;
         counts.running += nested.running;
         counts.paused += nested.paused;
@@ -32,7 +35,9 @@ function nestedRunLabel(run) {
     if (run.agent)
         return run.agent;
     if (run.agents?.length)
-        return run.agents.length === 1 ? run.agents[0] : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
+        return run.agents.length === 1
+            ? run.agents[0]
+            : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
     return run.id;
 }
 function formatNestedActivity(input) {
@@ -71,13 +76,20 @@ function formatNestedRunLines(children, options) {
                     lines[lines.length - 1] = `${indent}↳ ${aggregate}`;
                 return;
             }
-            const activity = child.state === "running" ? formatNestedActivity({ ...child, redactSensitiveDetails: options.redactSensitiveDetails }) : undefined;
-            const error = child.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : child.error}` : "";
+            const activity = child.state === "running"
+                ? formatNestedActivity({ ...child, redactSensitiveDetails: options.redactSensitiveDetails })
+                : undefined;
+            const error = child.error
+                ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : child.error}`
+                : "";
             lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${activity ? ` | ${activity}` : ""}${error}`);
             if (options.commandHints && lines.length < options.maxLines)
                 lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
             if (depth === options.maxDepth) {
-                const aggregate = formatNestedAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])]);
+                const aggregate = formatNestedAggregate([
+                    ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
+                    ...(child.children ?? []),
+                ]);
                 if (aggregate && lines.length < options.maxLines)
                     lines.push(`${indent}  ↳ ${aggregate}`);
                 continue;
@@ -85,7 +97,9 @@ function formatNestedRunLines(children, options) {
             for (const [stepIndex, step] of (child.steps ?? []).entries()) {
                 if (lines.length >= options.maxLines)
                     return;
-                const stepActivity = step.status === "running" ? formatNestedActivity({ ...step, redactSensitiveDetails: options.redactSensitiveDetails }) : undefined;
+                const stepActivity = step.status === "running"
+                    ? formatNestedActivity({ ...step, redactSensitiveDetails: options.redactSensitiveDetails })
+                    : undefined;
                 lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : step.error}` : ""}`);
                 append(step.children, depth + 1, `${indent}    `);
             }

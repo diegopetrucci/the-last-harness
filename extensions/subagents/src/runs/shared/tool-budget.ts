@@ -9,9 +9,13 @@ export function normalizeToolBudgetBlock(block: ToolBudgetConfig["block"] | unde
 	return [...new Set(block.map((tool) => tool.trim()).filter(Boolean))];
 }
 
-export function validateToolBudgetConfig(raw: unknown, label = "toolBudget"): { budget?: ResolvedToolBudget; error?: string } {
+export function validateToolBudgetConfig(
+	raw: unknown,
+	label = "toolBudget",
+): { budget?: ResolvedToolBudget; error?: string } {
 	if (raw === undefined) return {};
-	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: `${label} must be an object with hard and optional soft/block.` };
+	if (!raw || typeof raw !== "object" || Array.isArray(raw))
+		return { error: `${label} must be an object with hard and optional soft/block.` };
 	const value = raw as ToolBudgetConfig;
 	if (typeof value.hard !== "number" || !Number.isInteger(value.hard) || value.hard < 1) {
 		return { error: `${label}.hard must be an integer >= 1.` };
@@ -26,10 +30,17 @@ export function validateToolBudgetConfig(raw: unknown, label = "toolBudget"): { 
 		if (!Array.isArray(value.block)) return { error: `${label}.block must be "*" or an array of tool names.` };
 		if (value.block.length === 0) return { error: `${label}.block must contain at least one tool name.` };
 		for (const item of value.block) {
-			if (typeof item !== "string" || !item.trim()) return { error: `${label}.block must contain non-empty tool names.` };
+			if (typeof item !== "string" || !item.trim())
+				return { error: `${label}.block must contain non-empty tool names.` };
 		}
 	}
-	return { budget: { hard: value.hard, ...(value.soft !== undefined ? { soft: value.soft } : {}), block: normalizeToolBudgetBlock(value.block) } };
+	return {
+		budget: {
+			hard: value.hard,
+			...(value.soft !== undefined ? { soft: value.soft } : {}),
+			block: normalizeToolBudgetBlock(value.block),
+		},
+	};
 }
 
 export function initialToolBudgetState(budget: ResolvedToolBudget): ToolBudgetState {

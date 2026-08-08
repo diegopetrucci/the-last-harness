@@ -1,4 +1,11 @@
-import type { AnnotateLastMessageInlineComment, AnnotateLastMessageSectionComment, AnnotateLastMessageSubmitPayload, LastAssistantMessageData, LastAssistantMessageLine, LastAssistantMessageSection } from "./types.js";
+import type {
+	AnnotateLastMessageInlineComment,
+	AnnotateLastMessageSectionComment,
+	AnnotateLastMessageSubmitPayload,
+	LastAssistantMessageData,
+	LastAssistantMessageLine,
+	LastAssistantMessageSection,
+} from "./types.js";
 
 const EXCERPT_LIMIT = 120;
 
@@ -13,7 +20,10 @@ function formatLineLabel(line: number): string {
 	return `line ${line}`;
 }
 
-function formatLineComment(comment: AnnotateLastMessageInlineComment, line: LastAssistantMessageLine | undefined): string {
+function formatLineComment(
+	comment: AnnotateLastMessageInlineComment,
+	line: LastAssistantMessageLine | undefined,
+): string {
 	const excerpt = truncateExcerpt(line?.text ?? "");
 	return `${formatLineLabel(comment.line)} — “${excerpt}”`;
 }
@@ -24,7 +34,10 @@ function formatSectionLineRange(section: LastAssistantMessageSection): string {
 		: `lines ${section.startLine}-${section.endLine}`;
 }
 
-function formatSectionComment(comment: AnnotateLastMessageSectionComment, section: LastAssistantMessageSection | undefined): string {
+function formatSectionComment(
+	_comment: AnnotateLastMessageSectionComment,
+	section: LastAssistantMessageSection | undefined,
+): string {
 	if (section == null) {
 		return "Unknown section";
 	}
@@ -56,7 +69,11 @@ export function composeAnnotateLastMessagePrompt(
 		.sort((left, right) => left.line - right.line);
 	const sectionComments = payload.sectionComments
 		.filter((comment) => comment.body.trim().length > 0)
-		.sort((left, right) => (sectionMap.get(left.sectionId)?.index ?? Number.MAX_SAFE_INTEGER) - (sectionMap.get(right.sectionId)?.index ?? Number.MAX_SAFE_INTEGER));
+		.sort(
+			(left, right) =>
+				(sectionMap.get(left.sectionId)?.index ?? Number.MAX_SAFE_INTEGER) -
+				(sectionMap.get(right.sectionId)?.index ?? Number.MAX_SAFE_INTEGER),
+		);
 	const lines: string[] = [];
 
 	lines.push("Please revisit your last assistant message using the annotation feedback below.");
