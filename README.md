@@ -124,7 +124,6 @@ After adding files, installing a package, or saving project trust, run `/reload`
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
-- Accepted dependency risks: [`docs/dependency-risk.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/dependency-risk.md)
 
 ## Third-party attribution
 
