@@ -373,7 +373,17 @@ function ensureInstalled(ctx) {
 		scenarioId: "install-bootstrap",
 		label: "install",
 		command: "bash",
-		args: ["install.sh", "--track", "custom", "--agent-dir", ctx.agentDir, "--bin-dir", ctx.binDir],
+		args: [
+			"install.sh",
+			"--track",
+			"custom",
+			"--agent-dir",
+			ctx.agentDir,
+			"--bin-dir",
+			ctx.binDir,
+			"--wrapper-name",
+			"tlh",
+		],
 		cwd: repoRoot,
 		env: installEnv,
 		timeoutMs: installTimeoutMs,
@@ -622,7 +632,7 @@ function runInstallUpdateSmoke(ctx) {
 		scenarioId: "install-update-smoke",
 		label: "update",
 		command: ctx.wrapperPath,
-		args: ["update", "--track", "custom", "--package-source", `file:${repoRoot}`],
+		args: ["update", "--track", "ref", "--ref", "main", "--package-source", `file:${repoRoot}`],
 		cwd: ctx.workspaceDir,
 		env: ctx.baseEnv,
 		timeoutMs: installTimeoutMs,
@@ -634,7 +644,7 @@ function runInstallUpdateSmoke(ctx) {
 			label: "Installed wrapper updates against the current checkout",
 			passed: updatePassed,
 			details: updatePassed
-				? "tlh update exited 0 with the custom file: package source."
+				? "tlh update exited 0 on ref main with the current checkout file: package source."
 				: `tlh update failed with status ${updateResult.status ?? "null"}; see ${join(ctx.rootDir, "artifacts", "install-update-smoke", "update.log")}`,
 			artifacts: [updateArtifact],
 		}),
@@ -656,10 +666,13 @@ function runInstallUpdateSmoke(ctx) {
 			const state = JSON.parse(readFileSync(statePath, "utf8"));
 			writeArtifact(ctx, stateArtifact, `${JSON.stringify(state, null, 2)}\n`);
 			statePassed =
-				state.track === "custom" && state.packageSource === `file:${repoRoot}` && state.wrapperName === "tlh";
+				state.track === "ref" &&
+				state.ref === "main" &&
+				state.packageSource === `file:${repoRoot}` &&
+				state.wrapperName === "tlh";
 			stateDetail = statePassed
-				? "install-state.json recorded the custom track, file: package source, and tlh wrapper name."
-				: "install-state.json did not preserve the expected custom track, file: package source, and tlh wrapper name.";
+				? "install-state.json recorded ref main, the current checkout file: package source, and tlh wrapper name."
+				: "install-state.json did not preserve the expected ref main, current checkout file: package source, and tlh wrapper name.";
 		} catch (error) {
 			writeArtifact(ctx, stateArtifact, readFileSync(statePath, "utf8"));
 			stateDetail = `install-state.json was unreadable: ${error instanceof Error ? error.message : String(error)}`;
@@ -668,7 +681,7 @@ function runInstallUpdateSmoke(ctx) {
 	checks.push(
 		createBinaryScoreCheck({
 			id: "install-state",
-			label: "Install state reflects the custom update source",
+			label: "Install state reflects the ref update source",
 			passed: statePassed,
 			details: stateDetail,
 			artifacts: stateExists ? [stateArtifact] : [],

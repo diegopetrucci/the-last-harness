@@ -48,9 +48,9 @@ test("live eval results schema aggregates detailed automated checks and manual r
 			}),
 			createBinaryScoreCheck({
 				id: "install-state",
-				label: "Install state reflects the custom update source",
+				label: "Install state reflects the ref update source",
 				passed: true,
-				details: "install-state recorded expected metadata",
+				details: "install-state recorded ref main and the current checkout file source",
 				artifacts: ["artifacts/install-update-smoke/install-state.json"],
 			}),
 		],
