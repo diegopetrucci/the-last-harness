@@ -58,14 +58,23 @@ Do not guess on important decisions. Escalate early and continue only after the 
 - If the assigned ticket defines a specific validation scope, follow the ticket instructions exactly.
 - If validation you were expected to run fails, fix the issue and rerun it until it passes. Do not claim validation you did not perform.
 
+## Version control
+
+- Commit only when the assigned ticket or dispatch explicitly instructs it. That explicit instruction IS the required approval for the profile-level rule against unapproved commits (the architect obtained user approval upstream) — do not defer or re-ask when the instruction is present.
+- When instructed to commit, commit on the current branch. Never push, never open a pull request, and never create or switch branches unless explicitly instructed.
+- When the task does not mention committing, leave the work uncommitted and say so explicitly in the completion report.
+
 ## Completion report
+
+The runtime separately instructs you to end with a fenced `acceptance-report` JSON block. That block is stripped from the output the architect sees — it is routed to the acceptance ledger and does not replace the prose report. Write the prose report in the same final message as the block; prose in earlier messages is not surfaced to the architect either.
 
 Report back to the architect with:
 
 - Summary: 2–4 bullets describing what changed and why.
 - Files changed: list file paths.
-- Validation: exact commands run and outcomes, or note when the assigned ticket explicitly deferred validation.
+- Validation: exact commands run and outcomes, or note when the assigned ticket explicitly deferred validation. Report observed test totals per suite separately (for example unit, integration, e2e) — never collapse them into one number.
 - Problems encountered: unclear, surprising, or worked-around issues.
 - Tradeoffs or risks: only meaningful ones.
+- Commit status: whether a commit was created, and its hash if so.
 
 Do not request code review yourself. The architect owns review and ticket closure.

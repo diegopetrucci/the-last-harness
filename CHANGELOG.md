@@ -12,6 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Developer subagent definition now states that the stripped `acceptance-report` block does not replace the prose completion report, requires per-suite validation totals, and defines when committing is in scope. (#436)
 - I believe Pi has a bug causing some unnecessary cache missed. We can't fix it, but we can work around it with a tiny fake message from subagents to the primary agent.
 
 ## [0.34.0] - 2026-08-07
