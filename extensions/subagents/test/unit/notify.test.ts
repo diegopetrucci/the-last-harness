@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import registerSubagentNotify, {
 	MAX_COMPLETION_MESSAGE_CHARS,
+	MAX_DISPLAY_SUMMARY_CHARS,
 	buildCompletionDetails,
 	formatGroupedCompletion,
 	formatSingleCompletion,
@@ -379,7 +380,9 @@ describe("registerSubagentNotify", () => {
 		const results = Array.from({ length: 10 }, (_, index) => ({
 			agent: `worker-${index}`,
 			status: index === 8 ? "failed" : index === 9 ? "paused" : "completed",
-			summary: `${index}: ${"x".repeat(1_900)}`,
+			// Sized above the per-child budget at this fan-out (8 displayed -> 4 000 each) so the
+			// notice still exercises a capped scenario, as it did against the original 1 200 cap.
+			summary: `${index}: ${"x".repeat(4_500)}`,
 			...(index === 0
 				? { sessionPath: completedSession, index }
 				: index === 8
@@ -425,7 +428,14 @@ describe("registerSubagentNotify", () => {
 			content.includes("9/10. worker-8 — failed"),
 			"urgent child details must survive the final completion cap",
 		);
-		assert.match(content, /… \[completion message truncated\]$/);
+		// Tail-preserving truncation shrinks the preview body rather than end-cutting the
+		// assembled message, so the absolute backstop marker stays unreachable even at this
+		// fan-out. Per-summary truncation still applies (see marker below).
+		assert.ok(
+			!content.includes("… [completion message truncated]"),
+			"tail-preserving truncation must keep the absolute backstop unreachable",
+		);
+		assert.match(content, /… \[summary truncated\]/);
 		// sendMessage no options; nudge once (idle, failed — immediate path)
 		assert.equal(sentMessages[0]!.options, undefined);
 		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
@@ -481,7 +491,7 @@ describe("registerSubagentNotify", () => {
 		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 		assert.ok(message.details, "single notices must retain structured metadata");
 		assert.equal(message.details.asyncId, "notify-oversized-1");
-		assert.ok(message.details.resultPreview.length <= 1_200);
+		assert.ok(message.details.resultPreview.length <= MAX_DISPLAY_SUMMARY_CHARS);
 		assert.match(message.details.resultPreview, /… \[summary truncated\]$/);
 		assert.match(content, /^Background task failed: \*\*parallel:oversized\*\*/);
 		assert.match(content, /Children: 9 completed, 1 failed/);
@@ -491,7 +501,14 @@ describe("registerSubagentNotify", () => {
 		assert.match(content, /Session: \/safe\/sessions\/worker-0\.jsonl/);
 		assert.match(content, /… \[nested depth limit reached\]/);
 		assert.match(content, /… \[additional nested entries omitted\]/);
-		assert.match(content, /… \[completion message truncated\]$/);
+		// Oversized per-child summaries are clamped to the pool-derived per-child budget, so the
+		// assembled message fits the envelope without the backstop firing. This is what keeps the
+		// trailing recovery references (asserted above) from being truncated away.
+		assert.ok(
+			!content.includes("… [completion message truncated]"),
+			"pool-budgeted summaries must leave envelope headroom so the backstop does not fire",
+		);
+		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 		assert.doesNotMatch(content, /stale-target/);
 		// nudge sent once (idle, failed — immediate path)
 		assert.deepEqual(sentUserMessages[0], { content: NUDGE_TEXT, options: { deliverAs: "followUp" } });
@@ -1396,7 +1413,9 @@ describe("completion formatting helpers", () => {
 		const pausedSessionFile = path.join(resultsDir, "paused-session.jsonl");
 		fs.writeFileSync(pausedSessionFile, "session\n", "utf-8");
 		try {
-			const outerCrash = `runner crashed: ${"x".repeat(1_400)}`;
+			// Use a summary longer than MAX_SUMMARY_CHARS (8 000 chars) to verify
+			// that the outer failure is still bounded at the per-child budget.
+			const outerCrash = `runner crashed: ${"x".repeat(8_100)}`;
 			const details = buildCompletionDetails({
 				id: "outer-failed-paused-child",
 				agent: "chain:a+b",
@@ -1419,6 +1438,8 @@ describe("completion formatting helpers", () => {
 			assert.equal(details.status, "failed");
 			assert.deepEqual(details.resumeTarget, { sessionPath: pausedSessionFile, index: 1, childCount: 2 });
 			assert.match(details.resultPreview, /^runner crashed: x+/);
+			// Summary exceeds MAX_SUMMARY_CHARS so it should be truncated with the
+			// marker, followed immediately by the children section.
 			assert.match(details.resultPreview, /… \[summary truncated\]\n\nChildren: 1 completed, 1 paused/);
 			assert.match(
 				formatSingleCompletion(details),
@@ -1467,5 +1488,298 @@ describe("completion formatting helpers", () => {
 		});
 		assert.equal(details.agent, "unknown");
 		assert.equal(details.status, "completed");
+	});
+
+	it("single-result notice carries summary up to the single-result budget and still respects the envelope", () => {
+		// A summary between MAX_DISPLAY_SUMMARY_CHARS (1 200) and MAX_SUMMARY_CHARS
+		// (~6 000) must reach the model in full via content while structuredDetails.resultPreview
+		// is still capped at MAX_DISPLAY_SUMMARY_CHARS for the TUI.
+		const { events, sentMessages } = createPi();
+		const longSummary = `rich result: ${"r".repeat(4_000)}`;
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "budget-single-1",
+			agent: "worker",
+			success: true,
+			summary: longSummary,
+			exitCode: 0,
+			timestamp: 1,
+			sessionId: "session-1",
+		});
+
+		assert.equal(sentMessages.length, 1);
+		const message = sentMessages[0]!.message as { content: string; details?: SubagentNotifyDetails };
+		// content carries the full summary (no truncation — well under MAX_COMPLETION_MESSAGE_CHARS)
+		assert.ok(
+			message.content.includes(longSummary),
+			"model-facing content must carry the full summary beyond the old 1 200-char cap",
+		);
+		assert.ok(message.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
+		// structuredDetails.resultPreview is bounded at MAX_DISPLAY_SUMMARY_CHARS for the TUI
+		assert.ok(message.details, "single notice must include structuredDetails");
+		assert.ok(
+			message.details!.resultPreview.length <= MAX_DISPLAY_SUMMARY_CHARS,
+			"TUI details.resultPreview must be bounded at MAX_DISPLAY_SUMMARY_CHARS",
+		);
+		assert.ok(
+			!message.content.includes("… [summary truncated]"),
+			"a summary within the single-result budget must not be truncated in content",
+		);
+	});
+
+	it("grouped notice divides the summary pool across displayed children rather than a fixed per-child cap", () => {
+		// Two children each with a summary between MAX_DISPLAY_SUMMARY_CHARS (1 200) and the
+		// per-child budget (MAX_SUMMARY_CHARS = 8 000 at this fan-out). Both appear untruncated,
+		// proving each child gets the full per-child budget rather than a divided share.
+		const { events, sentMessages } = createPi();
+		const summaryA = `child-a result: ${"a".repeat(2_000)}`;
+		const summaryB = `child-b result: ${"b".repeat(2_000)}`;
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "budget-grouped-1",
+			agent: "parallel:a+b",
+			success: true,
+			summary: "outer done",
+			timestamp: 1,
+			sessionId: "session-1",
+			results: [
+				{ agent: "a", status: "completed", summary: summaryA, index: 0 },
+				{ agent: "b", status: "completed", summary: summaryB, index: 1 },
+			],
+		});
+
+		assert.equal(sentMessages.length, 1);
+		const message = sentMessages[0]!.message as { content: string };
+		assert.ok(
+			message.content.includes(summaryA),
+			"grouped content must carry child-a summary beyond the old 1 200-char cap",
+		);
+		assert.ok(
+			message.content.includes(summaryB),
+			"grouped content must carry child-b summary beyond the old 1 200-char cap",
+		);
+		assert.ok(message.content.length <= MAX_COMPLETION_MESSAGE_CHARS);
+		assert.ok(
+			!message.content.includes("… [summary truncated]"),
+			"child summaries within the per-child budget must not be truncated in content",
+		);
+	});
+
+	// Regression guard for the grouped budget shape. Each displayed child gets the full
+	// per-child MAX_SUMMARY_CHARS budget; a child's report must not shrink merely because
+	// it has siblings. The trailing `Session:` recovery pointer must survive in every case,
+	// because formatSingleCompletion emits it LAST and a naive end-cut would destroy it,
+	// turning a "truncated but recoverable" notice into a "truncated and unrecoverable" one.
+	for (const childCount of [2, 8]) {
+		it(`grouped notice with ${childCount} children filling their budget keeps the recovery pointer inside the ceiling`, () => {
+			const { events, sentMessages } = createPi();
+			const shareUrl = `https://share/grouped-capacity-${childCount}`;
+			// Oversized summaries so boundedSummary clamps each child to EXACTLY the per-child
+			// budget. This fills the budget to capacity without the test needing to know the
+			// constant's value. Child artifact/session references are populated too, since those
+			// are real scaffolding that competes for the same ceiling.
+			const results = Array.from({ length: childCount }, (_, index) => ({
+				agent: `worker-${index}`,
+				status: "completed",
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			}));
+
+			events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+				id: `grouped-capacity-${childCount}`,
+				agent: "parallel:capacity",
+				success: true,
+				summary: "outer done",
+				timestamp: 1,
+				sessionId: "session-1",
+				shareUrl,
+				results,
+			});
+
+			assert.equal(sentMessages.length, 1);
+			const content = (sentMessages[0]!.message as { content: string }).content;
+
+			// 1. The assembled message must fit the ceiling.
+			assert.ok(
+				content.length <= MAX_COMPLETION_MESSAGE_CHARS,
+				`assembled grouped message (${content.length}) must fit MAX_COMPLETION_MESSAGE_CHARS`,
+			);
+
+			// 2. The trailing recovery pointer must survive. This is the assertion with teeth.
+			assert.ok(
+				content.includes(`Session: ${shareUrl}`),
+				"the trailing Session line must survive; a naive end-cut would truncate the recovery pointer away",
+			);
+		});
+	}
+
+	// Direct regression test for tail-preserving truncation. Deliberately forces an overflow
+	// PAST the ceiling (8 children at full per-child budget plus long reference lines), which
+	// the per-child budget alone cannot prevent: at n=8 the equal-share fallback already
+	// allocates 8 x 4 000 = 32 000 chars of summary, exactly the ceiling, leaving nothing for
+	// scaffolding. The assembled message therefore MUST be clamped, and the clamp must cut
+	// from the preview body rather than from the tail, so the trailing Session line and the
+	// child artifact references both survive. Without tail preservation the final
+	// truncateWithMarker cuts from the end and destroys exactly those recovery pointers.
+	it("clamps an over-ceiling notice while preserving the trailing session line and child references", () => {
+		const { events, sentMessages } = createPi();
+		const shareUrl = "https://share/tail-preservation-overflow";
+		// Long reference lines on every child, pushing well past the ceiling once the 8 full
+		// per-child summaries are laid down.
+		const results = Array.from({ length: 8 }, (_, index) => ({
+			agent: `worker-${index}`,
+			// Urgency ordering puts the failed child first, so its references sit at the front.
+			status: index === 0 ? "failed" : "completed",
+			summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+			index,
+			artifactPath: `/tmp/artifacts/${"deep-path-segment/".repeat(10)}worker-${index}.md`,
+			sessionPath: `/tmp/sessions/${"deep-path-segment/".repeat(10)}worker-${index}.jsonl`,
+		}));
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "tail-preservation-overflow",
+			agent: "parallel:overflow",
+			success: true,
+			summary: "outer done",
+			timestamp: 1,
+			sessionId: "session-1",
+			shareUrl,
+			results,
+		});
+
+		assert.equal(sentMessages.length, 1);
+		const content = (sentMessages[0]!.message as { content: string }).content;
+
+		// 1. Clamped to the ceiling.
+		assert.ok(
+			content.length <= MAX_COMPLETION_MESSAGE_CHARS,
+			`over-ceiling message (${content.length}) must be clamped to MAX_COMPLETION_MESSAGE_CHARS`,
+		);
+
+		// 2. The trailing recovery pointer survives the clamp. This is the assertion with teeth:
+		// a naive end-cut removes it, because it is the very last line of the assembled message.
+		assert.ok(
+			content.includes(`Session: ${shareUrl}`),
+			"tail-preserving truncation must keep the trailing Session line even when the ceiling is hit",
+		);
+
+		// 3. Child artifact references survive for the urgent (first-displayed) child, so the
+		// architect retains a pointer to the full output of the result that matters most.
+		assert.ok(content.includes("worker-0.md"), "the urgent child's artifact reference must survive the clamp");
+		assert.ok(content.includes("worker-0.jsonl"), "the urgent child's session reference must survive the clamp");
+	});
+
+	// -------------------------------------------------------------------------
+	// Defect 1 regression: formatGroupedCompletion ceiling-overshoot fix.
+	//
+	// These tests call formatGroupedCompletion directly with MULTIPLE
+	// SubagentNotifyDetails entries (the batched path). The earlier tests at
+	// ~1568 emit ONE SubagentResult with children, which routes through
+	// formatSingleCompletion/buildCompletionDetails and never hits this path.
+	//
+	// Each entry is "saturated" — its resultPreview is longer than previewCeiling,
+	// so it fills every available char. The fix adds the per-entry \n separator
+	// cost (entries.length - 2) to the budget reservation so the assembled string
+	// is always exactly <= MAX_COMPLETION_MESSAGE_CHARS.
+	// -------------------------------------------------------------------------
+	for (const entryCount of [2, 3, 4, 8, 16, 40]) {
+		it(`formatGroupedCompletion with ${entryCount} saturated entries stays within the ceiling and preserves all session pointers`, () => {
+			// Each detail has a session pointer (worst-case scaffolding), and a resultPreview
+			// much larger than any possible previewCeiling so it saturates the budget exactly.
+			const details: SubagentNotifyDetails[] = Array.from({ length: entryCount }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: "completed" as const,
+				resultPreview: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				sessionLabel: "Session",
+				sessionValue: `https://share/worker-${i}`,
+			}));
+			const result = formatGroupedCompletion(details);
+
+			// 1. Assembled string must fit the ceiling.
+			assert.ok(
+				result.length <= MAX_COMPLETION_MESSAGE_CHARS,
+				`formatGroupedCompletion(${entryCount}) produced ${result.length} chars, exceeding MAX_COMPLETION_MESSAGE_CHARS`,
+			);
+
+			// 2. Every DISPLAYED entry's session pointer must survive.
+			// Entries beyond MAX_GROUPED_ENTRIES=8 are omitted, so only check those shown.
+			const displayedCount = Math.min(entryCount, 8);
+			for (let i = 0; i < displayedCount; i++) {
+				assert.ok(
+					result.includes(`Session: https://share/worker-${i}`),
+					`session pointer for displayed entry ${i} missing from grouped output at n=${entryCount}`,
+				);
+			}
+		});
+	}
+
+	it("formatGroupedCompletion caps displayed entries at 8 and emits an omission marker for the rest", () => {
+		// Defect 2: batch size was unbounded. Verify the cap is applied and the omission
+		// marker uses the same wording as existing child-result omission notices.
+		const details: SubagentNotifyDetails[] = Array.from({ length: 12 }, (_, i) => ({
+			agent: `worker-${i}`,
+			status: "completed" as const,
+			resultPreview: "done",
+			sessionLabel: "Session",
+			sessionValue: `https://share/worker-${i}`,
+		}));
+		const result = formatGroupedCompletion(details);
+
+		// Ceiling holds.
+		assert.ok(result.length <= MAX_COMPLETION_MESSAGE_CHARS);
+
+		// The total count in the header shows all 12.
+		assert.ok(result.includes("Background tasks completed (12):"), "header must show total count");
+
+		// First 8 displayed.
+		assert.ok(result.includes("Session: https://share/worker-0"), "first entry must be shown");
+		assert.ok(result.includes("Session: https://share/worker-7"), "eighth entry must be shown");
+
+		// Entries 9-12 are omitted.
+		assert.ok(!result.includes("Session: https://share/worker-8"), "ninth entry must be omitted");
+		assert.ok(result.includes("[4 entries omitted]"), "omission marker must appear for the 4 dropped entries");
+	});
+
+	it("batched send-time path routes multiple completions through formatGroupedCompletion and respects the ceiling", () => {
+		// End-to-end test: MULTIPLE SubagentResult events batch together and are
+		// emitted as one grouped message. This exercises the send-time cap on top
+		// of the per-entry budget fix.
+		const clock = createFakeClock();
+		const { events, sentMessages } = createBatchingPi(clock);
+
+		// Emit 4 separate completions with saturated summaries. The batcher holds
+		// them and emits as one group when the debounce fires.
+		for (let i = 0; i < 4; i++) {
+			events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+				id: `batched-ceiling-${i}`,
+				agent: `parallel-worker-${i}`,
+				success: true,
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				timestamp: 1,
+				sessionId: "session-a",
+				shareUrl: `https://share/batched-${i}`,
+			});
+		}
+		// Advance past debounce to trigger grouped emit.
+		clock.advance(200);
+
+		assert.equal(sentMessages.length, 1, "4 batched completions must produce exactly 1 grouped message");
+		const content = (sentMessages[0]!.message as { content: string }).content;
+
+		// 1. The grouped message fits the ceiling.
+		assert.ok(
+			content.length <= MAX_COMPLETION_MESSAGE_CHARS,
+			`batched grouped message (${content.length}) must fit MAX_COMPLETION_MESSAGE_CHARS`,
+		);
+
+		// 2. Each entry's session pointer survives (they are the last line of each block).
+		for (let i = 0; i < 4; i++) {
+			assert.ok(
+				content.includes(`Session: https://share/batched-${i}`),
+				`session pointer for worker-${i} must survive the send-time ceiling in the batched path`,
+			);
+		}
 	});
 });

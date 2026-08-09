@@ -94,7 +94,13 @@ describe("native completion notification renderer", () => {
 			};
 			const oversizedExpanded = notifyRenderer(oversizedMessage, { expanded: true }, theme).render(200).join("\n");
 			if (!oversizedExpanded.includes("content-derived-result-")) throw new Error("oversized rendering ignored capped content: " + oversizedExpanded);
-			if (!oversizedExpanded.includes("completion message truncated")) throw new Error("oversized rendering lost the content cap marker");
+			// The render-time display bound caps the preview so the "completion message truncated"
+			// marker (which is deep in the content string) does NOT appear in the TUI output.
+			// The model-facing content still carries it; the TUI shows a compact bounded preview.
+			if (oversizedExpanded.includes("completion message truncated")) throw new Error("oversized rendering exposed the message-cap marker — display should be bounded at render time");
+			// Render-time bounding applies: a preview longer than MAX_DISPLAY_SUMMARY_CHARS is
+			// replaced with a compact truncated version ending with the display-bound marker.
+			if (!oversizedExpanded.includes("preview truncated")) throw new Error("oversized rendering did not apply the render-time display bound: " + oversizedExpanded);
 			if (oversizedExpanded.includes("structured-fallback-")) throw new Error("oversized rendering used the structured fallback instead of content");
 			if (!oversizedExpanded.includes("1.3s")) throw new Error("oversized rendering lost structured duration metadata: " + oversizedExpanded);
 			if (!oversizedExpanded.includes("structured-session.jsonl")) throw new Error("oversized rendering lost structured session metadata: " + oversizedExpanded);
@@ -128,6 +134,99 @@ describe("native completion notification renderer", () => {
 			if (shareErrorExpanded.includes("unbounded-share-tail")) throw new Error("share error rendering exposed the oversized tail");
 			if (!shareErrorExpanded.includes("2.5s")) throw new Error("share error rendering lost structured duration metadata");
 			if (shareErrorExpanded.length > 2_000) throw new Error("share error expanded rendering was not bounded: " + shareErrorExpanded.length);
+		`;
+		const env = { ...process.env };
+		delete env[SUBAGENT_CHILD_ENV];
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env, stdio: "pipe" },
+		);
+	});
+
+	it("bounds the display of grouped notices and any other unparsed content at the render-time display cap", () => {
+		// Defect 3: the renderer parser only matches the singular-completion header regex.
+		// Grouped notices use 'Background tasks completed (N):' which does not match, so
+		// the renderer falls through to new Text(content). Before the fix, the full 32 000-char
+		// content was displayed. After the fix, the fallback bounds to MAX_DISPLAY_SUMMARY_CHARS.
+		const script = String.raw`
+			import { createRequire } from "node:module";
+			import { pathToFileURL } from "node:url";
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import { MAX_COMPLETION_MESSAGE_CHARS, MAX_DISPLAY_SUMMARY_CHARS } from "./src/runs/background/notify.ts";
+			const piCodingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+			const piCodingAgentRequire = createRequire(piCodingAgentEntry);
+			const piTuiEntry = piCodingAgentRequire.resolve("@earendil-works/pi-tui");
+			const { setKeybindings } = await import(pathToFileURL(piTuiEntry).href);
+			const { KeybindingsManager } = await import(new URL("./core/keybindings.js", piCodingAgentEntry).href);
+			setKeybindings(new KeybindingsManager({ "app.tools.expand": "ctrl+o" }));
+			const events = { on() { return () => {}; }, emit() {} };
+			let notifyRenderer;
+			const fakePi = new Proxy({
+				events,
+				on() {},
+				registerTool() {},
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer(type, renderer) {
+					if (type === "subagent-notify") notifyRenderer = renderer;
+				},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!notifyRenderer) throw new Error("notification renderer was not registered");
+
+			const theme = {
+				fg(_name, text) { return text; },
+				bg(_name, text) { return text; },
+				bold(text) { return text; },
+			};
+
+			// A grouped notice: header does not match the singular regex, no structuredDetails.
+			// The content is oversized (full MAX_COMPLETION_MESSAGE_CHARS envelope).
+			const groupedContent = "Background tasks completed (4): **a**, **b**, **c**, **d**\n\n"
+				+ "1. a\n" + "preview-a\n\n"
+				+ "2. b\n" + "preview-b\n\n"
+				+ "3. c\n" + "preview-c\n\n"
+				+ "4. d\n" + "d".repeat(MAX_COMPLETION_MESSAGE_CHARS);
+			const groupedMessage = { content: groupedContent }; // no structuredDetails
+			const rendered = notifyRenderer(groupedMessage, { expanded: false }, theme).render(200).join("\n");
+
+			// The truncation marker must appear (content is far over the cap).
+			if (!rendered.includes("preview truncated")) {
+				throw new Error("grouped notice renderer fallback must show the display-bound truncation marker, got: " + rendered.slice(0, 500));
+			}
+			// The bulk of the oversized tail must not appear. The bounded content includes
+			// only a small prefix of the 32 000 'd'-chars (up to ~MAX_DISPLAY_SUMMARY_CHARS).
+			// Without the fix, thousands of 'd'-chars would pass through; with it, at most
+			// ~1 100 can appear before the truncation marker. Check for a run clearly larger
+			// than the bounded slice allows.
+			if (rendered.includes("d".repeat(2000))) {
+				throw new Error("grouped notice renderer fallback must not expose the oversized tail");
+			}
+			// The rendered content (stripping per-line padding spaces) must be much
+			// smaller than the full 32 000-char envelope. The content is bounded at
+			// MAX_DISPLAY_SUMMARY_CHARS before Text wraps and pads each line to width.
+			// With ~20 lines padded to 200 chars each: expected ~4000. Without the fix,
+			// the full envelope produces ~36 000 chars rendered. Use 10x the display
+			// cap as the generous upper bound (includes wrapping + padding overhead).
+			const renderedContentChars = rendered.replace(/ +$/gm, "").length;
+			if (renderedContentChars > MAX_DISPLAY_SUMMARY_CHARS * 10) {
+				throw new Error("grouped notice renderer fallback exposed too much content: " + renderedContentChars + " chars (limit: " + (MAX_DISPLAY_SUMMARY_CHARS * 10) + ")");
+			}
 		`;
 		const env = { ...process.env };
 		delete env[SUBAGENT_CHILD_ENV];
