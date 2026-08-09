@@ -1871,7 +1871,7 @@ describe("completion formatting helpers", () => {
 			id: "outer-failure-3ch",
 			agent: "parallel",
 			success: false,
-			// Outer failure summary saturated at MAX_SUMMARY_CHARS.
+			// Outer failure summary saturated at MAX_COMPLETION_MESSAGE_CHARS.
 			summary: "f".repeat(MAX_COMPLETION_MESSAGE_CHARS),
 			timestamp: 1,
 			sessionId: "session-1",
@@ -1923,46 +1923,9 @@ describe("completion formatting helpers", () => {
 	// The fix uses _reformatPreview to re-format the preview for the grouped
 	// entry's ceiling, reserving non-summary scaffold before dividing.
 	it("four-child normalized preview batched beside a saturated completion retains all inner child reference lines when recovery lines are nested inside a batched entry preview", () => {
-		const { events } = createBatchingPi(createFakeClock());
-
+		// Build the details objects directly via buildCompletionDetails so _reformatPreview is wired up.
 		// Entry 1: four-child result with no shareUrl (no outer session in tailLines,
 		// worst case: inner child references carry the full recovery burden).
-		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-			id: "inner-4child-batch",
-			agent: "parallel-inner",
-			success: true,
-			summary: "done",
-			timestamp: 1,
-			sessionId: "session-a",
-			// No shareUrl — normalized child results suppress the top-level session,
-			// so the inner child references are the only recovery pointers.
-			results: Array.from({ length: 4 }, (_, index) => ({
-				agent: `worker-${index}`,
-				status: "completed",
-				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
-				index,
-				artifactPath: `/tmp/artifacts/worker-${index}.md`,
-				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
-			})),
-		});
-
-		// Entry 2: one saturated single completion (fills the grouped envelope when
-		// combined with the four-child result).
-		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
-			id: "saturated-single-batch",
-			agent: "single-worker",
-			success: true,
-			summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
-			timestamp: 1,
-			sessionId: "session-a",
-			shareUrl: "https://share/outer-single",
-		});
-
-		// Advance past debounce to trigger grouped emit.
-		const _clock = createFakeClock();
-		// Directly use formatGroupedCompletion with pre-built details so the test
-		// does not depend on the batcher's timing. Build the details objects via
-		// buildCompletionDetails so _reformatPreview is wired up.
 		const details1 = buildCompletionDetails({
 			id: "inner-4child-grouped",
 			runId: null,
@@ -2018,8 +1981,317 @@ describe("completion formatting helpers", () => {
 		);
 	});
 
+	// =========================================================================
+	// formatResultPreview ceiling-contract sweep.
+	//
+	// formatResultPreview MUST return a string whose length is <= the supplied
+	// ceilingForPreview for EVERY (shape, ceiling) combination listed here.
+	// This sweep is the durable guard that prevents future changes from silently
+	// overshooting the ceiling across any result shape or budget size.
+	// =========================================================================
+	describe("formatResultPreview ceiling-contract sweep", () => {
+		const CEILINGS = [32_000, 20_000, 10_000, 5_000, 3_700, 2_000, 1_000, 500, 200, 100];
+		const LONG_PATH = "x".repeat(500);
+
+		function checkCeiling(label: string, makeResult: () => object) {
+			it(`${label} — preview.length <= ceiling for all ${CEILINGS.length} ceilings`, () => {
+				const result = makeResult() as Parameters<typeof buildCompletionDetails>[0];
+				const details = buildCompletionDetails(result);
+				assert.ok(typeof details._reformatPreview === "function", "_reformatPreview must be defined");
+				for (const ceiling of CEILINGS) {
+					const preview = details._reformatPreview!(ceiling);
+					assert.ok(
+						preview.length <= ceiling,
+						`[${label}] ceiling=${ceiling}: preview.length=${preview.length} > ceiling`,
+					);
+				}
+			});
+		}
+
+		// Zero children — already correct before the fix, included as a baseline.
+		checkCeiling("0 children", () => ({
+			id: "sweep-0ch",
+			agent: "worker",
+			success: true,
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+		}));
+
+		// Single child.
+		checkCeiling("1 child", () => ({
+			id: "sweep-1ch",
+			agent: "worker",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			results: [
+				{
+					agent: "worker",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/artifacts/worker.md",
+					sessionPath: "/sessions/worker.jsonl",
+					index: 0,
+				},
+			],
+		}));
+
+		// Two children.
+		checkCeiling("2 children", () => ({
+			id: "sweep-2ch",
+			agent: "parallel:a+b",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			results: [
+				{
+					agent: "a",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/a.md",
+					sessionPath: "/a.jsonl",
+					index: 0,
+				},
+				{
+					agent: "b",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/b.md",
+					sessionPath: "/b.jsonl",
+					index: 1,
+				},
+			],
+		}));
+
+		// Eight children.
+		checkCeiling("8 children", () => ({
+			id: "sweep-8ch",
+			agent: "parallel:8",
+			success: false,
+			state: "failed",
+			summary: "outer",
+			timestamp: 1,
+			results: Array.from({ length: 8 }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: i === 7 ? "failed" : "completed",
+				summary: "x".repeat(9_000),
+				artifactPath: `/artifacts/worker-${i}.md`,
+				sessionPath: `/sessions/worker-${i}.jsonl`,
+				index: i,
+			})),
+		}));
+
+		// Failed outer WITH a failed child — isUnrepresentedOuterFailure = false.
+		checkCeiling("failed outer with failed child", () => ({
+			id: "sweep-fail-outer-with-failed",
+			agent: "chain:a+b",
+			success: false,
+			state: "failed",
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+			results: [
+				{
+					agent: "a",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/a.md",
+					sessionPath: "/a.jsonl",
+					index: 0,
+				},
+				{
+					agent: "b",
+					status: "failed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/b.md",
+					sessionPath: "/b.jsonl",
+					index: 1,
+				},
+			],
+		}));
+
+		// Failed outer WITHOUT a failed child — isUnrepresentedOuterFailure = true.
+		checkCeiling("failed outer without failed child", () => ({
+			id: "sweep-fail-outer-no-failed",
+			agent: "chain:a+b",
+			success: false,
+			state: "failed",
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+			results: [
+				{
+					agent: "a",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/a.md",
+					sessionPath: "/a.jsonl",
+					index: 0,
+				},
+				{
+					agent: "b",
+					status: "completed",
+					summary: "x".repeat(9_000),
+					artifactPath: "/b.md",
+					sessionPath: "/b.jsonl",
+					index: 1,
+				},
+			],
+		}));
+
+		// Nested children (exercises the nested-entries budget).
+		checkCeiling("nested children", () => ({
+			id: "sweep-nested",
+			agent: "parallel:nested",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			results: [
+				{
+					agent: "a",
+					status: "completed",
+					summary: "x".repeat(3_000),
+					artifactPath: "/a.md",
+					sessionPath: "/a.jsonl",
+					index: 0,
+					children: Array.from({ length: 6 }, (_, i) => ({
+						agent: `nested-${i}`,
+						state: "completed",
+						children: [{ agent: `deep-${i}`, state: "completed" }],
+					})),
+				},
+				{
+					agent: "b",
+					status: "completed",
+					summary: "x".repeat(3_000),
+					artifactPath: "/b.md",
+					sessionPath: "/b.jsonl",
+					index: 1,
+				},
+			],
+		}));
+
+		// 500-char reference paths — the paths that make per-child scaffold expensive.
+		checkCeiling("500-char reference paths", () => ({
+			id: "sweep-500path",
+			agent: "parallel:longpaths",
+			success: false,
+			state: "failed",
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+			results: Array.from({ length: 4 }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: i === 3 ? "failed" : "completed",
+				summary: "x".repeat(9_000),
+				artifactPath: LONG_PATH,
+				sessionPath: LONG_PATH,
+				index: i,
+			})),
+		}));
+	});
+
+	// =========================================================================
+	// Acceptance criterion 3: pointer-survival at every batch size.
+	//
+	// In a grouped batch where one entry is a parent with 8 saturated children,
+	// ALL 8 inner artifact pointers must be retained. Pre-fix: 1 of 8 survived
+	// at batch size 8 because the oversized preview (17 000+ chars) was end-cut
+	// at the previewCeiling, destroying the refs that live at the tail.
+	// =========================================================================
+	for (const batchSize of [2, 8, 20, 40] as const) {
+		it(`inner-child artifact pointers: 8 of 8 must survive in a grouped batch of ${batchSize}`, () => {
+			// The multi-child parent: 8 children, each with saturated summary and artifact+session.
+			const parentDetails = buildCompletionDetails({
+				id: `ptr-survival-parent-${batchSize}`,
+				runId: null,
+				agent: "parallel:8",
+				success: true,
+				summary: "outer done",
+				timestamp: 1,
+				results: Array.from({ length: 8 }, (_, i) => ({
+					agent: `worker-${i}`,
+					status: "completed" as const,
+					summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+					artifactPath: `/tmp/artifacts/worker-${i}.md`,
+					sessionPath: `/tmp/sessions/worker-${i}.jsonl`,
+					index: i,
+				})),
+			});
+			// Fill the rest of the batch with saturated single-agent completions.
+			const fillers: SubagentNotifyDetails[] = Array.from({ length: batchSize - 1 }, (_, i) => ({
+				agent: `filler-${i}`,
+				status: "completed" as const,
+				resultPreview: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+			}));
+			const result = formatGroupedCompletion([parentDetails, ...fillers]);
+
+			// 1. Message must fit the ceiling.
+			assert.ok(
+				result.length <= MAX_COMPLETION_MESSAGE_CHARS,
+				`grouped message (${result.length}) must fit MAX_COMPLETION_MESSAGE_CHARS at batch size ${batchSize}`,
+			);
+
+			// 2. All 8 inner artifact pointers must survive (pre-fix: only 1 survived at batch size 8).
+			const innerArtifactCount = Array.from({ length: 8 }, (_, i) =>
+				result.includes(`Output artifact: /tmp/artifacts/worker-${i}.md`) ? 1 : 0,
+			).reduce((a: number, b: number) => a + b, 0);
+			assert.equal(
+				innerArtifactCount,
+				8,
+				`expected 8 inner artifact pointers but found ${innerArtifactCount} at batch size ${batchSize}`,
+			);
+		});
+	}
+
+	// Acceptance criterion 4: no mangled truncation-marker fragments in any output.
+	// At very tight ceilings, summary lines must be suppressed entirely rather than
+	// producing fragments like "… [su" or "… [summary tru".
+	it("no mangled truncation-marker fragments at any ceiling", () => {
+		const CEILINGS = [32_000, 10_000, 5_000, 2_000, 1_000, 500, 200, 100];
+		const MANGLED_RE = /… \[s(?!ummary truncated\])/; // "… [s" not followed by "ummary truncated]"
+		const shapes = [
+			// Single child with outer failure.
+			{
+				id: "mangle-1ch-outer",
+				agent: "worker",
+				success: false,
+				state: "failed",
+				summary: "x".repeat(9_000),
+				timestamp: 1,
+				results: [{ agent: "worker", status: "completed", summary: "y".repeat(9_000), index: 0 }],
+			},
+			// Eight children, outer failure without failed child.
+			{
+				id: "mangle-8ch",
+				agent: "parallel",
+				success: false,
+				state: "failed",
+				summary: "x".repeat(9_000),
+				timestamp: 1,
+				results: Array.from({ length: 8 }, (_, i) => ({
+					agent: `worker-${i}`,
+					status: "completed",
+					summary: "y".repeat(9_000),
+					artifactPath: `/a-${i}.md`,
+					sessionPath: `/s-${i}.jsonl`,
+					index: i,
+				})),
+			},
+		];
+		for (const shape of shapes) {
+			const details = buildCompletionDetails(shape as Parameters<typeof buildCompletionDetails>[0]);
+			for (const ceiling of CEILINGS) {
+				const preview = details._reformatPreview!(ceiling);
+				assert.ok(
+					!MANGLED_RE.test(preview),
+					`[${shape.id}] ceiling=${ceiling}: mangled marker found in preview: ${JSON.stringify(preview.slice(0, 80))}`,
+				);
+			}
+		}
+	});
+
+	// =========================================================================
 	// Sanity check: realistic summaries (not saturated) remain completely untruncated
 	// with all 8 child reference lines present after the reservation fix.
+	// =========================================================================
 	it("realistic 4-child result (~3 000 chars each) remains completely untruncated with all reference lines", () => {
 		const { events, sentMessages } = createPi();
 		const shareUrl = "https://share/realistic-sanity";

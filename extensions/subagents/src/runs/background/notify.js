@@ -10,7 +10,6 @@ const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_GROUPED_ENTRIES = 8;
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
-const MIN_PER_CHILD_SUMMARY_CHARS = 2_000;
 const MAX_REFERENCE_CHARS = 500;
 const MAX_NESTED_ENTRIES = 8;
 const MAX_NESTED_DEPTH = 2;
@@ -27,13 +26,18 @@ function truncateWithMarker(value, maxChars, marker) {
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
+const TRUNCATION_MARKER_LEN = "… [summary truncated]".length;
+function boundedSummaryOrSuppress(value, maxChars) {
+    if (value.length <= maxChars)
+        return value;
+    if (maxChars < TRUNCATION_MARKER_LEN)
+        return "";
+    return boundedSummary(value, maxChars);
+}
 function resolvePerChildSummaryBudget(displayedChildCount, nonSummaryCostWithinPreview, ceilingForPreview) {
     const count = Math.max(displayedChildCount, 1);
     const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
-    const perChildShare = Math.floor(availableForSummaries / count);
-    if (perChildShare >= MAX_SUMMARY_CHARS)
-        return MAX_SUMMARY_CHARS;
-    return Math.max(perChildShare, MIN_PER_CHILD_SUMMARY_CHARS);
+    return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
 }
 export function boundedReference(value) {
     return truncateWithMarker(value, MAX_REFERENCE_CHARS, "… [reference truncated]");
@@ -241,52 +245,102 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
     if (children.length === 0)
         return boundedSummary(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
-    const outerFailureSummary = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed")
-        ? boundedSummary(typeof result.summary === "string" ? result.summary : "", MAX_SUMMARY_CHARS)
-        : "";
+    const isUnrepresentedOuterFailure = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed");
     if (children.length === 1) {
         const child = children[0];
         const singleChildRefs = formatChildReferences(child, privacySafe);
+        const singleChildNested = formatNestedChildren(child.children, "   ", nestedBudget);
+        const refsCost = joinedLineCost(singleChildRefs);
+        const nestedCost = joinedLineCost(singleChildNested);
+        const scaffoldFits = refsCost + nestedCost <= ceilingForPreview;
+        const effectiveRefs = scaffoldFits ? singleChildRefs : [];
+        const effectiveNested = scaffoldFits ? singleChildNested : [];
+        const effectiveScaffoldCost = scaffoldFits ? refsCost + nestedCost : 0;
+        const outerSummaryBudget = isUnrepresentedOuterFailure
+            ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - 2))
+            : 0;
+        const outerFailureSummary = isUnrepresentedOuterFailure
+            ? boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", outerSummaryBudget)
+            : "";
         const outerFailureCost = outerFailureSummary ? outerFailureSummary.length + 2 : 0;
-        const childSummaryBudget = Math.min(MAX_SUMMARY_CHARS, Math.max(ceilingForPreview - joinedLineCost(singleChildRefs) - outerFailureCost, MIN_PER_CHILD_SUMMARY_CHARS));
-        const childSummary = boundedSummary(child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? "")), childSummaryBudget);
-        const lines = outerFailureSummary ? [outerFailureSummary, "", childSummary || "(no output)"] : [childSummary];
-        lines.push(...singleChildRefs);
-        lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
+        const childSummaryBudget = Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - outerFailureCost));
+        const childSummarySource = child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? ""));
+        const childSummaryRaw = typeof childSummarySource === "string" ? childSummarySource : "";
+        const childSummaryText = boundedSummaryOrSuppress(childSummaryRaw, childSummaryBudget);
+        const childDisplayText = childSummaryText || (outerFailureSummary ? "(no output)" : "");
+        const showSummaryLine = childDisplayText.length > 0 &&
+            childDisplayText.length <= childSummaryBudget &&
+            !(childSummaryRaw.length > childSummaryBudget && childSummaryBudget < TRUNCATION_MARKER_LEN);
+        const lines = [];
+        if (outerFailureSummary)
+            lines.push(outerFailureSummary, "");
+        if (showSummaryLine)
+            lines.push(childDisplayText);
+        lines.push(...effectiveRefs);
+        lines.push(...effectiveNested);
         return lines.join("\n").trim();
     }
-    const lines = [];
-    if (outerFailureSummary)
-        lines.push(outerFailureSummary, "");
     const counts = countChildStatuses(children);
-    if (counts)
-        lines.push(`Children: ${counts}`, "");
+    const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
     const displayedChildren = ["failed", "paused", "completed", "detached"]
         .flatMap((status) => children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const omittedCount = children.length - displayedChildren.length;
-    const outerPreviewLines = [
-        ...(outerFailureSummary ? [outerFailureSummary, ""] : []),
-        ...(counts ? [`Children: ${counts}`, ""] : []),
-        ...(omittedCount > 0 ? [`… [${omittedCount} child results omitted]`, ""] : []),
-    ];
     const nestedBudgetForCost = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
-    const perChildScaffoldCost = displayedChildren.reduce((total, { child, index, status }) => {
+    const childCosts = displayedChildren.map(({ child, index, status }) => {
         const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
         const refs = formatChildReferences(child, privacySafe);
         const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
-        return total + joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
-    }, 0);
-    const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCost;
-    const perChildBudget = resolvePerChildSummaryBudget(displayedChildren.length, nonSummaryCost, ceilingForPreview);
-    if (omittedCount > 0) {
-        lines.push(`… [${omittedCount} child results omitted]`, "");
+        return joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+    });
+    let effectiveCount = displayedChildren.length;
+    while (effectiveCount > 0) {
+        const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+        const effectiveOmitted = children.length - effectiveCount;
+        const omissionCost = effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+        if (partialScaffold + countsCost + omissionCost <= ceilingForPreview)
+            break;
+        effectiveCount--;
     }
-    for (const { child, index, status } of displayedChildren) {
+    const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
+    const effectiveOmittedCount = children.length - effectiveCount;
+    const perChildScaffoldCostForEffective = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+    const effectiveOmissionCost = effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+    const totalFixedScaffoldCost = perChildScaffoldCostForEffective + countsCost + effectiveOmissionCost;
+    const outerSummaryBudget = isUnrepresentedOuterFailure
+        ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - totalFixedScaffoldCost - 2))
+        : 0;
+    const outerFailureSummary = isUnrepresentedOuterFailure
+        ? boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", outerSummaryBudget)
+        : "";
+    const outerPreviewLines = [
+        ...(outerFailureSummary ? [outerFailureSummary, ""] : []),
+        ...(counts ? [`Children: ${counts}`, ""] : []),
+        ...(effectiveOmittedCount > 0 ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
+    ];
+    const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCostForEffective;
+    const perChildBudget = resolvePerChildSummaryBudget(effectiveDisplayedChildren.length, nonSummaryCost, ceilingForPreview);
+    const lines = [];
+    if (outerFailureSummary)
+        lines.push(outerFailureSummary, "");
+    if (counts)
+        lines.push(`Children: ${counts}`, "");
+    if (effectiveOmittedCount > 0)
+        lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
+    for (const { child, index, status } of effectiveDisplayedChildren) {
         lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-        lines.push(boundedSummary((child.summary ?? child.output ?? "").trim(), perChildBudget) || "(no output)");
+        const rawSummary = (child.summary ?? child.output ?? "").trim();
+        if (rawSummary === "") {
+            if ("(no output)".length <= perChildBudget)
+                lines.push("(no output)");
+        }
+        else if (rawSummary.length <= perChildBudget) {
+            lines.push(rawSummary);
+        }
+        else if (perChildBudget >= TRUNCATION_MARKER_LEN) {
+            lines.push(boundedSummary(rawSummary, perChildBudget));
+        }
         lines.push(...formatChildReferences(child, privacySafe));
         lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         lines.push("");

@@ -52,11 +52,6 @@ import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
 // shared/types.ts), so 32 000 is still ~6x tighter than foreground for the same
 // work; the previous 8 000 was ~25x tighter, and that asymmetry was the defect.
 //
-// Wide fan-out overflow rule: when displayedChildren * MAX_SUMMARY_CHARS would
-// exceed the ceiling, fall back to an equal share floored at
-// MIN_PER_CHILD_SUMMARY_CHARS so no child is starved. At MAX_DISPLAYED_CHILDREN=8
-// that yields 4 000 per child (81% coverage) versus the old 1 200 (35%).
-//
 // MAX_DISPLAY_SUMMARY_CHARS is the TUI-only cap; it is applied both at send
 // time (structuredDetails.resultPreview) and at render time so a larger content
 // string does not produce a wall of text in the terminal.
@@ -68,9 +63,6 @@ const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_GROUPED_ENTRIES = 8;
 const MAX_SUMMARY_CHARS = 8_000;
 export const MAX_DISPLAY_SUMMARY_CHARS = 1_200;
-// Overflow floor: the guarantee that a child is never starved below ~60%
-// coverage when a wide fan-out forces the equal-share fallback.
-const MIN_PER_CHILD_SUMMARY_CHARS = 2_000;
 const MAX_REFERENCE_CHARS = 500;
 const MAX_NESTED_ENTRIES = 8;
 const MAX_NESTED_DEPTH = 2;
@@ -166,6 +158,23 @@ function boundedSummary(value: string, maxChars: number): string {
 	return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
 
+// Length of the standard truncation marker produced by boundedSummary.
+// A budget smaller than this cannot hold a well-formed marker, so summary lines
+// must be suppressed entirely rather than producing a mangled fragment like "… [su".
+const TRUNCATION_MARKER_LEN = "… [summary truncated]".length; // 21
+
+/**
+ * Like boundedSummary, but returns "" when the budget is too tight to produce a
+ * well-formed truncation marker (TRUNCATION_MARKER_LEN chars). This prevents mangled
+ * fragments such as "… [su" from reaching the rendered output. When the text fits
+ * within the budget it is returned unchanged.
+ */
+function boundedSummaryOrSuppress(value: string, maxChars: number): string {
+	if (value.length <= maxChars) return value;
+	if (maxChars < TRUNCATION_MARKER_LEN) return "";
+	return boundedSummary(value, maxChars);
+}
+
 /**
  * Per-child summary budget for the grouped shape.
  *
@@ -179,8 +188,11 @@ function boundedSummary(value: string, maxChars: number): string {
  *
  * Every displayed child gets the full MAX_SUMMARY_CHARS budget when the collective
  * summary text fits within the ceiling after reservation. Only when a wide fan-out
- * forces a smaller per-child share do we fall back to an equal split, floored at
- * MIN_PER_CHILD_SUMMARY_CHARS so no child is starved.
+ * forces a smaller per-child share do we fall back to an equal split. The former
+ * MIN_PER_CHILD_SUMMARY_CHARS floor is intentionally absent: at the top-level ceiling
+ * (32 000) with worst-case scaffolding the per-child share never drops below ~2 750,
+ * so the floor delivered no benefit there and only caused overshoot in grouped contexts
+ * where it forced per-child budgets past the available ceiling.
  */
 function resolvePerChildSummaryBudget(
 	displayedChildCount: number,
@@ -193,9 +205,7 @@ function resolvePerChildSummaryBudget(
 	// than optimal, but recovery pointers are guaranteed. Under-reservation is the bug
 	// this function previously had at count * MAX_SUMMARY_CHARS === MAX_COMPLETION_MESSAGE_CHARS.
 	const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
-	const perChildShare = Math.floor(availableForSummaries / count);
-	if (perChildShare >= MAX_SUMMARY_CHARS) return MAX_SUMMARY_CHARS;
-	return Math.max(perChildShare, MIN_PER_CHILD_SUMMARY_CHARS);
+	return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
 }
 
 export function boundedReference(value: string): string {
@@ -431,6 +441,15 @@ function formatProtectedLifecyclePreview(result: SubagentResult): string {
  * space is further divided by subtracting inner preview scaffolding (labels, reference
  * lines, blank separators, outer-failure summary, counts header) before distributing the
  * remainder among per-child summaries via resolvePerChildSummaryBudget.
+ *
+ * Ceiling contract: this function NEVER returns a string longer than ceilingForPreview.
+ * The four mechanisms that enforce this are:
+ *   1. resolvePerChildSummaryBudget uses no floor so per-child budgets are always ≤ the
+ *      available space.
+ *   2. Outer failure summaries are bounded by ceilingForPreview minus fixed scaffolding.
+ *   3. The single-child summary budget is floored at 0 (not MIN_PER_CHILD_SUMMARY_CHARS).
+ *   4. Summary lines are suppressed entirely when the budget is too tight to produce a
+ *      well-formed truncation marker, preventing mangled fragments.
  */
 function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS): string {
 	const privacySafe = isProtectedPausedLifecycle({
@@ -445,33 +464,60 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 			typeof result.summary === "string" ? result.summary : "",
 			Math.min(MAX_SUMMARY_CHARS, ceilingForPreview),
 		);
-	const outerFailureSummary =
-		resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed")
-			? boundedSummary(typeof result.summary === "string" ? result.summary : "", MAX_SUMMARY_CHARS)
-			: "";
+	// True when the outer result failed but no child individually failed. In that case the
+	// outer summary is the primary diagnostic and is prepended to the child section.
+	const isUnrepresentedOuterFailure =
+		resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed");
 	if (children.length === 1) {
 		const child = children[0]!;
+		// Compute refs and nested upfront so their cost can bound the outer-summary budget.
+		// Nested is computed here (consuming nestedBudget once) and reused in rendering.
 		const singleChildRefs = formatChildReferences(child, privacySafe);
-		// Reserve ref lines so they survive even when ceilingForPreview is tight (e.g. grouped
-		// context). The outer failure summary cost is already accounted for as fixed prose.
+		const singleChildNested = formatNestedChildren(child.children, "   ", nestedBudget);
+		const refsCost = joinedLineCost(singleChildRefs);
+		const nestedCost = joinedLineCost(singleChildNested);
+		// Drop refs and nested entirely when they alone exceed the ceiling. At those ceilings
+		// the recovery pointers cannot be preserved; the summary gets the full budget instead.
+		const scaffoldFits = refsCost + nestedCost <= ceilingForPreview;
+		const effectiveRefs = scaffoldFits ? singleChildRefs : [];
+		const effectiveNested = scaffoldFits ? singleChildNested : [];
+		const effectiveScaffoldCost = scaffoldFits ? refsCost + nestedCost : 0;
+		// Bound the outer failure summary to leave room for refs/nested + separator so
+		// the fixed scaffold lines are never crowded out by a long outer summary.
+		const outerSummaryBudget = isUnrepresentedOuterFailure
+			? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - effectiveScaffoldCost - 2))
+			: 0;
+		const outerFailureSummary = isUnrepresentedOuterFailure
+			? boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", outerSummaryBudget)
+			: "";
+		// The child summary budget floors at 0 (no absolute minimum) so it never
+		// exceeds the remaining space after the outer failure summary is reserved.
 		const outerFailureCost = outerFailureSummary ? outerFailureSummary.length + 2 : 0; // +2: blank+newline
 		const childSummaryBudget = Math.min(
 			MAX_SUMMARY_CHARS,
-			Math.max(ceilingForPreview - joinedLineCost(singleChildRefs) - outerFailureCost, MIN_PER_CHILD_SUMMARY_CHARS),
+			Math.max(0, ceilingForPreview - effectiveScaffoldCost - outerFailureCost),
 		);
-		const childSummary = boundedSummary(
-			child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? "")),
-			childSummaryBudget,
-		);
-		const lines = outerFailureSummary ? [outerFailureSummary, "", childSummary || "(no output)"] : [childSummary];
-		lines.push(...singleChildRefs);
-		lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
+		const childSummarySource = child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? ""));
+		const childSummaryRaw = typeof childSummarySource === "string" ? childSummarySource : "";
+		// Suppress the summary line when the budget cannot hold a well-formed truncation
+		// marker. Also suppress "(no output)" when the budget cannot even hold that
+		// 9-char fallback — both cases could otherwise produce ceiling violations.
+		const childSummaryText = boundedSummaryOrSuppress(childSummaryRaw, childSummaryBudget);
+		const childDisplayText = childSummaryText || (outerFailureSummary ? "(no output)" : "");
+		const showSummaryLine =
+			childDisplayText.length > 0 &&
+			childDisplayText.length <= childSummaryBudget &&
+			!(childSummaryRaw.length > childSummaryBudget && childSummaryBudget < TRUNCATION_MARKER_LEN);
+		const lines: string[] = [];
+		if (outerFailureSummary) lines.push(outerFailureSummary, "");
+		if (showSummaryLine) lines.push(childDisplayText);
+		lines.push(...effectiveRefs);
+		lines.push(...effectiveNested);
 		return lines.join("\n").trim();
 	}
-	const lines: string[] = [];
-	if (outerFailureSummary) lines.push(outerFailureSummary, "");
+	// Multi-child path.
 	const counts = countChildStatuses(children);
-	if (counts) lines.push(`Children: ${counts}`, "");
+	const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
 	const displayedChildren = ["failed", "paused", "completed", "detached"]
 		.flatMap((status) =>
 			children
@@ -479,41 +525,79 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 				.filter((entry) => entry.status === status),
 		)
 		.slice(0, MAX_DISPLAYED_CHILDREN);
-	// Compute the non-summary scaffolding cost before dividing the remaining ceiling among
-	// displayed children. This prevents the bug species: allocating the full ceiling to
-	// summary text and leaving zero for per-child labels, reference lines, blank separators,
-	// and outer-preview content (failure summary, counts header, omission marker).
-	//
-	// A separate NestedFormatBudget is used here so the cost-computation pass does not
-	// consume the shared budget that the rendering pass below needs.
-	const omittedCount = children.length - displayedChildren.length;
-	const outerPreviewLines: string[] = [
-		...(outerFailureSummary ? [outerFailureSummary, ""] : []),
-		...(counts ? [`Children: ${counts}`, ""] : []),
-		...(omittedCount > 0 ? [`… [${omittedCount} child results omitted]`, ""] : []),
-	];
+	// Compute per-child scaffold costs upfront using a separate NestedFormatBudget so the
+	// shared nestedBudget is not consumed by the cost-estimation pass.
 	const nestedBudgetForCost: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
-	const perChildScaffoldCost = displayedChildren.reduce((total, { child, index, status }) => {
+	const childCosts = displayedChildren.map(({ child, index, status }) => {
 		const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
 		const refs = formatChildReferences(child, privacySafe);
 		const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
 		// Include an empty placeholder for the summary's position so joinedLineCost accounts
-		// for the separator between the summary and the first ref line. Without the placeholder,
-		// that separator is missing from the cost estimate, causing the rendered preview to
-		// overshoot the ceiling by one char per non-last child.
-		return total + joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
-	}, 0);
-	const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCost;
-	// Each displayed child gets the full per-child budget when the collective summaries
-	// fit after reservation. Only when a wide fan-out forces a smaller per-child share
-	// do we fall back to an equal split, floored so no child is starved.
-	const perChildBudget = resolvePerChildSummaryBudget(displayedChildren.length, nonSummaryCost, ceilingForPreview);
-	if (omittedCount > 0) {
-		lines.push(`… [${omittedCount} child results omitted]`, "");
+		// for the separator between the label and the first ref line.
+		return joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+	});
+	// Dynamic reduction: drop trailing displayed children when their scaffolding alone would
+	// exceed the ceiling, incrementing the omission counter instead. This implements the
+	// ordering rule: drop whole children (with the existing omission marker) rather than
+	// silently tail-cutting any child that would otherwise be shown partially.
+	let effectiveCount = displayedChildren.length;
+	while (effectiveCount > 0) {
+		const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+		const effectiveOmitted = children.length - effectiveCount;
+		const omissionCost =
+			effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+		if (partialScaffold + countsCost + omissionCost <= ceilingForPreview) break;
+		effectiveCount--;
 	}
-	for (const { child, index, status } of displayedChildren) {
+	const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
+	const effectiveOmittedCount = children.length - effectiveCount;
+	const perChildScaffoldCostForEffective = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+	const effectiveOmissionCost =
+		effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+	const totalFixedScaffoldCost = perChildScaffoldCostForEffective + countsCost + effectiveOmissionCost;
+	// Bound the outer failure summary to leave room for child scaffolding.
+	// Reserve 2 chars for the blank separator that follows the outer failure summary.
+	const outerSummaryBudget = isUnrepresentedOuterFailure
+		? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - totalFixedScaffoldCost - 2))
+		: 0;
+	const outerFailureSummary = isUnrepresentedOuterFailure
+		? boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", outerSummaryBudget)
+		: "";
+	const outerPreviewLines: string[] = [
+		...(outerFailureSummary ? [outerFailureSummary, ""] : []),
+		...(counts ? [`Children: ${counts}`, ""] : []),
+		...(effectiveOmittedCount > 0 ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
+	];
+	const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCostForEffective;
+	// The per-child summary budget is derived purely from the space actually available
+	// after all fixed scaffold costs are reserved. There is no absolute floor because
+	// an absolute floor can exceed the ceiling in constrained grouped contexts, forcing
+	// per-child budgets past the available space and causing end-truncation that
+	// destroys recovery pointers.
+	const perChildBudget = resolvePerChildSummaryBudget(
+		effectiveDisplayedChildren.length,
+		nonSummaryCost,
+		ceilingForPreview,
+	);
+	// Render.
+	const lines: string[] = [];
+	if (outerFailureSummary) lines.push(outerFailureSummary, "");
+	if (counts) lines.push(`Children: ${counts}`, "");
+	if (effectiveOmittedCount > 0) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
+	for (const { child, index, status } of effectiveDisplayedChildren) {
 		lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-		lines.push(boundedSummary((child.summary ?? child.output ?? "").trim(), perChildBudget) || "(no output)");
+		// Suppress the summary line when the budget is too tight to produce a well-formed
+		// truncation marker or even a "(no output)" placeholder. Emitting either when the
+		// budget is below the minimum would produce ceiling violations.
+		const rawSummary = (child.summary ?? child.output ?? "").trim();
+		if (rawSummary === "") {
+			if ("(no output)".length <= perChildBudget) lines.push("(no output)");
+		} else if (rawSummary.length <= perChildBudget) {
+			lines.push(rawSummary);
+		} else if (perChildBudget >= TRUNCATION_MARKER_LEN) {
+			lines.push(boundedSummary(rawSummary, perChildBudget));
+		}
+		// else: suppress (budget too tight for a well-formed truncation marker)
 		lines.push(...formatChildReferences(child, privacySafe));
 		lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
 		lines.push("");
