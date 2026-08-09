@@ -1988,13 +1988,34 @@ describe("completion formatting helpers", () => {
 	// ceilingForPreview for EVERY (shape, ceiling) combination listed here.
 	// This sweep is the durable guard that prevents future changes from silently
 	// overshooting the ceiling across any result shape or budget size.
+	//
+	// It asserts TWO independent properties per combination, because a length-only
+	// assertion passes happily on a sliced truncation marker: a budget below a marker's
+	// width makes truncateWithMarker emit a marker prefix such as "… [su", which honours
+	// the ceiling while reading as a corrupted truncation notice. Marker integrity is
+	// therefore checked alongside length.
 	// =========================================================================
 	describe("formatResultPreview ceiling-contract sweep", () => {
-		const CEILINGS = [32_000, 20_000, 10_000, 5_000, 3_700, 2_000, 1_000, 500, 200, 100];
+		const CEILINGS = [32_000, 20_000, 10_000, 5_000, 3_700, 2_000, 1_000, 500, 200, 100, 50, 20, 10, 5, 1, 0];
 		const LONG_PATH = "x".repeat(500);
 
+		// Every marker this module emits has the shape "… [<text>]". A bare "…" that is not
+		// followed by a complete bracketed marker is a sliced fragment. Sweep fixtures never
+		// contain "…" in their own summary text, so any occurrence here originates from a marker.
+		const WELL_FORMED_MARKER = /^… \[[^[\]]*\]/;
+		function assertNoMangledMarker(label: string, ceiling: number, text: string) {
+			for (let i = text.indexOf("…"); i !== -1; i = text.indexOf("…", i + 1)) {
+				assert.ok(
+					WELL_FORMED_MARKER.test(text.slice(i)),
+					`[${label}] ceiling=${ceiling}: mangled marker fragment at index ${i}: ${JSON.stringify(
+						text.slice(i, i + 40),
+					)}`,
+				);
+			}
+		}
+
 		function checkCeiling(label: string, makeResult: () => object) {
-			it(`${label} — preview.length <= ceiling for all ${CEILINGS.length} ceilings`, () => {
+			it(`${label} — length <= ceiling and no mangled markers for all ${CEILINGS.length} ceilings`, () => {
 				const result = makeResult() as Parameters<typeof buildCompletionDetails>[0];
 				const details = buildCompletionDetails(result);
 				assert.ok(typeof details._reformatPreview === "function", "_reformatPreview must be defined");
@@ -2004,6 +2025,7 @@ describe("completion formatting helpers", () => {
 						preview.length <= ceiling,
 						`[${label}] ceiling=${ceiling}: preview.length=${preview.length} > ceiling`,
 					);
+					assertNoMangledMarker(label, ceiling, preview);
 				}
 			});
 		}

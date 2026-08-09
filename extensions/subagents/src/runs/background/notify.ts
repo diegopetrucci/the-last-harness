@@ -163,6 +163,16 @@ function boundedSummary(value: string, maxChars: number): string {
 // must be suppressed entirely rather than producing a mangled fragment like "… [su".
 const TRUNCATION_MARKER_LEN = "… [summary truncated]".length; // 21
 
+// Marker integrity rule for this module: truncateWithMarker falls back to
+// marker.slice(0, maxChars) when the budget cannot hold the whole marker, which yields
+// a fragment that reads as a corrupted truncation notice rather than as content. Any
+// call site whose budget is COMPUTED (derived from a ceiling, a per-child division, or
+// remaining space) must therefore go through boundedSummaryOrSuppress so an
+// impossible budget produces nothing instead of a fragment. Call sites whose budget is
+// a module constant far larger than their marker cannot reach that fallback and may use
+// truncateWithMarker directly: boundedReference (500 vs 23), boundedLabel (160 vs 19),
+// the sendCompletion envelope cut (32 000 vs 33) and the display-cap cut (1 200 vs 21).
+
 /**
  * Like boundedSummary, but returns "" when the budget is too tight to produce a
  * well-formed truncation marker (TRUNCATION_MARKER_LEN chars). This prevents mangled
@@ -459,8 +469,11 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 	if (privacySafe) return formatProtectedLifecyclePreview(result);
 	const children = Array.isArray(result.results) ? result.results : [];
 	const nestedBudget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+	// The budget here is caller-derived, so it can fall below the truncation-marker width.
+	// Suppress rather than emit a sliced marker: an empty preview at a 5-char ceiling is
+	// correct, a string that looks like a corrupted truncation notice is not.
 	if (children.length === 0)
-		return boundedSummary(
+		return boundedSummaryOrSuppress(
 			typeof result.summary === "string" ? result.summary : "",
 			Math.min(MAX_SUMMARY_CHARS, ceilingForPreview),
 		);
@@ -554,7 +567,17 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 	const perChildScaffoldCostForEffective = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
 	const effectiveOmissionCost =
 		effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
-	const totalFixedScaffoldCost = perChildScaffoldCostForEffective + countsCost + effectiveOmissionCost;
+	// The counts header and omission marker are informational only — they carry no recovery
+	// pointers. When the reduction loop has suppressed every displayable child, also check
+	// whether these lines together fit within the ceiling; if not, suppress them rather than
+	// breach it. When at least one child is displayed the loop already verified they fit.
+	const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
+	const showCountsLine = !!counts && optionalLinesAffordable;
+	const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
+	const totalFixedScaffoldCost =
+		perChildScaffoldCostForEffective +
+		(showCountsLine ? countsCost : 0) +
+		(showOmissionLine ? effectiveOmissionCost : 0);
 	// Bound the outer failure summary to leave room for child scaffolding.
 	// Reserve 2 chars for the blank separator that follows the outer failure summary.
 	const outerSummaryBudget = isUnrepresentedOuterFailure
@@ -565,8 +588,8 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 		: "";
 	const outerPreviewLines: string[] = [
 		...(outerFailureSummary ? [outerFailureSummary, ""] : []),
-		...(counts ? [`Children: ${counts}`, ""] : []),
-		...(effectiveOmittedCount > 0 ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
+		...(showCountsLine ? [`Children: ${counts}`, ""] : []),
+		...(showOmissionLine ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
 	];
 	const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCostForEffective;
 	// The per-child summary budget is derived purely from the space actually available
@@ -582,8 +605,8 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 	// Render.
 	const lines: string[] = [];
 	if (outerFailureSummary) lines.push(outerFailureSummary, "");
-	if (counts) lines.push(`Children: ${counts}`, "");
-	if (effectiveOmittedCount > 0) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
+	if (showCountsLine) lines.push(`Children: ${counts}`, "");
+	if (showOmissionLine) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
 	for (const { child, index, status } of effectiveDisplayedChildren) {
 		lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
 		// Suppress the summary line when the budget is too tight to produce a well-formed
@@ -627,7 +650,9 @@ function joinedLineCost(lines: string[]): number {
 function fitPreviewWithinCeiling(preview: string, reservedChars: number, ceiling: number): string {
 	const available = ceiling - reservedChars;
 	if (preview.length <= available) return preview;
-	return boundedSummary(preview, Math.max(available, 0));
+	// `available` is computed from the ceiling minus reserved scaffolding and can fall below
+	// the truncation-marker width, so suppress rather than emit a sliced marker.
+	return boundedSummaryOrSuppress(preview, Math.max(available, 0));
 }
 
 export function formatSingleCompletion(details: SubagentNotifyDetails): string {

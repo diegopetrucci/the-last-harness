@@ -244,7 +244,7 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     const children = Array.isArray(result.results) ? result.results : [];
     const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
     if (children.length === 0)
-        return boundedSummary(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
+        return boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
     const isUnrepresentedOuterFailure = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed");
     if (children.length === 1) {
         const child = children[0];
@@ -307,7 +307,12 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     const effectiveOmittedCount = children.length - effectiveCount;
     const perChildScaffoldCostForEffective = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
     const effectiveOmissionCost = effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
-    const totalFixedScaffoldCost = perChildScaffoldCostForEffective + countsCost + effectiveOmissionCost;
+    const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
+    const showCountsLine = !!counts && optionalLinesAffordable;
+    const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
+    const totalFixedScaffoldCost = perChildScaffoldCostForEffective +
+        (showCountsLine ? countsCost : 0) +
+        (showOmissionLine ? effectiveOmissionCost : 0);
     const outerSummaryBudget = isUnrepresentedOuterFailure
         ? Math.min(MAX_SUMMARY_CHARS, Math.max(0, ceilingForPreview - totalFixedScaffoldCost - 2))
         : 0;
@@ -316,17 +321,17 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
         : "";
     const outerPreviewLines = [
         ...(outerFailureSummary ? [outerFailureSummary, ""] : []),
-        ...(counts ? [`Children: ${counts}`, ""] : []),
-        ...(effectiveOmittedCount > 0 ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
+        ...(showCountsLine ? [`Children: ${counts}`, ""] : []),
+        ...(showOmissionLine ? [`… [${effectiveOmittedCount} child results omitted]`, ""] : []),
     ];
     const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCostForEffective;
     const perChildBudget = resolvePerChildSummaryBudget(effectiveDisplayedChildren.length, nonSummaryCost, ceilingForPreview);
     const lines = [];
     if (outerFailureSummary)
         lines.push(outerFailureSummary, "");
-    if (counts)
+    if (showCountsLine)
         lines.push(`Children: ${counts}`, "");
-    if (effectiveOmittedCount > 0)
+    if (showOmissionLine)
         lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
     for (const { child, index, status } of effectiveDisplayedChildren) {
         lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
@@ -354,7 +359,7 @@ function fitPreviewWithinCeiling(preview, reservedChars, ceiling) {
     const available = ceiling - reservedChars;
     if (preview.length <= available)
         return preview;
-    return boundedSummary(preview, Math.max(available, 0));
+    return boundedSummaryOrSuppress(preview, Math.max(available, 0));
 }
 export function formatSingleCompletion(details) {
     const asyncIdLine = formatAsyncIdLine(details);
