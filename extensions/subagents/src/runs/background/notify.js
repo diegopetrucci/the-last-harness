@@ -27,11 +27,13 @@ function truncateWithMarker(value, maxChars, marker) {
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
-function resolvePerChildSummaryBudget(displayedChildCount) {
+function resolvePerChildSummaryBudget(displayedChildCount, nonSummaryCostWithinPreview, ceilingForPreview) {
     const count = Math.max(displayedChildCount, 1);
-    if (count * MAX_SUMMARY_CHARS <= MAX_COMPLETION_MESSAGE_CHARS)
+    const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
+    const perChildShare = Math.floor(availableForSummaries / count);
+    if (perChildShare >= MAX_SUMMARY_CHARS)
         return MAX_SUMMARY_CHARS;
-    return Math.max(Math.floor(MAX_COMPLETION_MESSAGE_CHARS / count), MIN_PER_CHILD_SUMMARY_CHARS);
+    return Math.max(perChildShare, MIN_PER_CHILD_SUMMARY_CHARS);
 }
 export function boundedReference(value) {
     return truncateWithMarker(value, MAX_REFERENCE_CHARS, "… [reference truncated]");
@@ -228,7 +230,7 @@ function formatProtectedLifecyclePreview(result) {
     }
     return lines.join("\n").trimEnd() || "Paused awaiting supervisor.";
 }
-function formatResultPreview(result) {
+function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS) {
     const privacySafe = isProtectedPausedLifecycle({
         state: result.state,
         pause: result.pause,
@@ -238,15 +240,18 @@ function formatResultPreview(result) {
     const children = Array.isArray(result.results) ? result.results : [];
     const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
     if (children.length === 0)
-        return boundedSummary(typeof result.summary === "string" ? result.summary : "", MAX_SUMMARY_CHARS);
+        return boundedSummary(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
     const outerFailureSummary = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed")
         ? boundedSummary(typeof result.summary === "string" ? result.summary : "", MAX_SUMMARY_CHARS)
         : "";
     if (children.length === 1) {
         const child = children[0];
-        const childSummary = boundedSummary(child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? "")), MAX_SUMMARY_CHARS);
+        const singleChildRefs = formatChildReferences(child, privacySafe);
+        const outerFailureCost = outerFailureSummary ? outerFailureSummary.length + 2 : 0;
+        const childSummaryBudget = Math.min(MAX_SUMMARY_CHARS, Math.max(ceilingForPreview - joinedLineCost(singleChildRefs) - outerFailureCost, MIN_PER_CHILD_SUMMARY_CHARS));
+        const childSummary = boundedSummary(child.summary ?? child.output ?? (outerFailureSummary ? "" : (result.summary ?? "")), childSummaryBudget);
         const lines = outerFailureSummary ? [outerFailureSummary, "", childSummary || "(no output)"] : [childSummary];
-        lines.push(...formatChildReferences(child, privacySafe));
+        lines.push(...singleChildRefs);
         lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         return lines.join("\n").trim();
     }
@@ -261,9 +266,23 @@ function formatResultPreview(result) {
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const perChildBudget = resolvePerChildSummaryBudget(displayedChildren.length);
-    if (children.length > displayedChildren.length) {
-        lines.push(`… [${children.length - displayedChildren.length} child results omitted]`, "");
+    const omittedCount = children.length - displayedChildren.length;
+    const outerPreviewLines = [
+        ...(outerFailureSummary ? [outerFailureSummary, ""] : []),
+        ...(counts ? [`Children: ${counts}`, ""] : []),
+        ...(omittedCount > 0 ? [`… [${omittedCount} child results omitted]`, ""] : []),
+    ];
+    const nestedBudgetForCost = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const perChildScaffoldCost = displayedChildren.reduce((total, { child, index, status }) => {
+        const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
+        const refs = formatChildReferences(child, privacySafe);
+        const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
+        return total + joinedLineCost([labelLine, "", ...refs, ...nested, ""]);
+    }, 0);
+    const nonSummaryCost = joinedLineCost(outerPreviewLines) + perChildScaffoldCost;
+    const perChildBudget = resolvePerChildSummaryBudget(displayedChildren.length, nonSummaryCost, ceilingForPreview);
+    if (omittedCount > 0) {
+        lines.push(`… [${omittedCount} child results omitted]`, "");
     }
     for (const { child, index, status } of displayedChildren) {
         lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
@@ -296,7 +315,15 @@ export function formatSingleCompletion(details) {
         asyncIdLine || pausedSupervisorActionLines.length > 0 || resumeLine ? "" : undefined,
     ].filter((line) => line !== undefined);
     const tailLines = [sessionLine ? "" : undefined, sessionLine].filter((line) => line !== undefined);
-    const preview = fitPreviewWithinCeiling(details.resultPreview.trim() ? details.resultPreview : "(no output)", joinedLineCost(headLines) + joinedLineCost(tailLines), MAX_COMPLETION_MESSAGE_CHARS);
+    const headCost = joinedLineCost(headLines);
+    const tailCost = joinedLineCost(tailLines);
+    const ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS - headCost - tailCost;
+    const previewSource = details._reformatPreview
+        ? details._reformatPreview(ceilingForPreview)
+        : details.resultPreview.trim()
+            ? details.resultPreview
+            : "(no output)";
+    const preview = fitPreviewWithinCeiling(previewSource.trim() ? previewSource : "(no output)", headCost + tailCost, MAX_COMPLETION_MESSAGE_CHARS);
     return [...headLines, preview, ...tailLines].join("\n");
 }
 export function formatGroupedCompletion(details) {
@@ -332,7 +359,12 @@ export function formatGroupedCompletion(details) {
     }
     for (const entry of entries) {
         blocks.push(...entry.headLines);
-        blocks.push(fitPreviewWithinCeiling(entry.detail.resultPreview.trim() ? entry.detail.resultPreview : "(no output)", 0, previewCeiling));
+        const previewSource = entry.detail._reformatPreview
+            ? entry.detail._reformatPreview(previewCeiling)
+            : entry.detail.resultPreview.trim()
+                ? entry.detail.resultPreview
+                : "(no output)";
+        blocks.push(fitPreviewWithinCeiling(previewSource.trim() ? previewSource : "(no output)", 0, previewCeiling));
         blocks.push(...entry.tailLines);
     }
     return blocks.join("\n").trimEnd();
@@ -343,9 +375,10 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
         return;
     const formatted = details.length === 1 ? formatSingleCompletion(details[0]) : formatGroupedCompletion(details);
     const content = truncateWithMarker(formatted, MAX_COMPLETION_MESSAGE_CHARS, "\n… [completion message truncated]");
+    const { _reformatPreview: _discardReformat, ...serializableDetail } = details[0] ?? {};
     const structuredDetails = details.length === 1
         ? {
-            ...details[0],
+            ...serializableDetail,
             resultPreview: boundedSummary(details[0].resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
             ...(details[0].sessionValue ? { sessionValue: boundedReference(details[0].sessionValue) } : {}),
             ...(details[0].awaitingSupervisor && details[0].resumeTarget
@@ -421,6 +454,7 @@ export function buildCompletionDetails(result) {
         status,
         ...(taskInfo ? { taskInfo } : {}),
         resultPreview: formatResultPreview(result),
+        _reformatPreview: (ceilingForPreview) => formatResultPreview(result, ceilingForPreview),
         ...(typeof result.durationMs === "number" ? { durationMs: result.durationMs } : {}),
         ...(asyncId ? { asyncId } : {}),
         ...(resumeTarget ? { resumeTarget } : {}),

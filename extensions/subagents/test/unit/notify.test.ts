@@ -501,12 +501,12 @@ describe("registerSubagentNotify", () => {
 		assert.match(content, /Session: \/safe\/sessions\/worker-0\.jsonl/);
 		assert.match(content, /… \[nested depth limit reached\]/);
 		assert.match(content, /… \[additional nested entries omitted\]/);
-		// Oversized per-child summaries are clamped to the pool-derived per-child budget, so the
+		// Oversized per-child summaries are clamped to the fixed per-child budget, so the
 		// assembled message fits the envelope without the backstop firing. This is what keeps the
 		// trailing recovery references (asserted above) from being truncated away.
 		assert.ok(
 			!content.includes("… [completion message truncated]"),
-			"pool-budgeted summaries must leave envelope headroom so the backstop does not fire",
+			"per-child-budgeted summaries must leave envelope headroom so the backstop does not fire",
 		);
 		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
 		assert.doesNotMatch(content, /stale-target/);
@@ -1492,7 +1492,7 @@ describe("completion formatting helpers", () => {
 
 	it("single-result notice carries summary up to the single-result budget and still respects the envelope", () => {
 		// A summary between MAX_DISPLAY_SUMMARY_CHARS (1 200) and MAX_SUMMARY_CHARS
-		// (~6 000) must reach the model in full via content while structuredDetails.resultPreview
+		// (8,000) must reach the model in full via content while structuredDetails.resultPreview
 		// is still capped at MAX_DISPLAY_SUMMARY_CHARS for the TUI.
 		const { events, sentMessages } = createPi();
 		const longSummary = `rich result: ${"r".repeat(4_000)}`;
@@ -1527,7 +1527,7 @@ describe("completion formatting helpers", () => {
 		);
 	});
 
-	it("grouped notice divides the summary pool across displayed children rather than a fixed per-child cap", () => {
+	it("grouped notice gives each displayed child the full per-child budget so both summaries arrive untruncated", () => {
 		// Two children each with a summary between MAX_DISPLAY_SUMMARY_CHARS (1 200) and the
 		// per-child budget (MAX_SUMMARY_CHARS = 8 000 at this fan-out). Both appear untruncated,
 		// proving each child gets the full per-child budget rather than a divided share.
@@ -1781,5 +1781,289 @@ describe("completion formatting helpers", () => {
 				`session pointer for worker-${i} must survive the send-time ceiling in the batched path`,
 			);
 		}
+	});
+
+	// =========================================================================
+	// Bug-species regression: per-child scaffolding reservation fixes
+	//
+	// These three groups test the three occurrences of the same bug: a budget
+	// divided up to the ceiling without reserving the fixed recovery scaffolding
+	// (per-child labels, Output artifact: and Session: lines) that must travel
+	// with the allocated content. In all three shapes, EVERY displayed child must
+	// retain BOTH reference lines even when summaries are saturated.
+	// =========================================================================
+
+	// --- Occurrence 1: resolvePerChildSummaryBudget equality defect ---
+	// Prior to the fix, count * MAX_SUMMARY_CHARS === MAX_COMPLETION_MESSAGE_CHARS
+	// returned the full 8 000 per child, leaving zero for labels, reference lines,
+	// blank separators, and outer scaffolding. n=4 was the exact equality case;
+	// n=5 and n=8 triggered the equal-share fallback which also failed to reserve
+	// the per-child non-summary cost. All three pinned at exactly 32 000 chars
+	// with the last child's reference pair missing.
+	for (const childCount of [2, 4, 5, 8]) {
+		it(`every displayed child retains BOTH reference lines at n=${childCount} when the per-child budget exactly consumes the ceiling`, () => {
+			const { events, sentMessages } = createPi();
+			const shareUrl = `https://share/per-child-refs-${childCount}`;
+			const results = Array.from({ length: childCount }, (_, index) => ({
+				agent: `worker-${index}`,
+				status: "completed",
+				// Saturate each child's summary budget so the per-child budget is the
+				// binding constraint and reference lines are at maximum risk.
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			}));
+
+			events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+				id: `per-child-refs-${childCount}`,
+				agent: "parallel",
+				success: true,
+				summary: "outer done",
+				timestamp: 1,
+				sessionId: "session-1",
+				shareUrl,
+				results,
+			});
+
+			assert.equal(sentMessages.length, 1);
+			const content = (sentMessages[0]!.message as { content: string }).content;
+
+			// 1. Message must fit the ceiling.
+			assert.ok(
+				content.length <= MAX_COMPLETION_MESSAGE_CHARS,
+				`assembled message (${content.length}) must fit MAX_COMPLETION_MESSAGE_CHARS at n=${childCount}`,
+			);
+
+			// 2. EVERY displayed child must retain BOTH reference lines.
+			// This is the assertion the prior test suite lacked — it only checked the
+			// outer Session line, missing the per-child references entirely.
+			const displayedCount = Math.min(childCount, 8);
+			for (let i = 0; i < displayedCount; i++) {
+				assert.ok(
+					content.includes(`Output artifact: /tmp/artifacts/worker-${i}.md`),
+					`child ${i} artifact reference must survive at n=${childCount}`,
+				);
+				assert.ok(
+					content.includes(`Session: /tmp/sessions/worker-${i}.jsonl`),
+					`child ${i} session reference must survive at n=${childCount}`,
+				);
+			}
+
+			// 3. Outer session recovery pointer also survives.
+			assert.ok(content.includes(`Session: ${shareUrl}`), "outer session pointer must survive");
+		});
+	}
+
+	// --- Occurrence 2: outer failure summary excluded from allocation ---
+	// When the outer result failed (but no child is individually failed) the
+	// outer failure summary consumed up to MAX_SUMMARY_CHARS chars that were not
+	// subtracted from the ceiling before dividing among children. Three saturated
+	// children with an 8 000-char outer failure summary totalled 32 000 before
+	// labels and reference lines, pinning at exactly 32 000 with child 2's
+	// references missing. The fix includes the outer failure summary in the
+	// non-summary-cost reservation before dividing.
+	it("outer failure summary with three saturated children retains all reference lines when the outer summary is excluded from allocation", () => {
+		const { events, sentMessages } = createPi();
+		const shareUrl = "https://share/outer-failure-3children";
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "outer-failure-3ch",
+			agent: "parallel",
+			success: false,
+			// Outer failure summary saturated at MAX_SUMMARY_CHARS.
+			summary: "f".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+			timestamp: 1,
+			sessionId: "session-1",
+			shareUrl,
+			results: Array.from({ length: 3 }, (_, index) => ({
+				agent: `worker-${index}`,
+				// Children all completed — keeps outer as the only failure, triggering
+				// the outerFailureSummary path.
+				status: "completed",
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			})),
+		});
+
+		assert.equal(sentMessages.length, 1);
+		const content = (sentMessages[0]!.message as { content: string }).content;
+
+		// 1. Message must fit the ceiling.
+		assert.ok(
+			content.length <= MAX_COMPLETION_MESSAGE_CHARS,
+			`assembled message (${content.length}) must fit MAX_COMPLETION_MESSAGE_CHARS`,
+		);
+
+		// 2. All three children must retain BOTH reference lines despite the outer
+		// failure summary consuming a large share of the envelope.
+		for (let i = 0; i < 3; i++) {
+			assert.ok(
+				content.includes(`Output artifact: /tmp/artifacts/worker-${i}.md`),
+				`child ${i} artifact reference must survive with saturated outer failure summary`,
+			);
+			assert.ok(
+				content.includes(`Session: /tmp/sessions/worker-${i}.jsonl`),
+				`child ${i} session reference must survive with saturated outer failure summary`,
+			);
+		}
+
+		// 3. Outer recovery pointer also survives.
+		assert.ok(content.includes(`Session: ${shareUrl}`), "outer session pointer must survive");
+	});
+
+	// --- Occurrence 3: nested preview inside a grouped batch ---
+	// When a multi-child result is batched together with other completions, its
+	// resultPreview (formatted for the single-result ceiling) can exceed the
+	// per-entry previewCeiling in the grouped message. The prior code treated the
+	// entire resultPreview as truncatable prose, so fitPreviewWithinCeiling cut
+	// from the end — exactly where the last children's reference lines live.
+	// The fix uses _reformatPreview to re-format the preview for the grouped
+	// entry's ceiling, reserving non-summary scaffold before dividing.
+	it("four-child normalized preview batched beside a saturated completion retains all inner child reference lines when recovery lines are nested inside a batched entry preview", () => {
+		const { events } = createBatchingPi(createFakeClock());
+
+		// Entry 1: four-child result with no shareUrl (no outer session in tailLines,
+		// worst case: inner child references carry the full recovery burden).
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "inner-4child-batch",
+			agent: "parallel-inner",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			sessionId: "session-a",
+			// No shareUrl — normalized child results suppress the top-level session,
+			// so the inner child references are the only recovery pointers.
+			results: Array.from({ length: 4 }, (_, index) => ({
+				agent: `worker-${index}`,
+				status: "completed",
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			})),
+		});
+
+		// Entry 2: one saturated single completion (fills the grouped envelope when
+		// combined with the four-child result).
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "saturated-single-batch",
+			agent: "single-worker",
+			success: true,
+			summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+			timestamp: 1,
+			sessionId: "session-a",
+			shareUrl: "https://share/outer-single",
+		});
+
+		// Advance past debounce to trigger grouped emit.
+		const _clock = createFakeClock();
+		// Directly use formatGroupedCompletion with pre-built details so the test
+		// does not depend on the batcher's timing. Build the details objects via
+		// buildCompletionDetails so _reformatPreview is wired up.
+		const details1 = buildCompletionDetails({
+			id: "inner-4child-grouped",
+			runId: null,
+			agent: "parallel-inner",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			results: Array.from({ length: 4 }, (_, index) => ({
+				agent: `worker-${index}`,
+				status: "completed" as const,
+				summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			})),
+		});
+		const details2 = buildCompletionDetails({
+			id: "saturated-single-grouped",
+			runId: null,
+			agent: "single-worker",
+			success: true,
+			summary: "s".repeat(MAX_COMPLETION_MESSAGE_CHARS),
+			timestamp: 1,
+			shareUrl: "https://share/outer-single",
+		});
+
+		const result = formatGroupedCompletion([details1, details2]);
+
+		// 1. Assembled grouped message must fit the ceiling.
+		assert.ok(
+			result.length <= MAX_COMPLETION_MESSAGE_CHARS,
+			`grouped message (${result.length}) must fit MAX_COMPLETION_MESSAGE_CHARS`,
+		);
+
+		// 2. ALL four inner children must retain BOTH reference lines. Before the fix,
+		// fitPreviewWithinCeiling cut from the end of the resultPreview, destroying the
+		// third and fourth children's artifact and session lines.
+		for (let i = 0; i < 4; i++) {
+			assert.ok(
+				result.includes(`Output artifact: /tmp/artifacts/worker-${i}.md`),
+				`inner child ${i} artifact reference must survive in grouped context`,
+			);
+			assert.ok(
+				result.includes(`Session: /tmp/sessions/worker-${i}.jsonl`),
+				`inner child ${i} session reference must survive in grouped context`,
+			);
+		}
+
+		// 3. The outer session pointer for the second entry also survives.
+		assert.ok(
+			result.includes("Session: https://share/outer-single"),
+			"outer session pointer for the second entry must survive",
+		);
+	});
+
+	// Sanity check: realistic summaries (not saturated) remain completely untruncated
+	// with all 8 child reference lines present after the reservation fix.
+	it("realistic 4-child result (~3 000 chars each) remains completely untruncated with all reference lines", () => {
+		const { events, sentMessages } = createPi();
+		const shareUrl = "https://share/realistic-sanity";
+
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "realistic-sanity",
+			agent: "parallel",
+			success: true,
+			summary: "done",
+			timestamp: 1,
+			sessionId: "session-1",
+			shareUrl,
+			results: Array.from({ length: 4 }, (_, index) => ({
+				agent: `worker-${index}`,
+				status: "completed",
+				summary: "x".repeat(3_000),
+				index,
+				artifactPath: `/tmp/artifacts/worker-${index}.md`,
+				sessionPath: `/tmp/sessions/worker-${index}.jsonl`,
+			})),
+		});
+
+		assert.equal(sentMessages.length, 1);
+		const content = (sentMessages[0]!.message as { content: string }).content;
+
+		// 1. Message fits the ceiling.
+		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS);
+
+		// 2. No truncation marker anywhere in the content.
+		assert.ok(!content.includes("[summary truncated]"), "realistic summaries at ~3 000 chars must not be truncated");
+
+		// 3. All 8 reference lines (2 per child × 4 children) are present.
+		for (let i = 0; i < 4; i++) {
+			assert.ok(
+				content.includes(`Output artifact: /tmp/artifacts/worker-${i}.md`),
+				`child ${i} artifact reference must be present untruncated`,
+			);
+			assert.ok(
+				content.includes(`Session: /tmp/sessions/worker-${i}.jsonl`),
+				`child ${i} session reference must be present untruncated`,
+			);
+		}
+
+		// 4. Outer session also present.
+		assert.ok(content.includes(`Session: ${shareUrl}`), "outer session pointer must be present");
 	});
 });
