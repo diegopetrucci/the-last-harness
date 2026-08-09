@@ -24,6 +24,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '22.19.0'
+          cache: 'npm'
 
       - name: Measure TLH startup performance
         env:
