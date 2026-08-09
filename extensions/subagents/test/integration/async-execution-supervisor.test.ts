@@ -19,6 +19,7 @@ import {
 	removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
@@ -85,6 +86,7 @@ describe("async execution utilities", () => {
 	it("pauses async supervisor requests durably and reload resume stays single-claim", {
 		skip: process.platform === "win32" ? "cross-process supervisor pause delivery unreliable on Windows CI" : undefined,
 	}, async () => {
+		const resumeTimeoutMs = scaleTestTimeout(1_000);
 		const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
 		process.env.MOCK_PI_SESSION_DIR_FILE = "1";
 		try {
@@ -159,7 +161,7 @@ describe("async execution utilities", () => {
 			]);
 			await reloaded.execute(
 				"async-supervisor-resume",
-				{ action: "resume", id, message: "Supervisor replied: continue.", timeoutMs: 500 },
+				{ action: "resume", id, message: "Supervisor replied: continue.", timeoutMs: resumeTimeoutMs },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
@@ -174,7 +176,7 @@ describe("async execution utilities", () => {
 			const continuationPayload = await readAsyncPayload(continuedStatus.lifecycle.continuation.continuationRunId);
 			assert.equal(continuationPayload.state, "complete");
 			assert.equal(continuationPayload.results[0]?.output, "resumed after supervisor reply");
-			assert.equal(continuationPayload.timeoutMs, 500);
+			assert.equal(continuationPayload.timeoutMs, resumeTimeoutMs);
 			assert.ok((continuationPayload.results[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
 			const continuationStatus = JSON.parse(
 				fs.readFileSync(
@@ -182,7 +184,7 @@ describe("async execution utilities", () => {
 					"utf-8",
 				),
 			) as AsyncStatusPayload;
-			assert.equal(continuationStatus.steps?.[0]?.timeoutMs, 500);
+			assert.equal(continuationStatus.steps?.[0]?.timeoutMs, resumeTimeoutMs);
 			assert.ok((continuationStatus.steps?.[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
 			assert.notEqual(continuationPayload.results[0]?.acceptance?.status, "skipped");
 			assert.equal(continuationPayload.results[0]?.acceptance?.status, "checked");
