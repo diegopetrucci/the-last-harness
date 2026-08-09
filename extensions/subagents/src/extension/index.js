@@ -22,7 +22,7 @@ import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.js";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, } from "../slash/slash-live-state.js";
-import registerSubagentNotify, { boundedReference } from "../runs/background/notify.js";
+import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
 import { loadConfig } from "./config.js";
@@ -373,16 +373,28 @@ export default function registerSubagentExtension(pi) {
         const parsedSession = parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
             ? { sessionLabel: parsedContent.details.sessionLabel, sessionValue: parsedContent.details.sessionValue }
             : undefined;
+        const rawParsedPreview = parsedContent?.details.resultPreview;
+        const displayPreview = rawParsedPreview !== undefined
+            ? rawParsedPreview.length <= MAX_DISPLAY_SUMMARY_CHARS
+                ? rawParsedPreview
+                : `${rawParsedPreview.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`
+            : undefined;
         const details = structuredDetails
             ? {
                 ...structuredDetails,
-                resultPreview: parsedContent?.details.resultPreview ?? structuredDetails.resultPreview,
+                resultPreview: displayPreview ?? structuredDetails.resultPreview,
                 ...(structuredDetails.sessionValue ? { sessionValue: boundedReference(structuredDetails.sessionValue) } : {}),
                 ...parsedSession,
             }
-            : parsedContent?.details;
-        if (!details)
-            return new Text(content, 0, 0);
+            : parsedContent?.details
+                ? { ...parsedContent.details, resultPreview: displayPreview ?? parsedContent.details.resultPreview }
+                : undefined;
+        if (!details) {
+            const displayContent = content.length <= MAX_DISPLAY_SUMMARY_CHARS
+                ? content
+                : `${content.slice(0, MAX_DISPLAY_SUMMARY_CHARS - "… [preview truncated]".length)}… [preview truncated]`;
+            return new Text(displayContent, 0, 0);
+        }
         const referenceLines = parsedContent?.referenceLines ?? [];
         const icon = details.status === "completed"
             ? theme.fg("success", "✓")
