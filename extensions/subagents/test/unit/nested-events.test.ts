@@ -11,6 +11,7 @@ import {
 	projectNestedEvents,
 	resolveNestedParentAddressFromEnv,
 	resolveNestedRouteFromEnv,
+	sanitizeSummary,
 	updateAsyncJobNestedProjection,
 	updateForegroundNestedProjection,
 	writeNestedEvent,
@@ -350,6 +351,119 @@ describe("nested event parsing and projection", () => {
 			total: 25,
 		});
 		assert.equal(registry.children.find((item) => item.id === "nested-invalid-tokens")?.totalTokens, undefined);
+	});
+
+	it("omits programmatic path fields (sessionFile, asyncDir) when over the 2048-char limit", () => {
+		const route = trackRoute();
+		const limit = 2048;
+		const atLimit = "a".repeat(limit);
+		const overLimit = "a".repeat(limit + 1);
+
+		// Value exactly at limit passes through unchanged
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 100,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: { ...child("path-limit", "running", 100), sessionFile: atLimit, asyncDir: atLimit },
+		});
+		// Value one char over the limit is omitted entirely (not truncated)
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 200,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: { ...child("path-over", "running", 200), sessionFile: overLimit, asyncDir: overLimit },
+		});
+
+		const registry = projectNestedEvents(route);
+		const atLimitChild = registry.children.find((c) => c.id === "path-limit");
+		const overLimitChild = registry.children.find((c) => c.id === "path-over");
+
+		assert.equal(atLimitChild?.sessionFile, atLimit, "sessionFile at limit must pass through unchanged");
+		assert.equal(atLimitChild?.asyncDir, atLimit, "asyncDir at limit must pass through unchanged");
+		assert.equal(overLimitChild?.sessionFile, undefined, "sessionFile over limit must be omitted, not truncated");
+		assert.equal(overLimitChild?.asyncDir, undefined, "asyncDir over limit must be omitted, not truncated");
+	});
+
+	it("marks display-only path field (currentPath) with an ellipsis when over the 2048-char limit", () => {
+		const route = trackRoute();
+		const limit = 2048;
+		const atLimit = "b".repeat(limit);
+		const overLimit = "b".repeat(limit + 1);
+
+		// Value exactly at limit passes through unchanged
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 100,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: { ...child("disp-limit", "running", 100), currentPath: atLimit },
+		});
+		// Value one char over the limit is truncated with a visible marker
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 200,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: { ...child("disp-over", "running", 200), currentPath: overLimit },
+		});
+
+		const registry = projectNestedEvents(route);
+		const atLimitChild = registry.children.find((c) => c.id === "disp-limit");
+		const overLimitChild = registry.children.find((c) => c.id === "disp-over");
+
+		assert.equal(atLimitChild?.currentPath, atLimit, "currentPath at limit must pass through unchanged");
+		assert.ok(
+			overLimitChild?.currentPath?.endsWith("\u2026"),
+			"currentPath over limit must end with a visible truncation marker",
+		);
+		assert.ok(overLimitChild?.currentPath !== undefined, "currentPath over limit must not be omitted entirely");
+	});
+
+	// controlInbox cannot be exercised through the event-parsing route because
+	// parseRecord overwrites any child-provided controlInbox with route.controlInbox.
+	// Test it directly through sanitizeSummary, which applies displayStringValue
+	// without the route-level override.
+	it("marks display-only field controlInbox with an ellipsis when over the 2048-char limit (via sanitizeSummary)", () => {
+		const limit = 2048;
+		const base = { id: "ctrl-test", parentRunId: "root-run", state: "running", depth: 0, path: [] };
+
+		const atLimit = sanitizeSummary({ ...base, controlInbox: "c".repeat(limit) });
+		assert.equal(atLimit?.controlInbox, "c".repeat(limit), "controlInbox at limit must pass through unchanged");
+
+		const overLimit = sanitizeSummary({ ...base, controlInbox: "c".repeat(limit + 1) });
+		assert.ok(
+			overLimit?.controlInbox?.endsWith("\u2026"),
+			"controlInbox over limit must end with a visible truncation marker",
+		);
+		assert.ok(overLimit?.controlInbox !== undefined, "controlInbox over limit must not be omitted entirely");
+	});
+
+	it("displayStringValue does not emit a lone surrogate when the slice boundary falls between a surrogate pair", () => {
+		// Emoji U+1F600 \uD83D\uDE00 is a UTF-16 surrogate pair (two code units).
+		// Place it so the cut at (max - 1) falls on the high surrogate.
+		// displayStringValue slices at max-1 = 2047 code units, backing up if the last
+		// kept code unit is a high surrogate.
+		const emoji = "\uD83D\uDE00"; // U+1F600
+		// 2046 'a' chars + emoji + 'x' => length 2049, emoji straddles the cut at 2047.
+		const value = "a".repeat(2046) + emoji + "x";
+		const base = { id: "surr-test", parentRunId: "root-run", state: "running", depth: 0, path: [] };
+		const result = sanitizeSummary({ ...base, currentPath: value });
+		assert.ok(result?.currentPath !== undefined, "currentPath must be present");
+		const cp = result!.currentPath!;
+		assert.ok(cp.endsWith("\u2026"), "must end with a visible truncation marker");
+		// Verify no lone surrogate in the result.
+		for (let i = 0; i < cp.length; i++) {
+			const cu = cp.charCodeAt(i);
+			if (cu >= 0xd800 && cu <= 0xdbff) {
+				const next = cp.charCodeAt(i + 1);
+				assert.ok(
+					next >= 0xdc00 && next <= 0xdfff,
+					`lone high surrogate at index ${i}: 0x${cu.toString(16)} not followed by a low surrogate`,
+				);
+			}
+		}
 	});
 
 	it("parses only complete jsonl records", () => {

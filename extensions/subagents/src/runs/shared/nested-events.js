@@ -106,6 +106,24 @@ function clampNumber(value) {
 function stringValue(value, max = 512) {
     return typeof value === "string" && value.length > 0 ? value.slice(0, max) : undefined;
 }
+function pathValue(value, max = 512) {
+    if (typeof value !== "string" || value.length === 0)
+        return undefined;
+    if (value.length > max)
+        return undefined;
+    return value;
+}
+function displayStringValue(value, max = 512) {
+    if (typeof value !== "string" || value.length === 0)
+        return undefined;
+    if (value.length <= max)
+        return value;
+    const cut = max - 1;
+    const sliced = value.slice(0, cut);
+    const last = sliced.charCodeAt(sliced.length - 1);
+    const safe = last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
+    return `${safe}…`;
+}
 function sanitizeTokenUsage(value) {
     if (!value || typeof value !== "object")
         return undefined;
@@ -172,7 +190,7 @@ function sanitizeStep(input, depth) {
     return {
         agent,
         status,
-        ...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
+        ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
         ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
             ? { activityState: raw.activityState }
             : {}),
@@ -181,7 +199,7 @@ function sanitizeStep(input, depth) {
         ...(clampNumber(raw.currentToolStartedAt) !== undefined
             ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
             : {}),
-        ...(stringValue(raw.currentPath, 2048) ? { currentPath: stringValue(raw.currentPath, 2048) } : {}),
+        ...(displayStringValue(raw.currentPath, 2048) ? { currentPath: displayStringValue(raw.currentPath, 2048) } : {}),
         ...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
@@ -224,12 +242,12 @@ export function sanitizeSummary(input, depth = 0) {
         depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
         path: pathParts,
         state: sanitizeState(raw.state, "running"),
-        ...(stringValue(raw.asyncDir, 2048) ? { asyncDir: stringValue(raw.asyncDir, 2048) } : {}),
+        ...(pathValue(raw.asyncDir, 2048) ? { asyncDir: pathValue(raw.asyncDir, 2048) } : {}),
         ...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid) > 0 && Number.isInteger(clampNumber(raw.pid))
             ? { pid: clampNumber(raw.pid) }
             : {}),
         ...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
-        ...(stringValue(raw.sessionFile, 2048) ? { sessionFile: stringValue(raw.sessionFile, 2048) } : {}),
+        ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
         ...(stringValue(raw.intercomTarget, 256) ? { intercomTarget: stringValue(raw.intercomTarget, 256) } : {}),
         ...(stringValue(raw.ownerIntercomTarget, 256)
             ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
@@ -240,7 +258,7 @@ export function sanitizeSummary(input, depth = 0) {
         ...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
             ? { ownerState: raw.ownerState }
             : {}),
-        ...(stringValue(raw.controlInbox, 2048) ? { controlInbox: stringValue(raw.controlInbox, 2048) } : {}),
+        ...(displayStringValue(raw.controlInbox, 2048) ? { controlInbox: displayStringValue(raw.controlInbox, 2048) } : {}),
         ...(stringValue(raw.capabilityToken, 128) ? { capabilityToken: stringValue(raw.capabilityToken, 128) } : {}),
         ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain" ? { mode: raw.mode } : {}),
         ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
@@ -262,7 +280,7 @@ export function sanitizeSummary(input, depth = 0) {
         ...(clampNumber(raw.currentToolStartedAt) !== undefined
             ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
             : {}),
-        ...(stringValue(raw.currentPath, 2048) ? { currentPath: stringValue(raw.currentPath, 2048) } : {}),
+        ...(displayStringValue(raw.currentPath, 2048) ? { currentPath: displayStringValue(raw.currentPath, 2048) } : {}),
         ...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(totalTokens ? { totalTokens } : {}),

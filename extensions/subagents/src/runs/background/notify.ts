@@ -170,8 +170,10 @@ const TRUNCATION_MARKER_LEN = "… [summary truncated]".length; // 21
 // remaining space) must therefore go through boundedSummaryOrSuppress so an
 // impossible budget produces nothing instead of a fragment. Call sites whose budget is
 // a module constant far larger than their marker cannot reach that fallback and may use
-// truncateWithMarker directly: boundedReference (500 vs 23), boundedLabel (160 vs 19),
-// the sendCompletion envelope cut (32 000 vs 33) and the display-cap cut (1 200 vs 21).
+// truncateWithMarker directly: boundedLabel (160 vs 19), the sendCompletion envelope
+// cut (32 000 vs 33), and the display-cap cut (1 200 vs 21). boundedReference applies
+// middle-truncation directly and only calls truncateWithMarker in degenerate fallbacks
+// where 500 >> 23 still holds.
 
 /**
  * Like boundedSummary, but returns "" when the budget is too tight to produce a
@@ -218,7 +220,52 @@ function resolvePerChildSummaryBudget(
 	return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
 }
 
+/**
+ * Returns value.slice(0, end), backing up by one code unit when the last kept code
+ * unit is a UTF-16 high surrogate (U+D800–U+DBFF). A high surrogate without its
+ * paired low surrogate produces an ill-formed string; backing up one code unit keeps
+ * the string well-formed at the cost of one fewer character of context.
+ */
+function sliceSafe(value: string, end: number): string {
+	const sliced = value.slice(0, end);
+	const last = sliced.charCodeAt(sliced.length - 1);
+	return last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
+}
+
+/**
+ * Bounds a path-like reference to MAX_REFERENCE_CHARS by middle-truncating visibly:
+ * leading root context is kept alongside as many TRAILING path segments as fit,
+ * separated by a visible marker. A head-cut would instead keep the common prefix and
+ * destroy the segment that uniquely identifies the reference.
+ *
+ * Keeping only the final segment is not enough for session pointers, because every
+ * session file is named "session.jsonl"; the identifying information lives in the
+ * run-id directories just above it, as in ".../428b3c62/run-0/session.jsonl". Artifact
+ * filenames are unique per run, so they are already served by the last segment alone.
+ * Extending greedily up the path therefore serves both without special-casing either.
+ *
+ * When no path separator is present, or when the final segment alone saturates the
+ * cap, the function falls back to head truncation rather than emitting a garbled
+ * middle-truncation marker.
+ */
 export function boundedReference(value: string): string {
+	if (value.length <= MAX_REFERENCE_CHARS) return value;
+	const middleMarker = "… [reference truncated] …";
+	// Walk separators from the end, keeping the earliest one whose tail still leaves at
+	// least one leading character of context beside a whole marker.
+	let tailStart = -1;
+	let sep = value.lastIndexOf("/");
+	while (sep >= 0) {
+		if (MAX_REFERENCE_CHARS - middleMarker.length - (value.length - sep) < 1) break;
+		tailStart = sep;
+		sep = value.lastIndexOf("/", sep - 1);
+	}
+	if (tailStart >= 0) {
+		const leadingBudget = MAX_REFERENCE_CHARS - middleMarker.length - (value.length - tailStart);
+		return `${sliceSafe(value, leadingBudget)}${middleMarker}${value.slice(tailStart)}`;
+	}
+	// No path separator present, or the final segment alone saturates the cap.
+	// Fall back to head truncation rather than emitting a garbled middle marker.
 	return truncateWithMarker(value, MAX_REFERENCE_CHARS, "… [reference truncated]");
 }
 
@@ -382,11 +429,11 @@ function formatNestedChildren(
 	budget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() },
 ): string[] {
 	if (!children?.length) return [];
-	const lines = ["Nested subagents:"];
+	const entries: string[] = [];
 	const markOmitted = (currentIndent: string, marker: string) => {
 		if (budget.omissionMarkers.has(marker)) return;
 		budget.omissionMarkers.add(marker);
-		lines.push(`${currentIndent}${marker}`);
+		entries.push(`${currentIndent}${marker}`);
 	};
 	const append = (runs: NestedNotifyChild[] | undefined, currentIndent: string, depth: number) => {
 		if (!runs?.length) return;
@@ -402,12 +449,16 @@ function formatNestedChildren(
 			budget.remaining--;
 			const label = boundedLabel(child.agent ?? child.id ?? "nested");
 			const state = child.state ? boundedLabel(child.state) : undefined;
-			lines.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
+			entries.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
 			append(child.children, `${currentIndent}  `, depth + 1);
 		}
 	};
 	append(children, indent, 0);
-	return lines;
+	// Emit the heading only when there is content beneath it. When the shared budget is
+	// exhausted and the omission marker was already recorded by an earlier sibling, this
+	// child has no entries to show; emitting the heading alone would produce a bare
+	// 'Nested subagents:' with nothing beneath it.
+	return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
 }
 
 function formatChildReferences(child: ChainStepResult, privacySafe = false): string[] {
@@ -418,12 +469,19 @@ function formatChildReferences(child: ChainStepResult, privacySafe = false): str
 	].filter((line): line is string => Boolean(line));
 }
 
-function formatProtectedLifecyclePreview(result: SubagentResult): string {
+function formatProtectedLifecyclePreview(
+	result: SubagentResult,
+	ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS,
+): string {
 	const children = Array.isArray(result.results) ? result.results : [];
-	if (children.length <= 1) return "Paused awaiting supervisor.";
-	const lines: string[] = [];
+	if (children.length <= 1) {
+		const sentence = "Paused awaiting supervisor.";
+		// Honour ceilingForPreview for the zero- and one-child shape the same way every
+		// other branch does: suppress rather than emit a partial sentence.
+		return sentence.length <= ceilingForPreview ? sentence : "";
+	}
 	const counts = countChildStatuses(children);
-	if (counts) lines.push(`Children: ${counts}`, "");
+	const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
 	const displayedChildren = ["failed", "paused", "completed", "detached"]
 		.flatMap((status) =>
 			children
@@ -431,14 +489,47 @@ function formatProtectedLifecyclePreview(result: SubagentResult): string {
 				.filter((entry) => entry.status === status),
 		)
 		.slice(0, MAX_DISPLAYED_CHILDREN);
-	if (children.length > displayedChildren.length)
-		lines.push(`… [${children.length - displayedChildren.length} child results omitted]`, "");
-	for (const { child, index, status } of displayedChildren) {
+	// Compute per-child scaffold costs using a separate budget so the shared budget
+	// used during rendering is not consumed during cost estimation.
+	const nestedBudgetForCost: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+	const childCosts = displayedChildren.map(({ child, index, status }) => {
+		const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
+		const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
+		return joinedLineCost([labelLine, ...nested, ""]);
+	});
+	// Reduce displayed children when their scaffold alone would exceed the ceiling,
+	// incrementing the omission counter rather than silently tail-cutting a displayed child.
+	let effectiveCount = displayedChildren.length;
+	while (effectiveCount > 0) {
+		const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+		const effectiveOmitted = children.length - effectiveCount;
+		const omissionCost =
+			effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+		if (partialScaffold + countsCost + omissionCost <= ceilingForPreview) break;
+		effectiveCount--;
+	}
+	const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
+	const effectiveOmittedCount = children.length - effectiveCount;
+	const effectiveOmissionCost =
+		effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+	// The counts header and omission marker carry no recovery pointers. When the reduction
+	// loop suppresses every displayable child, also verify they fit the ceiling; if not,
+	// suppress them rather than breach it.
+	const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
+	const showCountsLine = !!counts && optionalLinesAffordable;
+	const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
+	// Shared nested budget across all displayed children; each call to formatNestedChildren
+	// drains from the same pool, matching the pattern at the other multi-child call sites.
+	const nestedBudget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+	const lines: string[] = [];
+	if (showCountsLine) lines.push(`Children: ${counts}`, "");
+	if (showOmissionLine) lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
+	for (const { child, index, status } of effectiveDisplayedChildren) {
 		lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-		lines.push(...formatNestedChildren(child.children, "   "));
+		lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
 		lines.push("");
 	}
-	return lines.join("\n").trimEnd() || "Paused awaiting supervisor.";
+	return lines.join("\n").trimEnd();
 }
 
 /**
@@ -466,7 +557,7 @@ function formatResultPreview(result: SubagentResult, ceilingForPreview = MAX_COM
 		state: result.state,
 		pause: (result as { pause?: { kind?: string } }).pause,
 	});
-	if (privacySafe) return formatProtectedLifecyclePreview(result);
+	if (privacySafe) return formatProtectedLifecyclePreview(result, ceilingForPreview);
 	const children = Array.isArray(result.results) ? result.results : [];
 	const nestedBudget: NestedFormatBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
 	// The budget here is caller-derived, so it can fall below the truncation-marker width.

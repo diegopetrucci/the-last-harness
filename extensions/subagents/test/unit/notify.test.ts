@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import registerSubagentNotify, {
 	MAX_COMPLETION_MESSAGE_CHARS,
 	MAX_DISPLAY_SUMMARY_CHARS,
+	boundedReference,
 	buildCompletionDetails,
 	formatGroupedCompletion,
 	formatSingleCompletion,
@@ -2014,6 +2015,26 @@ describe("completion formatting helpers", () => {
 			}
 		}
 
+		// Structural well-formedness: a 'Nested subagents:' heading must never appear
+		// without content beneath it. A length check cannot see this defect because an
+		// orphaned heading fits within the ceiling while producing meaningless output.
+		function assertNoOrphanedNestedHeading(label: string, ceiling: number, text: string) {
+			const lines = text.split("\n");
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i]?.trim() !== "Nested subagents:") continue;
+				// Find the next non-empty line.
+				let j = i + 1;
+				while (j < lines.length && lines[j]?.trim() === "") j++;
+				const next = lines[j]?.trim() ?? "";
+				// The next non-empty line must be a nested entry (↳) or an omission marker (…).
+				const hasContent = next.startsWith("↳") || next.startsWith("…");
+				assert.ok(
+					hasContent,
+					`[${label}] ceiling=${ceiling}: orphaned 'Nested subagents:' heading at line ${i} — next non-empty line: ${JSON.stringify(next)}`,
+				);
+			}
+		}
+
 		function checkCeiling(label: string, makeResult: () => object) {
 			it(`${label} — length <= ceiling and no mangled markers for all ${CEILINGS.length} ceilings`, () => {
 				const result = makeResult() as Parameters<typeof buildCompletionDetails>[0];
@@ -2026,6 +2047,7 @@ describe("completion formatting helpers", () => {
 						`[${label}] ceiling=${ceiling}: preview.length=${preview.length} > ceiling`,
 					);
 					assertNoMangledMarker(label, ceiling, preview);
+					assertNoOrphanedNestedHeading(label, ceiling, preview);
 				}
 			});
 		}
@@ -2208,6 +2230,151 @@ describe("completion formatting helpers", () => {
 				index: i,
 			})),
 		}));
+
+		// Protected lifecycle — 2 children with nested subagents (minimal shape).
+		checkCeiling("protected lifecycle 2 children with nested", () => ({
+			id: "sweep-protected-2ch",
+			agent: "parallel:a+b",
+			success: false,
+			state: "paused",
+			pause: { kind: "awaiting_supervisor" },
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+			results: Array.from({ length: 2 }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: "paused",
+				summary: "x".repeat(9_000),
+				index: i,
+				children: Array.from({ length: 5 }, (_, j) => ({
+					agent: `nested-${i}-${j}`,
+					state: "paused",
+				})),
+			})),
+		}));
+
+		// Protected lifecycle — 8 children each with nested subagents (saturated budget shape).
+		checkCeiling("protected lifecycle 8 children with nested", () => ({
+			id: "sweep-protected-8ch",
+			agent: "parallel:8",
+			success: false,
+			state: "paused",
+			pause: { kind: "awaiting_supervisor" },
+			summary: "x".repeat(9_000),
+			timestamp: 1,
+			results: Array.from({ length: 8 }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: "paused",
+				summary: "x".repeat(9_000),
+				index: i,
+				children: Array.from({ length: 5 }, (_, j) => ({
+					agent: `nested-${i}-${j}`,
+					state: "paused",
+				})),
+			})),
+		}));
+
+		// Protected lifecycle — zero children (returns 'Paused awaiting supervisor.').
+		checkCeiling("protected lifecycle 0 children", () => ({
+			id: "sweep-protected-0ch",
+			agent: "parallel:0",
+			success: false,
+			state: "paused",
+			pause: { kind: "awaiting_supervisor" },
+			summary: "done",
+			timestamp: 1,
+			results: [],
+		}));
+
+		// Protected lifecycle — one child (also returns 'Paused awaiting supervisor.').
+		checkCeiling("protected lifecycle 1 child", () => ({
+			id: "sweep-protected-1ch",
+			agent: "parallel:1",
+			success: false,
+			state: "paused",
+			pause: { kind: "awaiting_supervisor" },
+			summary: "done",
+			timestamp: 1,
+			results: [{ agent: "worker-0", status: "paused", summary: "x".repeat(9_000), index: 0 }],
+		}));
+	});
+
+	// =========================================================================
+	// Orphaned-heading regression: 8 protected children with 5 nested entries each
+	// at the default ceiling (32 000). The shared nested budget is exhausted after
+	// two children; without the fix, children 3–8 each rendered a bare
+	// 'Nested subagents:' heading with nothing beneath it (six orphaned headings).
+	// =========================================================================
+	it("no orphaned 'Nested subagents:' heading with 8 protected children and 5 nested entries each at the default ceiling", () => {
+		const result = {
+			id: "orphan-regression",
+			agent: "parallel:8",
+			success: false,
+			state: "paused" as const,
+			pause: { kind: "awaiting_supervisor" },
+			summary: "paused",
+			timestamp: 1,
+			results: Array.from({ length: 8 }, (_, i) => ({
+				agent: `w${i + 1}`,
+				status: "failed" as const,
+				summary: "summary",
+				children: Array.from({ length: 5 }, (_, j) => ({
+					agent: `nested-${i + 1}-${j + 1}`,
+					id: `id-${i + 1}-${j + 1}`,
+					state: "completed",
+				})),
+			})),
+		};
+		const details = buildCompletionDetails(result as Parameters<typeof buildCompletionDetails>[0]);
+		const preview = details._reformatPreview!(32_000);
+		const lines = preview.split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			if (lines[i]?.trim() !== "Nested subagents:") continue;
+			let j = i + 1;
+			while (j < lines.length && lines[j]?.trim() === "") j++;
+			const next = lines[j]?.trim() ?? "";
+			assert.ok(
+				next.startsWith("↳") || next.startsWith("…"),
+				`orphaned 'Nested subagents:' at line ${i}; next non-empty: ${JSON.stringify(next)}`,
+			);
+		}
+	});
+
+	// =========================================================================
+	// Protected-lifecycle privacy: no summary text in output.
+	//
+	// The protected-lifecycle path deliberately omits child and outer summaries
+	// so no sensitive context leaks in the preview. This test asserts that the
+	// privacy guarantee holds across ceilings and is never broken by the fix.
+	// =========================================================================
+	it("protected lifecycle preview contains no child or outer summary text", () => {
+		const SENTINEL = "SENTINEL_SECRET_TEXT";
+		const result = {
+			id: "privacy-check",
+			agent: "parallel:a+b",
+			success: false,
+			state: "paused",
+			pause: { kind: "awaiting_supervisor" },
+			summary: `Outer: ${SENTINEL}`,
+			timestamp: 1,
+			results: Array.from({ length: 4 }, (_, i) => ({
+				agent: `worker-${i}`,
+				status: "paused",
+				summary: `Child ${i}: ${SENTINEL}`,
+				index: i,
+				children: Array.from({ length: 3 }, (_, j) => ({
+					agent: `nested-${i}-${j}`,
+					state: "paused",
+				})),
+			})),
+		};
+		const details = buildCompletionDetails(result as Parameters<typeof buildCompletionDetails>[0]);
+		for (const ceiling of [32_000, 1_000, 100, 0]) {
+			const preview = details._reformatPreview!(ceiling);
+			assert.ok(
+				!preview.includes(SENTINEL),
+				`ceiling=${ceiling}: preview must not contain summary sentinel text, got: ${JSON.stringify(preview.slice(0, 200))}`,
+			);
+		}
 	});
 
 	// =========================================================================
@@ -2359,5 +2526,119 @@ describe("completion formatting helpers", () => {
 
 		// 4. Outer session also present.
 		assert.ok(content.includes(`Session: ${shareUrl}`), "outer session pointer must be present");
+	});
+});
+
+// MAX_REFERENCE_CHARS is 500; tests use the literal value so they remain sensitive
+// to changes in the constant.
+const MAX_REF = 500;
+
+describe("boundedReference", () => {
+	it("returns a value of exactly MAX_REFERENCE_CHARS bytes unchanged with no marker", () => {
+		const prefix = "/Users/diego/.the-last-harness/agent/sessions/run-0/";
+		const filename = "session.jsonl";
+		// Build a value padded to exactly 500 chars.
+		const padding = MAX_REF - prefix.length - filename.length;
+		const value = prefix + "x".repeat(padding) + filename;
+		assert.equal(value.length, MAX_REF);
+		assert.equal(boundedReference(value), value);
+	});
+
+	it("truncates a value of MAX_REFERENCE_CHARS + 1 with a middle marker", () => {
+		// Put padding in the directory portion so the last segment is a recognisable filename.
+		const filename = "session.jsonl";
+		const base = "/Users/diego/.the-last-harness/agent/sessions/run-0-";
+		// One char over the cap: padding fills the directory name, then '/' then filename.
+		const padding = MAX_REF + 1 - base.length - 1 - filename.length;
+		const value = `${base}${"x".repeat(padding)}/${filename}`;
+		assert.equal(value.length, MAX_REF + 1);
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF, `result length ${result.length} must be <= ${MAX_REF}`);
+		assert.ok(result.includes("… [reference truncated] …"), "middle marker must appear in the truncated result");
+		assert.ok(result.endsWith(`/${filename}`), "trailing filename must be preserved after middle truncation");
+		// At least one leading character of root context must survive before the marker.
+		// The exact amount varies: the tail is extended greedily, so a deeper kept tail
+		// legitimately leaves a shorter head.
+		const markerIndex = result.indexOf("… [reference truncated] …");
+		assert.ok(markerIndex >= 1, `at least one leading character must precede the marker; got index ${markerIndex}`);
+		assert.ok(value.startsWith(result.slice(0, markerIndex)), "the leading portion must be a true prefix of the input");
+	});
+
+	it("preserves the trailing filename for a long path with many directory segments", () => {
+		// Construct a path whose directory portion is very long.
+		const tail = "/artifact-output.md";
+		const directory = "/Users/diego/.the-last-harness/agent/sessions/" + "nested/".repeat(80);
+		const value = directory + tail.slice(1); // remove leading "/" already in directory
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF);
+		assert.ok(result.endsWith("/artifact-output.md"), `trailing filename must survive: got '${result.slice(-30)}'`);
+	});
+
+	it("retains the run-id directories above a session filename, not just the final segment", () => {
+		// Every session pointer in the system is named "session.jsonl", so the final segment
+		// alone identifies nothing. The run-id directories above it are the discriminating part.
+		const identifyingTail = "/428b3c62/run-0/session.jsonl";
+		const deepPrefix = `/Users/diego/.the-last-harness/agent/sessions/${"deeply-nested-directory/".repeat(25)}`;
+		const value = deepPrefix + identifyingTail.slice(1);
+		assert.ok(value.length > MAX_REF, "fixture must exceed the cap to exercise truncation");
+
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF, `result length ${result.length} must be <= ${MAX_REF}`);
+		// The property that matters: the run id survives, not merely the shared filename.
+		assert.ok(result.includes("428b3c62"), `run-id directory must survive: got '${result.slice(-60)}'`);
+		assert.ok(result.endsWith(identifyingTail), `full identifying tail must survive: got '${result.slice(-60)}'`);
+		assert.ok(result.includes("… [reference truncated] …"), "middle marker must be present");
+		assert.ok(result.startsWith("/Users/"), "leading root context must be preserved");
+	});
+
+	it("handles a value with no path separator by falling back to head truncation with a marker", () => {
+		// A non-path reference longer than the cap.
+		const value = "share-error-detail-".repeat(40); // 760 chars, no "/"
+		assert.ok(value.length > MAX_REF);
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF);
+		// With no separator the fallback emits the original end-of-string marker.
+		assert.ok(result.endsWith("… [reference truncated]"), "no-separator fallback must end with the standard marker");
+		// Must not emit the middle marker whose trailing '…' implies a segment follows.
+		assert.ok(!result.includes("… [reference truncated] …"), "no-separator fallback must not emit the middle marker");
+	});
+
+	it("handles a value whose final segment alone exceeds the cap by falling back to head truncation", () => {
+		// A path whose filename segment is itself larger than MAX_REFERENCE_CHARS.
+		const hugeFilename = "x".repeat(MAX_REF + 10);
+		const value = `/Users/diego/sessions/${hugeFilename}`;
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF, `result must be within cap; got ${result.length}`);
+		// The middle marker must not appear since it cannot be formed with a well-formed tail.
+		assert.ok(
+			!result.includes("… [reference truncated] …"),
+			"oversized final segment must not produce a garbled middle marker",
+		);
+	});
+
+	it("does not emit a lone surrogate when the slice boundary falls between a surrogate pair", () => {
+		// Emoji U+1F600 😀 is encoded as a UTF-16 surrogate pair (two code units).
+		// Construct a path where the leading budget of the middle-truncation cut falls
+		// between the high and low surrogate, which would yield an ill-formed string.
+		// The path must be long enough to trigger middle-truncation (> MAX_REFERENCE_CHARS).
+		const emoji = "\uD83D\uDE00"; // U+1F600, two code units
+		// 373 'a' chars + emoji + 40 'b' chars + '/' + 100 'z' chars
+		// so the last segment is 101 chars, and the split falls just before the emoji
+		const value = "a".repeat(373) + emoji + "b".repeat(40) + "/" + "z".repeat(100);
+		assert.ok(value.length > MAX_REF, "fixture must exceed the cap");
+		const result = boundedReference(value);
+		assert.ok(result.length <= MAX_REF, `result must fit the cap; got ${result.length}`);
+		// Verify no lone surrogate: every code unit in [0xD800, 0xDBFF] must be followed by
+		// a code unit in [0xDC00, 0xDFFF].
+		for (let i = 0; i < result.length; i++) {
+			const cu = result.charCodeAt(i);
+			if (cu >= 0xd800 && cu <= 0xdbff) {
+				const next = result.charCodeAt(i + 1);
+				assert.ok(
+					next >= 0xdc00 && next <= 0xdfff,
+					`lone high surrogate at index ${i}: 0x${cu.toString(16)} not followed by a low surrogate (got 0x${next.toString(16)})`,
+				);
+			}
+		}
 	});
 });
