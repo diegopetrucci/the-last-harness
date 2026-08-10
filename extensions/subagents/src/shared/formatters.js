@@ -1,6 +1,3 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { isParallelStep } from "./settings.js";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.js";
 export function formatTokens(n) {
     return n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
@@ -41,40 +38,6 @@ export function formatDuration(ms) {
     if (ms < 60000)
         return `${(ms / 1000).toFixed(1)}s`;
     return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
-}
-export function buildChainSummary(steps, results, chainDir, status, failedStep) {
-    const stepNames = steps
-        .map((step) => (isParallelStep(step) ? `parallel[${step.parallel.length}]` : step.agent))
-        .join(" → ");
-    const totalDuration = results.reduce((sum, r) => sum + (r.progress?.durationMs || 0), 0);
-    const durationStr = formatDuration(totalDuration);
-    const progressPath = path.join(chainDir, "progress.md");
-    const hasProgress = fs.existsSync(progressPath);
-    const allSkills = new Set();
-    for (const r of results) {
-        if (r.skills)
-            r.skills.forEach((s) => allSkills.add(s));
-    }
-    const skillsLine = allSkills.size > 0 ? `🔧 Skills: ${[...allSkills].join(", ")}` : "";
-    const fallbackNotices = [
-        ...new Set(results.map((result) => result.modelFallbackNotice?.trim()).filter((notice) => Boolean(notice))),
-    ];
-    const fallbackLine = fallbackNotices.length > 0 ? `ℹ️ Fallbacks: ${fallbackNotices.join("; ")}` : "";
-    if (status === "completed") {
-        const stepWord = results.length === 1 ? "step" : "steps";
-        return `✅ Chain completed: ${stepNames} (${results.length} ${stepWord}, ${durationStr})${fallbackLine ? `\n${fallbackLine}` : ""}${skillsLine ? `\n${skillsLine}` : ""}
-
-📋 Progress: ${hasProgress ? progressPath : "(none)"}
-📁 Artifacts: ${chainDir}`;
-    }
-    else {
-        const stepInfo = failedStep ? ` at step ${failedStep.index + 1}` : "";
-        const errorInfo = failedStep?.error ? `: ${failedStep.error}` : "";
-        return `❌ Chain failed${stepInfo}${errorInfo}${fallbackLine ? `\n${fallbackLine}` : ""}${skillsLine ? `\n${skillsLine}` : ""}
-
-📋 Progress: ${hasProgress ? progressPath : "(none)"}
-📁 Artifacts: ${chainDir}`;
-    }
 }
 export function formatToolCall(name, args, expanded = false) {
     switch (name) {

@@ -2,11 +2,7 @@
  * Formatting utilities for display output
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import type { Usage, SingleResult } from "./types.ts";
-import type { ChainStep } from "./settings.ts";
-import { isParallelStep } from "./settings.ts";
+import type { Usage } from "./types.ts";
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.ts";
 
 /**
@@ -50,53 +46,6 @@ export function formatDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
 	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
 	return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
-}
-
-/**
- * Build a summary string for a completed/failed chain
- */
-export function buildChainSummary(
-	steps: ChainStep[],
-	results: SingleResult[],
-	chainDir: string,
-	status: "completed" | "failed",
-	failedStep?: { index: number; error: string },
-): string {
-	const stepNames = steps
-		.map((step) => (isParallelStep(step) ? `parallel[${step.parallel.length}]` : step.agent))
-		.join(" → ");
-
-	const totalDuration = results.reduce((sum, r) => sum + (r.progress?.durationMs || 0), 0);
-	const durationStr = formatDuration(totalDuration);
-
-	const progressPath = path.join(chainDir, "progress.md");
-	const hasProgress = fs.existsSync(progressPath);
-	const allSkills = new Set<string>();
-	for (const r of results) {
-		if (r.skills) r.skills.forEach((s) => allSkills.add(s));
-	}
-	const skillsLine = allSkills.size > 0 ? `🔧 Skills: ${[...allSkills].join(", ")}` : "";
-	const fallbackNotices = [
-		...new Set(
-			results.map((result) => result.modelFallbackNotice?.trim()).filter((notice): notice is string => Boolean(notice)),
-		),
-	];
-	const fallbackLine = fallbackNotices.length > 0 ? `ℹ️ Fallbacks: ${fallbackNotices.join("; ")}` : "";
-
-	if (status === "completed") {
-		const stepWord = results.length === 1 ? "step" : "steps";
-		return `✅ Chain completed: ${stepNames} (${results.length} ${stepWord}, ${durationStr})${fallbackLine ? `\n${fallbackLine}` : ""}${skillsLine ? `\n${skillsLine}` : ""}
-
-📋 Progress: ${hasProgress ? progressPath : "(none)"}
-📁 Artifacts: ${chainDir}`;
-	} else {
-		const stepInfo = failedStep ? ` at step ${failedStep.index + 1}` : "";
-		const errorInfo = failedStep?.error ? `: ${failedStep.error}` : "";
-		return `❌ Chain failed${stepInfo}${errorInfo}${fallbackLine ? `\n${fallbackLine}` : ""}${skillsLine ? `\n${skillsLine}` : ""}
-
-📋 Progress: ${hasProgress ? progressPath : "(none)"}
-📁 Artifacts: ${chainDir}`;
-	}
 }
 
 /**

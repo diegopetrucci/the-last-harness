@@ -18,7 +18,6 @@ import { createSubagentExecutor } from "../runs/foreground/subagent-executor.js"
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
-import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.js";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.js";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, } from "../slash/slash-live-state.js";
@@ -212,25 +211,6 @@ class SubagentControlNoticeComponent {
         lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
         return lines;
     }
-}
-export function promptTemplateDelegationParams(request) {
-    if (request.tasks && request.tasks.length > 0) {
-        return {
-            tasks: request.tasks,
-            context: request.context,
-            cwd: request.cwd,
-            worktree: request.worktree,
-            async: false,
-        };
-    }
-    return {
-        agent: request.agent,
-        task: request.task,
-        context: request.context,
-        cwd: request.cwd,
-        model: request.model,
-        async: false,
-    };
 }
 export default function registerSubagentExtension(pi) {
     if (process.env[SUBAGENT_CHILD_ENV] === "1") {
@@ -445,11 +425,6 @@ export default function registerSubagentExtension(pi) {
         getContext: () => state.lastUiContext,
         execute: (id, params, signal, onUpdate, ctx) => executeSubagent(id, params, signal, onUpdate, ctx),
     });
-    const promptTemplateBridge = registerPromptTemplateDelegationBridge({
-        events: pi.events,
-        getContext: () => state.lastUiContext,
-        execute: async (requestId, request, signal, ctx, onUpdate) => executeSubagent(requestId, promptTemplateDelegationParams(request), signal, onUpdate, ctx),
-    });
     function effectiveParallelTaskCount(tasks) {
         if (!tasks || tasks.length === 0)
             return 0;
@@ -631,8 +606,6 @@ export default function registerSubagentExtension(pi) {
         clearSlashSnapshots();
         slashBridge.cancelAll();
         slashBridge.dispose();
-        promptTemplateBridge.cancelAll();
-        promptTemplateBridge.dispose();
         supervisorChannel.dispose();
         if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
             delete globalStore[runtimeCleanupStoreKey];

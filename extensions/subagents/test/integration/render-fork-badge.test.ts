@@ -840,7 +840,6 @@ describe("renderSubagentResult fork indicator", () => {
 				content: [{ type: "text", text: "paused" }],
 				details: {
 					mode: "chain",
-					chainAgents: ["worker"],
 					results: [
 						{
 							agent: "worker",
@@ -868,7 +867,6 @@ describe("renderSubagentResult fork indicator", () => {
 				content: [{ type: "text", text: "done" }],
 				details: {
 					mode: "chain",
-					chainAgents: ["worker"],
 					results: [
 						{
 							agent: "worker",
@@ -895,7 +893,6 @@ describe("renderSubagentResult fork indicator", () => {
 				content: [{ type: "text", text: "running" }],
 				details: {
 					mode: "chain",
-					chainAgents: ["a", "b"],
 					totalSteps: 2,
 					currentStepIndex: 0,
 					results: [
@@ -1165,7 +1162,27 @@ describe("renderSubagentResult fork indicator", () => {
 					mode: "chain",
 					totalSteps: 3,
 					currentStepIndex: 0,
-					chainAgents: ["[scout+reviewer+worker]", "planner", "writer"],
+					workflowGraph: {
+						runId: "test-run",
+						mode: "chain",
+						phases: [],
+						nodes: [
+							{
+								id: "pg0",
+								kind: "parallel-group",
+								label: "scout+reviewer+worker",
+								status: "running",
+								stepIndex: 0,
+								children: [
+									{ id: "a0", kind: "agent", label: "scout", status: "running", flatIndex: 0 },
+									{ id: "a1", kind: "agent", label: "reviewer", status: "running", flatIndex: 1 },
+									{ id: "a2", kind: "agent", label: "worker", status: "pending", flatIndex: 2 },
+								],
+							},
+							{ id: "s1", kind: "step", label: "planner", status: "pending", stepIndex: 1, flatIndex: 3 },
+							{ id: "s2", kind: "step", label: "writer", status: "pending", stepIndex: 2, flatIndex: 4 },
+						],
+					},
 					results: [
 						{
 							agent: "scout",
@@ -1249,7 +1266,26 @@ describe("renderSubagentResult fork indicator", () => {
 					mode: "chain",
 					totalSteps: 3,
 					currentStepIndex: 1,
-					chainAgents: ["planner", "[scout+reviewer]", "writer"],
+					workflowGraph: {
+						runId: "test-run",
+						mode: "chain",
+						phases: [],
+						nodes: [
+							{ id: "s0", kind: "step", label: "planner", status: "completed", stepIndex: 0, flatIndex: 0 },
+							{
+								id: "pg1",
+								kind: "parallel-group",
+								label: "scout+reviewer",
+								status: "running",
+								stepIndex: 1,
+								children: [
+									{ id: "a0", kind: "agent", label: "scout", status: "running", flatIndex: 1 },
+									{ id: "a1", kind: "agent", label: "reviewer", status: "running", flatIndex: 2 },
+								],
+							},
+							{ id: "s2", kind: "step", label: "writer", status: "pending", stepIndex: 2, flatIndex: 3 },
+						],
+					},
 					results: [
 						{
 							agent: "planner",
@@ -1408,7 +1444,26 @@ describe("renderSubagentResult fork indicator", () => {
 				details: {
 					mode: "chain",
 					totalSteps: 3,
-					chainAgents: ["planner", "[scout+reviewer]", "writer"],
+					workflowGraph: {
+						runId: "test-run",
+						mode: "chain",
+						phases: [],
+						nodes: [
+							{ id: "s0", kind: "step", label: "planner", status: "completed", stepIndex: 0, flatIndex: 0 },
+							{
+								id: "pg1",
+								kind: "parallel-group",
+								label: "scout+reviewer",
+								status: "completed",
+								stepIndex: 1,
+								children: [
+									{ id: "a0", kind: "agent", label: "scout", status: "completed", flatIndex: 1 },
+									{ id: "a1", kind: "agent", label: "reviewer", status: "completed", flatIndex: 2 },
+								],
+							},
+							{ id: "s2", kind: "step", label: "writer", status: "completed", stepIndex: 2, flatIndex: 3 },
+						],
+					},
 					results: progress.map((entry) => ({
 						agent: entry.agent,
 						task: entry.task,
@@ -1441,7 +1496,6 @@ describe("renderSubagentResult fork indicator", () => {
 					mode: "chain",
 					totalSteps: 3,
 					currentStepIndex: 0,
-					chainAgents: ["scout", "reviewer", "worker"],
 					results: [
 						{
 							agent: "scout",

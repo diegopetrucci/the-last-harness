@@ -661,7 +661,6 @@ export interface Details {
 		artifactPath?: string;
 	};
 	// Chain metadata for observability
-	chainAgents?: string[]; // Agent names in order, e.g., ["scout", "planner"]
 	totalSteps?: number; // Total steps in chain
 	currentStepIndex?: number; // 0-indexed current step (for running chains)
 	workflowGraph?: WorkflowGraphSnapshot;
@@ -1162,9 +1161,6 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-// biome-ignore lint/suspicious/noEmptyInterface: intentionally empty, reserved for future extension config
-interface ExtensionChainConfig {}
-
 export type ToolDescriptionMode = "full" | "compact" | "custom";
 
 export interface ExtensionConfig {
@@ -1182,10 +1178,6 @@ export interface ExtensionConfig {
 	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
 	parallel?: TopLevelParallelConfig;
-	chain?: ExtensionChainConfig;
-	worktreeSetupHook?: string;
-	worktreeSetupHookTimeoutMs?: number;
-	worktreeBaseDir?: string;
 	intercomBridge?: IntercomBridgeConfig;
 }
 
@@ -1216,7 +1208,7 @@ function sanitizeTempScopeSegment(value: string): string {
 	return sanitized || "unknown";
 }
 
-export function resolveTempScopeId(options?: {
+function resolveTempScopeId(options?: {
 	env?: NodeJS.ProcessEnv;
 	getuid?: (() => number) | undefined;
 	userInfo?: (() => { username?: string | null }) | undefined;

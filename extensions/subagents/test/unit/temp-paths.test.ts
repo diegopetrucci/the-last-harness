@@ -9,39 +9,38 @@ import {
 	TEMP_ROOT_DIR,
 	getAsyncConfigPath,
 	resolveTempRootDir,
-	resolveTempScopeId,
 } from "../../src/shared/types.ts";
 
-describe("resolveTempScopeId", () => {
+describe("temp scope id (via resolveTempRootDir)", () => {
 	it("prefers uid when available", () => {
-		const scope = resolveTempScopeId({
+		const root = resolveTempRootDir({
 			getuid: () => 501,
 			env: { USER: "alice" },
 			userInfo: () => ({ username: "alice" }),
 		});
-		assert.equal(scope, "uid-501");
+		assert.equal(path.basename(root), "pi-subagents-uid-501");
 	});
 
 	it("falls back to environment usernames when uid is unavailable", () => {
-		const scope = resolveTempScopeId({
+		const root = resolveTempRootDir({
 			getuid: undefined,
 			env: { USERNAME: "Alice Example" },
 			userInfo: () => ({ username: "ignored" }),
 		});
-		assert.equal(scope, "user-Alice-Example");
+		assert.equal(path.basename(root), "pi-subagents-user-Alice-Example");
 	});
 
 	it("falls back to os.userInfo when environment is missing", () => {
-		const scope = resolveTempScopeId({
+		const root = resolveTempRootDir({
 			getuid: undefined,
 			env: {},
 			userInfo: () => ({ username: "svc_account" }),
 		});
-		assert.equal(scope, "user-svc_account");
+		assert.equal(path.basename(root), "pi-subagents-user-svc_account");
 	});
 
 	it("falls back to home path when os.userInfo throws", () => {
-		const scope = resolveTempScopeId({
+		const root = resolveTempRootDir({
 			getuid: undefined,
 			env: {},
 			userInfo: () => {
@@ -49,7 +48,7 @@ describe("resolveTempScopeId", () => {
 			},
 			homedir: () => "/home/12345/app user",
 		});
-		assert.equal(scope, "home-home-12345-app-user");
+		assert.equal(path.basename(root), "pi-subagents-home-home-12345-app-user");
 	});
 });
 

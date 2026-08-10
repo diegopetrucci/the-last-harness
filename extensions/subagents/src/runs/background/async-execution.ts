@@ -41,7 +41,6 @@ import {
 } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
-import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -117,9 +116,6 @@ interface AsyncChainParams {
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
 	maxSubagentDepth: number;
-	worktreeSetupHook?: string;
-	worktreeSetupHookTimeoutMs?: number;
-	worktreeBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
@@ -157,9 +153,6 @@ interface AsyncSingleParams {
 	thinkingOverride?: AgentConfig["thinking"];
 	availableModels?: AvailableModelInfo[];
 	maxSubagentDepth: number;
-	worktreeSetupHook?: string;
-	worktreeSetupHookTimeoutMs?: number;
-	worktreeBaseDir?: string;
 	controlConfig?: ResolvedControlConfig;
 	controlIntercomTarget?: string;
 	childIntercomTarget?: (agent: string, index: number) => string | undefined;
@@ -192,7 +185,6 @@ export interface AsyncRunnerStepBuildParams {
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
 	maxSubagentDepth: number;
-	worktreeBaseDir?: string;
 	asyncDir: string;
 	outputBaseDir?: string;
 	validateOutputBindings?: boolean;
@@ -417,17 +409,8 @@ function validateAsyncExecutionAcceptance(
 }
 
 export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildParams): AsyncRunnerStepBuildResult {
-	const {
-		chain,
-		agents,
-		ctx,
-		cwd,
-		sessionFilesByFlatIndex,
-		thinkingOverridesByFlatIndex,
-		maxSubagentDepth,
-		worktreeBaseDir,
-		asyncDir,
-	} = params;
+	const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir } =
+		params;
 	const outputBaseDir = params.outputBaseDir;
 	const resultMode = params.resultMode ?? "chain";
 	const chainSkills = params.chainSkills ?? [];
@@ -647,7 +630,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 
 	try {
-		const builtSteps = chain.map((s, stepIndex) => {
+		const builtSteps = chain.map((s) => {
 			if (isParallelStep(s)) {
 				const parallelBehaviors = s.parallel.map((task) => {
 					const agent = agents.find((candidate) => candidate.name === task.agent)!;
@@ -659,29 +642,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				});
 				const progressPrecreated = parallelBehaviors.some((behavior) => behavior.progress);
 				if (progressPrecreated) {
-					if (!s.worktree || params.progressDir) writeInitialProgressFile(progressDir);
+					writeInitialProgressFile(progressDir);
 					progressInstructionCreated = true;
 				}
 				return {
 					parallel: s.parallel.map((t, taskIndex) => {
-						let behaviorCwd: string | undefined;
-						if (s.worktree) {
-							try {
-								behaviorCwd = resolveExpectedWorktreeAgentCwd(
-									runnerCwd,
-									`${id}-s${stepIndex}`,
-									taskIndex,
-									worktreeBaseDir,
-								);
-							} catch {
-								behaviorCwd = undefined;
-							}
-						}
 						const staticStep = nextFlatStep();
 						return buildSeqStep(
 							t,
 							staticStep.sessionFile,
-							behaviorCwd,
+							undefined,
 							progressPrecreated,
 							parallelBehaviors[taskIndex],
 							staticStep.index,
@@ -689,7 +659,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 					}),
 					concurrency: s.concurrency,
 					failFast: s.failFast,
-					worktree: s.worktree,
 				};
 			}
 			const staticStep = nextFlatStep();
@@ -726,9 +695,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 		sessionFilesByFlatIndex,
 		thinkingOverridesByFlatIndex,
 		maxSubagentDepth,
-		worktreeSetupHook,
-		worktreeSetupHookTimeoutMs,
-		worktreeBaseDir,
 		controlConfig,
 		controlIntercomTarget,
 		childIntercomTarget,
@@ -773,7 +739,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 					: undefined),
 		outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
 		maxSubagentDepth,
-		worktreeBaseDir,
 		asyncDir,
 		timeoutMs: params.timeoutMs,
 		toolBudget: params.toolBudget,
@@ -832,9 +797,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 				sessionId: ctx.currentSessionId,
 				piPackageRoot,
 				piArgv1: process.argv[1],
-				worktreeSetupHook,
-				worktreeSetupHookTimeoutMs,
-				worktreeBaseDir,
 				controlConfig,
 				turnBudget: params.turnBudget,
 				toolBudget: params.toolBudget,
@@ -986,9 +948,6 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 		sessionRoot,
 		sessionFile,
 		maxSubagentDepth,
-		worktreeSetupHook,
-		worktreeSetupHookTimeoutMs,
-		worktreeBaseDir,
 		controlConfig,
 		controlIntercomTarget,
 		childIntercomTarget,
@@ -1167,9 +1126,6 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 				sessionId: ctx.currentSessionId,
 				piPackageRoot,
 				piArgv1: process.argv[1],
-				worktreeSetupHook,
-				worktreeSetupHookTimeoutMs,
-				worktreeBaseDir,
 				controlConfig,
 				timeoutMs: effectiveTimeoutMs,
 				deadlineAt,

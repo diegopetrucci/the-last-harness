@@ -148,7 +148,6 @@ export interface ChainStepConfig {
 	collect?: unknown;
 	concurrency?: number;
 	failFast?: boolean;
-	worktree?: boolean;
 	acceptance?: AcceptanceInput;
 	toolBudget?: ToolBudgetConfig;
 }

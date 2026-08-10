@@ -920,29 +920,6 @@ describe("fork context execution wiring", () => {
 		assert.equal(new Set(sessionArgs).size, 3);
 	});
 
-	it("rejects top-level parallel worktree runs with a conflicting task cwd", async () => {
-		const { manager } = makeSessionManagerRecorder({ sessionFile: "/tmp/parent.jsonl", leafId: "leaf-777" });
-		const executor = makeExecutor();
-
-		const result = await executor.execute(
-			"id",
-			{
-				tasks: [
-					{ agent: "echo", task: "task one" },
-					{ agent: "second", task: "task two", cwd: `${tempDir}/other` },
-				],
-				worktree: true,
-			},
-			new AbortController().signal,
-			undefined,
-			makeCtx(manager),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /worktree isolation uses the shared cwd/i);
-		assert.match(result.content[0]?.text ?? "", /task 2 \(second\) sets cwd/i);
-	});
-
 	it("rejects top-level parallel counts that expand past MAX_PARALLEL", async () => {
 		const { manager } = makeSessionManagerRecorder({ sessionFile: "/tmp/parent.jsonl", leafId: "leaf-max" });
 		const executor = makeExecutor();
@@ -1184,18 +1161,6 @@ describe("fork context execution wiring", () => {
 				params: { tasks: [{ agent: "echo", task: "task one", count: 9 }], async: true },
 				patterns: [/Max 8 tasks/],
 			},
-			{
-				name: "worktree cwd conflict",
-				params: {
-					tasks: [
-						{ agent: "echo", task: "task one" },
-						{ agent: "second", task: "task two", cwd: `${tempDir}/other` },
-					],
-					worktree: true,
-					async: true,
-				},
-				patterns: [/worktree isolation uses the shared cwd/i, /task 2 \(second\) sets cwd/i],
-			},
 		]) {
 			const result = await executor.execute(
 				"id",
@@ -1210,33 +1175,6 @@ describe("fork context execution wiring", () => {
 				assert.match(result.content[0]?.text ?? "", pattern, testCase.name);
 			}
 		}
-	});
-
-	it("rejects async chain worktree requests before nested cwd validation runs", async () => {
-		const { manager } = makeSessionManagerRecorder({ sessionFile: "/tmp/parent.jsonl", leafId: "leaf-chain" });
-		const executor = makeExecutor();
-
-		const result = await executor.execute(
-			"id",
-			{
-				chain: [
-					{
-						parallel: [
-							{ agent: "echo", task: "p1" },
-							{ agent: "second", task: "p2", cwd: `${tempDir}/other` },
-						],
-						worktree: true,
-					},
-				],
-				async: true,
-			},
-			new AbortController().signal,
-			undefined,
-			makeCtx(manager),
-		);
-
-		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Saved chains are deliberately unsupported/);
 	});
 
 	it("rejects forked chain session allocation before any branch files are created", async () => {

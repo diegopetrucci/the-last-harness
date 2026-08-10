@@ -355,7 +355,6 @@ describe("SubagentParams schema", () => {
 			// additionalProperties: false violations at root
 			{ skill: "review" },
 			{ chain: [{ agent: "reviewer" }] },
-			{ worktree: true },
 			{ clarify: true },
 			{ maxRuntimeMs: 1000 },
 			{ acceptance: "checked" },
@@ -437,7 +436,6 @@ describe("SubagentParams schema", () => {
 		assert.ok(CompileSchema, "TypeBox compiler should exist");
 		const validator = CompileSchema(SubagentParams);
 		const removedKeys = [
-			"worktree",
 			"clarify",
 			"share",
 			"schedule",
@@ -461,7 +459,6 @@ describe("SubagentParams schema", () => {
 		];
 		const removedNestedTaskKeys = [
 			"cwd",
-			"worktree",
 			"clarify",
 			"share",
 			"chain",

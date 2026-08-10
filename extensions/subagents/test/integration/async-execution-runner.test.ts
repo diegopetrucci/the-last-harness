@@ -8,7 +8,6 @@
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
 	createEventBus,
@@ -28,7 +27,6 @@ import {
 	type AsyncStatusPayload,
 	RESULTS_DIR,
 	TEMP_ROOT_DIR,
-	createRepo,
 	createSubagentExecutor,
 	executeAsyncChain,
 	executeAsyncSingle,
@@ -829,72 +827,6 @@ describe("async execution utilities", () => {
 		const target = resolveAsyncResumeTarget({ id, index: 1 }, { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR });
 		assert.equal(target.kind, "revive");
 		assert.equal(target.sessionFile, path.resolve(secondSessionFile));
-	});
-
-	it("top-level async worktree parallel resolves reads against the worktree and output under the parent session artifacts", {
-		skip: process.platform === "win32" ? "worktree path separators unreliable on Windows CI" : undefined,
-	}, async () => {
-		const repoDir = createRepo("pi-subagent-async-worktree-");
-		try {
-			mockPi.onCall({ output: "Worktree report" });
-			const executor = createSubagentExecutor!({
-				pi: { events: createEventBus(), getSessionName: () => undefined },
-				state: {
-					baseCwd: repoDir,
-					currentSessionId: null,
-					asyncJobs: new Map(),
-					foregroundControls: new Map(),
-					lastForegroundControlId: null,
-				},
-				config: {},
-				asyncByDefault: false,
-				tempArtifactsDir: repoDir,
-				getSubagentSessionRoot: () => repoDir,
-				expandTilde: (p: string) => p,
-				discoverAgents: () => ({ agents: [makeAgent("worker")] }),
-			});
-
-			const parentSessionFile = path.join(repoDir, "parent-session", "session.jsonl");
-			const ctx = {
-				...makeMinimalCtx(repoDir),
-				sessionManager: {
-					getSessionId: () => "session-123",
-					getSessionFile: () => parentSessionFile,
-				},
-			};
-			const result = await executor.execute(
-				"async-parallel-worktree-fields",
-				{
-					tasks: [{ agent: "worker", task: "Do worktree work", output: "report.md", reads: ["input.md"] }],
-					async: true,
-					worktree: true,
-				},
-				new AbortController().signal,
-				undefined,
-				ctx,
-			);
-
-			const asyncId = result.details?.asyncId;
-			assert.ok(asyncId, "expected asyncId");
-
-			const worktreeCwd = path.join(os.tmpdir(), `pi-worktree-${asyncId}-s0-0`);
-			const args = await waitForMockPiArgs(mockPi, 0);
-			const taskArg = args.at(-1) ?? "";
-			const expectedOutputPath = path.join(
-				repoDir,
-				"parent-session",
-				"subagent-artifacts",
-				"outputs",
-				asyncId,
-				"report.md",
-			);
-			assert.ok(taskArg.includes(`[Read from: ${path.join(worktreeCwd, "input.md")}]`));
-			assert.ok(taskArg.includes(`Write your findings to exactly this path: ${expectedOutputPath}`));
-			await waitForAsyncResultFile(asyncId, 90_000);
-			assert.equal(fs.existsSync(path.join(repoDir, ".pi-subagents", "artifacts")), false);
-		} finally {
-			removeTempDir(repoDir);
-		}
 	});
 
 	it("readStatus caches unchanged files and invalidates same-mtime replacements", () => {

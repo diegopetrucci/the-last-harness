@@ -87,14 +87,13 @@ test("compact multi-result rendering shows total cost in the header", () => {
 	assert.match(expanded, /in:30 out:12 \$0\.0400/);
 });
 
-test("static sequential and static parallel chain rendering keep existing labels", () => {
+test("sequential chain rendering uses result agent names", () => {
 	const sequential = componentText(
 		renderSubagentResult(
 			{
 				content: [{ type: "text", text: "done" }],
 				details: {
 					mode: "chain",
-					chainAgents: ["scout", "writer"],
 					totalSteps: 2,
 					results: [result("scout", "a"), result("writer", "b")],
 				},
@@ -105,16 +104,37 @@ test("static sequential and static parallel chain rendering keep existing labels
 	);
 	assert.match(sequential, /Step 1: scout/);
 	assert.match(sequential, /Step 2: writer/);
+});
 
+test("parallel chain rendering uses workflowGraph for group labels", () => {
 	const parallel = componentText(
 		renderSubagentResult(
 			{
 				content: [{ type: "text", text: "done" }],
 				details: {
 					mode: "chain",
-					chainAgents: ["scout", "[reviewer+auditor]", "writer"],
 					totalSteps: 3,
 					results: [result("scout", "a"), result("reviewer", "b"), result("auditor", "c"), result("writer", "d")],
+					workflowGraph: {
+						runId: "test-run",
+						mode: "chain",
+						phases: [],
+						nodes: [
+							{ id: "s0", kind: "step", label: "scout", status: "completed", stepIndex: 0, flatIndex: 0 },
+							{
+								id: "p1",
+								kind: "parallel-group",
+								label: "reviewer+auditor",
+								status: "completed",
+								stepIndex: 1,
+								children: [
+									{ id: "p1a", kind: "agent", label: "reviewer", status: "completed", flatIndex: 1 },
+									{ id: "p1b", kind: "agent", label: "auditor", status: "completed", flatIndex: 2 },
+								],
+							},
+							{ id: "s2", kind: "step", label: "writer", status: "completed", stepIndex: 2, flatIndex: 3 },
+						],
+					},
 				},
 			},
 			{ expanded: false },

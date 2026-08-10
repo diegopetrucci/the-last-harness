@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -272,44 +271,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	}
 
-	function git(cwd: string, args: string[]): string {
-		const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8" });
-		if (result.status !== 0) {
-			throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`);
-		}
-		return result.stdout.trim();
-	}
-
-	function createRepo(prefix: string): string {
-		const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-		git(repoDir, ["init"]);
-		git(repoDir, ["config", "user.email", "tests@example.com"]);
-		git(repoDir, ["config", "user.name", "Intercom Result Tests"]);
-		fs.writeFileSync(path.join(repoDir, "tracked.txt"), "initial\n", "utf-8");
-		git(repoDir, ["add", "tracked.txt"]);
-		git(repoDir, ["commit", "-m", "initial commit"]);
-		return repoDir;
-	}
-
-	async function waitFor(
-		predicate: () => boolean,
-		failure: string,
-		timeoutMs = scaleTestTimeout(10_000),
-	): Promise<void> {
-		const deadline = Date.now() + timeoutMs;
-		while (!predicate()) {
-			if (Date.now() > deadline) assert.fail(failure);
-			await new Promise((resolve) => setTimeout(resolve, 50));
-		}
-	}
-
 	function makeExecutor(
 		options: {
 			bridgeMode?: "always" | "off";
 			agents?: ReturnType<typeof makeAgent>[];
 			acknowledgeResults?: boolean;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-			worktreeBaseDir?: string;
 		} = {},
 	) {
 		const events = createRecordingEventBus({ acknowledgeResults: options.acknowledgeResults ?? true });
@@ -340,7 +307,6 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			state,
 			config: {
 				intercomBridge: { mode: options.bridgeMode ?? "always" },
-				...(options.worktreeBaseDir ? { worktreeBaseDir: options.worktreeBaseDir } : {}),
 			},
 			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
@@ -776,56 +742,6 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			true,
 		);
 		assert.ok((result.content[0]?.text ?? "").length <= 8_000);
-	});
-
-	it("top-level parallel native worktree results capture patch artifacts before cleanup", async () => {
-		const repoDir = createRepo("pi-intercom-native-worktree-");
-		const worktreeBaseDir = path.join(tempDir, "worktrees");
-		mockPi.onCall({ output: "Parallel worktree child output", delay: 500 });
-		const { executor, events } = makeExecutor({ agents: [makeAgent("a")], worktreeBaseDir });
-		const runId = "parallel-native-worktree";
-
-		try {
-			const runPromise = executor.execute(
-				runId,
-				{ tasks: [{ agent: "a", task: "worktree-edit" }], worktree: true },
-				new AbortController().signal,
-				undefined,
-				makeMinimalCtx(repoDir),
-			);
-			await waitFor(
-				() => fs.existsSync(worktreeBaseDir) && fs.readdirSync(worktreeBaseDir).length > 0,
-				`Timed out waiting for worktree base dir: ${worktreeBaseDir}`,
-			);
-			const worktreeDir = path.join(worktreeBaseDir, fs.readdirSync(worktreeBaseDir)[0]!);
-			fs.writeFileSync(path.join(worktreeDir, "tracked.txt"), "updated from worktree\n", "utf-8");
-			fs.writeFileSync(path.join(worktreeDir, "new-file.ts"), "export const worktree = true;\n", "utf-8");
-
-			const result = await runPromise;
-			const text = result.content[0]?.text ?? "";
-			assert.equal(
-				events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-				false,
-			);
-			assert.match(text, /Mode: parallel/);
-			assert.match(text, /=== Worktree Changes ===/);
-			assert.equal(text.match(/=== Worktree Changes ===/g)?.length ?? 0, 1);
-			assert.equal(text.match(/Full patches:/g)?.length ?? 0, 1);
-			assert.ok(text.length <= 8_000);
-			const patchesDir = text.match(/Full patches: (.+)$/m)?.[1];
-			assert.ok(patchesDir, "expected native result to reference patch artifacts");
-			assert.ok(fs.existsSync(patchesDir), `expected patches dir to exist: ${patchesDir}`);
-			const patchFiles = fs.readdirSync(patchesDir).filter((name) => name.endsWith(".patch"));
-			assert.equal(patchFiles.length, 1);
-			const patch = fs.readFileSync(path.join(patchesDir, patchFiles[0]!), "utf-8");
-			assert.match(patch, /tracked\.txt/);
-			assert.match(patch, /new-file\.ts/);
-			assert.equal(fs.existsSync(worktreeDir), false, `worktree should be cleaned up: ${worktreeDir}`);
-			assert.equal(fs.existsSync(worktreeBaseDir) ? fs.readdirSync(worktreeBaseDir).length : 0, 0);
-			assert.equal(git(repoDir, ["branch", "--list", "pi-parallel-*"]).trim(), "");
-		} finally {
-			fs.rmSync(repoDir, { recursive: true, force: true });
-		}
 	});
 
 	it("chain grouping requests fail closed before native summaries are built", async () => {

@@ -283,49 +283,6 @@ function formatNativeForegroundNestedLines(children: PublicNestedRunSummary[] | 
 	return lines;
 }
 
-function compactNativeForegroundSuffixText(value: string, maxChars: number): string {
-	const trimmed = value.trim();
-	if (!trimmed || maxChars <= 0) return "";
-	if (trimmed.length <= maxChars) return trimmed;
-	const lines = trimmed
-		.split("\n")
-		.map((line) => line.trimEnd())
-		.filter((line) => line.trim().length > 0);
-	const heading = boundedNativeForegroundLabel(lines[0] ?? "Additional details:");
-	const fullPatchesLine = lines.find((line) => line.startsWith("Full patches:"));
-	const boundedPatchesLine = fullPatchesLine
-		? `Full patches: ${boundedNativeForegroundReference(fullPatchesLine.slice("Full patches:".length).trim())}`
-		: undefined;
-	const marker = "… [suffix truncated; inspect retained details, artifacts, or sessions for full appended output]";
-	const protectedLines = [
-		heading,
-		marker,
-		...(boundedPatchesLine && boundedPatchesLine !== heading ? [boundedPatchesLine] : []),
-	];
-	const compact = protectedLines.join("\n");
-	if (compact.length <= maxChars) return compact;
-	if (!boundedPatchesLine) return truncateWithMarker(compact, maxChars, marker);
-	const protectedTail = `${marker}\n${boundedPatchesLine}`;
-	if (protectedTail.length <= maxChars) return protectedTail;
-	return truncateWithMarker(boundedPatchesLine, maxChars, "… [reference truncated]");
-}
-
-function combineNativeForegroundBodyAndSuffix(body: string, suffixText: string | undefined): string {
-	const boundedBody = truncateWithMarker(body, MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
-	const trimmedSuffix = suffixText?.trim();
-	if (!trimmedSuffix) return boundedBody;
-	if (boundedBody.length + 2 + trimmedSuffix.length <= MAX_NATIVE_FOREGROUND_CHARS)
-		return `${boundedBody}\n\n${trimmedSuffix}`;
-	const minimalSuffix = compactNativeForegroundSuffixText(
-		trimmedSuffix,
-		Math.max(0, Math.min(1_200, MAX_NATIVE_FOREGROUND_CHARS - 2)),
-	);
-	if (!minimalSuffix) return boundedBody;
-	const bodyBudget = Math.max(0, MAX_NATIVE_FOREGROUND_CHARS - 2 - minimalSuffix.length);
-	const reboundedBody = truncateWithMarker(body, bodyBudget, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
-	return `${reboundedBody}\n\n${minimalSuffix}`;
-}
-
 function formatForegroundNativeSubagentText(input: {
 	runId: string;
 	mode: SubagentRunMode;
@@ -333,7 +290,6 @@ function formatForegroundNativeSubagentText(input: {
 	children: NativeForegroundChild[];
 	chainSteps?: number;
 	errorSummary?: string;
-	suffixText?: string;
 }): string {
 	const counts = countStatuses(input.children);
 	const lines: string[] = [
@@ -368,7 +324,7 @@ function formatForegroundNativeSubagentText(input: {
 		lines.push(...formatNativeForegroundNestedLines(child.children));
 	}
 
-	return combineNativeForegroundBodyAndSuffix(lines.join("\n"), input.suffixText);
+	return truncateWithMarker(lines.join("\n"), MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
 }
 
 interface GroupedResultIntercomMessageInput {
@@ -389,7 +345,6 @@ interface GroupedNativeForegroundMessageInput {
 	chainSteps?: number;
 	statusOverride?: SubagentResultStatus;
 	errorSummary?: string;
-	suffixText?: string;
 }
 
 function asyncResumeGuidance(input: {
@@ -522,7 +477,6 @@ export function formatForegroundNativeSubagentResult(input: GroupedNativeForegro
 			children,
 			...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
 			...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
-			...(input.suffixText ? { suffixText: input.suffixText } : {}),
 		}),
 	};
 }

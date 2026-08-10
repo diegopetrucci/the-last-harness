@@ -3,7 +3,6 @@ import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { promptTemplateDelegationParams } from "../../src/extension/index.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -13,51 +12,6 @@ function parentToolEnv(): NodeJS.ProcessEnv {
 	delete env[SUBAGENT_CHILD_ENV];
 	return env;
 }
-
-describe("prompt-template delegation adapter", () => {
-	it("omits clarify from supported single and parallel executor requests", () => {
-		const single = promptTemplateDelegationParams({
-			agent: "worker",
-			task: "Do work",
-			context: "fresh",
-			model: "openai/gpt-5",
-			cwd: "/repo",
-		});
-		const parallel = promptTemplateDelegationParams({
-			agent: "",
-			task: "",
-			tasks: [
-				{ agent: "worker", task: "Do work" },
-				{ agent: "reviewer", task: "Review work" },
-			],
-			context: "fork",
-			model: "openai/gpt-5",
-			cwd: "/repo",
-			worktree: true,
-		});
-
-		assert.equal("clarify" in single, false);
-		assert.equal("clarify" in parallel, false);
-		assert.deepEqual(single, {
-			agent: "worker",
-			task: "Do work",
-			context: "fresh",
-			cwd: "/repo",
-			model: "openai/gpt-5",
-			async: false,
-		});
-		assert.deepEqual(parallel, {
-			tasks: [
-				{ agent: "worker", task: "Do work" },
-				{ agent: "reviewer", task: "Review work" },
-			],
-			context: "fork",
-			cwd: "/repo",
-			worktree: true,
-			async: false,
-		});
-	});
-});
 
 describe("subagent extension child mode", () => {
 	it("does not mutate Pi tool expansion before direct subagent tool execution", () => {

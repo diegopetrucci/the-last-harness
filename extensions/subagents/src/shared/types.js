@@ -29,7 +29,7 @@ function sanitizeTempScopeSegment(value) {
         .replace(/^-+|-+$/g, "");
     return sanitized || "unknown";
 }
-export function resolveTempScopeId(options) {
+function resolveTempScopeId(options) {
     const env = options?.env ?? process.env;
     const getuid = options && Object.hasOwn(options, "getuid") ? options.getuid : process.getuid?.bind(process);
     if (typeof getuid === "function") {
