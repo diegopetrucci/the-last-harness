@@ -151,7 +151,7 @@ export interface RegisterSubagentNotifyOptions {
 function truncateWithMarker(value: string, maxChars: number, marker: string): string {
 	if (value.length <= maxChars) return value;
 	if (marker.length >= maxChars) return marker.slice(0, maxChars);
-	return `${value.slice(0, maxChars - marker.length)}${marker}`;
+	return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
 
 function boundedSummary(value: string, maxChars: number): string {

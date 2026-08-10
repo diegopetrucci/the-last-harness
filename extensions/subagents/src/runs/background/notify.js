@@ -21,7 +21,7 @@ function truncateWithMarker(value, maxChars, marker) {
         return value;
     if (marker.length >= maxChars)
         return marker.slice(0, maxChars);
-    return `${value.slice(0, maxChars - marker.length)}${marker}`;
+    return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");

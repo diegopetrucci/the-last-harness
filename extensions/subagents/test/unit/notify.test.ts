@@ -2642,3 +2642,138 @@ describe("boundedReference", () => {
 		}
 	});
 });
+
+// ---------------------------------------------------------------------------
+// truncateWithMarker surrogate safety — all four call sites
+//
+// The root cause (tlhm-vxik) is a raw value.slice(0, maxChars - marker.length)
+// inside truncateWithMarker that can leave an unpaired UTF-16 high surrogate
+// (U+D800–U+DBFF) at the cut boundary when an emoji straddles that position.
+// The fix replaces it with sliceSafe, which backs up one code unit when the
+// last retained unit is a high surrogate.
+//
+// CUT-POINT DERIVATION: each cut is maxChars - marker.length, derived directly
+// from the function arguments.  Tests measure this from the constants rather
+// than hardcoding an assumed offset so a constant change immediately breaks
+// the test fixture comment, not just the assertion.
+//
+// COMPLETION-ENVELOPE REACHABILITY NOTE:
+//   The sendCompletion envelope calls truncateWithMarker(formatted, 32000, marker33).
+//   Both formatSingleCompletion and formatGroupedCompletion guarantee
+//   formatted.length <= MAX_COMPLETION_MESSAGE_CHARS - 1 = 31 999 through their
+//   joinedLineCost / trimEnd reservation math (the final trimEnd removes exactly
+//   one trailing '\n' that joinedLineCost counts in reservedChars, leaving one
+//   char of permanent slack).  Therefore truncateWithMarker's value.length check
+//   always exits early for the envelope, and placing an emoji at index 31 966
+//   is structurally impossible under the current formatters.  No envelope test
+//   is written; this comment is the evidence.
+// ---------------------------------------------------------------------------
+
+describe("truncateWithMarker surrogate safety at each call site", () => {
+	const emoji = "\uD83D\uDE00"; // U+1F600 — two UTF-16 code units
+
+	// -----------------------------------------------------------------------
+	// 1. boundedSummary  (marker = '… [summary truncated]', 21 chars)
+	//    maxChars = 8 000 (MAX_SUMMARY_CHARS), cut = 8000 - 21 = 7 979
+	//    High surrogate at index 7 978 is the last unit taken by the raw slice.
+	// -----------------------------------------------------------------------
+	it("boundedSummary: well-formed when an emoji straddles the 7979-char cut", () => {
+		const summaryMarker = "… [summary truncated]";
+		const maxSummaryChars = 8_000; // MAX_SUMMARY_CHARS module constant
+		const cutPoint = maxSummaryChars - summaryMarker.length; // 7979
+		// emoji starts at cutPoint - 1 = 7978 so the high surrogate falls at the
+		// last position taken by slice(0, cutPoint).
+		const summary = "a".repeat(cutPoint - 1) + emoji + "a".repeat(500);
+		assert.equal(summary.length, cutPoint - 1 + 2 + 500, "fixture length sanity");
+
+		const { events, sentMessages } = createPi();
+		events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+			id: "surrogate-summary-test",
+			agent: "test-agent",
+			success: true,
+			summary,
+			timestamp: 1,
+			sessionId: "session-1",
+		});
+
+		assert.equal(sentMessages.length, 1, "exactly one message expected");
+		const content = (sentMessages[0]!.message as { content: string }).content;
+		assert.ok(content.isWellFormed(), "boundedSummary output must not contain a lone surrogate");
+		assert.ok(content.length <= MAX_COMPLETION_MESSAGE_CHARS, "ceiling must be respected");
+	});
+
+	// -----------------------------------------------------------------------
+	// 2. boundedReference fallback — no path separator present
+	//    (marker = '… [reference truncated]', 23 chars)
+	//    maxChars = 500 (MAX_REFERENCE_CHARS), cut = 500 - 23 = 477
+	//    High surrogate at index 476 is the last unit taken by the raw slice.
+	// -----------------------------------------------------------------------
+	it("boundedReference (no-separator fallback): well-formed when emoji straddles the 477-char cut", () => {
+		const refMarker = "… [reference truncated]";
+		const maxRefChars = 500; // MAX_REFERENCE_CHARS module constant
+		const cutPoint = maxRefChars - refMarker.length; // 477
+		// No '/' in the value → fallback to truncateWithMarker directly.
+		const value = "a".repeat(cutPoint - 1) + emoji + "a".repeat(100);
+		assert.ok(value.length > maxRefChars, "fixture must exceed the cap");
+		assert.ok(!value.includes("/"), "fixture must have no path separator");
+
+		const result = boundedReference(value);
+		assert.ok(result.length <= maxRefChars, `result length ${result.length} must be <= ${maxRefChars}`);
+		assert.ok(result.isWellFormed(), "boundedReference (no-separator) output must not contain a lone surrogate");
+		assert.ok(result.endsWith(refMarker), "fallback marker must be present");
+	});
+
+	// -----------------------------------------------------------------------
+	// 3. boundedReference fallback — final segment saturates the cap
+	//    Same marker and cut as above (477).  Route reached when the path has a
+	//    separator but the last segment is longer than
+	//    MAX_REFERENCE_CHARS - middleMarker.length - 1 = 474 chars, so no
+	//    leading context can survive alongside the middle marker.
+	// -----------------------------------------------------------------------
+	it("boundedReference (final-segment-saturates fallback): well-formed when emoji straddles the 477-char cut", () => {
+		const refMarker = "… [reference truncated]";
+		const maxRefChars = 500; // MAX_REFERENCE_CHARS module constant
+		const cutPoint = maxRefChars - refMarker.length; // 477
+		// '/' at index 0, then (cutPoint - 2) 'a's, then emoji.
+		// The final segment alone (cutPoint - 2 + 2 + 100 = 577 chars) exceeds
+		// MAX_REFERENCE_CHARS - middleMarker.length - 1 = 474, so the while-loop
+		// breaks immediately and tailStart stays -1 → truncateWithMarker fallback.
+		const value = "/" + "a".repeat(cutPoint - 2) + emoji + "a".repeat(100);
+		// index 0 = '/', indices 1..(cutPoint-2) = 'a', index cutPoint-1 = high surrogate
+		assert.equal(value[cutPoint - 1], "\uD83D", "high surrogate must be at index cutPoint-1");
+		assert.ok(value.length > maxRefChars, "fixture must exceed the cap");
+
+		const result = boundedReference(value);
+		assert.ok(result.length <= maxRefChars, `result length ${result.length} must be <= ${maxRefChars}`);
+		assert.ok(
+			result.isWellFormed(),
+			"boundedReference (final-segment-saturates) output must not contain a lone surrogate",
+		);
+		assert.ok(result.endsWith(refMarker), "fallback marker must be present");
+	});
+
+	// -----------------------------------------------------------------------
+	// 4. boundedLabel  (marker = '… [label truncated]', 19 chars)
+	//    maxChars = 160 (MAX_LABEL_CHARS), cut = 160 - 19 = 141
+	//    High surrogate at index 140 is the last unit taken by the raw slice.
+	// -----------------------------------------------------------------------
+	it("boundedLabel: well-formed when an emoji straddles the 141-char cut", () => {
+		const labelMarker = "… [label truncated]";
+		const maxLabelChars = 160; // MAX_LABEL_CHARS module constant
+		const cutPoint = maxLabelChars - labelMarker.length; // 141
+		// boundedLabel is applied to the agent name inside buildCompletionDetails.
+		const agentName = "a".repeat(cutPoint - 1) + emoji + "a".repeat(50);
+		assert.ok(agentName.length > maxLabelChars, "fixture must exceed the cap");
+
+		const details = buildCompletionDetails({
+			id: "surrogate-label-test",
+			agent: agentName,
+			success: true,
+			summary: "",
+			timestamp: 1,
+		});
+		assert.ok(details.agent.isWellFormed(), "boundedLabel output (details.agent) must not contain a lone surrogate");
+		assert.ok(details.agent.length <= maxLabelChars, "agent label must respect the cap");
+		assert.ok(details.agent.endsWith(labelMarker), "label marker must be present");
+	});
+});
