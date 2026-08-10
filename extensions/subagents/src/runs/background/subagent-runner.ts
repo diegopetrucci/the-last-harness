@@ -189,8 +189,6 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
-	/** Global cap on simultaneously-running subagent tasks within this run. */
-	globalConcurrencyLimit?: number;
 }
 
 interface StepResult {
@@ -1661,7 +1659,7 @@ function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {
 async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
-	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+	const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];

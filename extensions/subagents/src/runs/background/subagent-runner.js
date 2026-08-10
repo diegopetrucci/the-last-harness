@@ -1186,7 +1186,7 @@ function isPausedStepStatus(status) {
 }
 async function runSubagent(config) {
     const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
-    const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+    const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
     let previousOutput = "";
     const outputs = {};
     const results = [];

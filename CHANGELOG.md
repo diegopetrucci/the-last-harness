@@ -4,9 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- New **Skills** section in `docs/subagents.md` documents how skills are discovered, how the `pi-subagents` guard works, and the full `skill:` frontmatter reference.
+
 ### Removed
 
 - Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
+- Removed medium-confidence dead code from the subagents runtime (~1,300 lines): the `toolDescriptionMode: "custom"` mode (now falls through to the invalid-mode warning and defaults to `"full"`); the supervisor `reply` parent action and child reply-file plumbing; `ExtensionConfig` knobs `completionBatch`, `singleRunOutputBaseDir`, `forceTopLevelAsync`, `asyncByDefault`, `defaultSessionDir`, and `globalConcurrencyLimit`; config-level `turnBudget` and `toolBudget`; and dead skills sub-plumbing (`task.skill`/`s.skill`, `chainSkills`). Unknown/removed settings keys in existing user configs are silently ignored — no error on upgrade.
 
 ## [0.35.0] - 2026-08-09
 

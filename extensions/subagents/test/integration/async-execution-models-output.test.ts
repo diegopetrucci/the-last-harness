@@ -1211,8 +1211,8 @@ describe("async execution utilities", () => {
 	it("background chains report unavailable pi-subagents skill requests", () => {
 		const id = `async-chain-pi-subagents-skill-${Date.now().toString(36)}`;
 		const result = executeAsyncChain(id, {
-			chain: [{ agent: "worker", task: "Do work", skill: ["pi-subagents"] }],
-			agents: [makeAgent("worker")],
+			chain: [{ agent: "worker", task: "Do work" }],
+			agents: [makeAgent("worker", { skills: ["pi-subagents"] })],
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			cwd: tempDir,
 			artifactConfig: {
@@ -1243,8 +1243,8 @@ describe("async execution utilities", () => {
 		try {
 			writePackageSkill(path.join(chainCwd, "packages", "app"), "async-chain-step-skill");
 			executeAsyncChain(id, {
-				chain: [{ agent: "worker", task: "Do work", cwd: "packages/app", skill: ["async-chain-step-skill"] }],
-				agents: [makeAgent("worker")],
+				chain: [{ agent: "worker", task: "Do work", cwd: "packages/app" }],
+				agents: [makeAgent("worker", { skills: ["async-chain-step-skill"] })],
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				cwd: chainCwd,
 				artifactConfig: {

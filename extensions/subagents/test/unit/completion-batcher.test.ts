@@ -51,12 +51,6 @@ describe("resolveCompletionBatchConfig", () => {
 		assert.deepEqual(resolveCompletionBatchConfig(), DEFAULT_COMPLETION_BATCH_CONFIG);
 	});
 
-	it("override wins over global config", () => {
-		const resolved = resolveCompletionBatchConfig({ debounceMs: 50, maxWaitMs: 200 }, { debounceMs: 80 });
-		assert.equal(resolved.debounceMs, 80);
-		assert.equal(resolved.maxWaitMs, 200);
-	});
-
 	it("rejects invalid booleans and non-positive or fractional integers", () => {
 		const resolved = resolveCompletionBatchConfig({
 			enabled: "false",
@@ -70,15 +64,6 @@ describe("resolveCompletionBatchConfig", () => {
 		assert.equal(resolved.maxWaitMs, DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs);
 		assert.equal(resolved.stragglerDebounceMs, DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs);
 		assert.equal(resolved.stragglerWindowMs, DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs);
-	});
-
-	it("ignores invalid overrides instead of masking valid global config", () => {
-		const resolved = resolveCompletionBatchConfig({ enabled: false, debounceMs: 80 }, {
-			enabled: "false",
-			debounceMs: "bad",
-		} as never);
-		assert.equal(resolved.enabled, false);
-		assert.equal(resolved.debounceMs, 80);
 	});
 });
 

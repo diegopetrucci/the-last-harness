@@ -68,7 +68,6 @@ function makeExecutor(cwd: string) {
 		},
 		state: makeState(cwd),
 		config: {},
-		asyncByDefault: false,
 		tempArtifactsDir: cwd,
 		getSubagentSessionRoot: () => cwd,
 		expandTilde: (value: string) => value,

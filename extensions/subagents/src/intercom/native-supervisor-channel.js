@@ -7,7 +7,6 @@ import { POLL_INTERVAL_MS, TEMP_ROOT_DIR } from "../shared/types.js";
 import { writeAtomicJson } from "../shared/atomic-json.js";
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
-const REPLIES_DIR = "replies";
 export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -20,10 +19,8 @@ const ContactSupervisorParamsSchema = Type.Object({
     interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
 }, { additionalProperties: false });
 const IntercomParamsSchema = Type.Object({
-    action: Type.String({ enum: ["list", "send", "ask", "reply", "pending", "status"] }),
-    to: Type.Optional(Type.String()),
+    action: Type.String({ enum: ["list", "send", "ask", "pending", "status"] }),
     message: Type.Optional(Type.String()),
-    replyTo: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 function safeSegment(value) {
     return (value
@@ -36,13 +33,9 @@ export function resolveSupervisorChannelDir(runId, agent, childIndex) {
 }
 export function ensureSupervisorChannelDir(channelDir) {
     fs.mkdirSync(path.join(channelDir, REQUESTS_DIR), { recursive: true, mode: 0o700 });
-    fs.mkdirSync(path.join(channelDir, REPLIES_DIR), { recursive: true, mode: 0o700 });
 }
 function requestPath(channelDir, requestId) {
     return path.join(channelDir, REQUESTS_DIR, `${safeSegment(requestId)}.json`);
-}
-function replyPath(channelDir, requestId) {
-    return path.join(channelDir, REPLIES_DIR, `${safeSegment(requestId)}.json`);
 }
 function readTextEnv(name) {
     const value = process.env[name]?.trim();
@@ -92,16 +85,6 @@ function formatChildMessage(input) {
     }
     return lines.join("\n").trimEnd();
 }
-function parseStructuredReply(message) {
-    const trimmed = message.trim();
-    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
-    try {
-        return { value: JSON.parse(fenced ?? trimmed) };
-    }
-    catch (error) {
-        return { error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
-    }
-}
 function askTimeoutMs() {
     const parsed = Number(process.env.PI_INTERCOM_ASK_TIMEOUT_MS);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ASK_TIMEOUT_MS;
@@ -127,19 +110,10 @@ function delay(ms, signal) {
         signal?.addEventListener("abort", onAbort, { once: true });
     });
 }
-async function waitForReply(channelDir, requestId, deadline, signal) {
-    const file = replyPath(channelDir, requestId);
+async function waitForSupervisorPauseOrTimeout(deadline, signal) {
     while (Date.now() <= deadline) {
         if (signal?.aborted)
             throw new Error("Supervisor request cancelled.");
-        if (fs.existsSync(file)) {
-            const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
-            if (parsed.type === "subagent.supervisor.reply" &&
-                parsed.requestId === requestId &&
-                typeof parsed.message === "string") {
-                return parsed;
-            }
-        }
         await delay(250, signal);
     }
     throw new Error("Timed out waiting for supervisor reply.");
@@ -189,25 +163,10 @@ async function sendSupervisorRequest(params, signal) {
             details: { delivered: true, requestId, reason: params.reason },
         };
     }
-    try {
-        const reply = await waitForReply(metadata.channelDir, requestId, replyDeadline, signal);
-        const details = { requestId, reason: params.reason };
-        if (params.reason === "interview_request") {
-            const structured = parseStructuredReply(reply.message);
-            if (structured.error)
-                details.structuredReplyParseError = structured.error;
-            else
-                details.structuredReply = structured.value;
-        }
-        return {
-            content: [{ type: "text", text: `**Reply from supervisor:**\n${reply.message}` }],
-            details,
-        };
-    }
-    catch (error) {
+    return waitForSupervisorPauseOrTimeout(replyDeadline, signal).catch((error) => {
         removeRequestFile(requestPath(metadata.channelDir, requestId));
         throw error;
-    }
+    });
 }
 function hasTool(pi, name) {
     try {
@@ -255,7 +214,7 @@ export function registerNativeSupervisorClient(pi, options = {}) {
                     return sendSupervisorRequest({ reason: "progress_update", message: params.message ?? "" }, signal);
                 if (action === "ask")
                     return sendSupervisorRequest({ reason: "need_decision", message: params.message ?? "" }, signal);
-                throw new Error("Native child intercom supports status, list, send, and ask. Use parent intercom reply from the supervisor session.");
+                throw new Error("Native child intercom supports status, list, send, and ask; to respond to a child request from the supervisor session, use subagent resume or subagent interrupt.");
             },
         });
     }
@@ -345,19 +304,19 @@ function removeEmptyDirectory(dir) {
 }
 function removeStaleEmptySupervisorChannel(channelDir, nowMs) {
     const requestsDir = path.join(channelDir, REQUESTS_DIR);
-    const repliesDir = path.join(channelDir, REPLIES_DIR);
-    const newestKnownMtimeMs = Math.max(directoryMtimeMs(channelDir), directoryMtimeMs(requestsDir), directoryMtimeMs(repliesDir));
+    const newestKnownMtimeMs = Math.max(directoryMtimeMs(channelDir), directoryMtimeMs(requestsDir));
     if (nowMs - newestKnownMtimeMs < STALE_EMPTY_CHANNEL_AGE_MS)
         return false;
     const requestEntries = readDirectoryEntries(requestsDir);
     if (!requestEntries || requestEntries.length > 0)
         return false;
-    const replyEntries = readDirectoryEntries(repliesDir);
-    if (!replyEntries || replyEntries.length > 0)
+    const repliesDir = path.join(channelDir, "replies");
+    const repliesEntries = fs.existsSync(repliesDir) ? readDirectoryEntries(repliesDir) : undefined;
+    if (repliesEntries !== undefined && repliesEntries.length > 0)
         return false;
     if (!removeEmptyDirectory(requestsDir))
         return false;
-    if (!removeEmptyDirectory(repliesDir))
+    if (repliesEntries !== undefined && !removeEmptyDirectory(repliesDir))
         return false;
     if (!removeEmptyDirectory(channelDir))
         return false;
@@ -465,8 +424,6 @@ function requestLifecycle(request, state, ctx, now) {
     const blockingPhase = requestBlockingPhase(request, state);
     if (request.expectsReply && blockingPhase)
         return "pending";
-    if (request.expectsReply && fs.existsSync(replyPath(request.channelDir, request.id)))
-        return "resolved";
     if (request.expectsReply && now > requestExpiresAt(request, now))
         return "expired";
     if (request.expectsReply && requestTerminalState(request, state))
@@ -474,7 +431,7 @@ function requestLifecycle(request, state, ctx, now) {
     return "pending";
 }
 function cleanupRequestLifecycle(request, lifecycle) {
-    if (lifecycle === "resolved" || lifecycle === "expired" || lifecycle === "inactive")
+    if (lifecycle === "expired" || lifecycle === "inactive")
         removeRequestFile(request.requestFile);
 }
 function refreshPendingRequests(pending, state, ctx) {
@@ -517,42 +474,6 @@ function requestVisibleText(request, state) {
     }
     return lines.join("\n");
 }
-function writeReply(request, message) {
-    if (!message.trim())
-        throw new Error("message is required for supervisor replies.");
-    const reply = {
-        type: "subagent.supervisor.reply",
-        requestId: request.id,
-        createdAt: Date.now(),
-        message: message.trim(),
-    };
-    writeAtomicJson(replyPath(request.channelDir, request.id), reply);
-    removeRequestFile(request.requestFile);
-}
-function resolvePendingRequest(pending, params) {
-    if (params.replyTo) {
-        const request = pending.get(params.replyTo);
-        if (!request)
-            throw new Error(`No pending supervisor request found for replyTo '${params.replyTo}'.`);
-        return request;
-    }
-    const requests = [...pending.values()].filter((request) => request.expectsReply);
-    if (params.to) {
-        const normalizedTo = params.to.toLowerCase();
-        const matches = requests.filter((request) => request.id.toLowerCase().startsWith(normalizedTo) ||
-            request.agent.toLowerCase() === normalizedTo ||
-            request.childTarget?.toLowerCase() === normalizedTo);
-        if (matches.length === 1)
-            return matches[0];
-        if (matches.length > 1)
-            throw new Error(`Multiple pending supervisor requests match '${params.to}'. Use replyTo.`);
-    }
-    if (requests.length === 1)
-        return requests[0];
-    if (requests.length === 0)
-        throw new Error("No pending supervisor requests need a reply.");
-    throw new Error("Multiple pending supervisor requests need replies. Use replyTo.");
-}
 function publicPendingRequests(pending) {
     return [...pending.values()].map((request) => ({
         id: request.id,
@@ -568,8 +489,8 @@ function buildParentIntercomTool(pending, state, name = "intercom") {
         name,
         label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
         description: name === "intercom"
-            ? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only."
-            : "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
+            ? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt."
+            : "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt.",
         parameters: IntercomParamsSchema,
         async execute(_id, params) {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
@@ -589,21 +510,8 @@ function buildParentIntercomTool(pending, state, name = "intercom") {
                     details: { pending: publicPendingRequests(pending) },
                 };
             }
-            if (input.action === "reply") {
-                const request = resolvePendingRequest(pending, input);
-                const blockingPhase = requestBlockingPhase(request, state);
-                if (blockingPhase) {
-                    throw new Error(`Supervisor request '${request.id}' is durably ${blockingPhase}; use subagent resume or interrupt instead. Legacy reply only works for a live waiting child before durable pause persists.`);
-                }
-                writeReply(request, input.message ?? "");
-                pending.delete(request.id);
-                return {
-                    content: [{ type: "text", text: `Replied to supervisor request ${request.id}.` }],
-                    details: { replyTo: request.id, runId: request.runId, agent: request.agent },
-                };
-            }
             if (input.action === "send" || input.action === "ask") {
-                throw new Error("Native pi-subagents intercom currently handles supervisor replies. Child agents initiate asks with contact_supervisor.");
+                throw new Error("Native pi-subagents intercom handles pending/status inspection. Child agents initiate asks with contact_supervisor.");
             }
             throw new Error(`Unsupported intercom action: ${input.action}`);
         },

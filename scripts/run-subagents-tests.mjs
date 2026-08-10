@@ -12,12 +12,12 @@ export const suiteConfigs = {
 	unit: {
 		directory: join(repoRoot, "extensions/subagents/test/unit"),
 		minimumFiles: 84,
-		minimumTests: 1012,
+		minimumTests: 1007,
 	},
 	integration: {
 		directory: join(repoRoot, "extensions/subagents/test/integration"),
-		minimumFiles: 25,
-		minimumTests: 518,
+		minimumFiles: 24,
+		minimumTests: 513,
 	},
 	e2e: {
 		directory: join(repoRoot, "extensions/subagents/test/e2e"),

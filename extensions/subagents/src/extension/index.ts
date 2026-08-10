@@ -6,10 +6,10 @@
  * - Async: Background execution, emits events when done
  *
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
- * Toggle: async parameter (default: false, configurable via config.json)
+ * Toggle: async parameter (default: false)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
+ *   { "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
  */
 
 import * as fs from "node:fs";
@@ -379,7 +379,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupRuntimeDirs();
 
 	const config = loadConfig();
-	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
 	const liveDetailController = createSubagentLiveDetailController();
@@ -468,7 +467,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi,
 		state,
 		config,
-		asyncByDefault,
 		tempArtifactsDir,
 		getSubagentSessionRoot,
 		expandTilde,
@@ -695,7 +693,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}
 	}
-	registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	registerSubagentNotify(pi, state, {});
 
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices =

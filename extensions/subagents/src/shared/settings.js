@@ -33,7 +33,7 @@ export function cleanupOldChainDirs() {
         }
     }
 }
-export function resolveStepBehavior(agentConfig, stepOverrides, chainSkills) {
+export function resolveStepBehavior(agentConfig, stepOverrides) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
     const output = stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
     const reads = stepOverrides.reads !== undefined ? stepOverrides.reads : (agentConfig.defaultReads ?? false);
@@ -44,15 +44,9 @@ export function resolveStepBehavior(agentConfig, stepOverrides, chainSkills) {
     }
     else if (stepOverrides.skills !== undefined) {
         skills = [...stepOverrides.skills];
-        if (chainSkills && chainSkills.length > 0) {
-            skills = [...new Set([...skills, ...chainSkills])];
-        }
     }
     else {
         skills = agentConfig.skills ? [...agentConfig.skills] : [];
-        if (chainSkills && chainSkills.length > 0) {
-            skills = [...new Set([...skills, ...chainSkills])];
-        }
     }
     const outputMode = stepOverrides.outputMode ?? "inline";
     const model = stepOverrides.model ?? agentConfig.model;

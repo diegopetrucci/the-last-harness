@@ -128,7 +128,6 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				lastForegroundControlId: null,
 			},
 			config: {},
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
