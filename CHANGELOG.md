@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- Updated the packaged `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` defaults from `openai-codex/gpt-5.4-mini` with high thinking to `openai-codex/gpt-5.6-luna` with medium thinking. Explicit user overrides remain preserved.
+- `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` now use `gpt-5.6-luna medium`, instead of `gpt-5.4-mini high`.
 
 ### Removed
 
