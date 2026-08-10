@@ -434,7 +434,6 @@ async function runSingleAttempt(
 		promptFileStem: agent.name,
 		intercomSessionName: options.intercomSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
-		blockingSupervisorReplyPath: "unavailable",
 		runId: options.runId,
 		childAgentName: agent.name,
 		childIndex: options.index ?? 0,

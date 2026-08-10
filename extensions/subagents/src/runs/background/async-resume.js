@@ -235,7 +235,7 @@ export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir) {
 export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
     const asyncRoot = path.resolve(asyncDirRoot);
     const resultRoot = path.resolve(resultsDir);
-    const requestedId = assertRunId(params.id, "id") ?? assertRunId(params.runId, "runId");
+    const requestedId = assertRunId(params.id, "id");
     if (params.dir) {
         const asyncDir = path.resolve(params.dir);
         assertInsideRoot(asyncRoot, asyncDir, "Async run directory");
