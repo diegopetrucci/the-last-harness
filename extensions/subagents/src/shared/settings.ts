@@ -98,7 +98,6 @@ export interface ParallelStep {
 	parallel: ParallelTaskItem[];
 	concurrency?: number;
 	failFast?: boolean;
-	worktree?: boolean;
 	cwd?: string;
 }
 
@@ -113,31 +112,9 @@ export function isParallelStep(step: ChainStep): step is ParallelStep {
 	return "parallel" in step && Array.isArray((step as ParallelStep).parallel);
 }
 
-/** Get all agent names in a step (single for sequential, multiple for parallel) */
-export function getStepAgents(step: ChainStep): string[] {
-	if (isParallelStep(step)) {
-		return step.parallel.map((t) => t.agent);
-	}
-	return [step.agent];
-}
-
 // =============================================================================
 // Chain Directory Management
 // =============================================================================
-
-export function createChainDir(runId: string, baseDir?: string): string {
-	const chainDir = path.join(baseDir ? path.resolve(baseDir) : CHAIN_RUNS_DIR, runId);
-	fs.mkdirSync(chainDir, { recursive: true });
-	return chainDir;
-}
-
-export function removeChainDir(chainDir: string): void {
-	try {
-		fs.rmSync(chainDir, { recursive: true });
-	} catch {
-		// Chain cleanup is best-effort. Runs can already have cleaned their temp dir.
-	}
-}
 
 export function cleanupOldChainDirs(): void {
 	if (!fs.existsSync(CHAIN_RUNS_DIR)) return;
@@ -162,35 +139,6 @@ export function cleanupOldChainDirs(): void {
 			// Skip directories that can't be processed; continue with others
 		}
 	}
-}
-
-// =============================================================================
-// Template Resolution
-// =============================================================================
-
-/** Resolved templates for a chain - string for sequential, string[] for parallel */
-export type ResolvedTemplates = (string | string[])[];
-
-/**
- * Resolve templates for a chain with parallel step support.
- * Returns string for sequential steps, string[] for parallel steps.
- */
-export function resolveChainTemplates(steps: ChainStep[]): ResolvedTemplates {
-	return steps.map((step, i) => {
-		if (isParallelStep(step)) {
-			// Parallel step: resolve each task's template
-			return step.parallel.map((task) => {
-				if (task.task) return task.task;
-				// Default for parallel tasks is {previous}
-				return "{previous}";
-			});
-		}
-		// Sequential step: existing logic
-		const seq = step as SequentialStep;
-		if (seq.task) return seq.task;
-		// Default: first step uses {task}, others use {previous}
-		return i === 0 ? "{task}" : "{previous}";
-	});
 }
 
 // =============================================================================
@@ -328,87 +276,6 @@ export function buildChainInstructions(
 	const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
 
 	return { prefix, suffix };
-}
-
-// =============================================================================
-// Parallel Step Support
-// =============================================================================
-
-/**
- * Resolve behaviors for all tasks in a parallel step.
- * Creates namespaced output paths to avoid collisions.
- */
-export function resolveParallelBehaviors(
-	tasks: ParallelTaskItem[],
-	agentConfigs: AgentConfig[],
-	stepIndex: number,
-	chainSkills?: string[],
-): ResolvedStepBehavior[] {
-	return tasks.map((task, taskIndex) => {
-		const config = agentConfigs.find((a) => a.name === task.agent);
-		if (!config) {
-			throw new Error(`Unknown agent: ${task.agent}`);
-		}
-
-		// Build subdirectory path for this parallel task
-		const subdir = path.join(`parallel-${stepIndex}`, `${taskIndex}-${task.agent}`);
-
-		// Output: task override > agent default (namespaced) > false
-		// Absolute paths pass through unchanged; relative paths get namespaced under subdir
-		let output: string | false = false;
-		const taskOutput = normalizeOutputOverride(task.output);
-		const configOutput = normalizeOutputOverride(config.output);
-		if (taskOutput !== undefined) {
-			if (taskOutput === false) {
-				output = false;
-			} else if (path.isAbsolute(taskOutput)) {
-				output = taskOutput; // Absolute path: use as-is
-			} else {
-				output = path.join(subdir, taskOutput); // Relative: namespace under subdir
-			}
-		} else if (configOutput) {
-			// Agent defaults are always relative, so namespace them
-			output = path.join(subdir, configOutput);
-		}
-
-		// Reads: task override > agent default > false
-		const reads = task.reads !== undefined ? task.reads : (config.defaultReads ?? false);
-
-		// Progress: task override > agent default > false
-		const progress = task.progress !== undefined ? task.progress : (config.defaultProgress ?? false);
-
-		const taskSkillInput = normalizeSkillInput(task.skill);
-		let skills: string[] | false;
-		if (taskSkillInput === false) {
-			skills = false;
-		} else if (taskSkillInput !== undefined) {
-			skills = [...taskSkillInput];
-			if (chainSkills && chainSkills.length > 0) {
-				skills = [...new Set([...skills, ...chainSkills])];
-			}
-		} else {
-			skills = config.skills ? [...config.skills] : [];
-			if (chainSkills && chainSkills.length > 0) {
-				skills = [...new Set([...skills, ...chainSkills])];
-			}
-		}
-
-		const outputMode = task.outputMode ?? "inline";
-		const model = task.model ?? config.model;
-		const fallbackModels = task.fallbackModels;
-		const modelFallbackNotice = task.modelFallbackNotice;
-		return { output, outputMode, reads, progress, skills, model, fallbackModels, modelFallbackNotice };
-	});
-}
-
-/**
- * Create subdirectories for parallel step outputs
- */
-export function createParallelDirs(chainDir: string, stepIndex: number, taskCount: number, agentNames: string[]): void {
-	for (let i = 0; i < taskCount; i++) {
-		const subdir = path.join(chainDir, `parallel-${stepIndex}`, `${i}-${agentNames[i]}`);
-		fs.mkdirSync(subdir, { recursive: true });
-	}
 }
 
 export type { ParallelTaskResult } from "../runs/shared/parallel-utils.ts";

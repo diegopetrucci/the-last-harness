@@ -10,24 +10,6 @@ function normalizeOutputOverride(output) {
 export function isParallelStep(step) {
     return "parallel" in step && Array.isArray(step.parallel);
 }
-export function getStepAgents(step) {
-    if (isParallelStep(step)) {
-        return step.parallel.map((t) => t.agent);
-    }
-    return [step.agent];
-}
-export function createChainDir(runId, baseDir) {
-    const chainDir = path.join(baseDir ? path.resolve(baseDir) : CHAIN_RUNS_DIR, runId);
-    fs.mkdirSync(chainDir, { recursive: true });
-    return chainDir;
-}
-export function removeChainDir(chainDir) {
-    try {
-        fs.rmSync(chainDir, { recursive: true });
-    }
-    catch {
-    }
-}
 export function cleanupOldChainDirs() {
     if (!fs.existsSync(CHAIN_RUNS_DIR))
         return;
@@ -50,21 +32,6 @@ export function cleanupOldChainDirs() {
         catch {
         }
     }
-}
-export function resolveChainTemplates(steps) {
-    return steps.map((step, i) => {
-        if (isParallelStep(step)) {
-            return step.parallel.map((task) => {
-                if (task.task)
-                    return task.task;
-                return "{previous}";
-            });
-        }
-        const seq = step;
-        if (seq.task)
-            return seq.task;
-        return i === 0 ? "{task}" : "{previous}";
-    });
 }
 export function resolveStepBehavior(agentConfig, stepOverrides, chainSkills) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
@@ -144,61 +111,5 @@ export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent,
     const prefix = prefixParts.length > 0 ? prefixParts.join("\n") + "\n\n" : "";
     const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
     return { prefix, suffix };
-}
-export function resolveParallelBehaviors(tasks, agentConfigs, stepIndex, chainSkills) {
-    return tasks.map((task, taskIndex) => {
-        const config = agentConfigs.find((a) => a.name === task.agent);
-        if (!config) {
-            throw new Error(`Unknown agent: ${task.agent}`);
-        }
-        const subdir = path.join(`parallel-${stepIndex}`, `${taskIndex}-${task.agent}`);
-        let output = false;
-        const taskOutput = normalizeOutputOverride(task.output);
-        const configOutput = normalizeOutputOverride(config.output);
-        if (taskOutput !== undefined) {
-            if (taskOutput === false) {
-                output = false;
-            }
-            else if (path.isAbsolute(taskOutput)) {
-                output = taskOutput;
-            }
-            else {
-                output = path.join(subdir, taskOutput);
-            }
-        }
-        else if (configOutput) {
-            output = path.join(subdir, configOutput);
-        }
-        const reads = task.reads !== undefined ? task.reads : (config.defaultReads ?? false);
-        const progress = task.progress !== undefined ? task.progress : (config.defaultProgress ?? false);
-        const taskSkillInput = normalizeSkillInput(task.skill);
-        let skills;
-        if (taskSkillInput === false) {
-            skills = false;
-        }
-        else if (taskSkillInput !== undefined) {
-            skills = [...taskSkillInput];
-            if (chainSkills && chainSkills.length > 0) {
-                skills = [...new Set([...skills, ...chainSkills])];
-            }
-        }
-        else {
-            skills = config.skills ? [...config.skills] : [];
-            if (chainSkills && chainSkills.length > 0) {
-                skills = [...new Set([...skills, ...chainSkills])];
-            }
-        }
-        const outputMode = task.outputMode ?? "inline";
-        const model = task.model ?? config.model;
-        const fallbackModels = task.fallbackModels;
-        const modelFallbackNotice = task.modelFallbackNotice;
-        return { output, outputMode, reads, progress, skills, model, fallbackModels, modelFallbackNotice };
-    });
-}
-export function createParallelDirs(chainDir, stepIndex, taskCount, agentNames) {
-    for (let i = 0; i < taskCount; i++) {
-        const subdir = path.join(chainDir, `parallel-${stepIndex}`, `${i}-${agentNames[i]}`);
-        fs.mkdirSync(subdir, { recursive: true });
-    }
 }
 export { aggregateParallelOutputs } from "../runs/shared/parallel-utils.js";

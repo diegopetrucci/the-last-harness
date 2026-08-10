@@ -9,7 +9,7 @@
  * Toggle: async parameter (default: false, configurable via config.json)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
  */
 
 import * as fs from "node:fs";
@@ -59,7 +59,6 @@ import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foregro
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import {
@@ -341,34 +340,6 @@ class SubagentControlNoticeComponent implements Component {
 	}
 }
 
-export function promptTemplateDelegationParams(request: {
-	agent: string;
-	task: string;
-	tasks?: Array<{ agent: string; task: string; model?: string; cwd?: string }>;
-	context: "fresh" | "fork";
-	model: string;
-	cwd: string;
-	worktree?: boolean;
-}): SubagentParamsLike {
-	if (request.tasks && request.tasks.length > 0) {
-		return {
-			tasks: request.tasks,
-			context: request.context,
-			cwd: request.cwd,
-			worktree: request.worktree,
-			async: false,
-		};
-	}
-	return {
-		agent: request.agent,
-		task: request.task,
-		context: request.context,
-		cwd: request.cwd,
-		model: request.model,
-		async: false,
-	};
-}
-
 export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	if (process.env[SUBAGENT_CHILD_ENV] === "1") {
 		return;
@@ -622,13 +593,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		execute: (id, params, signal, onUpdate, ctx) => executeSubagent(id, params, signal, onUpdate, ctx),
 	});
 
-	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
-		events: pi.events,
-		getContext: () => state.lastUiContext,
-		execute: async (requestId, request, signal, ctx, onUpdate) =>
-			executeSubagent(requestId, promptTemplateDelegationParams(request), signal, onUpdate, ctx),
-	});
-
 	function effectiveParallelTaskCount(tasks: Array<{ count?: unknown }> | undefined): number {
 		if (!tasks || tasks.length === 0) return 0;
 		return tasks.reduce((total, task) => {
@@ -852,8 +816,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		clearSlashSnapshots();
 		slashBridge.cancelAll();
 		slashBridge.dispose();
-		promptTemplateBridge.cancelAll();
-		promptTemplateBridge.dispose();
 		supervisorChannel.dispose();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
 			delete globalStore[runtimeCleanupStoreKey];

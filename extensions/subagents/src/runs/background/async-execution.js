@@ -12,7 +12,6 @@ import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
-import { resolveExpectedWorktreeAgentCwd } from "../shared/worktree.js";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.js";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.js";
 import { createStructuredOutputRuntime } from "../shared/structured-output.js";
@@ -189,7 +188,7 @@ function validateAsyncExecutionAcceptance(params) {
     return errors;
 }
 export function buildAsyncRunnerSteps(id, params) {
-    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, worktreeBaseDir, asyncDir, } = params;
+    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir } = params;
     const outputBaseDir = params.outputBaseDir;
     const resultMode = params.resultMode ?? "chain";
     const chainSkills = params.chainSkills ?? [];
@@ -348,7 +347,7 @@ export function buildAsyncRunnerSteps(id, params) {
         };
     };
     try {
-        const builtSteps = chain.map((s, stepIndex) => {
+        const builtSteps = chain.map((s) => {
             if (isParallelStep(s)) {
                 const parallelBehaviors = s.parallel.map((task) => {
                     const agent = agents.find((candidate) => candidate.name === task.agent);
@@ -356,27 +355,16 @@ export function buildAsyncRunnerSteps(id, params) {
                 });
                 const progressPrecreated = parallelBehaviors.some((behavior) => behavior.progress);
                 if (progressPrecreated) {
-                    if (!s.worktree || params.progressDir)
-                        writeInitialProgressFile(progressDir);
+                    writeInitialProgressFile(progressDir);
                     progressInstructionCreated = true;
                 }
                 return {
                     parallel: s.parallel.map((t, taskIndex) => {
-                        let behaviorCwd;
-                        if (s.worktree) {
-                            try {
-                                behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, taskIndex, worktreeBaseDir);
-                            }
-                            catch {
-                                behaviorCwd = undefined;
-                            }
-                        }
                         const staticStep = nextFlatStep();
-                        return buildSeqStep(t, staticStep.sessionFile, behaviorCwd, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index);
+                        return buildSeqStep(t, staticStep.sessionFile, undefined, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index);
                     }),
                     concurrency: s.concurrency,
                     failFast: s.failFast,
-                    worktree: s.worktree,
                 };
             }
             const staticStep = nextFlatStep();
@@ -397,7 +385,7 @@ export function buildAsyncRunnerSteps(id, params) {
     }
 }
 export function executeAsyncChain(id, params) {
-    const { chain, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, worktreeSetupHook, worktreeSetupHookTimeoutMs, worktreeBaseDir, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
+    const { chain, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
     const resultMode = params.resultMode ?? "chain";
     const acceptanceErrors = validateAsyncExecutionAcceptance({ chain });
     if (acceptanceErrors.length > 0)
@@ -437,7 +425,6 @@ export function executeAsyncChain(id, params) {
                     : undefined),
         outputBaseDir: artifactsDir ? path.join(artifactsDir, "outputs", id) : undefined,
         maxSubagentDepth,
-        worktreeBaseDir,
         asyncDir,
         timeoutMs: params.timeoutMs,
         toolBudget: params.toolBudget,
@@ -495,9 +482,6 @@ export function executeAsyncChain(id, params) {
             sessionId: ctx.currentSessionId,
             piPackageRoot,
             piArgv1: process.argv[1],
-            worktreeSetupHook,
-            worktreeSetupHookTimeoutMs,
-            worktreeBaseDir,
             controlConfig,
             turnBudget: params.turnBudget,
             toolBudget: params.toolBudget,
@@ -626,7 +610,7 @@ export function executeAsyncChain(id, params) {
     };
 }
 export function executeAsyncSingle(id, params) {
-    const { agent, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFile, maxSubagentDepth, worktreeSetupHook, worktreeSetupHookTimeoutMs, worktreeBaseDir, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
+    const { agent, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFile, maxSubagentDepth, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
     const task = params.task ?? "";
     const acceptanceErrors = validateAsyncExecutionAcceptance({ acceptance: params.acceptance });
     if (acceptanceErrors.length > 0)
@@ -754,9 +738,6 @@ export function executeAsyncSingle(id, params) {
             sessionId: ctx.currentSessionId,
             piPackageRoot,
             piArgv1: process.argv[1],
-            worktreeSetupHook,
-            worktreeSetupHookTimeoutMs,
-            worktreeBaseDir,
             controlConfig,
             timeoutMs: effectiveTimeoutMs,
             deadlineAt,

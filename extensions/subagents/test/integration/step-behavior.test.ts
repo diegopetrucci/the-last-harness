@@ -1,14 +1,13 @@
 /**
- * Tests for chain template resolution and variable substitution.
+ * Tests for step behavior resolution, skill normalization, and chain instruction building.
  *
- * These test the pure logic of how {task}, {previous}, and {chain_dir}
- * variables get resolved in chain steps. Uses dynamic import since
- * settings.ts transitively depends on pi packages.
+ * Covers the pure logic of isParallelStep, normalizeSkillInput, resolveStepBehavior,
+ * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates, and buildChainInstructions.
+ * Uses dynamic import since settings.ts transitively depends on pi packages.
  */
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 
 // Top-level await
@@ -16,69 +15,12 @@ const settings = await tryImport<any>("./src/shared/settings.ts");
 const skills = await tryImport<any>("./src/agents/skills.ts");
 const available = !!(settings && skills);
 
-const resolveChainTemplates = settings?.resolveChainTemplates;
 const buildChainInstructions = settings?.buildChainInstructions;
 const resolveStepBehavior = settings?.resolveStepBehavior;
-const resolveParallelBehaviors = settings?.resolveParallelBehaviors;
 const suppressProgressForReadOnlyTask = settings?.suppressProgressForReadOnlyTask;
 const taskDisallowsFileUpdates = settings?.taskDisallowsFileUpdates;
 const isParallelStep = settings?.isParallelStep;
-const createChainDir = settings?.createChainDir;
 const normalizeSkillInput = skills?.normalizeSkillInput;
-
-describe("resolveChainTemplates", { skip: !available ? "pi packages not available" : undefined }, () => {
-	it("uses step task for first step", () => {
-		const chain = [{ agent: "a", task: "Analyze {task}" }, { agent: "b" }];
-		const templates = resolveChainTemplates(chain);
-		assert.equal(templates[0], "Analyze {task}");
-	});
-
-	it("defaults to {previous} for subsequent steps without task", () => {
-		const chain = [{ agent: "a", task: "Start" }, { agent: "b" }, { agent: "c" }];
-		const templates = resolveChainTemplates(chain);
-		assert.equal(templates[1], "{previous}");
-		assert.equal(templates[2], "{previous}");
-	});
-
-	it("preserves explicit task on later steps", () => {
-		const chain = [
-			{ agent: "a", task: "Start" },
-			{ agent: "b", task: "Custom task for B" },
-		];
-		const templates = resolveChainTemplates(chain);
-		assert.equal(templates[1], "Custom task for B");
-	});
-
-	it("handles parallel steps", () => {
-		const chain = [
-			{
-				parallel: [
-					{ agent: "a", task: "Review auth" },
-					{ agent: "b", task: "Review data" },
-				],
-			},
-		];
-		const templates = resolveChainTemplates(chain);
-		assert.ok(Array.isArray(templates[0]), "parallel step templates should be an array");
-		const parallelTemplates = templates[0] as string[];
-		assert.equal(parallelTemplates[0], "Review auth");
-		assert.equal(parallelTemplates[1], "Review data");
-	});
-
-	it("mixed sequential + parallel", () => {
-		const chain = [
-			{ agent: "scout", task: "Scan" },
-			{
-				parallel: [{ agent: "rev-a", task: "Deep review A" }, { agent: "rev-b" }],
-			},
-			{ agent: "writer" },
-		];
-		const templates = resolveChainTemplates(chain);
-		assert.equal(templates[0], "Scan");
-		assert.ok(Array.isArray(templates[1]));
-		assert.equal(templates[2], "{previous}");
-	});
-});
 
 describe("isParallelStep", { skip: !available ? "pi packages not available" : undefined }, () => {
 	it("returns true for parallel steps", () => {
@@ -172,18 +114,6 @@ describe("resolveStepBehavior", { skip: !available ? "pi packages not available"
 	});
 });
 
-describe("resolveParallelBehaviors", { skip: !available ? "pi packages not available" : undefined }, () => {
-	it("string false agent default disables output in chain parallel tasks", () => {
-		const behaviors = resolveParallelBehaviors(
-			[{ agent: "reviewer", task: "Review" }],
-			[{ name: "reviewer", output: "false" }],
-			0,
-		);
-
-		assert.equal(behaviors[0]?.output, false);
-	});
-});
-
 describe("read-only progress suppression", { skip: !available ? "pi packages not available" : undefined }, () => {
 	it("suppresses progress for review-only or no-edit tasks", () => {
 		const behavior = { reads: undefined, output: false, outputMode: "inline", progress: true, skills: undefined };
@@ -266,29 +196,6 @@ describe("buildChainInstructions", { skip: !available ? "pi packages not availab
 			assert.equal(suffix, "");
 		} finally {
 			removeTempDir(dir);
-		}
-	});
-});
-
-describe("createChainDir", { skip: !available ? "pi packages not available" : undefined }, () => {
-	it("creates directory with runId", () => {
-		const dir = createChainDir("test-run-123");
-		try {
-			assert.ok(fs.existsSync(dir));
-			assert.ok(dir.includes("test-run-123"));
-		} finally {
-			removeTempDir(dir);
-		}
-	});
-
-	it("uses custom base when provided", () => {
-		const base = createTempDir("chain-base-");
-		try {
-			const dir = createChainDir("run-abc", base);
-			assert.ok(fs.existsSync(dir));
-			assert.ok(dir.startsWith(base) || dir === base);
-		} finally {
-			removeTempDir(base);
 		}
 	});
 });
