@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
+- Removed the native parent-side `intercom` alias from the bundled subagents runtime. `subagent_supervisor` remains the canonical parent tool, while the child-side `intercom` fallback remains available for compatibility.
 - Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
 
 ## [0.35.0] - 2026-08-09
