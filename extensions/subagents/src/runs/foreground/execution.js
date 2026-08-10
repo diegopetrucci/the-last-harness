@@ -10,6 +10,7 @@ import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/ski
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { createJsonlWriter } from "../../shared/jsonl-writer.js";
+import { appendRecentProgressItem } from "../../shared/recent-progress.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.js";
@@ -789,7 +790,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (evt.type === "tool_execution_end") {
                 pendingSupervisorPause = undefined;
                 if (progress.currentTool) {
-                    progress.recentTools.push({
+                    appendRecentProgressItem(progress.recentTools, {
                         tool: progress.currentTool,
                         args: progress.currentToolArgs || "",
                         endMs: now,

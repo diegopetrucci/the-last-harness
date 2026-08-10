@@ -117,11 +117,13 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 
 		const collapsed = component.render(180).join("\n");
 		assert.match(collapsed, /Ctrl\+Shift\+D/);
-		assert.doesNotMatch(collapsed, new RegExp(escapeRegExp(longArgs)));
+		assert.match(collapsed, new RegExp(escapeRegExp(longArgs)));
+		assert.doesNotMatch(collapsed, /Task: inspect the active slash result/);
 
 		assert.equal(controller.toggle(), true);
 		const expanded = component.render(180).join("\n");
 		assert.match(expanded, new RegExp(escapeRegExp(longArgs)));
+		assert.match(expanded, /Task: inspect the active slash result/);
 	});
 
 	it("keeps finalized slash results on the live-detail controller", () => {
