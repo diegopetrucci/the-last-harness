@@ -2139,7 +2139,7 @@ function setupMonaco() {
 			// GHSA-c2j3-45gr-mqc4 (dompurify <=3.4.11 via monaco-editor@0.56.0) are
 			// not reachable in this usage. Do NOT add MarkdownString, hover/completion
 			// rendering, or trusted-HTML support without first re-evaluating the
-			// DOMPurify advisory and updating docs/dependency-risk.md.
+			// DOMPurify advisory and updating this co-located security note.
 			diffEditor = monacoApi.editor.createDiffEditor(diffEditorHostEl, {
 				automaticLayout: true,
 				renderSideBySide: activeFileShowsDiff(),
