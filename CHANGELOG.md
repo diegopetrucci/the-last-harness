@@ -5,9 +5,6 @@ All notable changes to The Last Harness will be documented in this file.
 ## Unreleased
 
 ### Added
-
-- New **Skills** section in `docs/subagents.md` documents how skills are discovered, how the `pi-subagents` guard works, and the full `skill:` frontmatter reference.
-
 ### Removed
 
 - Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
