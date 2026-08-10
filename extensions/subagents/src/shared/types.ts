@@ -405,7 +405,7 @@ export interface AgentProgress {
 
 export interface ToolCallSummary {
 	text: string;
-	expandedText: string;
+	expandedText?: string;
 }
 
 interface ProgressSummary {
@@ -1161,22 +1161,13 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type ToolDescriptionMode = "full" | "compact";
 
 export interface ExtensionConfig {
-	asyncByDefault?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
-	forceTopLevelAsync?: boolean;
-	defaultSessionDir?: string;
-	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;
-	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
-	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
-	completionBatch?: CompletionBatchConfig;
-	turnBudget?: TurnBudgetConfig;
-	toolBudget?: ToolBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	intercomBridge?: IntercomBridgeConfig;
 }

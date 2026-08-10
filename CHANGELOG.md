@@ -4,14 +4,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
-### Changed
+### Model defaults
 
 - `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` now use `gpt-5.6-luna medium`, instead of `gpt-5.4-mini high`.
 
 ### Removed
 
-- Removed the native parent-side `intercom` alias from the bundled subagents runtime. `subagent_supervisor` remains the canonical parent tool, while the child-side `intercom` fallback remains available for compatibility.
-- Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
+- Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
 
 ## [0.35.0] - 2026-08-09
 

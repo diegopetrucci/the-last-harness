@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
+import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
@@ -196,17 +196,19 @@ class SubagentControlNoticeComponent {
     render(width) {
         const eventLabel = this.details.event.type.replaceAll("_", " ");
         if (width < 3)
-            return [truncateToWidth(`Subagent ${eventLabel}`, width)];
+            return wrapTextWithAnsi(`Subagent ${eventLabel}`, Math.max(1, width));
         const bodyWidth = Math.max(1, width - 2);
         const borderChar = "─";
         const header = ` ⚠ Subagent ${eventLabel}: ${this.details.event.agent} `;
-        const headerText = truncateToWidth(header, bodyWidth, "");
-        const headerPadding = Math.max(0, bodyWidth - visibleWidth(headerText));
-        const lines = [this.theme.fg("accent", `╭${headerText}${borderChar.repeat(headerPadding)}╮`)];
+        const headerLines = wrapTextWithAnsi(header, bodyWidth);
+        const padLine = (line) => `${line}${" ".repeat(Math.max(0, bodyWidth - visibleWidth(line)))}`;
+        const firstHeaderLine = headerLines[0] ?? "";
+        const topBorderPadding = borderChar.repeat(Math.max(0, bodyWidth - visibleWidth(firstHeaderLine)));
+        const lines = [this.theme.fg("accent", `╭${firstHeaderLine}${topBorderPadding}╮`)];
+        for (const line of headerLines.slice(1))
+            lines.push(this.theme.fg("accent", `│${padLine(line)}│`));
         for (const line of wrapTextWithAnsi(formatSubagentControlNotice(this.details), bodyWidth)) {
-            const text = truncateToWidth(line, bodyWidth, "");
-            const padding = Math.max(0, bodyWidth - visibleWidth(text));
-            lines.push(this.theme.fg("accent", `│${text}${" ".repeat(padding)}│`));
+            lines.push(this.theme.fg("accent", `│${padLine(line)}│`));
         }
         lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
         return lines;
@@ -250,7 +252,6 @@ export default function registerSubagentExtension(pi) {
     cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
-    const asyncByDefault = config.asyncByDefault === true;
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
@@ -325,7 +326,6 @@ export default function registerSubagentExtension(pi) {
         pi,
         state,
         config,
-        asyncByDefault,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,
@@ -502,7 +502,7 @@ export default function registerSubagentExtension(pi) {
             }
         }
     }
-    registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+    registerSubagentNotify(pi, state, {});
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices : new Set();
     globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;

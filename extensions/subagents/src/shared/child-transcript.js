@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.js";
 export const CHILD_TRANSCRIPT_ARTIFACT_VERSION = 1;
 const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+const MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS = 32 * 1024;
+const CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER = " … [truncated for child transcript storage]";
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -29,6 +31,13 @@ function eventArgs(event) {
     return event.args && typeof event.args === "object" && !Array.isArray(event.args)
         ? event.args
         : {};
+}
+function childTranscriptArgsPreview(args) {
+    const preview = extractToolArgsPreview(args);
+    if (preview.length <= MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS)
+        return preview;
+    const retainedLength = Math.max(0, MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS - CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER.length);
+    return `${preview.slice(0, retainedLength)}${CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER}`;
 }
 export function createChildTranscriptWriter(input) {
     let bytesWritten = 0;
@@ -138,7 +147,7 @@ export function createChildTranscriptWriter(input) {
                     ...baseRecord("tool_start"),
                     sourceEventType: event.type,
                     toolName: event.toolName,
-                    ...(Object.keys(args).length > 0 ? { argsPreview: extractToolArgsPreview(args) } : {}),
+                    ...(Object.keys(args).length > 0 ? { argsPreview: childTranscriptArgsPreview(args) } : {}),
                 });
                 return;
             }

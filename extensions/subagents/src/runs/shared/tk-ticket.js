@@ -1,10 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { visibleWidth } from "@earendil-works/pi-tui";
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const MAX_TK_TICKET_TITLE_WIDTH = 72;
-const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 export function detectTkTicketId(task) {
     if (!task)
         return undefined;
@@ -69,13 +66,11 @@ function sanitizeTerminalText(raw) {
     }
     return cleaned;
 }
-export function sanitizeTkTicketTitle(raw, maxWidth = MAX_TK_TICKET_TITLE_WIDTH) {
+export function sanitizeTkTicketTitle(raw) {
     const cleaned = sanitizeTerminalText(raw).replace(/\s+/g, " ").trim();
-    if (!cleaned)
-        return undefined;
-    return truncatePlainTextToWidth(cleaned, maxWidth);
+    return cleaned || undefined;
 }
-export function normalizeTkTicketMetadata(raw, maxWidth = MAX_TK_TICKET_TITLE_WIDTH) {
+export function normalizeTkTicketMetadata(raw) {
     if (!raw || typeof raw !== "object")
         return undefined;
     const { id, title } = raw;
@@ -83,7 +78,7 @@ export function normalizeTkTicketMetadata(raw, maxWidth = MAX_TK_TICKET_TITLE_WI
         return undefined;
     if (typeof title !== "string")
         return undefined;
-    const sanitizedTitle = sanitizeTkTicketTitle(title, maxWidth);
+    const sanitizedTitle = sanitizeTkTicketTitle(title);
     if (!sanitizedTitle)
         return undefined;
     return { id, title: sanitizedTitle };
@@ -142,19 +137,4 @@ function findTicketsDir(cwd) {
             return undefined;
         dir = parent;
     }
-}
-function truncatePlainTextToWidth(text, maxWidth) {
-    if (maxWidth <= 0 || visibleWidth(text) <= maxWidth)
-        return text;
-    const targetWidth = Math.max(1, maxWidth - 1);
-    let width = 0;
-    let result = "";
-    for (const { segment } of segmenter.segment(text)) {
-        const nextWidth = visibleWidth(segment);
-        if (width + nextWidth > targetWidth)
-            return `${result}…`;
-        result += segment;
-        width += nextWidth;
-    }
-    return text;
 }

@@ -7,7 +7,7 @@ import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeS
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
 import { isParallelGroup } from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
-import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.js";
+import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
 import { buildFallbackModelList, buildModelCandidates, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
@@ -191,7 +191,6 @@ export function buildAsyncRunnerSteps(id, params) {
     const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir } = params;
     const outputBaseDir = params.outputBaseDir;
     const resultMode = params.resultMode ?? "chain";
-    const chainSkills = params.chainSkills ?? [];
     const availableModels = params.availableModels;
     const thinkingSuffixOptions = {
         availableModels,
@@ -227,28 +226,24 @@ export function buildAsyncRunnerSteps(id, params) {
         }
     }
     let progressInstructionCreated = false;
-    const buildStepOverrides = (s) => {
-        const stepSkillInput = normalizeSkillInput(s.skill);
-        return {
-            ...(s.output !== undefined ? { output: s.output } : {}),
-            ...(s.outputMode !== undefined ? { outputMode: s.outputMode } : {}),
-            ...(s.reads !== undefined ? { reads: s.reads } : {}),
-            ...(s.progress !== undefined ? { progress: s.progress } : {}),
-            ...(stepSkillInput !== undefined ? { skills: stepSkillInput } : {}),
-            ...(s.model ? { model: s.model } : {}),
-            ...(s.fallbackModels ? { fallbackModels: s.fallbackModels } : {}),
-            ...(s.modelFallbackNotice ? { modelFallbackNotice: s.modelFallbackNotice } : {}),
-        };
-    };
+    const buildStepOverrides = (s) => ({
+        ...(s.output !== undefined ? { output: s.output } : {}),
+        ...(s.outputMode !== undefined ? { outputMode: s.outputMode } : {}),
+        ...(s.reads !== undefined ? { reads: s.reads } : {}),
+        ...(s.progress !== undefined ? { progress: s.progress } : {}),
+        ...(s.model ? { model: s.model } : {}),
+        ...(s.fallbackModels ? { fallbackModels: s.fallbackModels } : {}),
+        ...(s.modelFallbackNotice ? { modelFallbackNotice: s.modelFallbackNotice } : {}),
+    });
     const buildSeqStep = (s, sessionFile, behaviorCwd, progressPrecreated = false, resolvedBehavior, flatIndex) => {
         const a = agents.find((x) => x.name === s.agent);
-        const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget ?? params.configToolBudget;
-        const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "config.toolBudget");
+        const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget;
+        const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "toolBudget");
         if (resolvedToolBudget.error)
             throw new AsyncStartValidationError(resolvedToolBudget.error);
         const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
         const instructionCwd = behaviorCwd ?? stepCwd;
-        const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
+        const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)), s.task, originalTask);
         const skillNames = behavior.skills === false ? [] : behavior.skills;
         const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, stepCwd, ctx.cwd);
         if (missingSkills.includes("pi-subagents"))
@@ -351,7 +346,7 @@ export function buildAsyncRunnerSteps(id, params) {
             if (isParallelStep(s)) {
                 const parallelBehaviors = s.parallel.map((task) => {
                     const agent = agents.find((candidate) => candidate.name === task.agent);
-                    return suppressProgressForReadOnlyTask(resolveStepBehavior(agent, buildStepOverrides(task), chainSkills), task.task, originalTask);
+                    return suppressProgressForReadOnlyTask(resolveStepBehavior(agent, buildStepOverrides(task)), task.task, originalTask);
                 });
                 const progressPrecreated = parallelBehaviors.some((behavior) => behavior.progress);
                 if (progressPrecreated) {
@@ -414,7 +409,6 @@ export function executeAsyncChain(id, params) {
         ctx,
         availableModels: params.availableModels,
         cwd,
-        chainSkills: params.chainSkills,
         sessionFilesByFlatIndex,
         thinkingOverridesByFlatIndex,
         progressDir: params.progressDir ??
@@ -428,7 +422,6 @@ export function executeAsyncChain(id, params) {
         asyncDir,
         timeoutMs: params.timeoutMs,
         toolBudget: params.toolBudget,
-        configToolBudget: params.configToolBudget,
     });
     if ("error" in built) {
         try {
@@ -490,7 +483,6 @@ export function executeAsyncChain(id, params) {
             resultMode,
             timeoutMs: params.timeoutMs,
             deadlineAt,
-            globalConcurrencyLimit: params.globalConcurrencyLimit,
             workflowGraph,
             tkTicket,
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -666,8 +658,8 @@ export function executeAsyncSingle(id, params) {
         return applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined, thinkingSuffixOptions);
     })
         .filter((candidate) => candidate !== undefined);
-    const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
-    const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget");
+    const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget;
+    const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, params.toolBudget ? "toolBudget" : "agent.toolBudget");
     if (resolvedToolBudget.error)
         return formatAsyncStartError("single", resolvedToolBudget.error);
     const activeRuntimeMs = Math.max(0, params.activeRuntimeMs ?? 0);

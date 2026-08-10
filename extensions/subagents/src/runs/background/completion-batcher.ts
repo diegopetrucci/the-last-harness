@@ -40,38 +40,17 @@ function parsePositiveInt(value: unknown): number | undefined {
 	return value;
 }
 
-export function resolveCompletionBatchConfig(
-	globalConfig?: CompletionBatchConfig,
-	override?: CompletionBatchConfig,
-): ResolvedCompletionBatchConfig {
-	const enabled =
-		typeof override?.enabled === "boolean"
-			? override.enabled
-			: typeof globalConfig?.enabled === "boolean"
-				? globalConfig.enabled
-				: DEFAULT_COMPLETION_BATCH_CONFIG.enabled;
+export function resolveCompletionBatchConfig(config?: CompletionBatchConfig): ResolvedCompletionBatchConfig {
+	const enabled = typeof config?.enabled === "boolean" ? config.enabled : DEFAULT_COMPLETION_BATCH_CONFIG.enabled;
 	return {
 		enabled,
-		debounceMs:
-			parsePositiveInt(override?.debounceMs) ??
-			parsePositiveInt(globalConfig?.debounceMs) ??
-			DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs,
-		maxWaitMs:
-			parsePositiveInt(override?.maxWaitMs) ??
-			parsePositiveInt(globalConfig?.maxWaitMs) ??
-			DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs,
+		debounceMs: parsePositiveInt(config?.debounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs,
+		maxWaitMs: parsePositiveInt(config?.maxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs,
 		stragglerDebounceMs:
-			parsePositiveInt(override?.stragglerDebounceMs) ??
-			parsePositiveInt(globalConfig?.stragglerDebounceMs) ??
-			DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
+			parsePositiveInt(config?.stragglerDebounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
 		stragglerMaxWaitMs:
-			parsePositiveInt(override?.stragglerMaxWaitMs) ??
-			parsePositiveInt(globalConfig?.stragglerMaxWaitMs) ??
-			DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
-		stragglerWindowMs:
-			parsePositiveInt(override?.stragglerWindowMs) ??
-			parsePositiveInt(globalConfig?.stragglerWindowMs) ??
-			DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
+			parsePositiveInt(config?.stragglerMaxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
+		stragglerWindowMs: parsePositiveInt(config?.stragglerWindowMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
 	};
 }
 

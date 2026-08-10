@@ -5,6 +5,8 @@ import { extractTextFromContent, extractToolArgsPreview } from "./utils.ts";
 
 export const CHILD_TRANSCRIPT_ARTIFACT_VERSION = 1;
 const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+const MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS = 32 * 1024;
+const CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER = " … [truncated for child transcript storage]";
 
 type ChildTranscriptSource = "foreground" | "async";
 type ChildTranscriptRecordType = "message" | "tool_start" | "tool_end" | "stdout" | "stderr" | "truncated";
@@ -74,6 +76,16 @@ function eventArgs(event: ChildTranscriptEvent): Record<string, unknown> {
 	return event.args && typeof event.args === "object" && !Array.isArray(event.args)
 		? (event.args as Record<string, unknown>)
 		: {};
+}
+
+function childTranscriptArgsPreview(args: Record<string, unknown>): string {
+	const preview = extractToolArgsPreview(args);
+	if (preview.length <= MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS) return preview;
+	const retainedLength = Math.max(
+		0,
+		MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS - CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER.length,
+	);
+	return `${preview.slice(0, retainedLength)}${CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER}`;
 }
 
 export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): ChildTranscriptWriter {
@@ -185,7 +197,7 @@ export function createChildTranscriptWriter(input: ChildTranscriptWriterInput): 
 					...baseRecord("tool_start"),
 					sourceEventType: event.type,
 					toolName: event.toolName,
-					...(Object.keys(args).length > 0 ? { argsPreview: extractToolArgsPreview(args) } : {}),
+					...(Object.keys(args).length > 0 ? { argsPreview: childTranscriptArgsPreview(args) } : {}),
 				});
 				return;
 			}

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
@@ -222,8 +223,9 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /Interrupt requested for async run abc123\./);
 	});
 
-	it("collapses multiline structured management output to a first-line summary", () => {
-		const output = `\n${"Managed agents: ".padEnd(220, "x")}\n- reviewer\n- writer`;
+	it("wraps the complete first-line summary for multiline structured management output", () => {
+		const firstLine = "Managed agents: ".padEnd(220, "x");
+		const output = `\n${firstLine}\n- reviewer\n- writer`;
 		const widget = renderSubagentResult!(
 			{
 				content: [{ type: "text", text: output }],
@@ -235,7 +237,9 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const lines = widget.render(120).map((line) => line.trimEnd());
 		assert.match(lines[0]!, /^\[fork\] Managed agents:/);
-		assert.match(lines[0]!, /…$/);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 120));
+		assert.ok(lines.join("").replace(/\s/g, "").includes(`[fork] ${firstLine} · 4 lines`.replace(/\s/g, "")));
+		assert.doesNotMatch(lines.join("\n"), /\.\.\.|…/);
 		const hintLineIndex = lines.findIndex((line) => line.includes(expandHint));
 		assert.ok(hintLineIndex > 0);
 		assert.doesNotMatch(lines[0]!, /reviewer/);
