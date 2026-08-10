@@ -255,7 +255,7 @@ export function registerNativeSupervisorClient(pi, options = {}) {
                     return sendSupervisorRequest({ reason: "progress_update", message: params.message ?? "" }, signal);
                 if (action === "ask")
                     return sendSupervisorRequest({ reason: "need_decision", message: params.message ?? "" }, signal);
-                throw new Error("Native child intercom supports status, list, send, and ask. Use parent intercom reply from the supervisor session.");
+                throw new Error("Native child intercom supports status, list, send, and ask. Use parent subagent_supervisor reply from the supervisor session.");
             },
         });
     }
@@ -563,13 +563,11 @@ function publicPendingRequests(pending) {
         expectsReply: request.expectsReply,
     }));
 }
-function buildParentIntercomTool(pending, state, name = "intercom") {
+function buildParentSupervisorTool(pending, state) {
     return {
-        name,
-        label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
-        description: name === "intercom"
-            ? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only."
-            : "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
+        name: NATIVE_SUPERVISOR_TOOL_NAME,
+        label: "Subagent Supervisor",
+        description: "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt; reply remains legacy live-session compatibility only.",
         parameters: IntercomParamsSchema,
         async execute(_id, params) {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
@@ -603,7 +601,7 @@ function buildParentIntercomTool(pending, state, name = "intercom") {
                 };
             }
             if (input.action === "send" || input.action === "ask") {
-                throw new Error("Native pi-subagents intercom currently handles supervisor replies. Child agents initiate asks with contact_supervisor.");
+                throw new Error("Native pi-subagents supervisor channel currently handles supervisor replies. Child agents initiate asks with contact_supervisor.");
             }
             throw new Error(`Unsupported intercom action: ${input.action}`);
         },
@@ -617,9 +615,7 @@ export function createNativeSupervisorChannel(pi, state) {
     const registerTool = pi.registerTool.bind(pi);
     const registerParentTools = () => {
         if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
-            registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
-        if (!hasTool(pi, "intercom"))
-            registerTool(buildParentIntercomTool(pending, state));
+            registerTool(buildParentSupervisorTool(pending, state));
     };
     const cleanupStaleChannelsIfDue = () => {
         const nowMs = Date.now();
