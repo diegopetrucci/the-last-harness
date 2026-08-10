@@ -11,7 +11,6 @@ All notable changes to The Last Harness will be documented in this file.
 ### Removed
 
 - Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
-- Removed custom tool-description mode, the supervisor reply action, several undocumented config knobs (`completionBatch`, `singleRunOutputBaseDir`, `forceTopLevelAsync`, `asyncByDefault`, `defaultSessionDir`, `globalConcurrencyLimit`, `turnBudget`, `toolBudget`), and dead skills plumbing from the subagents runtime. Stale keys in existing configs are silently ignored on upgrade.
 
 ## [0.35.0] - 2026-08-09
 
