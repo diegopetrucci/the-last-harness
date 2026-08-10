@@ -21,7 +21,7 @@ function truncateWithMarker(value, maxChars, marker) {
         return value;
     if (marker.length >= maxChars)
         return marker.slice(0, maxChars);
-    return `${value.slice(0, maxChars - marker.length)}${marker}`;
+    return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
@@ -39,7 +39,27 @@ function resolvePerChildSummaryBudget(displayedChildCount, nonSummaryCostWithinP
     const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
     return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
 }
+function sliceSafe(value, end) {
+    const sliced = value.slice(0, end);
+    const last = sliced.charCodeAt(sliced.length - 1);
+    return last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
+}
 export function boundedReference(value) {
+    if (value.length <= MAX_REFERENCE_CHARS)
+        return value;
+    const middleMarker = "… [reference truncated] …";
+    let tailStart = -1;
+    let sep = value.lastIndexOf("/");
+    while (sep >= 0) {
+        if (MAX_REFERENCE_CHARS - middleMarker.length - (value.length - sep) < 1)
+            break;
+        tailStart = sep;
+        sep = value.lastIndexOf("/", sep - 1);
+    }
+    if (tailStart >= 0) {
+        const leadingBudget = MAX_REFERENCE_CHARS - middleMarker.length - (value.length - tailStart);
+        return `${sliceSafe(value, leadingBudget)}${middleMarker}${value.slice(tailStart)}`;
+    }
     return truncateWithMarker(value, MAX_REFERENCE_CHARS, "… [reference truncated]");
 }
 function boundedLabel(value) {
@@ -175,12 +195,12 @@ function countChildStatuses(children) {
 function formatNestedChildren(children, indent = "   ", budget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() }) {
     if (!children?.length)
         return [];
-    const lines = ["Nested subagents:"];
+    const entries = [];
     const markOmitted = (currentIndent, marker) => {
         if (budget.omissionMarkers.has(marker))
             return;
         budget.omissionMarkers.add(marker);
-        lines.push(`${currentIndent}${marker}`);
+        entries.push(`${currentIndent}${marker}`);
     };
     const append = (runs, currentIndent, depth) => {
         if (!runs?.length)
@@ -197,12 +217,12 @@ function formatNestedChildren(children, indent = "   ", budget = { remaining: MA
             budget.remaining--;
             const label = boundedLabel(child.agent ?? child.id ?? "nested");
             const state = child.state ? boundedLabel(child.state) : undefined;
-            lines.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
+            entries.push(`${currentIndent}↳ ${label}${state ? ` — ${state}` : ""}`);
             append(child.children, `${currentIndent}  `, depth + 1);
         }
     };
     append(children, indent, 0);
-    return lines;
+    return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
 }
 function formatChildReferences(child, privacySafe = false) {
     if (privacySafe)
@@ -212,27 +232,52 @@ function formatChildReferences(child, privacySafe = false) {
         child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
     ].filter((line) => Boolean(line));
 }
-function formatProtectedLifecyclePreview(result) {
+function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS) {
     const children = Array.isArray(result.results) ? result.results : [];
-    if (children.length <= 1)
-        return "Paused awaiting supervisor.";
-    const lines = [];
+    if (children.length <= 1) {
+        const sentence = "Paused awaiting supervisor.";
+        return sentence.length <= ceilingForPreview ? sentence : "";
+    }
     const counts = countChildStatuses(children);
-    if (counts)
-        lines.push(`Children: ${counts}`, "");
+    const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
     const displayedChildren = ["failed", "paused", "completed", "detached"]
         .flatMap((status) => children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    if (children.length > displayedChildren.length)
-        lines.push(`… [${children.length - displayedChildren.length} child results omitted]`, "");
-    for (const { child, index, status } of displayedChildren) {
+    const nestedBudgetForCost = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const childCosts = displayedChildren.map(({ child, index, status }) => {
+        const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
+        const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
+        return joinedLineCost([labelLine, ...nested, ""]);
+    });
+    let effectiveCount = displayedChildren.length;
+    while (effectiveCount > 0) {
+        const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
+        const effectiveOmitted = children.length - effectiveCount;
+        const omissionCost = effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+        if (partialScaffold + countsCost + omissionCost <= ceilingForPreview)
+            break;
+        effectiveCount--;
+    }
+    const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
+    const effectiveOmittedCount = children.length - effectiveCount;
+    const effectiveOmissionCost = effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+    const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
+    const showCountsLine = !!counts && optionalLinesAffordable;
+    const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
+    const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const lines = [];
+    if (showCountsLine)
+        lines.push(`Children: ${counts}`, "");
+    if (showOmissionLine)
+        lines.push(`… [${effectiveOmittedCount} child results omitted]`, "");
+    for (const { child, index, status } of effectiveDisplayedChildren) {
         lines.push(`${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`);
-        lines.push(...formatNestedChildren(child.children, "   "));
+        lines.push(...formatNestedChildren(child.children, "   ", nestedBudget));
         lines.push("");
     }
-    return lines.join("\n").trimEnd() || "Paused awaiting supervisor.";
+    return lines.join("\n").trimEnd();
 }
 function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_CHARS) {
     const privacySafe = isProtectedPausedLifecycle({
@@ -240,7 +285,7 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
         pause: result.pause,
     });
     if (privacySafe)
-        return formatProtectedLifecyclePreview(result);
+        return formatProtectedLifecyclePreview(result, ceilingForPreview);
     const children = Array.isArray(result.results) ? result.results : [];
     const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
     if (children.length === 0)
