@@ -14,6 +14,9 @@ npm-debug.log*
 !.pi/skills/hunk-review/
 .pi/skills/hunk-review/*
 !.pi/skills/hunk-review/SKILL.md
+!.pi/skills/tlh-typescript-boundaries/
+.pi/skills/tlh-typescript-boundaries/*
+!.pi/skills/tlh-typescript-boundaries/SKILL.md
 !.pi/skills/visual-explainer/
 .pi/skills/visual-explainer/*
 !.pi/skills/visual-explainer/SKILL.md
