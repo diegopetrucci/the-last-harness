@@ -63,7 +63,6 @@ export interface SequentialStep {
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
-	skill?: string | string[] | false;
 	model?: string;
 	fallbackModels?: string[];
 	modelFallbackNotice?: string;
@@ -85,7 +84,6 @@ export interface ParallelTaskItem {
 	outputMode?: OutputMode;
 	reads?: string[] | false;
 	progress?: boolean;
-	skill?: string | string[] | false;
 	model?: string;
 	fallbackModels?: string[];
 	modelFallbackNotice?: string;
@@ -149,11 +147,7 @@ export function cleanupOldChainDirs(): void {
  * Resolve effective chain behavior per step.
  * Priority: step override > agent frontmatter > false (disabled)
  */
-export function resolveStepBehavior(
-	agentConfig: AgentConfig,
-	stepOverrides: StepOverrides,
-	chainSkills?: string[],
-): ResolvedStepBehavior {
+export function resolveStepBehavior(agentConfig: AgentConfig, stepOverrides: StepOverrides): ResolvedStepBehavior {
 	// Output: step override > frontmatter > false (no output)
 	const stepOutput = normalizeOutputOverride(stepOverrides.output);
 	const output = stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
@@ -170,14 +164,8 @@ export function resolveStepBehavior(
 		skills = false;
 	} else if (stepOverrides.skills !== undefined) {
 		skills = [...stepOverrides.skills];
-		if (chainSkills && chainSkills.length > 0) {
-			skills = [...new Set([...skills, ...chainSkills])];
-		}
 	} else {
 		skills = agentConfig.skills ? [...agentConfig.skills] : [];
-		if (chainSkills && chainSkills.length > 0) {
-			skills = [...new Set([...skills, ...chainSkills])];
-		}
 	}
 
 	const outputMode = stepOverrides.outputMode ?? "inline";

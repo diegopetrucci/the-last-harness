@@ -252,7 +252,6 @@ export default function registerSubagentExtension(pi) {
     cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
-    const asyncByDefault = config.asyncByDefault === true;
     const tempArtifactsDir = getArtifactsDir(null);
     cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
     const liveDetailController = createSubagentLiveDetailController();
@@ -327,7 +326,6 @@ export default function registerSubagentExtension(pi) {
         pi,
         state,
         config,
-        asyncByDefault,
         tempArtifactsDir,
         getSubagentSessionRoot,
         expandTilde,
@@ -504,7 +502,7 @@ export default function registerSubagentExtension(pi) {
             }
         }
     }
-    registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+    registerSubagentNotify(pi, state, {});
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
     const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices : new Set();
     globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;

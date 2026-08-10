@@ -149,7 +149,6 @@ describe("fork context execution wiring", () => {
 				},
 				state: makeState(tempDir),
 				config,
-				asyncByDefault: false,
 				tempArtifactsDir: tempDir,
 				getSubagentSessionRoot: () => tempDir,
 				expandTilde: (p: string) => p,
@@ -995,45 +994,6 @@ describe("fork context execution wiring", () => {
 			assert.equal(result.isError, undefined, testCase.name);
 			assert.equal(maxRunning, testCase.expectedMaxRunning, testCase.name);
 		}
-	});
-
-	it("caps top-level foreground parallel execution with globalConcurrencyLimit", async () => {
-		mockPi.reset();
-		for (let i = 0; i < 4; i++) {
-			mockPi.onCall({
-				steps: [
-					{ jsonl: [events.toolStart("bash", { command: `global-${i}` })] },
-					{ delay: 250 },
-					{ jsonl: [events.toolEnd("bash"), events.assistantMessage(`done-${i}`)] },
-				],
-			});
-		}
-
-		const executor = makeExecutorWithConfig({ globalConcurrencyLimit: 2, parallel: { concurrency: 4 } });
-		let maxRunning = 0;
-
-		const result = await executor.execute(
-			"id",
-			{
-				tasks: [
-					{ agent: "echo", task: "task one" },
-					{ agent: "second", task: "task two" },
-					{ agent: "echo", task: "task three" },
-					{ agent: "second", task: "task four" },
-				],
-			},
-			new AbortController().signal,
-			(update: ProgressUpdate) => {
-				const progress = update.details?.progress ?? [];
-				const running = progress.filter((entry) => entry.status === "running").length;
-				maxRunning = Math.max(maxRunning, running);
-			},
-			makeCtx(makeSessionManagerRecorder().manager),
-		);
-
-		assert.equal(result.isError, undefined);
-		assert.equal(mockPi.callCount(), 4);
-		assert.equal(maxRunning, 2);
 	});
 
 	it("detaches parallel child runs cleanly on intercom handoff", async () => {

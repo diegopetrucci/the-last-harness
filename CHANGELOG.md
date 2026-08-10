@@ -4,6 +4,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
 ### Removed
 
 - Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.

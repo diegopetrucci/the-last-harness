@@ -66,7 +66,6 @@ function createExecutor(
 			} as any,
 			state: createState(),
 			config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
-			asyncByDefault: false,
 			tempArtifactsDir: root,
 			getSubagentSessionRoot: (parentSessionFile) =>
 				parentSessionFile

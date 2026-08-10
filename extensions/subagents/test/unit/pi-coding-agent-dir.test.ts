@@ -84,10 +84,9 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
-		writeFile(configPath, JSON.stringify({ asyncByDefault: true, maxSubagentDepth: 3 }));
+		writeFile(configPath, JSON.stringify({ maxSubagentDepth: 3 }));
 
 		const config = loadConfig();
-		assert.equal(config.asyncByDefault, true);
 		assert.equal(config.maxSubagentDepth, 3);
 	});
 

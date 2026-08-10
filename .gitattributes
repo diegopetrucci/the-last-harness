@@ -130,7 +130,6 @@ extensions/subagents/src/runs/background/run-id-resolver.js linguist-generated=t
 extensions/subagents/src/runs/background/run-status.js linguist-generated=true
 extensions/subagents/src/runs/background/stale-run-reconciler.js linguist-generated=true
 extensions/subagents/src/runs/background/subagent-runner.js linguist-generated=true
-extensions/subagents/src/runs/background/top-level-async.js linguist-generated=true
 extensions/subagents/src/runs/foreground/execution.js linguist-generated=true
 extensions/subagents/src/runs/foreground/subagent-executor.js linguist-generated=true
 extensions/subagents/src/runs/shared/acceptance.js linguist-generated=true
