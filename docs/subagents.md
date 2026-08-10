@@ -28,6 +28,138 @@ The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
+## Skills
+
+Skills are named instruction sets injected into a child subagent's system prompt before a run begins. They let you package reusable workflows, coding conventions, or operational runbooks as separate files and attach them to specific agents without hardcoding the text in every agent definition.
+
+### Declaring skills on an agent
+
+Add `skill:` or `skills:` to the agent's YAML frontmatter (either key is accepted; they are read as `frontmatter.skill || frontmatter.skills`):
+
+```yaml
+---
+name: developer
+skill: tlh-dev-hygiene
+---
+```
+
+Multiple skills are comma-separated:
+
+```yaml
+skill: tlh-dev-hygiene, python-style
+```
+
+There is no `skill` or `skills` parameter on the model-facing `subagent` tool. Skills are configured exclusively through agent frontmatter (or through settings-based overrides described below).
+
+For built-in agents, an entry keyed by the agent's plain name under `subagents.agentOverrides` in `settings.json` also accepts `skills` as a string array, or `false` to disable skills for that agent. The frontmatter value takes precedence over the override for any field both define:
+
+```json
+{
+  "subagents": {
+    "agentOverrides": {
+      "developer": {
+        "skills": ["tlh-dev-hygiene"]
+      }
+    }
+  }
+}
+```
+
+Set `"skills": false` in the override to disable skills for agents whose frontmatter does NOT declare `skill:` or `skills:`; when the frontmatter declares them, the override is ignored entirely.
+
+### Resolution sources and search order
+
+When a run starts, the runtime walks the following locations and collects all skill directories (each containing a `SKILL.md` file, whose parent directory name becomes the skill name). When the same name appears in multiple locations, the source with the **highest priority number wins**. This ordering is defined by `SOURCE_PRIORITY` in `skills.ts` and assembled by `buildSkillPaths`.
+
+| Priority | Source | Typical path |
+|---|---|---|
+| 700 | `project` | `.pi/skills/` or `.agents/skills/` in the project root |
+| 650 | `project-settings` | Paths listed under `skills` in `.pi/settings.json` |
+| 600 | `project-package` | `.pi/npm/node_modules/<pkg>` (via `pi.skills` in `package.json`) or project root `package.json` → `pi.skills` |
+| 300 | `user` | `<agent-dir>/skills/` |
+| 250 | `user-settings` | Paths listed under `skills` in `<agent-dir>/settings.json` |
+| 200 | `user-package` | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root |
+| 150 | `extension` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
+| 100 | `builtin` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
+| 0 | `unknown` | Anything that does not match a known root |
+
+¹ `extension` and `builtin` are defined in `SOURCE_PRIORITY` and appear in the doctor's per-source breakdown, but `buildSkillPaths` never emits them and `inferSkillSource` never infers them. No current runtime caller passes either as a `sourceHint`; they are reserved for future use.
+
+Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
+
+### Two-cwd fallback
+
+`resolveSkillsWithFallback` runs two resolution passes for each run:
+
+1. **Task cwd** — the working directory the task runs in (the `cwd` option if provided, otherwise the runtime cwd).
+2. **Runtime cwd** — the working directory of the parent extension process.
+
+Skills not found after the first pass are retried against the runtime cwd in the second pass. If the two paths resolve to the same directory the fallback is skipped. Any skill still missing after both passes is collected into the `missing` list.
+
+### What injection looks like
+
+For each resolved skill, the runtime reads the `SKILL.md` file (stripping any YAML frontmatter) and appends an `<available_skills>` block to the child's system prompt via `buildSkillInjection`:
+
+```text
+The following configured skills are available to this subagent.
+Use the read tool to load a skill's file when the task matches its description.
+When a skill file references a relative path, resolve it against the skill directory
+(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
+
+<available_skills>
+  <skill>
+    <name>tlh-dev-hygiene</name>
+    <description>Pre-commit hygiene checklist for TLH contributors</description>
+    <location>/path/to/.pi/skills/tlh-dev-hygiene/SKILL.md</location>
+  </skill>
+</available_skills>
+```
+
+The child is instructed to load the skill file on demand using the read tool, not to memorise it upfront.
+
+### Missing-skill behavior
+
+If a named skill is not found in any search location after both passes, it is added to the `missing` list and the run **continues**. For foreground runs, a warning string `Skills not found: <name>, ...` is attached to the result and shown in the TUI as a warning line alongside the run output; async runs currently continue silently without surfacing the warning.
+
+Exception: if `pi-subagents` is requested, the run **fails immediately** rather than continuing — see below.
+
+### The `pi-subagents` skill
+
+The skill named `pi-subagents` can never be injected into a child. Children have no `subagent` tool (`registerSubagentExtension` is skipped for child processes), so orchestration instructions reaching a child would be unactionable and violate the "subagents cannot spawn subagents" boundary.
+
+Requesting `pi-subagents` as a skill **fails the run immediately** with `"Skills not found: pi-subagents"` rather than continuing with a warning. The `resolveSkills` function hardcodes this skill name to always go to the `missing` list, regardless of whether a matching file exists on disk. This is intentional — users who see this error should remove `pi-subagents` from their agent's `skill:` declaration.
+
+### `skills` vs `inheritSkills`
+
+These two mechanisms are distinct:
+
+| | `skills` (frontmatter) | `inheritSkills` (frontmatter) |
+|---|---|---|
+| What it does | Injects specific named skills into the child's system prompt | Passes the *parent's* existing skills section down to the child |
+| Default | None (no injection) | `false` (parent skills stripped by `rewriteSubagentPrompt`) |
+| Format | Comma-separated skill names, or array in settings override | Boolean (`true`/`false`) |
+| When to use | Give an agent a specific runbook or checklist | Let a child share the parent's ambient skill context |
+
+Use `skills:` when a child agent should always receive a particular skill regardless of what the parent has loaded. Use `inheritSkills: true` when the parent's skills are contextually relevant and you want the child to receive them without redeclaring them.
+
+Both can be set on the same agent. If both are active, the child receives its own injected skills plus the parent's inherited skills section.
+
+### Verifying discovery
+
+Run the doctor from a project directory to confirm which skills the runtime discovers:
+
+```
+/subagents-doctor
+```
+
+The report's **Discovery** section includes a `skills:` line with the total count and a per-source breakdown, produced by `discoverAvailableSkills(cwd)`:
+
+```text
+- skills: total 3 (project 2, user 1)
+```
+
+The `pi-subagents` skill is filtered out of discovery output by design — it will not appear in the list even if a matching file exists on disk.
+
 ## Async control, pause, and resume
 
 An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `/subagents-fleet` for the interactive fleet view or `subagent({ action: "status", id: "..." })` for the model-facing status path.

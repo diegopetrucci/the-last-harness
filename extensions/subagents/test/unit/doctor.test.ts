@@ -67,7 +67,7 @@ describe("buildDoctorReport", () => {
 
 			const report = buildDoctorReport({
 				cwd: root,
-				config: { defaultSessionDir: "~/subagent-sessions", intercomBridge: { mode: "always" } },
+				config: { intercomBridge: { mode: "always" } },
 				state: makeState(root),
 				currentSessionFile: path.join(root, "sessions", "parent.jsonl"),
 				currentSessionId: "session-abc123",
@@ -106,7 +106,7 @@ describe("buildDoctorReport", () => {
 			assert.match(report, /^Subagents doctor report/);
 			assert.ok(report.includes(`- cwd: ${root}`));
 			assert.match(report, /- async support: available/);
-			assert.match(report, /- configured session dir: .*subagent-sessions/);
+			assert.match(report, /- configured session dir: not configured/);
 			assert.match(report, /- current session file: .*parent\.jsonl/);
 			assert.match(report, /- temp root: ok /);
 			assert.match(

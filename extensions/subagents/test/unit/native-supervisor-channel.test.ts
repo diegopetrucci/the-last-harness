@@ -258,12 +258,55 @@ describe("native supervisor channel", () => {
 		assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
 	});
 
-	it("preserves fresh empty and stale non-empty supervisor channel directories", () => {
+	it("preserves stale channels when the legacy replies path cannot be read as a directory", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		const legacyRepliesPath = path.join(staleLegacyChannel, "replies");
+		fs.writeFileSync(legacyRepliesPath, "not a directory");
+		ageChannel(staleLegacyChannel, 2 * 60 * 1000);
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(staleLegacyChannel), true);
+		assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
+		assert.equal(fs.statSync(legacyRepliesPath).isFile(), true);
+	});
+
+	it("preserves fresh or non-empty supervisor channel directories", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const freshEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
 		const staleWithRequest = makeEmptyChannel(`run-${randomUUID()}`);
-		fs.writeFileSync(path.join(staleWithRequest, "requests", "request.json"), "{}");
+		// Write a request file so the channel is non-empty (should not be removed).
+		const staleRequestId = randomUUID();
+		fs.writeFileSync(
+			path.join(staleWithRequest, "requests", `${staleRequestId}.json`),
+			JSON.stringify({ type: "subagent.supervisor.request", id: staleRequestId }),
+		);
 		ageChannel(staleWithRequest, 2 * 60 * 1000);
+		const staleWithFreshLegacyReplies = makeEmptyChannel(`run-${randomUUID()}`);
+		const freshLegacyRepliesDir = path.join(staleWithFreshLegacyReplies, "replies");
+		fs.mkdirSync(freshLegacyRepliesDir);
+		const staleTimestamp = new Date(Date.now() - 2 * 60 * 1000);
+		for (const dir of [path.join(staleWithFreshLegacyReplies, "requests"), staleWithFreshLegacyReplies]) {
+			fs.utimesSync(dir, staleTimestamp, staleTimestamp);
+		}
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -286,6 +329,9 @@ describe("native supervisor channel", () => {
 
 		assert.equal(fs.existsSync(freshEmptyChannel), true);
 		assert.equal(fs.existsSync(staleWithRequest), true);
+		assert.equal(fs.existsSync(staleWithFreshLegacyReplies), true);
+		assert.equal(fs.existsSync(path.join(staleWithFreshLegacyReplies, "requests")), true);
+		assert.equal(fs.existsSync(freshLegacyRepliesDir), true);
 	});
 
 	it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {
@@ -377,6 +423,10 @@ describe("native supervisor channel", () => {
 				() => supervisorTool.execute("list", { action: "list" }),
 				/Unsupported supervisor action: list/,
 			);
+			await assert.rejects(
+				() => supervisorTool.execute("reply", { action: "reply" }),
+				/Unsupported supervisor action: reply/,
+			);
 		} finally {
 			channel.dispose();
 		}
@@ -459,7 +509,7 @@ describe("native supervisor channel", () => {
 			{
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}
 		>();
@@ -492,7 +542,7 @@ describe("native supervisor channel", () => {
 				name: string;
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}) => {
 				registeredTools.set(tool.name, tool);
@@ -558,13 +608,13 @@ describe("native supervisor channel", () => {
 	it("keeps pending blocking requests phase-truthful before the child finishes pausing", async () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
-		const requestId = writeRequest({ sessionId: currentSessionId, runId, index: 2 });
+		writeRequest({ sessionId: currentSessionId, runId, index: 2 });
 		const registeredTools = new Map<
 			string,
 			{
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}
 		>();
@@ -596,7 +646,7 @@ describe("native supervisor channel", () => {
 				name: string;
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}) => {
 				registeredTools.set(tool.name, tool);
@@ -632,11 +682,6 @@ describe("native supervisor channel", () => {
 			assert.match(pendingText, /When paused: Resume unchanged: subagent/);
 			assert.doesNotMatch(pendingText, /is durably paused awaiting supervisor guidance/);
 			assert.doesNotMatch(pendingText, /^- .*No child process is running\./m);
-			await assert.rejects(
-				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply" }),
-				/Unsupported supervisor action: reply/,
-			);
-			assert.equal(fs.existsSync(requestFile(runId, requestId, "worker", 2)), true);
 		} finally {
 			channel.dispose();
 		}
@@ -652,7 +697,7 @@ describe("native supervisor channel", () => {
 				{
 					execute: (
 						_id: string,
-						params: { action: string; replyTo?: string; message?: string },
+						params: { action: string; message?: string },
 					) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 				}
 			>();
@@ -666,7 +711,7 @@ describe("native supervisor channel", () => {
 						name: string;
 						execute: (
 							_id: string,
-							params: { action: string; replyTo?: string; message?: string },
+							params: { action: string; message?: string },
 						) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 					}) => {
 						registeredTools.set(tool.name, tool);
@@ -740,7 +785,7 @@ describe("native supervisor channel", () => {
 			{
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}
 		>();
@@ -760,7 +805,7 @@ describe("native supervisor channel", () => {
 				name: string;
 				execute: (
 					_id: string,
-					params: { action: string; replyTo?: string; message?: string },
+					params: { action: string; message?: string },
 				) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
 			}) => {
 				registeredTools.set(tool.name, tool);
@@ -788,10 +833,6 @@ describe("native supervisor channel", () => {
 			assert.match(pendingResult.content[0]!.text, /No pending supervisor requests/);
 			assert.deepEqual(pendingResult.details?.pending, []);
 			assert.equal(channel.pending.has(requestId), false);
-			await assert.rejects(
-				() => registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", { action: "reply" }),
-				/Unsupported supervisor action: reply/,
-			);
 		} finally {
 			channel.dispose();
 		}
@@ -962,7 +1003,7 @@ describe("native supervisor channel", () => {
 				registeredTools
 					.get("contact_supervisor")!
 					.execute("contact", { reason: "need_decision", message: "Need a decision" }),
-			/Timed out waiting for supervisor resume or interrupt/,
+			/Timed out waiting for supervisor pause or cancellation/,
 		);
 		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
 	});

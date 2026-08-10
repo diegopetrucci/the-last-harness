@@ -308,7 +308,6 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			config: {
 				intercomBridge: { mode: options.bridgeMode ?? "always" },
 			},
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,

@@ -25,6 +25,7 @@ import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/s
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
+import { appendRecentProgressItem } from "../../shared/recent-progress.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, formatErrorWithOutput, getFinalOutput, readStatus, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
@@ -1185,7 +1186,7 @@ function isPausedStepStatus(status) {
 }
 async function runSubagent(config) {
     const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
-    const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+    const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
     let previousOutput = "";
     const outputs = {};
     const results = [];
@@ -2013,7 +2014,11 @@ async function runSubagent(config) {
         else if (event.type === "tool_execution_end") {
             if (step.currentTool) {
                 step.recentTools ??= [];
-                step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+                appendRecentProgressItem(step.recentTools, {
+                    tool: step.currentTool,
+                    args: step.currentToolArgs || "",
+                    endMs: now,
+                });
             }
             step.currentTool = undefined;
             step.currentToolArgs = undefined;

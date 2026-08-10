@@ -261,7 +261,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state,
 			config,
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
@@ -1602,31 +1601,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(outputPath, "expected output path in child task");
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "default report");
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi-subagents", "artifacts")), false);
-		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
-	});
-
-	it("routes foreground single relative outputs to configured singleRunOutputBaseDir", {
-		skip: !createSubagentExecutor ? "executor not importable" : undefined,
-	}, async () => {
-		mockPi.onCall({ output: "configured report" });
-		const configuredBase = path.join(tempDir, "configured-outputs");
-		const executor = makeExecutor([makeAgent("researcher", { output: "context.md" })], {
-			singleRunOutputBaseDir: configuredBase,
-		});
-
-		const result = await executor.execute(
-			"single-configured-output-base",
-			{ agent: "researcher", task: "Write report" },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const expectedOutputPath = path.join(configuredBase, "context.md");
-		const taskArg = readCallArgs().at(-1) ?? "";
-		assert.equal(result.isError, undefined);
-		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(expectedOutputPath)}`));
-		assert.equal(fs.readFileSync(expectedOutputPath, "utf-8"), "configured report");
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 

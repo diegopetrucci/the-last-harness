@@ -38,10 +38,10 @@ describe("async runner execution", () => {
 		assert.equal(resolveAsyncRunnerLogPaths({}), undefined);
 	});
 
-	it("resolves async step tool budgets with step over run over agent over config precedence", () => {
+	it("resolves async step tool budgets with step over run over agent precedence", () => {
 		const result = buildAsyncRunnerSteps("run-1", {
 			chain: [
-				{ agent: "worker", task: "agent beats config" },
+				{ agent: "worker", task: "run beats agent" },
 				{ agent: "worker", task: "step beats run", toolBudget: { hard: 2, block: ["grep"] } },
 			],
 			agents: [agent("worker", { hard: 4, block: ["read"] })],
@@ -49,7 +49,6 @@ describe("async runner execution", () => {
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
 			toolBudget: { hard: 3, block: ["find"] },
-			configToolBudget: { hard: 5, block: ["ls"] },
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
@@ -57,14 +56,13 @@ describe("async runner execution", () => {
 		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 
-	it("uses agent tool budget before config default when no run override exists", () => {
+	it("uses agent tool budget when no step or run override exists", () => {
 		const result = buildAsyncRunnerSteps("run-2", {
-			chain: [{ agent: "worker", task: "agent beats config" }],
+			chain: [{ agent: "worker", task: "agent budget applies" }],
 			agents: [agent("worker", { hard: 4, block: ["read"] })],
 			ctx,
 			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
 			maxSubagentDepth: 2,
-			configToolBudget: { hard: 5, block: ["ls"] },
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
@@ -96,19 +94,5 @@ describe("async runner execution", () => {
 			parallel.parallel.map((step) => step.timeoutMs),
 			[100, undefined, undefined],
 		);
-	});
-
-	it("uses config default when no step, run, or agent budget exists", () => {
-		const result = buildAsyncRunnerSteps("run-3", {
-			chain: [{ agent: "worker", task: "config default" }],
-			agents: [agent("worker")],
-			ctx,
-			asyncDir: path.join(process.cwd(), ".tmp-async-test"),
-			maxSubagentDepth: 2,
-			configToolBudget: { hard: 5, block: ["ls"] },
-		});
-
-		assert.ok("steps" in result, "expected successful step build");
-		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 5, block: ["ls"] });
 	});
 });

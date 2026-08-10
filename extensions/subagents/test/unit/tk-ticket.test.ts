@@ -18,10 +18,10 @@ describe("tk ticket helpers", () => {
 		assert.equal(detectTkTicketId("No ticket here."), undefined);
 	});
 
-	it("parses and sanitizes terminal-safe ticket titles", () => {
+	it("parses and sanitizes terminal-safe ticket titles without clipping", () => {
 		assert.equal(parseTkTicketTitle("---\nid: psr-raw4\n---\n# Show active tk title\n"), "Show active tk title");
 		assert.equal(sanitizeTkTicketTitle("\u001b[31mActive\u001b[0m\n\u0007\u009b ticket title"), "Active ticket title");
-		assert.equal(sanitizeTkTicketTitle("x".repeat(100)), `${"x".repeat(71)}…`);
+		assert.equal(sanitizeTkTicketTitle("x".repeat(100)), "x".repeat(100));
 	});
 
 	it("resolves exactly one ticketed task with its effective child cwd", () => {

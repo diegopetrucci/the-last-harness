@@ -192,13 +192,19 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
-// Keep the tool call in flight until the runner aborts it for durable pause.
-// Resolution happens by resuming or interrupting the paused run; timeout is the fail-safe.
-async function waitForSupervisorAbortOrTimeout(deadline: number, signal?: AbortSignal): Promise<never> {
+// Keep this function alive and blocking until the deadline or abort.
+// This is load-bearing: it keeps the child process blocked inside the
+// contact_supervisor tool call so the Pi runner has time to durably pause
+// (kill) the process. The runner kills the child before the deadline fires
+// under normal operation; the timeout error is the safety net when the pause
+// machinery fails. Do NOT make this return early — removing the block breaks
+// the durable-pause contract.
+async function waitForSupervisorPauseOrTimeout(deadline: number, signal?: AbortSignal): Promise<never> {
 	while (Date.now() <= deadline) {
+		if (signal?.aborted) throw new Error("Supervisor request cancelled.");
 		await delay(250, signal);
 	}
-	throw new Error("Timed out waiting for supervisor resume or interrupt.");
+	throw new Error("Timed out waiting for supervisor pause or cancellation.");
 }
 
 async function sendSupervisorRequest(
@@ -249,12 +255,10 @@ async function sendSupervisorRequest(
 		};
 	}
 
-	try {
-		return await waitForSupervisorAbortOrTimeout(requestDeadline, signal);
-	} catch (error) {
+	return waitForSupervisorPauseOrTimeout(requestDeadline, signal).catch((error: unknown) => {
 		removeRequestFile(requestPath(metadata.channelDir, requestId));
 		throw error;
-	}
+	});
 }
 
 function hasTool(pi: ExtensionAPI, name: string): boolean {

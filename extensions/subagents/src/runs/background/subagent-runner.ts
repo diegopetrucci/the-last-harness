@@ -91,6 +91,7 @@ import {
 	sanitizeModelFallbackNotice,
 } from "../shared/model-fallback.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { appendRecentProgressItem } from "../../shared/recent-progress.ts";
 import { scheduleDeadline, type DeadlineTimer } from "../shared/deadline-timer.ts";
 import {
 	detectSubagentError,
@@ -189,8 +190,6 @@ interface SubagentRunConfig {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
-	/** Global cap on simultaneously-running subagent tasks within this run. */
-	globalConcurrencyLimit?: number;
 }
 
 interface StepResult {
@@ -1660,7 +1659,7 @@ function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {
 async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } =
 		config;
-	const globalSemaphore = new Semaphore(config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
+	const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
 	let previousOutput = "";
 	const outputs: ChainOutputMap = {};
 	const results: StepResult[] = [];
@@ -2510,7 +2509,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		} else if (event.type === "tool_execution_end") {
 			if (step.currentTool) {
 				step.recentTools ??= [];
-				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+				appendRecentProgressItem(step.recentTools, {
+					tool: step.currentTool,
+					args: step.currentToolArgs || "",
+					endMs: now,
+				});
 			}
 			step.currentTool = undefined;
 			step.currentToolArgs = undefined;

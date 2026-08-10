@@ -4,11 +4,12 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
 ### Removed
 
 - Canonicalized the native supervisor channel: `subagent_supervisor` now exposes only `pending`/`status`, and `contact_supervisor` is the sole native child coordination tool. Removed the native parent-side `intercom` alias, legacy parent list/send/ask/reply actions and reply-file path, child-side `intercom` fallback registration, and implicit bridge allowlisting while preserving separately installed external intercom tools when TLH primary-agent filtering is disabled.
 - Removed legacy execution-mode action aliases (`single`, `parallel`, and `tasks`) and the `maxRuntimeMs` timeout alias. Execution now requires canonical no-action single/parallel input and uses `timeoutMs` for run-level deadlines.
-- Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
+- Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
 
 ## [0.35.0] - 2026-08-09
 

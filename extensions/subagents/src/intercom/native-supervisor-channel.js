@@ -110,11 +110,13 @@ function delay(ms, signal) {
         signal?.addEventListener("abort", onAbort, { once: true });
     });
 }
-async function waitForSupervisorAbortOrTimeout(deadline, signal) {
+async function waitForSupervisorPauseOrTimeout(deadline, signal) {
     while (Date.now() <= deadline) {
+        if (signal?.aborted)
+            throw new Error("Supervisor request cancelled.");
         await delay(250, signal);
     }
-    throw new Error("Timed out waiting for supervisor resume or interrupt.");
+    throw new Error("Timed out waiting for supervisor pause or cancellation.");
 }
 async function sendSupervisorRequest(params, signal) {
     const metadata = readChildMetadata();
@@ -161,13 +163,10 @@ async function sendSupervisorRequest(params, signal) {
             details: { delivered: true, requestId, reason: params.reason },
         };
     }
-    try {
-        return await waitForSupervisorAbortOrTimeout(requestDeadline, signal);
-    }
-    catch (error) {
+    return waitForSupervisorPauseOrTimeout(requestDeadline, signal).catch((error) => {
         removeRequestFile(requestPath(metadata.channelDir, requestId));
         throw error;
-    }
+    });
 }
 function hasTool(pi, name) {
     try {
