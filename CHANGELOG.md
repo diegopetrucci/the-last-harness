@@ -10,8 +10,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Removed
 
-- Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
-- Removed medium-confidence dead code from the subagents runtime (~1,300 lines): the `toolDescriptionMode: "custom"` mode (now falls through to the invalid-mode warning and defaults to `"full"`); the supervisor `reply` parent action and child reply-file plumbing; `ExtensionConfig` knobs `completionBatch`, `singleRunOutputBaseDir`, `forceTopLevelAsync`, `asyncByDefault`, `defaultSessionDir`, and `globalConcurrencyLimit`; config-level `turnBudget` and `toolBudget`; and dead skills sub-plumbing (`task.skill`/`s.skill`, `chainSkills`). Unknown/removed settings keys in existing user configs are silently ignored — no error on upgrade.
+- Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
+- Removed custom tool-description mode, the supervisor reply action, several undocumented config knobs (`completionBatch`, `singleRunOutputBaseDir`, `forceTopLevelAsync`, `asyncByDefault`, `defaultSessionDir`, `globalConcurrencyLimit`, `turnBudget`, `toolBudget`), and dead skills plumbing from the subagents runtime. Stale keys in existing configs are silently ignored on upgrade.
 
 ## [0.35.0] - 2026-08-09
 

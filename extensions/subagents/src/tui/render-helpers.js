@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 function fuzzyScore(query, text) {
     const lq = query.toLowerCase();
     const lt = text.toLowerCase();
@@ -37,19 +37,37 @@ export function pad(s, len) {
     return s + " ".repeat(Math.max(0, len - vis));
 }
 export function row(content, width, theme) {
+    if (width <= 0)
+        return "";
+    const normalized = content.replace(/\t/g, "  ");
+    if (width < 3)
+        return wrapTextWithAnsi(normalized, width).join("\n");
     const innerW = width - 2;
-    const singleLine = content.replace(/[\r\n]+/g, " ").replace(/\t/g, "  ");
-    const clipped = truncateToWidth(singleLine, innerW);
-    return theme.fg("border", "│") + pad(clipped, innerW) + theme.fg("border", "│");
+    return wrapTextWithAnsi(normalized, innerW)
+        .map((line) => theme.fg("border", "│") + pad(line, innerW) + theme.fg("border", "│"))
+        .join("\n");
 }
 export function renderHeader(text, width, theme) {
+    if (width <= 0)
+        return "";
+    if (width < 3)
+        return wrapTextWithAnsi(text, width).join("\n");
     const innerW = width - 2;
-    const padLen = Math.max(0, innerW - visibleWidth(text));
-    const padLeft = Math.floor(padLen / 2);
-    const padRight = padLen - padLeft;
-    return (theme.fg("border", "╭" + "─".repeat(padLeft)) +
-        theme.fg("accent", text) +
-        theme.fg("border", "─".repeat(padRight) + "╮"));
+    return wrapTextWithAnsi(text, innerW)
+        .map((line, index) => {
+        const padLen = Math.max(0, innerW - visibleWidth(line));
+        const padLeft = Math.floor(padLen / 2);
+        const padRight = padLen - padLeft;
+        if (index === 0) {
+            return (theme.fg("border", "╭" + "─".repeat(padLeft)) +
+                theme.fg("accent", line) +
+                theme.fg("border", "─".repeat(padRight) + "╮"));
+        }
+        return (theme.fg("border", "│" + " ".repeat(padLeft)) +
+            theme.fg("accent", line) +
+            theme.fg("border", " ".repeat(padRight) + "│"));
+    })
+        .join("\n");
 }
 export function formatPath(filePath) {
     const home = process.env.HOME;
@@ -66,11 +84,25 @@ export function formatScrollInfo(above, below) {
     return info;
 }
 export function renderFooter(text, width, theme) {
+    if (width <= 0)
+        return "";
+    if (width < 3)
+        return wrapTextWithAnsi(text, width).join("\n");
     const innerW = width - 2;
-    const padLen = Math.max(0, innerW - visibleWidth(text));
-    const padLeft = Math.floor(padLen / 2);
-    const padRight = padLen - padLeft;
-    return (theme.fg("border", "╰" + "─".repeat(padLeft)) +
-        theme.fg("dim", text) +
-        theme.fg("border", "─".repeat(padRight) + "╯"));
+    const lines = wrapTextWithAnsi(text, innerW);
+    return lines
+        .map((line, index) => {
+        const padLen = Math.max(0, innerW - visibleWidth(line));
+        const padLeft = Math.floor(padLen / 2);
+        const padRight = padLen - padLeft;
+        if (index === lines.length - 1) {
+            return (theme.fg("border", "╰" + "─".repeat(padLeft)) +
+                theme.fg("dim", line) +
+                theme.fg("border", "─".repeat(padRight) + "╯"));
+        }
+        return (theme.fg("border", "│" + " ".repeat(padLeft)) +
+            theme.fg("dim", line) +
+            theme.fg("border", " ".repeat(padRight) + "│"));
+    })
+        .join("\n");
 }

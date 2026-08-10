@@ -189,7 +189,7 @@ describe("foreground result payload compaction", {
 		assert.ok(step?.progress === undefined, "completed foreground results should not inline full progress objects");
 		assert.ok(step?.toolCalls?.length, "completed foreground results should preserve compact tool-call summaries");
 		assert.equal(step?.toolCalls?.[0]?.text, "write /tmp/huge-report.md");
-		assert.equal(step?.toolCalls?.[0]?.expandedText, "write /tmp/huge-report.md");
+		assert.equal(step?.toolCalls?.[0]?.expandedText, undefined);
 
 		const payloadSize = JSON.stringify(result).length;
 		assert.ok(payloadSize < 80_000, `expected compact foreground payload, got ${payloadSize} bytes`);

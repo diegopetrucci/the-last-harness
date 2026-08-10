@@ -484,13 +484,11 @@ function publicPendingRequests(pending) {
         expectsReply: request.expectsReply,
     }));
 }
-function buildParentIntercomTool(pending, state, name = "intercom") {
+function buildParentSupervisorTool(pending, state) {
     return {
-        name,
-        label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
-        description: name === "intercom"
-            ? "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt."
-            : "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests without overriding pi-intercom, then resume them with subagent resume or cancel them with interrupt.",
+        name: NATIVE_SUPERVISOR_TOOL_NAME,
+        label: "Subagent Supervisor",
+        description: "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt.",
         parameters: IntercomParamsSchema,
         async execute(_id, params) {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
@@ -525,9 +523,7 @@ export function createNativeSupervisorChannel(pi, state) {
     const registerTool = pi.registerTool.bind(pi);
     const registerParentTools = () => {
         if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
-            registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
-        if (!hasTool(pi, "intercom"))
-            registerTool(buildParentIntercomTool(pending, state));
+            registerTool(buildParentSupervisorTool(pending, state));
     };
     const cleanupStaleChannelsIfDue = () => {
         const nowMs = Date.now();

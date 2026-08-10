@@ -155,7 +155,7 @@ describe("native supervisor channel", () => {
 		channel.start();
 		channel.dispose();
 
-		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME, "intercom"]);
+		assert.deepEqual(registeredTools, [NATIVE_SUPERVISOR_TOOL_NAME]);
 		assert.deepEqual(
 			sent.map((message) => message.details?.id),
 			[matchingId],
@@ -804,6 +804,34 @@ describe("native supervisor channel", () => {
 				/durably pause the child until the parent resumes or cancels it/i,
 			);
 			assert.match(registeredTools.get("intercom")?.description ?? "", /no child process keeps running while paused/i);
+		} finally {
+			restoreEnv();
+		}
+	});
+
+	it("does not override an installed child intercom when fallback is enabled", () => {
+		const installedIntercom = { name: "intercom", description: "Installed intercom" };
+		const registeredTools = new Map<string, { name: string; description?: string }>([["intercom", installedIntercom]]);
+		const runId = `run-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		createdChannels.push(channelDir);
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; description?: string }) => {
+				registeredTools.set(tool.name, tool);
+			},
+		};
+		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
+		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
+		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+		process.env[SUBAGENT_RUN_ID_ENV] = runId;
+		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+
+		try {
+			registerNativeSupervisorClient(pi as never, { includeIntercomFallback: true });
+			assert.equal(registeredTools.get("intercom"), installedIntercom);
+			assert.equal(registeredTools.has("contact_supervisor"), true);
 		} finally {
 			restoreEnv();
 		}

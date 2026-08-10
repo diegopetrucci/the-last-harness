@@ -1,13 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { visibleWidth } from "@earendil-works/pi-tui";
-
 import type { TkTicketMetadata } from "../../shared/types.ts";
 
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-const MAX_TK_TICKET_TITLE_WIDTH = 72;
-const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export interface ResolveTkTicketMetadataOptions {
 	cwd?: string;
@@ -104,21 +100,17 @@ function sanitizeTerminalText(raw: string): string {
 	return cleaned;
 }
 
-export function sanitizeTkTicketTitle(raw: string, maxWidth = MAX_TK_TICKET_TITLE_WIDTH): string | undefined {
+export function sanitizeTkTicketTitle(raw: string): string | undefined {
 	const cleaned = sanitizeTerminalText(raw).replace(/\s+/g, " ").trim();
-	if (!cleaned) return undefined;
-	return truncatePlainTextToWidth(cleaned, maxWidth);
+	return cleaned || undefined;
 }
 
-export function normalizeTkTicketMetadata(
-	raw: unknown,
-	maxWidth = MAX_TK_TICKET_TITLE_WIDTH,
-): TkTicketMetadata | undefined {
+export function normalizeTkTicketMetadata(raw: unknown): TkTicketMetadata | undefined {
 	if (!raw || typeof raw !== "object") return undefined;
 	const { id, title } = raw as Partial<TkTicketMetadata>;
 	if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id)) return undefined;
 	if (typeof title !== "string") return undefined;
-	const sanitizedTitle = sanitizeTkTicketTitle(title, maxWidth);
+	const sanitizedTitle = sanitizeTkTicketTitle(title);
 	if (!sanitizedTitle) return undefined;
 	return { id, title: sanitizedTitle };
 }
@@ -175,18 +167,4 @@ function findTicketsDir(cwd?: string): string | undefined {
 		if (parent === dir) return undefined;
 		dir = parent;
 	}
-}
-
-function truncatePlainTextToWidth(text: string, maxWidth: number): string {
-	if (maxWidth <= 0 || visibleWidth(text) <= maxWidth) return text;
-	const targetWidth = Math.max(1, maxWidth - 1);
-	let width = 0;
-	let result = "";
-	for (const { segment } of segmenter.segment(text)) {
-		const nextWidth = visibleWidth(segment);
-		if (width + nextWidth > targetWidth) return `${result}…`;
-		result += segment;
-		width += nextWidth;
-	}
-	return text;
 }

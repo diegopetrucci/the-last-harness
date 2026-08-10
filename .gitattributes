@@ -172,6 +172,7 @@ extensions/subagents/src/shared/jsonl-writer.js linguist-generated=true
 extensions/subagents/src/shared/model-info.js linguist-generated=true
 extensions/subagents/src/shared/post-exit-stdio-guard.js linguist-generated=true
 extensions/subagents/src/shared/profile.js linguist-generated=true
+extensions/subagents/src/shared/recent-progress.js linguist-generated=true
 extensions/subagents/src/shared/session-identity.js linguist-generated=true
 extensions/subagents/src/shared/session-tokens.js linguist-generated=true
 extensions/subagents/src/shared/settings.js linguist-generated=true

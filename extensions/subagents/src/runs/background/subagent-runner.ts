@@ -91,6 +91,7 @@ import {
 	sanitizeModelFallbackNotice,
 } from "../shared/model-fallback.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { appendRecentProgressItem } from "../../shared/recent-progress.ts";
 import { scheduleDeadline, type DeadlineTimer } from "../shared/deadline-timer.ts";
 import {
 	detectSubagentError,
@@ -2509,7 +2510,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		} else if (event.type === "tool_execution_end") {
 			if (step.currentTool) {
 				step.recentTools ??= [];
-				step.recentTools.push({ tool: step.currentTool, args: step.currentToolArgs || "", endMs: now });
+				appendRecentProgressItem(step.recentTools, {
+					tool: step.currentTool,
+					args: step.currentToolArgs || "",
+					endMs: now,
+				});
 			}
 			step.currentTool = undefined;
 			step.currentToolArgs = undefined;

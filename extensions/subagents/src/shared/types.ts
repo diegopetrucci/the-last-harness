@@ -405,7 +405,7 @@ export interface AgentProgress {
 
 export interface ToolCallSummary {
 	text: string;
-	expandedText: string;
+	expandedText?: string;
 }
 
 interface ProgressSummary {

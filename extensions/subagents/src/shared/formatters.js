@@ -39,12 +39,11 @@ export function formatDuration(ms) {
         return `${(ms / 1000).toFixed(1)}s`;
     return `${Math.floor(ms / 60000)}m${Math.floor((ms % 60000) / 1000)}s`;
 }
-export function formatToolCall(name, args, expanded = false) {
+export function formatToolCall(name, args, _expanded = false) {
     switch (name) {
         case "bash": {
             const command = typeof args.command === "string" ? args.command : "";
-            const maxLength = expanded ? 240 : 60;
-            return `$ ${command.slice(0, maxLength)}${command.length > maxLength ? "..." : ""}`;
+            return `$ ${command}`;
         }
         case "read":
         case "write":
@@ -53,9 +52,8 @@ export function formatToolCall(name, args, expanded = false) {
             return `${name} ${shortenPath(target)}`;
         }
         default: {
-            const s = JSON.stringify(args);
-            const maxLength = expanded ? 160 : 40;
-            return `${name} ${s.slice(0, maxLength)}${s.length > maxLength ? "..." : ""}`;
+            const serialized = JSON.stringify(args);
+            return `${name} ${serialized ?? ""}`;
         }
     }
 }

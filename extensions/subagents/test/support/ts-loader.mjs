@@ -3,32 +3,23 @@
 // imports and the actual .ts files on disk.
 
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const renderPiCodingAgentShim = `
 export function getMarkdownTheme() { return {}; }
 export function keyText(keybinding) { return keybinding === "app.tools.expand" ? "configured-expand-key" : ""; }
 `;
 
-const renderPiTuiShim = `
-function wrapText(text, width) {
-  if (!width || width <= 0) return [text];
-  const lines = [];
-  for (const rawLine of String(text).split("\\n")) {
-    if (rawLine.length === 0) {
-      lines.push("");
-      continue;
-    }
-    for (let i = 0; i < rawLine.length; i += width) {
-      lines.push(rawLine.slice(i, i + width));
-    }
-  }
-  return lines;
-}
+const realPiTuiUrl = pathToFileURL(createRequire(import.meta.url).resolve("@earendil-works/pi-tui")).href;
 
-export function visibleWidth(text) {
-  return String(text).length;
+const renderPiTuiShim = `
+import { visibleWidth, wrapTextWithAnsi } from ${JSON.stringify(realPiTuiUrl)};
+export { visibleWidth, wrapTextWithAnsi };
+
+function wrapText(text, width) {
+  return wrapTextWithAnsi(String(text), Math.max(1, width || 1));
 }
 
 export class Text {
