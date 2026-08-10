@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Updated the packaged `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` defaults from `openai-codex/gpt-5.4-mini` with high thinking to `openai-codex/gpt-5.6-luna` with medium thinking. Explicit user overrides remain preserved.
+
 ### Removed
 
 - Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
