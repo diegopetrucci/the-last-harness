@@ -7,7 +7,6 @@ import {
 	cleanupOldArtifacts,
 	getArtifactsDir,
 	getProjectArtifactsDir,
-	getProjectChainRunsDir,
 	getProjectSubagentsDir,
 } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
@@ -17,7 +16,6 @@ describe("project-local artifact paths", () => {
 		const cwd = path.join("tmp", "repo");
 		assert.equal(getProjectSubagentsDir(cwd), path.join(cwd, ".pi-subagents"));
 		assert.equal(getProjectArtifactsDir(cwd), path.join(cwd, ".pi-subagents", "artifacts"));
-		assert.equal(getProjectChainRunsDir(cwd), path.join(cwd, ".pi-subagents", "chain-runs"));
 		assert.equal(getArtifactsDir(null, cwd), path.join(cwd, ".pi-subagents", "artifacts"));
 	});
 

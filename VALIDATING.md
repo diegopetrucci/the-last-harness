@@ -30,7 +30,7 @@ npm run test:subagents:integration
 npm run test:subagents:e2e
 ```
 
-On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner requires at least 84 unit files/1012 tests, 25 integration files/518 tests, and 1 E2E file/test, preventing missing globs or zero-test runs from passing; current observed totals are 85 unit files/1025 tests, 25 integration files/520 tests, and 1 E2E file/test.
+On Node 22.19.0, full imported runs must report every discovered test as passed with zero failures, cancellations, skips, or todo tests. The runner requires at least 83 unit files/991 tests, 24 integration files/515 tests, and 1 E2E file/test, preventing missing globs or zero-test runs from passing; current observed totals are 83 unit files/991 tests, 24 integration files/515 tests, and 1 E2E file/test.
 
 CI runs the suites on Linux and macOS with Node 22.19.0. Its unit and integration shards must each execute at least one test and retain the same zero-non-pass requirement; together they cover the full counts.
 

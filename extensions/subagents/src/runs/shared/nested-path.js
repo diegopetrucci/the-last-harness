@@ -45,7 +45,3 @@ export function parseNestedPathEnv(value) {
         return [];
     }
 }
-export function encodeNestedPathEnv(value) {
-    const sanitized = sanitizeNestedPath(value);
-    return sanitized.length ? JSON.stringify(sanitized) : "";
-}

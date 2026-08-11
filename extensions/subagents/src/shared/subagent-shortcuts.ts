@@ -157,7 +157,3 @@ export function liveDetailShortcutDisplay(): string {
 export function pauseAllShortcutDisplay(): string {
 	return formatShortcutDisplay(SUBAGENT_PAUSE_ALL_SHORTCUT);
 }
-
-export function subagentRunningHintText(): string {
-	return `Press ${liveDetailShortcutDisplay()} for live detail · ${pauseAllShortcutDisplay()} pauses all`;
-}
