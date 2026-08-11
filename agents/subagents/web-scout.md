@@ -2,10 +2,10 @@
 name: web-scout
 description: Performs Exa-backed web research and URL fetch in an isolated read-only context.
 tools: web_search, fetch_content, get_search_content, read, grep, find, ls, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.4-mini
+tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 tlhAnthropicThinking: high
-tlhOpenaiThinking: high
+tlhOpenaiThinking: medium
 toolBudget: {"soft":5,"hard":7}
 systemPromptMode: replace
 inheritProjectContext: true

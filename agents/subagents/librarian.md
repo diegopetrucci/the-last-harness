@@ -2,10 +2,10 @@
 name: librarian
 description: Performs read-only GitHub research using gh, git, and rg via bash.
 tools: read, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.4-mini
+tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 tlhAnthropicThinking: high
-tlhOpenaiThinking: high
+tlhOpenaiThinking: medium
 toolBudget: {"soft":30,"hard":60}
 systemPromptMode: replace
 inheritProjectContext: true
