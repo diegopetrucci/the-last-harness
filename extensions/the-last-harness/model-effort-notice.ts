@@ -4,7 +4,12 @@
 import { SettingsManager, getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
-import { computeModelEffortDrift, readReconcileState } from "./model-effort-reconcile.js";
+import {
+	backfillMissingBaselines,
+	computeModelEffortDrift,
+	isKnownProvider,
+	readReconcileState,
+} from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import type { TlhSettings } from "./types.js";
 
@@ -147,6 +152,12 @@ export function maybeNotifyModelEffortDrift(ctx: ExtensionContext): void {
 		if (notifiedThisProcess) {
 			return;
 		}
+		// With no known provider (undefined or empty string), drift comparison cannot
+		// be scoped to any provider; defer all comparison, baseline write, and notice
+		// until a provider is known (ts-7w6o applied consistently).
+		if (!isKnownProvider(ctx.model?.provider)) {
+			return;
+		}
 
 		const settings = getTlhGlobalSettings(ctx.cwd);
 		// Nothing overridden means no drift entries are possible, so avoid the
@@ -155,16 +166,31 @@ export function maybeNotifyModelEffortDrift(ctx: ExtensionContext): void {
 			return;
 		}
 
-		const reconcileState = readReconcileState();
+		// Load agents before backfill — both operations need them.
 		const primaryAgents = hooks.loadPrimaryAgents();
 		const subagentMetadata = hooks.loadSubagentMetadata();
+
+		const reconcileState = readReconcileState();
+
+		// Silently backfill any (role, provider) pair that has an active override but
+		// no prior baseline.  Returns the snapshot to use for this notification pass:
+		// includes newly established baselines in-memory so a backfilled role cannot
+		// also produce a notice this pass (ts-8kfb).
+		const activeSnapshot = backfillMissingBaselines(
+			primaryAgents,
+			subagentMetadata,
+			settings,
+			// provider is known at this point — the undefined guard above already returned.
+			ctx.model?.provider,
+			reconcileState.acknowledgedSnapshot,
+		);
 
 		const changedRoles = getChangedOverriddenRoles(
 			primaryAgents,
 			subagentMetadata,
 			settings,
 			ctx.model?.provider,
-			reconcileState.acknowledgedSnapshot,
+			activeSnapshot,
 		);
 
 		if (changedRoles.length === 0) {

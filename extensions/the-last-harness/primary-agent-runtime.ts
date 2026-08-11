@@ -51,6 +51,7 @@ import {
 	loadSubagentMetadata,
 } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
+import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 import type {
 	AgentPrompt,
@@ -910,10 +911,29 @@ function createTlhPrimaryAgentRuntime(
 				: undefined;
 			// If user picked the bundled default, clear the override; otherwise record it.
 			const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
+			// Capture before write to detect the no-override → override transition.
+			const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+			const existingOverride = primaryConfig?.modelOverrides?.[selection];
+			let writeResult: TlhPrimaryAgentWriteResult | undefined;
 			try {
-				writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
+				writeResult = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
 			} catch {
-				// Best-effort: model override persistence is non-blocking.
+				// Best-effort: model override persistence is non-blocking.  `writeResult`
+				// stays undefined so a thrown or refused write records no baseline.
+			}
+			// Record override baseline on first creation (or remove-then-recreate), and
+			// only after the settings write actually succeeded: a refused or failed write
+			// must never leave a baseline behind for an override that was not persisted.
+			// Do NOT rebaseline on edits of an existing override: that would silently
+			// erase a pending drift the user has not yet been notified about.
+			// Use isMeaningfulPrimaryOverride so null/"" stored by a user-edited
+			// settings.json are treated as absent, not as an existing override.
+			if (
+				writeResult?.changed === true &&
+				nextOverride !== undefined &&
+				!isMeaningfulPrimaryOverride(existingOverride)
+			) {
+				recordOverrideBaseline(selection, primary, event.model.provider);
 			}
 		});
 

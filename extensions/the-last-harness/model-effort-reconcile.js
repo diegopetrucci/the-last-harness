@@ -1,6 +1,21 @@
 import { isRecord, readText } from "./common.js";
 import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";
+export function isKnownProvider(provider) {
+    return typeof provider === "string" && provider.length > 0;
+}
+export function isMeaningfulPrimaryOverride(value) {
+    return typeof value === "string" && value.length > 0;
+}
+export function hasMeaningfulSubagentOverride(override) {
+    if (!isRecord(override))
+        return false;
+    const model = override.model;
+    const thinking = override.thinking;
+    const hasModel = typeof model === "string" || model === false;
+    const hasThinking = typeof thinking === "string" || thinking === false;
+    return hasModel || hasThinking;
+}
 export function tlhReconcileStatePath() {
     return tlhStatePath("reconcile-state.json");
 }
@@ -19,7 +34,6 @@ function sanitizeAcknowledgedSnapshot(raw) {
         }
         const rawByProvider = entry.byProvider;
         if (rawByProvider === undefined) {
-            result[name] = entry;
             continue;
         }
         if (!isRecord(rawByProvider)) {
@@ -29,6 +43,9 @@ function sanitizeAcknowledgedSnapshot(raw) {
         }
         const sanitizedByProvider = {};
         for (const [provider, ack] of Object.entries(rawByProvider)) {
+            if (provider === "") {
+                continue;
+            }
             if (!isRecord(ack)) {
                 continue;
             }
@@ -112,27 +129,126 @@ function packagedCandidateModels(agent) {
     }
     return [...seen.values()];
 }
+function packagedCandidateModelsForProvider(agent, provider) {
+    if (provider === undefined) {
+        return [];
+    }
+    return packagedCandidateModels(agent).filter((m) => m.provider === provider);
+}
 function resolvePackagedDefaults(agent, provider) {
     if (!agent) {
         return {};
     }
-    const defaults = selectProviderAwareAgentDefaults(agent, packagedCandidateModels(agent), provider);
+    const providerCandidates = packagedCandidateModelsForProvider(agent, provider);
+    const defaults = selectProviderAwareAgentDefaults(agent, providerCandidates, provider);
     return {
         model: defaults.model ? formatProviderModelReference(defaults.model) : undefined,
         thinking: defaults.thinking,
     };
+}
+export function recordOverrideBaseline(agentName, agent, provider) {
+    try {
+        if (!isKnownProvider(provider)) {
+            return;
+        }
+        const packaged = resolvePackagedDefaults(agent, provider);
+        const ack = {};
+        if (packaged.model !== undefined) {
+            ack.model = packaged.model;
+        }
+        if (packaged.thinking !== undefined) {
+            ack.thinking = packaged.thinking;
+        }
+        updateReconcileAcknowledgedSnapshot({
+            [agentName]: { byProvider: { [provider]: ack } },
+        });
+    }
+    catch {
+    }
+}
+export function backfillMissingBaselines(primaryAgents, subagentMetadata, settings, currentProvider, existingSnapshot) {
+    const snapshot = existingSnapshot ?? {};
+    try {
+        if (!isKnownProvider(currentProvider)) {
+            return snapshot;
+        }
+        const toBackfill = {};
+        const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
+        if (isRecord(primaryModelOverrides)) {
+            for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
+                if (!isMeaningfulPrimaryOverride(overrideValue)) {
+                    continue;
+                }
+                if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
+                    continue;
+                }
+                const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
+                const ack = {};
+                if (packaged.model !== undefined) {
+                    ack.model = packaged.model;
+                }
+                if (packaged.thinking !== undefined) {
+                    ack.thinking = packaged.thinking;
+                }
+                toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+            }
+        }
+        const subagentOverrides = settings.subagents?.agentOverrides;
+        if (isRecord(subagentOverrides)) {
+            const subagentMap = new Map(subagentMetadata.map((s) => [s.name, s]));
+            for (const [name, rawOverride] of Object.entries(subagentOverrides)) {
+                if (!hasMeaningfulSubagentOverride(rawOverride)) {
+                    continue;
+                }
+                if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
+                    continue;
+                }
+                const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
+                const ack = {};
+                if (packaged.model !== undefined) {
+                    ack.model = packaged.model;
+                }
+                if (packaged.thinking !== undefined) {
+                    ack.thinking = packaged.thinking;
+                }
+                toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+            }
+        }
+        if (Object.keys(toBackfill).length === 0) {
+            return snapshot;
+        }
+        updateReconcileAcknowledgedSnapshot(toBackfill);
+        const merged = { ...snapshot };
+        for (const [name, incoming] of Object.entries(toBackfill)) {
+            const existing = merged[name];
+            if (existing != null && incoming.byProvider != null) {
+                merged[name] = {
+                    ...existing,
+                    byProvider: { ...(existing.byProvider ?? {}), ...incoming.byProvider },
+                };
+            }
+            else {
+                merged[name] = incoming;
+            }
+        }
+        return merged;
+    }
+    catch {
+        return snapshot;
+    }
 }
 export function computeModelEffortDrift(primaryAgents, subagentMetadata, settings, currentProvider, acknowledgedSnapshot) {
     const drift = [];
     const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
     if (isRecord(primaryModelOverrides)) {
         for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
-            if (typeof overrideValue !== "string" || !overrideValue) {
+            if (!isMeaningfulPrimaryOverride(overrideValue)) {
                 continue;
             }
             const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-            const providerKey = currentProvider ?? "";
-            const providerEntry = acknowledgedSnapshot?.[name]?.byProvider?.[providerKey];
+            const providerEntry = isKnownProvider(currentProvider)
+                ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
+                : undefined;
             const packagedDefaultsChanged = providerEntry !== undefined &&
                 (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
             drift.push({
@@ -163,8 +279,9 @@ export function computeModelEffortDrift(primaryAgents, subagentMetadata, setting
                 continue;
             }
             const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
-            const providerKey = currentProvider ?? "";
-            const providerEntry = acknowledgedSnapshot?.[name]?.byProvider?.[providerKey];
+            const providerEntry = isKnownProvider(currentProvider)
+                ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
+                : undefined;
             const packagedDefaultsChanged = providerEntry !== undefined &&
                 (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
             const overrideEntry = {};

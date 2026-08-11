@@ -1,6 +1,6 @@
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
-import { computeModelEffortDrift, readReconcileState } from "./model-effort-reconcile.js";
+import { backfillMissingBaselines, computeModelEffortDrift, isKnownProvider, readReconcileState, } from "./model-effort-reconcile.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 let notifiedThisProcess = false;
 function getTlhGlobalSettings(cwd) {
@@ -60,14 +60,18 @@ export function maybeNotifyModelEffortDrift(ctx) {
         if (notifiedThisProcess) {
             return;
         }
+        if (!isKnownProvider(ctx.model?.provider)) {
+            return;
+        }
         const settings = getTlhGlobalSettings(ctx.cwd);
         if (!hasAnyModelEffortOverride(settings)) {
             return;
         }
-        const reconcileState = readReconcileState();
         const primaryAgents = hooks.loadPrimaryAgents();
         const subagentMetadata = hooks.loadSubagentMetadata();
-        const changedRoles = getChangedOverriddenRoles(primaryAgents, subagentMetadata, settings, ctx.model?.provider, reconcileState.acknowledgedSnapshot);
+        const reconcileState = readReconcileState();
+        const activeSnapshot = backfillMissingBaselines(primaryAgents, subagentMetadata, settings, ctx.model?.provider, reconcileState.acknowledgedSnapshot);
+        const changedRoles = getChangedOverriddenRoles(primaryAgents, subagentMetadata, settings, ctx.model?.provider, activeSnapshot);
         if (changedRoles.length === 0) {
             return;
         }

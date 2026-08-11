@@ -145,6 +145,10 @@ TLH default model/effort changed for <role> — run /reconcile to review
 
 The **only trigger** is TLH shipping an update that changes a packaged default for a role you have overridden. There is no periodic or scheduled reminder. An ignored notice reappears each launch until you make a decision via `/reconcile`.
 
+When the session provider is unknown at startup, TLH defers: no comparison is performed, no baseline is written, and no notice appears until a provider is active.
+
+Overrides that existed before baseline recording was introduced are silently backfilled on your first startup with a known provider, using the current packaged default as the baseline. The notice will fire on the next packaged-default change after that point — not for any changes that occurred before the backfill.
+
 Acknowledgments are per-provider. A decision recorded under one provider does not suppress the notice for a different provider — switching providers means TLH treats you as not-yet-acknowledged for that provider until you run `/reconcile` under it, so a genuine later change to that provider's packaged default still notifies you.
 
 #### Using `/reconcile` in the TUI
@@ -153,10 +157,12 @@ In an interactive TLH session, `/reconcile` opens a picker listing every affecte
 
 For each role you have two choices:
 
-- **Keep** — acknowledges the new TLH packaged default and preserves your override unchanged. Non-destructive: nothing is written to or cleared from your settings.
+- **Keep** — acknowledges the new TLH packaged default and preserves your override unchanged. Non-destructive: nothing is written to or cleared from your settings. Keep requires a known session provider; when no provider is identified, TLH declines and asks you to rerun `/reconcile` in a session where a provider is active.
 - **Reset** — clears your stored override so the role resolves to TLH packaged defaults on the next dispatch. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Each reset is an independent write that creates a `settings.json.bak-*` backup; the notification shows the exact backup path.
 
 **Keep is always undoable** because your override is never touched.
+
+When resetting all, per-role failures are isolated — errors and unrecognised overrides are reported as a distinct category so a single failed clear does not abort the rest.
 
 **Reset is also undoable**: restore the value at any time with `/model` (primary-agent overrides) or `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` (subagent overrides), or copy back the `settings.json.bak-*` backup shown in the notification.
 
@@ -166,11 +172,11 @@ In headless or non-TUI contexts, `/reconcile` prints a read-only drift summary s
 
 #### Packaged-default semantics
 
-The packaged default shown is resolved from TLH's own bundled agent catalog and is **environment-independent** — it reflects what this TLH release declares, not what models your current environment has available. A reported default may therefore name a model you cannot currently reach. This does not block the decision; Keep and Reset work regardless of model availability.
+The packaged default shown is the canonical value for the active provider, resolved from TLH's own bundled agent catalog restricted to that provider's models. It is **environment-independent** — it reflects what this TLH release declares, not what models your current environment has available. A reported default may therefore name a model you cannot currently reach, and for roles that prefer an opposite-provider model (such as code-reviewer) the displayed value is a same-provider fallback rather than the exact model Reset would produce in a live dual-provider session. This does not block the decision; Keep and Reset work regardless of model availability.
 
 #### Reconcile state
 
-Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is managed entirely by `/reconcile`; do not edit it by hand.
+Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create an override (via `/model` or `/subagent-settings`), on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
 
 ### `/tickets`
 

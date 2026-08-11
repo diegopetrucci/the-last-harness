@@ -19,14 +19,22 @@ const { selectProviderAwareAgentDefaults, parseProviderModelReference, splitKnow
 );
 
 /**
- * Mirrors the module's synthetic "all packaged models available" registry so the
- * parity test can call the production selector directly.
+ * Mirrors the module's provider-filtered packaged catalog so the parity test can
+ * call the production selector with the same restricted candidate set that
+ * `resolvePackagedDefaults` uses internally.
+ *
+ * Filters to exact provider equality (not family). When `provider` is `undefined`
+ * the result is always empty, matching the no-provider behaviour in the module.
  */
-function packagedCandidateModelsForFixture(agent) {
+function packagedCandidateModelsForProvider(agent, provider) {
+	if (provider === undefined) {
+		return [];
+	}
 	const seen = new Map();
 	for (const raw of [agent.model, ...(agent.tlhOpenaiModels ?? []), ...(agent.tlhAnthropicModels ?? [])]) {
 		const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
 		if (!parsed) continue;
+		if (parsed.provider !== provider) continue;
 		const key = `${parsed.provider}/${parsed.id}`;
 		if (!seen.has(key)) seen.set(key, parsed);
 	}
@@ -145,19 +153,19 @@ test("primary override drift — model override with anthropic provider", () => 
 	assert.equal(entry.packagedDefaultsChanged, false);
 });
 
-test("primary override drift — explicit frontmatter `model` wins over the provider list", () => {
+test("primary override drift — openai-codex session reports the openai packaged default", () => {
 	const settings = {
 		tlh: { primaryAgent: { modelOverrides: { architect: "openai-codex/gpt-5.6-luna" } } },
 	};
 	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "openai-codex");
 	assert.equal(entry.role, "primary");
 	assert.equal(entry.name, "architect");
-	// architect declares `model: anthropic/claude-opus-5`. selectProviderAwareAgentDefaults
-	// checks that explicit field before any provider list, so it stays the packaged default
-	// even on an openai session. Reporting tlhOpenaiModels[0] here would disagree with
-	// what TLH actually dispatches.
-	assert.equal(entry.packaged.model, "anthropic/claude-opus-5");
-	// Effort still tracks the resolved model's provider, not the session provider.
+	// resolvePackagedDefaults filters candidates to provider "openai-codex" only, so the
+	// top-level `model: anthropic/claude-opus-5` is excluded and the selector picks the
+	// openai-codex packaged model instead. This is the fix for the bug where an
+	// openai-codex session reported the Anthropic model as the packaged default.
+	assert.equal(entry.packaged.model, "openai-codex/gpt-5.6-sol");
+	// Effort follows the resolved model's provider.
 	assert.equal(entry.packaged.thinking, "high");
 });
 
@@ -277,36 +285,44 @@ test("multiple overrides produce one entry per overridden role", () => {
 	assert.ok(roles.includes("subagent:code-reviewer"));
 });
 
-// --- Provider-aware defaults: no provider → falls back to generic model field ---
+// --- Provider-aware defaults: no provider → empty packaged, comparison deferred ---
 
-test("subagent packaged defaults resolve without a provider via the openai list", () => {
-	// developer declares no top-level `model`. With no session provider the selector
-	// falls through to the openai candidate list rather than reporting "no default".
+test("subagent packaged defaults with no provider return undefined model", () => {
+	// When no session provider is given, resolvePackagedDefaults filters candidates to
+	// exact provider `undefined`, which always yields an empty list. No model can be
+	// selected from an empty list, so both model and thinking are undefined.
+	// Startup and /reconcile defer all comparison when no provider is known (ts-7w6o).
 	const settings = {
 		subagents: { agentOverrides: { developer: { thinking: "high" } } },
 	};
 	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings);
-	assert.equal(entry.packaged.model, "openai-codex/gpt-5.6-luna");
-	// Effort follows the resolved model's provider → tlhOpenaiThinking.
-	assert.equal(entry.packaged.thinking, "max");
+	assert.equal(entry.packaged.model, undefined);
+	assert.equal(entry.packaged.thinking, undefined);
 });
 
 // --- Regression guards: packaged defaults must honour the frontmatter selection
 // flags. A private re-implementation of the selector previously ignored these and
 // reported (and would have Reset to) the wrong model. ---
 
-test("preferOppositeProvider subagent reports the opposite-provider packaged default", () => {
+test("preferOppositeProvider subagent resolves to same-provider fallback in provider-P-only hypothetical", () => {
+	// Irreducible limitation: resolvePackagedDefaults filters candidates to exactly
+	// provider P. With only provider-P models in the list, selectOppositeProviderPreferredAgentModel
+	// cannot find the opposite-provider model, so it returns undefined and the standard
+	// selector falls back to the same-provider model. This means the displayed packaged
+	// default for preferOppositeProvider roles (code-reviewer, contrarian, oracle) may
+	// differ from what a real dual-provider Reset produces in a live session where the
+	// opposite-provider model is actually available. Consulting the live registry would
+	// introduce spurious drift notices on availability changes, so this tradeoff is accepted.
 	const settings = {
 		subagents: { agentOverrides: { "code-reviewer": { thinking: "high" } } },
 	};
-	// code-reviewer sets preferOppositeProvider, so on an anthropic session the packaged
-	// default is the openai model — not tlhAnthropicModels[0].
+	// On anthropic: only anthropic candidates → opposite-provider (openai-codex) not found → same-provider fallback.
 	const [onAnthropic] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
-	assert.equal(onAnthropic.packaged.model, "openai-codex/gpt-5.6-sol");
+	assert.equal(onAnthropic.packaged.model, "anthropic/claude-opus-5");
 
-	// ...and symmetrically on an openai session.
+	// On openai-codex: only openai-codex candidates → opposite-provider (anthropic) not found → same-provider fallback.
 	const [onOpenai] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "openai-codex");
-	assert.equal(onOpenai.packaged.model, "anthropic/claude-opus-5");
+	assert.equal(onOpenai.packaged.model, "openai-codex/gpt-5.6-sol");
 });
 
 test("preferCurrentOpenaiModel primary reports the current-provider packaged default", () => {
@@ -322,12 +338,16 @@ test("preferCurrentOpenaiModel primary reports the current-provider packaged def
 test("packaged defaults agree with selectProviderAwareAgentDefaults across a fixture table", () => {
 	// Pins this module to the production selector. If a private re-implementation is
 	// ever reintroduced and diverges on any packaged agent × provider pair, this fails.
+	//
+	// The fixture uses the same provider-filtered candidate set that resolvePackagedDefaults
+	// uses internally: only models whose provider is exactly P are offered to the selector.
+	// For undefined provider the filtered list is empty, so no model is resolved.
 	const providers = [undefined, "anthropic", "openai-codex", "openai", "unknown-provider"];
 	const agents = [...primaryAgents.values(), ...subagentMetadata, rushOpenaiAgent];
 
 	for (const agent of agents) {
-		const candidates = packagedCandidateModelsForFixture(agent);
 		for (const provider of providers) {
+			const candidates = packagedCandidateModelsForProvider(agent, provider);
 			const expected = selectProviderAwareAgentDefaults(agent, candidates, provider);
 			const settings = { subagents: { agentOverrides: { [agent.name]: { thinking: "high" } } } };
 			const [entry] = computeModelEffortDrift(new Map(), [agent], settings, provider);
@@ -481,33 +501,41 @@ test("cross-provider: acknowledged under both providers, genuine change for acti
 	assert.equal(entry.packagedDefaultsChanged, true, "stale acknowledgment for the active provider must fire");
 });
 
-// --- Old-shape (pre-provider-keyed) state migration ---
+// --- Entries without byProvider are dropped, not compared ---
 
-test("old-shape snapshot (no byProvider) → packagedDefaultsChanged = false, no crash", () => {
-	// Regression guard: existing reconcile-state.json written before the provider-keyed
-	// upgrade must never fire a false notice.  The flat {model, thinking} fields are
-	// ignored; the absence of byProvider is treated as "no prior acknowledgment".
+test("snapshot entry without byProvider → packagedDefaultsChanged = false, no crash", () => {
+	// Entries that have no byProvider field are ignored by the sanitizer and never
+	// reach the comparator, so they cannot produce a spurious drift notice.
 	const settings = {
 		subagents: { agentOverrides: { developer: { model: "anthropic/claude-opus-5" } } },
 	};
-	const oldShapeSnapshot = {
-		developer: { model: "anthropic/claude-opus-5", thinking: "medium" }, // old flat shape
-	};
-	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic", oldShapeSnapshot);
-	assert.equal(entry.packagedDefaultsChanged, false, "old-shape snapshot must not fire a false notice on upgrade");
+	// Entry has no byProvider — sanitizer drops it; no comparison is made.
+	const noByProviderSnapshot = { developer: {} };
+	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic", noByProviderSnapshot);
+	assert.equal(entry.packagedDefaultsChanged, false, "entry without byProvider must not fire a notice");
 });
 
-test("old-shape snapshot with mismatched model → still packagedDefaultsChanged = false (migration)", () => {
-	// Even if the stored flat model differs from the current packaged model, the old shape
-	// must not fire — there is no provider key to compare against.
+// --- Unknown provider: comparison is deferred, spurious defaults-changed is unreachable ---
+
+test("unknown provider with existing snapshot → packagedDefaultsChanged = false (comparison deferred)", () => {
+	// Pins the hazard ts-7w6o closes: when provider is unknown, resolvePackagedDefaults
+	// returns no model (empty candidate list). Without defer semantics, a snapshot entry
+	// whose model differs from undefined would fire packagedDefaultsChanged = true spuriously.
+	// With defer semantics the comparison is skipped entirely, making the hazard unreachable.
 	const settings = {
 		subagents: { agentOverrides: { developer: { model: "anthropic/claude-opus-5" } } },
 	};
-	const oldShapeSnapshot = {
-		developer: { model: "anthropic/some-old-model", thinking: "low" }, // old flat shape, stale value
+	// Snapshot has a non-undefined model value that would mismatch the empty packaged
+	// defaults returned for an unknown provider if the comparison were ever reached.
+	const snapshot = {
+		developer: { byProvider: { "some-provider": { model: "anthropic/some-old-model", thinking: "high" } } },
 	};
-	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic", oldShapeSnapshot);
-	assert.equal(entry.packagedDefaultsChanged, false, "old-shape snapshot must not trigger false notice even if stale");
+	// Pass undefined provider — comparison must be deferred, not executed.
+	const [entry] = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, undefined, snapshot);
+	assert.equal(entry.packagedDefaultsChanged, false, "comparison must be deferred with unknown provider");
+	// Packaged defaults are also empty with no provider — confirm no confusion.
+	assert.equal(entry.packaged.model, undefined);
+	assert.equal(entry.packaged.thinking, undefined);
 });
 
 // ---------------------------------------------------------------------------
@@ -538,8 +566,8 @@ test("writeReconcileState and readReconcileState round-trip inside isolated prof
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		const state = {
 			acknowledgedSnapshot: {
-				architect: { model: "anthropic/claude-opus-5", thinking: "high" },
-				developer: { model: "anthropic/claude-sonnet-4-6", thinking: "medium" },
+				architect: { byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } } },
+				developer: { byProvider: { anthropic: { model: "anthropic/claude-sonnet-4-6", thinking: "medium" } } },
 			},
 			lastDecisionAt: "2026-08-10T16:31:00.000Z",
 		};
@@ -594,27 +622,25 @@ test("writeReconcileState stores file with mode 600", async (t) => {
 test("updateReconcileAcknowledgedSnapshot merges into existing state", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { test: t });
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		// Write initial state with one entry
+		// Write initial state with one byProvider entry.
 		writeReconcileState({
 			acknowledgedSnapshot: {
-				architect: { model: "anthropic/claude-opus-5", thinking: "high" },
+				architect: { byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } } },
 			},
 		});
 
-		// Update with a second entry and a lastDecisionAt
+		// Update with a second entry and a lastDecisionAt.
 		updateReconcileAcknowledgedSnapshot(
-			{ developer: { model: "anthropic/claude-sonnet-4-6", thinking: "medium" } },
+			{ developer: { byProvider: { anthropic: { model: "anthropic/claude-sonnet-4-6", thinking: "medium" } } } },
 			"2026-08-10T16:31:00.000Z",
 		);
 
 		const state = readReconcileState();
 		assert.deepEqual(state.acknowledgedSnapshot?.architect, {
-			model: "anthropic/claude-opus-5",
-			thinking: "high",
+			byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } },
 		});
 		assert.deepEqual(state.acknowledgedSnapshot?.developer, {
-			model: "anthropic/claude-sonnet-4-6",
-			thinking: "medium",
+			byProvider: { anthropic: { model: "anthropic/claude-sonnet-4-6", thinking: "medium" } },
 		});
 		assert.equal(state.lastDecisionAt, "2026-08-10T16:31:00.000Z");
 	});
@@ -625,16 +651,21 @@ test("updateReconcileAcknowledgedSnapshot overwrites existing snapshot for same 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeReconcileState({
 			acknowledgedSnapshot: {
-				architect: { model: "anthropic/claude-opus-5", thinking: "high" },
+				architect: { byProvider: { anthropic: { model: "anthropic/claude-opus-5", thinking: "high" } } },
 			},
 		});
 
 		updateReconcileAcknowledgedSnapshot({
-			architect: { model: "openai-codex/gpt-5.6-sol", thinking: "high" },
+			architect: { byProvider: { "openai-codex": { model: "openai-codex/gpt-5.6-sol", thinking: "high" } } },
 		});
 
 		const state = readReconcileState();
-		assert.equal(state.acknowledgedSnapshot?.architect?.model, "openai-codex/gpt-5.6-sol");
+		// deep-merge: both provider entries should be present
+		assert.ok(state.acknowledgedSnapshot?.architect?.byProvider?.anthropic, "prior anthropic entry must be preserved");
+		assert.equal(
+			state.acknowledgedSnapshot?.architect?.byProvider?.["openai-codex"]?.model,
+			"openai-codex/gpt-5.6-sol",
+		);
 	});
 });
 
@@ -642,7 +673,9 @@ test("updateReconcileAcknowledgedSnapshot without lastDecisionAt preserves exist
 	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { test: t });
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
 		writeReconcileState({ lastDecisionAt: "2026-01-01T00:00:00.000Z" });
-		updateReconcileAcknowledgedSnapshot({ developer: { model: "anthropic/claude-sonnet-4-6" } });
+		updateReconcileAcknowledgedSnapshot({
+			developer: { byProvider: { anthropic: { model: "anthropic/claude-sonnet-4-6" } } },
+		});
 		const state = readReconcileState();
 		assert.equal(state.lastDecisionAt, "2026-01-01T00:00:00.000Z");
 	});
@@ -829,5 +862,74 @@ test("updateReconcileAcknowledgedSnapshot returns true when inside isolated prof
 			"2026-01-01T00:00:00.000Z",
 		);
 		assert.equal(result, true, "updateReconcileAcknowledgedSnapshot must return true on success");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Gap 1: Empty-string provider key is dropped by sanitize (ts-8k8z)
+// ---------------------------------------------------------------------------
+
+test("sanitize: empty-string provider key in byProvider is dropped and does not produce drift", async (t) => {
+	// Regression guard: a byProvider[""] entry written by a user-edited settings.json
+	// must be dropped by sanitizeAcknowledgedSnapshot so computeModelEffortDrift never
+	// compares against it. Before the fix, the empty-string entry would survive
+	// sanitization and could be compared, producing a spurious drift notice.
+	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { test: t });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, () => {
+		// Write a reconcile-state with an empty-string provider key alongside a real one.
+		writeReconcileState({
+			acknowledgedSnapshot: {
+				architect: {
+					byProvider: {
+						"": { model: "anthropic/claude-opus-4-5", thinking: "high" },
+						anthropic: { model: "anthropic/claude-opus-5", thinking: "high" },
+					},
+				},
+			},
+		});
+
+		const state = readReconcileState();
+
+		// The empty-string key must be absent after sanitize.
+		const byProvider = state.acknowledgedSnapshot?.architect?.byProvider;
+		assert.ok(byProvider !== undefined, "byProvider must be present after sanitize");
+		assert.equal(
+			byProvider[""],
+			undefined,
+			"empty-string provider key must be dropped by sanitize (ts-7w6o applied consistently)",
+		);
+
+		// The real provider key must be preserved.
+		assert.ok(byProvider.anthropic !== undefined, "real provider key must be preserved by sanitize");
+
+		// Drift for the architect with anthropic provider must not use the empty-key entry.
+		const drift = computeModelEffortDrift(
+			new Map([
+				[
+					"architect",
+					{
+						name: "architect",
+						model: "anthropic/claude-opus-5",
+						tlhAnthropicModels: ["anthropic/claude-opus-5"],
+						tlhAnthropicThinking: "high",
+						tools: [],
+						systemPrompt: "",
+						filePath: "/fake/architect.md",
+					},
+				],
+			]),
+			[],
+			{ tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-sonnet-4-6" } } } },
+			"",
+			state.acknowledgedSnapshot,
+		);
+
+		// With empty-string provider, drift comparison is deferred: packagedDefaultsChanged must be false.
+		assert.equal(
+			drift.length > 0 && drift[0].packagedDefaultsChanged,
+			false,
+			"drift comparison must be deferred for empty-string provider, not produce a change",
+		);
 	});
 });

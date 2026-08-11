@@ -13,6 +13,7 @@ import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
+import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 function getTlhGlobalSettings(cwd) {
     try {
@@ -652,10 +653,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
                 : undefined;
             const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
+            const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+            const existingOverride = primaryConfig?.modelOverrides?.[selection];
+            let writeResult;
             try {
-                writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
+                writeResult = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
             }
             catch {
+            }
+            if (writeResult?.changed === true &&
+                nextOverride !== undefined &&
+                !isMeaningfulPrimaryOverride(existingOverride)) {
+                recordOverrideBaseline(selection, primary, event.model.provider);
             }
         });
         pi.on("session_tree", async (_event, ctx) => {

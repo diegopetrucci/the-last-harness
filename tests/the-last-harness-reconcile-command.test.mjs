@@ -79,6 +79,126 @@ test("/reconcile registers as a command", () => {
 	assert.ok(command.description?.length > 0, "command should have a description");
 });
 
+// ---------------------------------------------------------------------------
+// Unknown-provider defer semantics (ts-7w6o)
+// ---------------------------------------------------------------------------
+
+test("/reconcile non-TUI: no provider → defer message, no drift computed, no state written", async (t) => {
+	// When ctx.model is undefined (no provider), non-TUI must emit a single defer
+	// message and return without touching settings or reconcile state.
+	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerReconcileCommand(pi);
+	const command = pi.commands.get("reconcile");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify(buildSubagentOverrideSettings("anthropic/claude-opus-4-8"), null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			hasUI: false,
+			mode: "headless",
+			model: undefined, // no provider
+		});
+		await command.handler("", ctx);
+
+		assert.equal(notifications.length, 1, "exactly one notification must be emitted");
+		assert.match(
+			notifications[0].message,
+			/no provider|cannot be provider-resolved/i,
+			"message must mention no provider",
+		);
+		assert.equal(notifications[0].type, "info");
+		// No reconcile state file must have been created.
+		assert.equal(
+			existsSync(join(fixture.agent, "tlh", "reconcile-state.json")),
+			false,
+			"non-TUI defer must not write reconcile state",
+		);
+	});
+});
+
+test("/reconcile TUI Keep: no provider → no acknowledgment written, warning emitted", async (t) => {
+	// Keep must refuse to write an acknowledgment when no provider is known,
+	// because there is no provider key to store the snapshot under.
+	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerReconcileCommand(pi);
+	const command = pi.commands.get("reconcile");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify(buildSubagentOverrideSettings("anthropic/claude-opus-4-8"), null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			model: undefined, // no provider
+		});
+
+		ctx.ui.select = async (_title, options) => options.find((opt) => opt.startsWith("Keep all"));
+
+		await command.handler("", ctx);
+
+		// No reconcile state file must have been created.
+		assert.equal(
+			existsSync(join(fixture.agent, "tlh", "reconcile-state.json")),
+			false,
+			"Keep must not write reconcile state when no provider is known",
+		);
+		// A warning (not an error) must explain the deferral.
+		const last = notifications.at(-1);
+		assert.equal(last?.type, "warning", "Keep without provider must emit a warning, not an error");
+		assert.match(last?.message ?? "", /no provider|cannot acknowledge/i);
+	});
+});
+
+test("/reconcile TUI Reset: no provider → override cleared, no snapshot written", async (t) => {
+	// Reset may still clear the override when no provider is known, but must not
+	// write an acknowledgment snapshot (no provider key to store it under).
+	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerReconcileCommand(pi);
+	const command = pi.commands.get("reconcile");
+
+	writeFileSync(
+		join(fixture.agent, "settings.json"),
+		`${JSON.stringify(buildSubagentOverrideSettings("anthropic/claude-opus-4-8"), null, 2)}\n`,
+	);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({
+			cwd: fixture.cwd,
+			model: undefined, // no provider
+		});
+
+		ctx.ui.select = async (_title, options) => options.find((opt) => opt.startsWith("Reset all"));
+
+		await command.handler("", ctx);
+
+		// Override must be cleared from settings.
+		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(
+			settings.subagents?.agentOverrides?.developer?.model,
+			undefined,
+			"Reset must clear the override even when no provider is known",
+		);
+		// No reconcile state file must have been created.
+		assert.equal(
+			existsSync(join(fixture.agent, "tlh", "reconcile-state.json")),
+			false,
+			"Reset must not write a snapshot when no provider is known",
+		);
+		// Notification must confirm the reset completed.
+		const last = notifications.at(-1);
+		assert.ok(last, "a notification must be emitted after Reset");
+	});
+});
+
 test("/reconcile non-TUI: empty drift produces friendly no-overrides notice", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
 	const pi = createPiHarness();
@@ -998,5 +1118,103 @@ test("/reconcile TUI: Reset all reports acknowledgment persistence failure in su
 		const summary = notifications.at(-1);
 		assert.equal(summary?.type, "error", "acknowledgment failure must elevate the summary to error");
 		assert.match(summary?.message ?? "", /could not be persisted|failed to persist/i);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Per-role error isolation: mid-batch failure continues remaining roles
+// ---------------------------------------------------------------------------
+
+test("/reconcile TUI: Reset all isolates a mid-batch write failure and reports it without aborting the batch", async (t) => {
+	// Regression guard for ts-4um8: a throw mid-loop must not abort the batch.
+	// Remaining roles must still be attempted; earlier successes must be acknowledged;
+	// failed roles must not be acknowledged; the summary must call out the failure.
+	//
+	// Drift order: primary agents first (architect → bug-hunter), subagents after (developer).
+	// Mock runtime: delegates for architect (success before failure), throws for bug-hunter
+	// (mid-batch failure), developer subagent uses its own writer (success after failure).
+	const fixture = createIsolatedProfileFixture("tlh-reconcile-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+
+	const mockRuntime = {
+		applySessionStart: async () => {},
+		currentPrimaryAgentLabel: () => "architect",
+		activePrimaryAgentPrompt: () => undefined,
+		async resetPrimaryAgentModelOverride(ctx, agentName) {
+			if (agentName === "bug-hunter") {
+				throw new Error("simulated write failure for bug-hunter");
+			}
+			// Delegate to the real writer for all other primary agents.
+			return clearPrimaryAgentModelOverrideByName(ctx.cwd, agentName);
+		},
+	};
+
+	registerReconcileCommand(pi, mockRuntime);
+	const command = pi.commands.get("reconcile");
+
+	// architect and bug-hunter are both primary agents; developer is a subagent.
+	// primary entries appear before subagent entries in the drift list.
+	const initialSettings = {
+		tlh: {
+			primaryAgent: {
+				modelOverrides: {
+					architect: "anthropic/claude-sonnet-4-6",
+					"bug-hunter": "anthropic/claude-haiku-4-6",
+				},
+			},
+		},
+		subagents: { agentOverrides: { developer: { model: "anthropic/claude-opus-4-8" } } },
+	};
+	writeFileSync(join(fixture.agent, "settings.json"), `${JSON.stringify(initialSettings, null, 2)}\n`);
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { ctx, notifications } = createCommandContext({ cwd: fixture.cwd });
+		ctx.ui.select = async (_title, options) => options.find((opt) => opt.startsWith("Reset all"));
+
+		await command.handler("", ctx);
+
+		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+
+		// Earlier success (architect) must be cleared.
+		assert.equal(
+			settings.tlh?.primaryAgent?.modelOverrides?.architect,
+			undefined,
+			"architect override must be cleared (success before mid-batch failure)",
+		);
+		// Remaining success (developer, after bug-hunter failure) must also be cleared.
+		assert.equal(
+			settings.subagents?.agentOverrides?.developer?.model,
+			undefined,
+			"developer override must be cleared (remaining role attempted after mid-batch failure)",
+		);
+		// Failed role must leave its override untouched.
+		assert.equal(
+			settings.tlh?.primaryAgent?.modelOverrides?.["bug-hunter"],
+			"anthropic/claude-haiku-4-6",
+			"bug-hunter override must survive when the write throws",
+		);
+
+		const state = readReconcileState();
+		// Earlier success must be acknowledged.
+		assert.ok(state.acknowledgedSnapshot?.architect, "architect must be acknowledged (earlier success)");
+		// Remaining success must be acknowledged.
+		assert.ok(state.acknowledgedSnapshot?.developer, "developer must be acknowledged (remaining success)");
+		// Failed role must NOT be acknowledged.
+		assert.equal(
+			state.acknowledgedSnapshot?.["bug-hunter"],
+			undefined,
+			"bug-hunter must not be acknowledged when its write threw",
+		);
+
+		// Summary must report the failure count as a distinct category.
+		const summary = notifications.at(-1);
+		assert.match(summary?.message ?? "", /1 failed to clear/i, "summary must report the failed role count");
+		assert.equal(summary?.type, "error", "a batch with write failures must emit an error-severity summary");
+
+		// A per-role error notification must name the failed role.
+		assert.ok(
+			notifications.some((n) => /bug-hunter/.test(n.message) && n.type === "error"),
+			"failed role must receive a per-role error notification",
+		);
 	});
 });

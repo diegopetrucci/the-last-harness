@@ -108,27 +108,29 @@ function formatDriftStatus(drift: RoleDriftEntry[]): string {
 // Acknowledge snapshot helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a snapshot keyed by the given (non-empty) provider.  Callers must only
+ * call this when a provider is known; no empty-string key is ever created.
+ */
 function buildAcknowledgedSnapshot(
 	entries: RoleDriftEntry[],
-	provider: string | undefined,
+	provider: string,
 ): Record<string, AcknowledgedRoleSnapshot> {
-	const providerKey = provider ?? "";
 	return Object.fromEntries(
 		entries.map((entry) => [
 			entry.name,
-			{ byProvider: { [providerKey]: { model: entry.packaged.model, thinking: entry.packaged.thinking } } },
+			{ byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } } },
 		]),
 	);
 }
 
 function buildSingleAcknowledgedSnapshot(
 	entry: RoleDriftEntry,
-	provider: string | undefined,
+	provider: string,
 ): Record<string, AcknowledgedRoleSnapshot> {
-	const providerKey = provider ?? "";
 	return {
 		[entry.name]: {
-			byProvider: { [providerKey]: { model: entry.packaged.model, thinking: entry.packaged.thinking } },
+			byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } },
 		},
 	};
 }
@@ -193,9 +195,10 @@ async function clearOverride(
 
 async function runReconcilePicker(
 	ctx: ExtensionCommandContext,
+	provider: string | undefined,
 	runtime: TlhPrimaryAgentRuntime | undefined,
 ): Promise<void> {
-	const drift = computeDrift(ctx.cwd, ctx.model?.provider);
+	const drift = computeDrift(ctx.cwd, provider);
 
 	if (drift.length === 0) {
 		ctx.ui.notify(
@@ -218,7 +221,16 @@ async function runReconcilePicker(
 	}
 
 	if (selected === KEEP_ALL_OPTION) {
-		const snapshot = buildAcknowledgedSnapshot(drift, ctx.model?.provider);
+		// Cannot acknowledge without a known provider — the snapshot would have no
+		// meaningful provider key and would be unreachable by the drift comparator.
+		if (!provider) {
+			ctx.ui.notify(
+				"TLH reconcile: Cannot acknowledge — no provider is known for this session. Run /reconcile when a provider is active.",
+				"warning",
+			);
+			return;
+		}
+		const snapshot = buildAcknowledgedSnapshot(drift, provider);
 		const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
 		if (!acknowledged) {
 			ctx.ui.notify(
@@ -241,11 +253,20 @@ async function runReconcilePicker(
 		// their override survives the attempt.
 		const clearedEntries: RoleDriftEntry[] = [];
 		const unrecognizedNames: string[] = [];
+		const failedNames: string[] = [];
 		let changedCount = 0;
 		let unchangedCount = 0;
 
 		for (const entry of drift) {
-			const outcome = await clearOverride(ctx, entry, runtime);
+			let outcome: ClearOutcome;
+			try {
+				outcome = await clearOverride(ctx, entry, runtime);
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				failedNames.push(entry.name);
+				ctx.ui.notify(`TLH reconcile: Failed to clear override for ${entry.name}: ${message}`, "error");
+				continue;
+			}
 			if (outcome.status === "unrecognized") {
 				unrecognizedNames.push(entry.name);
 				continue;
@@ -265,9 +286,10 @@ async function runReconcilePicker(
 		}
 
 		let acknowledgmentFailed = false;
-		if (clearedEntries.length > 0) {
+		if (clearedEntries.length > 0 && provider) {
+			// Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
 			const acknowledged = updateReconcileAcknowledgedSnapshot(
-				buildAcknowledgedSnapshot(clearedEntries, ctx.model?.provider),
+				buildAcknowledgedSnapshot(clearedEntries, provider),
 				new Date().toISOString(),
 			);
 			if (!acknowledged) {
@@ -282,6 +304,9 @@ async function runReconcilePicker(
 		if (unrecognizedNames.length > 0) {
 			summaryParts.push(`${unrecognizedNames.length} unrecognised and left untouched.`);
 		}
+		if (failedNames.length > 0) {
+			summaryParts.push(`${failedNames.length} failed to clear.`);
+		}
 		if (changedCount > 0) {
 			summaryParts.push("Reset roles now resolve to TLH packaged defaults.");
 		}
@@ -290,7 +315,7 @@ async function runReconcilePicker(
 		}
 		ctx.ui.notify(
 			`TLH reconcile: ${summaryParts.join(" ")}`,
-			unrecognizedNames.length > 0 || acknowledgmentFailed ? "error" : "info",
+			unrecognizedNames.length > 0 || acknowledgmentFailed || failedNames.length > 0 ? "error" : "info",
 		);
 		return;
 	}
@@ -310,7 +335,15 @@ async function runReconcilePicker(
 	}
 
 	if (action === KEEP_OPTION) {
-		const snapshot = buildSingleAcknowledgedSnapshot(entry, ctx.model?.provider);
+		// Cannot acknowledge without a known provider.
+		if (!provider) {
+			ctx.ui.notify(
+				`TLH reconcile: Cannot acknowledge ${entry.name} — no provider is known for this session. Run /reconcile when a provider is active.`,
+				"warning",
+			);
+			return;
+		}
+		const snapshot = buildSingleAcknowledgedSnapshot(entry, provider);
 		const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
 		if (!acknowledged) {
 			ctx.ui.notify(
@@ -331,15 +364,18 @@ async function runReconcilePicker(
 			return;
 		}
 		notifyResetResult(ctx, outcome.result, entry.name);
-		const acknowledged = updateReconcileAcknowledgedSnapshot(
-			buildSingleAcknowledgedSnapshot(entry, ctx.model?.provider),
-			new Date().toISOString(),
-		);
-		if (!acknowledged) {
-			ctx.ui.notify(
-				`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
-				"error",
+		// Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+		if (provider) {
+			const acknowledged = updateReconcileAcknowledgedSnapshot(
+				buildSingleAcknowledgedSnapshot(entry, provider),
+				new Date().toISOString(),
 			);
+			if (!acknowledged) {
+				ctx.ui.notify(
+					`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
+					"error",
+				);
+			}
 		}
 	}
 }
@@ -352,13 +388,24 @@ export function registerReconcileCommand(pi: ExtensionAPI, runtime?: TlhPrimaryA
 	pi.registerCommand(RECONCILE_COMMAND, {
 		description: RECONCILE_COMMAND_DESCRIPTION,
 		handler: async (_args, ctx) => {
+			// Capture the provider once so comparison and acknowledgment always use
+			// the same value, even if ctx.model were mutated mid-command (ts-7w6o).
+			const provider = ctx.model?.provider;
+
 			if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
-				const drift = computeDrift(ctx.cwd, ctx.model?.provider);
+				if (!provider) {
+					ctx.ui.notify(
+						"TLH reconcile: No provider is known for this session — packaged defaults cannot be provider-resolved yet. Your overrides are preserved. Run /reconcile when a provider is active.",
+						"info",
+					);
+					return;
+				}
+				const drift = computeDrift(ctx.cwd, provider);
 				ctx.ui.notify(formatDriftStatus(drift), "info");
 				return;
 			}
 			try {
-				await runReconcilePicker(ctx, runtime);
+				await runReconcilePicker(ctx, provider, runtime);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(message, "error");
