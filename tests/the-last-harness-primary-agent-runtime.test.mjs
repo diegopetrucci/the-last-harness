@@ -622,3 +622,150 @@ test("echo guard: TLH's own applyPrimaryModel does not record a model override",
 		assert.equal(overrides?.architect, undefined, "TLH's own setModel must not record a model override");
 	});
 });
+
+// --- ts-nm9m: /reconcile Reset must reapply the packaged default to the ACTIVE session ---
+
+/**
+ * Build a ctx whose `model` tracks what the host most recently applied.
+ *
+ * `applyPrimaryModel` compares its target against `ctx.model` to decide whether a
+ * switch is needed, so a static `model` would make the apply path a no-op after the
+ * first switch and mask the very bug these tests guard.
+ */
+function createModelTrackingCtx(fixture, pi, availableModels, initialModel) {
+	return {
+		cwd: fixture.cwd,
+		sessionManager: { getBranch: () => [] },
+		ui: { notify() {} },
+		modelRegistry: { getAvailable: () => availableModels },
+		get model() {
+			return pi.model ?? initialModel;
+		},
+	};
+}
+
+function spyOnSetModel(pi) {
+	const calls = [];
+	const original = pi.setModel.bind(pi);
+	pi.setModel = async (model) => {
+		calls.push(model);
+		return original(model);
+	};
+	return calls;
+}
+
+test("resetPrimaryAgentModelOverride clears the stored override AND applies the packaged default to the active session", async (t) => {
+	// Regression guard for the /reconcile Reset blocker: clearing the persisted JSON is
+	// not enough. Without `await applyPrimaryModeChange(ctx)` inside the runtime method,
+	// the live session keeps running the overridden model until relaunch, contradicting
+	// docs/commands.md. This asserts the APPLIED model changes, not just settings.json.
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	// rushLikePrimary's packaged Anthropic default is anthropic/claude-sonnet-4-6.
+	// Store a different, available Anthropic model so the reset is observable.
+	const initialSettings = `${JSON.stringify(
+		{ tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } } },
+		null,
+		2,
+	)}\n`;
+	const availableModels = [
+		{ provider: "anthropic", id: "claude-sonnet-4-6" },
+		{ provider: "anthropic", id: "claude-opus-5" },
+	];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const setModelCalls = spyOnSetModel(pi);
+		const ctx = createModelTrackingCtx(fixture, pi, availableModels, {
+			provider: "anthropic",
+			id: "claude-haiku-4-5",
+		});
+
+		await runtime.applySessionStart(ctx);
+
+		// Precondition: the stored override is what the session is actually running.
+		assert.deepEqual(
+			pi.model,
+			{ provider: "anthropic", id: "claude-opus-5" },
+			"session should start on the stored override",
+		);
+
+		setModelCalls.length = 0;
+
+		const result = await runtime.resetPrimaryAgentModelOverride(ctx, "architect");
+
+		assert.ok(result, "reset should report a write result for a recognised primary agent");
+
+		// The persisted override is gone...
+		const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
+		assert.equal(
+			settings.tlh?.primaryAgent?.modelOverrides?.architect,
+			undefined,
+			"reset should clear the persisted architect model override",
+		);
+
+		// ...AND the active session was switched to the packaged default. This is the
+		// assertion a settings-only reset would fail.
+		assert.deepEqual(
+			setModelCalls,
+			[{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+			"reset must apply the packaged default to the active session",
+		);
+		assert.deepEqual(
+			pi.model,
+			{ provider: "anthropic", id: "claude-sonnet-4-6" },
+			"active model must resolve to the TLH packaged default after reset",
+		);
+	});
+});
+
+test("resetPrimaryAgentModelOverride refuses an unrecognised name: no write, no model change", async (t) => {
+	// The refusal semantics are deliberate: an unknown key has no packaged default to
+	// reconcile against, so TLH must not rewrite settings it does not understand and
+	// must not touch the active session either.
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+	const primaryAgents = new Map([["architect", rushLikePrimary()]]);
+	// A typo'd / stale primary-agent key straight out of user-editable JSON.
+	const initialSettings = `${JSON.stringify(
+		{ tlh: { primaryAgent: { modelOverrides: { architekt: "anthropic/claude-opus-5" } } } },
+		null,
+		2,
+	)}\n`;
+	const availableModels = [
+		{ provider: "anthropic", id: "claude-sonnet-4-6" },
+		{ provider: "anthropic", id: "claude-opus-5" },
+	];
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
+		const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+		assert.ok(runtime, "runtime should register outside child sessions");
+
+		const setModelCalls = spyOnSetModel(pi);
+		const ctx = createModelTrackingCtx(fixture, pi, availableModels, {
+			provider: "anthropic",
+			id: "claude-haiku-4-5",
+		});
+
+		await runtime.applySessionStart(ctx);
+
+		// The unrecognised key is ignored during resolution, so the session runs the default.
+		assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
+
+		const settingsBefore = readFileSync(join(fixture.agent, "settings.json"), "utf8");
+		setModelCalls.length = 0;
+
+		const result = await runtime.resetPrimaryAgentModelOverride(ctx, "architekt");
+
+		assert.equal(result, undefined, "unrecognised names must be refused with undefined");
+		assert.equal(
+			readFileSync(join(fixture.agent, "settings.json"), "utf8"),
+			settingsBefore,
+			"refusal must not rewrite settings",
+		);
+		assert.deepEqual(setModelCalls, [], "refusal must not apply a model change");
+	});
+});

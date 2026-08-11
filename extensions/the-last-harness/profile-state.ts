@@ -114,7 +114,16 @@ export async function readTlhInstallStateAsync(): Promise<TlhInstallState> {
 	}
 }
 
-function canUseTlhStartupStateDir(statePath: string): boolean {
+/**
+ * Guard the TLH state directory before writing `statePath`.
+ *
+ * `resolveExpectedPath` re-resolves the caller's managed state path so the guard
+ * can confirm the target is still exactly the path this writer owns. Passing the
+ * resolver (rather than a precomputed string) keeps the check honest: it re-runs
+ * the profile-isolation resolution after `mkdirSync`, so a directory that only
+ * became unsafe mid-write is still rejected.
+ */
+function canUseTlhStateDir(statePath: string, resolveExpectedPath: () => string | undefined): boolean {
 	const stateDir = dirname(statePath);
 	try {
 		const dirStat = lstatSync(stateDir);
@@ -133,13 +142,13 @@ function canUseTlhStartupStateDir(statePath: string): boolean {
 		if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
 			return false;
 		}
-		return tlhStartupStatePath() === statePath;
+		return resolveExpectedPath() === statePath;
 	} catch {
 		return false;
 	}
 }
 
-function canReplaceTlhStartupStateFile(statePath: string): boolean {
+function canReplaceTlhStateFile(statePath: string): boolean {
 	try {
 		const stateStat = lstatSync(statePath);
 		return !stateStat.isSymbolicLink() && stateStat.isFile();
@@ -148,13 +157,17 @@ function canReplaceTlhStartupStateFile(statePath: string): boolean {
 	}
 }
 
-function writeTlhStartupStateAtomically(statePath: string, content: string): void {
-	const nofollowFlag = constants.O_NOFOLLOW;
-	// Startup state is best-effort. If this platform cannot protect the temp
+/**
+ * Core atomic write implementation. Accepts `nofollowFlag` explicitly so the
+ * O_NOFOLLOW-unavailable path can be exercised in tests without mocking the
+ * native `fs` module. Production callers must always pass `constants.O_NOFOLLOW`.
+ */
+function writeTlhStateFileAtomicallyCore(statePath: string, content: string, nofollowFlag: unknown): boolean {
+	// TLH profile state is best-effort. If this platform cannot protect the temp
 	// file's final component from symlinks, fail closed instead of weakening the
 	// atomic replacement by silently dropping O_NOFOLLOW.
 	if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
-		return;
+		return false;
 	}
 
 	const stateDir = dirname(statePath);
@@ -186,15 +199,62 @@ function writeTlhStartupStateAtomically(statePath: string, content: string): voi
 	if (cleanupError !== undefined) {
 		throw cleanupError;
 	}
+	return true;
+}
+
+function writeTlhStateFileAtomically(statePath: string, content: string): boolean {
+	return writeTlhStateFileAtomicallyCore(statePath, content, constants.O_NOFOLLOW);
+}
+
+/**
+ * Write a file under the isolated TLH profile state directory (`${AGENT_DIR}/tlh`)
+ * behind the shared symlink/atomic-replacement guards.
+ *
+ * This is the single audited implementation of those guards; every TLH profile
+ * state writer must go through it rather than reimplementing the checks:
+ *  - `statePath` must resolve within the managed TLH state dir (`tlhStateDir()`),
+ *    validated independently without relying on caller-supplied `resolveExpectedPath`,
+ *  - the state directory must not be a symlink,
+ *  - `resolveExpectedPath()` must still resolve to `statePath` after the directory
+ *    is created (re-confirming isolated-profile containment),
+ *  - an existing target must be a regular, non-symlinked file,
+ *  - the replacement is written via an O_EXCL + O_NOFOLLOW temp file and renamed.
+ *
+ * Returns `true` when the file is written successfully, `false` when any guard
+ * rejects. Callers own "best-effort" error swallowing so a failed state write
+ * never blocks launch.
+ */
+export function writeGuardedTlhStateFile(
+	statePath: string,
+	content: string,
+	resolveExpectedPath: () => string | undefined,
+): boolean {
+	// Independent containment check: validate that statePath is within the managed
+	// TLH state dir (${AGENT_DIR}/tlh) without trusting resolveExpectedPath alone.
+	const managedDir = tlhStateDir();
+	if (!managedDir) {
+		return false;
+	}
+	try {
+		if (!pathWithinOrEqual(realpathForCompare(managedDir), realpathForCompare(statePath))) {
+			return false;
+		}
+	} catch {
+		return false;
+	}
+	if (!canUseTlhStateDir(statePath, resolveExpectedPath) || !canReplaceTlhStateFile(statePath)) {
+		return false;
+	}
+	return writeTlhStateFileAtomically(statePath, content);
 }
 
 export function writeTlhStartupState(state: TlhStartupState): void {
 	try {
 		const statePath = tlhStartupStatePath();
-		if (!statePath || !canUseTlhStartupStateDir(statePath) || !canReplaceTlhStartupStateFile(statePath)) {
+		if (!statePath) {
 			return;
 		}
-		writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
+		writeGuardedTlhStateFile(statePath, `${JSON.stringify(state, null, 2)}\n`, tlhStartupStatePath);
 	} catch {
 		// Startup state is best-effort; never block launch.
 	}
@@ -317,3 +377,13 @@ export function assertNotNormalPiSettings(settingsPath: string): void {
 		throw new Error(`Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`);
 	}
 }
+
+/** @internal Exported only for tests; do not use outside this module. */
+export const __testing = {
+	/**
+	 * The O_NOFOLLOW-parameterised core of `writeTlhStateFileAtomically`.
+	 * Pass `0` or `undefined` to simulate a platform where `O_NOFOLLOW` is
+	 * unavailable and verify the fail-closed path returns `false`.
+	 */
+	writeTlhStateFileAtomicallyCore,
+};

@@ -547,4 +547,4 @@ export function registerSubagentSettingsCommand(pi) {
         },
     });
 }
-export { INDEPENDENCE_WARNING };
+export { INDEPENDENCE_WARNING, resetSubagentOverride };

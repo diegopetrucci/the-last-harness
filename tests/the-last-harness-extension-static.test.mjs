@@ -878,7 +878,7 @@ test("extension runs primary session_start work before UI startup in one handler
 	);
 	assert.match(
 		primaryRuntimeSource,
-		/return\s+\{\s*applySessionStart,\s*currentPrimaryAgentLabel,\s*activePrimaryAgentPrompt:\s*activePrimaryAgent,\s*registerCommands,\s*registerLifecycleHooks,?\s*\};/,
+		/return\s+\{\s*applySessionStart,\s*currentPrimaryAgentLabel,\s*activePrimaryAgentPrompt:\s*activePrimaryAgent,\s*resetPrimaryAgentModelOverride,\s*registerCommands,\s*registerLifecycleHooks,?\s*\};/,
 	);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });

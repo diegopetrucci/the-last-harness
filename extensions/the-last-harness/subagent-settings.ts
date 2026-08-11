@@ -739,4 +739,4 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 	});
 }
 
-export { INDEPENDENCE_WARNING };
+export { INDEPENDENCE_WARNING, resetSubagentOverride };

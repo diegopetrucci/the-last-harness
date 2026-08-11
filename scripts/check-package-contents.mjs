@@ -87,6 +87,10 @@ const piEntrypoints = configuredPiEntrypoints.map((entrypoint) => entrypoint.rep
 const requiredFiles = [
 	...piEntrypoints,
 	"extensions/the-last-harness.ts",
+	// Model/effort reconcile feature (ts-c1nw, ts-tr52, ts-d5vi, ts-x0p7)
+	"extensions/the-last-harness/model-effort-reconcile.js",
+	"extensions/the-last-harness/model-effort-notice.js",
+	"extensions/the-last-harness/reconcile-command.js",
 	"extensions/subagents/LICENSE",
 	"agents/primary/architect.md",
 	"agents/subagents/developer.md",

@@ -471,6 +471,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     async function applyPrimaryModeChange(ctx) {
         await applyPrimaryDefaults(ctx);
     }
+    async function resetPrimaryAgentModelOverride(ctx, agentName) {
+        if (!isTlhPrimaryAgentSelection(agentName)) {
+            return undefined;
+        }
+        const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+        await applyPrimaryModeChange(ctx);
+        return result;
+    }
     function cleanDisabledPrimarySessionHint(selection) {
         return selection === DISABLED_PRIMARY_AGENT
             ? " Existing conversation history may still contain TLH primary-agent guidance; start a new session for a completely clean context."
@@ -745,6 +753,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         applySessionStart,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
+        resetPrimaryAgentModelOverride,
         registerCommands,
         registerLifecycleHooks,
     };
@@ -765,4 +774,13 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     runtime.registerCommands();
     runtime.registerLifecycleHooks();
     return runtime;
+}
+export function isTlhPrimaryAgentSelection(value) {
+    return PRIMARY_AGENT_CYCLE.includes(value);
+}
+export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {
+    if (!isTlhPrimaryAgentSelection(agentName)) {
+        return undefined;
+    }
+    return writeTlhPrimaryAgentModelOverride(cwd, agentName, undefined);
 }

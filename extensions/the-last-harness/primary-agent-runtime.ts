@@ -76,6 +76,18 @@ export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
 	activePrimaryAgentPrompt(): AgentPrompt | undefined;
+	/**
+	 * Clear the stored model override for a named primary agent and reapply
+	 * the packaged default to the active session, matching /switch-primary-agent
+	 * model reset behaviour.
+	 *
+	 * Returns `undefined` when `agentName` is not a recognised primary-agent
+	 * selection (unrecognised-name refusal semantics: no write, no apply).
+	 */
+	resetPrimaryAgentModelOverride(
+		ctx: ExtensionContext,
+		agentName: string,
+	): Promise<TlhPrimaryAgentWriteResult | undefined>;
 };
 
 function getTlhGlobalSettings(cwd: string): TlhSettings {
@@ -664,6 +676,18 @@ function createTlhPrimaryAgentRuntime(
 		await applyPrimaryDefaults(ctx);
 	}
 
+	async function resetPrimaryAgentModelOverride(
+		ctx: ExtensionContext,
+		agentName: string,
+	): Promise<TlhPrimaryAgentWriteResult | undefined> {
+		if (!isTlhPrimaryAgentSelection(agentName)) {
+			return undefined;
+		}
+		const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+		await applyPrimaryModeChange(ctx);
+		return result;
+	}
+
 	function cleanDisabledPrimarySessionHint(selection: TlhPrimaryAgentSelection): string {
 		return selection === DISABLED_PRIMARY_AGENT
 			? " Existing conversation history may still contain TLH primary-agent guidance; start a new session for a completely clean context."
@@ -1011,6 +1035,7 @@ function createTlhPrimaryAgentRuntime(
 		applySessionStart,
 		currentPrimaryAgentLabel,
 		activePrimaryAgentPrompt: activePrimaryAgent,
+		resetPrimaryAgentModelOverride,
 		registerCommands,
 		registerLifecycleHooks,
 	};
@@ -1042,4 +1067,38 @@ export function registerTlhPrimaryAgentRuntime(
 	runtime.registerCommands();
 	runtime.registerLifecycleHooks();
 	return runtime;
+}
+
+/**
+ * Narrow an untrusted string to a known primary-agent selection.
+ *
+ * Primary-agent override names reach TLH from `settings.tlh.primaryAgent.modelOverrides`,
+ * which is user-editable JSON, i.e. an external I/O boundary. Callers must validate
+ * before treating a key as a `TlhPrimaryAgentSelection` rather than asserting the type.
+ */
+export function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
+	return (PRIMARY_AGENT_CYCLE as readonly string[]).includes(value);
+}
+
+/**
+ * Clear the stored model override for a named primary agent.
+ *
+ * Used by the /reconcile command to reset a primary-agent override via the same
+ * guarded write path used by the primary-agent-runtime picker.
+ *
+ * Returns `undefined` when `agentName` is not a recognised primary-agent selection,
+ * which is deliberately a refusal rather than a best-effort delete. An unrecognised
+ * key (a typo or a stale name) has no packaged default to reconcile against, so TLH
+ * reports it instead of quietly rewriting settings it does not understand. Callers
+ * must not treat a refusal as a successful reset: acknowledging it would suppress
+ * future reporting for an override that is still present.
+ */
+export function clearPrimaryAgentModelOverrideByName(
+	cwd: string,
+	agentName: string,
+): TlhPrimaryAgentWriteResult | undefined {
+	if (!isTlhPrimaryAgentSelection(agentName)) {
+		return undefined;
+	}
+	return writeTlhPrimaryAgentModelOverride(cwd, agentName, undefined);
 }
