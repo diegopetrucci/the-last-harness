@@ -50,11 +50,12 @@ describe("nested widget rendering", () => {
 	it("uses aggregate lines when collapsed and full child rows when expanded", () => {
 		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read" });
 		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
-		assert.match(collapsed, /↳ \+1 nested run \(1 running\)/);
+		assert.match(collapsed, /↳ \+1 nested run/);
+		assert.doesNotMatch(collapsed, /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
 		assert.doesNotMatch(collapsed, /nested-reviewer · running/);
 
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
-		assert.match(expanded, /↳ . nested-reviewer · running · read/);
+		assert.match(expanded, /↳ . nested-reviewer · read/);
 	});
 
 	it("collapses descendants beyond the nested depth budget", () => {
@@ -73,7 +74,7 @@ describe("nested widget rendering", () => {
 		});
 		const expanded = buildWidgetLines([job(root)], theme as any, 160, true).join("\n");
 		assert.match(expanded, /nested-grandchild/);
-		assert.match(expanded, /\+1 nested run \(1 running\)/);
+		assert.match(expanded, /\+1 nested run/);
 		assert.doesNotMatch(expanded, /nested-great-grandchild · running/);
 	});
 
@@ -84,7 +85,7 @@ describe("nested widget rendering", () => {
 		state.steps![0]!.status = "complete";
 		const expanded = buildWidgetLines([state], theme as any, 120, true).join("\n");
 		assert.match(expanded, /✓ owner · complete/);
-		assert.match(expanded, /↳ . still-running · running/);
+		assert.match(expanded, /↳ . still-running · thinking…/);
 	});
 
 	it("renders unattached root children once alongside first-step children", () => {
@@ -94,10 +95,10 @@ describe("nested widget rendering", () => {
 		state.nestedChildren = [stepChild, rootChild];
 
 		const expanded = buildWidgetLines([state], theme as any, 160, true).join("\n");
-		assert.match(expanded, /owner · running/);
+		assert.match(expanded, /owner · 1\.5s/);
 		assert.doesNotMatch(expanded, /(?:Agent|Step) 1\/1/);
-		assert.equal(expanded.match(/step-child · running/g)?.length, 1);
-		assert.equal(expanded.match(/root-child · running/g)?.length, 1);
+		assert.equal(expanded.match(/step-child · thinking…/g)?.length, 1);
+		assert.equal(expanded.match(/root-child · thinking…/g)?.length, 1);
 	});
 
 	it("degrades stale child summaries to id and state", () => {
