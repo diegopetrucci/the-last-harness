@@ -3,6 +3,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { findAvailableProviderModel, formatProviderModelReference, formatResolvedProviderModelReference, formatUnavailableStoredModelWarning, parseProviderModelReference, resolveProviderAwareSubagentResolution, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
+import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 const SUBAGENT_SETTINGS_COMMAND = "subagent-settings";
@@ -450,7 +451,12 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
                 ctx.ui.notify("Model override cancelled.", "info");
                 continue;
             }
-            notifyWriteResult(ctx, writeSubagentOverridePatch(ctx.cwd, agentName, { model }), fixedModelWarning(agentName, { ...override, model }));
+            const hadModelOverride = hasMeaningfulSubagentOverride(override);
+            const modelWriteResult = writeSubagentOverridePatch(ctx.cwd, agentName, { model });
+            notifyWriteResult(ctx, modelWriteResult, fixedModelWarning(agentName, { ...override, model }));
+            if (modelWriteResult.changed && !hadModelOverride) {
+                recordOverrideBaseline(agentName, agent, ctx.model?.provider);
+            }
             continue;
         }
         const model = effectiveModelForEffort(agent, override, models, ctx);
@@ -466,7 +472,12 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
             ctx.ui.notify("Unknown effort picker selection.", "error");
             continue;
         }
-        notifyWriteResult(ctx, writeSubagentOverridePatch(ctx.cwd, agentName, { thinking }), fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+        const hadEffortOverride = hasMeaningfulSubagentOverride(override);
+        const effortWriteResult = writeSubagentOverridePatch(ctx.cwd, agentName, { thinking });
+        notifyWriteResult(ctx, effortWriteResult, fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+        if (effortWriteResult.changed && !hadEffortOverride) {
+            recordOverrideBaseline(agentName, agent, ctx.model?.provider);
+        }
     }
 }
 function commandCompletions(prefix) {
@@ -532,6 +543,7 @@ export function registerSubagentSettingsCommand(pi) {
                 }
                 const models = availableModels(ctx);
                 const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
+                const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
                 const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);
                 if (!(await confirmFixedModelOverride(ctx, rawAgentName, patch.model))) {
                     ctx.ui.notify("Model override cancelled.", "info");
@@ -539,6 +551,9 @@ export function registerSubagentSettingsCommand(pi) {
                 }
                 const result = writeSubagentOverridePatch(ctx.cwd, rawAgentName, patch);
                 notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, { ...currentOverride, ...patch }));
+                if (result.changed && !hadMeaningfulOverride) {
+                    recordOverrideBaseline(rawAgentName, agent, ctx.model?.provider);
+                }
             }
             catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
@@ -547,4 +562,4 @@ export function registerSubagentSettingsCommand(pi) {
         },
     });
 }
-export { INDEPENDENCE_WARNING };
+export { INDEPENDENCE_WARNING, resetSubagentOverride };

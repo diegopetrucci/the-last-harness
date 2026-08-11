@@ -17,6 +17,7 @@ import {
 } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { loadSubagentMetadata } from "./prompts.js";
+import { hasMeaningfulSubagentOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import type { ReasoningModel, SubagentMetadata, ThinkingLevel, TlhSettings, TlhSubagentOverride } from "./types.js";
@@ -102,6 +103,11 @@ function fixedModelWarning(agentName: string, override: TlhSubagentOverride | un
 		? INDEPENDENCE_WARNING
 		: undefined;
 }
+
+// hasMeaningfulSubagentOverride is imported from model-effort-reconcile.ts so the
+// override-creation transition check uses the same acceptance predicates as the drift
+// comparator.  A local copy using !== undefined would count null/invalid values as
+// meaningful overrides, silently skipping baseline recording for those roles.
 
 function notifyWriteResult(
 	ctx: Pick<ExtensionCommandContext, "ui">,
@@ -615,11 +621,14 @@ async function runInteractivePicker(
 				ctx.ui.notify("Model override cancelled.", "info");
 				continue;
 			}
-			notifyWriteResult(
-				ctx,
-				writeSubagentOverridePatch(ctx.cwd, agentName, { model }),
-				fixedModelWarning(agentName, { ...override, model }),
-			);
+			// Detect first-creation transition before write.
+			const hadModelOverride = hasMeaningfulSubagentOverride(override);
+			const modelWriteResult = writeSubagentOverridePatch(ctx.cwd, agentName, { model });
+			notifyWriteResult(ctx, modelWriteResult, fixedModelWarning(agentName, { ...override, model }));
+			// Record baseline only on transition from no meaningful override to active override.
+			if (modelWriteResult.changed && !hadModelOverride) {
+				recordOverrideBaseline(agentName, agent, ctx.model?.provider);
+			}
 			continue;
 		}
 
@@ -639,11 +648,14 @@ async function runInteractivePicker(
 			ctx.ui.notify("Unknown effort picker selection.", "error");
 			continue;
 		}
-		notifyWriteResult(
-			ctx,
-			writeSubagentOverridePatch(ctx.cwd, agentName, { thinking }),
-			fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)),
-		);
+		// Detect first-creation transition before write.
+		const hadEffortOverride = hasMeaningfulSubagentOverride(override);
+		const effortWriteResult = writeSubagentOverridePatch(ctx.cwd, agentName, { thinking });
+		notifyWriteResult(ctx, effortWriteResult, fixedModelWarning(agentName, getStoredOverrides(ctx.cwd).get(agentName)));
+		// Record baseline only on transition from no meaningful override to active override.
+		if (effortWriteResult.changed && !hadEffortOverride) {
+			recordOverrideBaseline(agentName, agent, ctx.model?.provider);
+		}
 	}
 }
 
@@ -724,6 +736,8 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 				}
 				const models = availableModels(ctx);
 				const currentOverride = getStoredOverrides(ctx.cwd).get(rawAgentName);
+				// Detect first-creation transition before write.
+				const hadMeaningfulOverride = hasMeaningfulSubagentOverride(currentOverride);
 				const patch = parseSetArguments(rest, agent, models, ctx, currentOverride);
 				if (!(await confirmFixedModelOverride(ctx, rawAgentName, patch.model))) {
 					ctx.ui.notify("Model override cancelled.", "info");
@@ -731,6 +745,10 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 				}
 				const result = writeSubagentOverridePatch(ctx.cwd, rawAgentName, patch);
 				notifyWriteResult(ctx, result, fixedModelWarning(rawAgentName, { ...currentOverride, ...patch }));
+				// Record baseline only on transition from no meaningful override to active override.
+				if (result.changed && !hadMeaningfulOverride) {
+					recordOverrideBaseline(rawAgentName, agent, ctx.model?.provider);
+				}
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				ctx.ui.notify(message, "error");
@@ -739,4 +757,4 @@ export function registerSubagentSettingsCommand(pi: ExtensionAPI): void {
 	});
 }
 
-export { INDEPENDENCE_WARNING };
+export { INDEPENDENCE_WARNING, resetSubagentOverride };

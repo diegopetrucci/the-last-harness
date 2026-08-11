@@ -476,6 +476,9 @@ describe("SubagentParams schema", () => {
 			assert.equal(validator.Check(value), false, `{ ${key}: ... } should be rejected by additionalProperties: false`);
 		}
 		const removedActions = [
+			"single",
+			"parallel",
+			"tasks",
 			"create",
 			"update",
 			"delete",

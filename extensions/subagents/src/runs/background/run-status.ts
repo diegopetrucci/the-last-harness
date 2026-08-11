@@ -48,7 +48,6 @@ import {
 interface RunStatusParams {
 	action?: "status";
 	id?: string;
-	runId?: string;
 	dir?: string;
 	index?: number;
 	view?: "fleet" | "transcript";
@@ -316,7 +315,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			childSafe: Boolean(deps.nested),
 		});
 	}
-	if (!params.id && !params.runId && !params.dir) {
+	if (!params.id && !params.dir) {
 		if (deps.nested) {
 			return {
 				content: [
@@ -366,7 +365,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 
 	let location;
 	try {
-		const requestedId = params.id ?? params.runId;
+		const requestedId = params.id;
 		if (!params.dir && requestedId) {
 			const resolved = resolveSubagentRunId(requestedId, {
 				asyncDirRoot,

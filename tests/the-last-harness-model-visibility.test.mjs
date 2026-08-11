@@ -59,6 +59,42 @@ async function createTestModelRuntime(models, refreshModels) {
 	return runtime;
 }
 
+function createModelMatchTestHarness(cachedModels, refreshedModels = cachedModels, onRefresh) {
+	let availableModels = [...cachedModels];
+	let refreshCalls = 0;
+	const statusMessages = [];
+	const session = { scopedModels: [] };
+	const modelRuntime = Object.create({
+		[Symbol.for("tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal")]() {
+			return availableModels;
+		},
+	});
+	modelRuntime.getAvailableSnapshot = () => availableModels.filter((model) => !isTlhModelHidden(model));
+	modelRuntime.refresh = async () => {
+		refreshCalls += 1;
+		availableModels = [...refreshedModels];
+		onRefresh?.(session);
+		return { aborted: false, errors: new Map() };
+	};
+
+	session.modelRuntime = modelRuntime;
+	const interactiveMode = Object.create(InteractiveMode.prototype);
+	interactiveMode.runtimeHost = { session };
+	interactiveMode.showStatus = (message) => statusMessages.push(message);
+	interactiveMode.showWarning = (message) => {
+		throw new Error(`unexpected model refresh warning: ${message}`);
+	};
+
+	return {
+		interactiveMode,
+		modelRuntime,
+		statusMessages,
+		get refreshCalls() {
+			return refreshCalls;
+		},
+	};
+}
+
 test("hidden model defaults stay pinned to the approved ordered list", () => {
 	assert.deepEqual(TLH_HIDDEN_MODEL_DEFAULTS, [
 		"anthropic/claude-3-5-haiku-20241022",
@@ -239,7 +275,28 @@ test("ModelRuntime filters async availability and current/refreshed snapshots wh
 			modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")),
 			["tlh-test/visible-current"],
 		);
-		assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test")), ["tlh-test/visible-current"]);
+
+		const originalModelsGetAvailable = runtime.models.getAvailable;
+		const getAvailableCalls = [];
+		const providerModels = getUnfilteredAvailableModels(runtime).filter((model) => model.provider === "tlh-test");
+		runtime.models.getAvailable = async (providerId, options) => {
+			getAvailableCalls.push({ options, providerId });
+			return providerModels;
+		};
+		const controller = new AbortController();
+		const availabilityOptions = { signal: controller.signal };
+		try {
+			assert.deepEqual(modelKeys(await runtime.getAvailable("tlh-test", availabilityOptions)), [
+				"tlh-test/visible-current",
+			]);
+		} finally {
+			runtime.models.getAvailable = originalModelsGetAvailable;
+		}
+		assert.equal(getAvailableCalls.length, 1);
+		assert.equal(getAvailableCalls[0].providerId, "tlh-test");
+		assert.equal(getAvailableCalls[0].options, availabilityOptions);
+		assert.equal(getAvailableCalls[0].options.signal, controller.signal);
+
 		assert.deepEqual(
 			modelKeys(registry.getAvailable()).filter((key) => key.startsWith("tlh-test/")),
 			["tlh-test/visible-current"],
@@ -314,15 +371,39 @@ test("exact /model provider/model lookup uses the unfiltered ModelRuntime snapsh
 			},
 		};
 
+		const originalRefresh = runtime.refresh.bind(runtime);
+		let refreshCalls = 0;
+		runtime.refresh = async (...args) => {
+			refreshCalls += 1;
+			throw new Error(`unexpected catalog refresh: ${args.length}`);
+		};
+		interactiveMode.showStatus = () => {
+			throw new Error("unexpected catalog refresh status");
+		};
+
 		const hiddenExactMatch = await InteractiveMode.prototype.findExactModelMatch.call(
 			interactiveMode,
 			"tlh-test/hidden-exact",
 		);
 		assert.equal(`${hiddenExactMatch?.provider}/${hiddenExactMatch?.id}`, "tlh-test/hidden-exact");
-		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "hidden-exact"), undefined);
+		assert.equal(refreshCalls, 0, "hidden canonical lookup must not refresh model catalogs");
+
+		const visibleMatch = await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/visible");
+		assert.equal(`${visibleMatch?.provider}/${visibleMatch?.id}`, "tlh-test/visible");
+		assert.equal(refreshCalls, 0, "visible canonical lookup should retain Pi's cached behavior");
 		assert.deepEqual(
 			modelKeys(runtime.getAvailableSnapshot()).filter((key) => key.startsWith("tlh-test/")),
 			["tlh-test/visible"],
+		);
+
+		// Bare and missing references remain delegated to Pi's normal matcher path;
+		// give that path the minimal UI it needs after the hidden-canonical canary.
+		runtime.refresh = originalRefresh;
+		interactiveMode.showStatus = () => {};
+		assert.equal(await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "hidden-exact"), undefined);
+		assert.equal(
+			await InteractiveMode.prototype.findExactModelMatch.call(interactiveMode, "tlh-test/missing"),
+			undefined,
 		);
 
 		interactiveMode.runtimeHost.session.scopedModels = [{ model: runtime.getModel("tlh-test", "hidden-scoped") }];
@@ -335,5 +416,91 @@ test("exact /model provider/model lookup uses the unfiltered ModelRuntime snapsh
 			"tlh-test/hidden-scoped",
 		);
 		assert.equal(`${scopedMatch?.provider}/${scopedMatch?.id}`, "tlh-test/hidden-scoped");
+	});
+});
+
+test("exact model lookup preserves Pi's visible bare-id collision priority over a hidden canonical match", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["hidden-provider/model"] } } }, null, 2)}\n`,
+		);
+		installTlhModelVisibilityFilter();
+		const hiddenCanonicalModel = { provider: "hidden-provider", id: "model" };
+		const visibleBareIdModel = { provider: "visible-provider", id: "hidden-provider/model" };
+		assert.equal(isTlhModelHidden(hiddenCanonicalModel), true);
+		assert.equal(isTlhModelHidden(visibleBareIdModel), false);
+		const harness = createModelMatchTestHarness([hiddenCanonicalModel, visibleBareIdModel]);
+
+		const match = await InteractiveMode.prototype.findExactModelMatch.call(
+			harness.interactiveMode,
+			"hidden-provider/model",
+		);
+
+		assert.equal(`${match?.provider}/${match?.id}`, "visible-provider/hidden-provider/model");
+		assert.deepEqual(modelKeys(harness.modelRuntime.getAvailableSnapshot()), [
+			"visible-provider/hidden-provider/model",
+		]);
+		assert.equal(harness.refreshCalls, 0);
+		assert.deepEqual(harness.statusMessages, []);
+	});
+});
+
+test("exact model lookup resolves a refresh-only hidden canonical model after Pi delegates", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["refresh-provider/hidden-model"] } } }, null, 2)}\n`,
+		);
+		installTlhModelVisibilityFilter();
+		const refreshedHiddenModel = { provider: "refresh-provider", id: "hidden-model" };
+		assert.equal(isTlhModelHidden(refreshedHiddenModel), true);
+		const harness = createModelMatchTestHarness([], [refreshedHiddenModel]);
+
+		const match = await InteractiveMode.prototype.findExactModelMatch.call(
+			harness.interactiveMode,
+			"refresh-provider/hidden-model",
+		);
+
+		assert.equal(`${match?.provider}/${match?.id}`, "refresh-provider/hidden-model");
+		assert.deepEqual(harness.modelRuntime.getAvailableSnapshot(), []);
+		assert.equal(harness.refreshCalls, 1);
+		assert.deepEqual(harness.statusMessages, ["Refreshing model catalogs…"]);
+	});
+});
+
+test("post-refresh hidden fallback respects a model scope activated while Pi refreshes", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-model-visibility-test-", { test: t });
+	const settingsPath = join(fixture.agent, "settings.json");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify({ tlh: { modelVisibility: { hidden: ["refresh-provider/hidden-model"] } } }, null, 2)}\n`,
+		);
+		installTlhModelVisibilityFilter();
+		const refreshedHiddenModel = { provider: "refresh-provider", id: "hidden-model" };
+		const scopedModel = { provider: "scope-provider", id: "scoped-model" };
+		assert.equal(isTlhModelHidden(refreshedHiddenModel), true);
+		const harness = createModelMatchTestHarness([], [refreshedHiddenModel], (session) => {
+			session.scopedModels = [{ model: scopedModel }];
+		});
+
+		const match = await InteractiveMode.prototype.findExactModelMatch.call(
+			harness.interactiveMode,
+			"refresh-provider/hidden-model",
+		);
+
+		assert.equal(match, undefined);
+		assert.deepEqual(modelKeys(getUnfilteredAvailableModels(harness.modelRuntime)), ["refresh-provider/hidden-model"]);
+		assert.deepEqual(harness.interactiveMode.runtimeHost.session.scopedModels, [{ model: scopedModel }]);
+		assert.equal(harness.refreshCalls, 1);
+		assert.deepEqual(harness.statusMessages, ["Refreshing model catalogs…"]);
 	});
 });

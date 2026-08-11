@@ -13,6 +13,7 @@ import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
+import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 function getTlhGlobalSettings(cwd) {
     try {
@@ -471,6 +472,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     async function applyPrimaryModeChange(ctx) {
         await applyPrimaryDefaults(ctx);
     }
+    async function resetPrimaryAgentModelOverride(ctx, agentName) {
+        if (!isTlhPrimaryAgentSelection(agentName)) {
+            return undefined;
+        }
+        const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, agentName, undefined);
+        await applyPrimaryModeChange(ctx);
+        return result;
+    }
     function cleanDisabledPrimarySessionHint(selection) {
         return selection === DISABLED_PRIMARY_AGENT
             ? " Existing conversation history may still contain TLH primary-agent guidance; start a new session for a completely clean context."
@@ -644,10 +653,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
                 : undefined;
             const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
+            const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
+            const existingOverride = primaryConfig?.modelOverrides?.[selection];
+            let writeResult;
             try {
-                writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
+                writeResult = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, nextOverride);
             }
             catch {
+            }
+            if (writeResult?.changed === true &&
+                nextOverride !== undefined &&
+                !isMeaningfulPrimaryOverride(existingOverride)) {
+                recordOverrideBaseline(selection, primary, event.model.provider);
             }
         });
         pi.on("session_tree", async (_event, ctx) => {
@@ -745,6 +762,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         applySessionStart,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
+        resetPrimaryAgentModelOverride,
         registerCommands,
         registerLifecycleHooks,
     };
@@ -765,4 +783,13 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     runtime.registerCommands();
     runtime.registerLifecycleHooks();
     return runtime;
+}
+export function isTlhPrimaryAgentSelection(value) {
+    return PRIMARY_AGENT_CYCLE.includes(value);
+}
+export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {
+    if (!isTlhPrimaryAgentSelection(agentName)) {
+        return undefined;
+    }
+    return writeTlhPrimaryAgentModelOverride(cwd, agentName, undefined);
 }

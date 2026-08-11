@@ -462,7 +462,7 @@ function updateRememberedForegroundChild(state, input) {
     trimRememberedForegroundRuns(state);
 }
 function resolveRememberedForegroundRun(params, state) {
-    const requested = (params.id ?? params.runId)?.trim();
+    const requested = params.id?.trim();
     if (!requested || !state.foregroundRuns?.size)
         return undefined;
     const direct = state.foregroundRuns.get(requested);
@@ -530,7 +530,6 @@ function buildRunStatusParams(params) {
     return {
         action: "status",
         id: params.id,
-        runId: params.runId,
         dir: params.dir,
         index: params.index,
         view: params.view,
@@ -584,7 +583,7 @@ function isExactResumeError(error, source, requested) {
     return new RegExp(`\\b${source} run '${escapeRegExp(requested)}'`, "i").test(error.message);
 }
 function resolveResumeTarget(params, state, options = {}) {
-    const requested = (params.id ?? params.runId)?.trim() ?? "";
+    const requested = params.id?.trim() ?? "";
     let foregroundTarget;
     let foregroundError;
     let asyncTarget;
@@ -637,7 +636,7 @@ function resolveResumeTarget(params, state, options = {}) {
         throw foregroundError;
     if (asyncError)
         throw asyncError;
-    throw new Error("Run not found. Provide id or runId.");
+    throw new Error("Run not found. Provide id.");
 }
 function claimPausedAwaitingSupervisorTarget(target, continuationRunId) {
     if (target.kind !== "revive" || target.state !== "paused" || !("asyncDir" in target) || !target.asyncDir)
@@ -1700,7 +1699,7 @@ async function queueLiveAsyncResume(input) {
 async function resumeAsyncRun(input) {
     const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
     input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
-    const requestedId = input.params.id ?? input.params.runId;
+    const requestedId = input.params.id;
     let target;
     const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
     try {
@@ -2183,23 +2182,12 @@ function buildRequestedModeError(params, message) {
 }
 function resolveForegroundTimeout(params) {
     const rawTimeout = params.timeoutMs;
-    const rawMaxRuntime = params.maxRuntimeMs;
-    if (rawTimeout === undefined && rawMaxRuntime === undefined)
+    if (rawTimeout === undefined)
         return {};
-    for (const [name, value] of [
-        ["timeoutMs", rawTimeout],
-        ["maxRuntimeMs", rawMaxRuntime],
-    ]) {
-        if (value === undefined)
-            continue;
-        if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-            return { error: `${name} must be a positive integer.` };
-        }
+    if (typeof rawTimeout !== "number" || !Number.isInteger(rawTimeout) || rawTimeout <= 0) {
+        return { error: "timeoutMs must be a positive integer." };
     }
-    if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
-        return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both." };
-    }
-    return { timeoutMs: rawTimeout ?? rawMaxRuntime };
+    return { timeoutMs: rawTimeout };
 }
 function resolveEffectiveSingleTimeout(callerTimeoutMs, agentTimeoutCeilingMs) {
     if (callerTimeoutMs === undefined)
@@ -3319,27 +3307,13 @@ function duplicateSubagentCallResult(params) {
         details: { mode: inferExecutionMode(params), results: [] },
     };
 }
-function omitExecutionModeActionAlias(params) {
-    const action = params.action?.toLowerCase();
-    if (action === "single" && (params.agent !== undefined || params.task !== undefined)) {
-        const rest = { ...params };
-        delete rest.action;
-        return rest;
-    }
-    if ((action === "parallel" || action === "tasks") && (params.tasks?.length ?? 0) > 0) {
-        const rest = { ...params };
-        delete rest.action;
-        return rest;
-    }
-    return params;
-}
 export function createSubagentExecutor(deps) {
     const execute = async (_id, params, signal, onUpdate, ctx) => {
         deps.state.baseCwd = ctx.cwd;
         deps.state.foregroundRuns ??= new Map();
         deps.state.foregroundControls ??= new Map();
         deps.state.lastForegroundControlId ??= null;
-        const requestParams = omitExecutionModeActionAlias(params);
+        const requestParams = params;
         const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
         const paramsWithResolvedCwd = requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
         const unsupportedSavedChainDetail = unsupportedSavedChainInput(paramsWithResolvedCwd);
@@ -3388,7 +3362,7 @@ export function createSubagentExecutor(deps) {
                 };
             }
             if (action === "status") {
-                const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+                const targetRunId = paramsWithResolvedCwd.id;
                 const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
                 if (paramsWithResolvedCwd.view === "fleet") {
                     return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
@@ -3456,7 +3430,7 @@ export function createSubagentExecutor(deps) {
                         isError: true,
                         details: { mode: "management", results: [] },
                     };
-                const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+                const targetRunId = paramsWithResolvedCwd.id;
                 if (paramsWithResolvedCwd.dir) {
                     try {
                         const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
@@ -3518,7 +3492,7 @@ export function createSubagentExecutor(deps) {
                 });
             }
             if (action === "interrupt") {
-                const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+                const targetRunId = paramsWithResolvedCwd.id;
                 const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
                 if (rememberedPaused?.child.status === "paused" &&
                     rememberedPaused.child.pause &&
@@ -3851,7 +3825,7 @@ export function createSubagentExecutor(deps) {
         }, effectiveParams.context);
     };
     const executeWithSingleDispatchGuard = async (id, params, signal, onUpdate, ctx) => {
-        const requestParams = omitExecutionModeActionAlias(params);
+        const requestParams = params;
         if (requestParams.action)
             return execute(id, requestParams, signal, onUpdate, ctx);
         if (deps.state.subagentInProgress === true)

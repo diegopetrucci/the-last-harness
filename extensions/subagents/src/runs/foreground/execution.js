@@ -281,7 +281,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         promptFileStem: agent.name,
         intercomSessionName: options.intercomSessionName,
         orchestratorIntercomTarget: options.orchestratorIntercomTarget,
-        blockingSupervisorReplyPath: "unavailable",
         runId: options.runId,
         childAgentName: agent.name,
         childIndex: options.index ?? 0,

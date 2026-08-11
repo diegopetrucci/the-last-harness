@@ -244,7 +244,7 @@ test("runtime TypeScript helper tracks generated extension runtime modules", () 
 	const extensionSources = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter(
 		(path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/"),
 	);
-	assert.equal(extensionSources.length, 70);
+	assert.equal(extensionSources.length, 73);
 
 	for (const sourcePath of extensionSources) {
 		const outputPath = sourcePath.replace(/\.ts$/, ".js");

@@ -55,7 +55,7 @@ function isolatedEnv(root, agentDir) {
 	};
 }
 
-test("packed TLH generated JavaScript resolves from profile settings and reloads through pinned Pi 0.83.0", (t) => {
+test("packed TLH generated JavaScript resolves from profile settings and reloads through pinned Pi 0.84.1", (t) => {
 	const root = mkdtempSync(join(tmpdir(), "tlh-package-runtime-smoke-"));
 	const packDir = join(root, "pack");
 	const extractDir = join(root, "extract");
@@ -101,7 +101,7 @@ Return the deterministic faux child marker exactly.
 	]
 		.map((path) => path.replace(/\.ts$/, ".js"))
 		.sort();
-	assert.equal(generatedExtensionPaths.length, 165);
+	assert.equal(generatedExtensionPaths.length, 168);
 	for (const generatedPath of generatedExtensionPaths) {
 		assert.ok(packedPaths.has(generatedPath), `npm pack omitted generated extension module ${generatedPath}`);
 	}
@@ -115,8 +115,8 @@ Return the deterministic faux child marker exactly.
 	const packageRoot = realpathSync(join(extractDir, "package"));
 	const packedManifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 	assert.deepEqual(packedManifest.pi.extensions, expectedEntrypoints);
-	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-coding-agent"], "0.83.0");
-	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-tui"], "0.83.0");
+	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-coding-agent"], "0.84.1");
+	assert.equal(packedManifest.peerDependencies["@earendil-works/pi-tui"], "0.84.1");
 	writeFileSync(
 		join(agentDir, "settings.json"),
 		`${JSON.stringify(
@@ -147,7 +147,7 @@ Return the deterministic faux child marker exactly.
 	});
 	assert.equal(runtimeResult.status, 0, runtimeResult.stderr || runtimeResult.stdout);
 	const runtimeEvidence = JSON.parse(runtimeResult.stdout.trim());
-	assert.equal(runtimeEvidence.piVersion, "0.83.0");
+	assert.equal(runtimeEvidence.piVersion, "0.84.1");
 	assert.deepEqual(
 		runtimeEvidence.entrypoints,
 		expectedEntrypoints.map((path) => path.slice(2)),
