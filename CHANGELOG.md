@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.37.0] - 2026-08-11
+
 ### Model defaults
 
 - `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` now use `gpt-5.6-luna medium`, instead of `gpt-5.4-mini high`.
