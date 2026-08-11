@@ -4,6 +4,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.36.0] - 2026-08-11
+
 ### Added
 
 - When TLH ships changes in the default models/thinking levels, it now offers the user to `/reconcile` them.
