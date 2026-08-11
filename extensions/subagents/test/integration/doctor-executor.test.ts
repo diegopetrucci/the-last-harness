@@ -67,8 +67,7 @@ describe("doctor action executor routing", {
 		const executor = createSubagentExecutor({
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: makeState(tempDir),
-			config: { defaultSessionDir: path.join(tempDir, "configured-sessions") },
-			asyncByDefault: false,
+			config: {},
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
@@ -89,7 +88,7 @@ describe("doctor action executor routing", {
 		assert.equal(result.isError, undefined);
 		const text = result.content[0]?.text ?? "";
 		assert.match(text, /^Subagents doctor report/);
-		assert.match(text, /- configured session dir: .*configured-sessions/);
+		assert.match(text, /- configured session dir: not configured/);
 		assert.match(text, /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/);
 	});
 
@@ -98,7 +97,6 @@ describe("doctor action executor routing", {
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state: makeState(tempDir),
 			config: {},
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,

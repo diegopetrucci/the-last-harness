@@ -97,7 +97,6 @@ function resolvePausedContinuationAcceptance(
 
 export interface AsyncResumeParams {
 	id?: string;
-	runId?: string;
 	dir?: string;
 	index?: number;
 }
@@ -307,7 +306,7 @@ function readResultFile(resultPath: string): AsyncResultFile {
 	}
 }
 
-function assertRunId(value: string | undefined, field: "id" | "runId"): string | undefined {
+function assertRunId(value: string | undefined, field: "id"): string | undefined {
 	if (value === undefined) return undefined;
 	if (value.trim() === "") throw new Error(`${field} must not be empty.`);
 	if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes("..")) {
@@ -372,7 +371,7 @@ export function resolveAsyncRunLocation(
 ): AsyncRunLocation {
 	const asyncRoot = path.resolve(asyncDirRoot);
 	const resultRoot = path.resolve(resultsDir);
-	const requestedId = assertRunId(params.id, "id") ?? assertRunId(params.runId, "runId");
+	const requestedId = assertRunId(params.id, "id");
 	if (params.dir) {
 		const asyncDir = path.resolve(params.dir);
 		assertInsideRoot(asyncRoot, asyncDir, "Async run directory");

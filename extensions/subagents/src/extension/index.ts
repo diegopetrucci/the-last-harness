@@ -6,10 +6,10 @@
  * - Async: Background execution, emits events when done
  *
  * Modes: single (agent + task), parallel (tasks[]), and management/control actions
- * Toggle: async parameter (default: false, configurable via config.json)
+ * Toggle: async parameter (default: false)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
+ *   { "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
  */
 
 import * as fs from "node:fs";
@@ -31,7 +31,6 @@ import {
 	Text,
 	isKeyRelease,
 	matchesKey,
-	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 	type Component,
@@ -322,18 +321,19 @@ class SubagentControlNoticeComponent implements Component {
 
 	render(width: number): string[] {
 		const eventLabel = this.details.event.type.replaceAll("_", " ");
-		if (width < 3) return [truncateToWidth(`Subagent ${eventLabel}`, width)];
+		if (width < 3) return wrapTextWithAnsi(`Subagent ${eventLabel}`, Math.max(1, width));
 		const bodyWidth = Math.max(1, width - 2);
 		const borderChar = "─";
 		const header = ` ⚠ Subagent ${eventLabel}: ${this.details.event.agent} `;
-		const headerText = truncateToWidth(header, bodyWidth, "");
-		const headerPadding = Math.max(0, bodyWidth - visibleWidth(headerText));
-		const lines = [this.theme.fg("accent", `╭${headerText}${borderChar.repeat(headerPadding)}╮`)];
+		const headerLines = wrapTextWithAnsi(header, bodyWidth);
+		const padLine = (line: string): string => `${line}${" ".repeat(Math.max(0, bodyWidth - visibleWidth(line)))}`;
+		const firstHeaderLine = headerLines[0] ?? "";
+		const topBorderPadding = borderChar.repeat(Math.max(0, bodyWidth - visibleWidth(firstHeaderLine)));
+		const lines = [this.theme.fg("accent", `╭${firstHeaderLine}${topBorderPadding}╮`)];
+		for (const line of headerLines.slice(1)) lines.push(this.theme.fg("accent", `│${padLine(line)}│`));
 
 		for (const line of wrapTextWithAnsi(formatSubagentControlNotice(this.details), bodyWidth)) {
-			const text = truncateToWidth(line, bodyWidth, "");
-			const padding = Math.max(0, bodyWidth - visibleWidth(text));
-			lines.push(this.theme.fg("accent", `│${text}${" ".repeat(padding)}│`));
+			lines.push(this.theme.fg("accent", `│${padLine(line)}│`));
 		}
 		lines.push(this.theme.fg("accent", `╰${borderChar.repeat(bodyWidth)}╯`));
 		return lines;
@@ -379,7 +379,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	cleanupRuntimeDirs();
 
 	const config = loadConfig();
-	const asyncByDefault = config.asyncByDefault === true;
 	const tempArtifactsDir = getArtifactsDir(null);
 	cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
 	const liveDetailController = createSubagentLiveDetailController();
@@ -468,7 +467,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi,
 		state,
 		config,
-		asyncByDefault,
 		tempArtifactsDir,
 		getSubagentSessionRoot,
 		expandTilde,
@@ -695,7 +693,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 		}
 	}
-	registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	registerSubagentNotify(pi, state, {});
 
 	const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
 	const visibleControlNotices =

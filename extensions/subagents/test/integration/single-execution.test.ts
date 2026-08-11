@@ -261,7 +261,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			pi: { events: createEventBus(), getSessionName: () => undefined },
 			state,
 			config,
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (value: string) => value,
@@ -285,10 +284,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(output, "Hello from mock agent");
 	});
 
-	it("treats action='single' with execution fields as single execution", {
+	it("rejects action='single' instead of treating it as execution", {
 		skip: !createSubagentExecutor ? "executor not importable" : undefined,
 	}, async () => {
-		mockPi.onCall({ output: "single alias finished" });
 		const executor = makeExecutor([makeAgent("echo")]);
 
 		const result = await executor.execute(
@@ -299,8 +297,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			makeMinimalCtx(tempDir),
 		);
 
-		assert.equal(result.isError, undefined);
-		assert.match(result.content[0]?.text ?? "", /single alias finished/);
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Unknown action: single/);
+		assert.equal(mockPi.callCount(), 0);
 	});
 
 	it("rejects unknown action strings at runtime", {
@@ -1605,31 +1604,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
 	});
 
-	it("routes foreground single relative outputs to configured singleRunOutputBaseDir", {
-		skip: !createSubagentExecutor ? "executor not importable" : undefined,
-	}, async () => {
-		mockPi.onCall({ output: "configured report" });
-		const configuredBase = path.join(tempDir, "configured-outputs");
-		const executor = makeExecutor([makeAgent("researcher", { output: "context.md" })], {
-			singleRunOutputBaseDir: configuredBase,
-		});
-
-		const result = await executor.execute(
-			"single-configured-output-base",
-			{ agent: "researcher", task: "Write report" },
-			new AbortController().signal,
-			undefined,
-			makeMinimalCtx(tempDir),
-		);
-
-		const expectedOutputPath = path.join(configuredBase, "context.md");
-		const taskArg = readCallArgs().at(-1) ?? "";
-		assert.equal(result.isError, undefined);
-		assert.match(taskArg, new RegExp(`Write your findings to exactly this path: ${escapeRegExp(expectedOutputPath)}`));
-		assert.equal(fs.readFileSync(expectedOutputPath, "utf-8"), "configured report");
-		assert.equal(fs.existsSync(path.join(tempDir, "context.md")), false);
-	});
-
 	it("makes task-level output overrides authoritative in the child system prompt", {
 		skip: !createSubagentExecutor ? "executor not importable" : undefined,
 	}, async () => {
@@ -1683,21 +1657,21 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(readCallArgs().at(-1) ?? "", /Write your findings to(?: exactly this path)?:/);
 	});
 
-	it("rejects mismatched foreground timeout aliases before spawning", {
+	it("rejects invalid foreground timeout values before spawning", {
 		skip: !createSubagentExecutor ? "executor not importable" : undefined,
 	}, async () => {
 		const executor = makeExecutor();
 
 		const result = await executor.execute(
-			"timeout-alias-validation",
-			{ agent: "echo", task: "Task", timeoutMs: 100, maxRuntimeMs: 200 },
+			"timeout-validation",
+			{ agent: "echo", task: "Task", timeoutMs: 0 },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
 		);
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /aliases/);
+		assert.match(result.content[0]?.text ?? "", /timeoutMs must be a positive integer/);
 		assert.equal(mockPi.callCount(), 0);
 	});
 
@@ -1784,7 +1758,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(typeof activeRuntimeMs === "number" && activeRuntimeMs > 0 && activeRuntimeMs < maxExecutionTimeMs);
 		const result = await executor.execute(
 			"resume-timeout-forwarding",
-			{ action: "resume", id: remembered!.runId, message: "Continue.", maxRuntimeMs: 10_000 },
+			{ action: "resume", id: remembered!.runId, message: "Continue.", timeoutMs: 10_000 },
 			new AbortController().signal,
 			undefined,
 			makeMinimalCtx(tempDir),
@@ -1975,7 +1949,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			echoEnv: [
 				"PI_SUBAGENT_INTERCOM_SESSION_NAME",
 				"PI_SUBAGENT_ORCHESTRATOR_TARGET",
-				"PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH",
 				"PI_SUBAGENT_RUN_ID",
 				"PI_SUBAGENT_CHILD_AGENT",
 				"PI_SUBAGENT_CHILD_INDEX",
@@ -1994,7 +1967,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
 			PI_SUBAGENT_INTERCOM_SESSION_NAME: "subagent-echo-78f659a3-3",
 			PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
-			PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH: "unavailable",
 			PI_SUBAGENT_RUN_ID: "78f659a3",
 			PI_SUBAGENT_CHILD_AGENT: "echo",
 			PI_SUBAGENT_CHILD_INDEX: "2",

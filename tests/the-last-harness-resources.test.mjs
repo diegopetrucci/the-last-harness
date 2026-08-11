@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
+import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
@@ -111,5 +112,29 @@ test("startup resources keep AGENTS.md and CLAUDE.md context visible when trust 
 
 		assert.deepEqual(resources.context, [join(fixture.cwd, "AGENTS.md"), "CLAUDE.md"]);
 		assert.deepEqual(resources.skills, []);
+	});
+});
+
+test("startup resources use AGENTS.override.md for the nearest context and retain ancestor inheritance", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-resources-context-override-", { cwd: true, test: t });
+	const childCwd = join(fixture.cwd, "project");
+	mkdirSync(childCwd, { recursive: true });
+	writeFileSync(join(fixture.cwd, "AGENTS.md"), "ancestor context", "utf8");
+	writeFileSync(join(childCwd, "AGENTS.md"), "ordinary child context", "utf8");
+	writeFileSync(join(childCwd, "CLAUDE.md"), "claude child context", "utf8");
+	writeFileSync(join(childCwd, "AGENTS.override.md"), "override child context", "utf8");
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const contextFiles = loadProjectContextFiles({ cwd: childCwd, agentDir: fixture.agent });
+		assert.deepEqual(
+			contextFiles.map(({ path, content }) => ({ path, content })),
+			[
+				{ path: join(fixture.cwd, "AGENTS.md"), content: "ancestor context" },
+				{ path: join(childCwd, "AGENTS.override.md"), content: "override child context" },
+			],
+		);
+
+		const resources = await collectStartupResources(childCwd, { projectTrusted: true });
+		assert.deepEqual(resources.context, [join(fixture.cwd, "AGENTS.md"), "AGENTS.override.md"]);
 	});
 });

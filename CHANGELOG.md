@@ -7,10 +7,11 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - When a TLH update changes the packaged model or effort default for a primary agent or subagent role you've overridden, you'll now get a non-blocking startup notice and a `/reconcile` command to sort it out: Keep your override (acknowledging the new default) or Reset so TLH's updated default kicks in — for primary agents, Reset also takes effect in the active session. This only ever fires when TLH itself changes a packaged default, never on a schedule, and acknowledgements are tracked per provider so switching providers won't silently suppress a later genuine change. TLH now also records a baseline when you create an override, so the notice fires for users who have never run `/reconcile`. Overrides that existed before this release are silently baselined on your first startup with a known provider — the notice will fire on the next packaged-default change after that point, not for any changes that occurred earlier. Sessions with an unknown provider defer all comparison: no baseline is written, no notice appears, and Keep is unavailable until a provider is active.
+- Bumped Pi to `0.84.1`.
 
 ### Removed
 
-- Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
+- Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
 
 ## [0.35.0] - 2026-08-09
 

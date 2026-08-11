@@ -218,6 +218,14 @@ function compactCompletedProgress(progress) {
         recentOutput: [],
     };
 }
+function toolCallSummary(text, expandedText) {
+    return expandedText === text ? { text } : { text, expandedText };
+}
+function normalizeToolCallSummaries(toolCalls) {
+    return toolCalls.map((toolCall) => toolCall.expandedText !== undefined && toolCall.expandedText === toolCall.text
+        ? { text: toolCall.text }
+        : { ...toolCall });
+}
 function extractToolCallSummaries(messages) {
     if (!messages?.length)
         return [];
@@ -231,10 +239,9 @@ function extractToolCallSummaries(messages) {
             const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
                 ? part.arguments
                 : {};
-            summaries.push({
-                text: formatToolCall(part.name, args),
-                expandedText: formatToolCall(part.name, args, true),
-            });
+            const text = formatToolCall(part.name, args);
+            const expandedText = formatToolCall(part.name, args, true);
+            summaries.push(toolCallSummary(text, expandedText));
         }
     }
     return summaries;
@@ -277,7 +284,9 @@ export function sumResultsCost(results) {
 export function compactForegroundResult(result) {
     if (result.progress?.status === "running")
         return result;
-    const toolCalls = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);
+    const toolCalls = result.toolCalls?.length
+        ? normalizeToolCallSummaries(result.toolCalls)
+        : extractToolCallSummaries(result.messages);
     return {
         ...result,
         messages: undefined,
@@ -355,7 +364,6 @@ export function detectSubagentError(messages) {
     return { hasError: false };
 }
 export function extractToolArgsPreview(args) {
-    const truncatePreview = (value, maxLength) => value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
     const stringifyPreviewValue = (value) => {
         if (typeof value === "string" && value.trim().length > 0)
             return value;
@@ -374,38 +382,34 @@ export function extractToolArgsPreview(args) {
     };
     if (args.tool && typeof args.tool === "string") {
         const server = args.server && typeof args.server === "string" ? `${args.server}/` : "";
-        const toolArgs = args.args && typeof args.args === "string" ? ` ${args.args.slice(0, 40)}` : "";
+        const toolArgs = args.args && typeof args.args === "string" ? ` ${args.args}` : "";
         return `${server}${args.tool}${toolArgs}`;
     }
     const queriesPreview = previewArray(args.queries);
     if (queriesPreview)
-        return truncatePreview(queriesPreview, 60);
+        return queriesPreview;
     if (typeof args.query === "string" && args.query.trim().length > 0)
-        return truncatePreview(args.query, 60);
+        return args.query;
     if (typeof args.workflow === "string" && args.workflow.trim().length > 0)
-        return `workflow=${truncatePreview(args.workflow, 48)}`;
+        return `workflow=${args.workflow}`;
     if (typeof args.url === "string" && args.url.trim().length > 0)
-        return truncatePreview(args.url, 60);
+        return args.url;
     const urlsPreview = previewArray(args.urls);
     if (urlsPreview)
-        return truncatePreview(urlsPreview, 60);
+        return urlsPreview;
     if (typeof args.prompt === "string" && args.prompt.trim().length > 0)
-        return truncatePreview(args.prompt, 60);
+        return args.prompt;
     const previewKeys = ["command", "path", "file_path", "pattern", "query", "url", "task", "describe", "search"];
     for (const key of previewKeys) {
-        if (args[key] && typeof args[key] === "string") {
-            const value = args[key];
-            return truncatePreview(value, 60);
-        }
+        if (args[key] && typeof args[key] === "string")
+            return args[key];
     }
     for (const [key, value] of Object.entries(args)) {
         const arrayPreview = previewArray(value);
         if (arrayPreview)
-            return `${key}=${truncatePreview(arrayPreview, 50)}`;
-        if (typeof value === "string" && value.length > 0) {
-            const preview = truncatePreview(value, 50);
-            return `${key}=${preview}`;
-        }
+            return `${key}=${arrayPreview}`;
+        if (typeof value === "string" && value.length > 0)
+            return `${key}=${value}`;
     }
     return "";
 }

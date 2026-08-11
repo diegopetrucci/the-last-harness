@@ -475,8 +475,8 @@ test("stage-1 installPiIfNeeded: broken npm install (wrong pi version) throws", 
 });
 
 // Regression (tlht-5php, blocker): piInstalledByTlh=true, private runtime ABSENT at start,
-// user-owned ~/.local/bin/pi@0.83.0 present.  The installer must provision the private
-// runtime and succeed — without removing or executing ~/.local/bin/pi.
+// user-owned ~/.local/bin/pi at the pinned version present. The installer must provision
+// the private runtime and succeed — without removing or executing ~/.local/bin/pi.
 test("stage-1 regression (tlht-5php): installer never removes or execs user-owned ~/.local/bin/pi when piInstalledByTlh=true and private runtime is absent", (t) => {
 	const root = makeTempDir();
 	const homeDir = join(root, "home");
@@ -518,7 +518,7 @@ test("stage-1 regression (tlht-5php): installer never removes or execs user-owne
 		),
 	);
 
-	// User-owned ~/.local/bin/pi@0.83.0 — must NOT be removed or invoked by the installer.
+	// User-owned ~/.local/bin/pi at the pinned version — must NOT be removed or invoked by the installer.
 	writeFakePi(
 		legacyBin,
 		[
