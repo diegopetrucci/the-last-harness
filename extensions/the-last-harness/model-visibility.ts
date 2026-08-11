@@ -245,8 +245,9 @@ export function installTlhModelVisibilityFilter(): void {
 		modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(
 			this: ModelRuntime,
 			providerId?: string,
+			options?: Parameters<ModelRuntime["getAvailable"]>[1],
 		): ReturnType<typeof originalGetAvailable> {
-			return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId));
+			return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId, options));
 		};
 		modelRuntimePrototype.getAvailableSnapshot = function tlhModelVisibilityRuntimeGetAvailableSnapshot(
 			this: ModelRuntime,
@@ -282,15 +283,46 @@ export function installTlhModelVisibilityFilter(): void {
 		this: InteractiveModeLike,
 		searchTerm: string,
 	): Promise<ProviderModelReference | undefined> {
+		const isUnscopedCanonicalReference =
+			isCanonicalModelReference(searchTerm) && (this.session?.scopedModels?.length ?? 0) === 0;
+		if (isUnscopedCanonicalReference) {
+			try {
+				// Preserve Pi's filtered cached-match priority. A canonical-looking
+				// reference can also be a visible bare model id under another provider.
+				const filteredCachedMatch = findExactModelReferenceMatch(
+					searchTerm,
+					this.session?.modelRuntime?.getAvailableSnapshot() ?? this.session?.modelRegistry?.getAvailable() ?? [],
+				);
+				if (filteredCachedMatch) {
+					return filteredCachedMatch;
+				}
+
+				// Recover a known TLH-hidden canonical model from the unfiltered cached
+				// snapshot so explicit references do not enter Pi's refresh/status path.
+				const unfilteredCachedMatch = findExactModelReferenceMatch(
+					searchTerm,
+					getUnfilteredAvailableModels(this.session),
+				);
+				if (unfilteredCachedMatch && isTlhModelHidden(unfilteredCachedMatch)) {
+					return unfilteredCachedMatch;
+				}
+			} catch {
+				// Preserve Pi's matcher as the compatibility fallback when the runtime
+				// shape is unavailable or its snapshots cannot be read.
+			}
+		}
+
 		const exactMatch = await originalFindExactModelMatch.call(this, searchTerm);
-		if (exactMatch || !isCanonicalModelReference(searchTerm)) {
+		const hasScopedModelsAfterDelegation = (this.session?.scopedModels?.length ?? 0) > 0;
+		if (exactMatch || !isUnscopedCanonicalReference || hasScopedModelsAfterDelegation) {
 			return exactMatch;
 		}
-		if ((this.session?.scopedModels?.length ?? 0) > 0) {
-			return exactMatch;
-		}
+
 		try {
-			return findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
+			// Pi's refresh may discover a TLH-hidden model that its final filtered
+			// snapshot cannot return. Retry the refreshed unfiltered snapshot.
+			const refreshedMatch = findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
+			return refreshedMatch && isTlhModelHidden(refreshedMatch) ? refreshedMatch : exactMatch;
 		} catch {
 			return exactMatch;
 		}
