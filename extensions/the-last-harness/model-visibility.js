@@ -158,8 +158,8 @@ export function installTlhModelVisibilityFilter() {
         const originalGetAvailableSnapshot = modelRuntimePrototype.getAvailableSnapshot;
         modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] = originalGetAvailable;
         modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] = originalGetAvailableSnapshot;
-        modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(providerId) {
-            return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId));
+        modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(providerId, options) {
+            return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId, options));
         };
         modelRuntimePrototype.getAvailableSnapshot = function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
             return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
@@ -183,15 +183,29 @@ export function installTlhModelVisibilityFilter() {
     const originalFindExactModelMatch = interactiveModePrototype.findExactModelMatch;
     interactiveModePrototype[TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL] = originalFindExactModelMatch;
     interactiveModePrototype.findExactModelMatch = async function tlhFindExactModelMatch(searchTerm) {
-        const exactMatch = await originalFindExactModelMatch.call(this, searchTerm);
-        if (exactMatch || !isCanonicalModelReference(searchTerm)) {
-            return exactMatch;
+        const isUnscopedCanonicalReference = isCanonicalModelReference(searchTerm) && (this.session?.scopedModels?.length ?? 0) === 0;
+        if (isUnscopedCanonicalReference) {
+            try {
+                const filteredCachedMatch = findExactModelReferenceMatch(searchTerm, this.session?.modelRuntime?.getAvailableSnapshot() ?? this.session?.modelRegistry?.getAvailable() ?? []);
+                if (filteredCachedMatch) {
+                    return filteredCachedMatch;
+                }
+                const unfilteredCachedMatch = findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
+                if (unfilteredCachedMatch && isTlhModelHidden(unfilteredCachedMatch)) {
+                    return unfilteredCachedMatch;
+                }
+            }
+            catch {
+            }
         }
-        if ((this.session?.scopedModels?.length ?? 0) > 0) {
+        const exactMatch = await originalFindExactModelMatch.call(this, searchTerm);
+        const hasScopedModelsAfterDelegation = (this.session?.scopedModels?.length ?? 0) > 0;
+        if (exactMatch || !isUnscopedCanonicalReference || hasScopedModelsAfterDelegation) {
             return exactMatch;
         }
         try {
-            return findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
+            const refreshedMatch = findExactModelReferenceMatch(searchTerm, getUnfilteredAvailableModels(this.session));
+            return refreshedMatch && isTlhModelHidden(refreshedMatch) ? refreshedMatch : exactMatch;
         }
         catch {
             return exactMatch;

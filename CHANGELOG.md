@@ -5,6 +5,11 @@ All notable changes to The Last Harness will be documented in this file.
 ## Unreleased
 
 ### Added
+
+### Changed
+
+- Bumped the bundled Pi runtime and managed `@earendil-works/pi-*` package family to `0.84.1`; adapted explicit TLH-hidden canonical model lookup to Pi's cached catalog matcher while retaining the existing provider/harness compatibility divergences.
+
 ### Removed
 
 - Canonicalized the native supervisor channel: `subagent_supervisor` now exposes only `pending`/`status`, and `contact_supervisor` is the sole native child coordination tool. Removed the native parent-side `intercom` alias, legacy parent list/send/ask/reply actions and reply-file path, child-side `intercom` fallback registration, and implicit bridge allowlisting while preserving separately installed external intercom tools when TLH primary-agent filtering is disabled.
