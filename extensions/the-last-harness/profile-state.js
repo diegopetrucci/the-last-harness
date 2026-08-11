@@ -101,7 +101,7 @@ export async function readTlhInstallStateAsync() {
         return {};
     }
 }
-function canUseTlhStartupStateDir(statePath) {
+function canUseTlhStateDir(statePath, resolveExpectedPath) {
     const stateDir = dirname(statePath);
     try {
         const dirStat = lstatSync(stateDir);
@@ -120,13 +120,13 @@ function canUseTlhStartupStateDir(statePath) {
         if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
             return false;
         }
-        return tlhStartupStatePath() === statePath;
+        return resolveExpectedPath() === statePath;
     }
     catch {
         return false;
     }
 }
-function canReplaceTlhStartupStateFile(statePath) {
+function canReplaceTlhStateFile(statePath) {
     try {
         const stateStat = lstatSync(statePath);
         return !stateStat.isSymbolicLink() && stateStat.isFile();
@@ -135,10 +135,9 @@ function canReplaceTlhStartupStateFile(statePath) {
         return isRecord(error) && error.code === "ENOENT";
     }
 }
-function writeTlhStartupStateAtomically(statePath, content) {
-    const nofollowFlag = constants.O_NOFOLLOW;
+function writeTlhStateFileAtomicallyCore(statePath, content, nofollowFlag) {
     if (typeof nofollowFlag !== "number" || nofollowFlag === 0) {
-        return;
+        return false;
     }
     const stateDir = dirname(statePath);
     const stateBase = basename(statePath);
@@ -168,14 +167,36 @@ function writeTlhStartupStateAtomically(statePath, content) {
     if (cleanupError !== undefined) {
         throw cleanupError;
     }
+    return true;
+}
+function writeTlhStateFileAtomically(statePath, content) {
+    return writeTlhStateFileAtomicallyCore(statePath, content, constants.O_NOFOLLOW);
+}
+export function writeGuardedTlhStateFile(statePath, content, resolveExpectedPath) {
+    const managedDir = tlhStateDir();
+    if (!managedDir) {
+        return false;
+    }
+    try {
+        if (!pathWithinOrEqual(realpathForCompare(managedDir), realpathForCompare(statePath))) {
+            return false;
+        }
+    }
+    catch {
+        return false;
+    }
+    if (!canUseTlhStateDir(statePath, resolveExpectedPath) || !canReplaceTlhStateFile(statePath)) {
+        return false;
+    }
+    return writeTlhStateFileAtomically(statePath, content);
 }
 export function writeTlhStartupState(state) {
     try {
         const statePath = tlhStartupStatePath();
-        if (!statePath || !canUseTlhStartupStateDir(statePath) || !canReplaceTlhStartupStateFile(statePath)) {
+        if (!statePath) {
             return;
         }
-        writeTlhStartupStateAtomically(statePath, `${JSON.stringify(state, null, 2)}\n`);
+        writeGuardedTlhStateFile(statePath, `${JSON.stringify(state, null, 2)}\n`, tlhStartupStatePath);
     }
     catch {
     }
@@ -281,3 +302,6 @@ export function assertNotNormalPiSettings(settingsPath) {
         throw new Error(`Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`);
     }
 }
+export const __testing = {
+    writeTlhStateFileAtomicallyCore,
+};

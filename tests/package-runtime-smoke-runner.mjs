@@ -24,6 +24,7 @@ const expectedTlhCommands = [
 	"annotate-last-message",
 	"effort",
 	"experimental",
+	"reconcile",
 	"review",
 	"subagent-settings",
 	"switch-primary-agent",

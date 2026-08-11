@@ -18,6 +18,8 @@ import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
 import { collectStartupResources } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
+import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
+import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
@@ -229,6 +231,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 	});
 	registerEffortCommand(pi, primaryAgentRuntime);
 	registerExperimentalCommand(pi);
+	registerReconcileCommand(pi, primaryAgentRuntime);
 	registerSubagentSettingsCommand(pi);
 	registerLazyTlhTicketWorkflowUi(pi);
 	pi.registerCommand("review", {
@@ -371,6 +374,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		scheduleDeferredStartupTask(() => {
 			persistTlhLastSeenVersion();
+			maybeNotifyModelEffortDrift(ctx);
 			void maybeNotifyAvailableTlhUpdate(ctx, {
 				canNotify: () => activeTlhHeaderSessionToken === sessionToken,
 			}).catch(() => undefined);

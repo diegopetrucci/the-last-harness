@@ -12,6 +12,9 @@ const { registerTlhPrimaryAgentRuntime } = await jiti.import("../extensions/the-
 const { registerSubagentSettingsCommand, INDEPENDENCE_WARNING } = await jiti.import(
 	"../extensions/the-last-harness/subagent-settings.ts",
 );
+const { readReconcileState } = await jiti.import("../extensions/the-last-harness/model-effort-reconcile.ts");
+const { __resetModelEffortNoticeForTests, __setModelEffortNoticeTestHooks, maybeNotifyModelEffortDrift } =
+	await jiti.import("../extensions/the-last-harness/model-effort-notice.ts");
 
 function createPiHarness() {
 	const commands = new Map();
@@ -681,5 +684,307 @@ test("subagent-settings headless mode refuses fixed-model pins for independence-
 			);
 			assert.equal(existsSync(join(fixture.agent, "settings.json")), false, `no write should occur for ${role}`);
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Override baseline recording (ts-sjlt)
+// ---------------------------------------------------------------------------
+
+test("subagent-settings set records override baseline on first creation", async (t) => {
+	// Verifies that the CLI `set` path records a baseline when creating a first override.
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	const { ctx } = createCommandContext({
+		cwd: fixture.cwd,
+		// Use anthropic so baseline is recorded for the anthropic provider.
+		model: { provider: "anthropic", id: "claude-opus-5" },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "anthropic", id: "claude-opus-5" },
+				{ provider: "anthropic", id: "claude-sonnet-4-6" },
+			],
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// First creation: no prior override exists for developer.
+		await command.handler("set developer model anthropic/claude-opus-5", ctx);
+
+		const reconcileState = readReconcileState();
+		const baseline = reconcileState.acknowledgedSnapshot?.developer?.byProvider?.anthropic;
+		assert.ok(baseline, "baseline must be recorded in reconcile state after first override creation");
+		// developer's packaged Anthropic default in the bundled catalog should be recorded.
+		assert.ok(
+			typeof baseline.model === "string" || baseline.model === undefined,
+			"baseline model must be a string or undefined (the packaged default for anthropic)",
+		);
+	});
+});
+
+test("subagent-settings set does not rebaseline when editing an existing override", async (t) => {
+	// Regression guard: editing an existing override must not overwrite the baseline,
+	// because that would silently erase pending drift the user has not yet seen.
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	const { ctx } = createCommandContext({
+		cwd: fixture.cwd,
+		model: { provider: "anthropic", id: "claude-opus-5" },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "anthropic", id: "claude-opus-5" },
+				{ provider: "anthropic", id: "claude-sonnet-4-6" },
+			],
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Pre-seed an existing override and a stale baseline (from a prior /reconcile or creation).
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ subagents: { agentOverrides: { developer: { model: "anthropic/claude-opus-5" } } } }, null, 2)}\n`,
+		);
+		const { mkdirSync: mkdirSyncNode } = await import("node:fs");
+		mkdirSyncNode(join(fixture.agent, "tlh"), { recursive: true });
+		const staleBaselineContent =
+			JSON.stringify(
+				{
+					acknowledgedSnapshot: {
+						developer: { byProvider: { anthropic: { model: "anthropic/STALE-packaged-default" } } },
+					},
+				},
+				null,
+				2,
+			) + "\n";
+		writeFileSync(join(fixture.agent, "tlh", "reconcile-state.json"), staleBaselineContent);
+
+		// Edit the override (existing override already present).
+		await command.handler("set developer model anthropic/claude-sonnet-4-6", ctx);
+
+		// The stale baseline must NOT have been overwritten.
+		const reconcileState = readReconcileState();
+		const baseline = reconcileState.acknowledgedSnapshot?.developer?.byProvider?.anthropic;
+		assert.equal(
+			baseline?.model,
+			"anthropic/STALE-packaged-default",
+			"editing an existing override must not overwrite the existing baseline",
+		);
+	});
+});
+
+test("subagent-settings set records baseline for remove-then-recreate", async (t) => {
+	// Verifies that if an override is removed and then recreated, the baseline is
+	// refreshed. This is important because packaged defaults may have changed while
+	// no override existed.
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	const { ctx } = createCommandContext({
+		cwd: fixture.cwd,
+		model: { provider: "anthropic", id: "claude-opus-5" },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "anthropic", id: "claude-opus-5" },
+				{ provider: "anthropic", id: "claude-sonnet-4-6" },
+			],
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Simulate: override was previously created (no override in settings now — it was removed).
+		// Old baseline is stale (from before the removal).
+		const { mkdirSync: mkdirSyncNode } = await import("node:fs");
+		mkdirSyncNode(join(fixture.agent, "tlh"), { recursive: true });
+		const oldBaseline =
+			JSON.stringify(
+				{
+					acknowledgedSnapshot: {
+						developer: { byProvider: { anthropic: { model: "anthropic/OLD-packaged-default" } } },
+					},
+				},
+				null,
+				2,
+			) + "\n";
+		writeFileSync(join(fixture.agent, "tlh", "reconcile-state.json"), oldBaseline);
+		// No override in settings (override was removed).
+
+		// User creates a new override (recreate after removal).
+		await command.handler("set developer model anthropic/claude-opus-5", ctx);
+
+		// Baseline must have been refreshed with the current packaged default (not the old stale one).
+		const reconcileState = readReconcileState();
+		const baseline = reconcileState.acknowledgedSnapshot?.developer?.byProvider?.anthropic;
+		assert.ok(baseline, "baseline must be present after recreating an override");
+		assert.notEqual(
+			baseline?.model,
+			"anthropic/OLD-packaged-default",
+			"stale baseline must be replaced on remove-then-recreate",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Pure end-to-end journey (ts-sjlt acceptance criterion), subagent variant
+//
+// As with the primary journey test, this deliberately hand-writes no reconcile
+// state and asserts only the user-visible outcome, so that breaking baseline
+// recording fails on the notice assertion rather than on a state assertion.
+// ---------------------------------------------------------------------------
+
+test("journey: subagent override created under packaged X fires the startup notice once packaged default is Y", async (t) => {
+	// The command registers against the real bundled catalog, so the baseline is
+	// recorded from production packaged defaults (developer @ anthropic).
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	const { ctx } = createCommandContext({
+		cwd: fixture.cwd,
+		model: { provider: "anthropic", id: "claude-opus-5" },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "anthropic", id: "claude-opus-5", reasoning: true },
+				{ provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true },
+			],
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Real override-creation path: writes settings, then records the baseline.
+		await command.handler("set developer model anthropic/claude-opus-5", ctx);
+
+		// TLH update: developer's packaged anthropic default becomes a different model.
+		// Using a sentinel id keeps this independent of whatever the real default is,
+		// so the test cannot silently stop exercising drift if the catalog changes.
+		const updatedDeveloper = {
+			name: "developer",
+			description: "Developer subagent after a TLH update",
+			tlhAnthropicModels: ["anthropic/claude-CHANGED-after-update"],
+			tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+			tlhAnthropicThinking: "medium",
+			tlhOpenaiThinking: "max",
+		};
+
+		__resetModelEffortNoticeForTests();
+		__setModelEffortNoticeTestHooks({
+			loadPrimaryAgents: () => new Map(),
+			loadSubagentMetadata: () => [updatedDeveloper],
+		});
+		t.after(() => __resetModelEffortNoticeForTests());
+
+		const notifications = [];
+		maybeNotifyModelEffortDrift({
+			cwd: fixture.cwd,
+			hasUI: true,
+			model: { provider: "anthropic", id: "claude-opus-5" },
+			ui: {
+				notify(message, type) {
+					notifications.push({ message, type });
+				},
+			},
+		});
+
+		assert.equal(
+			notifications.length,
+			1,
+			"startup must warn that the packaged default changed for an overridden subagent whose baseline was recorded at override-creation time",
+		);
+		assert.match(
+			notifications[0].message,
+			/developer/,
+			`notice must name the drifted role, got: ${notifications[0].message}`,
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Gap 2: Override-creation detection with invalid stored subagent values (ts-8k8z)
+// ---------------------------------------------------------------------------
+
+test("journey: {model: null} stored subagent override is treated as absent, baseline created, notice fires on packaged change", async (t) => {
+	// Regression guard: a {model: null} override in settings.json (user-editable) must
+	// be treated as "no meaningful override" so baseline recording fires when a real
+	// override is created. Before the fix, hasMeaningfulSubagentOverride returned true
+	// for null (null !== undefined), silently skipping baseline creation.
+	const fixture = createIsolatedProfileFixture("tlh-subagent-settings-test-", { cwd: true, test: t });
+	const pi = createPiHarness();
+	registerSubagentSettingsCommand(pi);
+	const command = pi.commands.get("subagent-settings");
+
+	const { ctx } = createCommandContext({
+		cwd: fixture.cwd,
+		model: { provider: "anthropic", id: "claude-opus-5" },
+		modelRegistry: {
+			getAvailable: () => [
+				{ provider: "anthropic", id: "claude-opus-5", reasoning: true },
+				{ provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true },
+			],
+		},
+	});
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		// Pre-seed settings with an invalid {model: null} override (user-edited).
+		writeFileSync(
+			join(fixture.agent, "settings.json"),
+			`${JSON.stringify({ subagents: { agentOverrides: { developer: { model: null } } } }, null, 2)}\n`,
+		);
+
+		// User runs the command to set a real model override — this is a first-creation
+		// transition because {model: null} is not a meaningful override.
+		await command.handler("set developer model anthropic/claude-opus-5", ctx);
+
+		// Baseline must have been recorded because {model: null} was not meaningful.
+		const baseline = readReconcileState().acknowledgedSnapshot?.developer?.byProvider?.anthropic;
+		assert.ok(baseline, "baseline must be recorded when replacing a {model: null} stored override");
+
+		// Simulate a TLH update: developer's packaged anthropic default changes.
+		const updatedDeveloper = {
+			name: "developer",
+			description: "Developer subagent after a TLH update",
+			tlhAnthropicModels: ["anthropic/claude-CHANGED-after-update"],
+			tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+			tlhAnthropicThinking: "medium",
+			tlhOpenaiThinking: "max",
+		};
+
+		// User-visible outcome: notice fires because baseline was recorded and packaged changed.
+		__resetModelEffortNoticeForTests();
+		__setModelEffortNoticeTestHooks({
+			loadPrimaryAgents: () => new Map(),
+			loadSubagentMetadata: () => [updatedDeveloper],
+		});
+		t.after(() => __resetModelEffortNoticeForTests());
+
+		const notifications = [];
+		maybeNotifyModelEffortDrift({
+			cwd: fixture.cwd,
+			hasUI: true,
+			model: { provider: "anthropic", id: "claude-opus-5" },
+			ui: {
+				notify(message, type) {
+					notifications.push({ message, type });
+				},
+			},
+		});
+
+		assert.equal(
+			notifications.length,
+			1,
+			"notice must fire because packaged default changed ({model: null} was not treated as an existing override)",
+		);
+		assert.match(
+			notifications[0].message,
+			/developer/,
+			`notice must name the drifted role, got: ${notifications[0].message}`,
+		);
 	});
 });
