@@ -100,12 +100,8 @@ function makeEmptyChannel(runId: string): string {
 
 function ageChannel(channelDir: string, ageMs: number): void {
 	const timestamp = new Date(Date.now() - ageMs);
-	for (const dir of [path.join(channelDir, "requests"), channelDir]) {
-		try {
-			fs.utimesSync(dir, timestamp, timestamp);
-		} catch {
-			/* dir may not exist */
-		}
+	for (const dir of [path.join(channelDir, "requests"), path.join(channelDir, "replies"), channelDir]) {
+		if (fs.existsSync(dir)) fs.utimesSync(dir, timestamp, timestamp);
 	}
 }
 
@@ -167,9 +163,10 @@ describe("native supervisor channel", () => {
 		);
 	});
 
-	it("prunes stale empty supervisor channel directories before polling", () => {
+	it("creates request-only channels and prunes them when stale and empty", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const staleEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		assert.deepEqual(fs.readdirSync(staleEmptyChannel), ["requests"]);
 		ageChannel(staleEmptyChannel, 2 * 60 * 1000);
 		const sent: Array<{ details?: { id?: string } }> = [];
 		const ctx = {
@@ -198,7 +195,101 @@ describe("native supervisor channel", () => {
 		assert.deepEqual(sent, []);
 	});
 
-	it("preserves fresh empty and stale non-empty supervisor channel directories", () => {
+	it("prunes a stale empty legacy replies directory left by a pre-upgrade runtime", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		fs.mkdirSync(path.join(staleLegacyChannel, "replies"));
+		assert.deepEqual(fs.readdirSync(staleLegacyChannel).sort(), ["replies", "requests"]);
+		ageChannel(staleLegacyChannel, 2 * 60 * 1000);
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(staleLegacyChannel), false);
+	});
+
+	it("preserves stale channels with non-empty legacy replies directories", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		const legacyRepliesDir = path.join(staleLegacyChannel, "replies");
+		const legacyReplyFile = path.join(legacyRepliesDir, "reply.json");
+		fs.mkdirSync(legacyRepliesDir);
+		fs.writeFileSync(legacyReplyFile, "{}");
+		ageChannel(staleLegacyChannel, 2 * 60 * 1000);
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(staleLegacyChannel), true);
+		assert.equal(fs.existsSync(legacyRepliesDir), true);
+		assert.equal(fs.existsSync(legacyReplyFile), true);
+		assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
+	});
+
+	it("preserves stale channels when the legacy replies path cannot be read as a directory", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+		const legacyRepliesPath = path.join(staleLegacyChannel, "replies");
+		fs.writeFileSync(legacyRepliesPath, "not a directory");
+		ageChannel(staleLegacyChannel, 2 * 60 * 1000);
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [],
+			registerTool: () => {},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		channel.start();
+		channel.dispose();
+
+		assert.equal(fs.existsSync(staleLegacyChannel), true);
+		assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
+		assert.equal(fs.statSync(legacyRepliesPath).isFile(), true);
+	});
+
+	it("preserves fresh or non-empty supervisor channel directories", () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const freshEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
 		const staleWithRequest = makeEmptyChannel(`run-${randomUUID()}`);
@@ -209,6 +300,13 @@ describe("native supervisor channel", () => {
 			JSON.stringify({ type: "subagent.supervisor.request", id: staleRequestId }),
 		);
 		ageChannel(staleWithRequest, 2 * 60 * 1000);
+		const staleWithFreshLegacyReplies = makeEmptyChannel(`run-${randomUUID()}`);
+		const freshLegacyRepliesDir = path.join(staleWithFreshLegacyReplies, "replies");
+		fs.mkdirSync(freshLegacyRepliesDir);
+		const staleTimestamp = new Date(Date.now() - 2 * 60 * 1000);
+		for (const dir of [path.join(staleWithFreshLegacyReplies, "requests"), staleWithFreshLegacyReplies]) {
+			fs.utimesSync(dir, staleTimestamp, staleTimestamp);
+		}
 		const ctx = {
 			cwd: process.cwd(),
 			hasUI: false,
@@ -231,106 +329,9 @@ describe("native supervisor channel", () => {
 
 		assert.equal(fs.existsSync(freshEmptyChannel), true);
 		assert.equal(fs.existsSync(staleWithRequest), true);
-	});
-
-	it("prunes legacy stale empty supervisor channel directories that have an empty replies dir", () => {
-		const currentSessionId = `session-${randomUUID()}`;
-		// Simulate a channel dir written by an older TLH version: both requests/ and replies/ exist.
-		const staleWithEmptyReplies = makeEmptyChannel(`run-${randomUUID()}`);
-		fs.mkdirSync(path.join(staleWithEmptyReplies, "replies"), { recursive: true, mode: 0o700 });
-		// Age channelDir and requests/ (creating replies/ updated channelDir mtime, so age after).
-		ageChannel(staleWithEmptyReplies, 2 * 60 * 1000);
-		const ctx = {
-			cwd: process.cwd(),
-			hasUI: false,
-			sessionManager: {
-				getSessionId: () => currentSessionId,
-				getSessionFile: () => null,
-				getEntries: () => [],
-			},
-		};
-		const pi = {
-			getAllTools: () => [],
-			registerTool: () => {},
-			sendMessage: () => {},
-			getSessionName: () => "shared-name",
-		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-		channel.start();
-		channel.dispose();
-
-		assert.equal(
-			fs.existsSync(staleWithEmptyReplies),
-			false,
-			"legacy stale channel with empty replies dir must be fully removed",
-		);
-	});
-
-	it("preserves legacy stale supervisor channel directories whose replies dir still has files", () => {
-		const currentSessionId = `session-${randomUUID()}`;
-		// Simulate a channel dir left by an older TLH version where a reply file is still present.
-		const staleWithReplyFile = makeEmptyChannel(`run-${randomUUID()}`);
-		fs.mkdirSync(path.join(staleWithReplyFile, "replies"), { recursive: true, mode: 0o700 });
-		fs.writeFileSync(path.join(staleWithReplyFile, "replies", "some-reply.json"), JSON.stringify({ type: "reply" }));
-		ageChannel(staleWithReplyFile, 2 * 60 * 1000);
-		const ctx = {
-			cwd: process.cwd(),
-			hasUI: false,
-			sessionManager: {
-				getSessionId: () => currentSessionId,
-				getSessionFile: () => null,
-				getEntries: () => [],
-			},
-		};
-		const pi = {
-			getAllTools: () => [],
-			registerTool: () => {},
-			sendMessage: () => {},
-			getSessionName: () => "shared-name",
-		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-		channel.start();
-		channel.dispose();
-
-		assert.equal(
-			fs.existsSync(staleWithReplyFile),
-			true,
-			"legacy stale channel with files in replies dir must not be removed (treated as in-use)",
-		);
-	});
-
-	it("prunes stale empty supervisor channel directories that have no replies dir", () => {
-		const currentSessionId = `session-${randomUUID()}`;
-		// Manually create a channel dir with only a requests subdir (no replies dir),
-		// simulating a channel created after the reply-file plumbing was removed.
-		const staleNoReplies = resolveSupervisorChannelDir(`run-${randomUUID()}`, "worker", 0);
-		createdChannels.push(staleNoReplies);
-		fs.mkdirSync(path.join(staleNoReplies, "requests"), { recursive: true, mode: 0o700 });
-		// No replies dir — age the channel and requests dir.
-		ageChannel(staleNoReplies, 2 * 60 * 1000);
-		const ctx = {
-			cwd: process.cwd(),
-			hasUI: false,
-			sessionManager: {
-				getSessionId: () => currentSessionId,
-				getSessionFile: () => null,
-				getEntries: () => [],
-			},
-		};
-		const pi = {
-			getAllTools: () => [],
-			registerTool: () => {},
-			sendMessage: () => {},
-			getSessionName: () => "shared-name",
-		};
-		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-		channel.start();
-		channel.dispose();
-
-		assert.equal(fs.existsSync(staleNoReplies), false, "stale empty channel without replies dir must be removed");
+		assert.equal(fs.existsSync(staleWithFreshLegacyReplies), true);
+		assert.equal(fs.existsSync(path.join(staleWithFreshLegacyReplies, "requests")), true);
+		assert.equal(fs.existsSync(freshLegacyRepliesDir), true);
 	});
 
 	it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {
@@ -364,6 +365,71 @@ describe("native supervisor channel", () => {
 			sent.map((message) => message.details?.id),
 			[matchingId],
 		);
+	});
+
+	it("keeps an installed intercom tool and exposes only native supervisor inspection", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId });
+		const registeredTools = new Map<
+			string,
+			{
+				parameters?: { properties?: { action?: { enum?: string[] } } };
+				execute: (_id: string, params: { action: string }) => Promise<unknown>;
+			}
+		>();
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: {
+				getSessionId: () => currentSessionId,
+				getSessionFile: () => null,
+				getEntries: () => [],
+			},
+		};
+		const pi = {
+			getAllTools: () => [{ name: "intercom" }, ...[...registeredTools.keys()].map((name) => ({ name }))],
+			registerTool: (tool: {
+				name: string;
+				parameters?: { properties?: { action?: { enum?: string[] } } };
+				execute: (_id: string, params: { action: string }) => Promise<unknown>;
+			}) => {
+				registeredTools.set(tool.name, tool);
+			},
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+
+		try {
+			assert.deepEqual([...registeredTools.keys()], []);
+			channel.start();
+
+			assert.deepEqual([...registeredTools.keys()], [NATIVE_SUPERVISOR_TOOL_NAME]);
+			const supervisorTool = registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
+			assert.deepEqual(supervisorTool.parameters?.properties?.action?.enum, ["pending", "status"]);
+			const status = (await supervisorTool.execute("status", { action: "status" })) as {
+				content?: Array<{ text?: string }>;
+			};
+			assert.match(status.content?.[0]?.text ?? "", /Native supervisor channel active/);
+			const pending = (await supervisorTool.execute("pending", { action: "pending" })) as {
+				details?: { pending?: Array<{ id?: string }> };
+			};
+			assert.deepEqual(
+				pending.details?.pending?.map((request) => request.id),
+				[requestId],
+			);
+			await assert.rejects(
+				() => supervisorTool.execute("list", { action: "list" }),
+				/Unsupported supervisor action: list/,
+			);
+			await assert.rejects(
+				() => supervisorTool.execute("reply", { action: "reply" }),
+				/Unsupported supervisor action: reply/,
+			);
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("cleans up pre-pause expired and terminal requests before displaying them", () => {
@@ -710,7 +776,7 @@ describe("native supervisor channel", () => {
 		}
 	});
 
-	it("refreshes pending requests before listing or replying", async () => {
+	it("refreshes pending requests before listing", async () => {
 		const currentSessionId = `session-${randomUUID()}`;
 		const runId = `run-${randomUUID()}`;
 		const requestId = writeRequest({ sessionId: currentSessionId, runId });
@@ -772,7 +838,7 @@ describe("native supervisor channel", () => {
 		}
 	});
 
-	it("describes blocking supervisor tools as durable pauses until resume or cancel", () => {
+	it("registers only contact_supervisor for child supervisor coordination", () => {
 		const registeredTools = new Map<string, { name: string; description?: string }>();
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
@@ -790,7 +856,8 @@ describe("native supervisor channel", () => {
 		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 		try {
-			registerNativeSupervisorClient(pi as never, { includeIntercomFallback: true });
+			registerNativeSupervisorClient(pi as never);
+			assert.deepEqual([...registeredTools.keys()], ["contact_supervisor"]);
 			assert.match(
 				registeredTools.get("contact_supervisor")?.description ?? "",
 				/durably pause the child until the parent resumes or cancels it/i,
@@ -799,17 +866,12 @@ describe("native supervisor channel", () => {
 				registeredTools.get("contact_supervisor")?.description ?? "",
 				/no child process keeps running while paused/i,
 			);
-			assert.match(
-				registeredTools.get("intercom")?.description ?? "",
-				/durably pause the child until the parent resumes or cancels it/i,
-			);
-			assert.match(registeredTools.get("intercom")?.description ?? "", /no child process keeps running while paused/i);
 		} finally {
 			restoreEnv();
 		}
 	});
 
-	it("does not override an installed child intercom when fallback is enabled", () => {
+	it("does not override an installed external child intercom", () => {
 		const installedIntercom = { name: "intercom", description: "Installed intercom" };
 		const registeredTools = new Map<string, { name: string; description?: string }>([["intercom", installedIntercom]]);
 		const runId = `run-${randomUUID()}`;
@@ -829,7 +891,7 @@ describe("native supervisor channel", () => {
 		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
 
 		try {
-			registerNativeSupervisorClient(pi as never, { includeIntercomFallback: true });
+			registerNativeSupervisorClient(pi as never);
 			assert.equal(registeredTools.get("intercom"), installedIntercom);
 			assert.equal(registeredTools.has("contact_supervisor"), true);
 		} finally {
@@ -837,7 +899,7 @@ describe("native supervisor channel", () => {
 		}
 	});
 
-	it("removes the request file when a child supervisor ask is cancelled", async () => {
+	it("preserves structured interview requests until the blocking wait is cancelled", async () => {
 		const runId = `run-${randomUUID()}`;
 		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
 		createdChannels.push(channelDir);
@@ -852,7 +914,7 @@ describe("native supervisor channel", () => {
 			{
 				execute: (
 					_id: string,
-					params: { reason: string; message?: string },
+					params: { reason: string; message?: string; interview?: unknown },
 					signal?: AbortSignal,
 				) => Promise<unknown> | unknown;
 			}
@@ -863,76 +925,86 @@ describe("native supervisor channel", () => {
 				name: string;
 				execute: (
 					_id: string,
-					params: { reason: string; message?: string },
+					params: { reason: string; message?: string; interview?: unknown },
 					signal?: AbortSignal,
 				) => Promise<unknown> | unknown;
 			}) => {
 				registeredTools.set(tool.name, tool);
 			},
 		};
-		registerNativeSupervisorClient(pi as never, { includeIntercomFallback: false });
+		registerNativeSupervisorClient(pi as never);
 		const controller = new AbortController();
+		const interview = { questions: [{ id: "choice", prompt: "Choose A or B" }] };
+		const resultPromise = registeredTools
+			.get("contact_supervisor")!
+			.execute(
+				"contact",
+				{ reason: "interview_request", message: "Need structured input", interview },
+				controller.signal,
+			) as Promise<unknown>;
+
+		assert.deepEqual(fs.readdirSync(channelDir), ["requests"]);
+		const requestEntries = fs.readdirSync(path.join(channelDir, "requests"));
+		assert.equal(requestEntries.length, 1);
+		const request = JSON.parse(fs.readFileSync(path.join(channelDir, "requests", requestEntries[0]!), "utf-8")) as {
+			reason?: string;
+			message?: string;
+			expectsReply?: boolean;
+			expiresAt?: number;
+			interview?: unknown;
+		};
+		assert.equal(request.reason, "interview_request");
+		assert.match(
+			request.message ?? "",
+			/Structured interview response requested\. Once the child is durably paused, resume it with JSON guidance matching the requested interview shape via subagent\(\{ action: "resume"/,
+		);
+		assert.match(request.message ?? "", /message: "<JSON>"/);
+		assert.match(request.message ?? "", /Do not send an in-band reply or write a `replies\/` file/);
+		assert.doesNotMatch(request.message ?? "", /Reply with JSON/);
+		assert.equal(request.expectsReply, true);
+		assert.equal(typeof request.expiresAt, "number");
+		assert.deepEqual(request.interview, interview);
+
 		controller.abort();
+		await assert.rejects(resultPromise, /Supervisor request cancelled/);
+		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
+	});
+
+	it("cleans up a blocking request when its abort-or-timeout wait expires", async () => {
+		const runId = `run-${randomUUID()}`;
+		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+		createdChannels.push(channelDir);
+		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
+		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
+		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+		process.env[SUBAGENT_RUN_ID_ENV] = runId;
+		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+		process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "1";
+		const registeredTools = new Map<
+			string,
+			{
+				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown;
+			}
+		>();
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: {
+				name: string;
+				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown;
+			}) => {
+				registeredTools.set(tool.name, tool);
+			},
+		};
+		registerNativeSupervisorClient(pi as never);
 
 		await assert.rejects(
 			() =>
 				registeredTools
 					.get("contact_supervisor")!
-					.execute("contact", { reason: "need_decision", message: "Need a decision" }, controller.signal),
-			/Supervisor request cancelled/,
+					.execute("contact", { reason: "need_decision", message: "Need a decision" }),
+			/Timed out waiting for supervisor pause or cancellation/,
 		);
-
 		assert.deepEqual(fs.readdirSync(path.join(channelDir, "requests")), []);
-	});
-
-	it("throws an accurate error for unsupported child intercom actions (e.g. pending)", async () => {
-		const runId = `run-${randomUUID()}`;
-		const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
-		createdChannels.push(channelDir);
-		process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
-		process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
-		process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
-		process.env[SUBAGENT_RUN_ID_ENV] = runId;
-		process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
-		process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
-		const registeredTools = new Map<
-			string,
-			{
-				execute: (
-					_id: string,
-					params: { action: string; message?: string },
-					signal?: AbortSignal,
-				) => Promise<unknown> | unknown;
-			}
-		>();
-		const pi = {
-			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
-			registerTool: (tool: {
-				name: string;
-				execute: (
-					_id: string,
-					params: { action: string; message?: string },
-					signal?: AbortSignal,
-				) => Promise<unknown> | unknown;
-			}) => {
-				registeredTools.set(tool.name, tool);
-			},
-		};
-		try {
-			registerNativeSupervisorClient(pi as never, { includeIntercomFallback: true });
-			await assert.rejects(
-				() => registeredTools.get("intercom")!.execute("intercom", { action: "pending" }),
-				(err: unknown) => {
-					assert.ok(err instanceof Error);
-					assert.match(err.message, /Native child intercom supports status, list, send, and ask/);
-					assert.match(err.message, /subagent resume or subagent interrupt/);
-					assert.doesNotMatch(err.message, /reply/);
-					assert.doesNotMatch(err.message, /pending/);
-					return true;
-				},
-			);
-		} finally {
-			restoreEnv();
-		}
 	});
 });

@@ -11,7 +11,6 @@ const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) ==
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
-export const SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH_ENV = "PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH";
 export const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
 export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR";
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
@@ -159,7 +158,6 @@ export function buildPiArgs(input) {
     if (input.orchestratorIntercomTarget) {
         env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
     }
-    env[SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH_ENV] = input.blockingSupervisorReplyPath ?? "";
     if (input.parentSessionId) {
         env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
     }
@@ -167,7 +165,6 @@ export function buildPiArgs(input) {
         const childIndex = input.childIndex ?? 0;
         const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
         fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
-        fs.mkdirSync(path.join(channelDir, "replies"), { recursive: true });
         env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
     }
     if (input.runId) {

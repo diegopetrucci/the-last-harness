@@ -19,16 +19,14 @@ const DEFAULT_INTERCOM_TARGET_PREFIX = "subagent-chat";
 export const INTERCOM_BRIDGE_MARKER = "Intercom orchestration channel:";
 const DEFAULT_INTERCOM_BRIDGE_TEMPLATE = `The inherited thread is reference-only. Do not continue that conversation or send questions, status updates, or completion handoffs to the supervisor in normal assistant text.
 
-Use contact_supervisor first. It resolves the supervisor session "{orchestratorTarget}" and run metadata automatically.
+Use contact_supervisor. It resolves the supervisor session "{orchestratorTarget}" and run metadata automatically.
 - Need a decision, blocked, approval, or product/API/scope ambiguity: contact_supervisor({ reason: "need_decision", message: "<question>" })
 - Blocking supervisor requests durably pause the child. Once that blocking tool call starts, this OS process will stop; no child process keeps running during the pause.
 - The parent must explicitly resume the paused child unchanged, resume it with guidance, or cancel it. Do not retry the blocking request or assume the same child process will still be live.
-- If the tool reports that blocking supervisor replies are unavailable in this child session (for example a foreground launch), do not keep retrying. Return the blocker in your final result instead, and use progress_update only for meaningful non-blocking updates.
 - Do not ask for clarification when the only conflict is review-only/no-edit versus progress-writing or artifact-writing instructions. Review-only/no-edit wins; leave files unchanged and mention the conflict in your final result only if it matters.
 - Meaningful progress or unexpected discoveries that change the plan: contact_supervisor({ reason: "progress_update", message: "UPDATE: <summary>" })
-- Generic intercom is lower-level plumbing/fallback only: intercom({ action: "ask", to: "{orchestratorTarget}", message: "<question>" })
 
-Do not use contact_supervisor or intercom for routine completion handoffs. If no coordination is needed, return a focused task result.`;
+Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.`;
 
 export interface IntercomBridgeState {
 	active: boolean;
@@ -175,7 +173,7 @@ export function resolveIntercomBridge(input: ResolveIntercomBridgeInput): Interc
 export function applyIntercomBridgeToAgent(agent: AgentConfig, bridge: IntercomBridgeState): AgentConfig {
 	if (!bridge.active || !bridge.orchestratorTarget) return agent;
 
-	const bridgeTools = ["intercom", "contact_supervisor"];
+	const bridgeTools = ["contact_supervisor"];
 	const tools = agent.tools
 		? [...agent.tools, ...bridgeTools.filter((tool) => !agent.tools?.includes(tool))]
 		: agent.tools;

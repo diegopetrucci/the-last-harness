@@ -182,7 +182,6 @@ interface TaskParam {
 export interface SubagentParamsLike {
 	action?: string;
 	id?: string;
-	runId?: string;
 	dir?: string;
 	index?: number;
 	view?: "fleet" | "transcript";
@@ -196,7 +195,6 @@ export interface SubagentParamsLike {
 	context?: "fresh" | "fork";
 	async?: boolean;
 	timeoutMs?: number;
-	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
 	clarify?: boolean;
@@ -745,7 +743,7 @@ function resolveRememberedForegroundRun(
 			child: import("../../shared/types.ts").ForegroundResumeChild;
 	  }
 	| undefined {
-	const requested = (params.id ?? params.runId)?.trim();
+	const requested = params.id?.trim();
 	if (!requested || !state.foregroundRuns?.size) return undefined;
 	const direct = state.foregroundRuns.get(requested);
 	const matches = direct
@@ -869,7 +867,6 @@ function buildRunStatusParams(params: SubagentParamsLike) {
 	return {
 		action: "status" as const,
 		id: params.id,
-		runId: params.runId,
 		dir: params.dir,
 		index: params.index,
 		view: params.view,
@@ -933,7 +930,7 @@ function resolveResumeTarget(
 	state: SubagentState,
 	options: { asyncRequireSessionFile?: boolean } = {},
 ): ResumeSourceTarget {
-	const requested = (params.id ?? params.runId)?.trim() ?? "";
+	const requested = params.id?.trim() ?? "";
 	let foregroundTarget: ForegroundResumeSourceTarget | undefined;
 	let foregroundError: unknown;
 	let asyncTarget: AsyncResumeSourceTarget | undefined;
@@ -978,7 +975,7 @@ function resolveResumeTarget(
 	if (foregroundError && !isAsyncRunNotFound(asyncError)) throw foregroundError;
 	if (foregroundError) throw foregroundError;
 	if (asyncError) throw asyncError;
-	throw new Error("Run not found. Provide id or runId.");
+	throw new Error("Run not found. Provide id.");
 }
 
 function claimPausedAwaitingSupervisorTarget(
@@ -2185,7 +2182,7 @@ async function resumeAsyncRun(input: {
 }): Promise<SubagentToolResult<Details>> {
 	const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
 	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
-	const requestedId = input.params.id ?? input.params.runId;
+	const requestedId = input.params.id;
 
 	let target: ResumeSourceTarget;
 	const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
@@ -2739,21 +2736,11 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): S
 
 function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: number; error?: string } {
 	const rawTimeout = params.timeoutMs;
-	const rawMaxRuntime = params.maxRuntimeMs;
-	if (rawTimeout === undefined && rawMaxRuntime === undefined) return {};
-	for (const [name, value] of [
-		["timeoutMs", rawTimeout],
-		["maxRuntimeMs", rawMaxRuntime],
-	] as const) {
-		if (value === undefined) continue;
-		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-			return { error: `${name} must be a positive integer.` };
-		}
+	if (rawTimeout === undefined) return {};
+	if (typeof rawTimeout !== "number" || !Number.isInteger(rawTimeout) || rawTimeout <= 0) {
+		return { error: "timeoutMs must be a positive integer." };
 	}
-	if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
-		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both." };
-	}
-	return { timeoutMs: rawTimeout ?? rawMaxRuntime };
+	return { timeoutMs: rawTimeout };
 }
 
 function resolveEffectiveSingleTimeout(
@@ -4078,21 +4065,6 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): SubagentToolRe
 	};
 }
 
-function omitExecutionModeActionAlias(params: SubagentParamsLike): SubagentParamsLike {
-	const action = params.action?.toLowerCase();
-	if (action === "single" && (params.agent !== undefined || params.task !== undefined)) {
-		const rest = { ...params };
-		delete rest.action;
-		return rest;
-	}
-	if ((action === "parallel" || action === "tasks") && (params.tasks?.length ?? 0) > 0) {
-		const rest = { ...params };
-		delete rest.action;
-		return rest;
-	}
-	return params;
-}
-
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -4113,7 +4085,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
-		const requestParams = omitExecutionModeActionAlias(params);
+		const requestParams = params;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
 		const paramsWithResolvedCwd =
 			requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
@@ -4163,7 +4135,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 			}
 			if (action === "status") {
-				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+				const targetRunId = paramsWithResolvedCwd.id;
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
 				if (paramsWithResolvedCwd.view === "fleet") {
 					return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
@@ -4228,7 +4200,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						isError: true,
 						details: { mode: "management", results: [] },
 					};
-				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				const targetRunId = paramsWithResolvedCwd.id;
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
@@ -4289,7 +4261,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 			}
 			if (action === "interrupt") {
-				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				const targetRunId = paramsWithResolvedCwd.id;
 				const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
 				if (
 					rememberedPaused?.child.status === "paused" &&
@@ -4672,7 +4644,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: SubagentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<SubagentToolResult<Details>> => {
-		const requestParams = omitExecutionModeActionAlias(params);
+		const requestParams = params;
 		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;

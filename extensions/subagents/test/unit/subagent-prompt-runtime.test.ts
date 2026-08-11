@@ -492,7 +492,7 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(registered, ["contact_supervisor"]);
 	});
 
-	it("registers native supervisor tools at runtime when pi-intercom is absent", async () => {
+	it("registers only contact_supervisor at runtime when pi-intercom is absent", async () => {
 		setSupervisorEnv();
 		const handlers = new Map<string, (payload?: unknown) => unknown>();
 		const registered: string[] = [];
@@ -515,7 +515,7 @@ describe("subagent prompt runtime", () => {
 		assert.deepEqual(registered, ["contact_supervisor"]);
 
 		await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
-		assert.deepEqual(registered, ["contact_supervisor", "intercom"]);
+		assert.deepEqual(registered, ["contact_supervisor"]);
 	});
 
 	it("sets the child intercom session name from env during agent startup", async () => {

@@ -248,18 +248,17 @@ describe("async execution utilities", () => {
 		}
 	});
 
-	it("background runs mark supervisor reply paths as live for child intercom metadata", async () => {
+	it("passes native supervisor metadata to background children", async () => {
 		mockPi.onCall({
 			echoEnv: [
 				"PI_SUBAGENT_INTERCOM_SESSION_NAME",
 				"PI_SUBAGENT_ORCHESTRATOR_TARGET",
-				"PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH",
 				"PI_SUBAGENT_RUN_ID",
 				"PI_SUBAGENT_CHILD_AGENT",
 				"PI_SUBAGENT_CHILD_INDEX",
 			],
 		});
-		const id = `async-supervisor-reply-path-${Date.now().toString(36)}`;
+		const id = `async-supervisor-metadata-${Date.now().toString(36)}`;
 		const run = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Echo supervisor metadata",
@@ -285,7 +284,6 @@ describe("async execution utilities", () => {
 		assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
 			PI_SUBAGENT_INTERCOM_SESSION_NAME: `subagent-worker-${id}-1`,
 			PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
-			PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH: "live",
 			PI_SUBAGENT_RUN_ID: id,
 			PI_SUBAGENT_CHILD_AGENT: "worker",
 			PI_SUBAGENT_CHILD_INDEX: "0",

@@ -244,7 +244,7 @@ export function inspectSubagentStatus(params, deps = {}) {
             childSafe: Boolean(deps.nested),
         });
     }
-    if (!params.id && !params.runId && !params.dir) {
+    if (!params.id && !params.dir) {
         if (deps.nested) {
             return {
                 content: [
@@ -294,7 +294,7 @@ export function inspectSubagentStatus(params, deps = {}) {
     }
     let location;
     try {
-        const requestedId = params.id ?? params.runId;
+        const requestedId = params.id;
         if (!params.dir && requestedId) {
             const resolved = resolveSubagentRunId(requestedId, {
                 asyncDirRoot,

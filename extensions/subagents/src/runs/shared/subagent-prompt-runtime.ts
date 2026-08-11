@@ -317,16 +317,9 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerSteeringInbox(pi);
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
 	let nativeSupervisorClientRegistered = false;
-	let nativeSupervisorFallbackRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
 		if (nativeSupervisorClientRegistered) return;
 		nativeSupervisorClientRegistered = true;
-		registerNativeSupervisorClient(pi, { includeIntercomFallback: false });
-	};
-	const registerNativeSupervisorFallbackOnce = (): void => {
-		registerNativeSupervisorClientOnce();
-		if (nativeSupervisorFallbackRegistered) return;
-		nativeSupervisorFallbackRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
@@ -382,7 +375,6 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		if (!event || typeof event !== "object" || typeof (event as { systemPrompt?: unknown }).systemPrompt !== "string")
 			return undefined;
 		const startEvent = event as { systemPrompt: string };
-		registerNativeSupervisorFallbackOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
 		if (intercomSessionName && typeof pi.setSessionName === "function") {
 			pi.setSessionName(intercomSessionName);
