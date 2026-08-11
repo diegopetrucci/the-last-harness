@@ -33,18 +33,24 @@ test("child runtime scopes tickets at session start", async (t) => {
 	});
 });
 
-test("disabled primary mode still injects provider-aware subagent models", async () => {
-	const { toolCall } = registerRuntimeHarness();
-	const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
-	const ctx = createToolCallContext([
-		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } },
-	]);
+test("disabled primary mode still injects provider-aware subagent models", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
-	assert.equal(await toolCall(event, ctx), undefined);
-	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
-	assert.equal(Object.hasOwn(event.input, "thinking"), false);
-	assert.equal(event.input.agentScope, undefined);
-	assert.equal(event.input.context, "resume");
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness();
+		const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "disabled" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+
+		assert.equal(await toolCall(event, ctx), undefined);
+		assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
+		assert.equal(Object.hasOwn(event.input, "thinking"), false);
+		assert.equal(event.input.agentScope, undefined);
+		assert.equal(event.input.context, "resume");
+	});
 });
 
 test("disabled primary mode allows contrarian by default and ignores stale contrarian experimental settings", async (t) => {
@@ -123,22 +129,28 @@ test("disabled primary mode allows opaque resume regardless of stale contrarian 
 	});
 });
 
-test("enabled primary mode validates subagent input after injecting provider-aware models", async () => {
-	const { toolCall } = registerRuntimeHarness();
-	const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
-	const ctx = createToolCallContext([
-		{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } },
-	]);
+test("enabled primary mode validates subagent input after injecting provider-aware models", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
-	const result = await toolCall(event, ctx);
-	assert.deepEqual(result, {
-		block: true,
-		reason:
-			'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const { toolCall } = registerRuntimeHarness();
+		const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+		const ctx = createToolCallContext(
+			[{ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data: { selected: "architect" } }],
+			undefined,
+			{ cwd: fixture.cwd },
+		);
+
+		const result = await toolCall(event, ctx);
+		assert.deepEqual(result, {
+			block: true,
+			reason:
+				'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
+		});
+		assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
+		assert.equal(Object.hasOwn(event.input, "thinking"), false);
+		assert.equal(event.input.agentScope, "user");
 	});
-	assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
-	assert.equal(Object.hasOwn(event.input, "thinking"), false);
-	assert.equal(event.input.agentScope, "user");
 });
 
 test("before_agent_start adds TLH commit attribution guidance only when enabled", async (t) => {
