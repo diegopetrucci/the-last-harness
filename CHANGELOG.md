@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Child-process JSON streams and quiet Glimpse no longer crash on valid non-object JSON; background and foreground runs retain those lines in raw output or transcripts where applicable.
+
 ### Removed
 
 - Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.

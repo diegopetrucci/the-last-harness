@@ -548,15 +548,23 @@ function runPiStreaming(
 
 		const processStdoutLine = (line: string) => {
 			if (!line.trim()) return;
-			let event: ChildEvent;
-			try {
-				event = JSON.parse(line) as ChildEvent;
-			} catch {
+			const writeRawStdoutLine = () => {
 				rawStdoutLines.push(line);
 				writeOutputLine(line);
 				appendChildLine("subagent.child.stdout", line);
+			};
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(line);
+			} catch {
+				writeRawStdoutLine();
 				return;
 			}
+			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+				writeRawStdoutLine();
+				return;
+			}
+			const event = parsed as ChildEvent;
 
 			appendChildEvent(event);
 			transcriptWriter?.writeChildEvent(event);

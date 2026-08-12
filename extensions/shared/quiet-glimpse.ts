@@ -33,7 +33,7 @@ export interface QuietGlimpseWindow {
 	close(): void;
 }
 
-class QuietGlimpseWindowImpl extends EventEmitter implements QuietGlimpseWindow {
+export class QuietGlimpseWindowImpl extends EventEmitter implements QuietGlimpseWindow {
 	#proc: ChildProcessWithoutNullStreams;
 	#closed = false;
 	#pendingHTML: string | null;
@@ -51,13 +51,15 @@ class QuietGlimpseWindowImpl extends EventEmitter implements QuietGlimpseWindow 
 
 		const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
 		rl.on("line", (line) => {
-			let message: GlimpseProtocolMessage;
+			let parsed: unknown;
 			try {
-				message = JSON.parse(line) as GlimpseProtocolMessage;
+				parsed = JSON.parse(line);
 			} catch {
 				this.emit("error", new Error(`Malformed glimpse protocol line: ${line}`));
 				return;
 			}
+			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return;
+			const message = parsed as GlimpseProtocolMessage;
 
 			switch (message.type) {
 				case "ready":

@@ -271,16 +271,24 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
         const processStdoutLine = (line) => {
             if (!line.trim())
                 return;
-            let event;
-            try {
-                event = JSON.parse(line);
-            }
-            catch {
+            const writeRawStdoutLine = () => {
                 rawStdoutLines.push(line);
                 writeOutputLine(line);
                 appendChildLine("subagent.child.stdout", line);
+            };
+            let parsed;
+            try {
+                parsed = JSON.parse(line);
+            }
+            catch {
+                writeRawStdoutLine();
                 return;
             }
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                writeRawStdoutLine();
+                return;
+            }
+            const event = parsed;
             appendChildEvent(event);
             transcriptWriter?.writeChildEvent(event);
             onChildEvent?.(event);

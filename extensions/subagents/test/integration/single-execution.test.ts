@@ -1419,6 +1419,51 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.progress.toolCount, 1, "should count tool calls");
 	});
 
+	it("routes non-object child JSON to the raw transcript and preserves unknown events", async () => {
+		const unknownEvent = {
+			type: "future_event",
+			extraField: { nested: true },
+			anotherField: ["preserve", 7],
+		};
+		mockPi.onCall({
+			jsonl: [null, [1, "two"], JSON.stringify("primitive"), 42, unknownEvent, events.assistantMessage("Done")],
+		});
+		const artifactsDir = path.join(tempDir, "json-guard-artifacts");
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", {
+			runId: "foreground-json-guards",
+			artifactsDir,
+			artifactConfig: {
+				enabled: true,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: true,
+				includeTranscript: true,
+				includeMetadata: false,
+			},
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.finalOutput, "Done");
+		assert.ok(result.artifactPaths?.jsonlPath, "expected JSONL artifact");
+		assert.ok(result.transcriptPath, "expected transcript artifact");
+		const jsonlRecords = fs
+			.readFileSync(result.artifactPaths!.jsonlPath, "utf-8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+		assert.deepEqual(jsonlRecords[4], unknownEvent);
+
+		const transcriptRecords = fs
+			.readFileSync(result.transcriptPath!, "utf-8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { recordType?: string; text?: string });
+		assert.deepEqual(
+			transcriptRecords.filter((record) => record.recordType === "stdout").map((record) => record.text),
+			["null", '[1,"two"]', '"primitive"', "42"],
+		);
+	});
+
 	it("resolves skills from the effective task cwd", async () => {
 		const taskCwd = createTempDir("pi-subagent-task-cwd-");
 		try {
