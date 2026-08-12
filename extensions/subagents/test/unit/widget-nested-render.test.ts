@@ -12,6 +12,8 @@ const theme = {
 	},
 };
 
+const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
+
 function nested(
 	id: string,
 	parentRunId: string,
@@ -50,12 +52,32 @@ describe("nested widget rendering", () => {
 	it("uses aggregate lines when collapsed and full child rows when expanded", () => {
 		const child = nested("nested-reviewer", "root-run", "running", { currentTool: "read" });
 		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
-		assert.match(collapsed, /↳ \+1 nested run/);
+		assert.match(collapsed, new RegExp(`↳ ${runningGlyphPattern} \\+1 nested run`));
 		assert.doesNotMatch(collapsed, /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
 		assert.doesNotMatch(collapsed, /nested-reviewer · running/);
 
 		const expanded = buildWidgetLines([job(child)], theme as any, 120, true).join("\n");
 		assert.match(expanded, /↳ . nested-reviewer · read/);
+	});
+
+	it("shows a live glyph for collapsed running descendants beneath a completed parent", () => {
+		const child = nested("still-running", "root-run", "running");
+		const state = job(child);
+		state.status = "complete";
+		state.steps![0]!.status = "complete";
+
+		const collapsed = buildWidgetLines([state], theme as any, 120, false).join("\n");
+		const aggregateLine = collapsed.split("\n").find((line) => line.includes("+1 nested run")) ?? "";
+		assert.match(aggregateLine, new RegExp(`↳ ${runningGlyphPattern} \\+1 nested run`));
+		assert.doesNotMatch(aggregateLine, /\brunning\b/);
+	});
+
+	it("does not show a live glyph for collapsed nested aggregates without running descendants", () => {
+		const child = nested("finished-child", "root-run", "complete");
+		const collapsed = buildWidgetLines([job(child)], theme as any, 120, false).join("\n");
+		const aggregateLine = collapsed.split("\n").find((line) => line.includes("+1 nested run")) ?? "";
+		assert.match(aggregateLine, /↳ \+1 nested run \(1 complete\)/);
+		assert.doesNotMatch(aggregateLine, new RegExp(runningGlyphPattern));
 	});
 
 	it("collapses descendants beyond the nested depth budget", () => {

@@ -916,17 +916,18 @@ function nestedRunName(run) {
         return formatWidgetAgents(run.agents);
     return run.id;
 }
-function formatNestedWidgetAggregate(children) {
+function formatNestedWidgetAggregate(children, theme) {
     const counts = countNestedRuns(children);
     if (counts.total === 0)
         return undefined;
+    const liveGlyph = counts.running > 0 ? `${nestedStatusGlyph("running", theme, runningSeed(counts.running, counts.total))} ` : "";
     const parts = [
         counts.paused > 0 ? `${counts.paused} paused` : "",
         counts.failed > 0 ? `${counts.failed} failed` : "",
         counts.complete > 0 ? `${counts.complete} complete` : "",
         counts.queued > 0 ? `${counts.queued} queued` : "",
     ].filter(Boolean);
-    return `+${counts.total} nested run${counts.total === 1 ? "" : "s"}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+    return `${liveGlyph}+${counts.total} nested run${counts.total === 1 ? "" : "s"}${parts.length ? ` (${parts.join(", ")})` : ""}`;
 }
 function nestedStatusGlyph(state, theme, seed) {
     if (state === "running")
@@ -984,7 +985,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
     if (!children?.length || lineBudget <= 0)
         return [];
     if (!expanded) {
-        const aggregate = formatNestedWidgetAggregate(children);
+        const aggregate = formatNestedWidgetAggregate(children, theme);
         return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
     }
     const lines = [];
@@ -993,7 +994,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
         if (!items?.length || lines.length >= lineBudget)
             return;
         if (depth > maxDepth) {
-            const aggregate = formatNestedWidgetAggregate(items);
+            const aggregate = formatNestedWidgetAggregate(items, theme);
             if (aggregate && lines.length < lineBudget)
                 lines.push(theme.fg("dim", `${prefix}↳ ${aggregate}`));
             return;
@@ -1001,7 +1002,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
         for (let index = 0; index < items.length; index++) {
             const child = items[index];
             if (lines.length >= lineBudget) {
-                const aggregate = formatNestedWidgetAggregate(items.slice(index));
+                const aggregate = formatNestedWidgetAggregate(items.slice(index), theme);
                 if (aggregate)
                     lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
                 return;
@@ -1011,10 +1012,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
             const status = child.state === "running" ? "" : ` · ${child.state}`;
             lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)}${status} · ${activity}${error}`));
             if (depth === maxDepth) {
-                const aggregate = formatNestedWidgetAggregate([
-                    ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
-                    ...(child.children ?? []),
-                ]);
+                const aggregate = formatNestedWidgetAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])], theme);
                 if (aggregate && lines.length < lineBudget)
                     lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
                 continue;
@@ -1268,7 +1266,7 @@ function buildSingleLineWidgetLines(jobs, theme, width) {
     const summary = parts.join(", ");
     const fallback = hasActive ? "" : `${jobs.length} total`;
     const detailed = `${coloredGlyph} ${coloredTitle}${summary ? ` (${summary})` : fallback ? ` (${fallback})` : ""}`;
-    const withoutParenthetical = (summary || fallback)
+    const withoutParenthetical = summary || fallback
         ? `${coloredGlyph} ${theme.fg(hasActive ? "accent" : "dim", summary || fallback)}`
         : coloredGlyph;
     const compactSummary = compactWidgetCountSummary(counts, jobs);
