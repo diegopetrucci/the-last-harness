@@ -178,6 +178,7 @@ extensions/subagents/src/shared/session-identity.js linguist-generated=true
 extensions/subagents/src/shared/session-tokens.js linguist-generated=true
 extensions/subagents/src/shared/settings.js linguist-generated=true
 extensions/subagents/src/shared/status-format.js linguist-generated=true
+extensions/subagents/src/shared/string-utils.js linguist-generated=true
 extensions/subagents/src/shared/subagent-shortcuts.js linguist-generated=true
 extensions/subagents/src/shared/types.js linguist-generated=true
 extensions/subagents/src/shared/utils.js linguist-generated=true

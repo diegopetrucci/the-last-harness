@@ -4,6 +4,11 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- When a foreground subagent run finishes with many children and the result summary has to be trimmed, every child that appears now keeps both of its recovery paths (artifact and session). Previously the summary was built in full and then cut at the end, which could silently delete whole child blocks — and the only pointers back to their output — from the tail. A child that genuinely cannot fit is now marked with an explicit omission notice instead of disappearing quietly.
+- Truncation notices in subagent output previously told the model to look at details it has no way of reading. They now point only at routes that actually exist: an artifact path, a session path, or a plain statement that the output is unavailable.
+
 ## [0.37.0] - 2026-08-11
 
 ### Model defaults

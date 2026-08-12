@@ -21,6 +21,7 @@ import {
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
+import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 
 // --- Injection / context bounds on child-controlled text ---
 // These constants limit text that originates from child subagents and enters
@@ -148,12 +149,6 @@ export interface RegisterSubagentNotifyOptions {
 	now?: () => number;
 }
 
-function truncateWithMarker(value: string, maxChars: number, marker: string): string {
-	if (value.length <= maxChars) return value;
-	if (marker.length >= maxChars) return marker.slice(0, maxChars);
-	return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
-}
-
 function boundedSummary(value: string, maxChars: number): string {
 	return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
@@ -218,18 +213,6 @@ function resolvePerChildSummaryBudget(
 	// this function previously had at count * MAX_SUMMARY_CHARS === MAX_COMPLETION_MESSAGE_CHARS.
 	const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
 	return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
-}
-
-/**
- * Returns value.slice(0, end), backing up by one code unit when the last kept code
- * unit is a UTF-16 high surrogate (U+D800–U+DBFF). A high surrogate without its
- * paired low surrogate produces an ill-formed string; backing up one code unit keeps
- * the string well-formed at the cost of one fewer character of context.
- */
-function sliceSafe(value: string, end: number): string {
-	const sliced = value.slice(0, end);
-	const last = sliced.charCodeAt(sliced.length - 1);
-	return last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
 }
 
 /**

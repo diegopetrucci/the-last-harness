@@ -2646,11 +2646,11 @@ describe("boundedReference", () => {
 // ---------------------------------------------------------------------------
 // truncateWithMarker surrogate safety — all four call sites
 //
-// The root cause (tlhm-vxik) is a raw value.slice(0, maxChars - marker.length)
-// inside truncateWithMarker that can leave an unpaired UTF-16 high surrogate
-// (U+D800–U+DBFF) at the cut boundary when an emoji straddles that position.
-// The fix replaces it with sliceSafe, which backs up one code unit when the
-// last retained unit is a high surrogate.
+// truncateWithMarker cuts at maxChars - marker.length. When a surrogate pair
+// (U+D800–U+DBFF high + U+DC00–U+DFFF low) straddles that position, a raw
+// slice leaves an unpaired high surrogate at the boundary, producing an
+// ill-formed string. sliceSafe enforces the invariant by backing up one code
+// unit when the last retained unit is a high surrogate.
 //
 // CUT-POINT DERIVATION: each cut is maxChars - marker.length, derived directly
 // from the function arguments.  Tests measure this from the constants rather
