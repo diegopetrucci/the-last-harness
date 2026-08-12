@@ -54,6 +54,7 @@ function normalizeOutputOverride(output: string | false | undefined): string | f
 export interface SequentialStep {
 	agent: string;
 	task?: string;
+	ticket?: string;
 	phase?: string;
 	label?: string;
 	as?: string;
@@ -74,6 +75,7 @@ export interface SequentialStep {
 export interface ParallelTaskItem {
 	agent: string;
 	task?: string;
+	ticket?: string;
 	phase?: string;
 	label?: string;
 	as?: string;

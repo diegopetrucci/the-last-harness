@@ -54,6 +54,41 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("sanitizes per-child ticket metadata and rejects malformed persisted tickets", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-step-ticket-"));
+		try {
+			createAsyncDir(root, "run-step-tickets", {
+				runId: "run-step-tickets",
+				mode: "parallel",
+				state: "running",
+				startedAt: 100,
+				steps: [
+					{ agent: "developer-a", status: "running", tkTicket: { id: "psr-a", title: "A\u001b[31m title\u001b[0m" } },
+					{ agent: "developer-b", status: "pending", tkTicket: { id: "psr-b", title: "B title" } },
+				],
+			});
+			const run = listAsyncRuns(root)[0];
+			assert.deepEqual(
+				run?.steps.map((step) => step.tkTicket),
+				[
+					{ id: "psr-a", title: "A title" },
+					{ id: "psr-b", title: "B title" },
+				],
+			);
+
+			createAsyncDir(root, "run-invalid-step-ticket", {
+				runId: "run-invalid-step-ticket",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "complete", tkTicket: { id: "bad/id", title: "unsafe" } }],
+			});
+			assert.throws(() => listAsyncRuns(root), /steps\[0\]\.tkTicket/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("sorts continued runs as terminal non-active work instead of completed success", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-continued-"));
 		try {

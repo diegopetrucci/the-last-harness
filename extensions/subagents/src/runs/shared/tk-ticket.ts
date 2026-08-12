@@ -11,6 +11,11 @@ export interface ResolveTkTicketMetadataOptions {
 	readFileSync?: (filePath: string, encoding: "utf-8") => string;
 }
 
+export interface ExplicitTkTicketResolution {
+	metadata?: TkTicketMetadata;
+	error?: string;
+}
+
 export interface TkTicketTaskContextInput {
 	task?: string;
 	cwd?: string;
@@ -121,13 +126,49 @@ export function resolveTkTicketMetadata(
 ): TkTicketMetadata | undefined {
 	const requestedId = detectTkTicketId(task);
 	if (!requestedId) return undefined;
+	return resolveTkTicketMetadataById(requestedId, options);
+}
+
+export function resolveTkTicketMetadataById(
+	ticketId: string,
+	options: ResolveTkTicketMetadataOptions = {},
+): TkTicketMetadata | undefined {
 	try {
-		const ticketMatch = (options.findTicketFile ?? findTkTicketFile)(requestedId, options.cwd);
+		const ticketMatch = (options.findTicketFile ?? findTkTicketFile)(ticketId, options.cwd);
 		if (!ticketMatch) return undefined;
 		const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
 		return normalizeTkTicketMetadata({ id: ticketMatch.id, title: parseTkTicketTitle(content) ?? "" });
 	} catch {
 		return undefined;
+	}
+}
+
+export function resolveExplicitTkTicketMetadata(
+	ticket: unknown,
+	options: ResolveTkTicketMetadataOptions = {},
+): ExplicitTkTicketResolution {
+	if (typeof ticket !== "string" || ticket.trim().length === 0) {
+		return { error: "ticket must be a non-empty ticket ID." };
+	}
+
+	const requestedId = ticket.trim();
+	if (!TK_TICKET_ID_PATTERN.test(requestedId)) {
+		return { error: "ticket must contain only letters, numbers, and hyphens." };
+	}
+
+	try {
+		const ticketMatch = (options.findTicketFile ?? findTkTicketFile)(requestedId, options.cwd);
+		if (!ticketMatch) {
+			return {
+				error: `ticket '${requestedId}' was not found from '${options.cwd ?? process.cwd()}'. Check TICKETS_DIR and the task cwd.`,
+			};
+		}
+		const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
+		const metadata = normalizeTkTicketMetadata({ id: ticketMatch.id, title: parseTkTicketTitle(content) ?? "" });
+		if (!metadata) return { error: `ticket '${requestedId}' has no readable title.` };
+		return { metadata };
+	} catch {
+		return { error: `ticket '${requestedId}' could not be resolved. Check TICKETS_DIR and the ticket file.` };
 	}
 }
 

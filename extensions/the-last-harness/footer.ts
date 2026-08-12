@@ -335,17 +335,6 @@ export function createTlhFooter(
 			if (hasMcpStatus) {
 				mcpContextEstimateCache = getMcpContextEstimateSuffix(pi, ctx, contextUsage, mcpContextEstimateCache);
 			}
-			const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
-			if (tkWorkflowStatus) {
-				const tkWorkflowLines = tkWorkflowStatus
-					.split(/\r?\n/)
-					.map((line) => sanitizeStatusText(line))
-					.filter(Boolean);
-				for (const line of tkWorkflowLines) {
-					lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
-				}
-			}
-
 			if (line3 !== undefined) {
 				lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
 			}

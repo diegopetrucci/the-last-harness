@@ -108,6 +108,50 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("selects the requested parallel child ticket instead of the aggregate run ticket", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-step-ticket-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const sessionA = path.join(root, "a.jsonl");
+			const sessionB = path.join(root, "b.jsonl");
+			fs.writeFileSync(sessionA, "", "utf-8");
+			fs.writeFileSync(sessionB, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-parallel-tickets", "status.json"), {
+				runId: "run-parallel-tickets",
+				mode: "parallel",
+				state: "complete",
+				startedAt: 100,
+				endedAt: 200,
+				lastUpdate: 200,
+				cwd: root,
+				tkTicket: { id: "psr-aggregate", title: "Aggregate ticket" },
+				steps: [
+					{
+						agent: "developer-a",
+						status: "complete",
+						sessionFile: sessionA,
+						tkTicket: { id: "psr-a", title: "A ticket" },
+					},
+					{
+						agent: "developer-b",
+						status: "complete",
+						sessionFile: sessionB,
+						tkTicket: { id: "psr-b", title: "B ticket" },
+					},
+				],
+			});
+
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-parallel-tickets", index: 1 },
+				{ asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+			);
+			assert.deepEqual(target.tkTicket, { id: "psr-b", title: "B ticket" });
+			assert.equal(target.agent, "developer-b");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("preserves cumulative active runtime without counting paused wall time", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-active-runtime-"));
 		try {

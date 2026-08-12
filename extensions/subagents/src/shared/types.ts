@@ -809,6 +809,7 @@ export interface AsyncStartedEvent {
 	chainStepCount?: number;
 	parallelGroups?: AsyncParallelGroupStatus[];
 	workflowGraph?: WorkflowGraphSnapshot;
+	tkTickets?: Array<TkTicketMetadata | undefined>;
 	timeoutMs?: number;
 	deadlineAt?: number;
 	turnBudget?: TurnBudgetState;
@@ -859,6 +860,7 @@ export interface AsyncStatus {
 		label?: string;
 		outputName?: string;
 		structured?: boolean;
+		tkTicket?: TkTicketMetadata;
 		status:
 			| "pending"
 			| "running"

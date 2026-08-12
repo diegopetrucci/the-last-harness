@@ -276,6 +276,147 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		}
 	});
 
+	it("carries independently resolved explicit tickets through active parallel child updates", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-dev-a.md"),
+				"---\nid: psr-dev-a\n---\n# Developer A title\n",
+				"utf-8",
+			);
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-dev-b.md"),
+				"---\nid: psr-dev-b\n---\n# Developer B \u001b[31mtitle\u001b[0m\n",
+				"utf-8",
+			);
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.toolStart("read", { path: "README.md" })], delay: 60 },
+					{ jsonl: [events.assistantMessage("developer A done")] },
+				],
+			});
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.toolStart("read", { path: "README.md" })], delay: 60 },
+					{ jsonl: [events.assistantMessage("developer B done")] },
+				],
+			});
+			const executor = makeExecutor([makeAgent("developer-a"), makeAgent("developer-b")]);
+			const updates: Array<{
+				details?: {
+					results?: Array<{
+						agent?: string;
+						tkTicket?: { id: string; title: string };
+						progress?: { status?: string };
+					}>;
+				};
+			}> = [];
+			const runPromise = executor.execute(
+				"parallel-explicit-tickets",
+				{
+					tasks: [
+						{ agent: "developer-a", task: "Work A", ticket: "psr-dev-a" },
+						{ agent: "developer-b", task: "Work B", ticket: "psr-dev-b" },
+					],
+				},
+				new AbortController().signal,
+				(update) => updates.push(update as (typeof updates)[number]),
+				makeMinimalCtx(tempDir),
+			);
+
+			const runningByAgent = new Map<string, { id: string; title: string }>();
+			const deadline = Date.now() + 5_000;
+			while (Date.now() < deadline && runningByAgent.size < 2) {
+				for (const update of updates) {
+					for (const result of update.details?.results ?? []) {
+						if (result.progress?.status === "running" && result.tkTicket) {
+							runningByAgent.set(result.agent ?? "", result.tkTicket);
+						}
+					}
+				}
+				if (runningByAgent.size < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			assert.deepEqual(runningByAgent.get("developer-a"), { id: "psr-dev-a", title: "Developer A title" });
+			assert.deepEqual(runningByAgent.get("developer-b"), { id: "psr-dev-b", title: "Developer B title" });
+
+			const result = await runPromise;
+			const finalByAgent = new Map(result.details?.results.map((child) => [child.agent, child.tkTicket]));
+			assert.deepEqual(finalByAgent.get("developer-a"), { id: "psr-dev-a", title: "Developer A title" });
+			assert.deepEqual(finalByAgent.get("developer-b"), { id: "psr-dev-b", title: "Developer B title" });
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
+	it("repeated parallel tasks inherit their task ticket", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-repeat.md"),
+				"---\nid: psr-repeat\n---\n# Repeated ticket title\n",
+				"utf-8",
+			);
+			mockPi.onCall({ output: "first repeat" });
+			mockPi.onCall({ output: "second repeat" });
+			const executor = makeExecutor([makeAgent("developer")]);
+			const result = await executor.execute(
+				"parallel-repeated-ticket",
+				{ tasks: [{ agent: "developer", task: "Repeat work", count: 2, ticket: "psr-repeat" }] },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.equal(result.details?.results.length, 2);
+			assert.deepEqual(
+				result.details?.results.map((child) => child.tkTicket),
+				[
+					{ id: "psr-repeat", title: "Repeated ticket title" },
+					{ id: "psr-repeat", title: "Repeated ticket title" },
+				],
+			);
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
+	it("rejects a missing explicit parallel ticket before starting any child", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			const executor = makeExecutor([makeAgent("developer-a")]);
+			const result = await executor.execute(
+				"parallel-missing-ticket",
+				{ tasks: [{ agent: "developer-a", task: "Work A", ticket: "missing-ticket" }] },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Invalid ticket for tasks\[0\]/);
+			assert.match(result.content[0]?.text ?? "", /not found/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
 	it("top-level parallel inherits the parent session model for unconfigured tasks and keeps explicit overrides authoritative", {
 		skip: !createSubagentExecutor ? "executor not importable" : undefined,
 	}, async () => {

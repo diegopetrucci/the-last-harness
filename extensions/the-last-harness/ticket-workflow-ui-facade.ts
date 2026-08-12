@@ -1,10 +1,19 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	SettingsManager,
+	getAgentDir,
+	type ExtensionAPI,
+	type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
-import type { TlhTicketWorkflowUiRuntime } from "./ticket-workflow-ui.js";
+import type { TlhTicketWorkflowUiRuntime, TlhTicketWorkflowUiRuntimeOptions } from "./ticket-workflow-ui.js";
 import { activateTlhTicketSessionScope } from "./tickets.js";
+import type { TlhSettings } from "./types.js";
 
 type TicketWorkflowUiModule = {
-	createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime;
+	createTlhTicketWorkflowUiRuntime(
+		pi: ExtensionAPI,
+		options?: TlhTicketWorkflowUiRuntimeOptions,
+	): TlhTicketWorkflowUiRuntime;
 };
 
 type TlhTicketWorkflowUiFacadeOptions = {
@@ -24,6 +33,17 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 	};
 }
 
+function getSettingsForFacade(cwd: string): TlhSettings {
+	try {
+		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
+		return settings !== null && typeof settings === "object" && !Array.isArray(settings)
+			? (settings as TlhSettings)
+			: {};
+	} catch {
+		return {};
+	}
+}
+
 export function registerLazyTlhTicketWorkflowUi(
 	pi: ExtensionAPI,
 	options: TlhTicketWorkflowUiFacadeOptions = {},
@@ -40,7 +60,12 @@ export function registerLazyTlhTicketWorkflowUi(
 		}
 		if (!runtimePromise) {
 			runtimePromise = loadModule()
-				.then((module) => module.createTlhTicketWorkflowUiRuntime(pi))
+				.then((module) =>
+					module.createTlhTicketWorkflowUiRuntime(pi, {
+						getSettings: getSettingsForFacade,
+						getAgentDir,
+					}),
+				)
 				.then((loadedRuntime) => {
 					runtime = loadedRuntime;
 					return loadedRuntime;
@@ -79,43 +104,5 @@ export function registerLazyTlhTicketWorkflowUi(
 	pi.on("session_start", async (_event, ctx) => {
 		activateTlhTicketSessionScope(ctx.cwd);
 		applyCurrentSettings(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		if (runtime) {
-			runtime.handleSessionShutdown();
-			return;
-		}
-		void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
-	});
-
-	pi.on("user_bash", (event, ctx) => {
-		if (runtime) {
-			runtime.handleUserBash(event, ctx);
-			return;
-		}
-		if (!ctx.hasUI) {
-			return;
-		}
-		void getRuntime()
-			.then((loadedRuntime) => {
-				loadedRuntime.handleUserBash(event, ctx);
-			})
-			.catch(() => undefined);
-	});
-
-	pi.on("tool_result", async (event, ctx) => {
-		if (runtime) {
-			runtime.handleToolResult(event, ctx);
-			return;
-		}
-		if (!ctx.hasUI) {
-			return;
-		}
-		void getRuntime()
-			.then((loadedRuntime) => {
-				loadedRuntime.handleToolResult(event, ctx);
-			})
-			.catch(() => undefined);
 	});
 }

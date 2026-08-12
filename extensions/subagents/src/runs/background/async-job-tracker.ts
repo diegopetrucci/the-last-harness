@@ -17,7 +17,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
-import { scanAsyncRunsForRestore, type AsyncRunSummary } from "./async-status.ts";
+import { scanAsyncRunsForRestore, validatePersistedAsyncStatus, type AsyncRunSummary } from "./async-status.ts";
 import { quarantineCorruptAsyncRun, type AsyncStatusQuarantineOptions } from "./async-status-quarantine.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 
@@ -306,6 +306,7 @@ export function createAsyncJobTracker(
 					});
 					const status = reconciliation.status ?? readStatus(job.asyncDir);
 					if (status) {
+						validatePersistedAsyncStatus(job.asyncDir, status);
 						const previousStatus = job.status;
 						job.status = status.state;
 						if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused")
@@ -418,6 +419,16 @@ export function createAsyncJobTracker(
 		const firstGroup = validParallelGroups.find((group) => group.start === 0);
 		const firstGroupCount = firstGroup?.count;
 		const agents = firstGroupCount && firstGroupCount > 0 ? rawAgents?.slice(0, firstGroupCount) : rawAgents;
+		const initialStepStart = firstGroup?.start ?? 0;
+		const initialSteps = agents?.map((agent, index) => {
+			const tkTicket = normalizeTkTicketMetadata(info.tkTickets?.[initialStepStart + index]);
+			return {
+				index: initialStepStart + index,
+				agent,
+				status: "pending" as const,
+				...(tkTicket ? { tkTicket } : {}),
+			};
+		});
 		const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
 		state.asyncJobs.set(info.id, {
 			asyncId: info.id,
@@ -427,6 +438,7 @@ export function createAsyncJobTracker(
 			...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
 			mode: info.mode ?? (info.chain ? "chain" : "single"),
 			agents,
+			steps: initialSteps,
 			chainStepCount: info.chainStepCount,
 			parallelGroups: validParallelGroups,
 			nestedRoute: info.nestedRoute,

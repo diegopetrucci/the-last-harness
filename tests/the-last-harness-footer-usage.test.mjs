@@ -769,7 +769,7 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 // NEW: extension status line rendering
 // ---------------------------------------------------------------------------
 
-test("tk workflow status renders as dim footer lines between agent and usage without generic duplication", () => {
+test("legacy tk workflow status is omitted from special and generic footer rendering", () => {
 	const ctx = createCtx({ provider: "anthropic", usingOAuth: false });
 	const footerData = {
 		getGitBranch: () => undefined,
@@ -784,10 +784,9 @@ test("tk workflow status renders as dim footer lines between agent and usage wit
 	const lines = footer.render(COLOR_WIDTH);
 
 	assert.match(lines[1] ?? "", /<dim>agent: <\/dim>/);
-	assert.equal(lines[2], "<dim>ticket: Implement read-only ticket workflow status UI (/tickets)</dim>");
-	assert.equal(lines[3], "<dim>$1.250</dim>");
-	assert.equal(lines[4], "my-ext: active");
-	assert.doesNotMatch(lines[4] ?? "", /ticket:|\/tickets/);
+	assert.equal(lines[2], "<dim>$1.250</dim>");
+	assert.equal(lines[3], "my-ext: active");
+	assert.doesNotMatch(lines.join("\n"), /ticket:|\/tickets/);
 });
 
 test("non-context-cap extension statuses are still rendered in the footer", () => {

@@ -80,6 +80,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import {
 	detectTkTicketId,
 	normalizeTkTicketMetadata,
+	resolveExplicitTkTicketMetadata,
 	resolveTkTicketMetadata,
 	resolveTkTicketTaskContext,
 } from "../shared/tk-ticket.ts";
@@ -128,6 +129,7 @@ interface AsyncChainParams {
 interface AsyncSingleParams {
 	agent: string;
 	task?: string;
+	ticket?: string;
 	agentConfig: AgentConfig;
 	ctx: AsyncExecutionContext;
 	cwd?: string;
@@ -467,6 +469,13 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		);
 		if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
+		const ticketResolution =
+			s.ticket !== undefined
+				? resolveExplicitTkTicketMetadata(s.ticket, { cwd: stepCwd })
+				: { metadata: resolveTkTicketMetadata(s.task, { cwd: stepCwd }) };
+		if (ticketResolution.error) {
+			throw new AsyncStartValidationError(`Invalid ticket for async step (${s.agent}): ${ticketResolution.error}`);
+		}
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		const behavior = suppressProgressForReadOnlyTask(
 			resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)),
@@ -564,6 +573,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			outputName: s.as,
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
+			...(ticketResolution.metadata ? { tkTicket: ticketResolution.metadata } : {}),
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
 			modelCandidates,
@@ -762,6 +772,10 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 				return [childIntercomTarget(step.agent, childTargetIndex++)];
 			})
 		: undefined;
+	const childTkTickets = steps
+		.flatMap((step) => ("parallel" in step ? step.parallel : [step]))
+		.map((step) => step.tkTicket);
+	const hasChildTkTickets = childTkTickets.some((ticket) => ticket !== undefined);
 
 	let spawnResult: { pid?: number; error?: string };
 	try {
@@ -888,6 +902,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 			chainStepCount: eventChain.length,
 			parallelGroups,
 			workflowGraph,
+			...(hasChildTkTickets ? { tkTickets: childTkTickets } : {}),
 			cwd: runnerCwd,
 			asyncDir,
 			...(tkTicket ? { tkTicket } : {}),
@@ -1049,9 +1064,17 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 	}
 	const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, remainingAgentTimeMs);
 	const deadlineAt = effectiveTimeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined;
-	const tkTicket = detectTkTicketId(task)
-		? resolveTkTicketMetadata(task, { cwd: runnerCwd })
-		: normalizeTkTicketMetadata(params.inheritedTkTicket);
+	const ticketResolution =
+		params.ticket !== undefined
+			? resolveExplicitTkTicketMetadata(params.ticket, { cwd: runnerCwd })
+			: {
+					metadata:
+						normalizeTkTicketMetadata(params.inheritedTkTicket) ??
+						(detectTkTicketId(task) ? resolveTkTicketMetadata(task, { cwd: runnerCwd }) : undefined),
+				};
+	if (ticketResolution.error)
+		return formatAsyncStartError("single", `Invalid ticket for SINGLE mode: ${ticketResolution.error}`);
+	const tkTicket = ticketResolution.metadata;
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	let spawnResult: { pid?: number; error?: string };
 	try {
@@ -1064,6 +1087,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 						agent,
 						task: taskWithOutputInstruction,
 						cwd: runnerCwd,
+						...(tkTicket ? { tkTicket } : {}),
 						model,
 						thinking: resolveEffectiveThinking(model, effectiveThinking),
 						modelCandidates,
@@ -1190,7 +1214,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 			task: task?.slice(0, 50),
 			cwd: runnerCwd,
 			asyncDir,
-			...(tkTicket ? { tkTicket } : {}),
+			...(tkTicket ? { tkTickets: [tkTicket], tkTicket } : {}),
 			...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			nestedRoute,

@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SubagentState } from "../../shared/types.ts";
+import {
+	ASYNC_DIR,
+	RESULTS_DIR,
+	type AsyncStatus,
+	type SubagentState,
+	type TkTicketMetadata,
+} from "../../shared/types.ts";
 import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim } from "../shared/lifecycle-state.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { deliverInterruptRequest } from "./control-channel.ts";
@@ -176,12 +182,14 @@ interface AsyncResultFile {
 	runId?: string;
 	agent?: string;
 	mode?: string;
+	tkTicket?: TkTicketMetadata;
 	state?: string;
 	success?: boolean;
 	cwd?: string;
 	sessionFile?: string;
 	results?: Array<{
 		agent?: string;
+		tkTicket?: TkTicketMetadata;
 		success?: boolean;
 		interrupted?: boolean;
 		sessionFile?: string;
@@ -230,6 +238,13 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			throw new Error(`Invalid async result file '${resultPath}': results must be an array.`);
 		results = resultsValue.map((entry, index) => {
 			const child = ensureObject(entry, `${resultPath} results[${index}]`);
+			const rawTkTicket: unknown = child.tkTicket;
+			const tkTicket = normalizeTkTicketMetadata(rawTkTicket);
+			if (rawTkTicket !== undefined && !tkTicket) {
+				throw new Error(
+					`Invalid async result file '${resultPath}': results[${index}].tkTicket must include a valid id and terminal-safe title.`,
+				);
+			}
 			const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
 			const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
 			const intercomTarget = validateOptionalString(
@@ -260,6 +275,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 					: undefined;
 			return {
 				agent,
+				...(tkTicket ? { tkTicket } : {}),
 				sessionFile,
 				intercomTarget,
 				...(typeof success === "boolean" ? { success } : {}),
@@ -272,11 +288,19 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 	const success = data.success;
 	if (success !== undefined && typeof success !== "boolean")
 		throw new Error(`Invalid async result file '${resultPath}': success must be a boolean.`);
+	const rawTkTicket: unknown = data.tkTicket;
+	const tkTicket = normalizeTkTicketMetadata(rawTkTicket);
+	if (rawTkTicket !== undefined && !tkTicket) {
+		throw new Error(
+			`Invalid async result file '${resultPath}': tkTicket must include a valid id and terminal-safe title.`,
+		);
+	}
 	return {
 		id: validateOptionalString(data, "id", resultPath),
 		runId: validateOptionalString(data, "runId", resultPath),
 		agent: validateOptionalString(data, "agent", resultPath),
 		mode: validateOptionalString(data, "mode", resultPath),
+		...(tkTicket ? { tkTicket } : {}),
 		state: validateOptionalString(data, "state", resultPath),
 		cwd: validateOptionalString(data, "cwd", resultPath),
 		sessionFile: validateOptionalString(data, "sessionFile", resultPath),
@@ -429,6 +453,12 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 		throw new Error(`Invalid async status '${source}': cwd must be a string.`);
 	if (status.sessionFile !== undefined && typeof status.sessionFile !== "string")
 		throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+	if (status.tkTicket !== undefined) {
+		const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
+		if (!normalizedTkTicket)
+			throw new Error(`Invalid async status '${source}': tkTicket must include a valid id and terminal-safe title.`);
+		status.tkTicket = normalizedTkTicket;
+	}
 	if (status.steps !== undefined) {
 		if (!Array.isArray(status.steps)) throw new Error(`Invalid async status '${source}': steps must be an array.`);
 		status.steps.forEach((step, index) => {
@@ -438,6 +468,14 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 				throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
 			if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
 				throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+			if (step.tkTicket !== undefined) {
+				const normalizedTkTicket = normalizeTkTicketMetadata(step.tkTicket);
+				if (!normalizedTkTicket)
+					throw new Error(
+						`Invalid async status '${source}': steps[${index}].tkTicket must include a valid id and terminal-safe title.`,
+					);
+				step.tkTicket = normalizedTkTicket;
+			}
 		});
 	}
 }
@@ -483,7 +521,7 @@ export function resolveAsyncResumeTarget(
 		location.resolvedId ??
 		(location.asyncDir ? path.basename(location.asyncDir) : "unknown");
 	const state = status?.state ?? (result ? resultState(result) : undefined);
-	const tkTicket = normalizeTkTicketMetadata(status?.tkTicket);
+	const rootTkTicket = normalizeTkTicketMetadata(status?.tkTicket) ?? normalizeTkTicketMetadata(result?.tkTicket);
 	if (!state) throw new Error(`Status file not found for async run '${runId}'.`);
 	if (state === "cancelled") throw new Error(`Async run '${runId}' was cancelled and cannot be resumed.`);
 	if (state === "pausing") throw new Error(`Async run '${runId}' is still pausing and cannot be resumed yet.`);
@@ -512,7 +550,9 @@ export function resolveAsyncResumeTarget(
 					intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-					...(tkTicket ? { tkTicket } : {}),
+					...((normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket)
+						? { tkTicket: normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket }
+						: {}),
 				};
 			}
 			if (selectedStep?.status === "pending")
@@ -541,7 +581,9 @@ export function resolveAsyncResumeTarget(
 				intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-				...(tkTicket ? { tkTicket } : {}),
+				...((normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket)
+					? { tkTicket: normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket }
+					: {}),
 			};
 		}
 	}
@@ -596,6 +638,10 @@ export function resolveAsyncResumeTarget(
 	}
 	const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
 	if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
+	const selectedTkTicket =
+		normalizeTkTicketMetadata(selectedStatusStep?.tkTicket) ??
+		normalizeTkTicketMetadata(resultSteps[index]?.tkTicket) ??
+		rootTkTicket;
 	const sessionFile =
 		statusSteps[index]?.sessionFile ??
 		resultSteps[index]?.sessionFile ??
@@ -633,7 +679,7 @@ export function resolveAsyncResumeTarget(
 		intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
 		cwd: status?.cwd ?? result?.cwd,
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-		...(tkTicket ? { tkTicket } : {}),
+		...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
 		...(selectedStatusStep?.pause?.kind
 			? { pauseKind: selectedStatusStep.pause.kind }
 			: status?.pause?.kind

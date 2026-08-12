@@ -494,6 +494,72 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		}
 	});
 
+	it("resolves an explicit single ticket without changing the child task text", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-explicit.md"),
+				"---\nid: psr-explicit\n---\n# Explicit single title\n",
+				"utf-8",
+			);
+			mockPi.onCall({ output: "explicit ticket done" });
+			const executor = makeExecutor([makeAgent("echo")]);
+			const result = await executor.execute(
+				"single-explicit-ticket",
+				{ agent: "echo", task: "Do the work; legacy text says `tk show missing`", ticket: "psr-explicit" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined);
+			assert.deepEqual(result.details?.results?.[0]?.tkTicket, {
+				id: "psr-explicit",
+				title: "Explicit single title",
+			});
+			const args = fs.readdirSync(mockPi.dir).find((name) => name.startsWith("call-") && name.endsWith(".json"));
+			assert.ok(args, "expected a recorded child call");
+			const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, args), "utf-8")) as { args?: unknown };
+			assert.ok(Array.isArray(payload.args));
+			const childArgs = (payload.args as string[]).join("\n");
+			assert.match(childArgs, /^Task: Do the work; legacy text says `tk show missing`/m);
+			assert.doesNotMatch(childArgs, /Explicit single title/);
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
+	it("rejects a missing explicit single ticket before starting a child", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			const executor = makeExecutor([makeAgent("echo")]);
+			const result = await executor.execute(
+				"single-missing-ticket",
+				{ agent: "echo", task: "Do the work", ticket: "missing-ticket" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Invalid ticket for SINGLE mode/);
+			assert.match(result.content[0]?.text ?? "", /not found/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
 	it("fails implementation runs that complete without mutation attempts", async () => {
 		mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });
 		const agents = [makeAgent("worker")];

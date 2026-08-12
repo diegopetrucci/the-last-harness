@@ -152,8 +152,13 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 					parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
 					steps: [
 						{ agent: "scout", status: "complete" },
-						{ agent: "reviewer", status: "running", currentTool: "read" },
-						{ agent: "worker", status: "running" },
+						{
+							agent: "reviewer",
+							status: "running",
+							currentTool: "read",
+							tkTicket: { id: "psr-reviewer", title: "Reviewer ticket" },
+						},
+						{ agent: "worker", status: "running", tkTicket: { id: "psr-worker", title: "Worker ticket" } },
 						{ agent: "writer", status: "pending" },
 					],
 				}),
@@ -195,6 +200,13 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.deepEqual(
 				job.steps?.map((step: { index?: number }) => step.index),
 				[1, 2],
+			);
+			assert.deepEqual(
+				job.steps?.map((step: { tkTicket?: unknown }) => step.tkTicket),
+				[
+					{ id: "psr-reviewer", title: "Reviewer ticket" },
+					{ id: "psr-worker", title: "Worker ticket" },
+				],
 			);
 			assert.equal(job.stepsTotal, 2);
 			assert.equal(job.runningSteps, 2);
@@ -652,6 +664,37 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				id: "psr-raw4",
 				title: "Show active tk title",
 			});
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("projects per-child ticket metadata from async-start events before status polling", () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-step-tickets-");
+		try {
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot);
+
+			tracker.handleStarted({
+				id: "run-step-tickets-start",
+				asyncDir: path.join(asyncRoot, "run-step-tickets-start"),
+				mode: "parallel",
+				agents: ["developer-a", "developer-b"],
+				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+				tkTickets: [
+					{ id: "psr-a", title: "A\u001b[31m ticket\u001b[0m" },
+					{ id: "psr-b", title: "B ticket" },
+				],
+			});
+
+			assert.deepEqual(
+				state.asyncJobs.get("run-step-tickets-start")?.steps?.map((step: { tkTicket?: unknown }) => step.tkTicket),
+				[
+					{ id: "psr-a", title: "A ticket" },
+					{ id: "psr-b", title: "B ticket" },
+				],
+			);
 		} finally {
 			removeTempDir(asyncRoot);
 		}

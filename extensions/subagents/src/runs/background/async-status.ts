@@ -42,6 +42,7 @@ interface AsyncRunStepSummary {
 	phase?: string;
 	outputName?: string;
 	structured?: boolean;
+	tkTicket?: TkTicketMetadata;
 	status: AsyncJobStep["status"];
 	activityState?: ActivityState;
 	lastActivityAt?: number;
@@ -199,23 +200,36 @@ function deriveAsyncActivityState(
 }
 
 export function validatePersistedAsyncStatus(asyncDir: string, status: AsyncStatus & { cwd?: string }): void {
-	if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
+	const invalid = (message: string): never => {
 		throw createAsyncStatusValidationError({
 			asyncDir,
-			message: "sessionId must be a string.",
+			message,
 			fingerprint: fingerprintAsyncStatusFile(asyncDir),
 		});
+	};
+	if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
+		invalid("sessionId must be a string.");
 	}
 	if (status.tkTicket !== undefined) {
 		const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
-		if (!normalizedTkTicket) {
-			throw createAsyncStatusValidationError({
-				asyncDir,
-				message: "tkTicket must include a valid id and terminal-safe title.",
-				fingerprint: fingerprintAsyncStatusFile(asyncDir),
-			});
-		}
+		if (!normalizedTkTicket) invalid("tkTicket must include a valid id and terminal-safe title.");
 		status.tkTicket = normalizedTkTicket;
+	}
+
+	const rawSteps: unknown = status.steps;
+	if (rawSteps === undefined) return;
+	if (!Array.isArray(rawSteps)) invalid("steps must be an array.");
+	const steps = rawSteps as unknown[];
+	for (const [index, rawStep] of steps.entries()) {
+		if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+			invalid(`steps[${index}] must be an object.`);
+		}
+		const step = rawStep as NonNullable<AsyncStatus["steps"]>[number];
+		const rawTicket: unknown = step.tkTicket;
+		if (rawTicket === undefined) continue;
+		const normalizedTkTicket = normalizeTkTicketMetadata(rawTicket);
+		if (!normalizedTkTicket) invalid(`steps[${index}].tkTicket must include a valid id and terminal-safe title.`);
+		step.tkTicket = normalizedTkTicket;
 	}
 }
 
@@ -243,6 +257,7 @@ function statusToSummary(
 	const summarizedSteps = steps.map((step, index) => {
 		const stepActivityState = step.activityState;
 		const stepLastActivityAt = step.lastActivityAt;
+		const normalizedStepTkTicket = normalizeTkTicketMetadata(step.tkTicket);
 		return {
 			index,
 			agent: step.agent,
@@ -250,6 +265,7 @@ function statusToSummary(
 			...(step.phase ? { phase: step.phase } : {}),
 			...(step.outputName ? { outputName: step.outputName } : {}),
 			...(step.structured ? { structured: step.structured } : {}),
+			...(normalizedStepTkTicket ? { tkTicket: normalizedStepTkTicket } : {}),
 			status: step.status,
 			...(stepActivityState ? { activityState: stepActivityState } : {}),
 			...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),

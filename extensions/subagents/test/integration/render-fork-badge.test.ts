@@ -166,6 +166,63 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
 	});
 
+	it("renders each active foreground parallel child's own ticket title", () => {
+		const text = renderSubagentResult!(
+			{
+				content: [{ type: "text", text: "running" }],
+				details: {
+					mode: "parallel",
+					totalSteps: 2,
+					results: [
+						{
+							agent: "developer-a",
+							task: "Work A",
+							exitCode: 0,
+							usage: emptyUsage,
+							tkTicket: { id: "psr-dev-a", title: "Developer A title" },
+							progress: {
+								index: 0,
+								agent: "developer-a",
+								status: "running",
+								task: "Work A",
+								recentTools: [],
+								recentOutput: [],
+								toolCount: 1,
+								tokens: 0,
+								durationMs: 10,
+							},
+						},
+						{
+							agent: "developer-b",
+							task: "Work B",
+							exitCode: 0,
+							usage: emptyUsage,
+							tkTicket: { id: "psr-dev-b", title: "Developer B title" },
+							progress: {
+								index: 1,
+								agent: "developer-b",
+								status: "running",
+								task: "Work B",
+								recentTools: [],
+								recentOutput: [],
+								toolCount: 1,
+								tokens: 0,
+								durationMs: 10,
+							},
+						},
+					],
+				},
+			},
+			{ expanded: false },
+			theme,
+		)
+			.render(140)
+			.join("\\n");
+
+		assert.equal(text.match(/working on tk: Developer A title/g)?.length, 1);
+		assert.equal(text.match(/working on tk: Developer B title/g)?.length, 1);
+	});
+
 	it("suppresses visible body lines for initial async-start placeholders", () => {
 		const widget = renderSubagentResult!(
 			{

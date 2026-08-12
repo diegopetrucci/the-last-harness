@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
 	detectTkTicketId,
 	normalizeTkTicketMetadata,
+	resolveExplicitTkTicketMetadata,
 	parseTkTicketTitle,
 	resolveTkTicketMetadata,
 	resolveTkTicketTaskContext,
@@ -41,6 +42,23 @@ describe("tk ticket helpers", () => {
 		);
 	});
 
+	it("resolves explicit ticket IDs and rejects invalid or missing tickets", () => {
+		assert.deepEqual(
+			resolveExplicitTkTicketMetadata("psr-raw4", {
+				cwd: "/repo",
+				findTicketFile: () => ({ id: "psr-raw4", path: "/repo/.tickets/psr-raw4.md" }),
+				readFileSync: () => "---\nid: psr-raw4\n---\n# Explicit ticket title\n",
+			}),
+			{ metadata: { id: "psr-raw4", title: "Explicit ticket title" } },
+		);
+		assert.match(
+			resolveExplicitTkTicketMetadata("missing", { cwd: "/repo", findTicketFile: () => undefined }).error ?? "",
+			/not found/,
+		);
+		assert.match(resolveExplicitTkTicketMetadata("bad/id", { cwd: "/repo" }).error ?? "", /only letters/);
+		assert.match(resolveExplicitTkTicketMetadata("", { cwd: "/repo" }).error ?? "", /non-empty/);
+	});
+
 	it("normalizes runtime tk ticket metadata", () => {
 		assert.deepEqual(normalizeTkTicketMetadata({ id: "psr-raw4", title: "Unsafe\u009b title" }), {
 			id: "psr-raw4",
@@ -66,6 +84,9 @@ describe("tk ticket helpers", () => {
 			assert.deepEqual(resolveTkTicketMetadata("Run `tk show psr-raw4` first.", { cwd: taskCwd }), {
 				id: "psr-raw4",
 				title: "Show active tk title",
+			});
+			assert.deepEqual(resolveExplicitTkTicketMetadata("psr-raw4", { cwd: taskCwd }), {
+				metadata: { id: "psr-raw4", title: "Show active tk title" },
 			});
 		} finally {
 			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;

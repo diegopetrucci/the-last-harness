@@ -7,7 +7,7 @@ import { readStatus } from "../../shared/utils.js";
 import { normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.js";
-import { scanAsyncRunsForRestore } from "./async-status.js";
+import { scanAsyncRunsForRestore, validatePersistedAsyncStatus } from "./async-status.js";
 import { quarantineCorruptAsyncRun } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -283,6 +283,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     });
                     const status = reconciliation.status ?? readStatus(job.asyncDir);
                     if (status) {
+                        validatePersistedAsyncStatus(job.asyncDir, status);
                         const previousStatus = job.status;
                         job.status = status.state;
                         if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused")
@@ -387,6 +388,16 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         const firstGroup = validParallelGroups.find((group) => group.start === 0);
         const firstGroupCount = firstGroup?.count;
         const agents = firstGroupCount && firstGroupCount > 0 ? rawAgents?.slice(0, firstGroupCount) : rawAgents;
+        const initialStepStart = firstGroup?.start ?? 0;
+        const initialSteps = agents?.map((agent, index) => {
+            const tkTicket = normalizeTkTicketMetadata(info.tkTickets?.[initialStepStart + index]);
+            return {
+                index: initialStepStart + index,
+                agent,
+                status: "pending",
+                ...(tkTicket ? { tkTicket } : {}),
+            };
+        });
         const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
         state.asyncJobs.set(info.id, {
             asyncId: info.id,
@@ -396,6 +407,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
             mode: info.mode ?? (info.chain ? "chain" : "single"),
             agents,
+            steps: initialSteps,
             chainStepCount: info.chainStepCount,
             parallelGroups: validParallelGroups,
             nestedRoute: info.nestedRoute,

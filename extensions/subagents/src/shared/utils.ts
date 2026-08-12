@@ -101,7 +101,8 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 
 	let status: AsyncStatus;
 	try {
-		status = normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
+		const parsed: unknown = JSON.parse(content);
+		status = normalizeAsyncLifecycleStatus(parsed);
 	} catch (error) {
 		throw createAsyncStatusJsonParseError({
 			asyncDir,

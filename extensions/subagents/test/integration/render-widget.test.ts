@@ -1783,6 +1783,42 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(text, /2 tool uses|1\.5k token/);
 	});
 
+	it("renders each active async parallel child with its own ticket title", () => {
+		const lines = buildWidgetLines(
+			[
+				{
+					asyncId: "run-step-tickets",
+					asyncDir: "/tmp/step-tickets",
+					status: "running",
+					mode: "parallel",
+					agents: ["developer-a", "developer-b"],
+					activeParallelGroup: true,
+					runningSteps: 2,
+					completedSteps: 0,
+					stepsTotal: 2,
+					steps: [
+						{
+							agent: "developer-a",
+							status: "running",
+							tkTicket: { id: "psr-a", title: "Developer A ticket" },
+						},
+						{
+							agent: "developer-b",
+							status: "pending",
+							tkTicket: { id: "psr-b", title: "Developer B ticket" },
+						},
+					],
+				},
+			],
+			theme,
+			160,
+		);
+		const text = lines.join("\n");
+
+		assert.equal(text.match(/working on tk: Developer A ticket/g)?.length, 1);
+		assert.equal(text.match(/working on tk: Developer B ticket/g)?.length, 1);
+	});
+
 	it("preserves freshness for compact parallel details in narrow multi-job rows", () => {
 		const now = 20_000;
 		const lines = buildWidgetLines(

@@ -3,6 +3,7 @@ export interface RunnerSubagentStep {
 	parentSessionId?: string;
 	agent: string;
 	task: string;
+	tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
 	phase?: string;
 	label?: string;
 	outputName?: string;

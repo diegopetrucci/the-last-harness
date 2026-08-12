@@ -43,6 +43,11 @@ interface SubagentParamsSchema {
 			enum?: string[];
 			description?: string;
 		};
+		ticket?: {
+			type?: string;
+			minLength?: number;
+			description?: string;
+		};
 		output?: JsonSchemaNode;
 	};
 }
@@ -106,10 +111,18 @@ describe("SubagentParams schema", () => {
 		assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
 		assert.deepEqual(
 			Object.keys(taskSchema ?? {}).sort(),
-			["agent", "task", "count", "output", "outputMode", "reads", "progress", "model"].sort(),
+			["agent", "task", "ticket", "count", "output", "outputMode", "reads", "progress", "model"].sort(),
 			"tasks[] allowlist mismatch",
 		);
 		assert.equal(taskSchema?.cwd, undefined, "tasks[] must not expose cwd");
+		const ticketSchema = taskSchema?.ticket as JsonSchemaNode | undefined;
+		assert.ok(ticketSchema, "tasks[].ticket schema should exist");
+		assert.equal(ticketSchema.type, "string");
+		assert.equal(ticketSchema.minLength, 1);
+		const topLevelTicketSchema = SubagentParams?.properties?.ticket;
+		assert.ok(topLevelTicketSchema, "top-level ticket schema should exist");
+		assert.equal(topLevelTicketSchema.type, "string");
+		assert.equal(topLevelTicketSchema.minLength, 1);
 		const outputSchema = taskSchema?.output as JsonSchemaNode | undefined;
 		assert.equal(outputSchema?.type, undefined);
 		assert.equal(hasAnyOfType(outputSchema, "string"), true);
@@ -319,7 +332,8 @@ describe("SubagentParams schema", () => {
 		const validator = CompileSchema(SubagentParams);
 		const validValues = [
 			{ agent: "reviewer", task: "check this" },
-			{ tasks: [{ agent: "reviewer", task: "check this", reads: false }] },
+			{ agent: "reviewer", ticket: "tlhm-87k7" },
+			{ tasks: [{ agent: "reviewer", task: "check this", ticket: "tlhm-87k7", reads: false }] },
 			{ tasks: [{ agent: "reviewer", task: "check this", output: "review.md", reads: ["input.md"], progress: true }] },
 			{ tasks: [{ agent: "reviewer", task: "check this", model: "anthropic/claude-sonnet-4" }] },
 			{ agent: "worker", task: "Fix", timeoutMs: 1000 },
@@ -403,6 +417,7 @@ describe("SubagentParams schema", () => {
 		const expectedProps = [
 			"agent",
 			"task",
+			"ticket",
 			"tasks",
 			"concurrency",
 			"context",

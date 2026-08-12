@@ -1,24 +1,14 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
-import {
-	SettingsManager,
-	getAgentDir,
-	type ExtensionAPI,
-	type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
-import { TK_WORKFLOW_STATUS_KEY, TK_WORKFLOW_WIDGET_KEY } from "./ticket-workflow-ui-constants.js";
 import type { TlhSettings } from "./types.js";
 
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_TITLE_RESOLUTION_BUDGET_MS = TK_COMMAND_TIMEOUT_MS;
-const TK_USER_BASH_REFRESH_DELAY_MS = 250;
-const TK_STATUS_HINT = " (/tickets)";
-const TK_WORKING_ON_PREFIX = "ticket: ";
 
 type TkWorkflowTicket = { id?: string; status?: string };
 type TkWorkflowInProgressTicket = { id: string; title?: string };
@@ -42,15 +32,12 @@ type TkCommandRunner = (command: string, cwd: string, args: string[], timeoutMs:
 export type TlhTicketWorkflowUiRuntimeOptions = {
 	runner?: TkCommandRunner;
 	now?: () => number;
+	getSettings?: (cwd: string) => TlhSettings;
+	getAgentDir?: () => string;
 };
 
-function getTlhGlobalSettings(cwd: string): TlhSettings {
-	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-		return isRecord(settings) ? (settings as TlhSettings) : {};
-	} catch {
-		return {};
-	}
+function defaultAgentDir(): string {
+	return process.env.PI_CODING_AGENT_DIR ?? "";
 }
 
 function firstOutputLine(result: TkCommandResult): string | undefined {
@@ -151,8 +138,8 @@ function resolveInProgressTickets(
 
 function getTkWorkflowSnapshot(cwd: string, options: TlhTicketWorkflowUiRuntimeOptions): TkWorkflowSnapshot {
 	activateTlhTicketSessionScope(cwd);
-	const settings = getTlhGlobalSettings(cwd);
-	const command = findValidTlhTicketCommand(settings, getAgentDir());
+	const settings = (options.getSettings ?? (() => ({})))(cwd);
+	const command = findValidTlhTicketCommand(settings, (options.getAgentDir ?? defaultAgentDir)());
 	if (!command) {
 		return { kind: "unavailable", message: "tk is unavailable for this TLH profile." };
 	}
@@ -277,18 +264,6 @@ function getSafeInProgressTicketTitle(ticket: TkWorkflowInProgressTicket): strin
 	return safeTitle || undefined;
 }
 
-function formatTkWorkflowFooterStatus(snapshot: TkWorkflowSnapshot): string | undefined {
-	if (snapshot.kind !== "ok" || snapshot.inProgress.length === 0) {
-		return undefined;
-	}
-	return snapshot.inProgress
-		.map((ticket) => {
-			const label = getSafeInProgressTicketTitle(ticket) ?? getSafeInProgressTicketId(ticket);
-			return `${TK_WORKING_ON_PREFIX}${label}${TK_STATUS_HINT}`;
-		})
-		.join("\n");
-}
-
 function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 	if (snapshot.kind === "unavailable") {
 		return `Ticket workflow status unavailable: ${snapshot.message}`;
@@ -304,7 +279,7 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 		`tk: ${snapshot.ready.length} ready • ${snapshot.blocked.length} blocked • ${snapshot.inProgress.length} in progress • ${snapshot.active} active • ${snapshot.total} total`,
 	];
 	if (snapshot.inProgress.length === 0) {
-		lines.push("In progress: none. Footer stays quiet.");
+		lines.push("In progress: none.");
 	} else if (snapshot.inProgress.length === 1) {
 		const [ticket] = snapshot.inProgress;
 		const id = getSafeInProgressTicketId(ticket);
@@ -329,39 +304,8 @@ function formatTkWorkflowDetails(snapshot: TkWorkflowSnapshot): string {
 	return lines.join("\n");
 }
 
-function setTkWorkflowUi(ctx: ExtensionContext, snapshot: TkWorkflowSnapshot): void {
-	ctx.ui.setStatus?.(TK_WORKFLOW_STATUS_KEY, formatTkWorkflowFooterStatus(snapshot));
-	ctx.ui.setWidget?.(TK_WORKFLOW_WIDGET_KEY, undefined);
-}
-
-function shouldRefreshFromBashCommand(command: string): boolean {
-	const tokens = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index]?.replace(/^['"]|['"]$/g, "");
-		if (!token) continue;
-		if (/(^|\/)tk$/.test(token)) {
-			return true;
-		}
-		if (/^(?:bash|sh|zsh)$/.test(token)) {
-			const nextIndex = tokens.findIndex(
-				(candidate, candidateIndex) => candidateIndex > index && /^-[^-]*c/.test(candidate),
-			);
-			if (nextIndex > index && nextIndex + 1 < tokens.length) {
-				const nested = tokens[nextIndex + 1]?.replace(/^['"]|['"]$/g, "") ?? "";
-				if (nested && shouldRefreshFromBashCommand(nested)) {
-					return true;
-				}
-			}
-		}
-	}
-	return false;
-}
-
 export type TlhTicketWorkflowUiRuntime = {
 	applyCurrentSettings(ctx: ExtensionContext): void;
-	handleSessionShutdown(): void;
-	handleUserBash(event: { command: string }, ctx: ExtensionContext): void;
-	handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext): void;
 };
 
 export function createTlhTicketWorkflowUiRuntime(
@@ -369,14 +313,6 @@ export function createTlhTicketWorkflowUiRuntime(
 	options: TlhTicketWorkflowUiRuntimeOptions = {},
 ): TlhTicketWorkflowUiRuntime {
 	let commandRegistered = false;
-	const pendingUserBashRefreshes = new Set<ReturnType<typeof setTimeout>>();
-
-	const refresh = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) {
-			return;
-		}
-		setTkWorkflowUi(ctx, getTkWorkflowSnapshot(ctx.cwd, options));
-	};
 
 	const ensureCommandRegistered = () => {
 		if (commandRegistered) {
@@ -396,39 +332,9 @@ export function createTlhTicketWorkflowUiRuntime(
 			return;
 		}
 		ensureCommandRegistered();
-		refresh(ctx);
 	};
 
-	return {
-		applyCurrentSettings,
-		handleSessionShutdown() {
-			for (const timeout of pendingUserBashRefreshes) {
-				clearTimeout(timeout);
-			}
-			pendingUserBashRefreshes.clear();
-		},
-		handleUserBash(event: { command: string }, ctx: ExtensionContext) {
-			if (!ctx.hasUI || !shouldRefreshFromBashCommand(event.command)) {
-				return;
-			}
-			const timeout = setTimeout(() => {
-				pendingUserBashRefreshes.delete(timeout);
-				refresh(ctx);
-			}, TK_USER_BASH_REFRESH_DELAY_MS);
-			pendingUserBashRefreshes.add(timeout);
-			timeout.unref?.();
-		},
-		handleToolResult(event: { toolName: string; input: { command?: unknown } }, ctx: ExtensionContext) {
-			if (!ctx.hasUI || event.toolName !== "bash") {
-				return;
-			}
-			const command = typeof event.input.command === "string" ? event.input.command : undefined;
-			if (!command || !shouldRefreshFromBashCommand(command)) {
-				return;
-			}
-			refresh(ctx);
-		},
-	};
+	return { applyCurrentSettings };
 }
 
 export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
@@ -437,17 +343,5 @@ export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		activateTlhTicketSessionScope(ctx.cwd);
 		runtime.applyCurrentSettings(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		runtime.handleSessionShutdown();
-	});
-
-	pi.on("user_bash", (event, ctx) => {
-		runtime.handleUserBash(event, ctx);
-	});
-
-	pi.on("tool_result", async (event, ctx) => {
-		runtime.handleToolResult(event, ctx);
 	});
 }

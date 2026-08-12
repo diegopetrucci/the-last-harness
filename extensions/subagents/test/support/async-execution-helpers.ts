@@ -55,6 +55,7 @@ export interface AsyncResultPayload {
 	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 	results: Array<{
 		agent?: string;
+		tkTicket?: { id: string; title: string };
 		output?: string;
 		success?: boolean;
 		error?: string;
@@ -145,6 +146,7 @@ export interface AsyncStatusPayload {
 	steps?: Array<{
 		label?: string;
 		phase?: string;
+		tkTicket?: { id: string; title: string };
 		outputName?: string;
 		structured?: boolean;
 		skills?: string[];

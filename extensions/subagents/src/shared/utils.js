@@ -61,7 +61,8 @@ export function readStatus(asyncDir) {
     }
     let status;
     try {
-        status = normalizeAsyncLifecycleStatus(JSON.parse(content));
+        const parsed = JSON.parse(content);
+        status = normalizeAsyncLifecycleStatus(parsed);
     }
     catch (error) {
         throw createAsyncStatusJsonParseError({

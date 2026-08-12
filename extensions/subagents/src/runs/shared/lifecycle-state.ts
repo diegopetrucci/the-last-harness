@@ -305,7 +305,11 @@ export function lifecycleGeneration(status: AsyncStatus | null | undefined): num
 	return typeof generation === "number" && Number.isInteger(generation) && generation >= 0 ? generation : 0;
 }
 
-export function normalizeAsyncLifecycleStatus(status: AsyncStatus): AsyncStatus {
+export function normalizeAsyncLifecycleStatus(value: unknown): AsyncStatus {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new TypeError("Persisted async status must be a JSON object.");
+	}
+	const status = value as AsyncStatus;
 	const pause = normalizePauseMetadata(status.pause);
 	const cancel = normalizeCancellationMetadata(status.cancel);
 	const continuation = normalizeContinuationMetadata(status.lifecycle?.continuation);
@@ -334,7 +338,8 @@ function statusPath(asyncDir: string): string {
 
 function readLifecycleStatus(asyncDir: string): AsyncStatus | null {
 	try {
-		return normalizeAsyncLifecycleStatus(JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8")) as AsyncStatus);
+		const parsed: unknown = JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8"));
+		return normalizeAsyncLifecycleStatus(parsed);
 	} catch (error) {
 		const code =
 			typeof error === "object" && error !== null && "code" in error

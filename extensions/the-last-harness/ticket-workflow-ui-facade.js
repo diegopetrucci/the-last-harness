@@ -1,3 +1,4 @@
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { activateTlhTicketSessionScope } from "./tickets.js";
 function createRetryableLazyImport(loader) {
     let modulePromise;
@@ -11,6 +12,17 @@ function createRetryableLazyImport(loader) {
         return modulePromise;
     };
 }
+function getSettingsForFacade(cwd) {
+    try {
+        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        return settings !== null && typeof settings === "object" && !Array.isArray(settings)
+            ? settings
+            : {};
+    }
+    catch {
+        return {};
+    }
+}
 export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
     const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./ticket-workflow-ui.js")));
     let runtime;
@@ -21,7 +33,10 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
         }
         if (!runtimePromise) {
             runtimePromise = loadModule()
-                .then((module) => module.createTlhTicketWorkflowUiRuntime(pi))
+                .then((module) => module.createTlhTicketWorkflowUiRuntime(pi, {
+                getSettings: getSettingsForFacade,
+                getAgentDir,
+            }))
                 .then((loadedRuntime) => {
                 runtime = loadedRuntime;
                 return loadedRuntime;
@@ -58,40 +73,5 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
     pi.on("session_start", async (_event, ctx) => {
         activateTlhTicketSessionScope(ctx.cwd);
         applyCurrentSettings(ctx);
-    });
-    pi.on("session_shutdown", () => {
-        if (runtime) {
-            runtime.handleSessionShutdown();
-            return;
-        }
-        void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
-    });
-    pi.on("user_bash", (event, ctx) => {
-        if (runtime) {
-            runtime.handleUserBash(event, ctx);
-            return;
-        }
-        if (!ctx.hasUI) {
-            return;
-        }
-        void getRuntime()
-            .then((loadedRuntime) => {
-            loadedRuntime.handleUserBash(event, ctx);
-        })
-            .catch(() => undefined);
-    });
-    pi.on("tool_result", async (event, ctx) => {
-        if (runtime) {
-            runtime.handleToolResult(event, ctx);
-            return;
-        }
-        if (!ctx.hasUI) {
-            return;
-        }
-        void getRuntime()
-            .then((loadedRuntime) => {
-            loadedRuntime.handleToolResult(event, ctx);
-        })
-            .catch(() => undefined);
     });
 }

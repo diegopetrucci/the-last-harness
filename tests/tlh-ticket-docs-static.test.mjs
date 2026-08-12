@@ -71,6 +71,15 @@ test("current README and active docs contain no RTK references", () => {
 	}
 });
 
+test("ticket docs keep titles on demand and out of the footer and model context", () => {
+	for (const path of ["docs/commands.md", "docs/integrations.md"]) {
+		const source = readRepoFile(path);
+		assert.match(source, /\/tickets/);
+		assert.match(source, /not add(?:ed)? .*primary footer or model context/i);
+		assert.doesNotMatch(source, /ticket footer status|ticket: <title>/i);
+	}
+});
+
 test("contributing guide links to the upstream-sync inventory", () => {
 	const source = readRepoFile("CONTRIBUTING.md");
 	assert.match(source, /docs\/upstream-sync-inventory\.md/);

@@ -59,7 +59,7 @@ import {
 } from "../shared/subagent-control.ts";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.ts";
+import { resolveExplicitTkTicketMetadata, resolveTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
 	finalizeSingleOutput,
 	injectSingleOutputInstruction,
@@ -166,6 +166,7 @@ const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground
 interface TaskParam {
 	agent: string;
 	task: string;
+	ticket?: string;
 	cwd?: string;
 	count?: number;
 	output?: string | boolean;
@@ -188,6 +189,7 @@ export interface SubagentParamsLike {
 	lines?: number;
 	agent?: string;
 	task?: string;
+	ticket?: string;
 	message?: string;
 	chain?: ChainStep[];
 	tasks?: TaskParam[];
@@ -2593,6 +2595,7 @@ function validateExecutionInput(
 	agents: AgentConfig[],
 	hasTasks: boolean,
 	hasSingle: boolean,
+	effectiveCwd: string,
 ): SubagentToolResult<Details> | null {
 	if (Number(hasTasks) + Number(hasSingle) !== 1) {
 		return {
@@ -2624,6 +2627,17 @@ function validateExecutionInput(
 		};
 	}
 
+	if (hasSingle && params.ticket !== undefined) {
+		const ticketResolution = resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd });
+		if (ticketResolution.error) {
+			return {
+				content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],
+				isError: true,
+				details: { mode: "single" as const, results: [] },
+			};
+		}
+	}
+
 	if (hasTasks && params.tasks) {
 		for (let i = 0; i < params.tasks.length; i++) {
 			const task = params.tasks[i]!;
@@ -2633,6 +2647,18 @@ function validateExecutionInput(
 					isError: true,
 					details: { mode: "parallel" as const, results: [] },
 				};
+			}
+			if (task.ticket !== undefined) {
+				const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, {
+					cwd: resolveParallelTaskCwd(task, effectiveCwd),
+				});
+				if (ticketResolution.error) {
+					return {
+						content: [{ type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` }],
+						isError: true,
+						details: { mode: "parallel" as const, results: [] },
+					};
+				}
 			}
 		}
 	}
@@ -2977,6 +3003,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
 			task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
+			...(task.ticket !== undefined ? { ticket: task.ticket } : {}),
 			cwd: task.cwd,
 			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
 			...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
@@ -3050,6 +3077,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 		return executeAsyncSingle(id, {
 			agent: params.agent!,
 			task: shouldForkAgent(contextPolicy, params.agent!) ? wrapForkTask(params.task ?? "") : (params.task ?? ""),
+			...(params.ticket !== undefined ? { ticket: params.ticket } : {}),
 			agentConfig: a,
 			ctx: asyncCtx,
 			availableModels,
@@ -3131,8 +3159,7 @@ interface ForegroundParallelRunInput {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudgets: (ResolvedToolBudget | undefined)[];
-	tkTicket?: TkTicketMetadata;
-	tkTicketIndex?: number;
+	tkTickets: (TkTicketMetadata | undefined)[];
 }
 
 function resolveSingleRunOutputBaseDir(artifactsDir: string, runId: string): string {
@@ -3350,7 +3377,7 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				availableModels: input.availableModels,
 				preferredModelProvider: input.ctx.model?.provider,
 				modelScope: input.modelScope,
-				...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
+				...(input.tkTickets[index] ? { tkTicket: input.tkTickets[index] } : {}),
 				skills: effectiveSkills === false ? [] : effectiveSkills,
 				acceptance: task.acceptance,
 				acceptanceContext: { mode: "parallel" },
@@ -3454,11 +3481,19 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	const allProgress: AgentProgress[] = [];
 	const allArtifactPaths: ArtifactPaths[] = [];
 	const tasks = params.tasks!;
-	const tkTicketContext = resolveTkTicketTaskContext({ runnerCwd: effectiveCwd, tasks });
-	const tkTicket = tkTicketContext
-		? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
-		: undefined;
-	const tkTicketIndex = tkTicketContext?.taskIndex;
+	const tkTickets: (TkTicketMetadata | undefined)[] = [];
+	for (let index = 0; index < tasks.length; index++) {
+		const task = tasks[index]!;
+		const taskCwd = resolveParallelTaskCwd(task, effectiveCwd);
+		if (task.ticket !== undefined) {
+			const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, { cwd: taskCwd });
+			if (ticketResolution.error)
+				return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
+			tkTickets.push(ticketResolution.metadata);
+			continue;
+		}
+		tkTickets.push(resolveTkTicketMetadata(task.task, { cwd: taskCwd }));
+	}
 	const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
 	const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
 
@@ -3598,8 +3633,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		deadlineAt,
 		turnBudget: data.turnBudget,
 		toolBudgets,
-		...(tkTicket ? { tkTicket } : {}),
-		...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
+		tkTickets,
 	});
 	for (let i = 0; i < results.length; i++) {
 		const run = results[i]!;
@@ -3762,7 +3796,18 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
-	const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
+	const ticketResolution =
+		params.ticket !== undefined
+			? resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd })
+			: { metadata: resolveTkTicketMetadata(params.task, { cwd: effectiveCwd }) };
+	if (ticketResolution.error) {
+		return {
+			content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],
+			isError: true,
+			details: { mode: "single", results: [] },
+		};
+	}
+	const tkTicket = ticketResolution.metadata;
 	const modelOverride: string | undefined = resolveSubagentModelOverride(
 		(params.model as string | undefined) ?? agentConfig.model,
 		ctx.model,
@@ -4422,7 +4467,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
 		const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
 
-		const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle);
+		const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle, effectiveCwd);
 		if (validationError) return validationError;
 
 		let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;

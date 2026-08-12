@@ -64,8 +64,14 @@ describe("registered subagent tool description", () => {
 			description.length >= 2500 && description.length <= 3900,
 			`expected 2500-3900 chars, got ${description.length}`,
 		);
-		assert.match(description, /SINGLE mode: \{ agent, task\? \ }|SINGLE mode: \{ agent, task\? \}/i);
+		assert.match(
+			description,
+			/SINGLE mode: \{ agent, task\?, ticket\? \ }|SINGLE mode: \{ agent, task\?, ticket\? \}/i,
+		);
 		assert.match(description, /PARALLEL mode:/i);
+		assert.match(description, /ticket\?/);
+		assert.match(description, /task-text tk show inference/);
+		assert.match(description, /effective cwd\/TICKETS_DIR/);
 		assert.match(description, /fallbackModels/i);
 		assert.match(description, /context: "fresh" \| "fork"/);
 		assert.match(description, /async:true|async: true/);
@@ -94,6 +100,9 @@ describe("registered subagent tool description", () => {
 		assertMinimalContract(description);
 		assert.match(description, /SINGLE/);
 		assert.match(description, /PARALLEL/);
+		assert.match(description, /ticket\?/);
+		assert.match(description, /task-text tk show inference/);
+		assert.match(description, /effective cwd\/TICKETS_DIR/);
 		assert.match(description, /no child process is running/i);
 		assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
 		assert.match(description, /fallbackModels/i);

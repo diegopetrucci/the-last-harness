@@ -64,23 +64,40 @@ function deriveAsyncActivityState(asyncDir, status) {
     };
 }
 export function validatePersistedAsyncStatus(asyncDir, status) {
-    if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
+    const invalid = (message) => {
         throw createAsyncStatusValidationError({
             asyncDir,
-            message: "sessionId must be a string.",
+            message,
             fingerprint: fingerprintAsyncStatusFile(asyncDir),
         });
+    };
+    if (status.sessionId !== undefined && typeof status.sessionId !== "string") {
+        invalid("sessionId must be a string.");
     }
     if (status.tkTicket !== undefined) {
         const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
-        if (!normalizedTkTicket) {
-            throw createAsyncStatusValidationError({
-                asyncDir,
-                message: "tkTicket must include a valid id and terminal-safe title.",
-                fingerprint: fingerprintAsyncStatusFile(asyncDir),
-            });
-        }
+        if (!normalizedTkTicket)
+            invalid("tkTicket must include a valid id and terminal-safe title.");
         status.tkTicket = normalizedTkTicket;
+    }
+    const rawSteps = status.steps;
+    if (rawSteps === undefined)
+        return;
+    if (!Array.isArray(rawSteps))
+        invalid("steps must be an array.");
+    const steps = rawSteps;
+    for (const [index, rawStep] of steps.entries()) {
+        if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+            invalid(`steps[${index}] must be an object.`);
+        }
+        const step = rawStep;
+        const rawTicket = step.tkTicket;
+        if (rawTicket === undefined)
+            continue;
+        const normalizedTkTicket = normalizeTkTicketMetadata(rawTicket);
+        if (!normalizedTkTicket)
+            invalid(`steps[${index}].tkTicket must include a valid id and terminal-safe title.`);
+        step.tkTicket = normalizedTkTicket;
     }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
@@ -101,6 +118,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const summarizedSteps = steps.map((step, index) => {
         const stepActivityState = step.activityState;
         const stepLastActivityAt = step.lastActivityAt;
+        const normalizedStepTkTicket = normalizeTkTicketMetadata(step.tkTicket);
         return {
             index,
             agent: step.agent,
@@ -108,6 +126,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.phase ? { phase: step.phase } : {}),
             ...(step.outputName ? { outputName: step.outputName } : {}),
             ...(step.structured ? { structured: step.structured } : {}),
+            ...(normalizedStepTkTicket ? { tkTicket: normalizedStepTkTicket } : {}),
             status: step.status,
             ...(stepActivityState ? { activityState: stepActivityState } : {}),
             ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
