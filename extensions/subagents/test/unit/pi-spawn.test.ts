@@ -7,7 +7,6 @@ import {
 	buildSubagentSpawnEnv,
 	getPiSpawnCommand,
 	resolvePiCliScript,
-	resolveWindowsPiCliScript,
 	type PiSpawnDeps,
 } from "../../src/runs/shared/pi-spawn.ts";
 
@@ -406,6 +405,5 @@ describe("resolvePiCliScript", () => {
 			existing: [packageJsonPath, cliPath],
 		});
 		assert.equal(resolvePiCliScript(deps), cliPath);
-		assert.equal(resolveWindowsPiCliScript(deps), cliPath);
 	});
 });

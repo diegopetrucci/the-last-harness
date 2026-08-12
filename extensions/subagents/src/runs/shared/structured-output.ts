@@ -72,12 +72,3 @@ export function readStructuredOutput(runtime: StructuredOutputRuntime): { value?
 	if (validation.status === "invalid") return { error: `Structured output validation failed: ${validation.message}` };
 	return { value };
 }
-
-export function cleanupStructuredOutputRuntime(runtime: StructuredOutputRuntime | undefined): void {
-	if (!runtime) return;
-	try {
-		fs.rmSync(path.dirname(runtime.schemaPath), { recursive: true, force: true });
-	} catch {
-		// Best-effort temp cleanup.
-	}
-}

@@ -10,13 +10,11 @@ import {
 	writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import {
-	ASYNC_DIR,
-	RESULTS_DIR,
-	SUBAGENT_CONTROL_INTERCOM_EVENT,
-	SUBAGENT_RESULT_INTERCOM_EVENT,
-	type SubagentState,
-} from "../../src/shared/types.ts";
+import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_CONTROL_INTERCOM_EVENT, type SubagentState } from "../../src/shared/types.ts";
+// Legacy event name kept as a test-local literal for the no-emission regression guard.
+// Do not re-add this constant to production types or result-intercom — the delivery/receipt
+// pipeline it belonged to has been permanently removed.
+const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 
 function createState(): SubagentState {
 	return {
@@ -291,7 +289,7 @@ describe("async interrupt action", () => {
 				false,
 			);
 			assert.equal(
-				emitted.some(({ event }) => event === SUBAGENT_RESULT_INTERCOM_EVENT),
+				emitted.some(({ event }) => event === LEGACY_RESULT_INTERCOM_EVENT),
 				false,
 			);
 			assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);

@@ -3,12 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-	buildBuiltinOverrideConfig,
-	discoverAgents,
-	discoverAgentsAll,
-	removeBuiltinAgentOverride,
-} from "../../src/agents/agents.ts";
+import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -418,13 +413,6 @@ describe("builtin agent overrides", () => {
 		assert.equal(implementer.override, undefined);
 	});
 
-	it("does not create a settings file when removing a non-existent override", () => {
-		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
-		assert.equal(fs.existsSync(settingsPath), false);
-		removeBuiltinAgentOverride(tempProject, "reviewer", "user");
-		assert.equal(fs.existsSync(settingsPath), false);
-	});
-
 	it("surfaces malformed settings files instead of silently ignoring them", () => {
 		const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
 		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -538,57 +526,5 @@ describe("builtin agent overrides", () => {
 				error.message.includes("reviewer") &&
 				error.message.includes("completionGuard"),
 		);
-	});
-
-	it("builds false sentinels when an override clears builtin fields", () => {
-		const override = buildBuiltinOverrideConfig(
-			{
-				model: "openai-codex/gpt-5.4-mini",
-				fallbackModels: ["openai/gpt-5-mini"],
-				thinking: "high",
-				systemPromptMode: "append",
-				inheritProjectContext: true,
-				inheritSkills: false,
-				defaultContext: "fork",
-				acceptanceRole: "read-only",
-				systemPrompt: "Base prompt",
-				skills: ["safe-bash"],
-				tools: ["bash"],
-				subagentOnlyExtensions: ["./tools/base-child.ts"],
-				completionGuard: false,
-				maxExecutionTimeMs: 1200,
-			},
-			{
-				model: undefined,
-				fallbackModels: undefined,
-				thinking: undefined,
-				systemPromptMode: "replace",
-				inheritProjectContext: false,
-				inheritSkills: false,
-				defaultContext: undefined,
-				acceptanceRole: undefined,
-				systemPrompt: "Base prompt",
-				skills: undefined,
-				tools: undefined,
-				subagentOnlyExtensions: undefined,
-				completionGuard: true,
-				maxExecutionTimeMs: undefined,
-			},
-		);
-
-		assert.deepEqual(override, {
-			model: false,
-			fallbackModels: false,
-			thinking: false,
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			defaultContext: false,
-			acceptanceRole: false,
-			skills: false,
-			tools: false,
-			subagentOnlyExtensions: false,
-			completionGuard: true,
-			maxExecutionTimeMs: false,
-		});
 	});
 });

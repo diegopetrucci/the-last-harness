@@ -1,6 +1,4 @@
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import { SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT, } from "../shared/types.js";
+import {} from "../shared/types.js";
 export function resolveSubagentResultStatus(input) {
     if (input.detached)
         return "detached";
@@ -136,30 +134,6 @@ export function attachNestedChildrenToResultChildren(runId, children, nestedChil
         return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
     });
 }
-function formatNestedResultLines(children) {
-    if (!children?.length)
-        return [];
-    const lines = ["Nested subagents:"];
-    let remaining = 10;
-    const append = (runs, indent) => {
-        for (const run of runs ?? []) {
-            if (remaining <= 0) {
-                lines.push(`${indent}↳ +more nested runs; inspect status for full tree`);
-                return;
-            }
-            remaining--;
-            const label = run.agent ?? run.agents?.join("+") ?? run.id;
-            lines.push(`${indent}↳ ${label} — ${run.state} [${run.id}]`);
-            if (run.sessionFile)
-                lines.push(`${indent}  Session: ${run.sessionFile}`);
-            append(run.children, `${indent}  `);
-            for (const step of run.steps ?? [])
-                append(step.children, `${indent}    `);
-        }
-    };
-    append(children, "");
-    return lines;
-}
 const MAX_NATIVE_FOREGROUND_CHARS = 8_000;
 const MAX_NATIVE_FOREGROUND_CHILDREN = 8;
 const MAX_NATIVE_FOREGROUND_SUMMARY_CHARS = 1_200;
@@ -277,93 +251,6 @@ function formatForegroundNativeSubagentText(input) {
     }
     return truncateWithMarker(lines.join("\n"), MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
 }
-function asyncResumeGuidance(input) {
-    if (input.source !== "async" || !input.asyncId)
-        return undefined;
-    const resumable = input.children.filter((child) => typeof child.sessionPath === "string" && fs.existsSync(child.sessionPath));
-    if (input.children.length === 1 && resumable.length === 1) {
-        return `Revive: subagent({ action: "resume", id: "${input.asyncId}", message: "..." })`;
-    }
-    if (resumable.length > 0) {
-        const firstIndex = resumable[0]?.index ?? input.children.indexOf(resumable[0]);
-        return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", index: ${firstIndex}, message: "..." })`;
-    }
-    return "Resume: unavailable; no child session file was persisted.";
-}
-function formatGroupedSubagentResultMessage(input) {
-    const counts = countStatuses(input.children);
-    const lines = [
-        "subagent results",
-        "",
-        `Run: ${input.runId}`,
-        `Mode: ${input.mode}`,
-        `Status: ${input.status}`,
-        `Children: ${formatStatusCounts(counts)}`,
-    ];
-    if (input.mode === "chain" && typeof input.chainSteps === "number") {
-        lines.push(`Chain steps: ${input.chainSteps}`);
-    }
-    if (input.errorSummary) {
-        lines.push("", "Error:", input.errorSummary);
-    }
-    if (input.asyncId)
-        lines.push(`Async id: ${input.asyncId}`);
-    if (input.asyncDir)
-        lines.push(`Async dir: ${input.asyncDir}`);
-    const resumeGuidance = asyncResumeGuidance(input);
-    if (resumeGuidance)
-        lines.push(resumeGuidance);
-    if (input.includeIntercomTargets && input.children.some((child) => child.intercomTarget)) {
-        lines.push("");
-        lines.push(input.source === "async"
-            ? "Previous intercom targets below identify child sessions used while they were running. Inspect artifacts or session logs if resume is unavailable."
-            : "Intercom targets below identify child sessions used while they were running; completed child sessions may no longer be reachable. Inspect artifacts or session logs for follow-up.");
-    }
-    for (let index = 0; index < input.children.length; index++) {
-        const child = input.children[index];
-        lines.push("");
-        lines.push(`${index + 1}. ${child.agent} — ${child.status}`);
-        if (input.includeIntercomTargets && child.intercomTarget)
-            lines.push(`${input.source === "async" ? "Previous intercom target" : "Run intercom target"}: ${child.intercomTarget}`);
-        if (child.artifactPath)
-            lines.push(`Output artifact: ${child.artifactPath}`);
-        if (child.sessionPath)
-            lines.push(`Session: ${child.sessionPath}`);
-        lines.push(...formatNestedResultLines(child.children));
-        lines.push("Summary:");
-        lines.push(child.summary);
-    }
-    return lines.join("\n");
-}
-export function buildSubagentResultIntercomPayload(input) {
-    const children = input.children.map((child) => ({
-        ...child,
-        summary: child.summary.trim() || "(no output)",
-        children: compactNestedResultChildren(child.children),
-    }));
-    const status = resolveGroupedStatus(children);
-    const summary = formatStatusCounts(countStatuses(children));
-    const firstChild = children[0];
-    const payload = {
-        to: input.to,
-        runId: input.runId,
-        mode: input.mode,
-        status,
-        summary,
-        source: input.source,
-        children,
-        ...(input.asyncId ? { asyncId: input.asyncId } : {}),
-        ...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
-        ...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
-        ...(firstChild?.agent ? { agent: firstChild.agent } : {}),
-        ...(firstChild?.index !== undefined ? { index: firstChild.index } : {}),
-        ...(firstChild?.artifactPath ? { artifactPath: firstChild.artifactPath } : {}),
-        ...(firstChild?.sessionPath ? { sessionPath: firstChild.sessionPath } : {}),
-        message: "",
-    };
-    payload.message = formatGroupedSubagentResultMessage({ ...payload, includeIntercomTargets: true });
-    return payload;
-}
 export function formatForegroundNativeSubagentResult(input) {
     const children = input.children.map((child) => ({
         ...child,
@@ -383,92 +270,4 @@ export function formatForegroundNativeSubagentResult(input) {
             ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
         }),
     };
-}
-export async function deliverSubagentResultIntercomEvent(events, payload, timeoutMs = 500) {
-    return deliverSubagentIntercomMessageEvent(events, payload.to, payload.message, timeoutMs, payload);
-}
-export async function deliverSubagentIntercomMessageEvent(events, to, message, timeoutMs = 500, extra = {}) {
-    if (typeof events.on !== "function" || typeof events.emit !== "function")
-        return false;
-    const requestId = typeof extra.requestId === "string" ? extra.requestId : randomUUID();
-    return new Promise((resolve) => {
-        const cleanupState = {};
-        let settled = false;
-        const finish = (delivered) => {
-            if (settled)
-                return;
-            settled = true;
-            if (cleanupState.timer)
-                clearTimeout(cleanupState.timer);
-            cleanupState.unsubscribe?.();
-            resolve(delivered);
-        };
-        const unsubscribe = events.on(SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, (data) => {
-            if (!data || typeof data !== "object")
-                return;
-            const delivery = data;
-            if (delivery.requestId !== requestId)
-                return;
-            finish(delivery.delivered === true);
-        });
-        cleanupState.unsubscribe = unsubscribe;
-        const timer = setTimeout(() => finish(false), timeoutMs);
-        cleanupState.timer = timer;
-        try {
-            events.emit(SUBAGENT_RESULT_INTERCOM_EVENT, { ...extra, to, message, requestId });
-        }
-        catch {
-            finish(false);
-        }
-    });
-}
-function stripSingleResultOutputs(result) {
-    return {
-        ...result,
-        messages: undefined,
-        finalOutput: undefined,
-        truncation: undefined,
-    };
-}
-export function stripDetailsOutputsForIntercomReceipt(details) {
-    return {
-        ...details,
-        results: details.results.map(stripSingleResultOutputs),
-    };
-}
-export function formatSubagentResultReceipt(input) {
-    const counts = countStatuses(input.payload.children);
-    const modeLabel = input.mode === "single"
-        ? "single subagent result"
-        : input.mode === "parallel"
-            ? "parallel subagent results"
-            : "chain subagent results";
-    const lines = [
-        `Delivered ${modeLabel} via intercom.`,
-        `Run: ${input.runId}`,
-        `Children: ${formatStatusCounts(counts)}`,
-    ];
-    const artifacts = input.payload.children.filter((child) => typeof child.artifactPath === "string");
-    if (artifacts.length > 0) {
-        lines.push("Artifacts:");
-        for (const child of artifacts) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.artifactPath}`);
-        }
-    }
-    const intercomTargets = input.payload.children.filter((child) => typeof child.intercomTarget === "string");
-    if (intercomTargets.length > 0) {
-        lines.push("Run intercom targets (may be inactive after completion):");
-        for (const child of intercomTargets) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.intercomTarget}`);
-        }
-    }
-    const sessions = input.payload.children.filter((child) => typeof child.sessionPath === "string");
-    if (sessions.length > 0) {
-        lines.push("Sessions:");
-        for (const child of sessions) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.sessionPath}`);
-        }
-    }
-    lines.push("Full grouped output was sent over intercom.");
-    return lines.join("\n");
 }

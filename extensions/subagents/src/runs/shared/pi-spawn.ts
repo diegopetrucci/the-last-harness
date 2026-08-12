@@ -173,10 +173,6 @@ export function resolvePiCliScript(deps: PiSpawnDeps = {}): string | undefined {
 	return resolvePiCliScriptWithStatus(deps).cliPath;
 }
 
-export function resolveWindowsPiCliScript(deps: PiSpawnDeps = {}): string | undefined {
-	return resolvePiCliScript(deps);
-}
-
 function getPiCliResolutionFailureSpawnCommand(
 	resolution: PiCliScriptResolution & { packageRoot: PiPackageRootResolution },
 	deps: PiSpawnDeps,
