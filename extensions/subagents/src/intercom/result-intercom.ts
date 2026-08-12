@@ -5,6 +5,7 @@ import {
 	type SubagentResultStatus,
 	type SubagentRunMode,
 } from "../shared/types.ts";
+import { truncateWithMarker } from "../shared/string-utils.ts";
 
 export function resolveSubagentResultStatus(input: {
 	exitCode?: number;
@@ -164,13 +165,6 @@ const MAX_NATIVE_FOREGROUND_REFERENCE_CHARS = 500;
 const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 const MAX_NATIVE_FOREGROUND_NESTED_ENTRIES = 8;
 const MAX_NATIVE_FOREGROUND_NESTED_DEPTH = 2;
-const NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER = `… [foreground result truncated at ${MAX_NATIVE_FOREGROUND_CHARS.toString()} chars; inspect retained details, artifacts, or sessions for full output]`;
-
-function truncateWithMarker(value: string, maxChars: number, marker: string): string {
-	if (value.length <= maxChars) return value;
-	if (marker.length >= maxChars) return marker.slice(0, maxChars);
-	return `${value.slice(0, maxChars - marker.length)}${marker}`;
-}
 
 function boundedNativeForegroundLabel(value: string): string {
 	return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
@@ -181,19 +175,27 @@ function boundedNativeForegroundReference(value: string): string {
 }
 
 function boundedNativeForegroundError(value: string): string {
-	return truncateWithMarker(
-		value,
-		MAX_NATIVE_FOREGROUND_ERROR_CHARS,
-		"… [error truncated; inspect retained details for full text]",
-	);
+	return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
 }
 
-function summarizeNativeForegroundOutput(child: SubagentResultIntercomChild): string {
+/**
+ * Bounds the per-child summary to maxChars, choosing the appropriate truncation marker.
+ * Returns "" when the budget cannot hold a well-formed marker so that callers can suppress
+ * the summary line entirely rather than emitting a sliced fragment.
+ */
+function boundedNativeForegroundSummary(child: SubagentResultIntercomChild, maxChars: number): string {
+	const raw = child.summary.trim() || "(no output)";
+	if (raw.length <= maxChars) return raw;
+	// Select the marker first, then suppress when the budget cannot hold it.
+	// Comparing against the selected marker's own length avoids suppressing a short
+	// no-references marker (49 chars) because the longer with-references marker (59
+	// chars) does not fit — the two markers have different lengths.
 	const marker =
 		child.artifactPath || child.sessionPath
 			? "… [summary truncated; see references below for full output]"
-			: "… [summary truncated; inspect retained details for full output]";
-	return truncateWithMarker(child.summary.trim() || "(no output)", MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, marker);
+			: "… [summary truncated; full output is unavailable]";
+	if (maxChars < marker.length) return "";
+	return truncateWithMarker(raw, maxChars, marker);
 }
 
 interface NativeForegroundChild extends SubagentResultIntercomChild {
@@ -224,6 +226,26 @@ function prioritizedNativeForegroundChildren(
 		.map(({ child, originalIndex }) => ({ child, originalIndex }));
 }
 
+/**
+ * Character cost of a set of lines once joined with newlines, counted conservatively
+ * (one extra char per line so reserved space is never undersized).
+ */
+function joinedLineCost(lines: string[]): number {
+	return lines.reduce((total, line) => total + line.length + 1, 0);
+}
+
+/**
+ * Divides the space remaining after all fixed scaffolding costs are reserved among the
+ * displayed children for summary text. Reserving fixed scaffolding (labels, reference
+ * lines, nested entries) before the division ensures summary text receives only the
+ * space that remains after every recovery pointer is guaranteed.
+ */
+function resolveNativeForegroundPerChildSummaryBudget(count: number, fixedCost: number, ceiling: number): number {
+	const effectiveCount = Math.max(count, 1);
+	const available = Math.max(ceiling - fixedCost, 0);
+	return Math.min(MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, Math.floor(available / effectiveCount));
+}
+
 function formatNativeForegroundNestedLines(children: PublicNestedRunSummary[] | undefined): string[] {
 	if (!children?.length) return [];
 	const lines = ["Nested subagents:"];
@@ -231,12 +253,12 @@ function formatNativeForegroundNestedLines(children: PublicNestedRunSummary[] | 
 	const append = (runs: PublicNestedRunSummary[] | undefined, indent: string, depth: number): void => {
 		if (!runs?.length) return;
 		if (depth >= MAX_NATIVE_FOREGROUND_NESTED_DEPTH) {
-			lines.push(`${indent}… [nested depth limit reached; inspect retained details for full tree]`);
+			lines.push(`${indent}… [nested depth limit reached; full tree is unavailable]`);
 			return;
 		}
 		for (const run of runs) {
 			if (remaining <= 0) {
-				lines.push(`${indent}… [additional nested entries omitted; inspect retained details for full tree]`);
+				lines.push(`${indent}… [additional nested entries omitted; full tree is unavailable]`);
 				return;
 			}
 			remaining--;
@@ -250,7 +272,11 @@ function formatNativeForegroundNestedLines(children: PublicNestedRunSummary[] | 
 		}
 	};
 	append(children, "", 0);
-	return lines;
+	// Guard: never emit a bare heading with no content beneath it. The append loop
+	// always adds at least one content line for non-empty children, but this guard
+	// is a forward-looking safety net — a future change that emits the heading and
+	// then drops entries without a marker would produce exactly the defect this catches.
+	return lines.length > 1 ? lines : [];
 }
 
 function formatForegroundNativeSubagentText(input: {
@@ -262,7 +288,9 @@ function formatForegroundNativeSubagentText(input: {
 	errorSummary?: string;
 }): string {
 	const counts = countStatuses(input.children);
-	const lines: string[] = [
+
+	// Build the fixed outer header lines.
+	const outerLines: string[] = [
 		"subagent results",
 		"",
 		`Run: ${boundedNativeForegroundReference(input.runId)}`,
@@ -270,31 +298,118 @@ function formatForegroundNativeSubagentText(input: {
 		`Status: ${boundedNativeForegroundLabel(input.status)}`,
 		`Children: ${formatStatusCounts(counts)}`,
 	];
-	if (input.mode === "chain" && typeof input.chainSteps === "number") lines.push(`Chain steps: ${input.chainSteps}`);
-	if (input.errorSummary) lines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
-
-	const displayedChildren = prioritizedNativeForegroundChildren(input.children);
-	if (input.children.length > displayedChildren.length) {
-		lines.push(
-			"",
-			`… [${input.children.length - displayedChildren.length} child results omitted; highest-priority results shown first, inspect retained details for the full set]`,
-		);
+	if (input.mode === "chain" && typeof input.chainSteps === "number") {
+		outerLines.push(`Chain steps: ${input.chainSteps}`);
 	}
-	for (const { child, originalIndex } of displayedChildren) {
+	if (input.errorSummary) {
+		outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
+	}
+
+	// Apply priority ordering and cap at MAX_NATIVE_FOREGROUND_CHILDREN.
+	const displayedChildren = prioritizedNativeForegroundChildren(input.children);
+
+	// Top-level omission (children beyond the priority cap).
+	const priorityOmittedCount = input.children.length - displayedChildren.length;
+	const priorityOmissionLine =
+		priorityOmittedCount > 0
+			? `… [${priorityOmittedCount} child results omitted; highest-priority results shown first; full set is unavailable]`
+			: null;
+
+	// Pre-compute per-child fixed lines (everything except the summary body).
+	// These carry the recovery pointers and must be reserved before the summary
+	// budget is divided so end-truncation can never destroy them.
+	interface ChildFixedData {
+		child: NativeForegroundChild;
+		originalIndex: number;
+		labelLine: string;
+		refLines: string[];
+		nestedLines: string[];
+		fixedCost: number;
+	}
+
+	const childFixedData: ChildFixedData[] = displayedChildren.map(({ child, originalIndex }) => {
 		const displayIndex = child.displayIndex ?? originalIndex + 1;
 		const displayTotal = child.displayTotal ?? input.children.length;
-		lines.push("");
-		lines.push(
-			`${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`,
-		);
-		lines.push("Summary:");
-		lines.push(summarizeNativeForegroundOutput(child));
-		if (child.artifactPath) lines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
-		if (child.sessionPath) lines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
-		lines.push(...formatNativeForegroundNestedLines(child.children));
+		const labelLine = `${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`;
+		const refLines: string[] = [];
+		if (child.artifactPath) refLines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
+		if (child.sessionPath) refLines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
+		const nestedLines = formatNativeForegroundNestedLines(child.children);
+		// Fixed cost: blank separator + label + "Summary:" header + ref lines + nested lines.
+		// The summary body itself is NOT included here — it is conditional on the per-child
+		// budget and must not be pre-counted, or the fit decision will drop children one char
+		// early when the budget is tight.
+		const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines, ...nestedLines]);
+		return { child, originalIndex, labelLine, refLines, nestedLines, fixedCost };
+	});
+
+	// Dynamic reduction: drop trailing displayed children when their scaffolding alone
+	// exceeds the ceiling. Each dropped child is counted in an explicit omission marker
+	// rather than being silently tail-cut.
+	const outerCost =
+		joinedLineCost(outerLines) + (priorityOmissionLine ? joinedLineCost(["", priorityOmissionLine]) : 0);
+	let effectiveCount = displayedChildren.length;
+	while (effectiveCount > 0) {
+		const partialFixedCost = childFixedData.slice(0, effectiveCount).reduce((s, c) => s + c.fixedCost, 0);
+		const budgetOmittedHere = displayedChildren.length - effectiveCount;
+		// The loop always tests whether effectiveCount >= 1 children fit. The omitted
+		// children's paths are never emitted; do not direct the reader to paths that
+		// belong to the retained children.
+		const budgetOmissionCostHere =
+			budgetOmittedHere > 0
+				? joinedLineCost([
+						"",
+						`… [${budgetOmittedHere} additional child results omitted; their output is not reachable from this envelope]`,
+					])
+				: 0;
+		if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS) break;
+		effectiveCount--;
 	}
 
-	return truncateWithMarker(lines.join("\n"), MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
+	const effectiveChildData = childFixedData.slice(0, effectiveCount);
+	const budgetOmittedCount = displayedChildren.length - effectiveCount;
+	// When every child is dropped (effectiveCount === 0) there are no paths above;
+	// state unavailability plainly. When some children are retained, the omitted
+	// children's paths are not emitted, so do not imply they are reachable above.
+	const budgetOmissionLine =
+		budgetOmittedCount > 0
+			? effectiveCount === 0
+				? `… [${budgetOmittedCount} child results omitted due to display size limit; full output is unavailable]`
+				: `… [${budgetOmittedCount} additional child results omitted; their output is not reachable from this envelope]`
+			: null;
+
+	// Compute total fixed cost and derive per-child summary budget from remaining space.
+	// +effectiveCount reserves one char per displayed child for the newline that joins("\n")
+	// emits between the summary text and the following ref lines. The loop's drop decision
+	// does NOT include this char (it checks bare scaffolding only), so it must be added
+	// here to keep the rendered total within the ceiling.
+	const totalFixedCost =
+		outerCost +
+		(budgetOmissionLine ? joinedLineCost(["", budgetOmissionLine]) : 0) +
+		effectiveChildData.reduce((s, c) => s + c.fixedCost, 0);
+
+	const perChildSummaryBudget = resolveNativeForegroundPerChildSummaryBudget(
+		effectiveCount,
+		totalFixedCost + effectiveCount,
+		MAX_NATIVE_FOREGROUND_CHARS,
+	);
+
+	// Render.
+	const lines: string[] = [...outerLines];
+	if (priorityOmissionLine) lines.push("", priorityOmissionLine);
+	if (budgetOmissionLine) lines.push("", budgetOmissionLine);
+
+	for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
+		lines.push("", labelLine);
+		// Emit summary text with per-child budget. Suppress the 'Summary:' heading
+		// entirely when the budget cannot hold a well-formed truncation marker — an
+		// orphaned heading with nothing beneath it is worse than no heading at all.
+		const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
+		if (summaryText) lines.push("Summary:", summaryText);
+		lines.push(...refLines, ...nestedLines);
+	}
+
+	return lines.join("\n");
 }
 
 interface GroupedNativeForegroundMessageInput {
