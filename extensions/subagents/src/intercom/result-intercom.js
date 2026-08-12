@@ -1,4 +1,5 @@
 import {} from "../shared/types.js";
+import { truncateWithMarker } from "../shared/string-utils.js";
 export function resolveSubagentResultStatus(input) {
     if (input.detached)
         return "detached";
@@ -142,14 +143,6 @@ const MAX_NATIVE_FOREGROUND_REFERENCE_CHARS = 500;
 const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 const MAX_NATIVE_FOREGROUND_NESTED_ENTRIES = 8;
 const MAX_NATIVE_FOREGROUND_NESTED_DEPTH = 2;
-const NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER = `… [foreground result truncated at ${MAX_NATIVE_FOREGROUND_CHARS.toString()} chars; inspect retained details, artifacts, or sessions for full output]`;
-function truncateWithMarker(value, maxChars, marker) {
-    if (value.length <= maxChars)
-        return value;
-    if (marker.length >= maxChars)
-        return marker.slice(0, maxChars);
-    return `${value.slice(0, maxChars - marker.length)}${marker}`;
-}
 function boundedNativeForegroundLabel(value) {
     return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
 }
@@ -157,13 +150,18 @@ function boundedNativeForegroundReference(value) {
     return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_REFERENCE_CHARS, "… [reference truncated]");
 }
 function boundedNativeForegroundError(value) {
-    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; inspect retained details for full text]");
+    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
 }
-function summarizeNativeForegroundOutput(child) {
+function boundedNativeForegroundSummary(child, maxChars) {
+    const raw = child.summary.trim() || "(no output)";
+    if (raw.length <= maxChars)
+        return raw;
     const marker = child.artifactPath || child.sessionPath
         ? "… [summary truncated; see references below for full output]"
-        : "… [summary truncated; inspect retained details for full output]";
-    return truncateWithMarker(child.summary.trim() || "(no output)", MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, marker);
+        : "… [summary truncated; full output is unavailable]";
+    if (maxChars < marker.length)
+        return "";
+    return truncateWithMarker(raw, maxChars, marker);
 }
 function prioritizedNativeForegroundChildren(children) {
     const statusPriority = new Map([
@@ -186,6 +184,14 @@ function prioritizedNativeForegroundChildren(children) {
         .slice(0, MAX_NATIVE_FOREGROUND_CHILDREN)
         .map(({ child, originalIndex }) => ({ child, originalIndex }));
 }
+function joinedLineCost(lines) {
+    return lines.reduce((total, line) => total + line.length + 1, 0);
+}
+function resolveNativeForegroundPerChildSummaryBudget(count, fixedCost, ceiling) {
+    const effectiveCount = Math.max(count, 1);
+    const available = Math.max(ceiling - fixedCost, 0);
+    return Math.min(MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, Math.floor(available / effectiveCount));
+}
 function formatNativeForegroundNestedLines(children) {
     if (!children?.length)
         return [];
@@ -195,12 +201,12 @@ function formatNativeForegroundNestedLines(children) {
         if (!runs?.length)
             return;
         if (depth >= MAX_NATIVE_FOREGROUND_NESTED_DEPTH) {
-            lines.push(`${indent}… [nested depth limit reached; inspect retained details for full tree]`);
+            lines.push(`${indent}… [nested depth limit reached; full tree is unavailable]`);
             return;
         }
         for (const run of runs) {
             if (remaining <= 0) {
-                lines.push(`${indent}… [additional nested entries omitted; inspect retained details for full tree]`);
+                lines.push(`${indent}… [additional nested entries omitted; full tree is unavailable]`);
                 return;
             }
             remaining--;
@@ -216,11 +222,11 @@ function formatNativeForegroundNestedLines(children) {
         }
     };
     append(children, "", 0);
-    return lines;
+    return lines.length > 1 ? lines : [];
 }
 function formatForegroundNativeSubagentText(input) {
     const counts = countStatuses(input.children);
-    const lines = [
+    const outerLines = [
         "subagent results",
         "",
         `Run: ${boundedNativeForegroundReference(input.runId)}`,
@@ -228,28 +234,69 @@ function formatForegroundNativeSubagentText(input) {
         `Status: ${boundedNativeForegroundLabel(input.status)}`,
         `Children: ${formatStatusCounts(counts)}`,
     ];
-    if (input.mode === "chain" && typeof input.chainSteps === "number")
-        lines.push(`Chain steps: ${input.chainSteps}`);
-    if (input.errorSummary)
-        lines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
-    const displayedChildren = prioritizedNativeForegroundChildren(input.children);
-    if (input.children.length > displayedChildren.length) {
-        lines.push("", `… [${input.children.length - displayedChildren.length} child results omitted; highest-priority results shown first, inspect retained details for the full set]`);
+    if (input.mode === "chain" && typeof input.chainSteps === "number") {
+        outerLines.push(`Chain steps: ${input.chainSteps}`);
     }
-    for (const { child, originalIndex } of displayedChildren) {
+    if (input.errorSummary) {
+        outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
+    }
+    const displayedChildren = prioritizedNativeForegroundChildren(input.children);
+    const priorityOmittedCount = input.children.length - displayedChildren.length;
+    const priorityOmissionLine = priorityOmittedCount > 0
+        ? `… [${priorityOmittedCount} child results omitted; highest-priority results shown first; full set is unavailable]`
+        : null;
+    const childFixedData = displayedChildren.map(({ child, originalIndex }) => {
         const displayIndex = child.displayIndex ?? originalIndex + 1;
         const displayTotal = child.displayTotal ?? input.children.length;
-        lines.push("");
-        lines.push(`${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`);
-        lines.push("Summary:");
-        lines.push(summarizeNativeForegroundOutput(child));
+        const labelLine = `${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`;
+        const refLines = [];
         if (child.artifactPath)
-            lines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
+            refLines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
         if (child.sessionPath)
-            lines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
-        lines.push(...formatNativeForegroundNestedLines(child.children));
+            refLines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
+        const nestedLines = formatNativeForegroundNestedLines(child.children);
+        const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines, ...nestedLines]);
+        return { child, originalIndex, labelLine, refLines, nestedLines, fixedCost };
+    });
+    const outerCost = joinedLineCost(outerLines) + (priorityOmissionLine ? joinedLineCost(["", priorityOmissionLine]) : 0);
+    let effectiveCount = displayedChildren.length;
+    while (effectiveCount > 0) {
+        const partialFixedCost = childFixedData.slice(0, effectiveCount).reduce((s, c) => s + c.fixedCost, 0);
+        const budgetOmittedHere = displayedChildren.length - effectiveCount;
+        const budgetOmissionCostHere = budgetOmittedHere > 0
+            ? joinedLineCost([
+                "",
+                `… [${budgetOmittedHere} additional child results omitted due to display size limit; see listed paths above]`,
+            ])
+            : 0;
+        if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS)
+            break;
+        effectiveCount--;
     }
-    return truncateWithMarker(lines.join("\n"), MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
+    const effectiveChildData = childFixedData.slice(0, effectiveCount);
+    const budgetOmittedCount = displayedChildren.length - effectiveCount;
+    const budgetOmissionLine = budgetOmittedCount > 0
+        ? effectiveCount === 0
+            ? `… [${budgetOmittedCount} child results omitted due to display size limit; full output is unavailable]`
+            : `… [${budgetOmittedCount} additional child results omitted due to display size limit; see listed paths above]`
+        : null;
+    const totalFixedCost = outerCost +
+        (budgetOmissionLine ? joinedLineCost(["", budgetOmissionLine]) : 0) +
+        effectiveChildData.reduce((s, c) => s + c.fixedCost, 0);
+    const perChildSummaryBudget = resolveNativeForegroundPerChildSummaryBudget(effectiveCount, totalFixedCost + effectiveCount, MAX_NATIVE_FOREGROUND_CHARS);
+    const lines = [...outerLines];
+    if (priorityOmissionLine)
+        lines.push("", priorityOmissionLine);
+    if (budgetOmissionLine)
+        lines.push("", budgetOmissionLine);
+    for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
+        lines.push("", labelLine, "Summary:");
+        const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
+        if (summaryText)
+            lines.push(summaryText);
+        lines.push(...refLines, ...nestedLines);
+    }
+    return lines.join("\n");
 }
 export function formatForegroundNativeSubagentResult(input) {
     const children = input.children.map((child) => ({
