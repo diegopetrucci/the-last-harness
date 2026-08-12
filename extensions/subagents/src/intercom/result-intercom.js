@@ -266,7 +266,7 @@ function formatForegroundNativeSubagentText(input) {
         const budgetOmissionCostHere = budgetOmittedHere > 0
             ? joinedLineCost([
                 "",
-                `… [${budgetOmittedHere} additional child results omitted due to display size limit; see listed paths above]`,
+                `… [${budgetOmittedHere} additional child results omitted; their output is not reachable from this envelope]`,
             ])
             : 0;
         if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS)
@@ -278,7 +278,7 @@ function formatForegroundNativeSubagentText(input) {
     const budgetOmissionLine = budgetOmittedCount > 0
         ? effectiveCount === 0
             ? `… [${budgetOmittedCount} child results omitted due to display size limit; full output is unavailable]`
-            : `… [${budgetOmittedCount} additional child results omitted due to display size limit; see listed paths above]`
+            : `… [${budgetOmittedCount} additional child results omitted; their output is not reachable from this envelope]`
         : null;
     const totalFixedCost = outerCost +
         (budgetOmissionLine ? joinedLineCost(["", budgetOmissionLine]) : 0) +
@@ -290,10 +290,10 @@ function formatForegroundNativeSubagentText(input) {
     if (budgetOmissionLine)
         lines.push("", budgetOmissionLine);
     for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
-        lines.push("", labelLine, "Summary:");
+        lines.push("", labelLine);
         const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
         if (summaryText)
-            lines.push(summaryText);
+            lines.push("Summary:", summaryText);
         lines.push(...refLines, ...nestedLines);
     }
     return lines.join("\n");

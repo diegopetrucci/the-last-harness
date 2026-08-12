@@ -439,7 +439,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// F1 premature-drop regression: no child is dropped while its bare
+	// Premature-drop guard: no child is dropped while its bare
 	// scaffolding would fit.
 	//
 	// Before the fix the per-child fit decision included a 1-char summary-line
@@ -456,7 +456,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 	// At artifactPath=426 the new scaffold is 8002 > 8000, so the drop to 7 is
 	// legitimate and expected in both old and new code.
 	// -------------------------------------------------------------------------
-	it("no child dropped while bare scaffolding fits — F1 premature-drop boundary", () => {
+	it("no child dropped while bare scaffolding fits", () => {
 		const artPath = "a".repeat(425); // 425 chars — scaffold_new = 7994 ≤ 8000
 		const sessPath = "b".repeat(500); // 500 chars (at the reference cap)
 		const children = Array.from({ length: 8 }, (_, i) => ({
@@ -501,5 +501,130 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 		// 7 of 8 is expected here (scaffold exceeds ceiling), and output must still be within bound.
 		assert.equal(artCountPlus, 7, `expected 7 artifact pointers at boundary+1, got ${artCountPlus}`);
 		assert.ok(textPlus.length <= MAX_CHARS, `length ${textPlus.length} exceeds ceiling`);
+	});
+
+	// -------------------------------------------------------------------------
+	// Bare-heading guard: orphaned 'Summary:' heading when per-child summary budget is exhausted.
+	//
+	// When the per-child summary budget is smaller than any well-formed truncation
+	// marker, boundedNativeForegroundSummary returns "", and the caller must NOT
+	// emit the 'Summary:' heading at all — an orphaned heading is worse than none.
+	//
+	// Measured shape: 8 children, 7 with 500-char artifact and session paths
+	// (budget too tight for any marker), 1 with no references (budget fits the
+	// shorter no-references marker). Before the fix: 7 bare 'Summary:' headings.
+	// After the fix: 0 bare 'Summary:' headings.
+	//
+	// Detector note: the previous search for this defect only treated a heading as
+	// bare when the next line was a child header or end of input, missing the case
+	// where scaffolding lines (e.g. 'Output artifact:') follow. The correct detector
+	// below treats a 'Summary:' heading as bare when its next non-blank line is
+	// scaffolding, an omission marker, or end of input.
+	// -------------------------------------------------------------------------
+	it("no bare 'Summary:' heading emitted when per-child summary budget is exhausted", () => {
+		// 7 children carry 500-char paths that push the per-child budget below any
+		// well-formed marker length; 1 child has no references and receives the shorter
+		// (49-char) no-references marker which still fits.
+		const fatArtPath = "a".repeat(500);
+		const fatSessPath = "b".repeat(500);
+		const children = Array.from({ length: 8 }, (_, i) => ({
+			agent: `worker-${i}`,
+			status: "completed" as const,
+			summary: "S".repeat(1_200),
+			// 7 children with 500-char paths; last child has no references.
+			...(i < 7 ? { artifactPath: fatArtPath, sessionPath: fatSessPath } : {}),
+			index: i,
+		}));
+
+		const { text } = formatForegroundNativeSubagentResult({
+			runId: "run-finding-a-regression",
+			mode: "parallel",
+			children,
+		});
+
+		// All 8 children must still be displayed and output must be within ceiling.
+		assert.ok(text.length <= MAX_CHARS, `length ${text.length} exceeds ceiling`);
+		assert.equal((text.match(/worker-/g) ?? []).length, 8, "all 8 children must appear");
+
+		// Count bare 'Summary:' headings using the correct detector:
+		// a heading is bare when its next non-blank line is scaffolding,
+		// an omission marker, or end of input — NOT only when a child header follows.
+		const lines = text.split("\n");
+		let bareSummaryCount = 0;
+		for (let i = 0; i < lines.length; i++) {
+			if (lines[i]?.trim() !== "Summary:") continue;
+			let j = i + 1;
+			while (j < lines.length && lines[j]?.trim() === "") j++;
+			const next = lines[j]?.trim() ?? "";
+			// Scaffolding lines that would directly follow an orphaned heading:
+			const isScaffolding =
+				next.startsWith("Output artifact:") || next.startsWith("Session:") || next.startsWith("Nested subagents:");
+			const isOmissionMarker = next.startsWith("…");
+			const isChildHeader = /^\d+\/\d+\./.test(next); // e.g. '2/8. worker'
+			const isEndOfInput = j >= lines.length;
+			if (isScaffolding || isOmissionMarker || isEndOfInput || isChildHeader) bareSummaryCount++;
+		}
+		// Before the fix: 7 bare headings. After the fix: 0.
+		assert.equal(bareSummaryCount, 0, `${bareSummaryCount} bare 'Summary:' heading(s) found; expected 0`);
+
+		// Additional gate checks from the contract sweep.
+		assert.doesNotThrow(() => assertNoMangledMarker("finding-a", text));
+		assert.doesNotThrow(() => assertNoOrphanedNestedHeading("finding-a", text));
+		assert.ok(text.isWellFormed());
+	});
+
+	// -------------------------------------------------------------------------
+	// Omission-marker guard: marker must not direct reader to paths of retained children.
+	//
+	// When some (not all) children are dropped for size, the omitted children's
+	// paths are never emitted. The marker must not imply those results are
+	// reachable through paths that belong to retained children.
+	//
+	// Measured shape: 8 children at 499-char paths; 7 display, 1 is dropped.
+	// Before the fix: marker said "see listed paths above" (misdirected).
+	// After the fix: marker states output is not reachable from this envelope.
+	// -------------------------------------------------------------------------
+	it("partial-drop omission marker does not point at retained children's paths", () => {
+		// 499-char paths push the fixed cost just over the ceiling at 8 children,
+		// causing exactly 1 child to be dropped.
+		const artPath = "a".repeat(499);
+		const sessPath = "b".repeat(499);
+		const children = Array.from({ length: 8 }, (_, i) => ({
+			agent: `worker-${i}`,
+			status: "completed" as const,
+			summary: "S".repeat(1_200),
+			artifactPath: artPath,
+			sessionPath: sessPath,
+			index: i,
+		}));
+
+		const { text } = formatForegroundNativeSubagentResult({
+			runId: "run-finding-b-regression",
+			mode: "parallel",
+			children,
+		});
+
+		// 7 children retained, 1 dropped — confirm the partial-drop case fired.
+		const artCount = (text.match(/Output artifact:/g) ?? []).length;
+		assert.equal(artCount, 7, `expected 7 retained artifact pointers, got ${artCount}`);
+
+		// The omission marker must not claim the dropped child's output is reachable
+		// through the retained children's paths.
+		assert.doesNotMatch(
+			text,
+			/see listed paths above/,
+			"marker must not direct reader to paths belonging to retained children",
+		);
+		// The marker must include the count and state that output is not reachable.
+		assert.match(
+			text,
+			/… \[1 additional child results omitted; their output is not reachable from this envelope\]/,
+			"marker must state omitted output is not reachable from this envelope",
+		);
+
+		// Ceiling and well-formedness.
+		assert.ok(text.length <= MAX_CHARS, `length ${text.length} exceeds ceiling`);
+		assert.doesNotThrow(() => assertNoMangledMarker("finding-b", text));
+		assert.ok(text.isWellFormed());
 	});
 });

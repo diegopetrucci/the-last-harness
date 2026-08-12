@@ -352,13 +352,14 @@ function formatForegroundNativeSubagentText(input: {
 	while (effectiveCount > 0) {
 		const partialFixedCost = childFixedData.slice(0, effectiveCount).reduce((s, c) => s + c.fixedCost, 0);
 		const budgetOmittedHere = displayedChildren.length - effectiveCount;
-		// The loop always tests whether effectiveCount >= 1 children fit, so paths ARE
-		// listed above whenever the omission line would appear. Use the with-paths wording.
+		// The loop always tests whether effectiveCount >= 1 children fit. The omitted
+		// children's paths are never emitted; do not direct the reader to paths that
+		// belong to the retained children.
 		const budgetOmissionCostHere =
 			budgetOmittedHere > 0
 				? joinedLineCost([
 						"",
-						`… [${budgetOmittedHere} additional child results omitted due to display size limit; see listed paths above]`,
+						`… [${budgetOmittedHere} additional child results omitted; their output is not reachable from this envelope]`,
 					])
 				: 0;
 		if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS) break;
@@ -368,12 +369,13 @@ function formatForegroundNativeSubagentText(input: {
 	const effectiveChildData = childFixedData.slice(0, effectiveCount);
 	const budgetOmittedCount = displayedChildren.length - effectiveCount;
 	// When every child is dropped (effectiveCount === 0) there are no paths above;
-	// state unavailability plainly instead of pointing at an empty list.
+	// state unavailability plainly. When some children are retained, the omitted
+	// children's paths are not emitted, so do not imply they are reachable above.
 	const budgetOmissionLine =
 		budgetOmittedCount > 0
 			? effectiveCount === 0
 				? `… [${budgetOmittedCount} child results omitted due to display size limit; full output is unavailable]`
-				: `… [${budgetOmittedCount} additional child results omitted due to display size limit; see listed paths above]`
+				: `… [${budgetOmittedCount} additional child results omitted; their output is not reachable from this envelope]`
 			: null;
 
 	// Compute total fixed cost and derive per-child summary budget from remaining space.
@@ -398,11 +400,12 @@ function formatForegroundNativeSubagentText(input: {
 	if (budgetOmissionLine) lines.push("", budgetOmissionLine);
 
 	for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
-		lines.push("", labelLine, "Summary:");
-		// Emit summary text with per-child budget. Suppress entirely when the budget
-		// cannot hold a well-formed truncation marker to prevent mangled fragments.
+		lines.push("", labelLine);
+		// Emit summary text with per-child budget. Suppress the 'Summary:' heading
+		// entirely when the budget cannot hold a well-formed truncation marker — an
+		// orphaned heading with nothing beneath it is worse than no heading at all.
 		const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
-		if (summaryText) lines.push(summaryText);
+		if (summaryText) lines.push("Summary:", summaryText);
 		lines.push(...refLines, ...nestedLines);
 	}
 
