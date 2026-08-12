@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens a selector UI) |
+| `/model` | Select the active model (opens the native selector; see [model selection scope](models.md#model-selection-scope)) |
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
@@ -164,7 +164,7 @@ For each role you have two choices:
 
 When resetting all, per-role failures are isolated — errors and unrecognised overrides are reported as a distinct category so a single failed clear does not abort the rest.
 
-**Reset is also undoable**: restore the value at any time with `/model` (primary-agent overrides) or `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` (subagent overrides), or copy back the `settings.json.bak-*` backup shown in the notification.
+**Reset is also undoable**: restore the value through the native `/model` picker and choose `All sessions` (the default `This session only — default` choice is session-only) for primary-agent overrides; use `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` for subagent overrides, or copy back the `settings.json.bak-*` backup shown in the notification.
 
 #### Outside the TUI
 
@@ -176,7 +176,7 @@ The packaged default shown is the canonical value for the active provider, resol
 
 #### Reconcile state
 
-Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create an override (via `/model` or `/subagent-settings`), on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
+Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create a persistent override via `/model` (the native picker requires the `All sessions` choice; its default `This session only — default` choice does not write an override; direct exact-name `/model` selections retain their existing persistent path) or via `/subagent-settings`, on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
 
 ### `/tickets`
 

@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Native model selection from `/model` without an exact argument or `Ctrl+L` now offers the ordered scope choices `This session only — default` and `All sessions`; exact-name and direct/programmatic model applications retain persistent upstream behavior.
+
 ## [0.37.0] - 2026-08-11
 
 ### Model defaults

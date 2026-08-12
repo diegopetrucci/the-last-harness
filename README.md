@@ -100,7 +100,7 @@ When TLH ships an update that changes the packaged model or effort default for a
 Run `/reconcile` to review and resolve the drift:
 
 - **Keep** — acknowledges the new TLH default and preserves your override unchanged. Non-destructive: your setting is untouched.
-- **Reset** — clears your override so the role falls back to TLH packaged defaults. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Undoable: restore the value at any time via `/model` (primary agents) or `/subagent-settings set <role> ...` (subagents). Settings writes always create a `settings.json.bak-*` backup shown in the notification.
+- **Reset** — clears your override so the role falls back to TLH packaged defaults. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Undoable: restore the value through the native `/model` picker and choose `All sessions` (the default `This session only — default` option is session-only); for subagents, use `/subagent-settings set <role> ...`. Settings writes always create a `settings.json.bak-*` backup shown in the notification.
 
 The **only trigger** is TLH changing a packaged default for a role you have overridden. There is no periodic or scheduled reminder.
 

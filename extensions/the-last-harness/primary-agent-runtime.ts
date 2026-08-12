@@ -42,6 +42,20 @@ import {
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
+import {
+	beginTlhModelSelectionDefaultSuppression,
+	chooseTlhModelSelectionScope,
+	claimTlhModelSelectionDefaults,
+	discardTlhModelSelectionDefaults,
+	installTlhModelSelectionPersistenceOverride,
+	isTlhNativeModelSelectorClaim,
+	persistTlhModelSelectionDefaults,
+	persistTlhStandaloneThinkingDefaults,
+	replayAllTlhUnclaimedModelSelectionDefaults,
+	replayTlhUnmatchedModelSelectionDefaults,
+	setTlhModelSelectionActiveModelResolver,
+	setTlhSessionOnlyModel,
+} from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import {
 	buildChildSubagentSystemPrompt,
@@ -574,6 +588,13 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	let tlhApplyingModel = false;
+	let tlhRestoringCancelledModel = false;
+	let sessionOnlyModel: ActiveModel | undefined;
+
+	function updateSessionOnlyModel(model: ActiveModel | undefined): void {
+		sessionOnlyModel = model;
+		setTlhSessionOnlyModel(model);
+	}
 
 	async function applyPrimaryModel(
 		ctx: ExtensionContext,
@@ -630,6 +651,51 @@ function createTlhPrimaryAgentRuntime(
 		setExtensionThinkingLevel(pi, thinking);
 	}
 
+	async function restoreCancelledModel(ctx: ExtensionContext, previousModel: ActiveModel | undefined): Promise<void> {
+		if (!previousModel) {
+			return;
+		}
+		const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
+		tlhRestoringCancelledModel = true;
+		tlhApplyingModel = true;
+		try {
+			const restored = await pi.setModel(previousModel);
+			if (restored) {
+				// The upstream picker posts `Model: <attempted>` after model_select
+				// dispatch completes. Run on the next event-loop turn so the accurate
+				// restored-model status remains the final visible message.
+				setImmediate(() => {
+					try {
+						if (ctx.model?.provider === previousModel.provider && ctx.model.id === previousModel.id) {
+							ctx.ui.notify(
+								`Kept ${previousModel.provider}/${previousModel.id} after cancelling model selection.`,
+								"info",
+							);
+						}
+					} catch {
+						// The originating extension context was replaced before the deferred
+						// status could render; never report a model for another session.
+					}
+				});
+			} else {
+				ctx.ui.notify(
+					`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`,
+					"warning",
+				);
+			}
+		} catch {
+			ctx.ui.notify(
+				`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`,
+				"warning",
+			);
+		} finally {
+			releaseDefaultSuppression();
+			discardTlhModelSelectionDefaults();
+			tlhApplyingModel = false;
+			tlhRestoringCancelledModel = false;
+		}
+	}
+
 	async function applyPrimaryDefaults(ctx: ExtensionContext, options: { warnOnMissing?: boolean } = {}): Promise<void> {
 		const { warnOnMissing = true } = options;
 		const selection = currentPrimaryAgentSelection();
@@ -667,13 +733,28 @@ function createTlhPrimaryAgentRuntime(
 			}
 		}
 
-		const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
+		const preservesSessionOnlyModel =
+			!forceApply &&
+			sessionOnlyModel !== undefined &&
+			ctx.model?.provider === sessionOnlyModel.provider &&
+			ctx.model.id === sessionOnlyModel.id;
+		if (sessionOnlyModel && !preservesSessionOnlyModel) {
+			// Locked primaries remain unconditional, and an out-of-band model
+			// change must not leave the session-only gate stuck on another model.
+			updateSessionOnlyModel(undefined);
+		}
+		const activePrimaryModel =
+			shouldApplyModel && !preservesSessionOnlyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
 		if (shouldApplyThinking) {
 			applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
 		}
 	}
 
 	async function applyPrimaryModeChange(ctx: ExtensionContext): Promise<void> {
+		// A primary-mode change is an explicit request to reapply that mode's
+		// defaults, so it ends any model choice scoped to the prior mode/session.
+		replayTlhUnmatchedModelSelectionDefaults();
+		updateSessionOnlyModel(undefined);
 		await applyPrimaryDefaults(ctx);
 	}
 
@@ -870,6 +951,12 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+		// Session-only model intent does not cross session_start. This includes
+		// /reload: the replacement runtime cannot safely prove that process-global
+		// shim state belongs to the same session rather than a switched session.
+		replayAllTlhUnclaimedModelSelectionDefaults();
+		setTlhModelSelectionActiveModelResolver(() => ctx.model);
+		updateSessionOnlyModel(undefined);
 		activateTlhTicketSessionScope(ctx.cwd);
 		sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
 		syncPrimaryAgentState(ctx);
@@ -877,15 +964,72 @@ function createTlhPrimaryAgentRuntime(
 	}
 
 	function registerLifecycleHooks(): void {
+		pi.on("thinking_level_select", async () => {
+			// Native model-selector thinking writes stay attached to the pending
+			// model claim. Independent /effort and thinking-cycle writes are drained
+			// and restored through the retained upstream setter here.
+			await persistTlhStandaloneThinkingDefaults();
+		});
+
 		pi.on("model_select", async (event, ctx) => {
-			// Ignore events emitted by TLH's own applyPrimaryModel to avoid a feedback loop.
+			// The claim remains pending for the full upstream dispatch, regardless
+			// of earlier async extension handlers. Refresh the live getter only after
+			// claiming the operation classified during AgentSession.setModel.
+			const defaultsClaim = claimTlhModelSelectionDefaults(event.model);
+			setTlhModelSelectionActiveModelResolver(() => ctx.model);
+
+			// Cancel restoration is intentionally ephemeral. It emits its own
+			// source="set" event, which must not prompt or restore defaults again.
+			if (tlhRestoringCancelledModel) {
+				discardTlhModelSelectionDefaults(defaultsClaim);
+				return;
+			}
+			// TLH's own primary-agent application is not a user choice. Keep its
+			// previous persistence behavior without opening the scope picker or
+			// recording a role override.
 			if (tlhApplyingModel) {
+				updateSessionOnlyModel(undefined);
+				await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
 				return;
 			}
-			// Only handle user-initiated model selections (source "set" is emitted by /model and pi.setModel alike).
-			if (event.source !== "set") {
+
+			if (event.source === "set") {
+				if (isTlhNativeModelSelectorClaim(defaultsClaim)) {
+					const scope = await chooseTlhModelSelectionScope(ctx);
+					if (scope === "cancel") {
+						discardTlhModelSelectionDefaults(defaultsClaim);
+						await restoreCancelledModel(ctx, event.previousModel);
+						return;
+					}
+					if (scope === "session-only") {
+						// The active AgentSession already appended the model change. Keep
+						// primary reapplication from replacing it for this active session,
+						// and keep a no-op native re-selection from persisting it globally.
+						updateSessionOnlyModel(event.model);
+						discardTlhModelSelectionDefaults(defaultsClaim);
+						return;
+					}
+				}
+				// A single intercepted write is a programmatic setModel call, not the
+				// native /model or Ctrl+L selector. Preserve its prior persistence
+				// behavior without prompting (including provider-auth auto-selection).
+				updateSessionOnlyModel(undefined);
+				await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+			} else if (event.source === "cycle") {
+				// Cycling has no scope picker and retains upstream behavior, but
+				// does not create or edit a TLH primary override.
+				updateSessionOnlyModel(undefined);
+				await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+				return;
+			} else {
+				// Restore and future sources are outside TLH's scoped interaction.
+				// Fail open by restoring claimed and unmatched upstream writes.
+				updateSessionOnlyModel(undefined);
+				await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+				replayTlhUnmatchedModelSelectionDefaults();
 				return;
 			}
+
 			syncPrimaryAgentState(ctx);
 			const selection = currentPrimaryAgentSelection();
 			if (!isEnabledPrimaryAgentSelection(selection)) {
@@ -938,15 +1082,22 @@ function createTlhPrimaryAgentRuntime(
 		});
 
 		pi.on("session_tree", async (_event, ctx) => {
+			replayTlhUnmatchedModelSelectionDefaults();
+			setTlhModelSelectionActiveModelResolver(() => ctx.model);
 			syncPrimaryAgentState(ctx);
 			await applyPrimaryDefaults(ctx);
 		});
 
 		pi.on("session_shutdown", async (_event, _ctx) => {
+			replayAllTlhUnclaimedModelSelectionDefaults();
+			setTlhModelSelectionActiveModelResolver(undefined);
+			updateSessionOnlyModel(undefined);
 			restorePrimaryToolsIfAppropriate();
 		});
 
 		pi.on("before_agent_start", async (event, ctx) => {
+			replayTlhUnmatchedModelSelectionDefaults();
+			setTlhModelSelectionActiveModelResolver(() => ctx.model);
 			const settings = getTlhGlobalSettings(ctx.cwd);
 			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
@@ -1079,6 +1230,7 @@ export function registerTlhPrimaryAgentRuntime(
 		return undefined;
 	}
 
+	installTlhModelSelectionPersistenceOverride();
 	const runtime = createTlhPrimaryAgentRuntime(
 		pi,
 		options.primaryAgents ?? loadPrimaryAgents(),

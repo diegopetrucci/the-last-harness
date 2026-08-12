@@ -10,6 +10,7 @@ import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryE
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
+import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
@@ -395,6 +396,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         }
     }
     let tlhApplyingModel = false;
+    let tlhRestoringCancelledModel = false;
+    let sessionOnlyModel;
+    function updateSessionOnlyModel(model) {
+        sessionOnlyModel = model;
+        setTlhSessionOnlyModel(model);
+    }
     async function applyPrimaryModel(ctx, primary, model) {
         if (!model) {
             const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
@@ -434,6 +441,40 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         }
         setExtensionThinkingLevel(pi, thinking);
     }
+    async function restoreCancelledModel(ctx, previousModel) {
+        if (!previousModel) {
+            return;
+        }
+        const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
+        tlhRestoringCancelledModel = true;
+        tlhApplyingModel = true;
+        try {
+            const restored = await pi.setModel(previousModel);
+            if (restored) {
+                setImmediate(() => {
+                    try {
+                        if (ctx.model?.provider === previousModel.provider && ctx.model.id === previousModel.id) {
+                            ctx.ui.notify(`Kept ${previousModel.provider}/${previousModel.id} after cancelling model selection.`, "info");
+                        }
+                    }
+                    catch {
+                    }
+                });
+            }
+            else {
+                ctx.ui.notify(`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`, "warning");
+            }
+        }
+        catch {
+            ctx.ui.notify(`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`, "warning");
+        }
+        finally {
+            releaseDefaultSuppression();
+            discardTlhModelSelectionDefaults();
+            tlhApplyingModel = false;
+            tlhRestoringCancelledModel = false;
+        }
+    }
     async function applyPrimaryDefaults(ctx, options = {}) {
         const { warnOnMissing = true } = options;
         const selection = currentPrimaryAgentSelection();
@@ -464,12 +505,21 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 }
             }
         }
-        const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
+        const preservesSessionOnlyModel = !forceApply &&
+            sessionOnlyModel !== undefined &&
+            ctx.model?.provider === sessionOnlyModel.provider &&
+            ctx.model.id === sessionOnlyModel.id;
+        if (sessionOnlyModel && !preservesSessionOnlyModel) {
+            updateSessionOnlyModel(undefined);
+        }
+        const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
         if (shouldApplyThinking) {
             applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
         }
     }
     async function applyPrimaryModeChange(ctx) {
+        replayTlhUnmatchedModelSelectionDefaults();
+        updateSessionOnlyModel(undefined);
         await applyPrimaryDefaults(ctx);
     }
     async function resetPrimaryAgentModelOverride(ctx, agentName) {
@@ -622,17 +672,56 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
+        replayAllTlhUnclaimedModelSelectionDefaults();
+        setTlhModelSelectionActiveModelResolver(() => ctx.model);
+        updateSessionOnlyModel(undefined);
         activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
     function registerLifecycleHooks() {
+        pi.on("thinking_level_select", async () => {
+            await persistTlhStandaloneThinkingDefaults();
+        });
         pi.on("model_select", async (event, ctx) => {
-            if (tlhApplyingModel) {
+            const defaultsClaim = claimTlhModelSelectionDefaults(event.model);
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
+            if (tlhRestoringCancelledModel) {
+                discardTlhModelSelectionDefaults(defaultsClaim);
                 return;
             }
-            if (event.source !== "set") {
+            if (tlhApplyingModel) {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                return;
+            }
+            if (event.source === "set") {
+                if (isTlhNativeModelSelectorClaim(defaultsClaim)) {
+                    const scope = await chooseTlhModelSelectionScope(ctx);
+                    if (scope === "cancel") {
+                        discardTlhModelSelectionDefaults(defaultsClaim);
+                        await restoreCancelledModel(ctx, event.previousModel);
+                        return;
+                    }
+                    if (scope === "session-only") {
+                        updateSessionOnlyModel(event.model);
+                        discardTlhModelSelectionDefaults(defaultsClaim);
+                        return;
+                    }
+                }
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+            }
+            else if (event.source === "cycle") {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                return;
+            }
+            else {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                replayTlhUnmatchedModelSelectionDefaults();
                 return;
             }
             syncPrimaryAgentState(ctx);
@@ -668,13 +757,20 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             }
         });
         pi.on("session_tree", async (_event, ctx) => {
+            replayTlhUnmatchedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
             syncPrimaryAgentState(ctx);
             await applyPrimaryDefaults(ctx);
         });
         pi.on("session_shutdown", async (_event, _ctx) => {
+            replayAllTlhUnclaimedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(undefined);
+            updateSessionOnlyModel(undefined);
             restorePrimaryToolsIfAppropriate();
         });
         pi.on("before_agent_start", async (event, ctx) => {
+            replayTlhUnmatchedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
             const settings = getTlhGlobalSettings(ctx.cwd);
             const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
             syncPrimaryAgentState(ctx);
@@ -779,6 +875,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     }) === "child") {
         return undefined;
     }
+    installTlhModelSelectionPersistenceOverride();
     const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata());
     runtime.registerCommands();
     runtime.registerLifecycleHooks();
