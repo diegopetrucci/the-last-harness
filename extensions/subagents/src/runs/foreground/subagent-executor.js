@@ -13,7 +13,6 @@ import { runSync } from "./execution.js";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.js";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.js";
-import { recordRun } from "../shared/run-history.js";
 import { buildChainInstructions, writeInitialProgressFile, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, } from "../../shared/settings.js";
 import { normalizeSkillInput } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
@@ -2883,10 +2882,6 @@ async function runParallelPath(data, deps) {
         ...(tkTicket ? { tkTicket } : {}),
         ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
     });
-    for (let i = 0; i < results.length; i++) {
-        const run = results[i];
-        recordRun(run.agent, taskTexts[i], run.exitCode, run.progressSummary?.durationMs ?? 0, run.error);
-    }
     for (const result of results) {
         if (result.progress)
             allProgress.push(result.progress);
@@ -3034,7 +3029,6 @@ async function runSinglePath(data, deps) {
     if (shouldForkAgent(contextPolicy, params.agent)) {
         task = wrapForkTask(task);
     }
-    const cleanTask = task;
     const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(artifactsDir, runId));
     const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
     if (validationError) {
@@ -3171,7 +3165,6 @@ async function runSinglePath(data, deps) {
         foregroundControl.toolCount = r.progress?.toolCount;
         foregroundControl.updatedAt = Date.now();
     }
-    recordRun(params.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r.error);
     if (r.progress)
         allProgress.push(r.progress);
     if (r.artifactPaths)

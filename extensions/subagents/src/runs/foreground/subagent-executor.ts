@@ -20,7 +20,6 @@ import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.ts";
-import { recordRun } from "../shared/run-history.ts";
 import {
 	buildChainInstructions,
 	writeInitialProgressFile,
@@ -3601,11 +3600,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(tkTicket ? { tkTicket } : {}),
 		...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
 	});
-	for (let i = 0; i < results.length; i++) {
-		const run = results[i]!;
-		recordRun(run.agent, taskTexts[i]!, run.exitCode, run.progressSummary?.durationMs ?? 0, run.error);
-	}
-
 	for (const result of results) {
 		if (result.progress) allProgress.push(result.progress);
 		if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
@@ -3783,7 +3777,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
 	}
-	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(
 		effectiveOutput,
 		ctx.cwd,
@@ -3924,8 +3917,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		foregroundControl.toolCount = r.progress?.toolCount;
 		foregroundControl.updatedAt = Date.now();
 	}
-	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r.error);
-
 	if (r.progress) allProgress.push(r.progress);
 	if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
 

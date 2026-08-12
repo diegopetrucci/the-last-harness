@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { normalizeSkillInput } from "../agents/skills.js";
 import { CHAIN_RUNS_DIR, } from "./types.js";
 const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";

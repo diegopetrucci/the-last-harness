@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { buildBuiltinOverrideConfig, discoverAgents, EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
+import { discoverAgents, EXTRA_AGENT_DIRS_ENV } from "../../src/agents/agents.ts";
 import { handleList } from "../../src/agents/agent-management.ts";
 
 let tempHome = "";
@@ -131,31 +131,5 @@ describe("builtin agent disabling", () => {
 
 		assert.match(text, /Executable agents:\n- helper \(project\): Helper/);
 		assert.doesNotMatch(text, /\(builtin/);
-	});
-
-	it("buildBuiltinOverrideConfig emits disabled false when re-enabling a builtin", () => {
-		const override = buildBuiltinOverrideConfig(
-			{
-				systemPromptMode: "replace",
-				inheritProjectContext: false,
-				inheritSkills: false,
-				disabled: undefined,
-				systemPrompt: "Base prompt",
-			},
-			{
-				model: undefined,
-				fallbackModels: undefined,
-				thinking: undefined,
-				systemPromptMode: "replace",
-				inheritProjectContext: false,
-				inheritSkills: false,
-				disabled: false,
-				systemPrompt: "Base prompt",
-				skills: undefined,
-				tools: undefined,
-			},
-		);
-
-		assert.deepEqual(override, { disabled: false });
 	});
 });

@@ -9,7 +9,6 @@ import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
 import { diagnoseIntercomBridge, resolveIntercomBridge } from "../../src/intercom/intercom-bridge.ts";
-import { loadRunsForAgent, recordRun } from "../../src/runs/shared/run-history.ts";
 import { cleanupAllArtifactDirs } from "../../src/shared/artifacts.ts";
 import {
 	getConfigDirName,
@@ -322,15 +321,7 @@ Package skill content.
 		assert.ok(available.find((skill) => skill.name === "package-skill" && skill.source === "user-package"));
 	});
 
-	it("records run history and cleans session artifacts under the configured agent dir", () => {
-		recordRun("env-agent", "Inspect", 0, 42);
-		const historyPath = path.join(agentDir, "run-history.jsonl");
-		assert.equal(fs.existsSync(historyPath), true);
-		const history = loadRunsForAgent("env-agent");
-		assert.equal(history.length, 1);
-		assert.equal(history[0]?.task, "Inspect");
-		assert.equal(history[0]?.status, "ok");
-
+	it("cleans session artifacts under the configured agent dir", () => {
 		const artifactPath = path.join(agentDir, "sessions", "session-1", "subagent-artifacts", "old_output.md");
 		writeFile(artifactPath, "old output");
 		const oldTime = new Date(Date.now() - 60_000);

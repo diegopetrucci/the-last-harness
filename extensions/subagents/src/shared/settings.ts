@@ -5,7 +5,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agents.ts";
-import { normalizeSkillInput } from "../agents/skills.ts";
 import {
 	CHAIN_RUNS_DIR,
 	type AcceptanceInput,

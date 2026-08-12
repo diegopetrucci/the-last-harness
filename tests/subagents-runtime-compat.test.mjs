@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import test from "node:test";
 
 import { createSubagentToolResultBridge } from "../extensions/subagents/src/extension/index.js";
 import { buildPiArgs } from "../extensions/subagents/src/runs/shared/pi-args.js";
-import { loadRunsForAgent } from "../extensions/subagents/src/runs/shared/run-history.js";
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -59,26 +57,6 @@ test("Pi 0.83 tool-result bridge preserves rich failures and patches the matchin
 	assert.equal(normalized.details, details);
 	assert.deepEqual(bridge.errorPatch("failure-call", "subagent", details), { isError: true });
 	assert.equal(bridge.errorPatch("failure-call", "subagent", details), undefined);
-});
-
-test("run history ignores parsed null entries", (t) => {
-	const agentDir = mkdtempSync(join(tmpdir(), "tlh-subagent-run-history-"));
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = agentDir;
-	t.after(() => {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		rmSync(agentDir, { recursive: true, force: true });
-	});
-	writeFileSync(
-		join(agentDir, "run-history.jsonl"),
-		["null", JSON.stringify({ agent: "worker", task: "ok", ts: 1, status: "ok", duration: 10 }), ""].join("\n"),
-	);
-
-	assert.deepEqual(
-		loadRunsForAgent("worker").map((entry) => entry.task),
-		["ok"],
-	);
 });
 
 test("Pi 0.83 compatibility declaration shim is absent", () => {

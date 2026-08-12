@@ -30,7 +30,11 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { SUBAGENT_CONTROL_INTERCOM_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_CONTROL_INTERCOM_EVENT } from "../../src/shared/types.ts";
+// Legacy event name kept as a test-local literal for the no-emission regression guard.
+// Do not re-add this constant to production types or result-intercom — the delivery/receipt
+// pipeline it belonged to has been permanently removed.
+const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 // ─── env save/restore ────────────────────────────────────────────────────────
@@ -326,7 +330,7 @@ describe("no-pi-intercom regression guard", () => {
 
 			// …but must NOT have produced any intercom event-bus emissions.
 			const controlIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_CONTROL_INTERCOM_EVENT);
-			const resultIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_RESULT_INTERCOM_EVENT);
+			const resultIntercomEmissions = emittedEvents.filter((e) => e.event === LEGACY_RESULT_INTERCOM_EVENT);
 
 			assert.equal(
 				controlIntercomEmissions.length,
@@ -336,7 +340,7 @@ describe("no-pi-intercom regression guard", () => {
 			assert.equal(
 				resultIntercomEmissions.length,
 				0,
-				`Expected zero ${SUBAGENT_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
+				`Expected zero ${LEGACY_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
 			);
 		});
 	});
