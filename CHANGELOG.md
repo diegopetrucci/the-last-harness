@@ -11,7 +11,6 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
-- Launch telemetry now reports a single combined `Tlh.Runtime.modelEffort` dimension (and one `Tlh.Subagent.<name>.modelEffort` per bundled subagent) in `<model>:<effort>` format, replacing the former separate `Tlh.Runtime.model`, `Tlh.Runtime.thinking`, `Tlh.Subagent.<name>.model`, and `Tlh.Subagent.<name>.thinking` dimensions.
 
 ## [0.37.0] - 2026-08-11
 
