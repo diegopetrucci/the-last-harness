@@ -402,6 +402,77 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(events.filter((event) => event.contextPressureSeverity === "critical").length, 1);
 	});
 
+	it("preserves remembered foreground pressure history for same-segment revival without suppressing new runs", async () => {
+		const runId = "foreground-pressure-revival";
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		fs.writeFileSync(sessionFile, '{"type":"session","id":"foreground-pressure-revival"}\n', "utf-8");
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundRuns: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			cwd: tempDir,
+			updatedAt: 1,
+			children: [
+				{
+					agent: "echo",
+					index: 0,
+					status: "completed",
+					sessionFile,
+					contextUsage: { contextTokens: 799, contextWindow: 1000, peakTokens: 799 },
+					contextPressureCrossedThresholds: ["warning"],
+				},
+			],
+		});
+		const context = makeMinimalCtx(tempDir);
+		context.model = { provider: "mock", id: "test-model" };
+		context.modelRegistry.getAvailable = () => [{ provider: "mock", id: "test-model", contextWindow: 1000 }];
+		const executor = makeExecutor([makeAgent("echo", { model: "mock/test-model", completionGuard: false })], {}, state);
+		const terminalPressure = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "continued" }],
+				model: "mock/test-model",
+				stopReason: "stop",
+				usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		};
+		mockPi.onCall({ jsonl: [terminalPressure] });
+		const revived = await executor.execute(
+			"foreground-pressure-revival-call",
+			{ action: "resume", id: runId, message: "Continue the same segment." },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const revivedResult = (revived.details as unknown as { results?: Array<{ controlEvents?: unknown[] }> })
+			.results?.[0];
+		assert.deepEqual(revivedResult?.controlEvents ?? [], []);
+
+		mockPi.onCall({ jsonl: [terminalPressure] });
+		const fresh = await executor.execute(
+			"foreground-pressure-new-run",
+			{ agent: "echo", task: "Start an independent continuation." },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const freshResult = (
+			fresh.details as unknown as { results?: Array<{ controlEvents?: Array<{ contextPressureSeverity?: string }> }> }
+		).results?.[0];
+		assert.deepEqual(
+			freshResult?.controlEvents?.map((event) => event.contextPressureSeverity),
+			["warning"],
+		);
+	});
+
 	it("does not classify a raw acceptance-report terminal as context exhausted", async () => {
 		const acceptanceReport = [
 			"```acceptance-report",

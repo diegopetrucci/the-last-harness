@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { findModelInfo, splitKnownThinkingSuffix, type ModelInfo } from "./model-info.ts";
 import type {
 	ContextPressureProjection,
@@ -90,20 +90,63 @@ export function formatContextPressureGuidance(projection: ContextPressureProject
 		: `Context pressure warning: ${measured}. Preserve progress; if the child pauses, use a fresh narrowly scoped dispatch instead of resuming.`;
 }
 
-/** Return true only for a pre-existing Pi session with a usable JSONL header. */
-export function hasUsableSessionArtifact(sessionFile: string | undefined): boolean {
-	if (!sessionFile) return false;
+const SESSION_HEADER_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+function isUsableSessionHeader(line: string): boolean {
 	try {
-		const headerLine = readFileSync(sessionFile, "utf-8")
-			.split("\n")
-			.find((line) => line.trim().length > 0);
-		if (!headerLine) return false;
-		const header: unknown = JSON.parse(headerLine);
+		const header: unknown = JSON.parse(line);
 		return (
 			isRecord(header) && header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0
 		);
 	} catch {
 		return false;
+	}
+}
+
+/** Return true only for a pre-existing Pi session with a usable JSONL header. */
+export function hasUsableSessionArtifact(sessionFile: string | undefined): boolean {
+	if (!sessionFile) return false;
+	let fd: number | undefined;
+	try {
+		fd = openSync(sessionFile, "r");
+		let bytesScanned = 0;
+		let lineParts: Buffer[] = [];
+		while (bytesScanned < MAX_SESSION_HEADER_SCAN_BYTES) {
+			const bytesToRead = Math.min(SESSION_HEADER_READ_CHUNK_BYTES, MAX_SESSION_HEADER_SCAN_BYTES - bytesScanned);
+			const buffer = Buffer.allocUnsafe(bytesToRead);
+			const bytesRead = readSync(fd, buffer, 0, bytesToRead, bytesScanned);
+			if (bytesRead === 0) break;
+			bytesScanned += bytesRead;
+			let lineStart = 0;
+			for (let index = 0; index < bytesRead; index++) {
+				if (buffer[index] !== 0x0a) continue;
+				lineParts.push(Buffer.from(buffer.subarray(lineStart, index)));
+				const line = Buffer.concat(lineParts).toString("utf-8");
+				lineParts = [];
+				lineStart = index + 1;
+				if (line.trim().length > 0) return isUsableSessionHeader(line);
+			}
+			if (lineStart < bytesRead) lineParts.push(Buffer.from(buffer.subarray(lineStart, bytesRead)));
+		}
+		if (bytesScanned >= MAX_SESSION_HEADER_SCAN_BYTES) {
+			// The cap is inclusive: distinguish an exact-size EOF record from one
+			// that continues past the cap with a single bounded lookahead byte.
+			const lookahead = Buffer.allocUnsafe(1);
+			if (readSync(fd, lookahead, 0, 1, bytesScanned) !== 0) return false;
+		}
+		const finalLine = Buffer.concat(lineParts).toString("utf-8");
+		return finalLine.trim().length > 0 && isUsableSessionHeader(finalLine);
+	} catch {
+		return false;
+	} finally {
+		if (fd !== undefined) {
+			try {
+				closeSync(fd);
+			} catch {
+				// Preserve the safe false result if closing an already-invalid descriptor fails.
+			}
+		}
 	}
 }
 

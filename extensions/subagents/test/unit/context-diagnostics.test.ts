@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
 	assessDurableResumeContext,
 	assistantContextTokens,
 	detectContextPressureCrossing,
 	formatContextPressureGuidance,
+	hasUsableSessionArtifact,
 	classifyContextExhaustedTermination,
 	formatDurableResumeContextBlock,
 	parseContextUsageDiagnostics,
@@ -43,6 +47,50 @@ describe("subagent context and termination diagnostics", () => {
 		assert.equal(detectContextPressureCrossing({ contextTokens: 700, contextWindow: 1000 }, ["warning"]), undefined);
 		assert.equal(detectContextPressureCrossing({ contextTokens: 800, contextWindow: 1000 }, ["warning"]), undefined);
 		assert.deepEqual(detectContextPressureCrossing({ contextTokens: 900, contextWindow: 0 }), undefined);
+	});
+
+	it("scans only a bounded first JSONL record and preserves safe artifact rejection", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-session-header-"));
+		try {
+			const validHeader = JSON.stringify({ type: "session", id: "session-123" });
+			const largeTail = path.join(root, "large-tail.jsonl");
+			fs.writeFileSync(largeTail, `${validHeader}\n${"x".repeat(2 * 1024 * 1024)}`, "utf-8");
+			assert.equal(hasUsableSessionArtifact(largeTail), true);
+
+			const chunkBoundaryPrefix = `${" ".repeat(64 * 1024 - 1)}\n`;
+			const blankPrefix = path.join(root, "blank-prefix.jsonl");
+			fs.writeFileSync(blankPrefix, `${chunkBoundaryPrefix}${validHeader}\ntrailing data`, "utf-8");
+			assert.equal(hasUsableSessionArtifact(blankPrefix), true);
+
+			const noNewline = path.join(root, "no-newline.jsonl");
+			fs.writeFileSync(noNewline, validHeader, "utf-8");
+			assert.equal(hasUsableSessionArtifact(noNewline), true);
+
+			const malformed = path.join(root, "malformed.jsonl");
+			fs.writeFileSync(malformed, `not json\n${validHeader}\n`, "utf-8");
+			assert.equal(hasUsableSessionArtifact(malformed), false);
+			assert.equal(hasUsableSessionArtifact(path.join(root, "missing.jsonl")), false);
+
+			const empty = path.join(root, "empty.jsonl");
+			fs.writeFileSync(empty, "\n  \n", "utf-8");
+			assert.equal(hasUsableSessionArtifact(empty), false);
+
+			const maxHeaderBytes = 1024 * 1024;
+			const exactBoundaryHeader = `${validHeader}${" ".repeat(maxHeaderBytes - Buffer.byteLength(validHeader))}`;
+			const exactBoundary = path.join(root, "exact-boundary.jsonl");
+			fs.writeFileSync(exactBoundary, exactBoundaryHeader, "utf-8");
+			assert.equal(hasUsableSessionArtifact(exactBoundary), true);
+
+			const oneByteOver = path.join(root, "one-byte-over.jsonl");
+			fs.writeFileSync(oneByteOver, `${exactBoundaryHeader} `, "utf-8");
+			assert.equal(hasUsableSessionArtifact(oneByteOver), false);
+
+			const oversizedWithNewline = path.join(root, "oversized-with-newline.jsonl");
+			fs.writeFileSync(oversizedWithNewline, `${exactBoundaryHeader} \n`, "utf-8");
+			assert.equal(hasUsableSessionArtifact(oversizedWithNewline), false);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("blocks exactly at the centralized unsafe threshold and uses the latest total, not peak", () => {

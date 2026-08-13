@@ -759,6 +759,9 @@ function rememberForegroundRun(
 				...(result.pause ? { pause: result.pause } : {}),
 				...(result.cancel ? { cancel: result.cancel } : {}),
 				...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+				...(result.contextPressureCrossedThresholds
+					? { contextPressureCrossedThresholds: [...result.contextPressureCrossedThresholds] }
+					: {}),
 				...(pausedForegroundTerminationReason(result)
 					? { terminationReason: pausedForegroundTerminationReason(result) }
 					: {}),
@@ -814,6 +817,9 @@ function updateRememberedForegroundChild(
 		...(input.result.pause ? { pause: input.result.pause } : {}),
 		...(input.result.cancel ? { cancel: input.result.cancel } : {}),
 		...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+		...(input.result.contextPressureCrossedThresholds
+			? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
+			: {}),
 		...(pausedForegroundTerminationReason(input.result)
 			? { terminationReason: pausedForegroundTerminationReason(input.result) }
 			: {}),

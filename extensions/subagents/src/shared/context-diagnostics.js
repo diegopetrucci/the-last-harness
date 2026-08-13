@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { findModelInfo, splitKnownThinkingSuffix } from "./model-info.js";
 export const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
 export const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
@@ -55,20 +55,65 @@ export function formatContextPressureGuidance(projection) {
         ? `Critical context pressure: ${measured}. Finish and preserve the current work immediately; avoid additional broad work.`
         : `Context pressure warning: ${measured}. Preserve progress; if the child pauses, use a fresh narrowly scoped dispatch instead of resuming.`;
 }
-export function hasUsableSessionArtifact(sessionFile) {
-    if (!sessionFile)
-        return false;
+const SESSION_HEADER_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+function isUsableSessionHeader(line) {
     try {
-        const headerLine = readFileSync(sessionFile, "utf-8")
-            .split("\n")
-            .find((line) => line.trim().length > 0);
-        if (!headerLine)
-            return false;
-        const header = JSON.parse(headerLine);
+        const header = JSON.parse(line);
         return (isRecord(header) && header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0);
     }
     catch {
         return false;
+    }
+}
+export function hasUsableSessionArtifact(sessionFile) {
+    if (!sessionFile)
+        return false;
+    let fd;
+    try {
+        fd = openSync(sessionFile, "r");
+        let bytesScanned = 0;
+        let lineParts = [];
+        while (bytesScanned < MAX_SESSION_HEADER_SCAN_BYTES) {
+            const bytesToRead = Math.min(SESSION_HEADER_READ_CHUNK_BYTES, MAX_SESSION_HEADER_SCAN_BYTES - bytesScanned);
+            const buffer = Buffer.allocUnsafe(bytesToRead);
+            const bytesRead = readSync(fd, buffer, 0, bytesToRead, bytesScanned);
+            if (bytesRead === 0)
+                break;
+            bytesScanned += bytesRead;
+            let lineStart = 0;
+            for (let index = 0; index < bytesRead; index++) {
+                if (buffer[index] !== 0x0a)
+                    continue;
+                lineParts.push(Buffer.from(buffer.subarray(lineStart, index)));
+                const line = Buffer.concat(lineParts).toString("utf-8");
+                lineParts = [];
+                lineStart = index + 1;
+                if (line.trim().length > 0)
+                    return isUsableSessionHeader(line);
+            }
+            if (lineStart < bytesRead)
+                lineParts.push(Buffer.from(buffer.subarray(lineStart, bytesRead)));
+        }
+        if (bytesScanned >= MAX_SESSION_HEADER_SCAN_BYTES) {
+            const lookahead = Buffer.allocUnsafe(1);
+            if (readSync(fd, lookahead, 0, 1, bytesScanned) !== 0)
+                return false;
+        }
+        const finalLine = Buffer.concat(lineParts).toString("utf-8");
+        return finalLine.trim().length > 0 && isUsableSessionHeader(finalLine);
+    }
+    catch {
+        return false;
+    }
+    finally {
+        if (fd !== undefined) {
+            try {
+                closeSync(fd);
+            }
+            catch {
+            }
+        }
     }
 }
 export function parseContextPressureCrossedThresholds(value) {
