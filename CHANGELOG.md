@@ -7,6 +7,10 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
+- Installing tlh is substantially faster. First launch after install no longer spends about 70 seconds installing bundled extensions one at a time — the installer now pre-installs them in a single batch, so first launch takes roughly a second.
+- Installer support files are now fetched in parallel instead of sequentially.
+- The installer skips a redundant npm install when the harness package checkout has not changed.
+- Overall time from running the installer to a usable `tlh` dropped from roughly 1.5–2 minutes to under 20 seconds.
 
 ## [0.37.0] - 2026-08-11
 

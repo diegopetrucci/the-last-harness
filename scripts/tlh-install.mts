@@ -61,6 +61,7 @@ import {
 	subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
+import { writeSafeProfileFile } from "./lib/tlh-safe-profile-write.mjs";
 import {
 	findLocalRepoDir,
 	ensureSupportFilesPrepared,
@@ -1775,6 +1776,195 @@ function installDefaultExtensions(config: InstallConfig): void {
 	if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
 }
 
+/**
+ * Batch pre-install all enabled pinned npm default extensions into the Pi npm
+ * root (<agentDir>/npm) in one npm install invocation, matching Pi's own
+ * ensureNpmProject + installNpmBatch layout.  This avoids ~70s of sequential
+ * per-package installs that Pi would otherwise run on first launch (Pi skips
+ * pinned npm sources in `pi update --extensions`).
+ *
+ * Design constraints:
+ * - Skipped entirely on --no-settings.
+ * - Only npm: sources are processed; git:/local sources are ignored.
+ * - Respects tlh.disabledDefaultExtensions via the same sources query used by
+ *   installDefaultExtensions.
+ * - Honors a user-configured npmCommand from the merged settings (Pi supports
+ *   array form such as ["mise","exec","node@20","--","npm"]).
+ * - Only proceeds when npmCommand is plain npm; non-npm package managers are
+ *   skipped cleanly (Pi self-heals on first launch).
+ * - Compares each bundled pin against the configured source in merged settings;
+ *   skips pre-install for packages where the configured version differs to
+ *   prevent downgrading a user-preserved version.
+ * - Verifies the npm prefix is confined to the isolated profile and not accessed
+ *   through symlinks before any directory creation, file write, or npm invocation.
+ * - Non-fatal: on any failure, warns and continues so Pi self-heals on first
+ *   launch.  The installer always exits 0.
+ * - Dry-run prints the planned batch command without writing anything.
+ * - Idempotent: npm install --prefix is safe to rerun.
+ */
+function preInstallNpmDefaultExtensions(config: InstallConfig): void {
+	if (config.noSettings) return;
+
+	if (!config.supportFilePaths.TLH_DEFAULTS_SCRIPT || !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) {
+		if (config.dryRun) log(config, "Would pre-install bundled npm default extensions after settings merge.");
+		return;
+	}
+
+	// Collect enabled sources from the bundled manifest (respects tlh.disabledDefaultExtensions).
+	let sourcesOutput: string;
+	try {
+		sourcesOutput = runNodeScript(
+			config,
+			config.supportFilePaths.TLH_DEFAULTS_SCRIPT,
+			["--settings", config.settingsPath, "--defaults", config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, "sources"],
+			{ captureStdout: true },
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		warn(
+			`failed to read bundled default extension sources for npm pre-install: ${message}; Pi will install missing packages on first launch.`,
+		);
+		return;
+	}
+
+	// Keep only npm: sources; strip the npm: prefix to get bare npm install specs.
+	const bundledNpmSpecs = outputLines(sourcesOutput)
+		.filter((s) => s.startsWith("npm:"))
+		.map((s) => s.slice("npm:".length));
+
+	if (bundledNpmSpecs.length === 0) {
+		verboseLog(config, "No npm default extensions to pre-install.");
+		return;
+	}
+
+	// Honor a user-configured npmCommand from the merged settings.
+	let configuredNpmCmd: string[] | undefined;
+	try {
+		configuredNpmCmd = captureRetiredSubagentNpmCommand(config.settingsPath);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		// Only warn in a real install; dry-run never runs npm so the command is irrelevant.
+		if (!config.dryRun) {
+			warn(
+				`invalid npmCommand in settings; falling back to plain npm for pre-install: ${message}; Pi will install missing packages on first launch if this is wrong.`,
+			);
+		}
+	}
+	const npmCmdArray: readonly string[] = configuredNpmCmd ?? ["npm"];
+
+	// Finding 3: only proceed when npmCommand is plain npm.  Do not reimplement
+	// Pi's pnpm/bun install-arg matrix (--cwd, --config.*, etc.) — that logic
+	// would drift from the pinned Pi source.  Pi self-heals on first launch.
+	if (!(npmCmdArray.length === 1 && npmCmdArray[0] === "npm")) {
+		verboseLog(
+			config,
+			`Skipping npm pre-install: configured npmCommand is not plain npm (${npmCmdArray.join(" ")}); Pi will install the packages on first launch.`,
+		);
+		return;
+	}
+
+	// Finding 2: compare each bundled pin against the configured source in the
+	// merged settings.  Skip any package whose configured version differs from the
+	// bundled pin so we never pre-install a downgrade of a user-preserved version.
+	let configuredPackageSources: string[] = [];
+	try {
+		if (existsSync(config.settingsPath)) {
+			const settingsRaw = JSON.parse(readFileSync(config.settingsPath, "utf8")) as Record<string, unknown>;
+			const packages = settingsRaw.packages;
+			if (Array.isArray(packages)) {
+				configuredPackageSources = packages.filter((p): p is string => typeof p === "string");
+			}
+		}
+	} catch {
+		// Non-fatal: if settings cannot be read, proceed with all bundled specs.
+	}
+
+	const npmSpecs = bundledNpmSpecs.filter((spec) => {
+		const bundledSource = `npm:${spec}`;
+		const identity = packageIdentity(bundledSource);
+		if (!identity) return true;
+		const configuredSource = configuredPackageSources.find((s) => packageIdentity(s) === identity);
+		if (configuredSource !== undefined && configuredSource !== bundledSource) {
+			verboseLog(
+				config,
+				`Skipping pre-install of ${spec}: configured version (${configuredSource}) differs from bundled pin (${bundledSource}); Pi will use the configured version on first launch.`,
+			);
+			return false;
+		}
+		return true;
+	});
+
+	if (npmSpecs.length === 0) {
+		verboseLog(config, "No npm default extensions to pre-install after version check.");
+		return;
+	}
+
+	const npmRoot = join(config.agentDir, "npm");
+
+	// ONE batch install: npm install <specs...> --prefix <npmRoot> --legacy-peer-deps
+	const installCommandArgs: CommandArgs = [
+		...npmCmdArray,
+		"install",
+		...npmSpecs,
+		"--prefix",
+		npmRoot,
+		"--legacy-peer-deps",
+	];
+
+	log(config, `Pre-installing ${npmSpecs.length} pinned npm default extension(s)...`);
+
+	if (!config.dryRun) {
+		// Finding 1: verify the npm prefix is confined to the isolated profile and not
+		// accessed through symlinks BEFORE creating dirs, writing files, or invoking
+		// npm.  Uses the same safe-profile helpers as merge-settings.mts and
+		// merge-keybindings.mts.  ensureSafeProfileDir also creates the directory.
+		try {
+			ensureSafeProfileDir(config, "npm", "npm project root");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			warn(
+				`npm pre-install skipped: unsafe npm prefix (${message}); Pi will install missing packages on first launch.`,
+			);
+			return;
+		}
+		// Prepare the npm project root exactly as Pi's ensureNpmProject does.
+		// writeSafeProfileFile handles atomic writes and repeats the symlink check on
+		// each target file; the existsSync guards preserve existing user content.
+		try {
+			const pkgJsonPath = join(npmRoot, "package.json");
+			if (!existsSync(pkgJsonPath)) {
+				writeSafeProfileFile(
+					config,
+					"npm/package.json",
+					JSON.stringify({ name: "pi-extensions", private: true }),
+					"npm project package.json",
+				);
+			}
+			const gitignorePath = join(npmRoot, ".gitignore");
+			if (!existsSync(gitignorePath)) {
+				writeSafeProfileFile(config, "npm/.gitignore", "*\n!.gitignore\n", "npm project .gitignore");
+			}
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			warn(
+				`failed to prepare npm project dir for pre-install: ${message}; Pi will install missing packages on first launch.`,
+			);
+			return;
+		}
+	}
+
+	// Run (or dry-run-print) the batch install; non-fatal on failure.
+	try {
+		runCommand(config, installCommandArgs);
+		if (!config.dryRun) verboseLog(config, `Pre-installed ${npmSpecs.length} pinned npm default extension(s).`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		warn(
+			`npm pre-install of pinned default extensions failed: ${message}; Pi will install missing packages on first launch.`,
+		);
+	}
+}
+
 function gnosisInstallSkippedByEnv(config: InstallConfig): boolean {
 	const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
 	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
@@ -2079,6 +2269,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
 	if (!config.noSettings) cleanupOldSettingsBackups(config);
 	await writeInstallState(config);
 	installDefaultExtensions(config);
+	preInstallNpmDefaultExtensions(config);
 	configureGnosis(config);
 	configureTickets(config);
 	await writeWrapper(config);
@@ -2143,6 +2334,7 @@ export {
 	installDefaultExtensions,
 	nodeVersionMeetsMinimum,
 	parseArgs,
+	preInstallNpmDefaultExtensions,
 	run,
 	usage,
 	validateInputs,

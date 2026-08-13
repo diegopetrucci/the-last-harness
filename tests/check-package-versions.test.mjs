@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -9,6 +9,13 @@ const repoRoot = resolve(import.meta.dirname, "..");
 const checkPackageVersionsScript = join(repoRoot, "scripts", "check-package-versions.mjs");
 const FIXTURE_MANAGED_PI_VERSION = "9.8.7";
 const FIXTURE_MANAGED_PI_DRIFT_VERSION = "9.8.6";
+// Unique package names covered by MANAGED_PI_DEPENDENCIES in check-package-versions.mjs
+const FIXTURE_MANAGED_PI_PKG_NAMES = [
+	"@earendil-works/pi-coding-agent",
+	"@earendil-works/pi-agent-core",
+	"@earendil-works/pi-ai",
+	"@earendil-works/pi-tui",
+];
 const FIXTURE_MANAGED_TYPEBOX_VERSION = "1.3.7";
 const FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION = "1.3.6";
 const FIXTURE_MANAGED_GNOSIS_VERSION = "4.5.6";
@@ -37,6 +44,9 @@ function tempFixture({
 	installMjsPiVersion = installShPiVersion,
 	piTypeboxVersion = FIXTURE_MANAGED_TYPEBOX_VERSION,
 	includeLatestReleaseUrl = true,
+	// null = use the expected pinned version for all managed packages;
+	// provide a partial map of { packageName: installedVersion } to override specific packages.
+	installedVersions = null,
 } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
 	const packagePath = join(dir, "package.json");
@@ -115,6 +125,19 @@ function tempFixture({
 		].join("\n"),
 	);
 
+	// Create a minimal fixture node_modules with the managed Pi packages so the
+	// installed-dependency freshness check has something to read. Use installedVersions
+	// to simulate stale packages.
+	const nodeModulesDir = join(dir, "node_modules");
+	for (const pkgName of FIXTURE_MANAGED_PI_PKG_NAMES) {
+		const installedVersion = installedVersions?.[pkgName] ?? FIXTURE_MANAGED_PI_VERSION;
+		mkdirSync(join(nodeModulesDir, pkgName), { recursive: true });
+		writeFileSync(
+			join(nodeModulesDir, pkgName, "package.json"),
+			`${JSON.stringify({ name: pkgName, version: installedVersion })}\n`,
+		);
+	}
+
 	return {
 		packagePath,
 		lockfilePath,
@@ -124,10 +147,11 @@ function tempFixture({
 		gnosisScriptPath,
 		installMtsPath,
 		installMjsPath,
+		nodeModulesDir,
 	};
 }
 
-function runCheckPackageVersions(fixture) {
+function runCheckPackageVersions(fixture, { nodeModulesDirOverride } = {}) {
 	return spawnSync(
 		process.execPath,
 		[
@@ -150,6 +174,8 @@ function runCheckPackageVersions(fixture) {
 			fixture.installMtsPath,
 			"--pi-install-script",
 			fixture.installMjsPath,
+			"--node-modules-dir",
+			nodeModulesDirOverride ?? fixture.nodeModulesDir,
 		],
 		{
 			cwd: repoRoot,
@@ -526,4 +552,42 @@ test("check-package-versions rejects non-exact managed Pi package pins", () => {
 		result.stderr,
 		/package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^9\.8\.7"/,
 	);
+});
+
+test("check-package-versions fails with actionable message when a managed dependency is stale", () => {
+	const fixture = tempFixture({
+		packageVersion: "1.2.3",
+		installedVersions: { "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_DRIFT_VERSION },
+	});
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
+	assert.match(result.stderr, /run npm ci/);
+	assert.match(result.stderr, /@earendil-works\/pi-coding-agent/);
+	assert.match(result.stderr, new RegExp(`expected ${JSON.stringify(FIXTURE_MANAGED_PI_VERSION)}`));
+	assert.match(result.stderr, new RegExp(`got ${JSON.stringify(FIXTURE_MANAGED_PI_DRIFT_VERSION)}`));
+});
+
+test("check-package-versions fails with actionable message when node_modules is missing", () => {
+	const fixture = tempFixture({ packageVersion: "1.2.3" });
+	// Point at a non-existent directory to simulate a missing node_modules.
+	const missingDir = join(fixture.nodeModulesDir, "does-not-exist-xyz");
+
+	const result = runCheckPackageVersions(fixture, { nodeModulesDirOverride: missingDir });
+
+	assert.equal(result.status, 1);
+	assert.match(result.stderr, /node_modules not found/);
+	assert.match(result.stderr, /run npm ci/);
+});
+
+test("check-package-versions passes when all managed dependencies are installed at expected versions", () => {
+	const fixture = tempFixture({ packageVersion: "1.2.3" });
+
+	const result = runCheckPackageVersions(fixture);
+
+	assert.equal(result.status, 0);
+	assert.match(result.stdout, /all tracked version fields match/);
+	assert.equal(result.stderr, "");
 });

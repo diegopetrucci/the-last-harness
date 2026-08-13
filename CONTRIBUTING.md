@@ -17,7 +17,7 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 Use Node.js >=22.19.0 from the repository root. Install dependencies with:
 
 ```sh
-npm install --no-package-lock
+npm ci
 ```
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.

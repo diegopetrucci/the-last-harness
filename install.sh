@@ -556,36 +556,99 @@ fetch_support_file() {
 }
 
 fetch_remote_support_root() {
+  # Bounded-concurrency parallel fetch: spawns up to 8 background curl jobs at
+  # once. set -e does not fire for background jobs, so each job writes its exit
+  # status to a file; the main shell reads those after waiting for each batch
+  # with `wait <pid>` per job.
+  local status_dir requirement relative_path prompt pid
+  local i batch_start batch_end total req rel_path target_path status_file exit_status
+  local -a all_requirements all_paths batch_pids
+  all_requirements=()
+  all_paths=()
+
   require_command curl
   TMP_DIR="$(mktemp -d)"
   TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
   verbose_log "Fetching installer support files from ${RAW_BASE}"
 
-  local requirement relative_path target_path
+  # Status files live inside TMP_DIR so the existing cleanup trap handles them.
+  status_dir="${TMP_DIR}/.fetch-status"
+  mkdir -p "${status_dir}"
+
+  # Build ordered work list from the manifest.
   while IFS='|' read -r requirement relative_path; do
     [[ -n "${relative_path}" ]] || continue
-    target_path="${TMP_DIR}/${relative_path}"
-    if fetch_support_file "${RAW_BASE}/${relative_path}" "${target_path}"; then
-      continue
-    fi
-    rm -f "${target_path}"
-    if [[ "${requirement}" == "required" ]]; then
-      die "required installer support file not found for ref ${REF}: ${relative_path}"
-    fi
-    warn_missing_optional_support_file "${relative_path}"
+    all_requirements+=("${requirement}")
+    all_paths+=("${relative_path}")
   done <<< "$(bootstrap_support_manifest)"
 
+  # Subagent prompts: non-fatal on failure (requirement tag "subagent").
   if [[ "${NO_SETTINGS}" != "true" ]]; then
-    local prompt target_dir
-    target_dir="${TMP_DIR}/agents/subagents"
-    mkdir -p "${target_dir}"
+    mkdir -p "${TMP_DIR}/agents/subagents"
     for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
-      target_path="${target_dir}/${prompt}"
-      if ! fetch_support_file "${RAW_BASE}/agents/subagents/${prompt}" "${target_path}"; then
-        rm -f "${target_path}"
-      fi
+      all_requirements+=("subagent")
+      all_paths+=("agents/subagents/${prompt}")
     done
   fi
+
+  total=${#all_paths[@]}
+  local max_fetch_jobs=8
+  batch_start=0
+
+  while [[ $batch_start -lt $total ]]; do
+    batch_end=$((batch_start + max_fetch_jobs))
+    [[ $batch_end -gt $total ]] && batch_end=$total
+
+    # Spawn one background curl per file in this batch.
+    batch_pids=()
+    for ((i = batch_start; i < batch_end; i++)); do
+      rel_path="${all_paths[$i]}"
+      target_path="${TMP_DIR}/${rel_path}"
+      status_file="${status_dir}/${i}"
+      mkdir -p "$(dirname "${target_path}")"
+      (
+        if fetch_support_file "${RAW_BASE}/${rel_path}" "${target_path}"; then
+          printf '0\n' > "${status_file}"
+        else
+          printf '1\n' > "${status_file}"
+        fi
+      ) &
+      batch_pids+=($!)
+    done
+
+    # Wait for every job in the batch; || true prevents set -e from firing on
+    # non-zero exit — actual success/failure is read from the status files.
+    # Guard against an empty batch_pids array for bash 3.2 compatibility.
+    if [[ ${#batch_pids[@]} -gt 0 ]]; then
+      for pid in "${batch_pids[@]}"; do
+        wait "${pid}" || true
+      done
+    fi
+
+    batch_start=$batch_end
+  done
+
+  # Process results in manifest order, preserving required/optional semantics.
+  for ((i = 0; i < total; i++)); do
+    req="${all_requirements[$i]}"
+    rel_path="${all_paths[$i]}"
+    target_path="${TMP_DIR}/${rel_path}"
+    status_file="${status_dir}/${i}"
+    exit_status=1
+    if [[ -f "${status_file}" ]]; then
+      exit_status="$(cat "${status_file}")"
+      exit_status="${exit_status%%[^0-9]*}"
+    fi
+
+    if [[ "${exit_status}" != "0" ]]; then
+      rm -f "${target_path}"
+      if [[ "${req}" == "required" ]]; then
+        die "required installer support file not found for ref ${REF}: ${rel_path}"
+      elif [[ "${req}" != "subagent" ]]; then
+        warn_missing_optional_support_file "${rel_path}"
+      fi
+    fi
+  done
 }
 
 # Remote/stale stage-0 installers cannot reliably tell whether their embedded

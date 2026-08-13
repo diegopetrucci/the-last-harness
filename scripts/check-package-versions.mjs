@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 import { readDefaultExtensions } from "./lib/default-extensions.mjs";
@@ -43,6 +44,7 @@ Options:
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
+  --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   -h, --help                   Show this help
 `;
 }
@@ -55,6 +57,7 @@ function parseArgs(argv) {
 		installShPath: DEFAULT_INSTALL_SH_PATH,
 		gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
 		piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
+		nodeModulesDir: "",
 		help: false,
 	};
 	let customGnosisScripts = false;
@@ -122,6 +125,16 @@ function parseArgs(argv) {
 		if (arg.startsWith("--install-sh=")) {
 			args.installShPath = arg.slice("--install-sh=".length);
 			if (!args.installShPath) throw new Error("--install-sh requires a value");
+			continue;
+		}
+		if (arg === "--node-modules-dir") {
+			args.nodeModulesDir = requiredValue(argv, index + 1, arg);
+			index += 1;
+			continue;
+		}
+		if (arg.startsWith("--node-modules-dir=")) {
+			args.nodeModulesDir = arg.slice("--node-modules-dir=".length);
+			if (!args.nodeModulesDir) throw new Error("--node-modules-dir requires a value");
 			continue;
 		}
 		if (arg.startsWith("--gnosis-script=")) {
@@ -529,6 +542,70 @@ function validateManagedPiPins(args, packageJson, problems) {
 	}
 }
 
+function resolveNodeModulesDir(args) {
+	if (args.nodeModulesDir) return args.nodeModulesDir;
+	return join(resolve(dirname(args.packagePath)), "node_modules");
+}
+
+function findExpectedManagedVersion(packageJson, packageName) {
+	for (const { field, name } of MANAGED_PI_DEPENDENCIES) {
+		if (name !== packageName) continue;
+		const spec = packageJson[field]?.[name];
+		if (typeof spec === "string" && isPinnedExactVersion(spec.trim())) {
+			return spec.trim();
+		}
+	}
+	return null;
+}
+
+function validateInstalledDependencies(args, packageJson, problems) {
+	const nodeModulesDir = resolveNodeModulesDir(args);
+
+	if (!existsSync(nodeModulesDir)) {
+		problems.push(`node_modules not found at ${nodeModulesDir} — run npm ci to install dependencies before validating`);
+		return;
+	}
+
+	const seen = new Set();
+	const mismatches = [];
+
+	for (const { name } of MANAGED_PI_DEPENDENCIES) {
+		if (seen.has(name)) continue;
+		seen.add(name);
+
+		const expectedVersion = findExpectedManagedVersion(packageJson, name);
+		if (expectedVersion === null) {
+			// Version is missing or non-exact; already reported by validateManagedPiPins.
+			continue;
+		}
+
+		const installedPkgPath = join(nodeModulesDir, name, "package.json");
+		let installedVersion;
+		try {
+			const raw = readFileSync(installedPkgPath, "utf8").replace(/^\uFEFF/, "");
+			const installedPkg = JSON.parse(raw);
+			installedVersion = installedPkg.version;
+		} catch {
+			problems.push(`${name} is not installed (${installedPkgPath} not found) — run npm ci to install dependencies`);
+			continue;
+		}
+
+		if (installedVersion !== expectedVersion) {
+			mismatches.push({ name, expected: expectedVersion, installed: installedVersion });
+		}
+	}
+
+	if (mismatches.length > 0) {
+		const details = mismatches
+			.map(
+				({ name, expected, installed }) =>
+					`  - ${name}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(String(installed ?? "(none)"))}`,
+			)
+			.join("\n");
+		problems.push(`Installed dependencies are stale or mismatched — run npm ci:\n${details}`);
+	}
+}
+
 function collectProblems(args) {
 	const packageJson = readJsonFile(args.packagePath);
 	const packageLock = readJsonFile(args.lockfilePath);
@@ -542,6 +619,7 @@ function collectProblems(args) {
 		problems.push(error.message);
 	}
 
+	validateInstalledDependencies(args, packageJson, problems);
 	validatePinnedDependencies(packageJson, args.packagePath, problems);
 	validateManagedPiPins(args, packageJson, problems);
 	validatePiTypeboxPin(args, packageJson, packageLock, problems);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -9,7 +9,7 @@ import {
 	makeDefaultExtensionInstallConfig,
 } from "./install-stage1-default-extensions-test-helpers.mjs";
 
-import { installDefaultExtensions } from "../scripts/tlh-install.mjs";
+import { installDefaultExtensions, preInstallNpmDefaultExtensions } from "../scripts/tlh-install.mjs";
 
 test("stage-1 batches non-critical default extension updates", (t) => {
 	const defaults = [
@@ -194,4 +194,272 @@ test("stage-1 keeps critical defaults on per-source install path while dry-run s
 	assert.match(stdout, /would retry only 1 non-critical bundled default source\(s\) individually/i);
 	assert.doesNotMatch(stdout, /^Would.*\bpi\s+update\b/m);
 	assert.doesNotMatch(stdout, /pi update --extension npm:helper/);
+});
+
+// --- preInstallNpmDefaultExtensions tests ---
+
+test("preInstallNpmDefaultExtensions batch-installs all enabled npm: sources", (t) => {
+	const defaults = [
+		{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" },
+		{ id: "pkg-b", source: "npm:@scope/pkg-b@2.0.0" },
+	];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	preInstallNpmDefaultExtensions(config);
+
+	const npmRootPkg = join(agentDir, "npm", "package.json");
+	const npmRootGitignore = join(agentDir, "npm", ".gitignore");
+	assert.ok(existsSync(npmRootPkg), "npm/package.json should be created");
+	assert.ok(existsSync(npmRootGitignore), "npm/.gitignore should be created");
+
+	const pkgJson = JSON.parse(readFileSync(npmRootPkg, "utf8"));
+	assert.equal(pkgJson.name, "pi-extensions");
+	assert.equal(pkgJson.private, true);
+
+	const gitignore = readFileSync(npmRootGitignore, "utf8");
+	assert.match(gitignore, /^\*\n!\.gitignore/);
+
+	const npmLogPath = join(agentDir, "npm.log");
+	assert.ok(existsSync(npmLogPath), "fake npm should have been called");
+	const logContent = readFileSync(npmLogPath, "utf8").trim();
+	// Should be one batch call: install <specs...> --prefix <npmRoot> --legacy-peer-deps
+	const lines = logContent.split(/\r?\n/).filter(Boolean);
+	assert.equal(lines.length, 1, "only one npm call should be made (batch)");
+	assert.match(lines[0], /install.*@scope\/pkg-a@1\.0\.0.*@scope\/pkg-b@2\.0\.0/);
+	assert.match(lines[0], /--prefix/);
+	assert.match(lines[0], /--legacy-peer-deps/);
+});
+
+test("preInstallNpmDefaultExtensions skips on --no-settings", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"\nexit 0',
+	});
+	config.noSettings = true;
+
+	preInstallNpmDefaultExtensions(config);
+
+	assert.ok(!existsSync(join(agentDir, "npm.log")), "npm should not be called when --no-settings");
+	assert.ok(!existsSync(join(agentDir, "npm")), "npm root should not be created when --no-settings");
+});
+
+test("preInstallNpmDefaultExtensions ignores git: and local sources", (t) => {
+	const defaults = [
+		{ id: "git-ext", source: "git:github.com/example/ext@main" },
+		{ id: "npm-ext", source: "npm:@scope/npm-ext@1.0.0" },
+	];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	preInstallNpmDefaultExtensions(config);
+
+	const npmLogPath = join(agentDir, "npm.log");
+	assert.ok(existsSync(npmLogPath), "npm should be called for npm: sources");
+	const logContent = readFileSync(npmLogPath, "utf8").trim();
+	assert.doesNotMatch(logContent, /git:/, "git: source should not appear in npm install args");
+	assert.match(logContent, /@scope\/npm-ext@1\.0\.0/, "npm: source should be installed");
+});
+
+test("preInstallNpmDefaultExtensions is non-fatal when npm install fails", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: "printf 'npm install failed\\n' >&2\nexit 1",
+	});
+
+	const stderr = captureConsole("error", () => {
+		assert.doesNotThrow(() => preInstallNpmDefaultExtensions(config));
+	});
+	assert.match(stderr, /npm pre-install of pinned default extensions failed/);
+	assert.match(stderr, /Pi will install missing packages on first launch/);
+});
+
+test("preInstallNpmDefaultExtensions dry-run prints planned command without writing", (t) => {
+	const defaults = [
+		{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" },
+		{ id: "pkg-b", source: "npm:@scope/pkg-b@2.0.0" },
+	];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		dryRun: true,
+	});
+
+	const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+	assert.match(stdout, /npm install/, "dry-run should print the planned npm install command");
+	assert.match(stdout, /@scope\/pkg-a@1\.0\.0/, "dry-run should include spec a");
+	assert.match(stdout, /@scope\/pkg-b@2\.0\.0/, "dry-run should include spec b");
+	assert.match(stdout, /--legacy-peer-deps/, "dry-run should include --legacy-peer-deps");
+	assert.ok(!existsSync(join(agentDir, "npm")), "npm root should not be created in dry-run");
+});
+
+test("preInstallNpmDefaultExtensions does not install disabled extensions", (t) => {
+	const defaults = [
+		{ id: "enabled-ext", source: "npm:@scope/enabled@1.0.0" },
+		{ id: "disabled-ext", source: "npm:@scope/disabled@1.0.0" },
+	];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: {
+			packages: defaults.map((entry) => entry.source),
+			tlh: { disabledDefaultExtensions: ["disabled-ext"] },
+		},
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	preInstallNpmDefaultExtensions(config);
+
+	const npmLogPath = join(agentDir, "npm.log");
+	assert.ok(existsSync(npmLogPath), "npm should be called");
+	const logContent = readFileSync(npmLogPath, "utf8").trim();
+	assert.match(logContent, /@scope\/enabled@1\.0\.0/, "enabled extension should be installed");
+	assert.doesNotMatch(logContent, /@scope\/disabled@1\.0\.0/, "disabled extension should not be installed");
+});
+
+test("preInstallNpmDefaultExtensions idempotent: does not corrupt existing npm root", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	// Pre-create npm root with existing package.json and .gitignore
+	const npmRoot = join(agentDir, "npm");
+	mkdirSync(npmRoot, { recursive: true });
+	const existingPkg = JSON.stringify({ name: "pi-extensions", private: true, version: "1.0.0" });
+	writeFileSync(join(npmRoot, "package.json"), existingPkg);
+	writeFileSync(join(npmRoot, ".gitignore"), "*\n!.gitignore\n");
+
+	preInstallNpmDefaultExtensions(config);
+
+	// Existing files should NOT be overwritten
+	assert.equal(readFileSync(join(npmRoot, "package.json"), "utf8"), existingPkg);
+});
+
+// --- Finding 1: symlinked npm root refusal ---
+
+test("preInstallNpmDefaultExtensions refuses symlinked npm root: warns, writes nothing through symlink, npm not invoked", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source) },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	// Symlink agentDir/npm to an external directory.
+	const npmExternal = join(agentDir, "..", "npm-external");
+	mkdirSync(npmExternal, { recursive: true });
+	symlinkSync(npmExternal, join(agentDir, "npm"));
+
+	const stderr = captureConsole("error", () => {
+		assert.doesNotThrow(() => preInstallNpmDefaultExtensions(config));
+	});
+
+	// Should warn about the unsafe npm prefix.
+	assert.match(stderr, /npm pre-install skipped.*unsafe npm prefix/);
+	// npm must NOT have been invoked.
+	assert.ok(!existsSync(join(agentDir, "npm.log")), "npm must not be invoked when npm root is a symlink");
+	// Nothing should have been written into the external directory through the symlink.
+	assert.deepEqual(
+		existsSync(join(npmExternal, "package.json")),
+		false,
+		"package.json must not be written through symlink",
+	);
+});
+
+// --- Finding 2: differing configured version skip (no downgrade) ---
+
+test("preInstallNpmDefaultExtensions skips pre-install when configured version differs from bundled pin", (t) => {
+	const bundledSource = "npm:@scope/pkg-a@1.0.0";
+	const configuredSource = "npm:@scope/pkg-a@2.0.0"; // user-preserved newer version
+	const defaults = [{ id: "pkg-a", source: bundledSource }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		// Settings carry the user-preserved version, not the bundled pin.
+		settings: { packages: [configuredSource] },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+	// Enable verbose + un-quiet so we can verify the skip log.
+	config.verbose = true;
+	config.quiet = false;
+
+	const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+	// npm must NOT have been invoked (would downgrade @2.0.0 → @1.0.0).
+	assert.ok(
+		!existsSync(join(agentDir, "npm.log")),
+		"npm must not be invoked when configured version differs from bundled pin",
+	);
+	// Verbose log must explain the skip.
+	assert.match(
+		stdout,
+		/Skipping pre-install of.*@scope\/pkg-a@1\.0\.0.*configured version.*@scope\/pkg-a@2\.0\.0.*differs from bundled pin/,
+	);
+});
+
+test("preInstallNpmDefaultExtensions still installs when configured version matches bundled pin", (t) => {
+	const source = "npm:@scope/pkg-a@1.0.0";
+	const defaults = [{ id: "pkg-a", source }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: [source] }, // settings match the bundled pin exactly
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+
+	preInstallNpmDefaultExtensions(config);
+
+	// npm SHOULD have been invoked since the version matches.
+	assert.ok(existsSync(join(agentDir, "npm.log")), "npm should be invoked when configured version matches bundled pin");
+	const logContent = readFileSync(join(agentDir, "npm.log"), "utf8").trim();
+	assert.match(logContent, /@scope\/pkg-a@1\.0\.0/);
+});
+
+// --- Finding 3: non-npm package manager skip ---
+
+test("preInstallNpmDefaultExtensions skips when configured npmCommand is pnpm", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source), npmCommand: ["pnpm"] },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+	// Enable verbose + un-quiet so we can verify the skip log.
+	config.verbose = true;
+	config.quiet = false;
+
+	const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+	// npm must NOT have been invoked (pnpm uses different install args).
+	assert.ok(!existsSync(join(agentDir, "npm.log")), "npm must not be invoked when npmCommand is pnpm");
+	// Verbose log must explain the skip.
+	assert.match(stdout, /Skipping npm pre-install.*configured npmCommand is not plain npm.*pnpm/);
+	// Installer must still be non-fatal (no throw).
+});
+
+test("preInstallNpmDefaultExtensions skips when configured npmCommand is bun", (t) => {
+	const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+	const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+		defaultExtensions: defaults,
+		settings: { packages: defaults.map((entry) => entry.source), npmCommand: ["bun"] },
+		fakeNpmBody: ['printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"', "exit 0"].join("\n"),
+	});
+	config.verbose = true;
+	config.quiet = false;
+
+	const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+	assert.ok(!existsSync(join(agentDir, "npm.log")), "npm must not be invoked when npmCommand is bun");
+	assert.match(stdout, /Skipping npm pre-install.*configured npmCommand is not plain npm.*bun/);
 });

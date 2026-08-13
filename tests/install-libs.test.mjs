@@ -691,6 +691,113 @@ test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode"
 	assert.deepEqual(warnings, []);
 });
 
+function trackingCheckoutIo(warnings, npmInstallCalls) {
+	return {
+		runCommand(_config, commandArgs, options = {}) {
+			const [command, ...args] = commandArgs;
+			runCommand(command, args, {
+				cwd: options.cwd,
+				env: options.env ? { ...process.env, ...options.env } : process.env,
+			});
+		},
+		runInDir(_config, _dir, commandArgs) {
+			// Capture npm install calls without actually running npm.
+			npmInstallCalls.push([...commandArgs]);
+		},
+		warn(message) {
+			warnings.push(message);
+		},
+	};
+}
+
+function addPackageJsonToCheckout(targetDir, _originDir) {
+	// Add a tracked package.json so `git clean -fd` does not remove it.
+	runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+	runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+	writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "test-pkg", version: "1.0.0" }) + "\n");
+	runGit(["-C", targetDir, "add", "package.json"]);
+	runGit(["-C", targetDir, "commit", "-m", "add package.json"]);
+	runGit(["-C", targetDir, "push", "origin", "HEAD:main"]);
+}
+
+test("refreshGitCheckout skips npm install when ref is unchanged, worktree was clean, and node_modules exists", (t) => {
+	const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+	const warnings = [];
+	const npmInstallCalls = [];
+
+	addPackageJsonToCheckout(targetDir, originDir);
+	mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+
+	refreshGitCheckout(
+		{ agentDir },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		trackingCheckoutIo(warnings, npmInstallCalls),
+	);
+
+	assert.deepEqual(
+		npmInstallCalls,
+		[],
+		"npm install must be skipped when ref unchanged, worktree clean, node_modules present",
+	);
+	assert.deepEqual(listBackupRefs(targetDir), [], "no backup ref should be created for a clean worktree");
+});
+
+test("refreshGitCheckout runs npm install when node_modules is absent even if ref is unchanged and worktree is clean", (t) => {
+	const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+	const warnings = [];
+	const npmInstallCalls = [];
+
+	addPackageJsonToCheckout(targetDir, originDir);
+	// Deliberately do NOT create node_modules.
+
+	refreshGitCheckout(
+		{ agentDir },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		trackingCheckoutIo(warnings, npmInstallCalls),
+	);
+
+	assert.equal(npmInstallCalls.length, 1, "npm install must run when node_modules is absent");
+	assert.ok(npmInstallCalls[0].includes("--omit=dev"), "npm install must be called with production-only flags");
+});
+
+test("refreshGitCheckout runs npm install after a dirty-tree reset even when node_modules exists", (t) => {
+	const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+	const warnings = [];
+	const npmInstallCalls = [];
+
+	addPackageJsonToCheckout(targetDir, originDir);
+	mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+	// Dirty the worktree so the backup-ref path is taken.
+	writeFileSync(join(targetDir, "tracked.txt"), "dirty local change\n");
+
+	refreshGitCheckout(
+		{ agentDir, quiet: true },
+		{
+			targetDir,
+			repo: originDir,
+			ref: "main",
+			label: "test checkout",
+			missingMessage: `missing checkout: ${targetDir}`,
+		},
+		trackingCheckoutIo(warnings, npmInstallCalls),
+	);
+
+	assert.equal(npmInstallCalls.length, 1, "npm install must run after a dirty-tree reset");
+	assert.equal(listBackupRefs(targetDir).length, 1, "backup ref must have been created for dirty worktree");
+});
+
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
 	const root = tempFixture(t);
 	const agentDir = join(root, "agent");

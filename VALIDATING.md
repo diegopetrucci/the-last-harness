@@ -10,6 +10,14 @@ Before considering changes ready, run:
 npm run validate
 ```
 
+**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. If your installed tree is stale or was installed with a different lock snapshot, type errors and runtime checks can fail in ways that look like source bugs but are purely a dependency drift. The `check:package-versions` step (the first step in `validate`) detects this and reports an actionable error. If you see a stale-dependency message, run:
+
+```sh
+npm ci
+```
+
+This is also how CI (`.github/workflows/ci.yml`, `release.yml`) and `.symphony/setup` install dependencies — always from the lockfile, never from a loose install.
+
 This is the standard full validation flow. It checks managed version pins and package contents; runs the main, subagent-test-support, and runtime TypeScript targets; verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint and formatting checks via Biome and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
 The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
@@ -82,6 +90,48 @@ npm run lint:sh
 This runs ShellCheck over every `*.sh` file tracked by git. It is also included in `npm run validate`.
 
 For installer tests, prefer temporary `--agent-dir` and `--bin-dir` values. Do not run a real install into home directories unless explicitly requested.
+
+### Installer verification recipe
+
+**Stage-0 vs stage-1 behaviour — what a plain temp-dir install actually exercises:**
+
+Running `bash install.sh` from inside the repo checkout takes the `find_local_support_root` path (install.sh ~line 730): stage 1 runs directly from local files and `fetch_remote_support_root` is **never** called. This means:
+
+- No remote support-file fetching is exercised.
+- `TLH_RAW_BASE` has no effect.
+- Changes to stage-0 fetching can appear verified when they were never executed.
+
+A second trap: running a locally-modified `install.sh` **without** `_TLH_STAGE0_CANONICALIZED=1` causes `canonicalize_stage0_installer` to re-download `install.sh` from `RAW_BASE` and exec that copy, discarding your local edits.
+
+**Stage-1-only changes** (e.g. edits to `scripts/tlh-install.mjs`) do run from a repo checkout via `find_local_support_root`, so the plain temp-dir install is sufficient for them:
+
+```sh
+bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
+```
+
+**To exercise stage-0 remote support-file fetching**, copy `install.sh` to a temp directory outside the repo and set `_TLH_STAGE0_CANONICALIZED=1` to bypass the re-download:
+
+```sh
+T=$(mktemp -d); cp install.sh "$T/"; cd "$T"
+_TLH_STAGE0_CANONICALIZED=1 bash install.sh --verbose --agent-dir "$T/base/agent" --bin-dir "$T/bin"
+```
+
+From outside the repo checkout the installer cannot find `find_local_support_root`, so it exercises the real remote fetch path (`fetch_remote_support_root` → `TLH_RAW_BASE`).
+
+**To verify the required-file abort path** (expects exit 1 and the message `required installer support file not found for ref ...`):
+
+```sh
+_TLH_STAGE0_CANONICALIZED=1 TLH_RAW_BASE="https://raw.githubusercontent.com/diegopetrucci/the-last-harness/no-such-ref-xyz" bash install.sh --agent-dir "$T/a/agent" --bin-dir "$T/a/bin"
+```
+
+**First-launch pi output:** when checking first-launch behaviour of a freshly installed profile, redirect pi output to a file rather than piping to `head` or `tail`. A `SIGPIPE` from an early-closing pipe kills pi mid-install and produces misleading partial results:
+
+```sh
+# Do this:
+tlh > /tmp/tlh-first-launch.log 2>&1
+# Not this (SIGPIPE risk):
+tlh | head -20
+```
 
 ## Release-tier manual validation
 

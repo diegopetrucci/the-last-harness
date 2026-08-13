@@ -129,7 +129,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
         printDryRunCommand(["git", "-C", targetDir, "checkout", "--detach", "<resolved-ref>"], io);
         printDryRunCommand(["git", "-C", targetDir, "reset", "--hard", "<resolved-ref>"], io);
         printDryRunCommand(["git", "-C", targetDir, "clean", "-fd"], io);
-        logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present.", io);
+        logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present and the ref changed, node_modules is absent, or the worktree was dirty.", io);
         return true;
     }
     if (!safeGitCheckoutDirForMutation(config, targetDir, label, io)) {
@@ -138,6 +138,10 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
             return false;
         }
         throw new Error(missingMessage);
+    }
+    let priorHead = null;
+    if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
+        priorHead = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
     }
     if (repo) {
         if (gitSucceeds(config, targetDir, ["remote", "get-url", "origin"], io)) {
@@ -149,6 +153,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
     }
     runGitCommand(config, ["git", "-C", targetDir, "fetch", "--prune", "--tags", "origin"], io);
     const statusOutput = gitOutput(config, targetDir, ["status", "--porcelain"], io);
+    const wasClean = statusOutput === "";
     if (statusOutput !== "") {
         const timestamp = new Date().toISOString();
         const refTimestamp = timestamp.replace(/:/g, "-");
@@ -188,11 +193,22 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
     else if (gitSucceeds(config, targetDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${ref}^{commit}`], io)) {
         targetRef = `refs/remotes/origin/${ref}`;
     }
+    // Capture node_modules presence before checkout/clean removes untracked dirs.
+    // This reflects whether npm install had already been run at the start of the refresh.
+    const nodeModulesExists = existsSync(join(targetDir, "node_modules"));
     runGitCommand(config, ["git", "-C", targetDir, "checkout", "-f", "--detach", targetRef], io);
     runGitCommand(config, ["git", "-C", targetDir, "reset", "--hard", targetRef], io);
     runGitCommand(config, ["git", "-C", targetDir, "clean", "-fd"], io);
     if (existsSync(join(targetDir, "package.json"))) {
-        runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
+        let newHead = null;
+        if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
+            newHead = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
+        }
+        const refUnchanged = priorHead !== null && newHead !== null && priorHead === newHead;
+        const skipNpmInstall = refUnchanged && wasClean && nodeModulesExists;
+        if (!skipNpmInstall) {
+            runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
+        }
     }
     return true;
 }
