@@ -935,139 +935,144 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         proc.on("close", (code, signal) => {
             clearFinalDrainTimers();
             clearStdioGuard();
-            void jsonlWriter.close().catch(() => {
-            });
-            cleanupTempDir(tempDir);
             result.exitSignal = signal ?? undefined;
             if (buf.trim())
                 processLine(buf);
             if (stderrBuf.trim())
                 shared.transcriptWriter?.writeStderrText(stderrBuf);
-            if (!result.error && assistantError)
-                result.error = assistantError;
-            const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
-            if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
-                result.error = stderrBuf.trim();
-            }
-            const finalCode = forcedDrainAfterFinalSuccess
-                ? 0
-                : forcedTerminationSignal || signal
-                    ? (code ?? 1)
-                    : (code ?? 0);
-            if (supervisorPauseRequested) {
-                void (async () => {
-                    const cleanup = await beginSupervisorPauseCleanup();
-                    result.processCleanup = cleanup;
-                    if (!cleanup.terminated) {
-                        supervisorPauseRequested = false;
-                        result.pause = undefined;
-                        result.interrupted = false;
-                        result.exitCode = 1;
-                        result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
-                        result.finalOutput = result.error;
+            processClosed = true;
+            void (async () => {
+                await jsonlWriter.close().catch(() => {
+                });
+                cleanupTempDir(tempDir);
+                if (!result.error && assistantError)
+                    result.error = assistantError;
+                const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
+                if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
+                    result.error = stderrBuf.trim();
+                }
+                const finalCode = forcedDrainAfterFinalSuccess
+                    ? 0
+                    : forcedTerminationSignal || signal
+                        ? (code ?? 1)
+                        : (code ?? 0);
+                if (supervisorPauseRequested) {
+                    void (async () => {
+                        const cleanup = await beginSupervisorPauseCleanup();
+                        result.processCleanup = cleanup;
+                        if (!cleanup.terminated) {
+                            supervisorPauseRequested = false;
+                            result.pause = undefined;
+                            result.interrupted = false;
+                            result.exitCode = 1;
+                            result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
+                            result.finalOutput = result.error;
+                            result.exitSignal = undefined;
+                            progress.status = "failed";
+                            progress.error = result.error;
+                            finish(1);
+                            return;
+                        }
+                        result.exitCode = 0;
+                        result.interrupted = true;
+                        result.error = undefined;
                         result.exitSignal = undefined;
-                        progress.status = "failed";
-                        progress.error = result.error;
-                        finish(1);
-                        return;
-                    }
-                    result.exitCode = 0;
-                    result.interrupted = true;
-                    result.error = undefined;
-                    result.exitSignal = undefined;
-                    if (result.pause)
-                        result.pause = { ...result.pause, pausedAt: Date.now(), ownerPid: undefined };
+                        if (result.pause)
+                            result.pause = { ...result.pause, pausedAt: Date.now(), ownerPid: undefined };
+                        progress.durationMs = Date.now() - startTime;
+                        result.progressSummary = {
+                            toolCount: progress.toolCount,
+                            tokens: progress.tokens,
+                            durationMs: progress.durationMs,
+                        };
+                        resolveResultSessionFile(result, options, shared.sessionEnabled);
+                        try {
+                            options.onSupervisorPauseTransition?.({
+                                stage: "paused",
+                                result: snapshotResult(result, snapshotProgress(progress)),
+                            });
+                        }
+                        catch {
+                            supervisorPauseRequested = false;
+                            result.pause = undefined;
+                            result.interrupted = false;
+                            result.exitCode = 1;
+                            result.error = FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
+                            result.finalOutput = result.error;
+                            progress.status = "failed";
+                            progress.error = result.error;
+                            finish(1);
+                            return;
+                        }
+                        finish(0);
+                    })();
+                    return;
+                }
+                if (interruptedByControl) {
+                    void (async () => {
+                        const cleanup = await beginSupervisorPauseCleanup();
+                        result.processCleanup = cleanup;
+                        if (!cleanup.terminated) {
+                            interruptedByControl = false;
+                            result.interrupted = false;
+                            result.exitCode = 1;
+                            result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
+                            result.finalOutput = result.error;
+                            progress.status = "failed";
+                            progress.error = result.error;
+                            finish(1);
+                            return;
+                        }
+                        processClosed = true;
+                        finish(finalCode);
+                    })();
+                    return;
+                }
+                if (detached) {
+                    result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
+                    progress.status = result.exitCode === 0 ? "completed" : "failed";
                     progress.durationMs = Date.now() - startTime;
+                    if (result.error)
+                        progress.error = result.error;
                     result.progressSummary = {
                         toolCount: progress.toolCount,
                         tokens: progress.tokens,
                         durationMs: progress.durationMs,
                     };
-                    resolveResultSessionFile(result, options, shared.sessionEnabled);
-                    try {
-                        options.onSupervisorPauseTransition?.({
-                            stage: "paused",
-                            result: snapshotResult(result, snapshotProgress(progress)),
-                        });
+                    const finalOutput = getFinalOutput(result.messages ?? []);
+                    result.finalOutput =
+                        finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+                    if (result.artifactPaths &&
+                        options.artifactConfig?.enabled !== false &&
+                        options.artifactConfig?.includeOutput !== false) {
+                        try {
+                            writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+                        }
+                        catch {
+                        }
                     }
-                    catch {
-                        supervisorPauseRequested = false;
-                        result.pause = undefined;
-                        result.interrupted = false;
-                        result.exitCode = 1;
-                        result.error = FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-                        result.finalOutput = result.error;
-                        progress.status = "failed";
-                        progress.error = result.error;
-                        finish(1);
-                        return;
-                    }
-                    finish(0);
-                })();
-                return;
-            }
-            if (interruptedByControl) {
-                void (async () => {
-                    const cleanup = await beginSupervisorPauseCleanup();
-                    result.processCleanup = cleanup;
-                    if (!cleanup.terminated) {
-                        interruptedByControl = false;
-                        result.interrupted = false;
-                        result.exitCode = 1;
-                        result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
-                        result.finalOutput = result.error;
-                        progress.status = "failed";
-                        progress.error = result.error;
-                        finish(1);
-                        return;
-                    }
-                    processClosed = true;
-                    finish(finalCode);
-                })();
-                return;
-            }
-            if (detached) {
-                result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
-                progress.status = result.exitCode === 0 ? "completed" : "failed";
-                progress.durationMs = Date.now() - startTime;
-                if (result.error)
-                    progress.error = result.error;
-                result.progressSummary = {
-                    toolCount: progress.toolCount,
-                    tokens: progress.tokens,
-                    durationMs: progress.durationMs,
-                };
-                const finalOutput = getFinalOutput(result.messages ?? []);
-                result.finalOutput =
-                    finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
-                if (result.artifactPaths &&
-                    options.artifactConfig?.enabled !== false &&
-                    options.artifactConfig?.includeOutput !== false) {
-                    try {
-                        writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
-                    }
-                    catch {
-                    }
+                    options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
+                    finish(-2);
+                    return;
                 }
-                options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
-                finish(-2);
-                return;
-            }
-            processClosed = true;
-            finish(finalCode);
+                finish(finalCode);
+            })();
         });
         proc.on("error", (error) => {
             clearFinalDrainTimers();
             clearStdioGuard();
-            void jsonlWriter.close().catch(() => {
-            });
-            cleanupTempDir(tempDir);
             if (stderrBuf.trim())
                 shared.transcriptWriter?.writeStderrText(stderrBuf);
             if (!result.error) {
                 result.error = error instanceof Error ? error.message : String(error);
             }
-            finish(1);
+            processClosed = true;
+            void (async () => {
+                await jsonlWriter.close().catch(() => {
+                });
+                cleanupTempDir(tempDir);
+                finish(1);
+            })();
         });
         if (options.signal) {
             const kill = () => {

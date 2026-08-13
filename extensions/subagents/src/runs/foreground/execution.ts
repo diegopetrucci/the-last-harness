@@ -1115,139 +1115,155 @@ async function runSingleAttempt(
 			clearFinalDrainTimers();
 		});
 		proc.on("close", (code, signal) => {
+			// Synchronous prelude — runs before any await so guards cannot observe stale state.
 			clearFinalDrainTimers();
 			clearStdioGuard();
-			void jsonlWriter.close().catch(() => {
-				// JSONL artifact flush is best effort.
-			});
-			cleanupTempDir(tempDir);
 			result.exitSignal = signal ?? undefined;
+			// processLine must be called before processClosed = true: the onUpdate guards at line 874/890
+			// check processClosed and would suppress the trailing line's progress update if set earlier.
 			if (buf.trim()) processLine(buf);
 			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
-			if (!result.error && assistantError) result.error = assistantError;
-			const forcedDrainAfterFinalSuccess =
-				forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
-			if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
-				result.error = stderrBuf.trim();
-			}
-			const finalCode = forcedDrainAfterFinalSuccess
-				? 0
-				: forcedTerminationSignal || signal
-					? (code ?? 1)
-					: (code ?? 0);
-			if (supervisorPauseRequested) {
-				void (async () => {
-					const cleanup = await beginSupervisorPauseCleanup();
-					result.processCleanup = cleanup;
-					if (!cleanup.terminated) {
-						supervisorPauseRequested = false;
-						result.pause = undefined;
-						result.interrupted = false;
-						result.exitCode = 1;
-						result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
-						result.finalOutput = result.error;
+			// processClosed must be set before the first await so timeout and kill guards cannot
+			// observe a stale false during the artifact flush window (see lines 1079-1080, 596-599, 823-828).
+			processClosed = true;
+			void (async () => {
+				// jsonlWriter.close() marks itself closed and drops its stream synchronously before
+				// its first await (jsonl-writer.ts), so processLine() must be called before close()
+				// to ensure any trailing partial line reaches the JSONL artifact.
+				await jsonlWriter.close().catch(() => {
+					// JSONL artifact flush is best effort.
+				});
+				cleanupTempDir(tempDir);
+				if (!result.error && assistantError) result.error = assistantError;
+				const forcedDrainAfterFinalSuccess =
+					forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
+				if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
+					result.error = stderrBuf.trim();
+				}
+				const finalCode = forcedDrainAfterFinalSuccess
+					? 0
+					: forcedTerminationSignal || signal
+						? (code ?? 1)
+						: (code ?? 0);
+				if (supervisorPauseRequested) {
+					void (async () => {
+						const cleanup = await beginSupervisorPauseCleanup();
+						result.processCleanup = cleanup;
+						if (!cleanup.terminated) {
+							supervisorPauseRequested = false;
+							result.pause = undefined;
+							result.interrupted = false;
+							result.exitCode = 1;
+							result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
+							result.finalOutput = result.error;
+							result.exitSignal = undefined;
+							progress.status = "failed";
+							progress.error = result.error;
+							finish(1);
+							return;
+						}
+						result.exitCode = 0;
+						result.interrupted = true;
+						result.error = undefined;
 						result.exitSignal = undefined;
-						progress.status = "failed";
-						progress.error = result.error;
-						finish(1);
-						return;
-					}
-					result.exitCode = 0;
-					result.interrupted = true;
-					result.error = undefined;
-					result.exitSignal = undefined;
-					if (result.pause) result.pause = { ...result.pause, pausedAt: Date.now(), ownerPid: undefined };
+						if (result.pause) result.pause = { ...result.pause, pausedAt: Date.now(), ownerPid: undefined };
+						progress.durationMs = Date.now() - startTime;
+						result.progressSummary = {
+							toolCount: progress.toolCount,
+							tokens: progress.tokens,
+							durationMs: progress.durationMs,
+						};
+						resolveResultSessionFile(result, options, shared.sessionEnabled);
+						try {
+							options.onSupervisorPauseTransition?.({
+								stage: "paused",
+								result: snapshotResult(result, snapshotProgress(progress)),
+							});
+						} catch {
+							supervisorPauseRequested = false;
+							result.pause = undefined;
+							result.interrupted = false;
+							result.exitCode = 1;
+							result.error = FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
+							result.finalOutput = result.error;
+							progress.status = "failed";
+							progress.error = result.error;
+							finish(1);
+							return;
+						}
+						finish(0);
+					})();
+					return;
+				}
+				if (interruptedByControl) {
+					void (async () => {
+						const cleanup = await beginSupervisorPauseCleanup();
+						result.processCleanup = cleanup;
+						if (!cleanup.terminated) {
+							interruptedByControl = false;
+							result.interrupted = false;
+							result.exitCode = 1;
+							result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
+							result.finalOutput = result.error;
+							progress.status = "failed";
+							progress.error = result.error;
+							finish(1);
+							return;
+						}
+						processClosed = true;
+						finish(finalCode);
+					})();
+					return;
+				}
+				if (detached) {
+					result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
+					progress.status = result.exitCode === 0 ? "completed" : "failed";
 					progress.durationMs = Date.now() - startTime;
+					if (result.error) progress.error = result.error;
 					result.progressSummary = {
 						toolCount: progress.toolCount,
 						tokens: progress.tokens,
 						durationMs: progress.durationMs,
 					};
-					resolveResultSessionFile(result, options, shared.sessionEnabled);
-					try {
-						options.onSupervisorPauseTransition?.({
-							stage: "paused",
-							result: snapshotResult(result, snapshotProgress(progress)),
-						});
-					} catch {
-						supervisorPauseRequested = false;
-						result.pause = undefined;
-						result.interrupted = false;
-						result.exitCode = 1;
-						result.error = FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-						result.finalOutput = result.error;
-						progress.status = "failed";
-						progress.error = result.error;
-						finish(1);
-						return;
+					const finalOutput = getFinalOutput(result.messages ?? []);
+					result.finalOutput =
+						finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+					if (
+						result.artifactPaths &&
+						options.artifactConfig?.enabled !== false &&
+						options.artifactConfig?.includeOutput !== false
+					) {
+						try {
+							writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+						} catch {
+							// Detached children may outlive test/temp cleanup; recovered status is best-effort.
+						}
 					}
-					finish(0);
-				})();
-				return;
-			}
-			if (interruptedByControl) {
-				void (async () => {
-					const cleanup = await beginSupervisorPauseCleanup();
-					result.processCleanup = cleanup;
-					if (!cleanup.terminated) {
-						interruptedByControl = false;
-						result.interrupted = false;
-						result.exitCode = 1;
-						result.error = FOREGROUND_PROCESS_CLEANUP_ERROR_MESSAGE;
-						result.finalOutput = result.error;
-						progress.status = "failed";
-						progress.error = result.error;
-						finish(1);
-						return;
-					}
-					processClosed = true;
-					finish(finalCode);
-				})();
-				return;
-			}
-			if (detached) {
-				result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
-				progress.status = result.exitCode === 0 ? "completed" : "failed";
-				progress.durationMs = Date.now() - startTime;
-				if (result.error) progress.error = result.error;
-				result.progressSummary = {
-					toolCount: progress.toolCount,
-					tokens: progress.tokens,
-					durationMs: progress.durationMs,
-				};
-				const finalOutput = getFinalOutput(result.messages ?? []);
-				result.finalOutput =
-					finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
-				if (
-					result.artifactPaths &&
-					options.artifactConfig?.enabled !== false &&
-					options.artifactConfig?.includeOutput !== false
-				) {
-					try {
-						writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
-					} catch {
-						// Detached children may outlive test/temp cleanup; recovered status is best-effort.
-					}
+					options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
+					finish(-2);
+					return;
 				}
-				options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
-				finish(-2);
-				return;
-			}
-			processClosed = true;
-			finish(finalCode);
+				finish(finalCode);
+			})();
 		});
 		proc.on("error", (error) => {
+			// Synchronous prelude — keep guards safe before the artifact flush await.
 			clearFinalDrainTimers();
 			clearStdioGuard();
-			void jsonlWriter.close().catch(() => {
-				// JSONL artifact flush is best effort.
-			});
-			cleanupTempDir(tempDir);
 			if (stderrBuf.trim()) shared.transcriptWriter?.writeStderrText(stderrBuf);
 			if (!result.error) {
 				result.error = error instanceof Error ? error.message : String(error);
 			}
-			finish(1);
+			// processClosed must be set before the first await so timeout, abort, and interrupt
+			// paths cannot observe a stale false and reinterpret a real process error.
+			processClosed = true;
+			void (async () => {
+				await jsonlWriter.close().catch(() => {
+					// JSONL artifact flush is best effort.
+				});
+				cleanupTempDir(tempDir);
+				finish(1);
+			})();
 		});
 
 		if (options.signal) {

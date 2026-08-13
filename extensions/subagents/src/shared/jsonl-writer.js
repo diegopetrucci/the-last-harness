@@ -1,10 +1,13 @@
 import * as fs from "node:fs";
+const NO_OP_CLOSE_PROMISE = Promise.resolve();
 const DEFAULT_MAX_JSONL_BYTES = 50 * 1024 * 1024;
 export function createJsonlWriter(filePath, source, deps = {}) {
     if (!filePath) {
         return {
             writeLine() { },
-            async close() { },
+            close() {
+                return NO_OP_CLOSE_PROMISE;
+            },
         };
     }
     const createWriteStream = deps.createWriteStream ?? ((targetPath) => fs.createWriteStream(targetPath, { flags: "a" }));
@@ -15,11 +18,14 @@ export function createJsonlWriter(filePath, source, deps = {}) {
     catch {
         return {
             writeLine() { },
-            async close() { },
+            close() {
+                return NO_OP_CLOSE_PROMISE;
+            },
         };
     }
     let backpressured = false;
     let closed = false;
+    let closePromise;
     let bytesWritten = 0;
     const maxBytes = deps.maxBytes ?? DEFAULT_MAX_JSONL_BYTES;
     return {
@@ -47,13 +53,18 @@ export function createJsonlWriter(filePath, source, deps = {}) {
                 void 0;
             }
         },
-        async close() {
-            if (!stream || closed)
-                return;
+        close() {
+            if (closePromise !== undefined)
+                return closePromise;
+            if (!stream) {
+                closePromise = Promise.resolve();
+                return closePromise;
+            }
             closed = true;
             const current = stream;
             stream = undefined;
-            await new Promise((resolve) => current.end(() => resolve()));
+            closePromise = new Promise((resolve) => current.end(() => resolve()));
+            return closePromise;
         },
     };
 }
