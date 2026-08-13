@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-class QuietGlimpseWindowImpl extends EventEmitter {
+export class QuietGlimpseWindowImpl extends EventEmitter {
     #proc;
     #closed = false;
     #pendingHTML;
@@ -17,14 +17,17 @@ class QuietGlimpseWindowImpl extends EventEmitter {
         });
         const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
         rl.on("line", (line) => {
-            let message;
+            let parsed;
             try {
-                message = JSON.parse(line);
+                parsed = JSON.parse(line);
             }
             catch {
                 this.emit("error", new Error(`Malformed glimpse protocol line: ${line}`));
                 return;
             }
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+                return;
+            const message = parsed;
             switch (message.type) {
                 case "ready":
                     if (this.#pendingHTML != null) {

@@ -727,14 +727,19 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (!line.trim())
                 return;
             jsonlWriter.writeLine(line);
-            let evt;
+            let parsed;
             try {
-                evt = JSON.parse(line);
+                parsed = JSON.parse(line);
             }
             catch {
                 shared.transcriptWriter?.writeStdoutLine(line);
                 return;
             }
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+                shared.transcriptWriter?.writeStdoutLine(line);
+                return;
+            }
+            const evt = parsed;
             shared.transcriptWriter?.writeChildEvent(evt);
             const now = Date.now();
             progress.durationMs = now - startTime;
