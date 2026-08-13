@@ -615,12 +615,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 			const isParallel = (args.tasks?.length ?? 0) > 0;
 			const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
-			if (isParallel)
-				return new Text(
-					`${theme.fg("toolTitle", theme.bold("subagent"))}${asyncLabel}`,
-					0,
-					0,
-				);
+			if (isParallel) return new Text(`${theme.fg("toolTitle", theme.bold("subagent"))}${asyncLabel}`, 0, 0);
 			return new Text(
 				`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`,
 				0,
