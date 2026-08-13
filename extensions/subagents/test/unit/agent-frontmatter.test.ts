@@ -3,8 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { serializeAgent } from "../../src/agents/agent-serializer.ts";
-import { discoverAgents, discoverAgentsAll, type AgentConfig } from "../../src/agents/agents.ts";
+import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
@@ -54,7 +53,7 @@ afterEach(() => {
 });
 
 describe("agent permission frontmatter", () => {
-	it("preserves nested permission YAML blocks through discovery and serialization", () => {
+	it("preserves nested permission YAML blocks through discovery", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-permission-frontmatter-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
@@ -88,30 +87,10 @@ bash:
   "*": ask
   "git *": allow`,
 		);
-
-		const serialized = serializeAgent(worker!);
-		assert.match(serialized, /^permission:\n  "\*": ask\n  read: allow\n  bash:\n    "\*": ask\n    "git \*": allow$/m);
 	});
 });
 
 describe("agent frontmatter defaultContext", () => {
-	it("serializes defaultContext into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "worker",
-			description: "Worker",
-			systemPrompt: "Do work",
-			systemPromptMode: "replace",
-			inheritProjectContext: true,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/worker.md",
-			defaultContext: "fork",
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /defaultContext: fork/);
-	});
-
 	it("parses defaultContext from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-default-context-"));
 		tempDirs.push(dir);
@@ -137,7 +116,7 @@ Do work
 });
 
 describe("agent maxExecutionTimeMs frontmatter", () => {
-	it("parses, serializes, and validates maxExecutionTimeMs", () => {
+	it("parses and validates maxExecutionTimeMs", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-max-execution-time-"));
 		tempDirs.push(dir);
 		const filePath = path.join(dir, ".pi", "agents", "explorer.md");
@@ -155,7 +134,6 @@ Explore the codebase
 
 		const explorer = discoverAgents(dir, "project").agents.find((agent) => agent.name === "explorer");
 		assert.equal(explorer?.maxExecutionTimeMs, Number.MAX_SAFE_INTEGER);
-		assert.match(serializeAgent(explorer!), new RegExp(`^maxExecutionTimeMs: ${Number.MAX_SAFE_INTEGER}$`, "m"));
 		assert.equal(explorer?.extraFields?.maxExecutionTimeMs, undefined);
 
 		writeAgent(
@@ -173,18 +151,11 @@ Explore the codebase
 			() => discoverAgents(dir, "project"),
 			/Agent 'explorer' has invalid maxExecutionTimeMs frontmatter; expected a positive safe integer/,
 		);
-
-		const unsafeConfig = { ...explorer!, maxExecutionTimeMs: Number.MAX_SAFE_INTEGER + 1 };
-		assert.doesNotMatch(serializeAgent(unsafeConfig), /^maxExecutionTimeMs:/m);
-		assert.doesNotMatch(
-			serializeAgent(unsafeConfig, { preserveFrontmatterFields: new Set(["maxExecutionTimeMs"]) }),
-			/^maxExecutionTimeMs:/m,
-		);
 	});
 });
 
 describe("agent acceptance-role frontmatter", () => {
-	it("parses, serializes, and validates acceptance roles", () => {
+	it("parses and validates acceptance roles", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-role-"));
 		tempDirs.push(dir);
 		const filePath = path.join(dir, ".pi", "agents", "explorer.md");
@@ -202,7 +173,6 @@ Explore the codebase
 
 		const explorer = discoverAgents(dir, "project").agents.find((agent) => agent.name === "explorer");
 		assert.equal(explorer?.acceptanceRole, "read-only");
-		assert.match(serializeAgent(explorer!), /^acceptanceRole: read-only$/m);
 		assert.equal(explorer?.extraFields?.acceptanceRole, undefined);
 
 		writeAgent(
@@ -857,40 +827,6 @@ Project chain.
 });
 
 describe("agent frontmatter completionGuard", () => {
-	it("serializes disabled completion guard into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "test-runner",
-			description: "Test runner",
-			systemPrompt: "Validate changes",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/test-runner.md",
-			completionGuard: false,
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /completionGuard: false/);
-	});
-
-	it("omits enabled completion guard from serialized frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "test-runner",
-			description: "Test runner",
-			systemPrompt: "Validate changes",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/test-runner.md",
-			completionGuard: true,
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.doesNotMatch(serialized, /completionGuard:/);
-	});
-
 	it("parses completionGuard from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
 		tempDirs.push(dir);
@@ -917,23 +853,6 @@ Validate changes
 });
 
 describe("agent frontmatter maxSubagentDepth", () => {
-	it("serializes maxSubagentDepth into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "scout",
-			description: "Scout",
-			systemPrompt: "Inspect code",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/scout.md",
-			maxSubagentDepth: 1,
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /maxSubagentDepth: 1/);
-	});
-
 	it("parses maxSubagentDepth from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-frontmatter-"));
 		tempDirs.push(dir);
@@ -1037,23 +956,6 @@ Do work
 });
 
 describe("agent frontmatter fallbackModels", () => {
-	it("serializes fallbackModels into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "worker",
-			description: "Worker",
-			systemPrompt: "Do work",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/worker.md",
-			fallbackModels: ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"],
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /fallbackModels: openai\/gpt-5-mini, anthropic\/claude-sonnet-4/);
-	});
-
 	it("parses fallbackModels from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-fallback-frontmatter-"));
 		tempDirs.push(dir);
@@ -1079,22 +981,6 @@ Do work
 });
 
 describe("agent frontmatter systemPromptMode", () => {
-	it("serializes systemPromptMode into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "worker",
-			description: "Worker",
-			systemPrompt: "Do work",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/worker.md",
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /systemPromptMode: replace/);
-	});
-
 	it("parses systemPromptMode from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-prompt-mode-frontmatter-"));
 		tempDirs.push(dir);
@@ -1120,23 +1006,6 @@ Do work
 });
 
 describe("agent frontmatter prompt inheritance flags", () => {
-	it("serializes inheritProjectContext and inheritSkills into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "worker",
-			description: "Worker",
-			systemPrompt: "Do work",
-			systemPromptMode: "replace",
-			inheritProjectContext: true,
-			inheritSkills: true,
-			source: "project",
-			filePath: "/tmp/worker.md",
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /inheritProjectContext: true/);
-		assert.match(serialized, /inheritSkills: true/);
-	});
-
 	it("parses inheritProjectContext and inheritSkills from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-prompt-inheritance-frontmatter-"));
 		tempDirs.push(dir);
@@ -1164,23 +1033,6 @@ Do work
 });
 
 describe("agent frontmatter subagentOnlyExtensions", () => {
-	it("serializes subagentOnlyExtensions into agent frontmatter", () => {
-		const agent: AgentConfig = {
-			name: "worker",
-			description: "Worker",
-			systemPrompt: "Do work",
-			systemPromptMode: "replace",
-			inheritProjectContext: false,
-			inheritSkills: false,
-			source: "project",
-			filePath: "/tmp/worker.md",
-			subagentOnlyExtensions: ["./tools/child-search.ts", "/opt/pi/child-only.ts"],
-		};
-
-		const serialized = serializeAgent(agent);
-		assert.match(serialized, /subagentOnlyExtensions: \.\/tools\/child-search\.ts, \/opt\/pi\/child-only\.ts/);
-	});
-
 	it("parses subagentOnlyExtensions from discovered agent frontmatter", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-child-ext-"));
 		tempDirs.push(dir);
@@ -1299,7 +1151,7 @@ Review
 		);
 	});
 
-	it("registers packaged agents by runtime name and serializes local name plus package", () => {
+	it("registers packaged agents by runtime name and preserves local name plus package", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-agent-"));
 		tempDirs.push(dir);
 		const agentsDir = path.join(dir, ".pi", "agents");
@@ -1321,10 +1173,6 @@ Inspect code
 		assert.ok(scout);
 		assert.equal(scout.localName, "scout");
 		assert.equal(scout.packageName, "code-analysis");
-		const serialized = serializeAgent(scout);
-		assert.match(serialized, /^name: scout$/m);
-		assert.match(serialized, /^package: code-analysis$/m);
-		assert.doesNotMatch(serialized, /^name: code-analysis\.scout$/m);
 	});
 
 	it("keeps packaged and un-packaged runtime names distinct while preserving un-packaged precedence", () => {

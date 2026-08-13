@@ -125,6 +125,14 @@ test("scout and research subagent prompts keep bounded scope and tool budgets", 
 	);
 });
 
+test("OpenAI scout and research subagent defaults pin GPT-5.6 Luna with medium thinking", () => {
+	for (const name of ["repo-scout", "web-scout", "librarian", "diff-summarizer"]) {
+		const agent = readAgentPrompt("subagents", name);
+		assert.match(agent, /^tlhOpenaiModels: openai-codex\/gpt-5\.6-luna$/m, `${name} OpenAI model default`);
+		assert.match(agent, /^tlhOpenaiThinking: medium$/m, `${name} OpenAI thinking default`);
+	}
+});
+
 test("architect prompt preserves pre-existing changes and async steering guidance", () => {
 	const agent = readAgentPrompt("primary", "architect");
 

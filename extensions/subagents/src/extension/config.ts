@@ -16,18 +16,6 @@ function readConfigForUpdate(configPath = getConfigPath()): ExtensionConfig {
 	return parsed as ExtensionConfig;
 }
 
-export function saveConfig(config: ExtensionConfig, configPath = getConfigPath()): void {
-	fs.mkdirSync(path.dirname(configPath), { recursive: true });
-	fs.writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`, "utf-8");
-}
-
-export function updateConfig(updater: (config: ExtensionConfig) => ExtensionConfig): ExtensionConfig {
-	const configPath = getConfigPath();
-	const next = updater(readConfigForUpdate(configPath));
-	saveConfig(next, configPath);
-	return next;
-}
-
 export function loadConfig(): ExtensionConfig {
 	const configPath = getConfigPath();
 	try {

@@ -85,10 +85,17 @@ function widgetContent(line: string): string {
 	return line.slice(1).trimEnd();
 }
 
-function assertWidgetContentFits(line: string, width: number): void {
+function wrappedText(lines: string[], padded = false): string {
+	return lines
+		.map((line) => (padded ? widgetContent(line) : line))
+		.join("")
+		.replace(/\s/g, "");
+}
+
+function assertWrappedSource(lines: string[], source: string, padded = false): void {
 	assert.ok(
-		visibleWidth(widgetContent(line)) <= Math.max(1, width - 2),
-		`widget content should fit ${Math.max(1, width - 2)} columns: ${JSON.stringify(line)}`,
+		wrappedText(lines, padded).includes(source.replace(/\s/g, "")),
+		`wrapped output should preserve ${JSON.stringify(source)}`,
 	);
 }
 
@@ -192,7 +199,8 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, new RegExp(`^${runningGlyphPattern} Async agents · background`));
+		assert.match(text, new RegExp(`^${runningGlyphPattern} Async agents(?:\\n|$)`));
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.ok(text.indexOf("scout") < text.indexOf("queued"), "running row should precede queued summary");
 		assert.ok(text.indexOf("queued") < text.indexOf("reviewer"), "queued summary should precede completions");
 		assert.match(text, /⎿  read/);
@@ -334,7 +342,7 @@ describe("subagent async widget rendering", () => {
 		assert.ok(text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  read"));
 	});
 
-	it("uses parallel running/done wording for async jobs with parallel groups", () => {
+	it("uses spinner and done wording for async jobs with parallel groups", () => {
 		const lines = buildWidgetLines(
 			[
 				{
@@ -355,7 +363,8 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, /3 agents running · 0\/3 done/);
+		assert.match(text, /0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}`));
 		assert.doesNotMatch(text, /parallel · scout, reviewer, worker/);
 		assert.doesNotMatch(text, /step 1\/3/);
@@ -381,7 +390,8 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, /3 agents running/);
+		assert.match(text, /0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.doesNotMatch(text, /parallel · reviewer ×3/);
 		assert.doesNotMatch(text, /reviewer → reviewer → reviewer/);
 	});
@@ -403,8 +413,9 @@ describe("subagent async widget rendering", () => {
 			140,
 		).join("\n");
 
-		assert.match(text, /async subagents \(2\) · background/);
-		assert.match(text, /1 agent running · 0\/2 done/);
+		assert.match(text, /async subagents \(2\)/);
+		assert.match(text, /0\/2 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.doesNotMatch(text, /\bsteps?\b|\bchain\b/i);
 	});
 
@@ -507,10 +518,7 @@ describe("subagent async widget rendering", () => {
 			assert.doesNotMatch(text, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 
 		const expanded = buildWidgetLines(jobs, theme, 180, true).join("\n");
-		assert.match(
-			expanded,
-			/Agent 1\/1: parallel-worker · running · no activity for 5s · 13 turns · 7 tools · 13k token · 9\.0s/,
-		);
+		assert.match(expanded, /Agent 1\/1: parallel-worker · no activity for 5s · 13 turns · 7 tools · 13k token · 9\.0s/);
 		assert.doesNotMatch(expanded, new RegExp(escapeRegExp(whimsicalThinkingPhrase(13))));
 	});
 
@@ -549,7 +557,7 @@ describe("subagent async widget rendering", () => {
 				},
 			]);
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(text, /attention · running · no activity for 5s/);
+			assert.match(text, /attention · no activity for 5s/);
 			assert.doesNotMatch(text, new RegExp(escapeRegExp(whimsicalThinkingPhrase(21))));
 		});
 		resetWidgetLayout();
@@ -633,7 +641,7 @@ describe("subagent async widget rendering", () => {
 			]);
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
 			const progressiveRow = text.split("\n").find((line) => line.includes("pausing-worker")) ?? "";
-			assert.match(progressiveRow, /pausing-worker · running · pausing…/);
+			assert.match(progressiveRow, /pausing-worker · pausing…/);
 			assert.doesNotMatch(progressiveRow, /no activity for|active but long-running/);
 			assert.doesNotMatch(progressiveRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(24))));
 		});
@@ -691,20 +699,84 @@ describe("subagent async widget rendering", () => {
 
 				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
 				const harnessRow = harnessLines.find((line) => line.includes("step-pausing-worker")) ?? "";
-				assert.match(harnessRow, /step-pausing-worker · running · pausing…/);
+				assert.match(harnessRow, /step-pausing-worker · pausing…/);
 				assert.doesNotMatch(harnessRow, warning);
 				assert.doesNotMatch(harnessRow, /needs attention/);
 				assert.doesNotMatch(harnessRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 
 				const realLines = renderWithRealPiTui(harnessLines, 120);
 				const realRow = realLines.find((line) => line.includes("step-pausing-worker")) ?? "";
-				assert.match(realRow, /step-pausing-worker · running · pausing…/);
+				assert.match(realRow, /step-pausing-worker · pausing…/);
 				assert.doesNotMatch(realRow, warning);
 				assert.doesNotMatch(realRow, /needs attention/);
 				assert.doesNotMatch(realRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 			});
 		}
 		resetWidgetLayout();
+	});
+
+	it("shows aggregate N agents pausing cue while suppressing running labels", () => {
+		const now = 20_000;
+		const text = buildWidgetLines(
+			[
+				{
+					asyncId: "parallel-pausing-aggregate",
+					asyncDir: "/tmp/parallel-pausing-aggregate",
+					status: "running" as const,
+					mode: "parallel" as const,
+					agents: ["worker-1", "worker-2", "worker-3"],
+					activeParallelGroup: true,
+					runningSteps: 2,
+					completedSteps: 1,
+					stepsTotal: 3,
+					interruptRequestedAt: now - 100,
+					updatedAt: now,
+					steps: [
+						{ index: 0, agent: "worker-1", status: "running" as const, interruptRequestedAt: now - 100 },
+						{ index: 1, agent: "worker-2", status: "running" as const, interruptRequestedAt: now - 100 },
+						{ index: 2, agent: "worker-3", status: "complete" as const },
+					],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+		// Aggregate pausing cue must be visible
+		assert.match(text, /2 agents pausing/);
+		// Running labels must be suppressed even when running steps exist
+		assert.doesNotMatch(text, /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
+	});
+
+	it("shows step-level pausing label while suppressing running label for non-pausing steps", () => {
+		const now = 20_000;
+		const text = buildWidgetLines(
+			[
+				{
+					asyncId: "step-pausing-mixed",
+					asyncDir: "/tmp/step-pausing-mixed",
+					status: "running" as const,
+					mode: "parallel" as const,
+					agents: ["pausing-worker", "active-worker"],
+					activeParallelGroup: true,
+					runningSteps: 2,
+					completedSteps: 0,
+					stepsTotal: 2,
+					updatedAt: now,
+					steps: [
+						{ index: 0, agent: "pausing-worker", status: "running" as const, interruptRequestedAt: now - 100 },
+						{ index: 1, agent: "active-worker", status: "running" as const },
+					],
+				},
+			],
+			theme,
+			180,
+		).join("\n");
+		// Step-level pausing label must be visible for the interrupt-requested step
+		assert.match(text, /Agent 1\/2: pausing-worker · pausing/);
+		// The non-pausing running step must not show a running label
+		assert.doesNotMatch(text, /active-worker · running/);
+		// No running labels anywhere in output
+		assert.doesNotMatch(text, /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
 	});
 
 	it("does not leak pausing child activity into a multi-job aggregate", () => {
@@ -885,16 +957,10 @@ describe("subagent async widget rendering", () => {
 			.render(180)
 			.map((line) => line.trimEnd());
 		const text = lines.join("\n");
-		assert.match(text, /async subagents \(3\) · background/);
-		assert.match(
-			text,
-			new RegExp(`Agent 1/3: reviewer · running · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`),
-		);
-		assert.match(
-			text,
-			new RegExp(`Agent 2/3: reviewer · running · ${escapeRegExp(whimsicalThinkingPhrase(4))} · active 2s ago`),
-		);
-		assert.match(text, /Agent 3\/3: reviewer · running · grep \| 1\.0s/);
+		assert.match(text, /async subagents \(3\)/);
+		assert.match(text, new RegExp(`Agent 1/3: reviewer · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`));
+		assert.match(text, new RegExp(`Agent 2/3: reviewer · ${escapeRegExp(whimsicalThinkingPhrase(4))} · active 2s ago`));
+		assert.match(text, /Agent 3\/3: reviewer · grep \| 1\.0s/);
 		assert.doesNotMatch(
 			text,
 			/5 turns|18 tool uses|44k token|4 turns|13 tool uses|22k token|3 turns|11 tool uses|19k token/,
@@ -934,11 +1000,13 @@ describe("subagent async widget rendering", () => {
 				},
 			]);
 
-			const row = renderWidgetLines(ui.widgets.at(-1), 60).find((line) => line.includes("Agent 1/3")) ?? "";
-			assert.match(row, /Agent 1\/3: reviewer · running/);
-			assert.match(row, /Wining/);
-			assert.match(row.trimEnd(), /active now$/);
-			assertWidgetContentFits(row, 60);
+			const lines = renderWidgetLines(ui.widgets.at(-1), 60);
+			const row = lines.find((line) => line.includes("Agent 1/3")) ?? "";
+			assert.match(row, /Agent 1\/3: reviewer/);
+			assertWrappedSource(lines, whimsicalThinkingPhrase(19));
+			assertWrappedSource(lines, "active now");
+			for (const line of lines)
+				assert.ok(visibleWidth(line) <= 58, `parallel row should fit 58 columns: ${JSON.stringify(line)}`);
 		});
 		resetWidgetLayout();
 	});
@@ -946,8 +1014,12 @@ describe("subagent async widget rendering", () => {
 	it("keeps compactSingleWidgetLines health identity in 40/50-column parallel rows", () => {
 		const now = 20_000;
 		const healthCases = [
-			{ state: "needs_attention", turnCount: 27, warning: /no activity for/ },
-			{ state: "active_long_running", turnCount: 28, warning: /active but lon/ },
+			{ state: "needs_attention", turnCount: 27, warning: "no activity for 5s" },
+			{
+				state: "active_long_running",
+				turnCount: 28,
+				warning: "active but long-running · last activity 5s ago",
+			},
 		] as const;
 
 		for (const width of [40, 50]) {
@@ -981,8 +1053,8 @@ describe("subagent async widget rendering", () => {
 					const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
 					const harnessRow = harnessLines.find((line) => line.includes("Agent 1/4")) ?? "";
 					assert.match(harnessRow, /Agent 1\/4/);
-					assert.match(harnessRow, warning);
-					assert.doesNotMatch(harnessRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+					assertWrappedSource(harnessLines, warning);
+					assert.doesNotMatch(harnessLines.join(""), new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 					for (const line of harnessLines)
 						assert.ok(
 							visibleWidth(line) <= width - 2,
@@ -997,8 +1069,8 @@ describe("subagent async widget rendering", () => {
 					);
 					const realRow = realLines.find((line) => line.includes("Agent 1/4")) ?? "";
 					assert.match(realRow, /Agent 1\/4/);
-					assert.match(realRow, warning);
-					assert.doesNotMatch(realRow, new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
+					assertWrappedSource(realLines, warning, true);
+					assert.doesNotMatch(realLines.join(""), new RegExp(escapeRegExp(whimsicalThinkingPhrase(turnCount))));
 					for (const line of realLines)
 						assert.equal(
 							visibleWidth(line),
@@ -1011,11 +1083,11 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
-	it("keeps progressiveJobLine identity with compact health warnings at 40/50 columns", () => {
+	it("wraps complete progressive health warnings at 40/50 columns", () => {
 		const now = 20_000;
 		for (const width of [40, 50]) {
 			resetWidgetLayout();
-			withStdoutSize(22, width, () => {
+			withStdoutSize(24, width, () => {
 				const ui = createUiContext();
 				renderWidget(ui.ctx as never, [
 					{
@@ -1044,13 +1116,26 @@ describe("subagent async widget rendering", () => {
 						agents: ["editor"],
 						currentTool: "edit",
 					},
+					{
+						asyncId: "progressive-write",
+						asyncDir: "/tmp/progressive-write",
+						status: "running",
+						mode: "single",
+						agents: ["writer"],
+						currentTool: "write",
+					},
 				]);
 
 				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
 				const harnessRow = harnessLines.find((line) => line.includes("health-job")) ?? "";
 				assert.match(harnessRow, /health-job/);
-				assert.match(harnessRow, /active but long/);
-				assertWidgetContentFits(harnessRow, width);
+				assertWrappedSource(harnessLines, "active but long-running · last activity 5s ago");
+				assert.match(harnessLines.join(""), /\+\d+ more/);
+				for (const line of harnessLines)
+					assert.ok(
+						visibleWidth(line) <= width - 2,
+						`harness row should fit ${width - 2} columns: ${JSON.stringify(line)}`,
+					);
 
 				const realLines = renderWithRealPiTui(harnessLines, width);
 				assert.equal(
@@ -1060,7 +1145,7 @@ describe("subagent async widget rendering", () => {
 				);
 				const realRow = realLines.find((line) => line.includes("health-job")) ?? "";
 				assert.match(realRow, /health-job/);
-				assert.match(realRow, /active but long/);
+				assertWrappedSource(realLines, "active but long-running · last activity 5s ago", true);
 				for (const line of realLines)
 					assert.equal(
 						visibleWidth(line),
@@ -1075,8 +1160,8 @@ describe("subagent async widget rendering", () => {
 	it("keeps widgetParallelAgentDetails identity with compact health warnings at 40/50 columns", () => {
 		const now = 20_000;
 		const healthCases = [
-			{ state: "needs_attention", warning: /no activity/ },
-			{ state: "active_long_running", warning: /active but lon/ },
+			{ state: "needs_attention", warning: "no activity for 5s" },
+			{ state: "active_long_running", warning: "active but long-running · last activity 5s ago" },
 		] as const;
 		for (const width of [40, 50]) {
 			for (const { state, warning } of healthCases) {
@@ -1114,7 +1199,7 @@ describe("subagent async widget rendering", () => {
 				);
 				const harnessRow = lines.find((line) => line.includes("Agent 1/4")) ?? "";
 				assert.match(harnessRow, /Agent 1\/4/);
-				assert.match(harnessRow, warning);
+				assertWrappedSource(lines, warning);
 				for (const line of lines)
 					assert.ok(
 						visibleWidth(line) <= width - 2,
@@ -1129,7 +1214,7 @@ describe("subagent async widget rendering", () => {
 				);
 				const realRow = realLines.find((line) => line.includes("Agent 1/4")) ?? "";
 				assert.match(realRow, /Agent 1\/4/);
-				assert.match(realRow, warning);
+				assertWrappedSource(realLines, warning, true);
 				for (const line of realLines)
 					assert.equal(
 						visibleWidth(line),
@@ -1191,7 +1276,7 @@ describe("subagent async widget rendering", () => {
 		}
 	});
 
-	it("keeps crowded progressive and single-line layouts within real 40-column Text rows", () => {
+	it("locks crowded widget rows at the reviewer narrow-width probes", () => {
 		const now = 20_000;
 		const jobs = Array.from({ length: 8 }, (_, index) => ({
 			asyncId: `crowded-width-${index}`,
@@ -1203,34 +1288,51 @@ describe("subagent async widget rendering", () => {
 			updatedAt: now,
 		}));
 
-		for (const { rows, expectedRows, description } of [
-			{ rows: 22, expectedRows: 3, description: "progressive" },
-			{ rows: 20, expectedRows: 1, description: "single-line" },
+		for (const { rows, columns, expectedRows, description, jobs: probeJobs } of [
+			{ rows: 22, columns: 20, expectedRows: 3, description: "progressive", jobs },
+			{ rows: 6, columns: 20, expectedRows: 1, description: "single-line", jobs: jobs.slice(0, 6) },
 		] as const) {
 			resetWidgetLayout();
-			withStdoutSize(rows, 40, () => {
+			withStdoutSize(rows, columns, () => {
 				const ui = createUiContext();
-				renderWidget(ui.ctx as never, jobs);
+				renderWidget(ui.ctx as never, probeJobs);
 				const harnessLines = renderWidgetHarnessLines(ui.widgets.at(-1));
 				assert.equal(harnessLines.length, expectedRows, `${description} harness row count`);
 				for (const line of harnessLines)
 					assert.ok(
-						visibleWidth(line) <= 38,
-						`${description} harness line should fit 38 columns: ${JSON.stringify(line)}`,
+						visibleWidth(line) <= columns - 2,
+						`${description} harness line should fit ${columns - 2} columns: ${JSON.stringify(line)}`,
 					);
 				if (description === "progressive") assert.match(harnessLines.join("\n"), /\+\d+ more/);
-				if (description === "single-line") assert.match(harnessLines[0] ?? "", /subagents/);
+				if (description === "single-line") {
+					assert.match(harnessLines[0] ?? "", /subagents/);
+					assert.doesNotMatch(harnessLines[0] ?? "", /\d+ running|\brunning\b/);
+				}
 
-				const realLines = renderWithRealPiTui(harnessLines, 40);
+				const realLines = renderWithRealPiTui(harnessLines, columns);
 				assert.equal(
 					realLines.length,
 					harnessLines.length,
 					`${description} real pi-tui row count must match the harness`,
 				);
 				for (const line of realLines)
-					assert.equal(visibleWidth(line), 40, `${description} real pi-tui row should be padded to 40 columns`);
+					assert.equal(
+						visibleWidth(line),
+						columns,
+						`${description} real pi-tui row should be padded to ${columns} columns`,
+					);
 			});
 		}
+
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, jobs);
+			const normalWidthText = renderWidgetHarnessLines(ui.widgets.at(-1)).join("\n");
+			assert.match(normalWidthText, /Async agents/);
+			assert.doesNotMatch(normalWidthText, /\b(?:agents?|jobs?) running\b/);
+			assert.match(normalWidthText, /crowded-agent-with-a-long-name-0/);
+		});
 		resetWidgetLayout();
 	});
 
@@ -1300,6 +1402,43 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 	});
 
+	it("reserves every physical row of a wrapped hidden-line label", () => {
+		resetWidgetLayout();
+		withStdoutSize(22, 20, () => {
+			const ui = createUiContext();
+			const liveDetailController = createSubagentLiveDetailController(true);
+			renderWidget(
+				ui.ctx as never,
+				[
+					{
+						asyncId: "expanded-hidden-label",
+						asyncDir: "/tmp/expanded-hidden-label",
+						status: "running",
+						mode: "single",
+						agents: ["worker"],
+						stepsTotal: 1,
+						steps: [
+							{
+								index: 0,
+								agent: "worker",
+								status: "running",
+								recentTools: [],
+								recentOutput: Array.from({ length: 5 }, (_, index) => `output-${index}-${"long-value-".repeat(8)}`),
+							},
+						],
+					},
+				],
+				liveDetailController,
+			);
+
+			const lines = renderWidgetHarnessLines(ui.widgets.at(-1));
+			assert.equal(lines.length, 12);
+			assert.match(wrappedText(lines), /…\d+live-detaillineshidden/);
+			assert.ok(lines.every((line) => visibleWidth(line) <= 18));
+		});
+		resetWidgetLayout();
+	});
+
 	it("locks crowded collapsed widget height for the current terminal session", () => {
 		resetWidgetLayout();
 		withStdoutSize(30, 120, () => {
@@ -1325,7 +1464,8 @@ describe("subagent async widget rendering", () => {
 			renderWidget(ui.ctx as never, crowdedJobs);
 			const crowdedLines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(crowdedLines.length, 10, "30 terminal rows should keep the compact widget cap while locking height");
-			assert.match(crowdedLines.join("\n"), /Async agents · 3 agents running/);
+			assert.match(crowdedLines.join("\n"), /Async agents/);
+			assert.doesNotMatch(crowdedLines.join("\n"), /\b(?:agents?|jobs?) running\b/);
 
 			renderWidget(ui.ctx as never, [
 				{
@@ -1380,7 +1520,8 @@ describe("subagent async widget rendering", () => {
 			renderWidget(ui.ctx as never, jobs);
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(lines.length, 14);
-			assert.match(lines.join("\n"), /parallel · running/);
+			assert.match(lines.join("\n"), /parallel · 0\/40 done/);
+			assert.doesNotMatch(lines.join("\n"), /· running\b/);
 		});
 		resetWidgetLayout();
 	});
@@ -1427,7 +1568,7 @@ describe("subagent async widget rendering", () => {
 			];
 			renderWidget(ui.ctx as never, jobs);
 			const firstText = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(firstText, /first · running · read/);
+			assert.match(firstText, /first · read/);
 			assert.doesNotMatch(firstText, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
 			assert.doesNotMatch(firstText, /1 tool use|2\.0s|token|turn/);
 			assert.match(firstText, /\+2 more/);
@@ -1481,17 +1622,17 @@ describe("subagent async widget rendering", () => {
 			]);
 
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(text, new RegExp(`thinker · running · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`));
+			assert.match(text, new RegExp(`thinker · ${escapeRegExp(whimsicalThinkingPhrase(5))} · active now`));
 			assert.doesNotMatch(text, /5 turns|18 tool uses|44k token|7\.0s/);
 			assert.match(text, /\+2 more/);
 		});
 		resetWidgetLayout();
 	});
 
-	it("prioritizes freshness over a long phrase in 40/50/60-column progressive rows", () => {
+	it("wraps complete thinking and freshness text in 40/50/60-column progressive rows", () => {
 		for (const width of [40, 50, 60]) {
 			resetWidgetLayout();
-			withStdoutSize(22, width, () => {
+			withStdoutSize(24, width, () => {
 				const now = 20_000;
 				const ui = createUiContext();
 				renderWidget(ui.ctx as never, [
@@ -1521,17 +1662,31 @@ describe("subagent async widget rendering", () => {
 						agents: ["editor"],
 						currentTool: "edit",
 					},
+					{
+						asyncId: "run-write",
+						asyncDir: "/tmp/run-write",
+						status: "running",
+						mode: "single",
+						agents: ["writer"],
+						currentTool: "write",
+					},
 				]);
 
 				const lines = renderWidgetLines(ui.widgets.at(-1), width);
 				const row = lines.find((line) => line.includes("thinker")) ?? "";
-				assert.match(row, /thinker · running/);
-				assert.match(row.trimEnd(), /active 2s ago$/);
-				assertWidgetContentFits(row, width);
+				assert.match(row, /thinker ·/);
+				assertWrappedSource(lines, whimsicalThinkingPhrase(19));
+				assertWrappedSource(lines, "active 2s ago");
+				assert.match(lines.join(""), /\+\d+ more/);
+				for (const line of lines)
+					assert.ok(
+						visibleWidth(line) <= width - 2,
+						`progressive row should fit ${width - 2} columns: ${JSON.stringify(line)}`,
+					);
 				assert.equal(
-					lines.filter((line) => line.includes("active 2s ago")).length,
+					wrappedText(lines).match(/active2sago/g)?.length,
 					1,
-					`freshness must stay on the thinker row at ${width} columns`,
+					`freshness must appear once at ${width} columns`,
 				);
 			});
 		}
@@ -1571,15 +1726,16 @@ describe("subagent async widget rendering", () => {
 			]);
 
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(text, /ticketed · running · working on tk: Show active tk title/);
-			assert.doesNotMatch(text, /plain · running · working on tk:/);
+			assert.match(text, /ticketed · working on tk: Show active tk title/);
+			assert.doesNotMatch(text, /plain · working on tk:/);
 			assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
 		});
 		resetWidgetLayout();
 	});
 
-	it("sanitizes unsafe direct tk ticket widget state before rendering", () => {
-		const text = buildWidgetLines(
+	it("sanitizes and wraps complete direct tk ticket widget state", () => {
+		const safeTitle = `Unsafe title now ${"x".repeat(120)}`;
+		const lines = buildWidgetLines(
 			[
 				{
 					asyncId: "run-unsafe-ticket",
@@ -1592,11 +1748,11 @@ describe("subagent async widget rendering", () => {
 			],
 			theme,
 			90,
-		).join("\n");
+		);
 
-		assert.match(text, /working on tk: Unsafe title now x+/);
-		assert.match(text, /working on tk: .*…/);
-		assert.doesNotMatch(text, /\u009b|\u001b\[31m/);
+		assertWrappedSource(lines, safeTitle);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 88));
+		assert.doesNotMatch(lines.join(""), /…|\u009b|\u001b\[31m/);
 	});
 
 	it("uses a single collapsed widget line when the terminal has almost no spare rows", () => {
@@ -1615,7 +1771,8 @@ describe("subagent async widget rendering", () => {
 
 			const lines = renderWidgetLines(ui.widgets.at(-1));
 			assert.equal(lines.length, 1);
-			assert.match(lines[0] ?? "", /subagents \(1\/1 running\)/);
+			assert.match(lines[0] ?? "", /subagents/);
+			assert.doesNotMatch(lines[0] ?? "", /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
 		});
 		resetWidgetLayout();
 	});
@@ -1645,8 +1802,9 @@ describe("subagent async widget rendering", () => {
 			);
 
 			const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-			assert.match(text, /async subagents \(1\) · background/);
-			assert.match(text, /Agent 1\/1: reviewer · running/);
+			assert.match(text, /async subagents \(1\)/);
+			assert.match(text, /Agent 1\/1: reviewer/);
+			assert.doesNotMatch(text, /· running\b/);
 			assert.doesNotMatch(text, /subagents \(1\/1 running\)/);
 		});
 		resetWidgetLayout();
@@ -1679,14 +1837,14 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, /async subagents \(3\) · background/);
-		assert.match(text, /2 agents running · 1\/3 done/);
-		assert.doesNotMatch(text, /parallel · 2 agents running/);
+		assert.match(text, /async subagents \(3\)/);
+		assert.match(text, /1\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(
 			text,
-			new RegExp(`Agent 1/3: reviewer · running\\n\\s+⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}\\n\\s+active now`),
+			new RegExp(`Agent 1/3: reviewer\\n\\s+⎿  ${escapeRegExp(whimsicalThinkingPhrase(0))}\\n\\s+active now`),
 		);
-		assert.match(text, /Agent 2\/3: reviewer · running\n\s+⎿  read \| 2\.0s/);
+		assert.match(text, /Agent 2\/3: reviewer[\s\S]*⎿  read \| 2\.0s/);
 		assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
 		assert.match(text, /Agent 3\/3: reviewer · complete/);
 		assert.doesNotMatch(text, /2 tool uses|1\.5k token/);
@@ -1727,8 +1885,9 @@ describe("subagent async widget rendering", () => {
 
 		const row = lines.find((line) => line.includes("Agent 1/2")) ?? "";
 		assert.match(row, /Agent 1\/2: reviewer/);
-		assert.match(row.trimEnd(), /active 2s ago$/);
-		assertWidgetContentFits(row, 60);
+		assertWrappedSource(lines, whimsicalThinkingPhrase(19));
+		assertWrappedSource(lines, "active 2s ago");
+		assert.ok(lines.every((line) => visibleWidth(line) <= 58));
 	});
 
 	it("shows model and thinking for active async widget rows", () => {
@@ -1755,8 +1914,8 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, /Agent 1\/2: reviewer · running \(gpt-5\.5 · thinking high\)/);
-		assert.match(text, /Agent 2\/2: scout · running \(claude-haiku-4-5 · thinking low\)/);
+		assert.match(text, /Agent 1\/2: reviewer \(gpt-5\.5 · thinking high\)/);
+		assert.match(text, /Agent 2\/2: scout \(claude-haiku-4-5 · thinking low\)/);
 		assert.doesNotMatch(text, /openai-codex\/gpt-5\.5/);
 		assert.doesNotMatch(text, /gpt-5\.5:high/);
 	});
@@ -1835,7 +1994,7 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const row = lines.find((line) => line.includes("Agent 1/1")) ?? "";
-		assert.match(row, /Agent 1\/1: reviewer · running/);
+		assert.match(row, /Agent 1\/1: reviewer/);
 		assert.doesNotMatch(row, /Agent 1\/1: reviewer \(/);
 	});
 
@@ -1910,11 +2069,8 @@ describe("subagent async widget rendering", () => {
 		};
 
 		const collapsedText = buildWidgetLines([job], theme, 180).join("\n");
-		assert.match(collapsedText, /async subagent · background/);
-		assert.match(
-			collapsedText,
-			new RegExp(`${runningGlyphPattern} developer · running \\(gpt-5\\.5 · thinking high\\)`),
-		);
+		assert.match(collapsedText, /async subagent/);
+		assert.match(collapsedText, new RegExp(`${runningGlyphPattern} developer \\(gpt-5\\.5 · thinking high\\)`));
 		assert.doesNotMatch(collapsedText, /2 turns|3 tool uses|12k token|4\.0s/);
 		assert.match(collapsedText, /⎿  read: src\/tui\/render\.ts \| 2\.0s/);
 		assert.match(collapsedText, /Press Ctrl\+Shift\+D for live detail/);
@@ -1923,7 +2079,7 @@ describe("subagent async widget rendering", () => {
 		assert.doesNotMatch(collapsedText, /reading render widget/);
 
 		const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-		assert.match(expandedText, /developer · running \(gpt-5\.5 · thinking high\)/);
+		assert.match(expandedText, /developer \(gpt-5\.5 · thinking high\)/);
 		assert.doesNotMatch(expandedText, /(?:Agent|Step) 1\/1/);
 		assert.doesNotMatch(expandedText, /Press Configured\+Expand\+Key for live detail/);
 		assert.match(expandedText, outputPathPattern("/tmp/single-run/output-0.log"));
@@ -2069,8 +2225,9 @@ describe("subagent async widget rendering", () => {
 			180,
 		).join("\n");
 
-		assert.match(text, /async subagent · background/);
-		assert.match(text, new RegExp(`${runningGlyphPattern} worker · running`));
+		assert.match(text, /async subagent/);
+		assert.match(text, new RegExp(`${runningGlyphPattern} worker`));
+		assert.doesNotMatch(text, /· running\b/);
 		assert.doesNotMatch(text, /2 tool uses|5\.0k token|3\.0s/);
 		assert.match(text, /⎿  read 1\.0s/);
 		assert.doesNotMatch(text, /\bsteps?\b|\bchain\b/i);
@@ -2100,7 +2257,7 @@ describe("subagent async widget rendering", () => {
 		);
 
 		const text = lines.join("\n");
-		assert.match(text, /step 2\/3 · parallel group: 1 agent running · 1\/2 done/);
+		assert.match(text, /step 2\/3 · parallel group: 1\/2 done/);
 	});
 
 	it("uses logical chain steps after an async chain parallel group finishes", () => {
@@ -2126,7 +2283,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(text, /async subagent chain \(2\)/);
 		assert.match(text, /chain · step 2\/2/);
 		assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
-		assert.match(text, /Step 2\/2: writer · running/);
+		assert.match(text, /Step 2\/2: writer/);
 		assert.doesNotMatch(text, /1 tool use|duration|token|turn/);
 		assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
 		assert.doesNotMatch(text, outputPathPattern("/tmp/chain/output-3.log"));
@@ -2189,7 +2346,8 @@ describe("subagent async widget rendering", () => {
 			120,
 		);
 
-		assert.match(lines.join("\n"), /\+1 more \(1 running\)/);
+		assert.match(lines.join("\n"), /\+1 more/);
+		assert.doesNotMatch(lines.join("\n"), /\b(?:\d+(?:\/\d+)?|(?:agent|job|run)s?)\s+running\b/);
 	});
 
 	it("counts hidden queued work even when a visible running agent name contains queued", () => {
@@ -2292,6 +2450,49 @@ describe("subagent async widget rendering", () => {
 
 		assert.deepEqual(second, first);
 		assert.equal(firstGrapheme(first[1] ?? ""), firstGrapheme(second[1] ?? ""));
+	});
+
+	it("wraps complete long arguments and output in narrow compact and expanded widgets", () => {
+		const width = 42;
+		const longArgs = `--path=${"src/deep/".repeat(14)}report.json --query=${"needle-".repeat(18)}`;
+		const longOutput = `recent-output-${"value-".repeat(18)}`;
+		const longTicket = `Wrap ${"complete-ticket-title-".repeat(10)}`;
+		const job = {
+			asyncId: "narrow-wrap",
+			asyncDir: "/tmp/narrow-wrap",
+			status: "running",
+			mode: "single",
+			agents: ["worker"],
+			stepsTotal: 1,
+			updatedAt: 20_000,
+			tkTicket: { id: "tlh-narrow", title: longTicket },
+			steps: [
+				{
+					index: 0,
+					agent: "worker",
+					status: "running",
+					currentTool: "grep",
+					currentToolArgs: longArgs,
+					recentTools: [{ tool: "grep", args: longArgs }],
+					recentOutput: [longOutput],
+				},
+			],
+		};
+
+		const compact = buildWidgetLines([job], theme, width, false);
+		assert.ok(compact.length > 3);
+		assert.ok(compact.every((line) => visibleWidth(line) <= width - 2));
+		assertWrappedSource(compact, longArgs);
+		assertWrappedSource(compact, longTicket);
+		assert.doesNotMatch(compact.join(""), /…|\.\.\./);
+
+		const expanded = buildWidgetLines([job], theme, width, true);
+		assert.ok(expanded.length > compact.length);
+		assert.ok(expanded.every((line) => visibleWidth(line) <= width - 2));
+		assertWrappedSource(expanded, longArgs);
+		assertWrappedSource(expanded, longOutput);
+		assertWrappedSource(expanded, longTicket);
+		assert.doesNotMatch(expanded.join(""), /…|\.\.\./);
 	});
 
 	it("does not animate queued-only widgets", async () => {

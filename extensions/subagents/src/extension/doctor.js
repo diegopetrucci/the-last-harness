@@ -68,9 +68,6 @@ function formatConfiguredSessionDir(input) {
     if (input.requestedSessionDir) {
         return path.resolve(input.expandTilde?.(input.requestedSessionDir) ?? input.requestedSessionDir);
     }
-    if (input.config.defaultSessionDir) {
-        return path.resolve(input.expandTilde?.(input.config.defaultSessionDir) ?? input.config.defaultSessionDir);
-    }
     return "not configured";
 }
 function formatSessionLines(input) {

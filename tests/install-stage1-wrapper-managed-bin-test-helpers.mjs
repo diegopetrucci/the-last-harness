@@ -59,7 +59,7 @@ export function setupTicketsEnabledWrapperFixture(t) {
 	writeFakePi(
 		fakebin,
 		[
-			'if [[ "${1:-}" == "--version" ]]; then printf \'0.83.0\\n\'; exit 0; fi',
+			'if [[ "${1:-}" == "--version" ]]; then printf \'0.84.1\\n\'; exit 0; fi',
 			'printf \'path=%s\\n\' "${PATH:-}" >"${PI_WRAPPER_LOG}"',
 		].join("\n"),
 	);

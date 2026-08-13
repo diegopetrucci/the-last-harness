@@ -75,7 +75,6 @@ describe("async execution utilities", () => {
 				lastForegroundControlId: null,
 			},
 			config: {},
-			asyncByDefault: false,
 			tempArtifactsDir: tempDir,
 			getSubagentSessionRoot: () => tempDir,
 			expandTilde: (p: string) => p,

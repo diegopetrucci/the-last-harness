@@ -31,10 +31,13 @@ import { consumeSteerRequests } from "../../src/runs/background/control-channel.
 import {
 	RESULTS_DIR,
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
-	SUBAGENT_RESULT_INTERCOM_EVENT,
 	TEMP_ROOT_DIR,
 	type SubagentState,
 } from "../../src/shared/types.ts";
+// Legacy event name kept as a test-local literal for the no-emission regression guard.
+// Do not re-add this constant to production types or result-intercom — the delivery/receipt
+// pipeline it belonged to has been permanently removed.
+const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 
 const routeRoots: string[] = [];
 const savedEnv = {
@@ -93,7 +96,6 @@ function createExecutor(
 		} as any,
 		state,
 		config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
-		asyncByDefault: false,
 		tempArtifactsDir: os.tmpdir(),
 		getSubagentSessionRoot: (parentSessionFile) =>
 			parentSessionFile
@@ -446,7 +448,7 @@ describe("nested control routing", () => {
 				false,
 			);
 			assert.equal(
-				emitted.some((event) => event.name === SUBAGENT_RESULT_INTERCOM_EVENT),
+				emitted.some((event) => event.name === LEGACY_RESULT_INTERCOM_EVENT),
 				false,
 			);
 		} finally {

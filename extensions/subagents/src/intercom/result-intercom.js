@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs";
-import { SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT, } from "../shared/types.js";
+import {} from "../shared/types.js";
+import { truncateWithMarker } from "../shared/string-utils.js";
 export function resolveSubagentResultStatus(input) {
     if (input.detached)
         return "detached";
@@ -136,30 +135,6 @@ export function attachNestedChildrenToResultChildren(runId, children, nestedChil
         return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
     });
 }
-function formatNestedResultLines(children) {
-    if (!children?.length)
-        return [];
-    const lines = ["Nested subagents:"];
-    let remaining = 10;
-    const append = (runs, indent) => {
-        for (const run of runs ?? []) {
-            if (remaining <= 0) {
-                lines.push(`${indent}↳ +more nested runs; inspect status for full tree`);
-                return;
-            }
-            remaining--;
-            const label = run.agent ?? run.agents?.join("+") ?? run.id;
-            lines.push(`${indent}↳ ${label} — ${run.state} [${run.id}]`);
-            if (run.sessionFile)
-                lines.push(`${indent}  Session: ${run.sessionFile}`);
-            append(run.children, `${indent}  `);
-            for (const step of run.steps ?? [])
-                append(step.children, `${indent}    `);
-        }
-    };
-    append(children, "");
-    return lines;
-}
 const MAX_NATIVE_FOREGROUND_CHARS = 8_000;
 const MAX_NATIVE_FOREGROUND_CHILDREN = 8;
 const MAX_NATIVE_FOREGROUND_SUMMARY_CHARS = 1_200;
@@ -168,14 +143,6 @@ const MAX_NATIVE_FOREGROUND_REFERENCE_CHARS = 500;
 const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 const MAX_NATIVE_FOREGROUND_NESTED_ENTRIES = 8;
 const MAX_NATIVE_FOREGROUND_NESTED_DEPTH = 2;
-const NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER = `… [foreground result truncated at ${MAX_NATIVE_FOREGROUND_CHARS.toString()} chars; inspect retained details, artifacts, or sessions for full output]`;
-function truncateWithMarker(value, maxChars, marker) {
-    if (value.length <= maxChars)
-        return value;
-    if (marker.length >= maxChars)
-        return marker.slice(0, maxChars);
-    return `${value.slice(0, maxChars - marker.length)}${marker}`;
-}
 function boundedNativeForegroundLabel(value) {
     return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
 }
@@ -183,13 +150,18 @@ function boundedNativeForegroundReference(value) {
     return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_REFERENCE_CHARS, "… [reference truncated]");
 }
 function boundedNativeForegroundError(value) {
-    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; inspect retained details for full text]");
+    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
 }
-function summarizeNativeForegroundOutput(child) {
+function boundedNativeForegroundSummary(child, maxChars) {
+    const raw = child.summary.trim() || "(no output)";
+    if (raw.length <= maxChars)
+        return raw;
     const marker = child.artifactPath || child.sessionPath
         ? "… [summary truncated; see references below for full output]"
-        : "… [summary truncated; inspect retained details for full output]";
-    return truncateWithMarker(child.summary.trim() || "(no output)", MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, marker);
+        : "… [summary truncated; full output is unavailable]";
+    if (maxChars < marker.length)
+        return "";
+    return truncateWithMarker(raw, maxChars, marker);
 }
 function prioritizedNativeForegroundChildren(children) {
     const statusPriority = new Map([
@@ -212,6 +184,14 @@ function prioritizedNativeForegroundChildren(children) {
         .slice(0, MAX_NATIVE_FOREGROUND_CHILDREN)
         .map(({ child, originalIndex }) => ({ child, originalIndex }));
 }
+function joinedLineCost(lines) {
+    return lines.reduce((total, line) => total + line.length + 1, 0);
+}
+function resolveNativeForegroundPerChildSummaryBudget(count, fixedCost, ceiling) {
+    const effectiveCount = Math.max(count, 1);
+    const available = Math.max(ceiling - fixedCost, 0);
+    return Math.min(MAX_NATIVE_FOREGROUND_SUMMARY_CHARS, Math.floor(available / effectiveCount));
+}
 function formatNativeForegroundNestedLines(children) {
     if (!children?.length)
         return [];
@@ -221,12 +201,12 @@ function formatNativeForegroundNestedLines(children) {
         if (!runs?.length)
             return;
         if (depth >= MAX_NATIVE_FOREGROUND_NESTED_DEPTH) {
-            lines.push(`${indent}… [nested depth limit reached; inspect retained details for full tree]`);
+            lines.push(`${indent}… [nested depth limit reached; full tree is unavailable]`);
             return;
         }
         for (const run of runs) {
             if (remaining <= 0) {
-                lines.push(`${indent}… [additional nested entries omitted; inspect retained details for full tree]`);
+                lines.push(`${indent}… [additional nested entries omitted; full tree is unavailable]`);
                 return;
             }
             remaining--;
@@ -242,11 +222,11 @@ function formatNativeForegroundNestedLines(children) {
         }
     };
     append(children, "", 0);
-    return lines;
+    return lines.length > 1 ? lines : [];
 }
 function formatForegroundNativeSubagentText(input) {
     const counts = countStatuses(input.children);
-    const lines = [
+    const outerLines = [
         "subagent results",
         "",
         `Run: ${boundedNativeForegroundReference(input.runId)}`,
@@ -254,115 +234,69 @@ function formatForegroundNativeSubagentText(input) {
         `Status: ${boundedNativeForegroundLabel(input.status)}`,
         `Children: ${formatStatusCounts(counts)}`,
     ];
-    if (input.mode === "chain" && typeof input.chainSteps === "number")
-        lines.push(`Chain steps: ${input.chainSteps}`);
-    if (input.errorSummary)
-        lines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
-    const displayedChildren = prioritizedNativeForegroundChildren(input.children);
-    if (input.children.length > displayedChildren.length) {
-        lines.push("", `… [${input.children.length - displayedChildren.length} child results omitted; highest-priority results shown first, inspect retained details for the full set]`);
-    }
-    for (const { child, originalIndex } of displayedChildren) {
-        const displayIndex = child.displayIndex ?? originalIndex + 1;
-        const displayTotal = child.displayTotal ?? input.children.length;
-        lines.push("");
-        lines.push(`${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`);
-        lines.push("Summary:");
-        lines.push(summarizeNativeForegroundOutput(child));
-        if (child.artifactPath)
-            lines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
-        if (child.sessionPath)
-            lines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
-        lines.push(...formatNativeForegroundNestedLines(child.children));
-    }
-    return truncateWithMarker(lines.join("\n"), MAX_NATIVE_FOREGROUND_CHARS, NATIVE_FOREGROUND_TOTAL_TRUNCATION_MARKER);
-}
-function asyncResumeGuidance(input) {
-    if (input.source !== "async" || !input.asyncId)
-        return undefined;
-    const resumable = input.children.filter((child) => typeof child.sessionPath === "string" && fs.existsSync(child.sessionPath));
-    if (input.children.length === 1 && resumable.length === 1) {
-        return `Revive: subagent({ action: "resume", id: "${input.asyncId}", message: "..." })`;
-    }
-    if (resumable.length > 0) {
-        const firstIndex = resumable[0]?.index ?? input.children.indexOf(resumable[0]);
-        return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", index: ${firstIndex}, message: "..." })`;
-    }
-    return "Resume: unavailable; no child session file was persisted.";
-}
-function formatGroupedSubagentResultMessage(input) {
-    const counts = countStatuses(input.children);
-    const lines = [
-        "subagent results",
-        "",
-        `Run: ${input.runId}`,
-        `Mode: ${input.mode}`,
-        `Status: ${input.status}`,
-        `Children: ${formatStatusCounts(counts)}`,
-    ];
     if (input.mode === "chain" && typeof input.chainSteps === "number") {
-        lines.push(`Chain steps: ${input.chainSteps}`);
+        outerLines.push(`Chain steps: ${input.chainSteps}`);
     }
     if (input.errorSummary) {
-        lines.push("", "Error:", input.errorSummary);
+        outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
     }
-    if (input.asyncId)
-        lines.push(`Async id: ${input.asyncId}`);
-    if (input.asyncDir)
-        lines.push(`Async dir: ${input.asyncDir}`);
-    const resumeGuidance = asyncResumeGuidance(input);
-    if (resumeGuidance)
-        lines.push(resumeGuidance);
-    if (input.includeIntercomTargets && input.children.some((child) => child.intercomTarget)) {
-        lines.push("");
-        lines.push(input.source === "async"
-            ? "Previous intercom targets below identify child sessions used while they were running. Inspect artifacts or session logs if resume is unavailable."
-            : "Intercom targets below identify child sessions used while they were running; completed child sessions may no longer be reachable. Inspect artifacts or session logs for follow-up.");
-    }
-    for (let index = 0; index < input.children.length; index++) {
-        const child = input.children[index];
-        lines.push("");
-        lines.push(`${index + 1}. ${child.agent} — ${child.status}`);
-        if (input.includeIntercomTargets && child.intercomTarget)
-            lines.push(`${input.source === "async" ? "Previous intercom target" : "Run intercom target"}: ${child.intercomTarget}`);
+    const displayedChildren = prioritizedNativeForegroundChildren(input.children);
+    const priorityOmittedCount = input.children.length - displayedChildren.length;
+    const priorityOmissionLine = priorityOmittedCount > 0
+        ? `… [${priorityOmittedCount} child results omitted; highest-priority results shown first; full set is unavailable]`
+        : null;
+    const childFixedData = displayedChildren.map(({ child, originalIndex }) => {
+        const displayIndex = child.displayIndex ?? originalIndex + 1;
+        const displayTotal = child.displayTotal ?? input.children.length;
+        const labelLine = `${displayIndex}/${displayTotal}. ${boundedNativeForegroundLabel(child.agent)} — ${boundedNativeForegroundLabel(child.status)}`;
+        const refLines = [];
         if (child.artifactPath)
-            lines.push(`Output artifact: ${child.artifactPath}`);
+            refLines.push(`Output artifact: ${boundedNativeForegroundReference(child.artifactPath)}`);
         if (child.sessionPath)
-            lines.push(`Session: ${child.sessionPath}`);
-        lines.push(...formatNestedResultLines(child.children));
-        lines.push("Summary:");
-        lines.push(child.summary);
+            refLines.push(`Session: ${boundedNativeForegroundReference(child.sessionPath)}`);
+        const nestedLines = formatNativeForegroundNestedLines(child.children);
+        const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines, ...nestedLines]);
+        return { child, originalIndex, labelLine, refLines, nestedLines, fixedCost };
+    });
+    const outerCost = joinedLineCost(outerLines) + (priorityOmissionLine ? joinedLineCost(["", priorityOmissionLine]) : 0);
+    let effectiveCount = displayedChildren.length;
+    while (effectiveCount > 0) {
+        const partialFixedCost = childFixedData.slice(0, effectiveCount).reduce((s, c) => s + c.fixedCost, 0);
+        const budgetOmittedHere = displayedChildren.length - effectiveCount;
+        const budgetOmissionCostHere = budgetOmittedHere > 0
+            ? joinedLineCost([
+                "",
+                `… [${budgetOmittedHere} additional child results omitted; their output is not reachable from this envelope]`,
+            ])
+            : 0;
+        if (outerCost + partialFixedCost + budgetOmissionCostHere <= MAX_NATIVE_FOREGROUND_CHARS)
+            break;
+        effectiveCount--;
+    }
+    const effectiveChildData = childFixedData.slice(0, effectiveCount);
+    const budgetOmittedCount = displayedChildren.length - effectiveCount;
+    const budgetOmissionLine = budgetOmittedCount > 0
+        ? effectiveCount === 0
+            ? `… [${budgetOmittedCount} child results omitted due to display size limit; full output is unavailable]`
+            : `… [${budgetOmittedCount} additional child results omitted; their output is not reachable from this envelope]`
+        : null;
+    const totalFixedCost = outerCost +
+        (budgetOmissionLine ? joinedLineCost(["", budgetOmissionLine]) : 0) +
+        effectiveChildData.reduce((s, c) => s + c.fixedCost, 0);
+    const perChildSummaryBudget = resolveNativeForegroundPerChildSummaryBudget(effectiveCount, totalFixedCost + effectiveCount, MAX_NATIVE_FOREGROUND_CHARS);
+    const lines = [...outerLines];
+    if (priorityOmissionLine)
+        lines.push("", priorityOmissionLine);
+    if (budgetOmissionLine)
+        lines.push("", budgetOmissionLine);
+    for (const { child, labelLine, refLines, nestedLines } of effectiveChildData) {
+        lines.push("", labelLine);
+        const summaryText = boundedNativeForegroundSummary(child, perChildSummaryBudget);
+        if (summaryText)
+            lines.push("Summary:", summaryText);
+        lines.push(...refLines, ...nestedLines);
     }
     return lines.join("\n");
-}
-export function buildSubagentResultIntercomPayload(input) {
-    const children = input.children.map((child) => ({
-        ...child,
-        summary: child.summary.trim() || "(no output)",
-        children: compactNestedResultChildren(child.children),
-    }));
-    const status = resolveGroupedStatus(children);
-    const summary = formatStatusCounts(countStatuses(children));
-    const firstChild = children[0];
-    const payload = {
-        to: input.to,
-        runId: input.runId,
-        mode: input.mode,
-        status,
-        summary,
-        source: input.source,
-        children,
-        ...(input.asyncId ? { asyncId: input.asyncId } : {}),
-        ...(input.asyncDir ? { asyncDir: input.asyncDir } : {}),
-        ...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
-        ...(firstChild?.agent ? { agent: firstChild.agent } : {}),
-        ...(firstChild?.index !== undefined ? { index: firstChild.index } : {}),
-        ...(firstChild?.artifactPath ? { artifactPath: firstChild.artifactPath } : {}),
-        ...(firstChild?.sessionPath ? { sessionPath: firstChild.sessionPath } : {}),
-        message: "",
-    };
-    payload.message = formatGroupedSubagentResultMessage({ ...payload, includeIntercomTargets: true });
-    return payload;
 }
 export function formatForegroundNativeSubagentResult(input) {
     const children = input.children.map((child) => ({
@@ -383,92 +317,4 @@ export function formatForegroundNativeSubagentResult(input) {
             ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
         }),
     };
-}
-export async function deliverSubagentResultIntercomEvent(events, payload, timeoutMs = 500) {
-    return deliverSubagentIntercomMessageEvent(events, payload.to, payload.message, timeoutMs, payload);
-}
-export async function deliverSubagentIntercomMessageEvent(events, to, message, timeoutMs = 500, extra = {}) {
-    if (typeof events.on !== "function" || typeof events.emit !== "function")
-        return false;
-    const requestId = typeof extra.requestId === "string" ? extra.requestId : randomUUID();
-    return new Promise((resolve) => {
-        const cleanupState = {};
-        let settled = false;
-        const finish = (delivered) => {
-            if (settled)
-                return;
-            settled = true;
-            if (cleanupState.timer)
-                clearTimeout(cleanupState.timer);
-            cleanupState.unsubscribe?.();
-            resolve(delivered);
-        };
-        const unsubscribe = events.on(SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT, (data) => {
-            if (!data || typeof data !== "object")
-                return;
-            const delivery = data;
-            if (delivery.requestId !== requestId)
-                return;
-            finish(delivery.delivered === true);
-        });
-        cleanupState.unsubscribe = unsubscribe;
-        const timer = setTimeout(() => finish(false), timeoutMs);
-        cleanupState.timer = timer;
-        try {
-            events.emit(SUBAGENT_RESULT_INTERCOM_EVENT, { ...extra, to, message, requestId });
-        }
-        catch {
-            finish(false);
-        }
-    });
-}
-function stripSingleResultOutputs(result) {
-    return {
-        ...result,
-        messages: undefined,
-        finalOutput: undefined,
-        truncation: undefined,
-    };
-}
-export function stripDetailsOutputsForIntercomReceipt(details) {
-    return {
-        ...details,
-        results: details.results.map(stripSingleResultOutputs),
-    };
-}
-export function formatSubagentResultReceipt(input) {
-    const counts = countStatuses(input.payload.children);
-    const modeLabel = input.mode === "single"
-        ? "single subagent result"
-        : input.mode === "parallel"
-            ? "parallel subagent results"
-            : "chain subagent results";
-    const lines = [
-        `Delivered ${modeLabel} via intercom.`,
-        `Run: ${input.runId}`,
-        `Children: ${formatStatusCounts(counts)}`,
-    ];
-    const artifacts = input.payload.children.filter((child) => typeof child.artifactPath === "string");
-    if (artifacts.length > 0) {
-        lines.push("Artifacts:");
-        for (const child of artifacts) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.artifactPath}`);
-        }
-    }
-    const intercomTargets = input.payload.children.filter((child) => typeof child.intercomTarget === "string");
-    if (intercomTargets.length > 0) {
-        lines.push("Run intercom targets (may be inactive after completion):");
-        for (const child of intercomTargets) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.intercomTarget}`);
-        }
-    }
-    const sessions = input.payload.children.filter((child) => typeof child.sessionPath === "string");
-    if (sessions.length > 0) {
-        lines.push("Sessions:");
-        for (const child of sessions) {
-            lines.push(`- ${child.agent} [${child.status}]: ${child.sessionPath}`);
-        }
-    }
-    lines.push("Full grouped output was sent over intercom.");
-    return lines.join("\n");
 }

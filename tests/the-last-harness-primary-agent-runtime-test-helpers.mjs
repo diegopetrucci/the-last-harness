@@ -63,9 +63,11 @@ export function createToolCallContext(branchEntries = [], notifications, overrid
 			},
 		},
 		modelRegistry: {
-			getAvailable: () => [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+			getAvailable: () => [
+				{ provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true, thinkingLevelMap: { max: "max" } },
+			],
 		},
-		model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+		model: { provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true, thinkingLevelMap: { max: "max" } },
 		...overrides,
 	};
 }

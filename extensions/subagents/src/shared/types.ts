@@ -358,25 +358,6 @@ export interface SubagentResultIntercomChild {
 	children?: PublicNestedRunSummary[];
 }
 
-export interface SubagentResultIntercomPayload {
-	to: string;
-	message: string;
-	requestId?: string;
-	runId: string;
-	mode: SubagentRunMode;
-	status: SubagentResultStatus;
-	summary: string;
-	source: "foreground" | "async";
-	children: SubagentResultIntercomChild[];
-	asyncId?: string;
-	asyncDir?: string;
-	chainSteps?: number;
-	agent?: string;
-	index?: number;
-	artifactPath?: string;
-	sessionPath?: string;
-}
-
 // ============================================================================
 // Progress Tracking
 // ============================================================================
@@ -405,7 +386,7 @@ export interface AgentProgress {
 
 export interface ToolCallSummary {
 	text: string;
-	expandedText: string;
+	expandedText?: string;
 }
 
 interface ProgressSummary {
@@ -1078,8 +1059,6 @@ export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
-export const SUBAGENT_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
-export const SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT = "subagent:result-intercom-delivery";
 
 // ============================================================================
 // Execution Options
@@ -1161,22 +1140,13 @@ interface TopLevelParallelConfig {
 	concurrency?: number;
 }
 
-export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type ToolDescriptionMode = "full" | "compact";
 
 export interface ExtensionConfig {
-	asyncByDefault?: boolean;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
 	toolDescriptionMode?: ToolDescriptionMode;
-	forceTopLevelAsync?: boolean;
-	defaultSessionDir?: string;
-	singleRunOutputBaseDir?: string;
 	maxSubagentDepth?: number;
-	/** Global cap on simultaneously-running subagent tasks within a single run. Defaults to 20. */
-	globalConcurrencyLimit?: number;
 	control?: ControlConfig;
-	completionBatch?: CompletionBatchConfig;
-	turnBudget?: TurnBudgetConfig;
-	toolBudget?: ToolBudgetConfig;
 	parallel?: TopLevelParallelConfig;
 	intercomBridge?: IntercomBridgeConfig;
 }

@@ -93,6 +93,25 @@ Writes that replace existing settings content create a `settings.json.bak-*` bac
 
 See [`docs/commands.md`](docs/commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
 
+### Reconciling overrides with TLH packaged defaults
+
+When TLH ships an update that changes the packaged model or effort default for a role you have overridden, it shows a one-line startup notice: `TLH default model/effort changed for <role> — run /reconcile to review`. The notice is non-blocking and reappears each launch until you act.
+
+Run `/reconcile` to review and resolve the drift:
+
+- **Keep** — acknowledges the new TLH default and preserves your override unchanged. Non-destructive: your setting is untouched.
+- **Reset** — clears your override so the role falls back to TLH packaged defaults. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Undoable: restore the value at any time via `/model` (primary agents) or `/subagent-settings set <role> ...` (subagents). Settings writes always create a `settings.json.bak-*` backup shown in the notification.
+
+The **only trigger** is TLH changing a packaged default for a role you have overridden. There is no periodic or scheduled reminder.
+
+Acknowledgments are per-provider. A Keep or Reset under one provider does not suppress the notice if you later switch providers and that provider's packaged default has since changed.
+
+When the session provider is unknown, TLH defers all comparison — no notice appears and Keep is unavailable until a provider is active. Overrides that pre-date this release are silently backfilled on your first startup with a known provider; the notice then fires on the next packaged-default change after that point, not for any changes that occurred before the backfill.
+
+The reported value is the canonical packaged default for the active provider, resolved from TLH's own bundled catalog. It may name a model your current environment cannot reach, and it may differ from the model Reset produces in a live session (for example, roles that prefer an opposite-provider model will show a same-provider fallback here). That does not block the decision; Keep and Reset work regardless.
+
+Outside the TUI, `/reconcile` prints a read-only drift summary. See [`docs/commands.md`](docs/commands.md) for full details.
+
 ### Customisation
 
 You can add your own skills, prompts, extensions, and packages to TLH.

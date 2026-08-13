@@ -3,7 +3,7 @@
  * must work without pi-intercom installed.
  *
  * TLH is retiring pi-intercom; this file asserts:
- *   (a) contact_supervisor round-trip (need_decision) completes end-to-end
+ *   (a) contact_supervisor reaches the parent pending/status surface
  *       when no external 'intercom' tool is present.
  *   (b) needs_attention notices delivered via handleSubagentControlNotice
  *       do NOT emit subagent:control-intercom or subagent:result-intercom
@@ -30,7 +30,11 @@ import {
 	SUBAGENT_RUN_ID_ENV,
 	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { SUBAGENT_CONTROL_INTERCOM_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_CONTROL_INTERCOM_EVENT } from "../../src/shared/types.ts";
+// Legacy event name kept as a test-local literal for the no-emission regression guard.
+// Do not re-add this constant to production types or result-intercom — the delivery/receipt
+// pipeline it belonged to has been permanently removed.
+const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
 
 // ─── env save/restore ────────────────────────────────────────────────────────
@@ -125,16 +129,16 @@ function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEven
 // ─── describe ────────────────────────────────────────────────────────────────
 
 describe("no-pi-intercom regression guard", () => {
-	// ── (a) contact_supervisor round-trip without intercom ────────────────────
+	// ── (a) contact_supervisor pending/status without intercom ────────────────
 
-	describe("contact_supervisor round-trip with no intercom tool installed", () => {
+	describe("contact_supervisor pending/status with no intercom tool installed", () => {
 		let savedEnv: SavedEnv;
 
 		afterEach(() => {
 			if (savedEnv) restoreEnv(savedEnv);
 		});
 
-		it("completes a need_decision request/reply cycle using only the native channel", async () => {
+		it("surfaces a need_decision request through the native pending/status channel", async () => {
 			savedEnv = saveEnv();
 
 			const runId = `run-${randomUUID()}`;
@@ -170,19 +174,15 @@ describe("no-pi-intercom regression guard", () => {
 			};
 
 			// Register native supervisor client — no intercom tool present
-			registerNativeSupervisorClient(childPi as never, { includeIntercomFallback: false });
+			registerNativeSupervisorClient(childPi as never);
 
-			assert.ok(childTools.has("contact_supervisor"), "contact_supervisor should be registered");
-			assert.ok(!childTools.has("intercom"), "intercom must NOT be registered when includeIntercomFallback is false");
+			assert.deepEqual([...childTools.keys()], ["contact_supervisor"]);
 
 			// Parent side: real native supervisor channel scoped to the SAME
 			// orchestrator session id the child env points at. No intercom tool
 			// pre-installed here either; sendMessage is a recorder no-op for the
 			// proactive parent notice channel.start()/polling may deliver.
-			const parentTools = new Map<
-				string,
-				{ execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown> }
-			>();
+			const parentTools = new Map<string, { execute: (_id: string, params: { action: string }) => Promise<unknown> }>();
 			const parentCtx = {
 				cwd: process.cwd(),
 				hasUI: false,
@@ -196,7 +196,7 @@ describe("no-pi-intercom regression guard", () => {
 				getAllTools: () => [...parentTools.keys()].map((name) => ({ name })),
 				registerTool: (tool: {
 					name: string;
-					execute: (_id: string, params: { action: string; replyTo?: string; message?: string }) => Promise<unknown>;
+					execute: (_id: string, params: { action: string }) => Promise<unknown>;
 				}) => {
 					parentTools.set(tool.name, tool);
 				},
@@ -212,16 +212,20 @@ describe("no-pi-intercom regression guard", () => {
 				parentChannel.start();
 				assert.ok(parentTools.has(NATIVE_SUPERVISOR_TOOL_NAME), "parent subagent_supervisor tool should be registered");
 
-				// Kick off the child-side request in the background
+				// Kick off the child-side request in the background.
 				const contactSupervisorTool = childTools.get("contact_supervisor")!;
-				const resultPromise = contactSupervisorTool.execute("req-id", {
-					reason: "need_decision",
-					message: "Should I proceed with option A?",
-				});
+				const controller = new AbortController();
+				const resultPromise = contactSupervisorTool.execute(
+					"req-id",
+					{
+						reason: "need_decision",
+						message: "Should I proceed with option A?",
+					},
+					controller.signal,
+				);
 
 				// Wait for the request file to appear in the channel dir
 				const requestsDir = path.join(channelDir, "requests");
-				const repliesDir = path.join(channelDir, "replies");
 				let requestId: string | undefined;
 				await pollUntil(() => {
 					const entries = fs.readdirSync(requestsDir).filter((f) => f.endsWith(".json"));
@@ -251,30 +255,27 @@ describe("no-pi-intercom regression guard", () => {
 				// (new request files are picked up by the poll loop, ≤500ms).
 				await pollUntil(() => parentChannel.pending.has(requestId!), 4000);
 
-				// Parent replies through the REAL subagent_supervisor reply path
-				// (refreshes pending requests before replying), not a hand-written
-				// reply file — so format drift in the parent-side writer is caught.
-				await parentTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("reply", {
-					action: "reply",
-					replyTo: requestId,
-					message: "Proceed with option A — approved.",
-				});
-				assert.ok(fs.existsSync(path.join(repliesDir, `${requestId}.json`)), "parent reply file should exist");
-
-				// Child side receives reply
-				const result = (await resultPromise) as {
-					content?: Array<{ type: string; text: string }>;
-					details?: { requestId?: string; reason?: string };
+				const status = (await parentTools
+					.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+					.execute("status", { action: "status" })) as {
+					content?: Array<{ text?: string }>;
 				};
-
-				assert.ok(Array.isArray(result.content) && result.content.length > 0, "Result should have content");
-				const text = result.content![0]!.text;
-				assert.ok(
-					text.includes("Proceed with option A — approved."),
-					`Reply text should contain supervisor message; got: ${text}`,
+				assert.match(status.content?.[0]?.text ?? "", /Native supervisor channel active/);
+				const pending = (await parentTools
+					.get(NATIVE_SUPERVISOR_TOOL_NAME)!
+					.execute("pending", { action: "pending" })) as {
+					details?: { pending?: Array<{ id?: string }> };
+				};
+				assert.deepEqual(
+					pending.details?.pending?.map((request) => request.id),
+					[requestId],
 				);
-				assert.equal(result.details?.requestId, requestId);
-				assert.equal(result.details?.reason, "need_decision");
+
+				// The canonical durable path aborts this live wait before a later resume or interrupt.
+				controller.abort();
+				await assert.rejects(resultPromise, /Supervisor request cancelled/);
+				assert.equal(fs.existsSync(requestFile), false);
+				assert.deepEqual(fs.readdirSync(channelDir), ["requests"]);
 			} finally {
 				parentChannel.dispose();
 				fs.rmSync(channelDir, { recursive: true, force: true });
@@ -329,7 +330,7 @@ describe("no-pi-intercom regression guard", () => {
 
 			// …but must NOT have produced any intercom event-bus emissions.
 			const controlIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_CONTROL_INTERCOM_EVENT);
-			const resultIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_RESULT_INTERCOM_EVENT);
+			const resultIntercomEmissions = emittedEvents.filter((e) => e.event === LEGACY_RESULT_INTERCOM_EVENT);
 
 			assert.equal(
 				controlIntercomEmissions.length,
@@ -339,7 +340,7 @@ describe("no-pi-intercom regression guard", () => {
 			assert.equal(
 				resultIntercomEmissions.length,
 				0,
-				`Expected zero ${SUBAGENT_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
+				`Expected zero ${LEGACY_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
 			);
 		});
 	});

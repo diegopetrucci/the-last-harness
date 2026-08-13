@@ -43,6 +43,7 @@ import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/ski
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
+import { appendRecentProgressItem } from "../../shared/recent-progress.ts";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { scheduleDeadline, type DeadlineTimer } from "../shared/deadline-timer.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.ts";
@@ -434,7 +435,6 @@ async function runSingleAttempt(
 		promptFileStem: agent.name,
 		intercomSessionName: options.intercomSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
-		blockingSupervisorReplyPath: "unavailable",
 		runId: options.runId,
 		childAgentName: agent.name,
 		childIndex: options.index ?? 0,
@@ -971,7 +971,7 @@ async function runSingleAttempt(
 			if (evt.type === "tool_execution_end") {
 				pendingSupervisorPause = undefined;
 				if (progress.currentTool) {
-					progress.recentTools.push({
+					appendRecentProgressItem(progress.recentTools, {
 						tool: progress.currentTool,
 						args: progress.currentToolArgs || "",
 						endMs: now,

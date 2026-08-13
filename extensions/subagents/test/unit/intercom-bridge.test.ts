@@ -139,11 +139,16 @@ describe("resolveIntercomBridge", () => {
 		assert.match(bridge.instruction, /contact_supervisor/);
 		assert.match(bridge.instruction, /need_decision/);
 		assert.match(bridge.instruction, /progress_update/);
+		assert.doesNotMatch(bridge.instruction, /intercom\(\{/i);
 		assert.match(bridge.instruction, /durably pause the child/i);
 		assert.match(bridge.instruction, /this OS process will stop/i);
 		assert.match(bridge.instruction, /no child process keeps running/i);
 		assert.match(bridge.instruction, /resume the paused child unchanged, resume it with guidance, or cancel it/i);
-		assert.doesNotMatch(bridge.instruction, /stay alive|reply arrives|fresh redispatch|fresh-redispatch|\bdetached\b/i);
+		assert.doesNotMatch(
+			bridge.instruction,
+			/stay alive|reply arrives|blocking supervisor replies are unavailable|fresh redispatch|fresh-redispatch|\bdetached\b/i,
+		);
+		assert.match(bridge.instruction, /\n\nDo not use contact_supervisor for routine completion handoffs\./);
 		assert.match(bridge.instruction, /focused task result/i);
 	});
 });
@@ -158,23 +163,24 @@ describe("applyIntercomBridgeToAgent", () => {
 			'Intercom orchestration channel:\n- Need a decision or blocked: contact_supervisor({ reason: "need_decision", message: "<question>" })\n- Blocking supervisor requests durably pause the child until the parent resumes or cancels it; no child process keeps running during that pause.\n- Blocked/update: contact_supervisor({ reason: "progress_update", message: "UPDATE: <summary>" })',
 	};
 
-	it("injects intercom tool and prompt instructions", () => {
+	it("injects only contact_supervisor and its prompt instructions", () => {
 		const updated = applyIntercomBridgeToAgent(makeAgent({ tools: ["read", "bash"] }), activeBridge);
-		assert.deepEqual(updated.tools, ["read", "bash", "intercom", "contact_supervisor"]);
+		assert.deepEqual(updated.tools, ["read", "bash", "contact_supervisor"]);
 		assert.match(updated.systemPrompt, /Intercom orchestration channel:/);
 		assert.match(updated.systemPrompt, /contact_supervisor/);
+		assert.doesNotMatch(updated.systemPrompt, /intercom\(\{/i);
 	});
 
 	it("is idempotent", () => {
 		const first = applyIntercomBridgeToAgent(makeAgent({ tools: ["read"] }), activeBridge);
 		const second = applyIntercomBridgeToAgent(first, activeBridge);
-		assert.equal(second.tools?.filter((tool) => tool === "intercom").length, 1);
+		assert.equal(second.tools?.filter((tool) => tool === "intercom").length, 0);
 		assert.equal(second.tools?.filter((tool) => tool === "contact_supervisor").length, 1);
 		assert.equal(second.systemPrompt, first.systemPrompt);
 	});
 
-	it("does not block native supervisor tools for agents with explicit extension allowlists", () => {
-		const agent = makeAgent({ tools: ["read"], extensions: ["/tmp/other-extension/index.ts"] });
+	it("preserves explicit external intercom tools while adding contact_supervisor", () => {
+		const agent = makeAgent({ tools: ["read", "intercom"], extensions: ["/tmp/other-extension/index.ts"] });
 		const updated = applyIntercomBridgeToAgent(agent, activeBridge);
 		assert.deepEqual(updated.tools, ["read", "intercom", "contact_supervisor"]);
 		assert.match(updated.systemPrompt, /contact_supervisor/);

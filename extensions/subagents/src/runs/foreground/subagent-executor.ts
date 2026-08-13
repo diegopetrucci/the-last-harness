@@ -20,7 +20,6 @@ import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.ts";
-import { recordRun } from "../shared/run-history.ts";
 import {
 	buildChainInstructions,
 	writeInitialProgressFile,
@@ -120,7 +119,6 @@ import {
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
-import { applyForceTopLevelAsyncOverride } from "../background/top-level-async.ts";
 import {
 	type AgentProgress,
 	type AcceptanceInput,
@@ -176,7 +174,6 @@ interface TaskParam {
 	model?: string;
 	fallbackModels?: string[];
 	modelFallbackNotice?: string;
-	skill?: string | string[] | boolean;
 	acceptance?: AcceptanceInput;
 	toolBudget?: ToolBudgetConfig;
 }
@@ -184,7 +181,6 @@ interface TaskParam {
 export interface SubagentParamsLike {
 	action?: string;
 	id?: string;
-	runId?: string;
 	dir?: string;
 	index?: number;
 	view?: "fleet" | "transcript";
@@ -198,7 +194,6 @@ export interface SubagentParamsLike {
 	context?: "fresh" | "fork";
 	async?: boolean;
 	timeoutMs?: number;
-	maxRuntimeMs?: number;
 	turnBudget?: TurnBudgetConfig;
 	toolBudget?: ToolBudgetConfig;
 	clarify?: boolean;
@@ -228,7 +223,6 @@ interface ExecutorDeps {
 	pi: ExtensionAPI;
 	state: SubagentState;
 	config: ExtensionConfig;
-	asyncByDefault: boolean;
 	tempArtifactsDir: string;
 	getSubagentSessionRoot: (parentSessionFile: string | null) => string;
 	expandTilde: (p: string) => string;
@@ -260,7 +254,6 @@ interface ExecutionContextData {
 	deadlineAt?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
-	configToolBudget?: ResolvedToolBudget;
 	contextPolicy: AgentDefaultContextPolicy;
 	modelScope?: ModelScopeConfig;
 }
@@ -615,7 +608,7 @@ function formatForegroundActivity(
 }
 
 function trustedSessionRootsForStatus(ctx: ExtensionContext, deps: ExecutorDeps): string[] {
-	const roots = deps.config.defaultSessionDir ? [path.resolve(deps.expandTilde(deps.config.defaultSessionDir))] : [];
+	const roots: string[] = [];
 	const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
 	if (parentSessionFile) roots.push(deps.getSubagentSessionRoot(parentSessionFile));
 	return [...new Set(roots)];
@@ -749,7 +742,7 @@ function resolveRememberedForegroundRun(
 			child: import("../../shared/types.ts").ForegroundResumeChild;
 	  }
 	| undefined {
-	const requested = (params.id ?? params.runId)?.trim();
+	const requested = params.id?.trim();
 	if (!requested || !state.foregroundRuns?.size) return undefined;
 	const direct = state.foregroundRuns.get(requested);
 	const matches = direct
@@ -873,7 +866,6 @@ function buildRunStatusParams(params: SubagentParamsLike) {
 	return {
 		action: "status" as const,
 		id: params.id,
-		runId: params.runId,
 		dir: params.dir,
 		index: params.index,
 		view: params.view,
@@ -937,7 +929,7 @@ function resolveResumeTarget(
 	state: SubagentState,
 	options: { asyncRequireSessionFile?: boolean } = {},
 ): ResumeSourceTarget {
-	const requested = (params.id ?? params.runId)?.trim() ?? "";
+	const requested = params.id?.trim() ?? "";
 	let foregroundTarget: ForegroundResumeSourceTarget | undefined;
 	let foregroundError: unknown;
 	let asyncTarget: AsyncResumeSourceTarget | undefined;
@@ -982,7 +974,7 @@ function resolveResumeTarget(
 	if (foregroundError && !isAsyncRunNotFound(asyncError)) throw foregroundError;
 	if (foregroundError) throw foregroundError;
 	if (asyncError) throw asyncError;
-	throw new Error("Run not found. Provide id or runId.");
+	throw new Error("Run not found. Provide id.");
 }
 
 function claimPausedAwaitingSupervisorTarget(
@@ -2189,7 +2181,7 @@ async function resumeAsyncRun(input: {
 }): Promise<SubagentToolResult<Details>> {
 	const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
 	input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
-	const requestedId = input.params.id ?? input.params.runId;
+	const requestedId = input.params.id;
 
 	let target: ResumeSourceTarget;
 	const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
@@ -2214,9 +2206,6 @@ async function resumeAsyncRun(input: {
 				return resumeLiveNestedRun({ target: resolved, message: requestedFollowUp, index: input.params.index });
 			}
 			const trustedSessionRoots = [
-				...(input.deps.config.defaultSessionDir
-					? [path.resolve(input.deps.expandTilde(input.deps.config.defaultSessionDir))]
-					: []),
 				...(parentSessionFile ? [input.deps.getSubagentSessionRoot(parentSessionFile)] : []),
 			];
 			target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
@@ -2402,7 +2391,7 @@ async function resumeAsyncRun(input: {
 			continuationAcceptance: target.state === "paused" ? target.continuationAcceptance : undefined,
 			activeRuntimeMs,
 			timeoutMs: callerTimeout.timeoutMs,
-			outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
+			outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, runId),
 			maxSubagentDepth: resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 			controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
 			controlIntercomTarget: intercomBridge.active ? intercomBridge.orchestratorTarget : undefined,
@@ -2445,7 +2434,7 @@ async function resumeAsyncRun(input: {
 const MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS = 600;
 
 function boundedNativeForegroundSaveError(error: string): string {
-	const marker = "… [save error truncated; inspect retained details for full diagnostic]";
+	const marker = "… [save error truncated; full diagnostic is unavailable]";
 	if (error.length <= MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS) return error;
 	return `${error.slice(0, MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS - marker.length)}${marker}`;
 }
@@ -2507,7 +2496,22 @@ function resultNoticeForEarlierSuccessfulChainStep(result: SingleResult): string
 		lines.push(`Output file error:\n${boundedNativeForegroundSaveError(result.outputSaveError)}`);
 	}
 	if (result.modelFallbackNotice) lines.push(`Notice: ${result.modelFallbackNotice}`);
-	lines.push("Earlier successful chain step output omitted here; inspect retained details for the full step output.");
+	// Derive wording from the same values that populate artifactPath/sessionPath in the
+	// enclosing child block (result.artifactPaths?.outputPath and result.sessionFile), so
+	// the note and the rendered paths cannot drift apart. Do NOT condition on outputMode
+	// alone — the previous wording did that and produced a false "unavailable" claim when
+	// an artifact or session path was about to be rendered directly below.
+	const hasArtifact = Boolean(result.artifactPaths?.outputPath);
+	const hasSession = Boolean(result.sessionFile);
+	const stepOutputNote =
+		hasArtifact && hasSession
+			? "Earlier successful chain step output omitted here; see the artifact and session paths below for reference."
+			: hasArtifact
+				? "Earlier successful chain step output omitted here; see the artifact path below for reference."
+				: hasSession
+					? "Earlier successful chain step output omitted here; see the session path below for reference."
+					: "Earlier successful chain step output omitted here; full step output is unavailable.";
+	lines.push(stepOutputNote);
 	if (result.outputMode === "file-only" && result.savedOutputPath && result.outputReference) {
 		lines.push(getSingleResultOutput(result) || result.outputReference.message);
 	}
@@ -2746,21 +2750,11 @@ function buildRequestedModeError(params: SubagentParamsLike, message: string): S
 
 function resolveForegroundTimeout(params: SubagentParamsLike): { timeoutMs?: number; error?: string } {
 	const rawTimeout = params.timeoutMs;
-	const rawMaxRuntime = params.maxRuntimeMs;
-	if (rawTimeout === undefined && rawMaxRuntime === undefined) return {};
-	for (const [name, value] of [
-		["timeoutMs", rawTimeout],
-		["maxRuntimeMs", rawMaxRuntime],
-	] as const) {
-		if (value === undefined) continue;
-		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-			return { error: `${name} must be a positive integer.` };
-		}
+	if (rawTimeout === undefined) return {};
+	if (typeof rawTimeout !== "number" || !Number.isInteger(rawTimeout) || rawTimeout <= 0) {
+		return { error: "timeoutMs must be a positive integer." };
 	}
-	if (rawTimeout !== undefined && rawMaxRuntime !== undefined && rawTimeout !== rawMaxRuntime) {
-		return { error: "timeoutMs and maxRuntimeMs are aliases; provide only one value or use the same value for both." };
-	}
-	return { timeoutMs: rawTimeout ?? rawMaxRuntime };
+	return { timeoutMs: rawTimeout };
 }
 
 function resolveEffectiveSingleTimeout(
@@ -2772,11 +2766,8 @@ function resolveEffectiveSingleTimeout(
 	return Math.min(callerTimeoutMs, agentTimeoutCeilingMs);
 }
 
-function resolveTurnBudget(
-	params: SubagentParamsLike,
-	config: ExtensionConfig,
-): { turnBudget?: ResolvedTurnBudget; error?: string } {
-	const raw = params.turnBudget ?? config.turnBudget;
+function resolveTurnBudget(params: SubagentParamsLike): { turnBudget?: ResolvedTurnBudget; error?: string } {
+	const raw = params.turnBudget;
 	if (raw === undefined) return {};
 	if (!raw || typeof raw !== "object" || Array.isArray(raw))
 		return { error: "turnBudget must be an object with maxTurns and optional graceTurns." };
@@ -2799,12 +2790,10 @@ function resolveEffectiveToolBudget(input: {
 	stepBudget?: ToolBudgetConfig;
 	runBudget?: ResolvedToolBudget;
 	agentBudget?: ToolBudgetConfig;
-	configBudget?: ToolBudgetConfig;
 }): { toolBudget?: ResolvedToolBudget; error?: string } {
 	if (input.stepBudget !== undefined) return resolveToolBudget(input.stepBudget, "toolBudget");
 	if (input.runBudget !== undefined) return { toolBudget: input.runBudget };
-	if (input.agentBudget !== undefined) return resolveToolBudget(input.agentBudget, "agent.toolBudget");
-	return resolveToolBudget(input.configBudget, "config.toolBudget");
+	return resolveToolBudget(input.agentBudget, "agent.toolBudget");
 }
 
 function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; error?: string } {
@@ -2999,7 +2988,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 				{ scope: data.modelScope, source: task.model ? "explicit" : "inherited" },
 			),
 		);
-		const skillOverrides = params.tasks.map((task) => normalizeSkillInput(task.skill));
 		const parallelTasks = params.tasks.map((task, index) => ({
 			agent: task.agent,
 			task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
@@ -3007,7 +2995,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 			...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
 			...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
 			...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
-			...(skillOverrides[index] !== undefined ? { skill: skillOverrides[index] } : {}),
 			...(task.output === true
 				? agentConfigs[index]?.output
 					? { output: agentConfigs[index]!.output }
@@ -3038,7 +3025,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 			artifactConfig,
 			shareEnabled,
 			sessionRoot,
-			chainSkills: [],
 			sessionFilesByFlatIndex: params.tasks.map((task, index) => sessionFileForTask(task.agent, index)),
 			thinkingOverridesByFlatIndex: params.tasks.map((task, index) => thinkingOverrideForTask(task.agent, index)),
 			maxSubagentDepth: currentMaxSubagentDepth,
@@ -3049,8 +3035,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 			timeoutMs: data.timeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
-			configToolBudget: data.configToolBudget,
-			globalConcurrencyLimit: deps.config.globalConcurrencyLimit,
 		});
 	}
 
@@ -3093,7 +3077,7 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 			skills,
 			output: effectiveOutput,
 			outputMode: effectiveOutputMode,
-			outputBaseDir: resolveSingleRunOutputBaseDir(deps, artifactsDir, id),
+			outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
 			modelOverride,
 			fallbackModels: params.fallbackModels,
 			modelFallbackNotice: params.modelFallbackNotice,
@@ -3107,7 +3091,6 @@ function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): SubagentT
 			timeoutMs: effectiveTimeoutMs,
 			turnBudget: data.turnBudget,
 			toolBudget: data.toolBudget,
-			configToolBudget: data.configToolBudget,
 		});
 	}
 
@@ -3166,10 +3149,8 @@ interface ForegroundParallelRunInput {
 	tkTicketIndex?: number;
 }
 
-function resolveSingleRunOutputBaseDir(deps: ExecutorDeps, artifactsDir: string, runId: string): string {
-	return deps.config.singleRunOutputBaseDir
-		? path.resolve(deps.expandTilde(deps.config.singleRunOutputBaseDir))
-		: path.join(artifactsDir, "outputs", runId);
+function resolveSingleRunOutputBaseDir(artifactsDir: string, runId: string): string {
+	return path.join(artifactsDir, "outputs", runId);
 }
 
 function resolveParallelTaskCwd(task: TaskParam, paramsCwd: string): string {
@@ -3525,7 +3506,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 			stepBudget: tasks[index]?.toolBudget,
 			runBudget: data.toolBudget,
 			agentBudget: agentConfigs[index]?.toolBudget,
-			configBudget: data.configToolBudget,
 		});
 		if (resolved.error) return buildParallelModeError(resolved.error);
 		toolBudgets.push(resolved.toolBudget);
@@ -3534,7 +3514,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const taskTexts = tasks.map((t) => t.task);
-	const skillOverrides: (string[] | false | undefined)[] = tasks.map((t) => normalizeSkillInput(t.skill));
 	const behaviorOverrides: StepOverrides[] = tasks.map((task, index) => ({
 		...(task.output !== undefined
 			? { output: task.output === true ? (agentConfigs[index]?.output ?? false) : task.output }
@@ -3542,7 +3521,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
 		...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
 		...(task.progress !== undefined ? { progress: task.progress } : {}),
-		...(skillOverrides[index] !== undefined ? { skills: skillOverrides[index] } : {}),
 		...(task.model ? { model: task.model } : {}),
 		...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
 		...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
@@ -3625,7 +3603,7 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		orchestratorIntercomTarget: data.intercomBridge.active ? data.intercomBridge.orchestratorTarget : undefined,
 		foregroundControl,
 		concurrencyLimit: parallelConcurrency,
-		globalSemaphore: new Semaphore(deps.config.globalConcurrencyLimit ?? DEFAULT_GLOBAL_CONCURRENCY_LIMIT),
+		globalSemaphore: new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT),
 		maxSubagentDepths,
 		liveResults,
 		liveProgress,
@@ -3637,11 +3615,6 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 		...(tkTicket ? { tkTicket } : {}),
 		...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
 	});
-	for (let i = 0; i < results.length; i++) {
-		const run = results[i]!;
-		recordRun(run.agent, taskTexts[i]!, run.exitCode, run.progressSummary?.durationMs ?? 0, run.error);
-	}
-
 	for (const result of results) {
 		if (result.progress) allProgress.push(result.progress);
 		if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
@@ -3792,7 +3765,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const effectiveToolBudget = resolveEffectiveToolBudget({
 		runBudget: data.toolBudget,
 		agentBudget: agentConfig.toolBudget,
-		configBudget: data.configToolBudget,
 	});
 	if (effectiveToolBudget.error) return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
 
@@ -3820,12 +3792,11 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	if (shouldForkAgent(contextPolicy, params.agent!)) {
 		task = wrapForkTask(task);
 	}
-	const cleanTask = task;
 	const outputPath = resolveSingleOutputPath(
 		effectiveOutput,
 		ctx.cwd,
 		effectiveCwd,
-		resolveSingleRunOutputBaseDir(deps, artifactsDir, runId),
+		resolveSingleRunOutputBaseDir(artifactsDir, runId),
 	);
 	const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
 	if (validationError) {
@@ -3961,8 +3932,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		foregroundControl.toolCount = r.progress?.toolCount;
 		foregroundControl.updatedAt = Date.now();
 	}
-	recordRun(params.agent!, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r.error);
-
 	if (r.progress) allProgress.push(r.progress);
 	if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
 
@@ -4102,21 +4071,6 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): SubagentToolRe
 	};
 }
 
-function omitExecutionModeActionAlias(params: SubagentParamsLike): SubagentParamsLike {
-	const action = params.action?.toLowerCase();
-	if (action === "single" && (params.agent !== undefined || params.task !== undefined)) {
-		const rest = { ...params };
-		delete rest.action;
-		return rest;
-	}
-	if ((action === "parallel" || action === "tasks") && (params.tasks?.length ?? 0) > 0) {
-		const rest = { ...params };
-		delete rest.action;
-		return rest;
-	}
-	return params;
-}
-
 export function createSubagentExecutor(deps: ExecutorDeps): {
 	execute: (
 		id: string,
@@ -4137,7 +4091,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
 		deps.state.lastForegroundControlId ??= null;
-		const requestParams = omitExecutionModeActionAlias(params);
+		const requestParams = params;
 		const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
 		const paramsWithResolvedCwd =
 			requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
@@ -4187,7 +4141,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				};
 			}
 			if (action === "status") {
-				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
+				const targetRunId = paramsWithResolvedCwd.id;
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
 				if (paramsWithResolvedCwd.view === "fleet") {
 					return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
@@ -4252,7 +4206,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						isError: true,
 						details: { mode: "management", results: [] },
 					};
-				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				const targetRunId = paramsWithResolvedCwd.id;
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
@@ -4313,7 +4267,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				});
 			}
 			if (action === "interrupt") {
-				const targetRunId = paramsWithResolvedCwd.runId ?? paramsWithResolvedCwd.id;
+				const targetRunId = paramsWithResolvedCwd.id;
 				const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
 				if (
 					rememberedPaused?.child.status === "paused" &&
@@ -4441,20 +4395,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (normalized.error) return normalized.error;
 		const normalizedParams = normalized.params!;
 
-		let effectiveParams = applyForceTopLevelAsyncOverride(
-			normalizedParams,
-			depth,
-			deps.config.forceTopLevelAsync === true,
-		);
+		let effectiveParams = normalizedParams;
 		const foregroundTimeout = resolveForegroundTimeout(effectiveParams);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
-		const turnBudget = resolveTurnBudget(effectiveParams, deps.config);
+		const turnBudget = resolveTurnBudget(effectiveParams);
 		if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
 		const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
 		if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
-		const configToolBudget = resolveToolBudget(deps.config.toolBudget, "config.toolBudget");
-		if (configToolBudget.error) return buildRequestedModeError(effectiveParams, configToolBudget.error);
-
 		const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
 		const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
 		const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
@@ -4496,7 +4443,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			return toExecutionErrorResult(effectiveParams, error);
 		}
-		const requestedAsync = effectiveParams.async ?? deps.asyncByDefault;
+		const requestedAsync = effectiveParams.async ?? false;
 		const effectiveAsync = requestedAsync;
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
@@ -4510,9 +4457,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (effectiveParams.sessionDir) {
 			sessionRoot = path.resolve(deps.expandTilde(effectiveParams.sessionDir));
 		} else {
-			const baseSessionRoot = deps.config.defaultSessionDir
-				? path.resolve(deps.expandTilde(deps.config.defaultSessionDir))
-				: deps.getSubagentSessionRoot(parentSessionFile);
+			const baseSessionRoot = deps.getSubagentSessionRoot(parentSessionFile);
 			sessionRoot = path.join(baseSessionRoot, runId);
 		}
 		try {
@@ -4566,7 +4511,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			timeoutMs: foregroundTimeout.timeoutMs,
 			turnBudget: turnBudget.turnBudget,
 			toolBudget: runToolBudget.toolBudget,
-			configToolBudget: configToolBudget.toolBudget,
 			contextPolicy,
 			modelScope,
 		};
@@ -4706,7 +4650,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		onUpdate: ((r: SubagentToolResult<Details>) => void) | undefined,
 		ctx: ExtensionContext,
 	): Promise<SubagentToolResult<Details>> => {
-		const requestParams = omitExecutionModeActionAlias(params);
+		const requestParams = params;
 		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
 		if (deps.state.subagentInProgress === true) return duplicateSubagentCallResult(requestParams);
 		deps.state.subagentInProgress = true;

@@ -7,10 +7,25 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Child-process JSON streams and quiet Glimpse no longer crash on valid non-object JSON; background and foreground runs retain those lines in raw output or transcripts where applicable.
+- When a foreground subagent run finishes with many children and the result summary has to be trimmed, every child that appears now keeps both of its recovery paths (artifact and session). Previously the summary was built in full and then cut at the end, which could silently delete whole child blocks — and the only pointers back to their output — from the tail. A child that genuinely cannot fit is now marked with an explicit omission notice instead of disappearing quietly.
+- Truncation notices in subagent output previously told the model to look at details it has no way of reading. They now point only at routes that actually exist: an artifact path, a session path, or a plain statement that the output is unavailable.
+
+## [0.37.0] - 2026-08-11
+
+### Model defaults
+
+- `repo-scout`, `web-scout`, `librarian`, and `diff-summarizer` now use `gpt-5.6-luna medium`, instead of `gpt-5.4-mini high`.
+
+## [0.36.0] - 2026-08-11
+
+### Added
+
+- When TLH ships changes in the default models/thinking levels, it now offers the user to `/reconcile` them.
+- Bumped Pi to `0.84.1`.
 
 ### Removed
 
-- Removed ~4,400 lines of unreachable fork-era code from the subagents runtime: the prompt-template delegation bridge, the worktree isolation feature, and dead chain-era exports/config surface. No user-facing behavior changes.
+- Removed a lot of dead schemas, tools, code, etc. TLH is now using even fewer tokens per run.
 
 ## [0.35.0] - 2026-08-09
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
@@ -222,8 +223,9 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.match(text, /Interrupt requested for async run abc123\./);
 	});
 
-	it("collapses multiline structured management output to a first-line summary", () => {
-		const output = `\n${"Managed agents: ".padEnd(220, "x")}\n- reviewer\n- writer`;
+	it("wraps the complete first-line summary for multiline structured management output", () => {
+		const firstLine = "Managed agents: ".padEnd(220, "x");
+		const output = `\n${firstLine}\n- reviewer\n- writer`;
 		const widget = renderSubagentResult!(
 			{
 				content: [{ type: "text", text: output }],
@@ -235,7 +237,9 @@ describe("renderSubagentResult fork indicator", () => {
 
 		const lines = widget.render(120).map((line) => line.trimEnd());
 		assert.match(lines[0]!, /^\[fork\] Managed agents:/);
-		assert.match(lines[0]!, /…$/);
+		assert.ok(lines.every((line) => visibleWidth(line) <= 120));
+		assert.ok(lines.join("").replace(/\s/g, "").includes(`[fork] ${firstLine} · 4 lines`.replace(/\s/g, "")));
+		assert.doesNotMatch(lines.join("\n"), /\.\.\.|…/);
 		const hintLineIndex = lines.findIndex((line) => line.includes(expandHint));
 		assert.ok(hintLineIndex > 0);
 		assert.doesNotMatch(lines[0]!, /reviewer/);
@@ -308,6 +312,50 @@ describe("renderSubagentResult fork indicator", () => {
 		const text = widget.render(120).join("\n");
 		assert.match(text, /Press Ctrl\+Shift\+D for full output/);
 		assert.doesNotMatch(text, /Press  for full output/);
+	});
+
+	it("styles keyboard instruction hints with the dim theme", () => {
+		const hintStyles: string[] = [];
+		const styledTheme = {
+			fg(name: string, text: string): string {
+				if (text.includes("Press ")) hintStyles.push(name);
+				return text;
+			},
+			bold(text: string): string {
+				return text;
+			},
+		};
+		const activeResult = {
+			agent: "worker",
+			task: "review",
+			exitCode: 0,
+			usage: emptyUsage,
+			progress: {
+				index: 0,
+				agent: "worker",
+				status: "running" as const,
+				task: "review",
+				recentTools: [],
+				recentOutput: [],
+				toolCount: 0,
+				tokens: 0,
+				durationMs: 0,
+			},
+		};
+		renderSubagentResult!(
+			{ content: [{ type: "text", text: "running" }], details: { mode: "single", results: [activeResult] } },
+			{ expanded: false },
+			styledTheme,
+		).render(120);
+		renderSubagentResult!(
+			{
+				content: [{ type: "text", text: "First line\nSecond line" }],
+				details: { mode: "single", results: [] },
+			},
+			{ expanded: false },
+			styledTheme,
+		).render(120);
+		assert.deepEqual(hintStyles, ["dim", "dim"]);
 	});
 
 	it("preserves unstructured multiline and structured single-line output", () => {
@@ -1022,7 +1070,7 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.equal((expandedText.match(/artifacts: \/tmp\/reviewer-output\.md/g) ?? []).length, 1);
 	});
 
-	it("uses running/done wording and agent fractions for live parallel rendering", () => {
+	it("uses spinner/done wording and agent fractions for live parallel rendering", () => {
 		const widget = renderSubagentResult!(
 			{
 				content: [{ type: "text", text: "(running...)" }],
@@ -1069,7 +1117,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /parallel · 2 agents running · 0\/3 done/);
+		assert.match(text, /parallel · 0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 3\/3: worker/);
 		assert.doesNotMatch(text, /Step 3: worker/);
 		assert.doesNotMatch(text, /Agent 1: worker/);
@@ -1151,7 +1200,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /parallel · 1 agent running · 1\/3 done/);
+		assert.match(text, /parallel · 1\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 	});
 
 	it("labels active chain parallel groups with chain step and agent fractions", () => {
@@ -1252,7 +1302,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /chain · step 1\/3 · parallel group: 2 agents running · 0\/3 done/);
+		assert.match(text, /chain · step 1\/3 · parallel group: 0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 1\/3: scout/);
 		assert.match(text, /Agent 2\/3: reviewer/);
 		assert.doesNotMatch(text, /Step 1: scout/);
@@ -1384,7 +1435,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /chain · step 2\/3 · parallel group: 2 agents running · 0\/2 done/);
+		assert.match(text, /chain · step 2\/3 · parallel group: 0\/2 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 1\/2: scout/);
 		assert.match(text, /Agent 2\/2: reviewer/);
 		assert.doesNotMatch(text, /planner/);

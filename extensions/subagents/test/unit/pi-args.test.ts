@@ -452,7 +452,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
 			inheritSkills: true,
 			intercomSessionName: "subagent-worker-78f659a3",
 			orchestratorIntercomTarget: "subagent-chat-parent",
-			blockingSupervisorReplyPath: "live",
 			parentSessionId: "session-parent-123",
 			runId: "78f659a3",
 			childAgentName: "worker",
@@ -461,7 +460,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
 		assert.equal(env.PI_SUBAGENT_INTERCOM_SESSION_NAME, "subagent-worker-78f659a3");
 		assert.equal(env.PI_SUBAGENT_ORCHESTRATOR_TARGET, "subagent-chat-parent");
-		assert.equal(env.PI_SUBAGENT_BLOCKING_SUPERVISOR_REPLY_PATH, "live");
 		assert.equal(env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV], "session-parent-123");
 		assert.equal(env.PI_SUBAGENT_RUN_ID, "78f659a3");
 		assert.equal(env.PI_SUBAGENT_CHILD_AGENT, "worker");

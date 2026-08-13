@@ -49,14 +49,16 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Format a tool call for display
+ * Format a tool call for display.
+ *
+ * Keep argument values complete here. Renderers own width fitting and must
+ * wrap these strings instead of losing command, path, or payload text.
  */
-export function formatToolCall(name: string, args: Record<string, unknown>, expanded = false): string {
+export function formatToolCall(name: string, args: Record<string, unknown>, _expanded = false): string {
 	switch (name) {
 		case "bash": {
 			const command = typeof args.command === "string" ? args.command : "";
-			const maxLength = expanded ? 240 : 60;
-			return `$ ${command.slice(0, maxLength)}${command.length > maxLength ? "..." : ""}`;
+			return `$ ${command}`;
 		}
 		case "read":
 		case "write":
@@ -66,9 +68,8 @@ export function formatToolCall(name: string, args: Record<string, unknown>, expa
 			return `${name} ${shortenPath(target)}`;
 		}
 		default: {
-			const s = JSON.stringify(args);
-			const maxLength = expanded ? 160 : 40;
-			return `${name} ${s.slice(0, maxLength)}${s.length > maxLength ? "..." : ""}`;
+			const serialized = JSON.stringify(args);
+			return `${name} ${serialized ?? ""}`;
 		}
 	}
 }

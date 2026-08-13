@@ -52,6 +52,13 @@ const MAX_CACHE_SIZE = 50;
 let loadSkillsCache: { cwd: string; agentDir: string; skills: CachedSkillEntry[]; timestamp: number } | null = null;
 const LOAD_SKILLS_CACHE_TTL_MS = 5000;
 
+// The orchestration skill must never be injected into a child subagent.
+// Children have no `subagent` tool (registerSubagentExtension is skipped for them),
+// and stripSubagentOrchestrationSkill only sanitizes inherited prompts — it does NOT
+// cover the explicit frontmatter-injection vector that resolveSkills and
+// discoverAvailableSkills guard here. Removing these guards would allow orchestration
+// instructions to reach a child that cannot act on them, violating the
+// "subagents cannot spawn subagents" boundary.
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 
 const SOURCE_PRIORITY: Record<SkillSource, number> = {
@@ -637,11 +644,11 @@ export function resolveSkills(skillNames: string[], cwd: string): { resolved: Re
 	for (const name of skillNames) {
 		const trimmed = name.trim();
 		if (!trimmed) continue;
+		// Guard: pi-subagents must never be injected into a child (see SUBAGENT_ORCHESTRATION_SKILL).
 		if (trimmed === SUBAGENT_ORCHESTRATION_SKILL) {
 			missing.push(trimmed);
 			continue;
 		}
-
 		const location = resolveSkillPath(trimmed, cwd);
 		if (!location) {
 			missing.push(trimmed);
@@ -737,14 +744,17 @@ export function discoverAvailableSkills(cwd: string): Array<{
 	description?: string;
 }> {
 	const skills = getCachedSkills(cwd);
-	return skills
-		.filter((s) => s.name !== SUBAGENT_ORCHESTRATION_SKILL)
-		.map((s) => ({
-			name: s.name,
-			source: s.source,
-			description: s.description,
-		}))
-		.sort((a, b) => a.name.localeCompare(b.name));
+	return (
+		skills
+			// pi-subagents must never appear as injectable to children (see SUBAGENT_ORCHESTRATION_SKILL).
+			.filter((s) => s.name !== SUBAGENT_ORCHESTRATION_SKILL)
+			.map((s) => ({
+				name: s.name,
+				source: s.source,
+				description: s.description,
+			}))
+			.sort((a, b) => a.name.localeCompare(b.name))
+	);
 }
 
 export function clearSkillCache(): void {

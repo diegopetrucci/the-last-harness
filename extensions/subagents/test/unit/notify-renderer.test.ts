@@ -151,6 +151,96 @@ describe("native completion notification renderer", () => {
 		);
 	});
 
+	it("renders wrapped control notices with a connected top border", () => {
+		const script = String.raw`
+			import { createRequire } from "node:module";
+			import { pathToFileURL } from "node:url";
+			import registerSubagentExtension from "./src/extension/index.ts";
+			import { SUBAGENT_CONTROL_MESSAGE_TYPE } from "./src/extension/control-notices.ts";
+			const piCodingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+			const piCodingAgentRequire = createRequire(piCodingAgentEntry);
+			const piTuiEntry = piCodingAgentRequire.resolve("@earendil-works/pi-tui");
+			const { visibleWidth } = await import(pathToFileURL(piTuiEntry).href);
+			const events = { on() { return () => {}; }, emit() {} };
+			let controlRenderer;
+			const fakePi = new Proxy({
+				events,
+				on() {},
+				registerTool() {},
+				registerCommand() {},
+				registerShortcut() {},
+				registerMessageRenderer(type, renderer) {
+					if (type === SUBAGENT_CONTROL_MESSAGE_TYPE) controlRenderer = renderer;
+				},
+				sendMessage() {},
+				getSessionName() { return undefined; },
+			}, {
+				get(target, prop) {
+					if (prop in target) return target[prop];
+					return () => undefined;
+				},
+			});
+			registerSubagentExtension(fakePi);
+			if (!controlRenderer) throw new Error("control renderer was not registered");
+
+			const theme = {
+				fg(_name, text) { return text; },
+				bg(_name, text) { return text; },
+				bold(text) { return text; },
+			};
+			const width = 38;
+			const agent = "worker-with-a-long-renderer-name";
+			const lines = controlRenderer({
+				content: "worker needs attention",
+				details: {
+					source: "foreground",
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: 1,
+						runId: "run-control",
+						agent,
+						index: 0,
+						message: "worker needs attention",
+						reason: "idle",
+					},
+				},
+			}, { expanded: false }, theme).render(width);
+
+			if (lines.length < 4) throw new Error("expected a wrapped control notice: " + lines.join("\\n"));
+			if (!lines.every((line) => visibleWidth(line) === width)) {
+				throw new Error("every physical line must fit and pad to width " + width + ": " + lines.join("\\n"));
+			}
+			if (!/^╭.*─+╮$/.test(lines[0])) {
+				throw new Error("top header must connect to ╮ with dashes: " + lines[0]);
+			}
+			const middle = lines.slice(1, -1);
+			if (!middle.every((line) => /^│.*│$/.test(line) && !line.includes("─"))) {
+				throw new Error("continuation and body rows must use space padding: " + middle.join("\\n"));
+			}
+			if (!middle.some((line) => / +│$/.test(line))) {
+				throw new Error("expected visible space padding before a continuation/body border");
+			}
+			if (!lines.join("").replace(/\\s/g, "").includes(agent.replace(/\\s/g, ""))) {
+				throw new Error("wrapped header lost the agent name: " + lines.join("\\n"));
+			}
+		`;
+		const env = { ...process.env };
+		delete env[SUBAGENT_CHILD_ENV];
+		execFileSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--import",
+				"./test/support/register-loader.mjs",
+				"--input-type=module",
+				"--eval",
+				script,
+			],
+			{ cwd: projectRoot, env, stdio: "pipe" },
+		);
+	});
+
 	it("bounds the display of grouped notices and any other unparsed content at the render-time display cap", () => {
 		// Defect 3: the renderer parser only matches the singular-completion header regex.
 		// Grouped notices use 'Background tasks completed (N):' which does not match, so

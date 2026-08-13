@@ -29,7 +29,7 @@ import {
 } from "../../shared/settings.ts";
 import { isParallelGroup, type RunnerStep, type RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.ts";
-import { buildSkillInjection, normalizeSkillInput, resolveSkillsWithFallback } from "../../agents/skills.ts";
+import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.ts";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import {
@@ -111,7 +111,6 @@ interface AsyncChainParams {
 	artifactConfig: ArtifactConfig;
 	shareEnabled: boolean;
 	sessionRoot?: string;
-	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
@@ -124,9 +123,6 @@ interface AsyncChainParams {
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
-	configToolBudget?: ResolvedToolBudget;
-	/** Global cap on simultaneously-running subagent tasks within the async run. */
-	globalConcurrencyLimit?: number;
 }
 
 interface AsyncSingleParams {
@@ -163,7 +159,6 @@ interface AsyncSingleParams {
 	timeoutMs?: number;
 	turnBudget?: ResolvedTurnBudget;
 	toolBudget?: ResolvedToolBudget;
-	configToolBudget?: ResolvedToolBudget;
 }
 
 interface AsyncExecutionResult {
@@ -180,7 +175,6 @@ export interface AsyncRunnerStepBuildParams {
 	ctx: AsyncExecutionContext;
 	availableModels?: AvailableModelInfo[];
 	cwd?: string;
-	chainSkills?: string[];
 	sessionFilesByFlatIndex?: (string | undefined)[];
 	thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
 	progressDir?: string;
@@ -190,7 +184,6 @@ export interface AsyncRunnerStepBuildParams {
 	validateOutputBindings?: boolean;
 	timeoutMs?: number;
 	toolBudget?: ResolvedToolBudget;
-	configToolBudget?: ResolvedToolBudget;
 }
 
 export type AsyncRunnerStepBuildResult =
@@ -413,7 +406,6 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		params;
 	const outputBaseDir = params.outputBaseDir;
 	const resultMode = params.resultMode ?? "chain";
-	const chainSkills = params.chainSkills ?? [];
 	const availableModels = params.availableModels;
 	const thinkingSuffixOptions = {
 		availableModels,
@@ -450,19 +442,15 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	}
 
 	let progressInstructionCreated = false;
-	const buildStepOverrides = (s: SequentialStep): StepOverrides => {
-		const stepSkillInput = normalizeSkillInput(s.skill);
-		return {
-			...(s.output !== undefined ? { output: s.output } : {}),
-			...(s.outputMode !== undefined ? { outputMode: s.outputMode } : {}),
-			...(s.reads !== undefined ? { reads: s.reads } : {}),
-			...(s.progress !== undefined ? { progress: s.progress } : {}),
-			...(stepSkillInput !== undefined ? { skills: stepSkillInput } : {}),
-			...(s.model ? { model: s.model } : {}),
-			...(s.fallbackModels ? { fallbackModels: s.fallbackModels } : {}),
-			...(s.modelFallbackNotice ? { modelFallbackNotice: s.modelFallbackNotice } : {}),
-		};
-	};
+	const buildStepOverrides = (s: SequentialStep): StepOverrides => ({
+		...(s.output !== undefined ? { output: s.output } : {}),
+		...(s.outputMode !== undefined ? { outputMode: s.outputMode } : {}),
+		...(s.reads !== undefined ? { reads: s.reads } : {}),
+		...(s.progress !== undefined ? { progress: s.progress } : {}),
+		...(s.model ? { model: s.model } : {}),
+		...(s.fallbackModels ? { fallbackModels: s.fallbackModels } : {}),
+		...(s.modelFallbackNotice ? { modelFallbackNotice: s.modelFallbackNotice } : {}),
+	});
 	const buildSeqStep = (
 		s: SequentialStep,
 		sessionFile?: string,
@@ -472,16 +460,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		flatIndex?: number,
 	) => {
 		const a = agents.find((x) => x.name === s.agent)!;
-		const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget ?? params.configToolBudget;
+		const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget;
 		const resolvedToolBudget = validateToolBudgetConfig(
 			toolBudgetInput,
-			s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "config.toolBudget",
+			s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "toolBudget",
 		);
 		if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		const behavior = suppressProgressForReadOnlyTask(
-			resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills),
+			resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)),
 			s.task,
 			originalTask,
 		);
@@ -635,7 +623,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				const parallelBehaviors = s.parallel.map((task) => {
 					const agent = agents.find((candidate) => candidate.name === task.agent)!;
 					return suppressProgressForReadOnlyTask(
-						resolveStepBehavior(agent, buildStepOverrides(task), chainSkills),
+						resolveStepBehavior(agent, buildStepOverrides(task)),
 						task.task,
 						originalTask,
 					);
@@ -727,7 +715,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 		ctx,
 		availableModels: params.availableModels,
 		cwd,
-		chainSkills: params.chainSkills,
 		sessionFilesByFlatIndex,
 		thinkingOverridesByFlatIndex,
 		progressDir:
@@ -742,7 +729,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 		asyncDir,
 		timeoutMs: params.timeoutMs,
 		toolBudget: params.toolBudget,
-		configToolBudget: params.configToolBudget,
 	});
 	if ("error" in built) {
 		try {
@@ -805,7 +791,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 				resultMode,
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
-				globalConcurrencyLimit: params.globalConcurrencyLimit,
 				workflowGraph,
 				tkTicket,
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -1048,10 +1033,10 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 			);
 		})
 		.filter((candidate): candidate is string => candidate !== undefined);
-	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget ?? params.configToolBudget;
+	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(
 		toolBudgetInput,
-		params.toolBudget ? "toolBudget" : agentConfig.toolBudget ? "agent.toolBudget" : "config.toolBudget",
+		params.toolBudget ? "toolBudget" : "agent.toolBudget",
 	);
 	if (resolvedToolBudget.error) return formatAsyncStartError("single", resolvedToolBudget.error);
 	const activeRuntimeMs = Math.max(0, params.activeRuntimeMs ?? 0);

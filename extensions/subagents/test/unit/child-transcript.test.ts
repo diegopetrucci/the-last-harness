@@ -134,6 +134,26 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(records[2]!.toolName, "bash");
 	});
 
+	it("bounds only persisted tool argument previews with an explicit storage marker", () => {
+		const dir = tmpDir();
+		const transcriptPath = path.join(dir, "transcript.jsonl");
+		const writer = createChildTranscriptWriter({
+			transcriptPath,
+			source: "foreground",
+			runId: "run-args-preview",
+			agent: "worker",
+			cwd: "/repo",
+		});
+		const command = `npm run validate -- ${"x".repeat(40_000)}`;
+		writer.writeChildEvent({ type: "tool_execution_start", toolName: "bash", args: { command } });
+
+		const argsPreview = String(readRecords(transcriptPath)[0]!.argsPreview);
+		assert.ok(argsPreview.length <= 32 * 1024);
+		assert.match(argsPreview, /\[truncated for child transcript storage\]$/);
+		assert.ok(argsPreview.startsWith("npm run validate -- "));
+		assert.ok(!argsPreview.includes(command), "the persisted preview should be bounded at the storage boundary");
+	});
+
 	it("skips blank stdout/stderr lines and splits multi-line stderr text", () => {
 		const dir = tmpDir();
 		const transcriptPath = path.join(dir, "transcript.jsonl");
