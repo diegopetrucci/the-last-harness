@@ -19,7 +19,7 @@ import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAccept
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
 import { initialTurnBudgetState } from "../shared/turn-budget.js";
-import { parseContextPressureCrossedThresholds, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
 const piPackageRoot = resolvePiPackageRoot();
@@ -761,6 +761,9 @@ export function executeAsyncSingle(id, params) {
                     sessionFile,
                     ...(parseContextUsageDiagnostics(params.contextUsage)
                         ? { contextUsage: parseContextUsageDiagnostics(params.contextUsage) }
+                        : {}),
+                    ...(parseContextPressureProjection(params.contextPressure)
+                        ? { contextPressure: parseContextPressureProjection(params.contextPressure) }
                         : {}),
                     ...(parseContextPressureCrossedThresholds(params.contextPressureCrossedThresholds)
                         ? {

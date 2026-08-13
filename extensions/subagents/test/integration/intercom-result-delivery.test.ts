@@ -1569,14 +1569,45 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
-	it("status keeps paused foreground supervisor runs actionable and guided resume revives the same session once", async () => {
+	it("status keeps paused foreground supervisor runs actionable and guided resume starts independent pressure state", async () => {
+		const pressureMessage = (text: string, totalTokens = 800, model = "mock/test-model") => ({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				model,
+				stopReason: "stop",
+				usage: { totalTokens, input: totalTokens - 100, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		});
+		const pressureContext = () => {
+			const context = makeMinimalCtx(tempDir);
+			context.model = { provider: "mock", id: "test-model" };
+			context.modelRegistry.getAvailable = () => [
+				{ provider: "mock", id: "test-model", contextWindow: 1000 },
+				{ provider: "mock", id: "resume-model", contextWindow: 2000 },
+			];
+			return context;
+		};
 		mockPi.onCall({
 			steps: [
-				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				{
+					jsonl: [
+						pressureMessage("preserve before asking"),
+						events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" }),
+					],
+				},
 				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
-		mockPi.onCall({ output: "resumed after supervisor reply" });
+		mockPi.onCall({
+			steps: [
+				{
+					delay: 1_000,
+					jsonl: [pressureMessage("resumed after supervisor reply", 1600, "mock/resume-model")],
+				},
+			],
+		});
 		const { executor } = makeExecutor({
 			agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
 		});
@@ -1585,10 +1616,19 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			{ agent: "a", task: "ask supervisor" },
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
+		const pausedPressureStatus = readAsyncStatusJson<{
+			steps?: Array<{
+				contextPressure?: { severity?: string; crossedThreshold?: string };
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		}>(runId);
+		assert.equal(pausedPressureStatus.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.equal(pausedPressureStatus.steps?.[0]?.contextPressure?.crossedThreshold, "warning");
+		assert.deepEqual(pausedPressureStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
 		assert.match(original.content[0]?.text ?? "", /paused awaiting supervisor/i);
 		assert.match(original.content[0]?.text ?? "", /Resume unchanged: subagent\(\{ action: "resume", id: "/);
 		assert.match(
@@ -1602,7 +1642,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			{ action: "status", id: runId },
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		const statusText = status.content[0]?.text ?? "";
 		assert.match(statusText, /State: remembered foreground/);
@@ -1617,14 +1657,46 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const revived = await executor.execute(
 			"foreground-paused-resume",
-			{ action: "resume", id: runId, message: "Supervisor replied: proceed with option A." },
+			{
+				action: "resume",
+				id: runId,
+				message: "Supervisor replied: proceed with option A.",
+				model: "mock/resume-model",
+			},
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		assert.equal(revived.isError, undefined);
 		assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
+		const revivedId = revived.details?.asyncId;
+		assert.ok(revivedId, "expected revived async id");
+		await waitForAsyncStatusPredicate(revivedId, (status) => status.state === "running", "revived pressure reset");
+		const initialRevivedStatus = readAsyncStatusJson<{
+			steps?: Array<{ contextPressure?: unknown; contextPressureCrossedThresholds?: unknown }>;
+		}>(revivedId);
+		assert.equal(initialRevivedStatus.steps?.[0]?.contextPressure, undefined);
+		assert.equal(initialRevivedStatus.steps?.[0]?.contextPressureCrossedThresholds, undefined);
 		await waitForRevivedAsyncResult(revived);
+		const completedRevivedStatus = readAsyncStatusJson<{
+			steps?: Array<{
+				contextPressure?: { severity?: string };
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		}>(revivedId);
+		assert.equal(completedRevivedStatus.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.deepEqual(completedRevivedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const revivedControlEvents = fs
+			.readFileSync(path.join(ASYNC_DIR, revivedId, "events.jsonl"), "utf-8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } });
+		assert.equal(
+			revivedControlEvents.filter(
+				(event) => event.type === "subagent.control" && event.event?.reason === "context_pressure",
+			).length,
+			1,
+		);
 		const selectedSession = original.details?.results?.[0]?.sessionFile;
 		assert.ok(selectedSession, "expected paused child session file");
 		const reviveArgs = await readMockCallArgs(1);
@@ -1815,6 +1887,16 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	});
 
 	it("persists paused foreground parallel cohorts with per-index actions and terminal transitions", async () => {
+		const cohortPressureMessage = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "running sibling partial output" }],
+				model: "anthropic/claude-sonnet-4",
+				stopReason: "stop",
+				usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		};
 		mockPi.onCall({
 			matchArgIncludes: "finish",
 			jsonl: [events.assistantMessage("completed sibling")],
@@ -1831,7 +1913,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		});
 		mockPi.onCall({
 			matchArgIncludes: "keep working",
-			steps: [{ delay: 50, jsonl: [events.assistantMessage("running sibling partial output")] }, { delay: 10_000 }],
+			steps: [{ delay: 50, jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
 		});
 		mockPi.onCall({
 			matchArgIncludes: "start late work",
@@ -1850,6 +1932,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeAgent("queued"),
 			],
 		});
+		const cohortContext = makeMinimalCtx(tempDir);
+		cohortContext.model = { provider: "mock", id: "test-model" };
+		cohortContext.modelRegistry.getAvailable = () => [
+			{ provider: "anthropic", id: "claude-sonnet-4", contextWindow: 1000 },
+			{ provider: "openai", id: "gpt-5-mini", contextWindow: 1000 },
+		];
 		const original = await first.executor.execute(
 			"foreground-parallel-pause-original",
 			{
@@ -1864,7 +1952,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			},
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			cohortContext,
 		);
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
@@ -1881,6 +1969,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				pause?: { kind?: string };
 				terminationReason?: string;
 				modelIdentity?: { provider: string; model: string; thinking?: string };
+				contextPressure?: { severity?: string; crossedThreshold?: string };
+				contextPressureCrossedThresholds?: string[];
 			}>;
 		}>(runId);
 		assert.equal(pausedStatus.state, "paused");
@@ -1894,6 +1984,9 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			provider: "anthropic",
 			model: "claude-sonnet-4",
 		});
+		assert.equal(pausedStatus.steps?.[2]?.contextPressure?.severity, "warning");
+		assert.equal(pausedStatus.steps?.[2]?.contextPressure?.crossedThreshold, "warning");
+		assert.deepEqual(pausedStatus.steps?.[2]?.contextPressureCrossedThresholds, ["warning"]);
 		assert.equal(pausedStatus.steps?.[3]?.status, "paused");
 		assert.equal(pausedStatus.steps?.[3]?.pause?.kind, "cohort_pause");
 		assert.equal(pausedStatus.steps?.[3]?.terminationReason, "paused");

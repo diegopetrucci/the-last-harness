@@ -166,6 +166,8 @@ import {
 	classifyContextExhaustedTermination,
 	CONTEXT_EXHAUSTED_TERMINATION_MESSAGE,
 	hasUsableSessionArtifact,
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
 	parseContextUsageDiagnostics,
 	mergeContextUsageDiagnostics,
 	resolveSubagentTerminationReason,
@@ -1933,6 +1935,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let latestSessionFile: string | undefined;
 
 	const flatSteps = flattenSteps(steps);
+	for (const step of flatSteps) {
+		step.contextPressure = parseContextPressureProjection(step.contextPressure);
+		step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
+			step.contextPressureCrossedThresholds,
+		);
+	}
 	const initialFlatStepCount = flatSteps.length;
 	const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
 	const initialStatusSteps: RunnerStatusStep[] = [];
@@ -1971,6 +1979,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
 					...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
 					...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
+					...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
 					...(task.contextPressureCrossedThresholds
 						? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
 						: {}),
@@ -2015,6 +2024,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
 				...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
 				...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+				...(step.contextPressure ? { contextPressure: { ...step.contextPressure } } : {}),
 				...(step.contextPressureCrossedThresholds
 					? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
 					: {}),
@@ -3591,6 +3601,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					toolBudget: pr.toolBudget,
 					toolBudgetBlocked: pr.toolBudgetBlocked,
 					contextUsage: pr.contextUsage,
+					contextPressure: pr.contextPressure,
+					contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
 					terminationReason: pr.terminationReason,
 					sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
 					intercomTarget: pr.intercomTarget,

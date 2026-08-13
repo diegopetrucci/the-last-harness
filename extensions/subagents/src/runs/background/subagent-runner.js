@@ -38,7 +38,7 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { TERMINAL_RUN_STATES, boundSupervisorSummary, finalizeLifecycleContinuationLaunch, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
-import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
+import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -1386,6 +1386,10 @@ async function runSubagent(config) {
     let previousCumulativeTokens = { input: 0, output: 0, total: 0 };
     let latestSessionFile;
     const flatSteps = flattenSteps(steps);
+    for (const step of flatSteps) {
+        step.contextPressure = parseContextPressureProjection(step.contextPressure);
+        step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
+    }
     const initialFlatStepCount = flatSteps.length;
     const parallelGroups = [];
     const initialStatusSteps = [];
@@ -1424,6 +1428,7 @@ async function runSubagent(config) {
                     ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
                     ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
                     ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
+                    ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
                     ...(task.contextPressureCrossedThresholds
                         ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
                         : {}),
@@ -1468,6 +1473,7 @@ async function runSubagent(config) {
                 ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
                 ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
                 ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+                ...(step.contextPressure ? { contextPressure: { ...step.contextPressure } } : {}),
                 ...(step.contextPressureCrossedThresholds
                     ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
                     : {}),
@@ -2856,6 +2862,8 @@ async function runSubagent(config) {
                     toolBudget: pr.toolBudget,
                     toolBudgetBlocked: pr.toolBudgetBlocked,
                     contextUsage: pr.contextUsage,
+                    contextPressure: pr.contextPressure,
+                    contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
                     terminationReason: pr.terminationReason,
                     sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
                     intercomTarget: pr.intercomTarget,

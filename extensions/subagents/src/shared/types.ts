@@ -1200,6 +1200,8 @@ export interface RunSyncOptions {
 	modelResolution?: SubagentModelResolution;
 	/** Per-execution fallback models tried before agent frontmatter fallback models. */
 	fallbackModels?: string[];
+	/** Latest persisted display projection restored for the same execution segment. */
+	contextPressure?: ContextPressureProjection;
 	/** Thresholds already crossed in this execution, used for restart-safe deduplication. */
 	contextPressureCrossedThresholds?: ContextPressureThreshold[];
 	/** Optional sanitized notice shown only if a fallback retry is used. */

@@ -129,6 +129,7 @@ import {
 	assessDurableResumeContext,
 	formatDurableResumeContextBlock,
 	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
 	parseContextUsageDiagnostics,
 	resolveEffectiveContextWindow,
 } from "../../shared/context-diagnostics.ts";
@@ -159,6 +160,7 @@ import {
 	type SubagentResultStatus,
 	type SubagentModelIdentity,
 	type SubagentModelResolution,
+	type ContextPressureProjection,
 	type ContextUsageDiagnostics,
 	type SubagentRunMode,
 	type SubagentState,
@@ -361,6 +363,10 @@ function persistPausedForegroundCohortRun(input: {
 			...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
 			...(result.modelResolution ? { modelResolution: result.modelResolution } : {}),
 			...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+			...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
+			...(result.contextPressureCrossedThresholds
+				? { contextPressureCrossedThresholds: [...result.contextPressureCrossedThresholds] }
+				: {}),
 			...(pausedForegroundTerminationReason(result)
 				? { terminationReason: pausedForegroundTerminationReason(result) }
 				: {}),
@@ -498,6 +504,10 @@ function buildPausedStepFromResult(
 			: {}),
 		...(result.cancel ? { cancel: result.cancel } : {}),
 		...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+		...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
+		...(result.contextPressureCrossedThresholds
+			? { contextPressureCrossedThresholds: [...result.contextPressureCrossedThresholds] }
+			: {}),
 		...(pausedForegroundTerminationReason(result, status === "paused" || status === "pausing")
 			? { terminationReason: pausedForegroundTerminationReason(result, status === "paused" || status === "pausing") }
 			: {}),
@@ -514,6 +524,8 @@ function buildCohortPauseStep(input: {
 	modelIdentity?: SubagentModelIdentity;
 	modelResolution?: SubagentModelResolution;
 	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 }): NonNullable<AsyncStatus["steps"]>[number] {
 	const modelIdentity = input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
 	return {
@@ -525,6 +537,10 @@ function buildCohortPauseStep(input: {
 		...(modelIdentity ? { modelIdentity } : {}),
 		...(input.modelResolution ? { modelResolution: input.modelResolution } : {}),
 		...(input.contextUsage ? { contextUsage: input.contextUsage } : {}),
+		...(input.contextPressure ? { contextPressure: { ...input.contextPressure } } : {}),
+		...(input.contextPressureCrossedThresholds
+			? { contextPressureCrossedThresholds: [...input.contextPressureCrossedThresholds] }
+			: {}),
 		...(input.status === "pausing" || input.status === "paused"
 			? {
 					pause: {
@@ -590,6 +606,10 @@ function persistPausedForegroundSingleRun(input: {
 					...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
 					exitCode: 0,
 					...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+					...(input.result.contextPressure ? { contextPressure: { ...input.result.contextPressure } } : {}),
+					...(input.result.contextPressureCrossedThresholds
+						? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
+						: {}),
 					...(pausedForegroundTerminationReason(input.result)
 						? { terminationReason: pausedForegroundTerminationReason(input.result) }
 						: {}),
@@ -631,6 +651,10 @@ function persistPausedForegroundSingleRun(input: {
 							...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
 							exitCode: 0,
 							...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+							...(input.result.contextPressure ? { contextPressure: { ...input.result.contextPressure } } : {}),
+							...(input.result.contextPressureCrossedThresholds
+								? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
+								: {}),
 							...(pausedForegroundTerminationReason(input.result)
 								? { terminationReason: pausedForegroundTerminationReason(input.result) }
 								: {}),
@@ -759,6 +783,7 @@ function rememberForegroundRun(
 				...(result.pause ? { pause: result.pause } : {}),
 				...(result.cancel ? { cancel: result.cancel } : {}),
 				...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+				...(result.contextPressure ? { contextPressure: { ...result.contextPressure } } : {}),
 				...(result.contextPressureCrossedThresholds
 					? { contextPressureCrossedThresholds: [...result.contextPressureCrossedThresholds] }
 					: {}),
@@ -817,6 +842,7 @@ function updateRememberedForegroundChild(
 		...(input.result.pause ? { pause: input.result.pause } : {}),
 		...(input.result.cancel ? { cancel: input.result.cancel } : {}),
 		...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+		...(input.result.contextPressure ? { contextPressure: { ...input.result.contextPressure } } : {}),
 		...(input.result.contextPressureCrossedThresholds
 			? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
 			: {}),
@@ -880,6 +906,7 @@ function resolveForegroundResumeTarget(
 			modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
 			modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
 			contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+			contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
 			contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 			activeRuntimeMs?: number;
 	  }
@@ -929,6 +956,9 @@ function resolveForegroundResumeTarget(
 		...(parseContextUsageDiagnostics(child.contextUsage)
 			? { contextUsage: parseContextUsageDiagnostics(child.contextUsage) }
 			: {}),
+		...(parseContextPressureProjection(child.contextPressure)
+			? { contextPressure: parseContextPressureProjection(child.contextPressure) }
+			: {}),
 		...(parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds)
 			? {
 					contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
@@ -960,6 +990,7 @@ type NestedResumeSourceTarget = {
 	modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
 	modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
 	contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+	contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
 	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	activeRuntimeMs?: number;
 	asyncDir?: string;
@@ -1259,6 +1290,11 @@ function enrichPersistedPausedForegroundSingleRun(input: { runId: string; result
 								transcriptPath: input.result.transcriptPath ?? step.transcriptPath,
 								transcriptError: input.result.transcriptError ?? step.transcriptError,
 								terminationReason: step.terminationReason ?? "paused",
+								...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+								...(input.result.contextPressure ? { contextPressure: { ...input.result.contextPressure } } : {}),
+								...(input.result.contextPressureCrossedThresholds
+									? { contextPressureCrossedThresholds: [...input.result.contextPressureCrossedThresholds] }
+									: {}),
 								...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 							}
 						: step,
@@ -1873,6 +1909,7 @@ type NestedResumeStatusStep = {
 	modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
 	modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
 	contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+	contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
 	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	activeRuntimeMs?: number;
 };
@@ -1906,12 +1943,14 @@ function readNestedResumeStatusStep(runId: string, asyncDir: string | undefined)
 		);
 	const modelResolution = sanitizeSubagentModelResolution(raw.modelResolution);
 	const contextUsage = parseContextUsageDiagnostics(raw.contextUsage);
+	const contextPressure = parseContextPressureProjection(raw.contextPressure);
 	const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(raw.contextPressureCrossedThresholds);
 	return {
 		...(typeof raw.status === "string" ? { status: raw.status } : {}),
 		...(modelIdentity ? { modelIdentity } : {}),
 		...(modelResolution ? { modelResolution } : {}),
 		...(contextUsage ? { contextUsage } : {}),
+		...(contextPressure ? { contextPressure } : {}),
 		...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
 		...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
 		...(raw.acceptance ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] } : {}),
@@ -1945,6 +1984,7 @@ function resolveNestedResumeTarget(
 	const statusModelIdentity = statusStep?.modelIdentity;
 	const statusModelResolution = statusStep?.modelResolution;
 	const contextUsage = statusStep?.contextUsage;
+	const contextPressure = statusStep?.contextPressure;
 	const contextPressureCrossedThresholds = statusStep?.contextPressureCrossedThresholds;
 	const continuationAcceptance =
 		state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
@@ -1959,6 +1999,7 @@ function resolveNestedResumeTarget(
 		...(statusModelIdentity ? { modelIdentity: statusModelIdentity } : {}),
 		...(statusModelResolution ? { modelResolution: statusModelResolution } : {}),
 		...(contextUsage ? { contextUsage } : {}),
+		...(contextPressure ? { contextPressure: { ...contextPressure } } : {}),
 		...(contextPressureCrossedThresholds
 			? { contextPressureCrossedThresholds: [...contextPressureCrossedThresholds] }
 			: {}),
@@ -2650,10 +2691,12 @@ async function resumeAsyncRun(input: {
 			...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
 				? { contextUsage: target.contextUsage }
 				: {}),
-			// A revived run continues the same persisted execution segment, so its
-			// crossed pressure history must survive for warning deduplication. A
-			// claimed pause creates a new continuation segment and intentionally
-			// starts with independent history.
+			// A same-segment revival restores the latest display projection and the
+			// machine deduplication history independently. A claimed pause creates a
+			// new continuation segment and intentionally starts with neither.
+			...(target.kind === "revive" && !claimedPause && "contextPressure" in target
+				? { contextPressure: target.contextPressure }
+				: {}),
 			...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
 				? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
 				: {}),
@@ -3512,6 +3555,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 					modelIdentity: result?.modelIdentity,
 					modelResolution: result?.modelResolution,
 					contextUsage: result?.contextUsage,
+					contextPressure: result?.contextPressure,
+					contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
 				});
 			}
 			return buildCohortPauseStep({
@@ -3524,6 +3569,8 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				modelIdentity: result?.modelIdentity,
 				modelResolution: result?.modelResolution,
 				contextUsage: result?.contextUsage,
+				contextPressure: result?.contextPressure,
+				contextPressureCrossedThresholds: result?.contextPressureCrossedThresholds,
 			});
 		});
 		persistPausedForegroundCohortRun({

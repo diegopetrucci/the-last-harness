@@ -1345,6 +1345,44 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("result-only single revival falls back to sanitized root pressure diagnostics", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-root-pressure-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "result-only-pressure.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			const contextPressure = {
+				severity: "warning",
+				crossedThreshold: "warning",
+				contextTokens: 800,
+				contextWindow: 1000,
+				contextPercent: 80,
+				remainingTokens: 200,
+				warnedAt: 123,
+			};
+			writeJson(path.join(resultsDir, "run-root-pressure.json"), {
+				id: "run-root-pressure",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				cwd: root,
+				sessionFile,
+				contextPressure,
+				contextPressureCrossedThresholds: ["warning", "warning"],
+			});
+
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-root-pressure" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
+			assert.equal(target.kind, "revive");
+			assert.deepEqual(target.contextPressure, contextPressure);
+			assert.deepEqual(target.contextPressureCrossedThresholds, ["warning"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("result-only revival identifies a paused child via interrupted flag", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-result-only-paused-"));
 		try {

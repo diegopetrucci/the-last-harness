@@ -12,6 +12,7 @@ import * as path from "node:path";
 import { createMockPi, createTempDir, events, makeAgent, removeTempDir } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
+import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import {
 	ASYNC_DIR,
 	type AsyncResultPayload,
@@ -125,6 +126,75 @@ describe("async execution utilities", () => {
 			controls.map((event) => event.event.contextPressureThreshold),
 			["warning", "critical"],
 		);
+	});
+
+	it("background parallel result persistence survives result-only recovery with pressure diagnostics", async () => {
+		for (const output of ["parallel one", "parallel two"])
+			mockPi.onCall({
+				jsonl: [
+					{
+						type: "message_end",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: output }],
+							model: "mock/test-model",
+							stopReason: "stop",
+							usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+						},
+					},
+				],
+			});
+		const id = `async-parallel-pressure-recovery-${Date.now().toString(36)}`;
+		const sessionFiles = [path.join(tempDir, `${id}-0.jsonl`), path.join(tempDir, `${id}-1.jsonl`)];
+		for (const sessionFile of sessionFiles) fs.writeFileSync(sessionFile, '{"type":"session"}\n', "utf-8");
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+		executeAsyncChain(id, {
+			chain: [
+				{
+					parallel: [
+						{ agent: "reader", task: "Read" },
+						{ agent: "editor", task: "Edit" },
+					],
+				},
+			],
+			agents: [makeAgent("reader", { model: "mock/test-model" }), makeAgent("editor", { model: "mock/test-model" })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-pressure-recovery" },
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			sessionFilesByFlatIndex: sessionFiles,
+			maxSubagentDepth: 2,
+		});
+		await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload & {
+			results?: Array<{ contextPressure?: { severity?: string }; contextPressureCrossedThresholds?: string[] }>;
+		};
+		assert.deepEqual(
+			payload.results?.map((child) => child.contextPressure?.severity),
+			["warning", "warning"],
+		);
+		assert.deepEqual(
+			payload.results?.map((child) => child.contextPressureCrossedThresholds),
+			[["warning"], ["warning"]],
+		);
+		const statusPath = path.join(asyncDir, "status.json");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.deepEqual(status.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		fs.rmSync(asyncDir, { recursive: true, force: true });
+		const recovered = resolveAsyncResumeTarget({ id, index: 0 }, { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR });
+		assert.equal(recovered.kind, "revive");
+		assert.equal(recovered.contextPressure?.severity, "warning");
+		assert.deepEqual(recovered.contextPressureCrossedThresholds, ["warning"]);
 	});
 
 	it("background runs record fallback attempts and final model", async () => {

@@ -55,6 +55,7 @@ import {
 import {
 	type AcceptanceInput,
 	type ArtifactConfig,
+	type ContextPressureProjection,
 	type ContextUsageDiagnostics,
 	type Details,
 	type MaxOutputConfig,
@@ -83,6 +84,7 @@ import {
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import {
 	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
 	parseContextUsageDiagnostics,
 } from "../../shared/context-diagnostics.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
@@ -159,6 +161,7 @@ interface AsyncSingleParams {
 	modelResolution?: SubagentModelResolution;
 	/** Persisted context diagnostics used to initialize a durable continuation. */
 	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
 	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	fallbackModels?: string[];
 	modelFallbackNotice?: string;
@@ -1175,9 +1178,12 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 						...(parseContextUsageDiagnostics(params.contextUsage)
 							? { contextUsage: parseContextUsageDiagnostics(params.contextUsage) }
 							: {}),
-						// Lifecycle-aware callers omit this field for a newly created
-						// continuation. Revivals of the same persisted execution pass it
-						// through so threshold notifications remain deduplicated.
+						...(parseContextPressureProjection(params.contextPressure)
+							? { contextPressure: parseContextPressureProjection(params.contextPressure) }
+							: {}),
+						// Lifecycle-aware callers omit both pressure fields for a newly
+						// created continuation. Same-segment revivals restore the latest
+						// display projection separately from machine deduplication history.
 						...(parseContextPressureCrossedThresholds(params.contextPressureCrossedThresholds)
 							? {
 									contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(

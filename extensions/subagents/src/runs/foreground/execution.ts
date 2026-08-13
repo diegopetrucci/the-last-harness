@@ -121,6 +121,8 @@ import {
 	updateContextUsageDiagnostics,
 	detectContextPressureCrossing,
 	formatContextPressureGuidance,
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
 } from "../../shared/context-diagnostics.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
@@ -1729,9 +1731,9 @@ export async function runSync(
 	const aggregateUsage = emptyUsage();
 	const attemptNotes: string[] = [];
 	const contextPressureCrossedThresholds = new Set<ContextPressureThreshold>(
-		options.contextPressureCrossedThresholds ?? [],
+		parseContextPressureCrossedThresholds(options.contextPressureCrossedThresholds) ?? [],
 	);
-	let contextPressure: ContextPressureProjection | undefined;
+	let contextPressure = parseContextPressureProjection(options.contextPressure);
 	let totalToolCount = 0;
 	let totalDurationMs = 0;
 

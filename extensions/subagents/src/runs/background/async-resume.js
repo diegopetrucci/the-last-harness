@@ -7,7 +7,7 @@ import { deliverInterruptRequest } from "./control-channel.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
-import { parseContextPressureCrossedThresholds, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
 export const ASYNC_RESUME_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -159,6 +159,7 @@ function validateResultFile(value, resultPath) {
             const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
             const modelResolution = parseResultModelResolution(child.modelResolution, resultPath, `results[${index}].modelResolution`);
             const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+            const contextPressure = parseContextPressureProjection(child.contextPressure);
             const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
             const terminationReason = parseSubagentTerminationReason(child.terminationReason);
             const success = child.success;
@@ -186,6 +187,7 @@ function validateResultFile(value, resultPath) {
                 ...(modelIdentity ? { modelIdentity } : {}),
                 ...(modelResolution ? { modelResolution } : {}),
                 ...(contextUsage ? { contextUsage } : {}),
+                ...(contextPressure ? { contextPressure } : {}),
                 ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
                 ...(terminationReason ? { terminationReason } : {}),
                 ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
@@ -210,6 +212,9 @@ function validateResultFile(value, resultPath) {
         modelResolution: parseResultModelResolution(data.modelResolution, resultPath, "modelResolution"),
         ...(parseContextUsageDiagnostics(data.contextUsage)
             ? { contextUsage: parseContextUsageDiagnostics(data.contextUsage) }
+            : {}),
+        ...(parseContextPressureProjection(data.contextPressure)
+            ? { contextPressure: parseContextPressureProjection(data.contextPressure) }
             : {}),
         ...(parseContextPressureCrossedThresholds(data.contextPressureCrossedThresholds)
             ? {
@@ -375,6 +380,8 @@ function validateStatusForResume(status, source) {
             validateModelResolution(step.modelResolution, source, `steps[${index}].modelResolution`);
             if (step.contextUsage !== undefined && !parseContextUsageDiagnostics(step.contextUsage))
                 throw new Error(`Invalid async status '${source}': steps[${index}].contextUsage is invalid.`);
+            if (step.contextPressure !== undefined && !parseContextPressureProjection(step.contextPressure))
+                throw new Error(`Invalid async status '${source}': steps[${index}].contextPressure is invalid.`);
             if (step.contextPressureCrossedThresholds !== undefined &&
                 !parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds))
                 throw new Error(`Invalid async status '${source}': steps[${index}].contextPressureCrossedThresholds is invalid.`);
@@ -444,8 +451,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const contextUsageForStep = (index, step = statusSteps[index]) => parseContextUsageDiagnostics(step?.contextUsage) ??
         parseContextUsageDiagnostics(resultSteps[index]?.contextUsage) ??
         parseContextUsageDiagnostics(result?.contextUsage);
+    const contextPressureForStep = (index, step = statusSteps[index]) => parseContextPressureProjection(step?.contextPressure) ??
+        parseContextPressureProjection(resultSteps[index]?.contextPressure) ??
+        parseContextPressureProjection(result?.contextPressure);
     const crossedPressureThresholdsForStep = (index, step = statusSteps[index]) => parseContextPressureCrossedThresholds(step?.contextPressureCrossedThresholds) ??
-        parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds);
+        parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds) ??
+        parseContextPressureCrossedThresholds(result?.contextPressureCrossedThresholds);
     const terminationReasonForStep = (index, step = statusSteps[index]) => step?.terminationReason ?? resultSteps[index]?.terminationReason;
     if (state === "running") {
         if (requestedIndex !== undefined) {
@@ -595,6 +606,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
         ...(contextUsageForStep(index, selectedStatusStep)
             ? { contextUsage: contextUsageForStep(index, selectedStatusStep) }
+            : {}),
+        ...(contextPressureForStep(index, selectedStatusStep)
+            ? { contextPressure: contextPressureForStep(index, selectedStatusStep) }
             : {}),
         ...(crossedPressureThresholdsForStep(index, selectedStatusStep)
             ? { contextPressureCrossedThresholds: crossedPressureThresholdsForStep(index, selectedStatusStep) }

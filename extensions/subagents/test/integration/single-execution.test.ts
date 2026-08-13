@@ -27,6 +27,7 @@ import {
 } from "../support/helpers.ts";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
+import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
 interface ModelAttempt {
 	success?: boolean;
@@ -84,6 +85,16 @@ interface RunSyncResult {
 		contextWindow?: number;
 		contextPercent?: number;
 	};
+	contextPressure?: {
+		severity?: string;
+		crossedThreshold?: string;
+		contextTokens?: number;
+		contextWindow?: number;
+		contextPercent?: number;
+		remainingTokens?: number;
+		warnedAt?: number;
+	};
+	contextPressureCrossedThresholds?: string[];
 	terminationReason?: string;
 	progress: ProgressSummary;
 	controlEvents?: Array<{
@@ -185,6 +196,7 @@ interface ExecutorToolResult {
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 		timeoutMs?: number;
 		deadlineAt?: number;
+		asyncId?: string;
 	};
 }
 
@@ -402,7 +414,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(events.filter((event) => event.contextPressureSeverity === "critical").length, 1);
 	});
 
-	it("preserves remembered foreground pressure history for same-segment revival without suppressing new runs", async () => {
+	it("preserves remembered foreground pressure projection and history only for same-segment revival", async () => {
 		const runId = "foreground-pressure-revival";
 		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
 		fs.writeFileSync(sessionFile, '{"type":"session","id":"foreground-pressure-revival"}\n', "utf-8");
@@ -413,6 +425,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			foregroundRuns: new Map(),
 			foregroundControls: new Map(),
 			lastForegroundControlId: null,
+		};
+		const persistedPressure = {
+			severity: "warning",
+			crossedThreshold: "warning",
+			contextTokens: 799,
+			contextWindow: 1000,
+			contextPercent: 79.9,
+			remainingTokens: 201,
+			warnedAt: 123,
 		};
 		state.foregroundRuns.set(runId, {
 			runId,
@@ -426,6 +447,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 					status: "completed",
 					sessionFile,
 					contextUsage: { contextTokens: 799, contextWindow: 1000, peakTokens: 799 },
+					contextPressure: { ...persistedPressure, unexpected: "drop at boundary" },
 					contextPressureCrossedThresholds: ["warning"],
 				},
 			],
@@ -452,9 +474,34 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			undefined,
 			context,
 		);
-		const revivedResult = (revived.details as unknown as { results?: Array<{ controlEvents?: unknown[] }> })
-			.results?.[0];
-		assert.deepEqual(revivedResult?.controlEvents ?? [], []);
+		const revivedId = revived.details?.asyncId;
+		assert.ok(revivedId, "expected revived async id");
+		const revivedPayload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(revivedId), "utf-8")) as {
+			results?: Array<{
+				contextPressure?: Record<string, unknown>;
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		};
+		assert.deepEqual(revivedPayload.results?.[0]?.contextPressure, persistedPressure);
+		assert.deepEqual(revivedPayload.results?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const revivedStatus = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, revivedId, "status.json"), "utf-8")) as {
+			steps?: Array<{
+				contextPressure?: Record<string, unknown>;
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		};
+		assert.deepEqual(revivedStatus.steps?.[0]?.contextPressure, persistedPressure);
+		assert.deepEqual(revivedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const revivedEvents = fs
+			.readFileSync(path.join(ASYNC_DIR, revivedId, "events.jsonl"), "utf-8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } });
+		assert.equal(
+			revivedEvents.filter((event) => event.type === "subagent.control" && event.event?.reason === "context_pressure")
+				.length,
+			0,
+		);
 
 		mockPi.onCall({ jsonl: [terminalPressure] });
 		const fresh = await executor.execute(
