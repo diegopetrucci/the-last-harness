@@ -638,7 +638,25 @@ function readSubagentFrontmatterConfig(
 }
 
 /**
- * Build the per-agent Tlh.Subagent.NAME.{thinking,model} telemetry payload for all eight
+ * Join a privacy-safe model ID and a privacy-safe effort/thinking level into the combined
+ * modelEffort token used by telemetry.
+ *
+ * Both sides must already be privacy-filtered before calling this helper. The colon mirrors
+ * the separator used by upstream Pi's applyThinkingSuffix.
+ *
+ * Edge cases:
+ *   - Normal:  joinModelEffort("claude-opus-4-5", "high")    → "claude-opus-4-5:high"
+ *   - Unknown: joinModelEffort("unknown", "unknown")         → "unknown:unknown"
+ *   - Custom:  joinModelEffort("custom", "high")             → "custom:high"
+ *   - Cleared: joinModelEffort("cleared", "high")            → "cleared:high"
+ *              joinModelEffort("claude-opus-4-5", "cleared") → "claude-opus-4-5:cleared"
+ */
+function joinModelEffort(model: string, effort: string): string {
+	return `${model}:${effort}`;
+}
+
+/**
+ * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all eight
  * bundled minor agents.
  *
  * Precedence (highest first):
@@ -648,15 +666,17 @@ function readSubagentFrontmatterConfig(
  *      selectProviderAwareAgentDefaults for the active provider.
  *
  * When an agent override has disabled: true the agent will not run at all. In that case
- * both keys are reported as "disabled" — a value that does not collide with any THINKING_LEVELS
- * member and signals clearly that the agent is turned off.
+ * the modelEffort key is reported as the single token "disabled" (not "disabled:disabled") —
+ * a value that does not collide with any THINKING_LEVELS member and signals clearly that
+ * the agent is turned off.
  *
- * When an override key is explicitly set to false (model: false / thinking: false), the value
- * is reported as "cleared" — a sentinel that does not collide with any canonical thinking level
- * or public model ID pattern, and signals that the user explicitly cleared the bundled default.
- * Unlike undefined (no override), false must NOT silently fall back to the frontmatter default.
+ * When an override key is explicitly set to false (model: false / thinking: false), the affected
+ * side is reported as "cleared" — a sentinel that does not collide with any canonical thinking
+ * level or public model ID pattern, and signals that the user explicitly cleared the bundled
+ * default. Unlike undefined (no override), false must NOT silently fall back to the frontmatter
+ * default. The other side is still resolved normally: 'cleared:high', 'claude-opus-4-5:cleared'.
  *
- * Values are routed through privacy filters before being emitted. Agent names outside
+ * Values are routed through privacy filters before joining. Agent names outside
  * BUNDLED_SUBAGENT_NAMES are never emitted as keys.
  */
 function buildSubagentTelemetryPayload(
@@ -669,10 +689,9 @@ function buildSubagentTelemetryPayload(
 	for (const name of BUNDLED_SUBAGENT_NAMES) {
 		const override = effectiveOverrides[name];
 
-		// A disabled override means the agent won't run; report that clearly.
+		// A disabled override means the agent won't run; report that as a single token.
 		if (override?.disabled === true) {
-			payload[`Tlh.Subagent.${name}.thinking`] = "disabled";
-			payload[`Tlh.Subagent.${name}.model`] = "disabled";
+			payload[`Tlh.Subagent.${name}.modelEffort`] = "disabled";
 			continue;
 		}
 
@@ -688,12 +707,13 @@ function buildSubagentTelemetryPayload(
 		// pattern, making it unambiguous as a telemetry value. It is emitted directly
 		// (not routed through the privacy filter) because false is a boolean, not a
 		// user-authored string, and "cleared" is a controlled sentinel we define.
-		payload[`Tlh.Subagent.${name}.thinking`] =
+		const model = override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+		const effort =
 			override?.thinking === false
 				? "cleared"
 				: privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
-		payload[`Tlh.Subagent.${name}.model`] =
-			override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+
+		payload[`Tlh.Subagent.${name}.modelEffort`] = joinModelEffort(model, effort);
 	}
 	return payload;
 }
@@ -719,8 +739,10 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
 				payload: {
 					"Tlh.App.version": snapshot.version,
 					"Tlh.Runtime.provider": privacySafeTlhTelemetryProviderId(snapshot.providerId),
-					"Tlh.Runtime.model": privacySafeTlhTelemetryModelId(snapshot.modelId),
-					"Tlh.Runtime.thinking": privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel),
+					"Tlh.Runtime.modelEffort": joinModelEffort(
+						privacySafeTlhTelemetryModelId(snapshot.modelId),
+						privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel),
+					),
 					"Tlh.PrimaryAgent.name": privacySafeTlhTelemetryPrimaryAgentName(snapshot.primaryAgentName),
 					"Tlh.Device.osName": osMetadata.osName,
 					"Tlh.Device.osVersion": osMetadata.osVersion,

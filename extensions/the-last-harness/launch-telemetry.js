@@ -451,23 +451,24 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
             : undefined;
     return { thinking, model };
 }
+function joinModelEffort(model, effort) {
+    return `${model}:${effort}`;
+}
 function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId, availableModels) {
     const payload = {};
     for (const name of BUNDLED_SUBAGENT_NAMES) {
         const override = effectiveOverrides[name];
         if (override?.disabled === true) {
-            payload[`Tlh.Subagent.${name}.thinking`] = "disabled";
-            payload[`Tlh.Subagent.${name}.model`] = "disabled";
+            payload[`Tlh.Subagent.${name}.modelEffort`] = "disabled";
             continue;
         }
         const needFrontmatter = agentDir !== undefined && (override?.thinking === undefined || override?.model === undefined);
         const fm = needFrontmatter ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) : undefined;
-        payload[`Tlh.Subagent.${name}.thinking`] =
-            override?.thinking === false
-                ? "cleared"
-                : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
-        payload[`Tlh.Subagent.${name}.model`] =
-            override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+        const model = override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+        const effort = override?.thinking === false
+            ? "cleared"
+            : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
+        payload[`Tlh.Subagent.${name}.modelEffort`] = joinModelEffort(model, effort);
     }
     return payload;
 }
@@ -486,8 +487,7 @@ export async function sendTlhLaunchTelemetry(snapshot) {
             payload: {
                 "Tlh.App.version": snapshot.version,
                 "Tlh.Runtime.provider": privacySafeTlhTelemetryProviderId(snapshot.providerId),
-                "Tlh.Runtime.model": privacySafeTlhTelemetryModelId(snapshot.modelId),
-                "Tlh.Runtime.thinking": privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel),
+                "Tlh.Runtime.modelEffort": joinModelEffort(privacySafeTlhTelemetryModelId(snapshot.modelId), privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel)),
                 "Tlh.PrimaryAgent.name": privacySafeTlhTelemetryPrimaryAgentName(snapshot.primaryAgentName),
                 "Tlh.Device.osName": osMetadata.osName,
                 "Tlh.Device.osVersion": osMetadata.osVersion,
