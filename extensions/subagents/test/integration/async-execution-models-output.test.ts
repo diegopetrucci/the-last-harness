@@ -1774,4 +1774,51 @@ describe("async execution utilities", () => {
 		);
 		assert.deepEqual(status.steps[0].recentOutput, ["file-a", "file-b", "Done streaming"]);
 	});
+
+	it("keeps non-object child JSON in background output and preserves unknown object events", async () => {
+		const unknownEvent = {
+			type: "future_event",
+			extraField: { nested: true },
+			anotherField: ["preserve", 7],
+		};
+		mockPi.onCall({
+			jsonl: [null, [1, "two"], JSON.stringify("primitive"), 42, unknownEvent],
+		});
+
+		const id = `async-json-guards-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Handle child JSON protocol lines",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.output, ["null", '[1,"two"]', '"primitive"', "42"].join("\n"));
+
+		const eventRecords = fs
+			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+		const rawLines = eventRecords.filter((event) => event.type === "subagent.child.stdout").map((event) => event.line);
+		assert.deepEqual(rawLines, ["null", '[1,"two"]', '"primitive"', "42"]);
+		const preservedEvent = eventRecords.find((event) => event.type === unknownEvent.type);
+		assert.deepEqual(preservedEvent?.extraField, unknownEvent.extraField);
+		assert.deepEqual(preservedEvent?.anotherField, unknownEvent.anotherField);
+	});
 });

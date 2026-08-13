@@ -899,14 +899,19 @@ async function runSingleAttempt(
 		const processLine = (line: string) => {
 			if (!line.trim()) return;
 			jsonlWriter.writeLine(line);
-			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown };
+			let parsed: unknown;
 			try {
-				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown };
+				parsed = JSON.parse(line);
 			} catch {
 				shared.transcriptWriter?.writeStdoutLine(line);
 				// Non-JSON stdout lines are expected; only structured events are parsed.
 				return;
 			}
+			if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+				shared.transcriptWriter?.writeStdoutLine(line);
+				return;
+			}
+			const evt = parsed as { type?: string; message?: Message; toolName?: string; args?: unknown };
 			shared.transcriptWriter?.writeChildEvent(evt);
 
 			const now = Date.now();
