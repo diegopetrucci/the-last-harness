@@ -1,2 +1,5 @@
 check-package-contents.mjs
 run-subagents-tests.mjs
+run-lane.mjs
+run-ci-test-shard.mjs
+run-ci-validation.mjs

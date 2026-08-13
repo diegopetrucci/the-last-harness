@@ -68,7 +68,13 @@ if (missingDocs.length > 0) {
 }
 
 const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
-const forbiddenExactPaths = ["scripts/check-package-contents.mjs", "scripts/run-subagents-tests.mjs"];
+const forbiddenExactPaths = [
+	"scripts/check-package-contents.mjs",
+	"scripts/run-subagents-tests.mjs",
+	"scripts/run-lane.mjs",
+	"scripts/run-ci-test-shard.mjs",
+	"scripts/run-ci-validation.mjs",
+];
 const forbiddenFiles = [...files].filter(
 	(file) => forbiddenExactPaths.includes(file) || forbiddenPrefixes.some((prefix) => file.startsWith(prefix)),
 );
