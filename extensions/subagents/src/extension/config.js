@@ -13,16 +13,6 @@ function readConfigForUpdate(configPath = getConfigPath()) {
     }
     return parsed;
 }
-export function saveConfig(config, configPath = getConfigPath()) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, `${JSON.stringify(config, null, "\t")}\n`, "utf-8");
-}
-export function updateConfig(updater) {
-    const configPath = getConfigPath();
-    const next = updater(readConfigForUpdate(configPath));
-    saveConfig(next, configPath);
-    return next;
-}
 export function loadConfig() {
     const configPath = getConfigPath();
     try {

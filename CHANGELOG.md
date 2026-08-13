@@ -8,6 +8,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Native model selection from `/model` without an exact argument or `Ctrl+L` now offers the ordered scope choices `This session only — default` and `All sessions`; exact-name and direct/programmatic model applications retain persistent upstream behavior.
 
+### Changed
+
+- Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
+
 ## [0.37.0] - 2026-08-11
 
 ### Model defaults

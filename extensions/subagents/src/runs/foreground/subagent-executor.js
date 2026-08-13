@@ -13,7 +13,6 @@ import { runSync } from "./execution.js";
 import { resolveSubagentModelOverride } from "../shared/model-fallback.js";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.js";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.js";
-import { recordRun } from "../shared/run-history.js";
 import { buildChainInstructions, writeInitialProgressFile, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, } from "../../shared/settings.js";
 import { normalizeSkillInput } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
@@ -1937,7 +1936,7 @@ async function resumeAsyncRun(input) {
 }
 const MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS = 600;
 function boundedNativeForegroundSaveError(error) {
-    const marker = "… [save error truncated; inspect retained details for full diagnostic]";
+    const marker = "… [save error truncated; full diagnostic is unavailable]";
     if (error.length <= MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS)
         return error;
     return `${error.slice(0, MAX_NATIVE_FOREGROUND_SAVE_ERROR_CHARS - marker.length)}${marker}`;
@@ -1996,7 +1995,16 @@ function resultNoticeForEarlierSuccessfulChainStep(result) {
     }
     if (result.modelFallbackNotice)
         lines.push(`Notice: ${result.modelFallbackNotice}`);
-    lines.push("Earlier successful chain step output omitted here; inspect retained details for the full step output.");
+    const hasArtifact = Boolean(result.artifactPaths?.outputPath);
+    const hasSession = Boolean(result.sessionFile);
+    const stepOutputNote = hasArtifact && hasSession
+        ? "Earlier successful chain step output omitted here; see the artifact and session paths below for reference."
+        : hasArtifact
+            ? "Earlier successful chain step output omitted here; see the artifact path below for reference."
+            : hasSession
+                ? "Earlier successful chain step output omitted here; see the session path below for reference."
+                : "Earlier successful chain step output omitted here; full step output is unavailable.";
+    lines.push(stepOutputNote);
     if (result.outputMode === "file-only" && result.savedOutputPath && result.outputReference) {
         lines.push(getSingleResultOutput(result) || result.outputReference.message);
     }
@@ -2883,10 +2891,6 @@ async function runParallelPath(data, deps) {
         ...(tkTicket ? { tkTicket } : {}),
         ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
     });
-    for (let i = 0; i < results.length; i++) {
-        const run = results[i];
-        recordRun(run.agent, taskTexts[i], run.exitCode, run.progressSummary?.durationMs ?? 0, run.error);
-    }
     for (const result of results) {
         if (result.progress)
             allProgress.push(result.progress);
@@ -3034,7 +3038,6 @@ async function runSinglePath(data, deps) {
     if (shouldForkAgent(contextPolicy, params.agent)) {
         task = wrapForkTask(task);
     }
-    const cleanTask = task;
     const outputPath = resolveSingleOutputPath(effectiveOutput, ctx.cwd, effectiveCwd, resolveSingleRunOutputBaseDir(artifactsDir, runId));
     const validationError = validateFileOnlyOutputMode(effectiveOutputMode, outputPath, `Single run (${params.agent})`);
     if (validationError) {
@@ -3171,7 +3174,6 @@ async function runSinglePath(data, deps) {
         foregroundControl.toolCount = r.progress?.toolCount;
         foregroundControl.updatedAt = Date.now();
     }
-    recordRun(params.agent, cleanTask, r.exitCode, r.progressSummary?.durationMs ?? 0, r.error);
     if (r.progress)
         allProgress.push(r.progress);
     if (r.artifactPaths)

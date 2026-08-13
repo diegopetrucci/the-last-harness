@@ -497,7 +497,7 @@ describe("subagent extension child mode", () => {
 			const asyncSingle = registeredTool.renderCall({ agent: "worker", async: true }, theme).text;
 			const asyncParallel = registeredTool.renderCall({ tasks: [{ agent: "worker" }, { agent: "reviewer", count: 2 }], async: true }, theme).text;
 			if (!asyncSingle.includes("[async]")) throw new Error("expected async single badge, got " + asyncSingle);
-			if (!asyncParallel.includes("parallel (3) [async]")) throw new Error("expected async parallel badge, got " + asyncParallel);
+			if (!asyncParallel.includes("[async]") || asyncParallel.includes("parallel")) throw new Error("expected async parallel badge without parallel count, got " + asyncParallel);
 		`;
 
 		execFileSync(

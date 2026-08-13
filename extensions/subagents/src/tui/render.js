@@ -7,9 +7,9 @@ import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatT
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.js";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.js";
 import { extractSingleOutputInstructionTarget } from "../runs/shared/single-output.js";
-import { formatNestedAggregate } from "../runs/shared/nested-render.js";
+import { countNestedRuns } from "../runs/shared/nested-render.js";
 import { normalizeTkTicketMetadata } from "../runs/shared/tk-ticket.js";
-import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome, } from "../shared/status-format.js";
+import { aggregateStepStatus, formatActivityLabel, formatParallelOutcome } from "../shared/status-format.js";
 import { isProtectedPausedLifecycle } from "../runs/shared/lifecycle-privacy.js";
 import { whimsicalThinkingPhrase } from "./whimsical-phrases.js";
 function liveDetailKeyText() {
@@ -447,7 +447,7 @@ function widgetStepStatus(status, theme, interruptRequestedAt) {
     if (status === "running" && interruptRequestedAt !== undefined)
         return theme.fg("accent", "pausing");
     if (status === "running")
-        return theme.fg("accent", "running");
+        return "";
     if (status === "complete" || status === "completed")
         return theme.fg("success", "complete");
     if (status === "failed")
@@ -527,7 +527,7 @@ function widgetChainDetails(job, theme, expanded = false, width = getTermWidth()
         const steps = job.steps.slice(span.start, span.start + span.count);
         if (span.isParallel) {
             const status = aggregateStepStatus(steps);
-            lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count))}`);
+            lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count, { showRunning: false }))}`);
             continue;
         }
         const step = steps[0];
@@ -563,7 +563,9 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
             !healthWarning
             ? buildLiveStatusLine(step, job.updatedAt)
             : undefined;
-        const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme, step.interruptRequestedAt)}${modelDisplay}`)}`;
+        const stepStatus = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+        const statusSuffix = stepStatus ? ` ${theme.fg("dim", "·")} ${stepStatus}` : "";
+        const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent}${statusSuffix}${modelDisplay}`)}`;
         if (!expanded && healthWarning) {
             lines.push(...fitInlineActivity(prefix, healthWarning, theme, Math.max(1, width - 6)));
         }
@@ -705,11 +707,8 @@ function buildMultiProgressLabel(details, hasRunning) {
                 (result.interrupted || result.detached ? "detached" : result.exitCode === 0 ? "completed" : "failed");
             statuses[index] = status;
         }
-        const running = statuses.filter((status) => status === "running").length;
         const done = statuses.filter((status) => status === "completed").length;
-        const headerLabel = hasRunning
-            ? `${formatAgentRunningLabel(running)} · ${done}/${totalCount} done`
-            : `${done}/${totalCount} done`;
+        const headerLabel = `${done}/${totalCount} done`;
         return {
             headerLabel,
             itemTitle,
@@ -727,15 +726,10 @@ function buildMultiProgressLabel(details, hasRunning) {
         const groupSize = span?.count ?? 1;
         const groupStart = span?.start ?? 0;
         const groupEnd = groupStart + groupSize;
-        let running = 0;
         let done = 0;
         for (let index = groupStart; index < groupEnd; index++) {
             const progressEntry = details.progress?.find((progress) => progress.index === index);
             const resultEntry = details.results.find((result) => result.progress?.index === index);
-            if (progressEntry?.status === "running") {
-                running++;
-                continue;
-            }
             if (progressEntry?.status === "completed") {
                 done++;
                 continue;
@@ -744,9 +738,7 @@ function buildMultiProgressLabel(details, hasRunning) {
                 done++;
         }
         const totalSteps = details.totalSteps ?? 1;
-        const headerLabel = hasRunning
-            ? `step ${currentStepIndex + 1}/${totalSteps} · parallel group: ${formatAgentRunningLabel(running)} · ${done}/${groupSize} done`
-            : `step ${currentStepIndex + 1}/${totalSteps} · parallel group: ${done}/${groupSize} done`;
+        const headerLabel = `step ${currentStepIndex + 1}/${totalSteps} · parallel group: ${done}/${groupSize} done`;
         return {
             headerLabel,
             itemTitle,
@@ -830,10 +822,8 @@ function widgetStats(job, theme, includeStepProgress = true, expanded = false) {
         const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
         const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
         if (job.mode === "parallel") {
-            if (job.status === "running" && running > 0)
-                parts.push(job.interruptRequestedAt !== undefined
-                    ? `${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`
-                    : formatAgentRunningLabel(running));
+            if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
+                parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
             if (stepsTotal > 0)
                 parts.push(`${done}/${stepsTotal} done`);
         }
@@ -844,18 +834,16 @@ function widgetStats(job, theme, includeStepProgress = true, expanded = false) {
             const logicalStep = activeGroup?.stepIndex ?? job.currentStep ?? 0;
             const total = job.chainStepCount ?? stepsTotal;
             const groupParts = [`${done}/${stepsTotal} done`];
-            if (job.status === "running" && running > 0)
-                groupParts.unshift(formatAgentRunningLabel(running));
+            if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
+                groupParts.unshift(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
             parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupParts.join(" · ")}`);
         }
     }
     else if (includeStepProgress && job.mode === "parallel") {
         const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
         const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
-        if (job.status === "running" && running > 0)
-            parts.push(job.interruptRequestedAt !== undefined
-                ? `${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`
-                : formatAgentRunningLabel(running));
+        if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
+            parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
         if (stepsTotal > 0)
             parts.push(`${done}/${stepsTotal} done`);
     }
@@ -928,6 +916,19 @@ function nestedRunName(run) {
         return formatWidgetAgents(run.agents);
     return run.id;
 }
+function formatNestedWidgetAggregate(children, theme) {
+    const counts = countNestedRuns(children);
+    if (counts.total === 0)
+        return undefined;
+    const liveGlyph = counts.running > 0 ? `${nestedStatusGlyph("running", theme, runningSeed(counts.running, counts.total))} ` : "";
+    const parts = [
+        counts.paused > 0 ? `${counts.paused} paused` : "",
+        counts.failed > 0 ? `${counts.failed} failed` : "",
+        counts.complete > 0 ? `${counts.complete} complete` : "",
+        counts.queued > 0 ? `${counts.queued} queued` : "",
+    ].filter(Boolean);
+    return `${liveGlyph}+${counts.total} nested run${counts.total === 1 ? "" : "s"}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+}
 function nestedStatusGlyph(state, theme, seed) {
     if (state === "running")
         return theme.fg("accent", runningGlyph(seed));
@@ -984,7 +985,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
     if (!children?.length || lineBudget <= 0)
         return [];
     if (!expanded) {
-        const aggregate = formatNestedAggregate(children);
+        const aggregate = formatNestedWidgetAggregate(children, theme);
         return aggregate ? [theme.fg("dim", `↳ ${aggregate}`)] : [];
     }
     const lines = [];
@@ -993,7 +994,7 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
         if (!items?.length || lines.length >= lineBudget)
             return;
         if (depth > maxDepth) {
-            const aggregate = formatNestedAggregate(items);
+            const aggregate = formatNestedWidgetAggregate(items, theme);
             if (aggregate && lines.length < lineBudget)
                 lines.push(theme.fg("dim", `${prefix}↳ ${aggregate}`));
             return;
@@ -1001,19 +1002,17 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
         for (let index = 0; index < items.length; index++) {
             const child = items[index];
             if (lines.length >= lineBudget) {
-                const aggregate = formatNestedAggregate(items.slice(index));
+                const aggregate = formatNestedWidgetAggregate(items.slice(index), theme);
                 if (aggregate)
                     lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
                 return;
             }
             const activity = nestedActivity(child, child.state, snapshotNow ?? child.lastUpdate, privacySafe, expanded);
             const error = child.error ? ` · ${privacySafe ? "lifecycle status requires attention" : child.error}` : "";
-            lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)} · ${child.state} · ${activity}${error}`));
+            const status = child.state === "running" ? "" : ` · ${child.state}`;
+            lines.push(theme.fg("dim", `${prefix}↳ ${nestedStatusGlyph(child.state, theme, nestedRunSeed(child))} ${nestedRunName(child)}${status} · ${activity}${error}`));
             if (depth === maxDepth) {
-                const aggregate = formatNestedAggregate([
-                    ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
-                    ...(child.children ?? []),
-                ]);
+                const aggregate = formatNestedWidgetAggregate([...(child.steps?.flatMap((step) => step.children ?? []) ?? []), ...(child.children ?? [])], theme);
                 if (aggregate && lines.length < lineBudget)
                     lines.push(theme.fg("dim", `${prefix}  ↳ ${aggregate}`));
                 continue;
@@ -1021,7 +1020,8 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
             for (const step of child.steps ?? []) {
                 if (lines.length >= lineBudget)
                     return;
-                lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.agent} · ${step.status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded)}`));
+                const status = step.status === "running" ? "" : ` · ${step.status}`;
+                lines.push(theme.fg("dim", `${prefix}  ↳ ${nestedStatusGlyph(step.status, theme)} ${step.agent}${status} · ${nestedActivity(step, step.status, snapshotNow ?? child.lastUpdate, privacySafe, expanded)}`));
                 append(step.children, depth + 1, `${prefix}    `);
             }
             append(child.children, depth + 1, `${prefix}  `);
@@ -1049,8 +1049,9 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     const stats = widgetStepStats(theme, step, durationFallbackMs, expanded);
     const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
     const itemLabel = itemTitle ? `${itemTitle} ${index}/${total}: ` : "";
+    const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
     const lines = [
-        `  ${widgetStepGlyph(displayStatus, theme, widgetStepRunningSeed(step, index - 1))} ${itemLabel}${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+        `  ${widgetStepGlyph(displayStatus, theme, widgetStepRunningSeed(step, index - 1))} ${itemLabel}${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
     const activityLines = displayStatus === step.status ? widgetStepActivityLines(step, width, expanded, job.updatedAt) : [];
     for (const [activityIndex, activity] of activityLines.entries()) {
@@ -1061,7 +1062,7 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     }
     if (displayStatus === "running") {
         if (!expanded)
-            lines.push(`    ${theme.fg("accent", liveDetailHintText())}`);
+            lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
         if (expanded) {
             const output = widgetOutputPath(job, step);
             if (output)
@@ -1115,8 +1116,10 @@ function singleWidgetAgentDetails(job, theme, expanded, width) {
     }
     const agent = job.agents?.[0] ?? widgetJobName(job);
     const stats = widgetSummaryStats(job, theme, expanded);
+    const status = job.status === "running" ? "" : theme.fg("dim", job.status);
+    const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
     return [
-        `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)} ${theme.fg("dim", "·")} ${theme.fg("dim", job.status)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+        `${widgetStatusGlyph(job, theme)} ${themeBold(theme, agent)}${statusSuffix}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
         ...widgetTkTicketLines(job, theme),
         ...widgetActivityDetailLines(job, theme, expanded),
         ...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt)).map((line) => `  ${line}`),
@@ -1126,17 +1129,19 @@ function parallelWidgetAggregateStats(job, theme, expanded = false) {
     const stats = widgetSummaryStats(job, theme, expanded);
     if (stats)
         return stats;
+    if (job.status === "running")
+        return "";
     return job.status === "complete" ? "done" : job.status;
 }
 function singleWidgetHeaderLines(job, theme, expanded) {
     if (job.mode === "single") {
-        return [`${theme.fg("toolTitle", themeBold(theme, "async subagent"))} ${theme.fg("dim", "· background")}`];
+        return [`${theme.fg("toolTitle", themeBold(theme, "async subagent"))}`];
     }
     if (job.mode === "parallel") {
         const count = job.stepsTotal ?? job.agents?.length ?? job.steps?.length ?? 0;
         const stats = parallelWidgetAggregateStats(job, theme, expanded);
         return [
-            `${theme.fg("toolTitle", themeBold(theme, `async subagents (${count})`))} ${theme.fg("dim", "· background")}`,
+            `${theme.fg("toolTitle", themeBold(theme, `async subagents (${count})`))}`,
             `${widgetStatusGlyph(job, theme)}${stats ? ` ${stats}` : ""}`,
         ];
     }
@@ -1145,7 +1150,7 @@ function singleWidgetHeaderLines(job, theme, expanded) {
     const mode = widgetJobName(job);
     const title = `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
     return [
-        `${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
+        `${theme.fg("toolTitle", themeBold(theme, title))}`,
         `${widgetStatusGlyph(job, theme)} ${themeBold(theme, mode)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
 }
@@ -1169,12 +1174,13 @@ function compactSingleWidgetLines(job, theme, width) {
     ];
     for (const [index, step] of job.steps.entries()) {
         const status = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+        const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
         const activityLines = widgetStepActivityLines(step, contentWidth, false, job.updatedAt);
         const activity = activityLines.join(" · ");
         const stepStats = widgetStepStats(theme, step);
         const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
         const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-        const rowPrefix = `  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
+        const rowPrefix = `  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
         const healthWarning = step.status === "running" &&
             step.interruptRequestedAt === undefined &&
             !step.currentTool &&
@@ -1194,7 +1200,7 @@ function compactSingleWidgetLines(job, theme, width) {
             lines.push(`    ${nestedLine}`);
     }
     if (job.steps.some((step) => step.status === "running"))
-        lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
     return wrapDisplayLines(lines, contentWidth);
 }
 const RESERVED_NON_WIDGET_ROWS = 19;
@@ -1231,10 +1237,6 @@ function chooseWidgetSummaryVariant(variants, width) {
     return variants.find((variant) => visibleWidth(variant) <= contentWidth) ?? variants[variants.length - 1];
 }
 function compactWidgetCountSummary(counts, jobs) {
-    if (counts.running.length > 0 && counts.queued.length > 0)
-        return `${counts.running.length}r ${counts.queued.length}q`;
-    if (counts.running.length > 0)
-        return `${counts.running.length} running`;
     if (counts.queued.length > 0)
         return `${counts.queued.length} queued`;
     if (counts.failed.length > 0)
@@ -1243,7 +1245,7 @@ function compactWidgetCountSummary(counts, jobs) {
         return `${counts.paused.length} paused`;
     if (counts.complete.length > 0)
         return `${counts.complete.length} done`;
-    return `${jobs.length} total`;
+    return counts.running.length > 0 ? "" : `${jobs.length} total`;
 }
 function buildSingleLineWidgetLines(jobs, theme, width) {
     const contentWidth = Math.max(1, width - 2);
@@ -1253,8 +1255,6 @@ function buildSingleLineWidgetLines(jobs, theme, width) {
     const coloredGlyph = theme.fg(hasActive ? "accent" : "dim", glyph);
     const coloredTitle = theme.fg(hasActive ? "accent" : "dim", "subagents");
     const parts = [];
-    if (counts.running.length > 0)
-        parts.push(`${counts.running.length}/${jobs.length} running`);
     if (counts.queued.length > 0)
         parts.push(`${counts.queued.length} queued`);
     if (counts.failed.length > 0)
@@ -1263,9 +1263,14 @@ function buildSingleLineWidgetLines(jobs, theme, width) {
         parts.push(`${counts.paused.length} paused`);
     if (!hasActive && counts.complete.length > 0)
         parts.push(`${counts.complete.length}/${jobs.length} done`);
-    const detailed = `${coloredGlyph} ${coloredTitle} (${parts.join(", ") || `${jobs.length} total`})`;
-    const withoutParenthetical = `${coloredGlyph} ${theme.fg(hasActive ? "accent" : "dim", parts.join(", ") || `${jobs.length} total`)}`;
-    const compact = `${coloredGlyph} ${theme.fg(hasActive ? "accent" : "dim", compactWidgetCountSummary(counts, jobs))}`;
+    const summary = parts.join(", ");
+    const fallback = hasActive ? "" : `${jobs.length} total`;
+    const detailed = `${coloredGlyph} ${coloredTitle}${summary ? ` (${summary})` : fallback ? ` (${fallback})` : ""}`;
+    const withoutParenthetical = summary || fallback
+        ? `${coloredGlyph} ${theme.fg(hasActive ? "accent" : "dim", summary || fallback)}`
+        : coloredGlyph;
+    const compactSummary = compactWidgetCountSummary(counts, jobs);
+    const compact = `${coloredGlyph}${compactSummary ? ` ${theme.fg(hasActive ? "accent" : "dim", compactSummary)}` : ""}`;
     const titleOnly = `${coloredGlyph} ${coloredTitle}`;
     return [chooseWidgetSummaryVariant([detailed, withoutParenthetical, compact, titleOnly, coloredGlyph], contentWidth)];
 }
@@ -1331,8 +1336,6 @@ function progressiveHeaderLine(jobs, theme, width) {
     const coloredGlyph = theme.fg(hasActive ? "accent" : "dim", glyph);
     const coloredTitle = theme.fg(hasActive ? "accent" : "dim", "Async agents");
     const parts = [];
-    if (counts.running.length > 0)
-        parts.push(formatAgentRunningLabel(counts.running.length));
     if (counts.queued.length > 0)
         parts.push(`${counts.queued.length} queued`);
     if (!hasActive) {
@@ -1343,25 +1346,29 @@ function progressiveHeaderLine(jobs, theme, width) {
         if (counts.complete.length > 0)
             parts.push(`${counts.complete.length}/${jobs.length} done`);
     }
-    const coloredParts = theme.fg("dim", parts.join(", ") || `${jobs.length} total`);
-    const compact = theme.fg(hasActive ? "accent" : "dim", compactWidgetCountSummary(counts, jobs));
+    const summary = parts.join(", ");
+    const coloredParts = summary ? theme.fg("dim", summary) : "";
+    const compactSummary = compactWidgetCountSummary(counts, jobs);
+    const compact = compactSummary ? theme.fg(hasActive ? "accent" : "dim", compactSummary) : "";
     const contentWidth = Math.max(1, width - 2);
-    const detailed = `${coloredGlyph} ${coloredTitle} ${theme.fg("dim", "·")} ${coloredParts}`;
-    const withoutTitle = `${coloredGlyph} ${coloredParts}`;
+    const detailed = coloredParts
+        ? `${coloredGlyph} ${coloredTitle} ${theme.fg("dim", "·")} ${coloredParts}`
+        : `${coloredGlyph} ${coloredTitle}`;
+    const withoutTitle = coloredParts ? `${coloredGlyph} ${coloredParts}` : `${coloredGlyph} ${coloredTitle}`;
     const titleOnly = `${coloredGlyph} ${coloredTitle}`;
     return [
-        chooseWidgetSummaryVariant([detailed, withoutTitle, `${coloredGlyph} ${compact}`, titleOnly, coloredGlyph], contentWidth),
+        chooseWidgetSummaryVariant([detailed, withoutTitle, compact ? `${coloredGlyph} ${compact}` : titleOnly, titleOnly, coloredGlyph], contentWidth),
     ];
 }
 function progressiveJobLine(job, theme, width) {
     const contentWidth = Math.max(1, width - 2);
     const stats = widgetSummaryStats(job, theme);
     const activity = widgetActivity(job);
-    const status = job.status === "complete" ? "done" : job.status;
+    const status = job.status === "running" ? "" : job.status === "complete" ? "done" : job.status;
     const ticket = widgetTkTicketText(job);
     const prefixParts = [
         themeBold(theme, widgetJobName(job)),
-        theme.fg("dim", status),
+        status ? theme.fg("dim", status) : "",
         stats,
         ticket ? theme.fg("dim", ticket) : "",
     ].filter(Boolean);
@@ -1387,8 +1394,6 @@ function progressiveHiddenLine(hiddenJobs, theme, width) {
     const contentWidth = Math.max(1, width - 2);
     const counts = widgetHeaderCounts(hiddenJobs);
     const parts = [];
-    if (counts.running.length > 0)
-        parts.push(`${counts.running.length} running`);
     if (counts.queued.length > 0)
         parts.push(`${counts.queued.length} queued`);
     const finished = counts.complete.length + counts.failed.length + counts.paused.length;
@@ -1526,7 +1531,7 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
     const lines = [];
     const hasActive = running.length > 0 || queued.length > 0;
     const headerGlyph = running.length > 0 ? runningGlyph(widgetJobsRunningSeed(running)) : hasActive ? "●" : "○";
-    lines.push(...wrapDisplayLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "· background")}`, contentWidth));
+    lines.push(...wrapDisplayLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")}`, contentWidth));
     const items = [];
     let hiddenRunning = 0;
     let hiddenFinished = 0;
@@ -1569,13 +1574,11 @@ export function buildWidgetLines(jobs, theme, width = getTermWidth(), expanded =
     const hiddenTotal = hiddenRunning + hiddenFinished + hiddenQueued;
     if (hiddenTotal > 0) {
         const parts = [];
-        if (hiddenRunning > 0)
-            parts.push(`${hiddenRunning} running`);
         if (hiddenQueued > 0)
             parts.push(`${hiddenQueued} queued`);
         if (hiddenFinished > 0)
             parts.push(`${hiddenFinished} finished`);
-        items.push([theme.fg("dim", `+${hiddenTotal} more (${parts.join(", ")})`)]);
+        items.push([theme.fg("dim", `+${hiddenTotal} more${parts.length ? ` (${parts.join(", ")})` : ""}`)]);
     }
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -1615,7 +1618,7 @@ function renderSingleCompact(d, r, theme, frame) {
         for (const [activityIndex, activity] of compactProgressActivityLines(r.progress, width).entries()) {
             lines.push(theme.fg("dim", activityIndex === 0 ? `  ⎿  ${activity}` : `     ${activity}`));
         }
-        lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
+        lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
         return collapsedForegroundComponent(lines, theme);
     }
     const preview = compactOutputPreview(output);
@@ -1688,7 +1691,8 @@ function renderMultiCompact(d, theme, frame) {
         if (entry.kind === "placeholder") {
             const glyph = widgetStepGlyph(entry.status, theme);
             const statusLabel = widgetStepStatus(entry.status, theme);
-            lines.push(`  ${glyph} ${entry.stepLabel}: ${themeBold(theme, entry.agentName)} ${theme.fg("dim", "·")} ${statusLabel}`);
+            const statusSuffix = statusLabel ? ` ${theme.fg("dim", "·")} ${statusLabel}` : "";
+            lines.push(`  ${glyph} ${entry.stepLabel}: ${themeBold(theme, entry.agentName)}${statusSuffix}`);
             if (entry.error)
                 lines.push(theme.fg("error", `    ⎿  Error: ${entry.error}`));
             continue;
@@ -1723,7 +1727,7 @@ function renderMultiCompact(d, theme, frame) {
             for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width).entries()) {
                 lines.push(theme.fg("dim", activityIndex === 0 ? `    ⎿  ${activity}` : `       ${activity}`));
             }
-            lines.push(theme.fg("accent", `    ${liveDetailHintText()}`));
+            lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
         }
         else if (!rPending &&
             (r.exitCode !== 0 || r.interrupted || r.detached || hasEmptyTextOutputWithoutOutputTarget(r.task, output))) {
@@ -1754,7 +1758,7 @@ export function renderSubagentResult(result, options, theme, frame) {
             const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
             const c = new Container();
             addWrappedText(c, `${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width);
-            addWrappedText(c, theme.fg("accent", `  Press ${liveDetailKeyText()} for full output`), width);
+            addWrappedText(c, theme.fg("dim", `  Press ${liveDetailKeyText()} for full output`), width);
             return c;
         }
         const c = new Container();
@@ -1769,8 +1773,10 @@ export function renderSubagentResult(result, options, theme, frame) {
         if (!expanded)
             return renderSingleCompact(d, r, theme, frame);
         const isRunning = r.progress?.status === "running";
+        const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+        const output = r.truncation?.text || getSingleResultOutput(r);
         const icon = isRunning
-            ? theme.fg("warning", "running")
+            ? resultGlyph(r, output, theme, true, progressRunningSeed(r.progress ?? r.progressSummary), frame)
             : r.pause?.kind === "awaiting_supervisor"
                 ? theme.fg("warning", "paused")
                 : r.detached
@@ -1778,8 +1784,6 @@ export function renderSubagentResult(result, options, theme, frame) {
                     : r.exitCode === 0
                         ? theme.fg("success", "ok")
                         : theme.fg("error", "failed");
-        const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
-        const output = r.truncation?.text || getSingleResultOutput(r);
         const progressInfo = isRunning && r.progress
             ? ` | ${r.progress.toolCount} tools, ${formatTokens(r.progress.tokens)} tok, ${formatDuration(r.progress.durationMs)}`
             : r.progressSummary
@@ -1809,7 +1813,7 @@ export function renderSubagentResult(result, options, theme, frame) {
             if (liveStatusLine) {
                 c.addChild(new Text(theme.fg("accent", liveStatusLine), 0, 0));
             }
-            c.addChild(new Text(theme.fg("accent", liveDetailHintText()), 0, 0));
+            c.addChild(new Text(theme.fg("dim", liveDetailHintText()), 0, 0));
             if (r.artifactPaths) {
                 c.addChild(new Text(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`), 0, 0));
             }
@@ -1875,7 +1879,7 @@ export function renderSubagentResult(result, options, theme, frame) {
     const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed"]);
     const hasWorkflowPause = workflowGraphHasStatus(d, ["paused", "detached"]);
     const icon = hasRunning
-        ? theme.fg("warning", "running")
+        ? theme.fg("accent", runningGlyph(frame))
         : hasEmptyWithoutTarget
             ? theme.fg("warning", "warning")
             : hasWorkflowFailure
@@ -1930,9 +1934,12 @@ export function renderSubagentResult(result, options, theme, frame) {
     c.addChild(new Spacer(1));
     for (const entry of renderEntries) {
         if (entry.kind === "placeholder") {
-            const statusLabel = widgetStepStatus(entry.status, theme);
-            c.addChild(new Text(`  ${statusLabel} ${entry.stepLabel}: ${theme.bold(entry.agentName)}`, 0, 0));
-            c.addChild(new Text(theme.fg(entry.status === "failed" ? "error" : "dim", `    status: ${entry.status}`), 0, 0));
+            const status = entry.status;
+            const statusLabel = widgetStepStatus(status, theme);
+            const statusPrefix = statusLabel || widgetStepGlyph(status, theme);
+            c.addChild(new Text(`  ${statusPrefix} ${entry.stepLabel}: ${theme.bold(entry.agentName)}`, 0, 0));
+            if (status !== "running")
+                c.addChild(new Text(theme.fg(status === "failed" ? "error" : "dim", `    status: ${status}`), 0, 0));
             if (entry.error)
                 c.addChild(new Text(theme.fg("error", `    error: ${entry.error}`), 0, 0));
             c.addChild(new Spacer(1));
@@ -1956,7 +1963,7 @@ export function renderSubagentResult(result, options, theme, frame) {
         const stepNumber = typeof liveProgress?.index === "number" ? liveProgress.index + 1 : i + 1;
         const resultOutput = getSingleResultOutput(r);
         const statusIcon = rRunning
-            ? theme.fg("warning", "running")
+            ? resultGlyph(r, resultOutput, theme, true, progressRunningSeed(summaryProgress), frame)
             : r.exitCode !== 0
                 ? theme.fg("error", "failed")
                 : hasEmptyTextOutputWithoutOutputTarget(r.task, resultOutput)
@@ -2002,7 +2009,7 @@ export function renderSubagentResult(result, options, theme, frame) {
             if (liveStatusLine) {
                 c.addChild(new Text(theme.fg("accent", `    ${liveStatusLine}`), 0, 0));
             }
-            c.addChild(new Text(theme.fg("accent", `    ${liveDetailHintText()}`), 0, 0));
+            c.addChild(new Text(theme.fg("dim", `    ${liveDetailHintText()}`), 0, 0));
             if (r.artifactPaths) {
                 c.addChild(new Text(theme.fg("dim", `    artifacts: ${shortenPath(r.artifactPaths.outputPath)}`), 0, 0));
             }

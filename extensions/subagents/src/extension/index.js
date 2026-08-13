@@ -425,14 +425,6 @@ export default function registerSubagentExtension(pi) {
         getContext: () => state.lastUiContext,
         execute: (id, params, signal, onUpdate, ctx) => executeSubagent(id, params, signal, onUpdate, ctx),
     });
-    function effectiveParallelTaskCount(tasks) {
-        if (!tasks || tasks.length === 0)
-            return 0;
-        return tasks.reduce((total, task) => {
-            const count = typeof task.count === "number" && Number.isInteger(task.count) && task.count >= 1 ? task.count : 1;
-            return total + count;
-        }, 0);
-    }
     const parameters = SubagentParams;
     const tool = defineTool({
         name: "subagent",
@@ -451,10 +443,9 @@ export default function registerSubagentExtension(pi) {
                 return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${args.action}${target ? ` ${theme.fg("accent", target)}` : ""}`, 0, 0);
             }
             const isParallel = (args.tasks?.length ?? 0) > 0;
-            const parallelCount = effectiveParallelTaskCount(args.tasks);
             const asyncLabel = args.async === true ? theme.fg("warning", " [async]") : "";
             if (isParallel)
-                return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}parallel (${parallelCount})${asyncLabel}`, 0, 0);
+                return new Text(`${theme.fg("toolTitle", theme.bold("subagent"))}${asyncLabel}`, 0, 0);
             return new Text(`${theme.fg("toolTitle", theme.bold("subagent "))}${theme.fg("accent", args.agent || "?")}${asyncLabel}`, 0, 0);
         },
         renderResult(result, options, theme, context) {

@@ -5,6 +5,7 @@ import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./comple
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
+import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_GROUPED_ENTRIES = 8;
@@ -16,13 +17,6 @@ const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
-function truncateWithMarker(value, maxChars, marker) {
-    if (value.length <= maxChars)
-        return value;
-    if (marker.length >= maxChars)
-        return marker.slice(0, maxChars);
-    return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
-}
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
@@ -38,11 +32,6 @@ function resolvePerChildSummaryBudget(displayedChildCount, nonSummaryCostWithinP
     const count = Math.max(displayedChildCount, 1);
     const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
     return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
-}
-function sliceSafe(value, end) {
-    const sliced = value.slice(0, end);
-    const last = sliced.charCodeAt(sliced.length - 1);
-    return last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
 }
 export function boundedReference(value) {
     if (value.length <= MAX_REFERENCE_CHARS)

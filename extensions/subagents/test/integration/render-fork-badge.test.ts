@@ -314,6 +314,50 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.doesNotMatch(text, /Press  for full output/);
 	});
 
+	it("styles keyboard instruction hints with the dim theme", () => {
+		const hintStyles: string[] = [];
+		const styledTheme = {
+			fg(name: string, text: string): string {
+				if (text.includes("Press ")) hintStyles.push(name);
+				return text;
+			},
+			bold(text: string): string {
+				return text;
+			},
+		};
+		const activeResult = {
+			agent: "worker",
+			task: "review",
+			exitCode: 0,
+			usage: emptyUsage,
+			progress: {
+				index: 0,
+				agent: "worker",
+				status: "running" as const,
+				task: "review",
+				recentTools: [],
+				recentOutput: [],
+				toolCount: 0,
+				tokens: 0,
+				durationMs: 0,
+			},
+		};
+		renderSubagentResult!(
+			{ content: [{ type: "text", text: "running" }], details: { mode: "single", results: [activeResult] } },
+			{ expanded: false },
+			styledTheme,
+		).render(120);
+		renderSubagentResult!(
+			{
+				content: [{ type: "text", text: "First line\nSecond line" }],
+				details: { mode: "single", results: [] },
+			},
+			{ expanded: false },
+			styledTheme,
+		).render(120);
+		assert.deepEqual(hintStyles, ["dim", "dim"]);
+	});
+
 	it("preserves unstructured multiline and structured single-line output", () => {
 		const unstructured = renderSubagentResult!(
 			{
@@ -1026,7 +1070,7 @@ describe("renderSubagentResult fork indicator", () => {
 		assert.equal((expandedText.match(/artifacts: \/tmp\/reviewer-output\.md/g) ?? []).length, 1);
 	});
 
-	it("uses running/done wording and agent fractions for live parallel rendering", () => {
+	it("uses spinner/done wording and agent fractions for live parallel rendering", () => {
 		const widget = renderSubagentResult!(
 			{
 				content: [{ type: "text", text: "(running...)" }],
@@ -1073,7 +1117,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /parallel · 2 agents running · 0\/3 done/);
+		assert.match(text, /parallel · 0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 3\/3: worker/);
 		assert.doesNotMatch(text, /Step 3: worker/);
 		assert.doesNotMatch(text, /Agent 1: worker/);
@@ -1155,7 +1200,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /parallel · 1 agent running · 1\/3 done/);
+		assert.match(text, /parallel · 1\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 	});
 
 	it("labels active chain parallel groups with chain step and agent fractions", () => {
@@ -1256,7 +1302,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /chain · step 1\/3 · parallel group: 2 agents running · 0\/3 done/);
+		assert.match(text, /chain · step 1\/3 · parallel group: 0\/3 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 1\/3: scout/);
 		assert.match(text, /Agent 2\/3: reviewer/);
 		assert.doesNotMatch(text, /Step 1: scout/);
@@ -1388,7 +1435,8 @@ describe("renderSubagentResult fork indicator", () => {
 		);
 
 		const text = widget.render(120).join("\n");
-		assert.match(text, /chain · step 2\/3 · parallel group: 2 agents running · 0\/2 done/);
+		assert.match(text, /chain · step 2\/3 · parallel group: 0\/2 done/);
+		assert.doesNotMatch(text, /\b(?:agents?|jobs?) running\b/);
 		assert.match(text, /Agent 1\/2: scout/);
 		assert.match(text, /Agent 2\/2: reviewer/);
 		assert.doesNotMatch(text, /planner/);
