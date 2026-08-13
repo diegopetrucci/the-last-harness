@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- When changing the architect's `/model`, you can now choose whether it will be for only the current session, or across all.
+
 ### Changed
 
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.

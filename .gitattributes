@@ -59,6 +59,7 @@ extensions/the-last-harness/launch-telemetry.js linguist-generated=true
 extensions/the-last-harness/model-defaults.js linguist-generated=true
 extensions/the-last-harness/model-effort-notice.js linguist-generated=true
 extensions/the-last-harness/model-effort-reconcile.js linguist-generated=true
+extensions/the-last-harness/model-selection-scope.js linguist-generated=true
 extensions/the-last-harness/model-visibility.js linguist-generated=true
 extensions/the-last-harness/new-version-notice.js linguist-generated=true
 extensions/the-last-harness/package-update-notice.js linguist-generated=true
