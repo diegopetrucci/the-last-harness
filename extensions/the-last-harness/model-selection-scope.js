@@ -400,6 +400,7 @@ export async function chooseTlhModelSelectionScope(ctx) {
         }
     }
     catch {
+        return "session-only";
     }
     return "cancel";
 }

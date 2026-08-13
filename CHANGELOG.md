@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- When changing the architect's `/model`, you can now choose whether it will be for only the current session, or across all.
+- After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
 
 ### Changed
 
