@@ -10,6 +10,12 @@ const DEFAULT_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
+export class LifecycleLockExhaustedError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "LifecycleLockExhaustedError";
+    }
+}
 function replaceControlCharacters(value) {
     return [...value]
         .map((character) => {
@@ -277,6 +283,66 @@ export function writeNormalizedLifecycleStatus(asyncDir, status) {
     invalidateStatusCache(filePath);
     return normalized;
 }
+export const TERMINAL_RUN_STATES = new Set(["continued", "cancelled", "failed", "complete"]);
+const TERMINAL_STEP_STATUSES = new Set([
+    "continued",
+    "cancelled",
+    "failed",
+    "complete",
+    "completed",
+]);
+function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
+    if (!persisted) {
+        return writeNormalizedLifecycleStatus(asyncDir, inMemory);
+    }
+    const persistedGen = lifecycleGeneration(persisted);
+    const inMemoryGen = lifecycleGeneration(inMemory);
+    const lifecycle = persistedGen > inMemoryGen ? persisted.lifecycle : inMemory.lifecycle;
+    let state = inMemory.state;
+    if (TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== state) {
+        state = persisted.state;
+    }
+    const steps = inMemory.steps?.map((step, i) => {
+        const persistedStep = persisted.steps?.[i];
+        if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status))
+            return step;
+        if (persistedStep.status === step.status)
+            return step;
+        return {
+            ...step,
+            status: persistedStep.status,
+            endedAt: persistedStep.endedAt ?? step.endedAt,
+            exitCode: persistedStep.exitCode ?? step.exitCode,
+            ...(persistedStep.cancel !== undefined ? { cancel: persistedStep.cancel } : {}),
+            pause: undefined,
+        };
+    });
+    const terminalRunOverrides = TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state
+        ? {
+            ...(persisted.cancel !== undefined ? { cancel: persisted.cancel } : {}),
+            ...(persisted.endedAt !== undefined ? { endedAt: persisted.endedAt } : {}),
+        }
+        : {};
+    const merged = {
+        ...inMemory,
+        ...terminalRunOverrides,
+        state,
+        ...(steps !== undefined ? { steps } : {}),
+        lifecycle,
+    };
+    return writeNormalizedLifecycleStatus(asyncDir, merged);
+}
+export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
+    try {
+        return withLifecycleStatusLock(asyncDir, (persisted) => mergeAndWriteStatus(asyncDir, inMemory, persisted));
+    }
+    catch (error) {
+        if (!(error instanceof LifecycleLockExhaustedError))
+            throw error;
+        const persisted = readLifecycleStatus(asyncDir);
+        return persisted ?? inMemory;
+    }
+}
 function waitSync(delayMs) {
     if (delayMs <= 0)
         return;
@@ -414,7 +480,7 @@ function acquireTransitionLock(asyncDir, options = {}) {
                 continue;
             }
             const ownerSummary = transitionLockOwnerSummary(readTransitionLockOwner(asyncDir));
-            throw new Error(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`, { cause: error });
+            throw new LifecycleLockExhaustedError(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`, { cause: error });
         }
     }
     try {

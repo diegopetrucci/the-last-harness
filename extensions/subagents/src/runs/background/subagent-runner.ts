@@ -144,9 +144,11 @@ import {
 } from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import {
+	TERMINAL_RUN_STATES,
 	boundSupervisorSummary,
 	finalizeLifecycleContinuationLaunch,
 	lifecycleGeneration,
+	mergeAndWriteSourceRunnerStatus,
 	transitionLifecycleStatus,
 	writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
@@ -1948,7 +1950,41 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const writeStatusPayload = (): void => {
 		if (statusPayload.currentStep !== undefined) refreshTrackedSessionFile(statusPayload.currentStep);
 		refreshWorkflowGraph();
-		writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+		if (interrupted && pausedCheckpointCommitted) {
+			// Post-interrupt writes that follow a durable paused checkpoint go through
+			// the lifecycle lock and merge against the currently persisted status so
+			// that a concurrent continuation reservation (committed by the resuming
+			// actor after the first paused checkpoint) is never clobbered by the
+			// stale in-memory statusPayload. The locked merge is synchronous
+			// (Atomics.wait); no new await window is introduced between the lock
+			// acquisition, disk read, and write.
+			//
+			// The gating condition `pausedCheckpointCommitted` is necessary: before
+			// a paused checkpoint exists, no resume actor can hold the lifecycle lock,
+			// so a bare write is correct. More importantly, when the supervisor-pause
+			// transition fails (e.g. lock held by an external entity at the time of
+			// the transition), `pausedCheckpointCommitted` is still false and the
+			// runner must be able to write a `failed` state through the bare path
+			// even while the lock is held; skip-on-exhaustion would leave the run
+			// stuck in `running` state forever.
+			//
+			// We update statusPayload.lifecycle from the returned merged status so
+			// subsequent writes see the correct generation and any continuation that
+			// was preserved.
+			const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
+			if (TERMINAL_RUN_STATES.has(merged.state) && merged.state !== statusPayload.state) {
+				// A concurrent terminal winner was committed to disk while we were
+				// running. Adopt it in memory immediately so that result computation
+				// and artifact writes reflect the authoritative state — without relying
+				// on the finalization CAS inside the supervisorPauseRequest block, which
+				// is skipped entirely for an ordinary interrupt (no supervisorPauseRequest).
+				adoptConcurrentTerminalStatus();
+			} else {
+				statusPayload.lifecycle = merged.lifecycle;
+			}
+		} else {
+			writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+		}
 		emitNestedSelfEvent(
 			statusPayload.state === "running" || statusPayload.state === "queued"
 				? "subagent.nested.updated"
@@ -2105,6 +2141,24 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	let supervisorPauseTransitionFailed = false;
 	let durablePausingCheckpointPersisted = false;
 	let concurrentTerminalStatusAdopted = false;
+	// Set to true once a durable paused checkpoint is known to exist on disk —
+	// either because this process wrote it, or because adoptConcurrentTerminalStatus
+	// found a persisted `paused` state written by another process.
+	// writeStatusPayload uses this flag to decide whether subsequent writes must go
+	// through the lifecycle lock/merge path: before a paused checkpoint exists,
+	// no resume actor can hold the lock, so a bare write is safe and must not
+	// be skipped on lock exhaustion.
+	//
+	// INVARIANT — every code path that produces a durable paused checkpoint on disk
+	// must set this flag to true BEFORE the next writeStatusPayload call:
+	//   1. interruptRunner: set after writeStatusPayload() writes the first
+	//      paused checkpoint (~line 2764).
+	//   2. requestSupervisorPause success path: set inside the try block that
+	//      calls transitionLifecycleStatus (~line 2215).
+	//   3. adoptConcurrentTerminalStatus: set when persisted.state === "paused"
+	//      — another process may have written the checkpoint; we must still route
+	//      subsequent writes through the locked merge path (~line 2165).
+	let pausedCheckpointCommitted = false;
 	const pauseMetadataForIndex = (index: number, pausedAt?: number): AsyncStatus["pause"] | undefined => {
 		if (!supervisorPauseRequest) return undefined;
 		if (index === supervisorPauseRequest.requesterIndex) {
@@ -2125,6 +2179,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		if (!persisted || persisted.state === "running" || persisted.state === "pausing") return undefined;
 		Object.assign(statusPayload, persisted);
 		interrupted = persisted.state === "paused";
+		// A paused checkpoint written by another process is still a durable paused
+		// checkpoint on disk. Route all subsequent writeStatusPayload calls through
+		// the locked merge path so that a reservation committed by the resume actor
+		// after the adoption is never clobbered by a stale in-memory statusPayload.
+		if (persisted.state === "paused") pausedCheckpointCommitted = true;
 		concurrentTerminalStatusAdopted = true;
 		return persisted;
 	};
@@ -2177,6 +2236,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			Object.assign(statusPayload, transition.status);
 			supervisorPauseTransitionFailed = false;
 			durablePausingCheckpointPersisted = true;
+			pausedCheckpointCommitted = true;
 		} catch {
 			supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
 		}
@@ -2721,6 +2781,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			}
 		}
 		writeStatusPayload();
+		// The first paused checkpoint is now on disk. Subsequent writeStatusPayload
+		// calls (for settling interrupted children and final finalization) must go
+		// through mergeAndWriteSourceRunnerStatus so that a reservation committed
+		// by the resuming actor between this write and those writes is preserved.
+		pausedCheckpointCommitted = true;
 		appendJsonl(
 			eventsPath,
 			JSON.stringify({
@@ -3669,41 +3734,41 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 		(safePausedResultAfterReap && !supervisorPauseTransitionFailed && !concurrentTerminalStatusAdopted
 			? safePausedResultAfterReap
 			: undefined);
-	const resultState =
-		timedOut || turnBudgetExceeded
+	const resultState = concurrentTerminalStatusAdopted
+		? statusPayload.state
+		: timedOut || turnBudgetExceeded
 			? "failed"
 			: resultPausedAwaitingSupervisor
 				? "paused"
-				: concurrentTerminalStatusAdopted
-					? statusPayload.state
-					: supervisorPauseTransitionFailed
-						? "failed"
-						: statusPayload.state === "failed" ||
-								statusPayload.state === "paused" ||
-								statusPayload.state === "cancelled" ||
-								statusPayload.state === "continued"
-							? statusPayload.state
-							: interrupted
-								? "paused"
-								: results.every((r) => r.success)
-									? "complete"
-									: "failed";
+				: supervisorPauseTransitionFailed
+					? "failed"
+					: statusPayload.state === "failed" ||
+							statusPayload.state === "paused" ||
+							statusPayload.state === "cancelled" ||
+							statusPayload.state === "continued"
+						? statusPayload.state
+						: interrupted
+							? "paused"
+							: results.every((r) => r.success)
+								? "complete"
+								: "failed";
 	const resultSuccess = resultState === "complete";
-	const resultSummary = timedOut
-		? (timeoutMessage ?? "Subagent timed out.")
-		: turnBudgetExceeded
-			? (statusPayload.error ?? "Subagent exceeded turn budget.")
-			: resultPausedAwaitingSupervisor
-				? pausedOutputForIndex(
-						supervisorPauseRequest?.requesterIndex ?? 0,
-						statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName,
-					)
-				: resultState === "failed"
-					? (statusPayload.error ??
-						(supervisorPauseTransitionFailed ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE : summary))
-					: resultState === "paused"
-						? "Paused after interrupt. Waiting for explicit next action."
-						: summary;
+	const resultSummary =
+		!concurrentTerminalStatusAdopted && timedOut
+			? (timeoutMessage ?? "Subagent timed out.")
+			: !concurrentTerminalStatusAdopted && turnBudgetExceeded
+				? (statusPayload.error ?? "Subagent exceeded turn budget.")
+				: resultPausedAwaitingSupervisor
+					? pausedOutputForIndex(
+							supervisorPauseRequest?.requesterIndex ?? 0,
+							statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName,
+						)
+					: resultState === "failed"
+						? (statusPayload.error ??
+							(supervisorPauseTransitionFailed ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE : summary))
+						: resultState === "paused"
+							? "Paused after interrupt. Waiting for explicit next action."
+							: summary;
 
 	try {
 		writeAtomicJson(resultPath, {
@@ -3721,9 +3786,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
 			...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
 			...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-			...(timedOut
+			...(!concurrentTerminalStatusAdopted && timedOut
 				? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
-				: turnBudgetExceeded
+				: !concurrentTerminalStatusAdopted && turnBudgetExceeded
 					? { error: statusPayload.error ?? "Subagent exceeded turn budget." }
 					: resultState === "failed"
 						? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }

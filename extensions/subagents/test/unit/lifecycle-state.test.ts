@@ -4,9 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+	TERMINAL_RUN_STATES,
 	boundSupervisorSummary,
 	finalizeLifecycleContinuationLaunch,
 	lifecycleGeneration,
+	mergeAndWriteSourceRunnerStatus,
 	recoverStaleLifecycleContinuationClaim,
 	recoverStoppedLifecycleOwnership,
 	transitionLifecycleStatus,
@@ -828,6 +830,405 @@ describe("lifecycle state helpers", () => {
 			});
 			assert.equal(missingOwner.recovered, false);
 			assert.equal(missingOwner.liveness, "missing-owner");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	// ── Regression tests for the post-pause source-runner status write race ─────
+	//
+	// Root cause (tlhm-8typ): after the source runner writes a "pausing"
+	// checkpoint via transitionLifecycleStatus (generation N+1), a resuming actor
+	// can race in and reserve a continuation (generation N+2). Any subsequent bare
+	// writeNormalizedLifecycleStatus call from the still-running source runner
+	// (settling interrupted children, writing the final paused status) would
+	// overwrite disk with the stale in-memory payload (generation N+1, no
+	// continuation) — erasing the reservation and making the resumed run fail its
+	// launch gate without writing a result artifact.
+	//
+	// Fix: mergeAndWriteSourceRunnerStatus acquires the lifecycle lock, reads the
+	// persisted status, and merges before writing, preserving any continuation.
+	//
+	// Handshake: all operations in these tests are synchronous. The "race" is
+	// reproduced deterministically by interleaving transitionLifecycleStatus
+	// (reservation) between two mergeAndWriteSourceRunnerStatus calls. Against the
+	// old code (bare writeNormalizedLifecycleStatus), the continuation assertion
+	// after step 4 would fail because the reservation would be gone.
+
+	it("post-pause source-runner writes preserve a concurrent continuation reservation", () => {
+		const root = tempRoot("pi-lifecycle-post-pause-race-");
+		try {
+			const asyncDir = path.join(root, "run-post-pause-race");
+
+			// Step 1: Source runner writes initial running status (gen 0).
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-post-pause-race",
+				mode: "single",
+				state: "running",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "running" }],
+			});
+
+			// Step 2: Source runner transitions to "pausing" (gen 0→1).
+			// After this, the source runner holds inMemory.lifecycle.generation = 1.
+			const pausingTransition = transitionLifecycleStatus({
+				asyncDir,
+				expectedGeneration: 0,
+				mutate: (status) => ({
+					...status,
+					state: "pausing",
+					pid: 1234,
+					pause: { kind: "awaiting_supervisor", ownerPid: 1234, requestedAt: 110 },
+					steps: [{ ...status.steps?.[0], agent: "worker", status: "pausing" }],
+				}),
+			});
+			assert.equal(pausingTransition.nextGeneration, 1);
+
+			// Step 3: Resume actor reserves a continuation (gen 1→2).
+			// This races with the source runner's subsequent writeStatusPayload calls.
+			const reservationTransition = transitionLifecycleStatus({
+				asyncDir,
+				expectedGeneration: 1,
+				mutate: (status) => ({
+					...status,
+					lifecycle: withLifecycleContinuation(status, 0, {
+						phase: "reserved",
+						claimToken: "claim-race-test",
+						claimedAt: 120,
+						ownerPid: 5678,
+						continuationRunId: "resumed-race-run",
+					}),
+				}),
+			});
+			assert.equal(reservationTransition.nextGeneration, 2);
+			assert.equal(readStatus(asyncDir)?.lifecycle?.generation, 2);
+			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.phase, "reserved");
+
+			// Step 4: Source runner settles an interrupted child and writes status.
+			// The in-memory payload is stale: generation=1, no continuation.
+			// A bare writeNormalizedLifecycleStatus would clobber the reservation.
+			// mergeAndWriteSourceRunnerStatus must preserve it.
+			const staleInMemory = {
+				...pausingTransition.status,
+				state: "paused" as const,
+				steps: [{ agent: "worker", status: "paused" as const, exitCode: 0, endedAt: 200 }],
+			};
+			// Verify: old bare write would erase the reservation.
+			// (Demonstrated by comment; we do NOT call writeNormalizedLifecycleStatus
+			// here because that is the bug we are testing against.)
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// Reservation must survive the post-pause source-runner write.
+			assert.equal(persisted?.lifecycle?.continuation?.phase, "reserved");
+			assert.equal(persisted?.lifecycle?.continuation?.claimToken, "claim-race-test");
+			assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "resumed-race-run");
+			// Generation must not regress below the reservation generation.
+			assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
+			// Step data from the source runner must still be written.
+			assert.equal(persisted?.steps?.[0]?.status, "paused");
+			assert.equal(persisted?.steps?.[0]?.exitCode, 0);
+			// Return value reflects the merged on-disk content.
+			assert.equal(written.lifecycle?.continuation?.phase, "reserved");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("post-pause source-runner writes cannot downgrade a continued run state to paused", () => {
+		const root = tempRoot("pi-lifecycle-continued-downgrade-");
+		try {
+			const asyncDir = path.join(root, "run-continued-downgrade");
+
+			// Persisted status is already "continued" (resumed run launched and finalized).
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-continued-downgrade",
+				mode: "single",
+				state: "continued",
+				startedAt: 100,
+				endedAt: 210,
+				steps: [{ agent: "worker", status: "continued", exitCode: 0, endedAt: 210 }],
+				lifecycle: {
+					generation: 3,
+					continuation: {
+						phase: "continued",
+						claimToken: "claim-done",
+						claimedAt: 150,
+						continuedAt: 205,
+						continuationRunId: "revived-done",
+					},
+				},
+			});
+
+			// Source runner holds stale in-memory payload at generation 1.
+			const staleInMemory = {
+				runId: "run-continued-downgrade",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const, exitCode: 0, endedAt: 200 }],
+				lifecycle: { generation: 1 },
+			};
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// State must not be downgraded to "paused".
+			assert.equal(persisted?.state, "continued");
+			// Step must not be reverted.
+			assert.equal(persisted?.steps?.[0]?.status, "continued");
+			// Continuation metadata must be intact.
+			assert.equal(persisted?.lifecycle?.continuation?.phase, "continued");
+			assert.equal(persisted?.lifecycle?.continuation?.continuationRunId, "revived-done");
+			// Generation must not regress.
+			assert.ok((persisted?.lifecycle?.generation ?? 0) >= 3, "generation must not regress");
+			// Return value reflects the merged on-disk content.
+			assert.equal(written.state, "continued");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("post-pause source-runner writes preserve a cancelled run state committed by a concurrent CAS writer", () => {
+		const root = tempRoot("pi-lifecycle-cancelled-preserve-");
+		try {
+			const asyncDir = path.join(root, "run-cancelled-preserve");
+
+			// Persisted status: run was cancelled at generation 2 via lock/CAS
+			// (e.g. by the cancel action while the source runner was still exiting).
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-cancelled-preserve",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: 210,
+				cancel: { cancelledAt: 205, summary: "User cancelled" },
+				steps: [
+					{
+						agent: "worker",
+						status: "cancelled" as const,
+						exitCode: 1,
+						endedAt: 210,
+						cancel: { cancelledAt: 205, summary: "User cancelled" },
+					},
+				],
+				lifecycle: { generation: 2 },
+			});
+
+			// Source runner holds a stale in-memory payload at generation 1, still
+			// writing "paused" — this is the resurrection bug: without the fix,
+			// the merge would overwrite the cancelled state with paused.
+			const staleInMemory = {
+				runId: "run-cancelled-preserve",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const, exitCode: 0, endedAt: 200 }],
+				lifecycle: { generation: 1 },
+			};
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// The cancelled state must survive; the source runner must not resurrect it.
+			assert.equal(persisted?.state, "cancelled", "cancelled run must not be resurrected to paused");
+			assert.equal(persisted?.steps?.[0]?.status, "cancelled", "cancelled step must not be reverted to paused");
+			// Cancel metadata from the persisted CAS write must be intact.
+			assert.equal(persisted?.cancel?.summary, "User cancelled");
+			assert.equal(persisted?.steps?.[0]?.cancel?.summary, "User cancelled");
+			// Generation must not regress.
+			assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
+			// Return value reflects the merged on-disk content.
+			assert.equal(written.state, "cancelled");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	// ── tlhm-8typ FIX 8: terminal-vs-terminal merge and CAS downgrade prevention ─
+
+	it("persisted terminal run state wins over a conflicting in-memory terminal state (terminal-vs-terminal)", () => {
+		const root = tempRoot("pi-lifecycle-terminal-vs-terminal-");
+		try {
+			const asyncDir = path.join(root, "run-terminal-vs-terminal");
+
+			// Persisted: run was cancelled at generation 2 via lock/CAS.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-terminal-vs-terminal",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: 210,
+				cancel: { cancelledAt: 205, summary: "Operator cancelled" },
+				steps: [
+					{
+						agent: "worker",
+						status: "cancelled" as const,
+						exitCode: 1,
+						endedAt: 210,
+						cancel: { cancelledAt: 205, summary: "Operator cancelled" },
+					},
+				],
+				lifecycle: { generation: 2 },
+			});
+
+			// Source runner holds a stale in-memory payload at generation 1 with a
+			// DIFFERENT terminal state ("failed"). Without the fix, the merge would let
+			// the in-memory terminal state overwrite the persisted terminal winner
+			// because the old condition was `&& !TERMINAL_RUN_STATES.has(inMemory.state)`.
+			const staleInMemory = {
+				runId: "run-terminal-vs-terminal",
+				mode: "single" as const,
+				state: "failed" as const,
+				error: "source runner error",
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "failed" as const, exitCode: 1, endedAt: 200 }],
+				lifecycle: { generation: 1 },
+			};
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// Persisted terminal (cancelled) must beat in-memory terminal (failed).
+			assert.equal(
+				persisted?.state,
+				"cancelled",
+				"persisted terminal state must win over conflicting in-memory terminal",
+			);
+			// Cancel metadata from the CAS writer must be intact.
+			assert.equal(persisted?.cancel?.summary, "Operator cancelled");
+			assert.equal(persisted?.endedAt, 210, "persisted endedAt must be preserved");
+			// Step must carry the persisted terminal status and cancel metadata.
+			assert.equal(persisted?.steps?.[0]?.status, "cancelled");
+			assert.equal(persisted?.steps?.[0]?.cancel?.summary, "Operator cancelled");
+			// Generation must not regress.
+			assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
+			// Return value reflects the merged on-disk content.
+			assert.equal(written.state, "cancelled");
+			// TERMINAL_RUN_STATES export sanity check (guards the export itself).
+			assert.ok(TERMINAL_RUN_STATES.has("cancelled"));
+			assert.ok(TERMINAL_RUN_STATES.has("continued"));
+			assert.ok(!TERMINAL_RUN_STATES.has("paused"));
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("CAS downgrade blocked: merged.lifecycle is not advanced after terminal override, so finalization CAS fails on generation mismatch", () => {
+		// This test verifies the second half of the fix: writeStatusPayload must NOT
+		// advance statusPayload.lifecycle.generation when mergeAndWriteSourceRunnerStatus
+		// adopted a persisted terminal state. If it did, the finalization CAS would
+		// pass its expectedGeneration check and could write a non-terminal (e.g.
+		// "paused") state over the persisted terminal winner.
+		//
+		// We simulate this directly: call mergeAndWriteSourceRunnerStatus (which
+		// adopts the persisted terminal state and returns the merged generation),
+		// then attempt transitionLifecycleStatus with the ORIGINAL (pre-terminal)
+		// generation to prove it fails — just as it would when writeStatusPayload
+		// correctly withholds the generation sync after a terminal override.
+		const root = tempRoot("pi-lifecycle-cas-downgrade-");
+		try {
+			const asyncDir = path.join(root, "run-cas-downgrade");
+
+			// Persisted: run cancelled at generation 2 (written via lock/CAS).
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-cas-downgrade",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: 210,
+				cancel: { cancelledAt: 205, summary: "User cancelled" },
+				steps: [{ agent: "worker", status: "cancelled" as const, exitCode: 1, endedAt: 210 }],
+				lifecycle: { generation: 2 },
+			});
+
+			// Source runner in-memory payload at generation 1, still "pausing".
+			const staleInMemory = {
+				runId: "run-cas-downgrade",
+				mode: "single" as const,
+				state: "pausing" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "pausing" as const }],
+				lifecycle: { generation: 1 },
+			};
+
+			// mergeAndWriteSourceRunnerStatus writes "cancelled" to disk and returns
+			// the merged status (which includes generation 2).
+			const merged = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+			assert.equal(merged.state, "cancelled");
+			assert.equal(lifecycleGeneration(merged), 2);
+
+			// Simulate writeStatusPayload NOT advancing the generation when the merge
+			// adopted a terminal override: the runner keeps the old generation (1).
+			const originalGen = lifecycleGeneration(staleInMemory); // = 1
+
+			// Attempt a finalization CAS using the old generation (1). This would be
+			// the downgrade attempt (e.g. writing "paused" over "cancelled").
+			// It MUST fail because the persisted status is at generation 2.
+			assert.throws(
+				() =>
+					transitionLifecycleStatus({
+						asyncDir,
+						expectedGeneration: originalGen, // 1 — old, pre-terminal
+						mutate: (status) => ({ ...status, state: "paused" }), // would downgrade
+					}),
+				/expected generation/,
+				"finalization CAS with old generation must be rejected",
+			);
+
+			// Persisted state must still be "cancelled" after the failed CAS attempt.
+			assert.equal(readStatus(asyncDir)?.state, "cancelled", "persisted terminal winner must survive the CAS attempt");
+			assert.equal(readStatus(asyncDir)?.lifecycle?.generation, 2, "generation must not advance from a failed CAS");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("mergeAndWriteSourceRunnerStatus skips the write and returns persisted status when lock is exhausted", () => {
+		const root = tempRoot("pi-lifecycle-lock-exhausted-");
+		try {
+			const asyncDir = path.join(root, "run-lock-exhausted");
+
+			// Write initial status with a reservation.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-lock-exhausted",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const }],
+				lifecycle: {
+					generation: 2,
+					continuation: {
+						phase: "reserved" as const,
+						claimToken: "claim-lock-exhausted",
+						claimedAt: 150,
+						ownerPid: 5678,
+						continuationRunId: "resumed-lock-exhausted",
+					},
+				},
+			});
+
+			// Hold the lifecycle lock so lock acquisition is exhausted immediately.
+			const staleInMemory = {
+				runId: "run-lock-exhausted",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const, exitCode: 0, endedAt: 200 }],
+				lifecycle: { generation: 1 }, // stale generation
+			};
+
+			let returned: ReturnType<typeof mergeAndWriteSourceRunnerStatus> | undefined;
+			withLifecycleStatusLock(asyncDir, () => {
+				// Lock is held here. mergeAndWriteSourceRunnerStatus must not write
+				// and must return the persisted status (not the stale in-memory).
+				returned = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+			});
+
+			// The write was skipped: persisted status should be unchanged.
+			const persisted = readStatus(asyncDir);
+			assert.equal(persisted?.lifecycle?.generation, 2, "generation must not change when write is skipped");
+			assert.equal(persisted?.lifecycle?.continuation?.phase, "reserved", "reservation must be preserved");
+			// Return value is the persisted status (not the stale in-memory).
+			assert.equal(returned?.lifecycle?.generation, 2, "returned status must reflect persisted generation");
+			assert.equal(returned?.lifecycle?.continuation?.claimToken, "claim-lock-exhausted");
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

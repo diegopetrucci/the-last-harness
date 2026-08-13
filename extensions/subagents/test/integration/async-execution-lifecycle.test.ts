@@ -16,6 +16,11 @@ import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume
 import { reconcileAsyncRun } from "../../src/runs/background/stale-run-reconciler.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import {
+	transitionLifecycleStatus,
+	withLifecycleContinuation,
+	lifecycleGeneration,
+} from "../../src/runs/shared/lifecycle-state.ts";
+import {
 	ASYNC_DIR,
 	type AsyncResultPayload,
 	type AsyncStatusPayload,
@@ -35,6 +40,7 @@ import {
 	waitForPidsToExit,
 	writeLifecycleLock,
 } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 describe("async execution utilities", () => {
 	let tempDir: string;
@@ -989,5 +995,282 @@ describe("async execution utilities", () => {
 		) as AsyncStatusPayload;
 		assert.equal(reconciledStatus.state, "paused");
 		assert.equal(reconciledStatus.pause?.kind, "awaiting_supervisor");
+	});
+
+	// ── Regression test for tlhm-8typ: post-pause source-runner write race ───────
+	//
+	// When a source runner writes status after a paused checkpoint (e.g. after an
+	// interrupted child settles), it must not clobber a continuation reservation
+	// that a concurrent resume actor committed between the paused checkpoint and
+	// the post-child write. The test exercises the REAL background runner and
+	// coordinates via marker files — no wall-clock sleeps, no hardcoded counts.
+	//
+	// Proof of non-vacuousness: revert the `if (interrupted)` routing in
+	// writeStatusPayload (using bare writeNormalizedLifecycleStatus instead of
+	// mergeAndWriteSourceRunnerStatus) and this test FAILS with:
+	//   "reservation must survive the post-child source-runner status write".
+	// Restoring the routing makes it PASS.
+	it("post-pause source-runner status write preserves a concurrent continuation reservation (tlhm-8typ)", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		// Marker-file rendezvous: child signals when it is executing, then blocks
+		// until the test releases it. This lets us insert the reservation after the
+		// paused checkpoint but before the post-child write — deterministically.
+		const markerDir = path.join(tempDir, "tlhm-8typ-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const readyMarker = path.join(markerDir, "child-ready");
+		const releaseMarker = path.join(markerDir, "child-release");
+
+		// Mock child writes the ready marker, then blocks until the release marker
+		// appears. SIGINT is ignored so the child survives the interrupt and keeps
+		// blocking; the test controls when it exits via the release marker.
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+			output: "child work complete",
+		});
+
+		const id = `tlhm8typ-reservation-race-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-tlhm8typ" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+
+		// ── Step 1: wait for the child to signal it is blocking (no sleep) ──────
+		// Safety deadline scales with TLH_TEST_TIMEOUT_SCALE so CI (3x) gets the
+		// same headroom as spawn-heavy helper defaults.
+		{
+			const deadline = Date.now() + scaleTestTimeout(20_000);
+			while (!fs.existsSync(readyMarker)) {
+				if (Date.now() > deadline) assert.fail("Timed out waiting for mock child ready marker");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		}
+
+		// ── Step 2: interrupt the source runner so it pauses ─────────────────────
+		// requestAsyncInterrupt uses the control-channel file so it works across
+		// platforms without sending OS signals to the test process.
+		requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-test" });
+
+		// ── Step 3: wait for the first paused checkpoint ─────────────────────────
+		// This is the disk state the source runner holds in in-memory; any write
+		// after this point that does not go through mergeAndWriteSourceRunnerStatus
+		// would clobber a concurrent reservation.
+		await waitForAsyncState(asyncDir, "paused");
+
+		const pausedStatusRaw = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const pausedGen = lifecycleGeneration(pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0]);
+
+		// ── Step 4: inject a continuation reservation (simulates resume actor) ───
+		const reservedClaimToken = "tlhm8typ-test-claim";
+		const reservedRunId = "tlhm8typ-test-continuation";
+		transitionLifecycleStatus({
+			asyncDir,
+			expectedGeneration: pausedGen,
+			mutate: (status) => ({
+				...status,
+				lifecycle: withLifecycleContinuation(status, 0, {
+					phase: "reserved" as const,
+					claimToken: reservedClaimToken,
+					claimedAt: Date.now(),
+					ownerPid: process.pid,
+					continuationRunId: reservedRunId,
+				}),
+			}),
+		});
+
+		// Disk now has the reservation at pausedGen + 1.
+		const afterReservation = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		assert.equal(
+			afterReservation.lifecycle?.continuation?.phase,
+			"reserved",
+			"sanity: reservation must be on disk before releasing the child",
+		);
+
+		// ── Step 5: release the blocking child ───────────────────────────────────
+		// The child exits normally. The source runner will call writeStatusPayload()
+		// after the child settles (with interrupted=true), which is the write path
+		// that used to clobber the reservation before the fix.
+		fs.writeFileSync(releaseMarker, "", "utf-8");
+
+		// ── Step 6: wait for the result artifact ─────────────────────────────────
+		const resultPath = await waitForAsyncResultFile(id);
+
+		// ── Assertions ───────────────────────────────────────────────────────────
+		const finalStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
+		// The reservation must survive every post-child source-runner status write.
+		// Without the fix (bare writeNormalizedLifecycleStatus), the reservation
+		// would be erased here and the test would fail.
+		assert.equal(
+			finalStatus.lifecycle?.continuation?.phase,
+			"reserved",
+			"reservation must survive the post-child source-runner status write",
+		);
+		assert.equal(finalStatus.lifecycle?.continuation?.claimToken, reservedClaimToken);
+		assert.equal(finalStatus.lifecycle?.continuation?.continuationRunId, reservedRunId);
+
+		// The result artifact must exist: the source runner wrote it cleanly despite
+		// the interrupted+reservation scenario.
+		assert.equal(
+			resultPayload.state,
+			"paused",
+			"result artifact must reflect the paused state from the interrupted run",
+		);
+		assert.ok(resultPayload.results.length > 0, "result artifact must carry child results");
+	});
+
+	// ── Regression test for tlhm-8typ round 5 FIX 10 + FIX 11: ordinary-interrupt
+	// terminal-override path ────────────────────────────────────────────────────
+	//
+	// When a source runner with NO supervisorPauseRequest (ordinary interrupt) goes
+	// through writeStatusPayload and the merge finds a concurrent terminal winner on
+	// disk, adoptConcurrentTerminalStatus must be called in-memory immediately.
+	// Before the fix the stale-generation trick only helped inside the
+	// supervisorPauseRequest CAS block, which is skipped for ordinary interrupts, so
+	// resultState fell through to `interrupted ? "paused" : ...` and the artifact
+	// incorrectly said `state: "paused"` — contradicting the persisted terminal winner.
+	//
+	// Proof of non-vacuousness: revert the FIX 10 branch in writeStatusPayload to
+	// the round-4 `if (!TERMINAL_RUN_STATES.has(merged.state) || merged.state ===
+	// statusPayload.state)` form (which skips adoption) and this test FAILS with:
+	//   "result artifact must reflect the adopted cancelled state, not stale paused".
+	it("ordinary-interrupt terminal override: artifact reflects the concurrent terminal winner (tlhm-8typ r5)", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const markerDir = path.join(tempDir, "tlhm-8typ-r5-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const readyMarker = path.join(markerDir, "child-ready");
+		const releaseMarker = path.join(markerDir, "child-release");
+
+		// Mock child writes the ready marker and blocks until the release marker
+		// appears. SIGINT/SIGTERM are ignored so the child survives the ordinary
+		// interrupt and remains blocked; the test controls exit via the release marker.
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+			output: "child work complete",
+		});
+
+		const id = `tlhm8typ-r5-terminal-override-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-tlhm8typ-r5" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+
+		// ── Step 1: wait for the child to signal it is blocking ──────────────────
+		{
+			const deadline = Date.now() + scaleTestTimeout(20_000);
+			while (!fs.existsSync(readyMarker)) {
+				if (Date.now() > deadline) assert.fail("Timed out waiting for mock child ready marker");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		}
+
+		// ── Step 2: ordinary interrupt (no supervisorPauseRequest) ───────────────
+		requestAsyncInterrupt(asyncDir, { source: "tlhm-8typ-r5-test" });
+
+		// ── Step 3: wait for the first paused checkpoint ─────────────────────────
+		await waitForAsyncState(asyncDir, "paused");
+
+		const pausedStatusRaw = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const pausedGen = lifecycleGeneration(pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0]);
+
+		// ── Step 4: inject a concurrent cancelled terminal state via CAS ─────────
+		// Simulates an external cancel action (e.g. from a cancel tool call) that
+		// commits the terminal state after the paused checkpoint but before the
+		// source runner's post-child write.
+		const cancelledAt = Date.now();
+		transitionLifecycleStatus({
+			asyncDir,
+			expectedGeneration: pausedGen,
+			mutate: (status) => ({
+				...status,
+				state: "cancelled" as const,
+				pid: undefined,
+				cancel: { summary: "Test cancellation", cancelledAt },
+				endedAt: cancelledAt,
+				lastUpdate: cancelledAt,
+				steps: status.steps?.map((step) => ({
+					...step,
+					status: "cancelled" as const,
+					endedAt: cancelledAt,
+					exitCode: 0,
+					pause: undefined,
+					cancel: { summary: "Test cancellation", cancelledAt },
+				})),
+			}),
+		});
+
+		// Sanity: verify the cancelled state is on disk before releasing the child.
+		const afterCancel = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(afterCancel.state, "cancelled", "sanity: cancelled state must be on disk before releasing the child");
+
+		// ── Step 5: release the blocking child ───────────────────────────────────
+		// The child exits. The source runner calls writeStatusPayload() (with
+		// interrupted=true, no supervisorPauseRequest), which is the write path that
+		// must now adopt the terminal winner in-memory via FIX 10.
+		fs.writeFileSync(releaseMarker, "", "utf-8");
+
+		// ── Step 6: wait for the result artifact ─────────────────────────────────
+		const resultPath = await waitForAsyncResultFile(id);
+
+		// ── Assertions ───────────────────────────────────────────────────────────
+		const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
+		// FIX 10: adoption must happen in-memory at the writeStatusPayload call,
+		// not deferred to a CAS block that only runs when supervisorPauseRequest
+		// is set. Without the fix resultState falls through to `interrupted ? "paused"`
+		// and the artifact says `state: "paused"`.
+		assert.equal(
+			resultPayload.state,
+			"cancelled",
+			"result artifact must reflect the adopted cancelled state, not stale paused",
+		);
+		// FIX 11: the adopted terminal state must also beat any stale turnBudgetExceeded
+		// flag in resultState precedence. Even if a late message_end fired updateStepTurnBudget
+		// before the interrupt write, concurrentTerminalStatusAdopted wins.
+		assert.equal(
+			resultPayload.state !== "failed",
+			true,
+			"result artifact must not be failed due to stale budget state",
+		);
 	});
 });

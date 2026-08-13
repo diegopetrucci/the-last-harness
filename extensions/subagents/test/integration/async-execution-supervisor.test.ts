@@ -656,12 +656,15 @@ describe("async execution utilities", () => {
 			(status) => status.state === "pausing",
 			"pausing before concurrent terminal winner",
 		);
+		// Hold the lifecycle lock to prevent the runner's finalization CAS write from
+		// overwriting the concurrent terminal winner we are about to inject. Note:
+		// with skip-on-exhaustion (FIX 1, tlhm-8typ), the runner's intermediate
+		// post-child status writes are skipped while the lock is held. We therefore
+		// write the cancelled status immediately without waiting for the step-update
+		// write — the adopted cancelled status already carries the correct step state.
 		writeLifecycleLock(asyncDir);
-		await waitForAsyncStatusPredicate(
-			asyncDir,
-			(status) => status.state === "pausing" && status.steps?.[0]?.status === "paused",
-			"paused step before concurrent terminal winner",
-		);
+		// Write the concurrent terminal status immediately; writeNormalizedLifecycleStatus
+		// bypasses the lifecycle lock so this write succeeds even while the lock is held.
 		writeNormalizedLifecycleStatus(asyncDir, {
 			...pausingStatus,
 			state: "cancelled",
@@ -682,6 +685,8 @@ describe("async execution utilities", () => {
 					1,
 			},
 		});
+		// The runner's finalization CAS will fail (lock held), causing it to call
+		// adoptConcurrentTerminalStatus which reads the cancelled status and exits.
 		const payload = await readAsyncPayload(id);
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "cancelled");
