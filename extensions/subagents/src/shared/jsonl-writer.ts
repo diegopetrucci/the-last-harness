@@ -1,5 +1,9 @@
 import * as fs from "node:fs";
 
+// Stable resolved promise shared by all no-op writer variants so close() identity
+// is consistent (async close(){} would allocate a fresh promise per call).
+const NO_OP_CLOSE_PROMISE: Promise<void> = Promise.resolve();
+
 export interface DrainableSource {
 	pause(): void;
 	resume(): void;
@@ -31,7 +35,9 @@ export function createJsonlWriter(
 	if (!filePath) {
 		return {
 			writeLine() {},
-			async close() {},
+			close() {
+				return NO_OP_CLOSE_PROMISE;
+			},
 		};
 	}
 
@@ -43,12 +49,15 @@ export function createJsonlWriter(
 	} catch {
 		return {
 			writeLine() {},
-			async close() {},
+			close() {
+				return NO_OP_CLOSE_PROMISE;
+			},
 		};
 	}
 
 	let backpressured = false;
 	let closed = false;
+	let closePromise: Promise<void> | undefined;
 	let bytesWritten = 0;
 	const maxBytes = deps.maxBytes ?? DEFAULT_MAX_JSONL_BYTES;
 
@@ -73,12 +82,17 @@ export function createJsonlWriter(
 				void 0;
 			}
 		},
-		async close() {
-			if (!stream || closed) return;
+		close(): Promise<void> {
+			if (closePromise !== undefined) return closePromise;
+			if (!stream) {
+				closePromise = Promise.resolve();
+				return closePromise;
+			}
 			closed = true;
 			const current = stream;
 			stream = undefined;
-			await new Promise<void>((resolve) => current.end(() => resolve()));
+			closePromise = new Promise<void>((resolve) => current.end(() => resolve()));
+			return closePromise;
 		},
 	};
 }

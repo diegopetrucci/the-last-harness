@@ -1449,8 +1449,31 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			.readFileSync(result.artifactPaths!.jsonlPath, "utf-8")
 			.trim()
 			.split("\n")
-			.map((line) => JSON.parse(line) as Record<string, unknown>);
+			.map((line) => JSON.parse(line) as unknown);
+		assert.equal(jsonlRecords.length, 6, "expected 6 JSONL records");
+		assert.deepEqual(jsonlRecords[0], null);
+		assert.deepEqual(jsonlRecords[1], [1, "two"]);
+		assert.deepEqual(jsonlRecords[2], "primitive");
+		assert.deepEqual(jsonlRecords[3], 42);
 		assert.deepEqual(jsonlRecords[4], unknownEvent);
+		// Record 5 is the assistant message_end event. The default acceptance level is "auto",
+		// so formatAcceptancePrompt emits a "## Acceptance Contract" section; the mock's
+		// taskRequestsAcceptance detects it and withAcceptanceReport appends an acceptance
+		// report to the assistant text. Assert structure and key fields, not exact text.
+		const r5 = jsonlRecords[5] as {
+			type?: string;
+			message?: {
+				role?: string;
+				model?: string;
+				stopReason?: string;
+				content?: Array<{ type?: string; text?: string }>;
+			};
+		};
+		assert.equal(r5.type, "message_end", "record 5 is message_end");
+		assert.equal(r5.message?.role, "assistant", "record 5 message role is assistant");
+		assert.equal(r5.message?.model, "mock/test-model", "record 5 message model is mock/test-model");
+		assert.equal(r5.message?.stopReason, "stop", "record 5 message stopReason is stop");
+		assert.ok(r5.message?.content?.[0]?.text?.startsWith("Done"), "record 5 text starts with 'Done'");
 
 		const transcriptRecords = fs
 			.readFileSync(result.transcriptPath!, "utf-8")
