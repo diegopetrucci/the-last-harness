@@ -855,18 +855,24 @@ export function finalizeLifecycleContinuationLaunch(
 	}
 }
 
-export function recoverStaleLifecycleContinuationClaim(
+export interface StaleLifecycleContinuationRecoveryOptions {
+	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+	now?: () => number;
+	asyncDirRoot?: string;
+	resultsDir?: string;
+}
+
+/**
+ * Inspect a status that is already protected by the lifecycle lock and, when
+ * safe, return the in-memory recovery. Callers can compose this with another
+ * guarded decision before persisting either change.
+ */
+export function recoverStaleLifecycleContinuationStatus(
+	current: AsyncStatus,
 	asyncDir: string,
 	index: number,
-	options: {
-		kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-		now?: () => number;
-		asyncDirRoot?: string;
-		resultsDir?: string;
-	} = {},
-): { status: AsyncStatus | null; recovered: boolean; liveness: ContinuationClaimLiveness } {
-	const current = readLifecycleStatus(asyncDir);
-	if (!current) return { status: null, recovered: false, liveness: "unclaimed" };
+	options: StaleLifecycleContinuationRecoveryOptions = {},
+): { status: AsyncStatus; recovered: boolean; liveness: ContinuationClaimLiveness } {
 	const continuation = lifecycleContinuationForIndex(current, index);
 	if (!continuation?.claimToken) return { status: current, recovered: false, liveness: "unclaimed" };
 	if (
@@ -886,22 +892,37 @@ export function recoverStaleLifecycleContinuationClaim(
 	if (continuation.continuationRunId && continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
 		return { status: current, recovered: false, liveness: "blocked" };
 	}
-	const recoveredAt = options.now?.() ?? Date.now();
+	return {
+		status: {
+			...current,
+			lastUpdate: options.now?.() ?? Date.now(),
+			lifecycle: withLifecycleContinuation(current, index, undefined),
+		},
+		recovered: true,
+		liveness,
+	};
+}
+
+export function recoverStaleLifecycleContinuationClaim(
+	asyncDir: string,
+	index: number,
+	options: StaleLifecycleContinuationRecoveryOptions = {},
+): { status: AsyncStatus | null; recovered: boolean; liveness: ContinuationClaimLiveness } {
+	const current = readLifecycleStatus(asyncDir);
+	if (!current) return { status: null, recovered: false, liveness: "unclaimed" };
+	const inspected = recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options);
+	if (!inspected.recovered) return inspected;
 	try {
 		const transitioned = transitionLifecycleStatus({
 			asyncDir,
 			expectedGeneration: lifecycleGeneration(current),
 			lockOptions: options,
-			mutate: (status) => ({
-				...status,
-				lastUpdate: recoveredAt,
-				lifecycle: withLifecycleContinuation(status, index, undefined),
-			}),
+			mutate: () => inspected.status,
 		});
-		return { status: transitioned.status, recovered: true, liveness };
+		return { status: transitioned.status, recovered: true, liveness: inspected.liveness };
 	} catch (error) {
 		if (error instanceof Error && /expected generation/.test(error.message)) {
-			return { status: readLifecycleStatus(asyncDir), recovered: false, liveness };
+			return { status: readLifecycleStatus(asyncDir), recovered: false, liveness: inspected.liveness };
 		}
 		throw error;
 	}

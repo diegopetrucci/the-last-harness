@@ -16,7 +16,13 @@ import { handleManagementAction } from "../../agents/agent-management.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
 import { clearPendingForegroundControlNotices } from "../../extension/control-notices.ts";
 import { runSync } from "./execution.ts";
-import { resolveSubagentModelOverride } from "../shared/model-fallback.ts";
+import {
+	canonicalSubagentModelIdentity,
+	modelReferenceFromIdentity,
+	resolveSubagentModelOverride,
+	sanitizeSubagentModelIdentity,
+	sanitizeSubagentModelResolution,
+} from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
 import { aggregateParallelOutputs } from "../shared/parallel-utils.ts";
 import { clearForegroundInterrupt, registerForegroundInterrupt } from "../shared/foreground-interrupts.ts";
@@ -91,8 +97,10 @@ import {
 	lifecycleGeneration,
 	markLifecycleContinuationSpawned,
 	recoverStaleLifecycleContinuationClaim,
+	recoverStaleLifecycleContinuationStatus,
 	transitionLifecycleStatus,
 	withLifecycleContinuation,
+	withLifecycleStatusLock,
 	writeNormalizedLifecycleStatus,
 } from "../shared/lifecycle-state.ts";
 import {
@@ -117,6 +125,13 @@ import {
 	writeNestedEvent,
 } from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
+import {
+	assessDurableResumeContext,
+	formatDurableResumeContextBlock,
+	parseContextPressureCrossedThresholds,
+	parseContextUsageDiagnostics,
+	resolveEffectiveContextWindow,
+} from "../../shared/context-diagnostics.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
@@ -142,6 +157,9 @@ import {
 	type ToolBudgetConfig,
 	type TurnBudgetConfig,
 	type SubagentResultStatus,
+	type SubagentModelIdentity,
+	type SubagentModelResolution,
+	type ContextUsageDiagnostics,
 	type SubagentRunMode,
 	type SubagentState,
 	ASYNC_DIR,
@@ -326,7 +344,7 @@ function persistPausedForegroundCohortRun(input: {
 				...(derivedPause.request ? { request: derivedPause.request } : {}),
 			} satisfies AsyncStatus["pause"])
 		: undefined;
-	const steps =
+	const steps = (
 		input.steps ??
 		input.results?.map((result) => ({
 			agent: result.agent,
@@ -338,6 +356,14 @@ function persistPausedForegroundCohortRun(input: {
 			endedAt: input.stage === "paused" ? now : undefined,
 			durationMs: result.progress?.durationMs,
 			activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
+			model: result.model,
+			thinking: result.modelIdentity?.thinking ?? result.thinking,
+			...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
+			...(result.modelResolution ? { modelResolution: result.modelResolution } : {}),
+			...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+			...(pausedForegroundTerminationReason(result)
+				? { terminationReason: pausedForegroundTerminationReason(result) }
+				: {}),
 			exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
 			...(result.acceptance ? { acceptance: result.acceptance } : {}),
 			...(result.pause
@@ -353,7 +379,12 @@ function persistPausedForegroundCohortRun(input: {
 				: {}),
 			...(result.cancel ? { cancel: result.cancel } : {}),
 		})) ??
-		[];
+		[]
+	).map((step) =>
+		(step.status === "pausing" || step.status === "paused") && step.pause
+			? { ...step, terminationReason: "paused" as const }
+			: step,
+	);
 	for (let attempt = 0; attempt < 3; attempt++) {
 		const current = readStatus(asyncDir);
 		if (!current) {
@@ -410,6 +441,13 @@ function persistPausedForegroundCohortRun(input: {
 	throw new Error(`Foreground cohort lifecycle update failed for run '${input.runId}'.`);
 }
 
+function pausedForegroundTerminationReason(
+	result: SingleResult,
+	pauseProjected = false,
+): NonNullable<SingleResult["terminationReason"]> | undefined {
+	return pauseProjected || result.pause ? "paused" : result.terminationReason;
+}
+
 function buildPausedStepFromResult(
 	result: SingleResult,
 	now: number,
@@ -438,6 +476,10 @@ function buildPausedStepFromResult(
 				: undefined,
 		durationMs: result.progress?.durationMs,
 		activeRuntimeMs: result.activeRuntimeMs ?? result.progress?.durationMs,
+		model: result.model,
+		thinking: result.modelIdentity?.thinking ?? result.thinking,
+		...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
+		...(result.modelResolution ? { modelResolution: result.modelResolution } : {}),
 		exitCode: result.pause || result.interrupted ? 0 : result.exitCode,
 		...(result.acceptance ? { acceptance: result.acceptance } : {}),
 		...(result.pause
@@ -455,6 +497,10 @@ function buildPausedStepFromResult(
 				}
 			: {}),
 		...(result.cancel ? { cancel: result.cancel } : {}),
+		...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+		...(pausedForegroundTerminationReason(result, status === "paused" || status === "pausing")
+			? { terminationReason: pausedForegroundTerminationReason(result, status === "paused" || status === "pausing") }
+			: {}),
 	};
 }
 
@@ -463,11 +509,22 @@ function buildCohortPauseStep(input: {
 	sessionFile?: string;
 	status: "pending" | "pausing" | "paused";
 	now: number;
+	model?: string;
+	thinking?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
+	contextUsage?: ContextUsageDiagnostics;
 }): NonNullable<AsyncStatus["steps"]>[number] {
+	const modelIdentity = input.modelIdentity ?? canonicalSubagentModelIdentity(input.model, input.thinking);
 	return {
 		agent: input.agent,
 		status: input.status,
 		sessionFile: input.sessionFile,
+		...(input.model ? { model: input.model } : {}),
+		...(input.thinking ? { thinking: input.thinking } : {}),
+		...(modelIdentity ? { modelIdentity } : {}),
+		...(input.modelResolution ? { modelResolution: input.modelResolution } : {}),
+		...(input.contextUsage ? { contextUsage: input.contextUsage } : {}),
 		...(input.status === "pausing" || input.status === "paused"
 			? {
 					pause: {
@@ -476,6 +533,7 @@ function buildCohortPauseStep(input: {
 						requestedAt: input.now,
 						...(input.status === "paused" ? { pausedAt: input.now } : {}),
 					},
+					terminationReason: "paused" as const,
 				}
 			: {}),
 	};
@@ -526,7 +584,15 @@ function persistPausedForegroundSingleRun(input: {
 					transcriptPath: input.result.transcriptPath,
 					transcriptError: input.result.transcriptError,
 					durationMs: input.result.progress?.durationMs,
+					model: input.result.model,
+					thinking: input.result.modelIdentity?.thinking ?? input.result.thinking,
+					...(input.result.modelIdentity ? { modelIdentity: input.result.modelIdentity } : {}),
+					...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
 					exitCode: 0,
+					...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+					...(pausedForegroundTerminationReason(input.result)
+						? { terminationReason: pausedForegroundTerminationReason(input.result) }
+						: {}),
 					...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 				},
 			],
@@ -559,7 +625,15 @@ function persistPausedForegroundSingleRun(input: {
 							transcriptError: input.result.transcriptError ?? step.transcriptError,
 							...(input.stage === "paused" ? { endedAt: now } : {}),
 							durationMs: input.result.progress?.durationMs ?? step.durationMs,
+							model: input.result.model ?? step.model,
+							thinking: input.result.modelIdentity?.thinking ?? input.result.thinking ?? step.thinking,
+							...(input.result.modelIdentity ? { modelIdentity: input.result.modelIdentity } : {}),
+							...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
 							exitCode: 0,
+							...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+							...(pausedForegroundTerminationReason(input.result)
+								? { terminationReason: pausedForegroundTerminationReason(input.result) }
+								: {}),
 							...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 						}
 					: step,
@@ -671,6 +745,10 @@ function rememberForegroundRun(
 				}),
 				updatedAt,
 				...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+				...(result.model ? { model: result.model } : {}),
+				...(result.thinking ? { thinking: result.thinking } : {}),
+				...(result.modelIdentity ? { modelIdentity: result.modelIdentity } : {}),
+				...(result.modelResolution ? { modelResolution: result.modelResolution } : {}),
 				...(result.finalOutput ? { finalOutput: result.finalOutput } : {}),
 				...(result.sessionFile ? { sessionFile: result.sessionFile } : {}),
 				...(result.artifactPaths ? { artifactPaths: result.artifactPaths } : {}),
@@ -680,6 +758,10 @@ function rememberForegroundRun(
 				...(result.acceptance ? { acceptance: result.acceptance } : {}),
 				...(result.pause ? { pause: result.pause } : {}),
 				...(result.cancel ? { cancel: result.cancel } : {}),
+				...(result.contextUsage ? { contextUsage: result.contextUsage } : {}),
+				...(pausedForegroundTerminationReason(result)
+					? { terminationReason: pausedForegroundTerminationReason(result) }
+					: {}),
 				...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
 			};
 			const recovered = previous?.children[index];
@@ -718,6 +800,10 @@ function updateRememberedForegroundChild(
 		}),
 		updatedAt,
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
+		...(input.result.model ? { model: input.result.model } : {}),
+		...(input.result.thinking ? { thinking: input.result.thinking } : {}),
+		...(input.result.modelIdentity ? { modelIdentity: input.result.modelIdentity } : {}),
+		...(input.result.modelResolution ? { modelResolution: input.result.modelResolution } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
 		...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
 		...(input.result.artifactPaths ? { artifactPaths: input.result.artifactPaths } : {}),
@@ -727,6 +813,10 @@ function updateRememberedForegroundChild(
 		...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 		...(input.result.pause ? { pause: input.result.pause } : {}),
 		...(input.result.cancel ? { cancel: input.result.cancel } : {}),
+		...(input.result.contextUsage ? { contextUsage: input.result.contextUsage } : {}),
+		...(pausedForegroundTerminationReason(input.result)
+			? { terminationReason: pausedForegroundTerminationReason(input.result) }
+			: {}),
 		...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
 	};
 	trimRememberedForegroundRuns(state);
@@ -781,6 +871,10 @@ function resolveForegroundResumeTarget(
 			asyncDir?: string;
 			pauseKind?: "awaiting_supervisor" | "cohort_pause";
 			continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+			modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
+			modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
+			contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+			contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 			activeRuntimeMs?: number;
 	  }
 	| undefined {
@@ -805,6 +899,7 @@ function resolveForegroundResumeTarget(
 	if (!fs.existsSync(sessionFile))
 		throw new Error(`Foreground run '${run.runId}' child ${index} session file is missing.`);
 	const childState = child.status === "completed" ? "complete" : child.status;
+	const childModelIdentity = child.modelIdentity ?? canonicalSubagentModelIdentity(child.model, child.thinking);
 	const continuationAcceptance =
 		childState === "paused" && child.acceptance?.status === "skipped"
 			? child.acceptance.effectiveAcceptance
@@ -823,6 +918,18 @@ function resolveForegroundResumeTarget(
 			: {}),
 		...(child.pause?.kind ? { pauseKind: child.pause.kind } : {}),
 		...(continuationAcceptance ? { continuationAcceptance } : {}),
+		...(childModelIdentity ? { modelIdentity: childModelIdentity } : {}),
+		...(child.modelResolution ? { modelResolution: child.modelResolution } : {}),
+		...(parseContextUsageDiagnostics(child.contextUsage)
+			? { contextUsage: parseContextUsageDiagnostics(child.contextUsage) }
+			: {}),
+		...(parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds)
+			? {
+					contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
+						child.contextPressureCrossedThresholds,
+					),
+				}
+			: {}),
 		...(child.activeRuntimeMs !== undefined ? { activeRuntimeMs: child.activeRuntimeMs } : {}),
 	};
 }
@@ -844,7 +951,12 @@ type NestedResumeSourceTarget = {
 	sessionFile: string;
 	pauseKind?: "awaiting_supervisor" | "cohort_pause";
 	continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
+	modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
+	modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
+	contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	activeRuntimeMs?: number;
+	asyncDir?: string;
 };
 type ResumeSourceTarget = AsyncResumeSourceTarget | ForegroundResumeSourceTarget | NestedResumeSourceTarget;
 
@@ -927,7 +1039,7 @@ function isExactResumeError(error: unknown, source: "async" | "foreground", requ
 function resolveResumeTarget(
 	params: SubagentParamsLike,
 	state: SubagentState,
-	options: { asyncRequireSessionFile?: boolean } = {},
+	options: { asyncRequireSessionFile?: boolean; readOnly?: boolean } = {},
 ): ResumeSourceTarget {
 	const requested = params.id?.trim() ?? "";
 	let foregroundTarget: ForegroundResumeSourceTarget | undefined;
@@ -944,7 +1056,14 @@ function resolveResumeTarget(
 	try {
 		asyncTarget = {
 			source: "async",
-			...resolveAsyncResumeTarget(params, {}, { requireSessionFile: options.asyncRequireSessionFile }),
+			...resolveAsyncResumeTarget(
+				params,
+				{},
+				{
+					requireSessionFile: options.asyncRequireSessionFile,
+					readOnly: options.readOnly,
+				},
+			),
 		};
 	} catch (error) {
 		asyncError = error;
@@ -977,62 +1096,87 @@ function resolveResumeTarget(
 	throw new Error("Run not found. Provide id.");
 }
 
+type PausedContinuationClaim = {
+	asyncDir: string;
+	claimToken: string;
+	rollbackReserved: () => void;
+	markSpawned: () => void;
+};
+
+type ContinuationClaimDecision = PausedContinuationClaim | { blockedMessage: string } | undefined;
+
 function claimPausedAwaitingSupervisorTarget(
 	target: ResumeSourceTarget,
 	continuationRunId: string,
-): { asyncDir: string; claimToken: string; rollbackReserved: () => void; markSpawned: () => void } | undefined {
-	if (target.kind !== "revive" || target.state !== "paused" || !("asyncDir" in target) || !target.asyncDir)
-		return undefined;
+	effectiveContextWindow?: number,
+): ContinuationClaimDecision {
+	if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir) return undefined;
 	const asyncDir = target.asyncDir;
-	let current = readStatus(asyncDir);
-	if (!current) throw new Error(`Paused run '${target.runId}' was not found.`);
-	const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, target.index);
-	if (recovered.recovered && recovered.status) current = recovered.status;
-	const currentStep = current.steps?.[target.index];
-	if (current.state === "cancelled" || currentStep?.status === "cancelled")
-		throw new Error(`Paused run '${target.runId}' child ${target.index} was cancelled and cannot be resumed.`);
-	if (current.state === "continued" || currentStep?.status === "continued")
-		throw new Error(
-			`Paused run '${target.runId}' child ${target.index} already launched its continuation and cannot be resumed again.`,
-		);
-	if (isClaimedPausedLifecycle(current, target.index))
-		throw new Error(
-			`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`,
-		);
-	if (
-		current.state !== "paused" ||
-		!currentStep ||
-		(currentStep.status !== "paused" && currentStep.status !== "pausing")
-	) {
-		throw new Error(`Paused run '${target.runId}' child ${target.index} is not paused and cannot be resumed.`);
-	}
-	const claimToken = `claim-${target.runId}-${target.index}-${Date.now()}`;
-	const claimedAt = Date.now();
-	transitionLifecycleStatus({
+	const decision = withLifecycleStatusLock<{ claimToken: string } | { blockedMessage: string } | undefined>(
 		asyncDir,
-		expectedGeneration: lifecycleGeneration(current),
-		mutate: (status) => ({
-			...status,
-			lastUpdate: claimedAt,
-			pause: status.pause ? { ...status.pause, ownerPid: undefined } : status.pause,
-			lifecycle: withLifecycleContinuation(status, target.index, {
-				phase: "reserved",
-				claimToken,
-				claimedAt,
-				ownerPid: process.pid,
-				continuationRunId,
-			}),
-		}),
-	});
+		(persisted) => {
+			if (!persisted) throw new Error(`Paused run '${target.runId}' was not found.`);
+			let current = persisted;
+			const recovered = recoverStaleLifecycleContinuationStatus(current, asyncDir, target.index);
+			if (recovered.recovered) current = recovered.status;
+			const currentStep = current.steps?.[target.index];
+			if (current.state === "cancelled" || currentStep?.status === "cancelled")
+				throw new Error(`Paused run '${target.runId}' child ${target.index} was cancelled and cannot be resumed.`);
+			if (current.state === "continued" || currentStep?.status === "continued")
+				throw new Error(
+					`Paused run '${target.runId}' child ${target.index} already launched its continuation and cannot be resumed again.`,
+				);
+			const latestContextUsage = parseContextUsageDiagnostics(currentStep?.contextUsage) ?? target.contextUsage;
+			const contextAssessment = assessDurableResumeContext(latestContextUsage, effectiveContextWindow);
+			if (contextAssessment.blocked) return { blockedMessage: formatDurableResumeContextBlock(contextAssessment) };
+			if (
+				current.state !== "paused" ||
+				!currentStep ||
+				(currentStep.status !== "paused" && currentStep.status !== "pausing")
+			) {
+				if (isClaimedPausedLifecycle(current, target.index))
+					throw new Error(
+						`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`,
+					);
+				if (target.state === "paused")
+					throw new Error(`Paused run '${target.runId}' child ${target.index} is not paused and cannot be resumed.`);
+				return undefined;
+			}
+			if (isClaimedPausedLifecycle(current, target.index))
+				throw new Error(
+					`Paused run '${target.runId}' child ${target.index} was already claimed for continuation and cannot be resumed again.`,
+				);
+			const claimToken = `claim-${target.runId}-${target.index}-${Date.now()}`;
+			const claimedAt = Date.now();
+			const nextStatus: AsyncStatus = {
+				...current,
+				lastUpdate: claimedAt,
+				pause: current.pause ? { ...current.pause, ownerPid: undefined } : current.pause,
+				lifecycle: {
+					...withLifecycleContinuation(current, target.index, {
+						phase: "reserved",
+						claimToken,
+						claimedAt,
+						ownerPid: process.pid,
+						continuationRunId,
+					}),
+					generation: lifecycleGeneration(current) + 1,
+				},
+			};
+			writeNormalizedLifecycleStatus(asyncDir, nextStatus);
+			return { claimToken };
+		},
+	);
+	if (!decision || "blockedMessage" in decision) return decision;
 	return {
 		asyncDir,
-		claimToken,
+		claimToken: decision.claimToken,
 		rollbackReserved: () => {
 			const latest = readStatus(asyncDir);
 			if (!latest || latest.state !== "paused") return;
 			const latestContinuation = indexedLifecycleContinuation(latest, target.index);
 			if (
-				latestContinuation?.claimToken !== claimToken ||
+				latestContinuation?.claimToken !== decision.claimToken ||
 				latestContinuation.continuationRunId !== continuationRunId ||
 				latestContinuation.phase !== "reserved"
 			)
@@ -1048,7 +1192,7 @@ function claimPausedAwaitingSupervisorTarget(
 			});
 		},
 		markSpawned: () => {
-			markLifecycleContinuationSpawned(asyncDir, target.index, claimToken, continuationRunId);
+			markLifecycleContinuationSpawned(asyncDir, target.index, decision.claimToken, continuationRunId);
 		},
 	};
 }
@@ -1073,7 +1217,14 @@ function recoverFailedPausedForegroundTransition(input: { runId: string; error: 
 				pause: status.pause ? { ...status.pause, ownerPid: undefined } : status.pause,
 				steps: status.steps?.map((step, index) =>
 					index === 0 && (step.status === "pausing" || step.status === "paused")
-						? { ...step, status: "failed", endedAt: failedAt, exitCode: 1, error: step.error ?? message }
+						? {
+								...step,
+								status: "failed",
+								endedAt: failedAt,
+								exitCode: 1,
+								terminationReason: "process_exit",
+								error: step.error ?? message,
+							}
 						: step,
 				),
 			}),
@@ -1101,6 +1252,7 @@ function enrichPersistedPausedForegroundSingleRun(input: { runId: string; result
 								sessionFile: input.result.sessionFile ?? step.sessionFile,
 								transcriptPath: input.result.transcriptPath ?? step.transcriptPath,
 								transcriptError: input.result.transcriptError ?? step.transcriptError,
+								terminationReason: step.terminationReason ?? "paused",
 								...(input.result.acceptance ? { acceptance: input.result.acceptance } : {}),
 							}
 						: step,
@@ -1161,6 +1313,7 @@ function updateRememberedForegroundCancellation(
 	run.children[index] = {
 		...child,
 		cancel: { summary, cancelledAt },
+		terminationReason: "cancelled",
 	};
 }
 
@@ -1280,6 +1433,7 @@ function cancelPersistedPausedForegroundRun(
 								endedAt: cancelledAt,
 								exitCode: 0,
 								cancel: { summary, cancelledAt },
+								terminationReason: "cancelled" as const,
 							}
 						: step,
 				);
@@ -1708,6 +1862,12 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 type NestedResumeStatusStep = {
 	status?: string;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
+	model?: string;
+	thinking?: string;
+	modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
+	modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
+	contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	activeRuntimeMs?: number;
 };
 
@@ -1731,7 +1891,25 @@ function readNestedResumeStatusStep(runId: string, asyncDir: string | undefined)
 	) {
 		throw new Error(`Nested run '${runId}' persisted step activeRuntimeMs must be a non-negative finite number.`);
 	}
-	return step as NestedResumeStatusStep;
+	const raw = step as Record<string, unknown>;
+	const modelIdentity =
+		sanitizeSubagentModelIdentity(raw.modelIdentity) ??
+		canonicalSubagentModelIdentity(
+			typeof raw.model === "string" ? raw.model : undefined,
+			typeof raw.thinking === "string" ? raw.thinking : undefined,
+		);
+	const modelResolution = sanitizeSubagentModelResolution(raw.modelResolution);
+	const contextUsage = parseContextUsageDiagnostics(raw.contextUsage);
+	const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(raw.contextPressureCrossedThresholds);
+	return {
+		...(typeof raw.status === "string" ? { status: raw.status } : {}),
+		...(modelIdentity ? { modelIdentity } : {}),
+		...(modelResolution ? { modelResolution } : {}),
+		...(contextUsage ? { contextUsage } : {}),
+		...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+		...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+		...(raw.acceptance ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] } : {}),
+	};
 }
 
 function resolveNestedContinuationAcceptance(
@@ -1758,6 +1936,10 @@ function resolveNestedResumeTarget(
 	const state = run.state === "complete" || run.state === "failed" || run.state === "paused" ? run.state : "failed";
 	const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
 	const statusStep = readNestedResumeStatusStep(run.id, asyncDir);
+	const statusModelIdentity = statusStep?.modelIdentity;
+	const statusModelResolution = statusStep?.modelResolution;
+	const contextUsage = statusStep?.contextUsage;
+	const contextPressureCrossedThresholds = statusStep?.contextPressureCrossedThresholds;
 	const continuationAcceptance =
 		state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
 	return {
@@ -1768,7 +1950,14 @@ function resolveNestedResumeTarget(
 		agent,
 		index: 0,
 		...(continuationAcceptance ? { continuationAcceptance } : {}),
+		...(statusModelIdentity ? { modelIdentity: statusModelIdentity } : {}),
+		...(statusModelResolution ? { modelResolution: statusModelResolution } : {}),
+		...(contextUsage ? { contextUsage } : {}),
+		...(contextPressureCrossedThresholds
+			? { contextPressureCrossedThresholds: [...contextPressureCrossedThresholds] }
+			: {}),
 		...(statusStep?.activeRuntimeMs !== undefined ? { activeRuntimeMs: statusStep.activeRuntimeMs } : {}),
+		...(asyncDir ? { asyncDir } : {}),
 		...(run.state === "paused" ? { pauseKind: "cohort_pause" as const } : {}),
 		intercomTarget: resolveSubagentIntercomTarget(run.id, agent, 0),
 		cwd: asyncDir ? path.dirname(asyncDir) : undefined,
@@ -2173,6 +2362,53 @@ async function queueLiveAsyncResume(input: {
 	};
 }
 
+function explicitResumeModel(value: string | undefined): string | undefined {
+	const trimmed = value?.trim();
+	return trimmed && trimmed !== "inherit" ? trimmed : undefined;
+}
+
+export function buildResumeModelResolution(
+	target: ResumeSourceTarget,
+	requestedModel: string | undefined,
+): SubagentModelResolution | undefined {
+	const persisted = target.kind === "revive" ? target.modelResolution : undefined;
+	const persistedEffective = target.kind === "revive" ? (target.modelIdentity ?? persisted?.resumed) : undefined;
+	const persistedOriginal = target.kind === "revive" ? (persisted?.original ?? persistedEffective) : undefined;
+	const explicit = explicitResumeModel(requestedModel);
+	if (explicit) {
+		const explicitIdentity = canonicalSubagentModelIdentity(explicit);
+		const reference = persistedEffective ?? persistedOriginal;
+		return {
+			kind: "override",
+			...(reference ? { original: reference } : {}),
+			...(explicitIdentity ? { resumed: explicitIdentity } : {}),
+			reason: [
+				persisted?.reason,
+				reference
+					? `Caller explicitly overrode persisted selection ${reference.provider}/${reference.model}${reference.thinking ? `:${reference.thinking}` : ""} with '${explicit}'.`
+					: `Caller explicitly selected '${explicit}' for the resumed child.`,
+			]
+				.filter(Boolean)
+				.join(" "),
+		};
+	}
+	if (!persistedEffective) return undefined;
+	const restoration = `Restored persisted child selection ${persistedEffective.provider}/${persistedEffective.model}${persistedEffective.thinking ? `:${persistedEffective.thinking}` : ""} instead of the current parent model.`;
+	return persisted?.kind === "fallback"
+		? {
+				...persisted,
+				...(persistedOriginal ? { original: persistedOriginal } : {}),
+				resumed: persistedEffective,
+				reason: [persisted.reason, restoration].join(" "),
+			}
+		: {
+				kind: "restored",
+				original: persistedOriginal!,
+				resumed: persistedEffective,
+				reason: [persisted?.reason, restoration].filter(Boolean).join(" "),
+			};
+}
+
 async function resumeAsyncRun(input: {
 	params: SubagentParamsLike;
 	requestCwd: string;
@@ -2223,7 +2459,7 @@ async function resumeAsyncRun(input: {
 				...resolveAsyncResumeTarget(
 					input.params,
 					{ kill: input.deps.kill, resultsDir: RESULTS_DIR },
-					{ requireSessionFile: true },
+					{ requireSessionFile: true, readOnly: preResolutionStatus?.state !== "running" },
 				),
 			};
 			if (hadLiveResumeIntent && asyncTarget.kind !== "live") {
@@ -2254,7 +2490,10 @@ async function resumeAsyncRun(input: {
 			}
 			target = asyncTarget;
 		} else {
-			target = resolveResumeTarget(input.params, input.deps.state, { asyncRequireSessionFile: true });
+			target = resolveResumeTarget(input.params, input.deps.state, {
+				asyncRequireSessionFile: true,
+				readOnly: true,
+			});
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -2338,12 +2577,40 @@ async function resumeAsyncRun(input: {
 		};
 	}
 
+	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
+	let modelContextWindow: number | undefined;
+	if (target.kind === "revive") {
+		const selectedModel =
+			explicitResumeModel(input.params.model) ??
+			(target.modelIdentity ? modelReferenceFromIdentity(target.modelIdentity) : undefined) ??
+			agentConfig.model ??
+			(input.ctx.model ? `${input.ctx.model.provider}/${input.ctx.model.id}` : undefined);
+		modelContextWindow = resolveEffectiveContextWindow(selectedModel, availableModels, input.ctx.model?.provider);
+		const contextAssessment = assessDurableResumeContext(
+			target.contextUsage,
+			modelContextWindow ?? target.contextUsage?.contextWindow,
+		);
+		if (contextAssessment.blocked) {
+			return {
+				content: [{ type: "text", text: formatDurableResumeContextBlock(contextAssessment) }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+	}
+
 	const continuationRunId = randomUUID().slice(0, 8);
-	let claimedPause:
-		| { asyncDir: string; claimToken: string; rollbackReserved: () => void; markSpawned: () => void }
-		| undefined;
+	let claimedPause: PausedContinuationClaim | undefined;
 	try {
-		claimedPause = claimPausedAwaitingSupervisorTarget(target, continuationRunId);
+		const claimDecision = claimPausedAwaitingSupervisorTarget(target, continuationRunId, modelContextWindow);
+		if (claimDecision && "blockedMessage" in claimDecision) {
+			return {
+				content: [{ type: "text", text: claimDecision.blockedMessage }],
+				isError: true,
+				details: { mode: "management", results: [] },
+			};
+		}
+		claimedPause = claimDecision;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
@@ -2352,7 +2619,9 @@ async function resumeAsyncRun(input: {
 	const runId = continuationRunId;
 	const artifactConfig: ArtifactConfig = { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false };
 	const artifactsDir = getArtifactsDir(parentSessionFile);
-	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
+	const resumeModelResolution = buildResumeModelResolution(target, input.params.model);
+	const restoredModelIdentity =
+		explicitResumeModel(input.params.model) || target.kind !== "revive" ? undefined : target.modelIdentity;
 	let result: ReturnType<typeof executeAsyncSingle>;
 	try {
 		result = executeAsyncSingle(runId, {
@@ -2370,6 +2639,18 @@ async function resumeAsyncRun(input: {
 			...(target.source === "async" && target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
 			task: buildRevivedAsyncTask(target, followUp),
 			modelOverride: input.params.model,
+			...(restoredModelIdentity ? { restoredModelIdentity } : {}),
+			...(resumeModelResolution ? { modelResolution: resumeModelResolution } : {}),
+			...(target.kind === "revive" && "contextUsage" in target && target.contextUsage
+				? { contextUsage: target.contextUsage }
+				: {}),
+			// A revived run continues the same persisted execution segment, so its
+			// crossed pressure history must survive for warning deduplication. A
+			// claimed pause creates a new continuation segment and intentionally
+			// starts with independent history.
+			...(target.kind === "revive" && !claimedPause && "contextPressureCrossedThresholds" in target
+				? { contextPressureCrossedThresholds: target.contextPressureCrossedThresholds }
+				: {}),
 			agentConfig,
 			ctx: {
 				pi: input.deps.pi,
@@ -3220,6 +3501,11 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 					sessionFile: input.sessionFileForTask(task.agent, index) ?? input.sessionFileForIndex(index),
 					status: options.rootStage === "paused" ? "paused" : "pausing",
 					now,
+					model: result?.model ?? task.model,
+					thinking: result?.thinking,
+					modelIdentity: result?.modelIdentity,
+					modelResolution: result?.modelResolution,
+					contextUsage: result?.contextUsage,
 				});
 			}
 			return buildCohortPauseStep({
@@ -3227,6 +3513,11 @@ async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Pr
 				sessionFile: input.sessionFileForTask(task.agent, index) ?? input.sessionFileForIndex(index),
 				status: "pending",
 				now,
+				model: result?.model ?? task.model,
+				thinking: result?.thinking,
+				modelIdentity: result?.modelIdentity,
+				modelResolution: result?.modelResolution,
+				contextUsage: result?.contextUsage,
 			});
 		});
 		persistPausedForegroundCohortRun({
@@ -4591,6 +4882,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 										status: child.interrupted ? "paused" : child.exitCode === 0 ? "complete" : "failed",
 										...(child.sessionFile ? { sessionFile: child.sessionFile } : {}),
 										...(child.error ? { error: child.error } : {}),
+										...(child.contextUsage ? { contextUsage: child.contextUsage } : {}),
+										...(child.terminationReason ? { terminationReason: child.terminationReason } : {}),
 									})),
 								}
 							: {}),

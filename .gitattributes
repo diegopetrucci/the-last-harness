@@ -167,6 +167,7 @@ extensions/subagents/src/shared/artifacts.js linguist-generated=true
 extensions/subagents/src/shared/atomic-json.js linguist-generated=true
 extensions/subagents/src/shared/child-transcript.js linguist-generated=true
 extensions/subagents/src/shared/config-dir.js linguist-generated=true
+extensions/subagents/src/shared/context-diagnostics.js linguist-generated=true
 extensions/subagents/src/shared/file-coalescer.js linguist-generated=true
 extensions/subagents/src/shared/foreground-pause.js linguist-generated=true
 extensions/subagents/src/shared/fork-context.js linguist-generated=true

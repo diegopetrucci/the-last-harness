@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+	appendRuntimeFallbackResolution,
 	buildFallbackModelList,
 	buildModelCandidates,
+	canonicalSubagentModelIdentity,
 	fuzzyResolveModel,
 	isRetryableModelFailure,
+	modelReferenceFromIdentity,
 	normalizeModelSegment,
 	resolveModelCandidate,
 	resolveSubagentModelOverride,
@@ -83,6 +86,29 @@ describe("model fallback helpers", () => {
 			["anthropic/claude-sonnet-4", "openai/gpt-5-mini", "google/gemini-2.5-pro"],
 		);
 		assert.equal(buildFallbackModelList(undefined, undefined), undefined);
+	});
+
+	it("records every completed fallback transition in order", () => {
+		const original = canonicalSubagentModelIdentity("openai/a")!;
+		const b = canonicalSubagentModelIdentity("anthropic/b")!;
+		const c = canonicalSubagentModelIdentity("google/c")!;
+		const aAttempt = { model: "openai/a", success: false, exitCode: 1, error: "a unavailable" };
+		const bAttempt = { model: "anthropic/b", success: false, exitCode: 1, error: "b unavailable" };
+		const afterB = appendRuntimeFallbackResolution({
+			sourceAttempt: aAttempt,
+			currentIdentity: b,
+			originalIdentity: original,
+		});
+		const afterC = appendRuntimeFallbackResolution({
+			previous: afterB,
+			sourceAttempt: bAttempt,
+			currentIdentity: c,
+			originalIdentity: original,
+		});
+		assert.deepEqual(afterC?.original, original);
+		assert.deepEqual(afterC?.resumed, c);
+		assert.match(afterC?.reason ?? "", /openai\/a.*anthropic\/b/);
+		assert.match(afterC?.reason ?? "", /anthropic\/b.*google\/c/);
 	});
 
 	it("sanitizes fallback notices for one-line display", () => {
@@ -372,5 +398,52 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		assert.deepEqual(candidates, ["openai/gpt-5-mini", "deepseek/deepseek-v4"]);
 		assert.equal(warnings.length, 1);
 		assert.match(warnings[0]!, /deepseek\/deepseek-v4/);
+	});
+});
+
+describe("canonical subagent model identity", () => {
+	it("extracts provider, model, and thinking from a suffixed reference", () => {
+		assert.deepEqual(canonicalSubagentModelIdentity("anthropic/claude-sonnet-4:high"), {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "high",
+		});
+	});
+
+	it("preserves separately supplied effective thinking when the model has no suffix", () => {
+		// Regression: the async runner's running/crash-recovery status updates
+		// must not drop thinking that is supplied alongside a bare model arg.
+		assert.deepEqual(canonicalSubagentModelIdentity("anthropic/claude-sonnet-4", "high"), {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "high",
+		});
+	});
+
+	it("prefers an explicit model suffix over separately supplied thinking", () => {
+		assert.deepEqual(canonicalSubagentModelIdentity("anthropic/claude-sonnet-4:low", "high"), {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "low",
+		});
+	});
+
+	it("ignores unknown thinking values instead of persisting them", () => {
+		assert.deepEqual(canonicalSubagentModelIdentity("anthropic/claude-sonnet-4", "turbo"), {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+		});
+	});
+
+	it("returns undefined for provider-less or empty model references", () => {
+		assert.equal(canonicalSubagentModelIdentity("claude-sonnet-4", "high"), undefined);
+		assert.equal(canonicalSubagentModelIdentity(undefined, "high"), undefined);
+	});
+
+	it("round-trips identities back to provider/model references", () => {
+		assert.equal(
+			modelReferenceFromIdentity({ provider: "anthropic", model: "claude-sonnet-4", thinking: "high" }),
+			"anthropic/claude-sonnet-4",
+		);
 	});
 });

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
-import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
+import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.ts";
 import {
 	type AsyncJobState,
 	type AsyncStartedEvent,
@@ -54,10 +54,35 @@ export function createAsyncJobTracker(
 		renderWidget(ctx, jobs, state.liveDetailController);
 	};
 	const restoredControlEventCursor = (asyncDir: string) => {
+		const eventsPath = path.join(asyncDir, "events.jsonl");
 		try {
-			return fs.statSync(path.join(asyncDir, "events.jsonl")).size;
+			const stat = fs.statSync(eventsPath);
+			let skippingOversizedLine = false;
+			if (stat.size > MAX_CONTROL_EVENT_LINE_BYTES) {
+				const fd = fs.openSync(eventsPath, "r");
+				try {
+					const probeStart = Math.max(0, stat.size - MAX_CONTROL_EVENT_LINE_BYTES - 1);
+					let readCursor = probeStart;
+					let lastNewline = -1;
+					while (readCursor < stat.size) {
+						const toRead = Math.min(CONTROL_EVENT_READ_CHUNK_BYTES, stat.size - readCursor);
+						const buffer = Buffer.alloc(toRead);
+						const bytesRead = fs.readSync(fd, buffer, 0, toRead, readCursor);
+						if (bytesRead <= 0) break;
+						for (let index = 0; index < bytesRead; index++) {
+							if (buffer[index] === 0x0a) lastNewline = readCursor + index;
+						}
+						readCursor += bytesRead;
+					}
+					skippingOversizedLine = stat.size - lastNewline - 1 > MAX_CONTROL_EVENT_LINE_BYTES;
+				} finally {
+					fs.closeSync(fd);
+				}
+			}
+			return { cursor: stat.size, identity: `${stat.dev}:${stat.ino}`, skippingOversizedLine };
 		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+			if ((error as NodeJS.ErrnoException).code === "ENOENT")
+				return { cursor: 0, identity: undefined, skippingOversizedLine: false };
 			throw error;
 		}
 	};
@@ -111,7 +136,14 @@ export function createAsyncJobTracker(
 			outputFile: run.outputFile,
 			totalTokens: run.totalTokens,
 			sessionFile: run.sessionFile,
-			controlEventCursor: restoredControlEventCursor(run.asyncDir),
+			...(() => {
+				const restoredCursor = restoredControlEventCursor(run.asyncDir);
+				return {
+					controlEventCursor: restoredCursor.cursor,
+					controlEventFileIdentity: restoredCursor.identity,
+					controlEventSkippingOversizedLine: restoredCursor.skippingOversizedLine,
+				};
+			})(),
 			nestedChildren: run.nestedChildren,
 			tkTicket: run.tkTicket,
 		};
@@ -156,10 +188,16 @@ export function createAsyncJobTracker(
 		}
 		try {
 			const stat = fs.fstatSync(fd);
+			const fileIdentity = `${stat.dev}:${stat.ino}`;
 			const savedCursor = job.controlEventCursor;
-			let cursor = stat.size < (savedCursor ?? 0) ? 0 : (savedCursor ?? 0);
-			const startedFromTail = savedCursor === undefined && stat.size > CONTROL_EVENT_SCAN_WINDOW_BYTES;
+			const fileReplaced = job.controlEventFileIdentity !== undefined && job.controlEventFileIdentity !== fileIdentity;
+			const cursorInvalid = fileReplaced || stat.size < (savedCursor ?? 0);
+			let cursor = cursorInvalid ? 0 : (savedCursor ?? 0);
+			const startedFromTail =
+				!cursorInvalid && savedCursor === undefined && stat.size > CONTROL_EVENT_SCAN_WINDOW_BYTES;
 			if (startedFromTail) cursor = stat.size - CONTROL_EVENT_SCAN_WINDOW_BYTES;
+			job.controlEventFileIdentity = fileIdentity;
+			if (cursorInvalid) job.controlEventSkippingOversizedLine = false;
 			if (stat.size <= cursor) return;
 			const scanEnd = Math.min(stat.size, cursor + CONTROL_EVENT_SCAN_WINDOW_BYTES);
 			const handleLine = (line: string) => {
@@ -179,19 +217,20 @@ export function createAsyncJobTracker(
 					noticeText?: string;
 					intercom?: { to?: string; message?: string };
 				};
-				if (!record.event || !Array.isArray(record.channels)) return;
+				const event = parseControlEvent(record.event);
+				if (!event || !Array.isArray(record.channels)) return;
 				const payload = {
-					event: record.event,
+					event,
 					source: "async" as const,
 					asyncDir: job.asyncDir,
 					childIntercomTarget: record.childIntercomTarget,
-					noticeText: record.noticeText ?? formatControlNoticeMessage(record.event, record.childIntercomTarget),
+					noticeText: record.noticeText ?? formatControlNoticeMessage(event, record.childIntercomTarget),
 				};
 				if (record.channels.includes("event")) {
 					pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
 				}
 				if (
-					record.event.type !== "active_long_running" &&
+					event.type !== "active_long_running" &&
 					record.channels.includes("intercom") &&
 					record.intercom?.to &&
 					record.intercom.message
@@ -207,7 +246,7 @@ export function createAsyncJobTracker(
 			let lastCompleteCursor = cursor;
 			let lineParts: Buffer[] = [];
 			let lineBytes = 0;
-			let skippingOversizedLine = startedFromTail;
+			let skippingOversizedLine = cursorInvalid ? false : (job.controlEventSkippingOversizedLine ?? startedFromTail);
 			const appendLineSegment = (segment: Buffer) => {
 				if (segment.length === 0 || skippingOversizedLine) return;
 				if (lineBytes + segment.length > MAX_CONTROL_EVENT_LINE_BYTES) {
@@ -240,10 +279,20 @@ export function createAsyncJobTracker(
 				}
 				appendLineSegment(chunk.subarray(lineStart));
 				readCursor += bytesRead;
-				if (skippingOversizedLine) job.controlEventCursor = readCursor;
+				if (skippingOversizedLine) {
+					job.controlEventCursor = readCursor;
+					job.controlEventSkippingOversizedLine = true;
+				}
 			}
-			if (lastCompleteCursor > cursor) job.controlEventCursor = lastCompleteCursor;
-			else if (scanEnd < stat.size || startedFromTail) job.controlEventCursor = scanEnd;
+			if (skippingOversizedLine) {
+				job.controlEventCursor = readCursor;
+				job.controlEventSkippingOversizedLine = true;
+			} else if (lastCompleteCursor > cursor) {
+				job.controlEventCursor = lastCompleteCursor;
+				job.controlEventSkippingOversizedLine = false;
+			} else if (scanEnd < stat.size || startedFromTail) {
+				job.controlEventCursor = scanEnd;
+			}
 		} catch (error) {
 			console.error(`Failed to read async control events for '${job.asyncDir}':`, error);
 		} finally {

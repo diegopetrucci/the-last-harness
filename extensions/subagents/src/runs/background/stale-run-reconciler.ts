@@ -5,8 +5,14 @@ import {
 	RESULTS_DIR,
 	type AsyncParallelGroupStatus,
 	type AsyncStatus,
+	type ContextPressureProjection,
+	type ContextPressureThreshold,
+	type ContextUsageDiagnostics,
 	type NestedRunSummary,
+	type SubagentModelIdentity,
+	type SubagentModelResolution,
 	type SubagentRunMode,
+	type SubagentTerminationReason,
 } from "../../shared/types.ts";
 import { createAsyncStatusJsonParseError } from "./async-status-corruption.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -22,6 +28,14 @@ import {
 	normalizeAsyncLifecycleStatus,
 	recoverStoppedLifecycleOwnership,
 } from "../shared/lifecycle-state.ts";
+import {
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
+	parseContextUsageDiagnostics,
+	parseSubagentTerminationReason,
+} from "../../shared/context-diagnostics.ts";
+import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution } from "../shared/model-fallback.ts";
+import { parseThinkingLevel } from "../../shared/model-info.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
@@ -127,8 +141,14 @@ interface ResultChildOutcome {
 	error?: string;
 	sessionFile?: string;
 	model?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
 	attemptedModels?: string[];
 	modelAttempts?: NonNullable<AsyncStatus["steps"]>[number]["modelAttempts"];
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
 	activeRuntimeMs?: number;
 }
 
@@ -137,22 +157,75 @@ interface ResultRepairData {
 	results?: ResultChildOutcome[];
 }
 
+type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
+
+function sanitizeStatusStep(step: AsyncStatusStep): AsyncStatusStep {
+	const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, ...rest } = step;
+	const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
+	const modelResolution = sanitizeSubagentModelResolution(step.modelResolution);
+	const thinking = parseThinkingLevel(step.thinking);
+	return {
+		...rest,
+		...(modelIdentity ? { modelIdentity } : {}),
+		...(modelResolution ? { modelResolution } : {}),
+		...(thinking ? { thinking } : {}),
+	};
+}
+
 function readResultRepairData(resultPath: string): ResultRepairData | undefined {
 	try {
-		const data = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as {
-			success?: boolean;
-			state?: string;
-			exitCode?: number;
-			results?: ResultChildOutcome[];
-		};
-		const state = data.success
-			? "complete"
-			: data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
-				? data.state
-				: data.state === "paused" || data.exitCode === 0
-					? "paused"
-					: "failed";
-		return { state, ...(Array.isArray(data.results) ? { results: data.results } : {}) };
+		const parsed: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			throw new Error(`Async result file '${resultPath}' must contain a JSON object.`);
+		}
+		const data = parsed as Record<string, unknown>;
+		const state =
+			data.success === true
+				? "complete"
+				: data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
+					? data.state
+					: data.state === "paused" || data.exitCode === 0
+						? "paused"
+						: "failed";
+		const results = Array.isArray(data.results)
+			? data.results.map((entry): ResultChildOutcome => {
+					if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
+					const child = entry as Record<string, unknown>;
+					const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+					const contextPressure = parseContextPressureProjection(child.contextPressure);
+					const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
+						child.contextPressureCrossedThresholds,
+					);
+					const terminationReason = parseSubagentTerminationReason(child.terminationReason);
+					const modelIdentity = sanitizeSubagentModelIdentity(child.modelIdentity);
+					const modelResolution = sanitizeSubagentModelResolution(child.modelResolution);
+					const attemptedModels = Array.isArray(child.attemptedModels)
+						? child.attemptedModels.filter((value): value is string => typeof value === "string")
+						: undefined;
+					const activeRuntimeMs =
+						typeof child.activeRuntimeMs === "number" &&
+						Number.isFinite(child.activeRuntimeMs) &&
+						child.activeRuntimeMs >= 0
+							? child.activeRuntimeMs
+							: undefined;
+					return {
+						...(typeof child.agent === "string" ? { agent: child.agent } : {}),
+						...(typeof child.success === "boolean" ? { success: child.success } : {}),
+						...(typeof child.error === "string" ? { error: child.error } : {}),
+						...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
+						...(typeof child.model === "string" ? { model: child.model } : {}),
+						...(modelIdentity ? { modelIdentity } : {}),
+						...(modelResolution ? { modelResolution } : {}),
+						...(attemptedModels?.length ? { attemptedModels } : {}),
+						...(contextUsage ? { contextUsage } : {}),
+						...(contextPressure ? { contextPressure } : {}),
+						...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+						...(terminationReason ? { terminationReason } : {}),
+						...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+					};
+				})
+			: undefined;
+		return { state, ...(results ? { results } : {}) };
 	} catch (error) {
 		if (isNotFoundError(error)) return undefined;
 		throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
@@ -174,11 +247,12 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 	const repair = readResultRepairData(resultPath);
 	if (!repair) return undefined;
 	const steps = (status.steps ?? []).map((step, index) => {
-		if (step.status !== "running" && step.status !== "pending") return step;
+		const sanitizedStep = sanitizeStatusStep(step);
+		if (step.status !== "running" && step.status !== "pending") return sanitizedStep;
 		const child = repair.results?.[index];
 		const state = childState(repair.state, child);
 		return {
-			...step,
+			...sanitizedStep,
 			status:
 				state === "complete"
 					? ("complete" as const)
@@ -199,8 +273,16 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			error: state === "failed" ? (step.error ?? child?.error) : step.error,
 			sessionFile: step.sessionFile ?? child?.sessionFile,
 			model: step.model ?? child?.model,
+			modelIdentity: sanitizedStep.modelIdentity ?? child?.modelIdentity,
+			modelResolution: sanitizedStep.modelResolution ?? child?.modelResolution,
 			attemptedModels: step.attemptedModels ?? child?.attemptedModels,
 			modelAttempts: step.modelAttempts ?? child?.modelAttempts,
+			contextUsage: step.contextUsage ?? child?.contextUsage,
+			contextPressure: step.contextPressure ?? child?.contextPressure,
+			contextPressureCrossedThresholds:
+				step.contextPressureCrossedThresholds ?? child?.contextPressureCrossedThresholds,
+			terminationReason:
+				step.terminationReason ?? child?.terminationReason ?? (state === "failed" ? "process_exit" : undefined),
 		};
 	});
 	return {
@@ -254,27 +336,36 @@ function buildFailedRepair(
 		`Async runner process ${pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
 	const diagnostics = readRunnerStartupDiagnostics(asyncDir);
 	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
-	const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }];
-	const repairedSteps = steps.map((step) =>
-		step.status === "running" || step.status === "pending" || step.status === "pausing"
-			? {
-					...step,
-					status: "failed" as const,
-					activityState: undefined,
-					endedAt: step.endedAt ?? now,
-					durationMs:
-						step.startedAt !== undefined && step.durationMs === undefined
-							? Math.max(0, now - step.startedAt)
-							: step.durationMs,
-					activeRuntimeMs:
-						step.status === "pausing" && step.activeRuntimeMs !== undefined
-							? step.activeRuntimeMs
-							: (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
-					exitCode: step.exitCode ?? 1,
-					error: step.error ?? message,
-				}
-			: step,
+	const steps = (status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }]).map(
+		sanitizeStatusStep,
 	);
+	const repairedSteps = steps
+		.map((step) =>
+			step.status === "running" || step.status === "pending" || step.status === "pausing"
+				? {
+						...step,
+						status: "failed" as const,
+						activityState: undefined,
+						endedAt: step.endedAt ?? now,
+						durationMs:
+							step.startedAt !== undefined && step.durationMs === undefined
+								? Math.max(0, now - step.startedAt)
+								: step.durationMs,
+						activeRuntimeMs:
+							step.status === "pausing" && step.activeRuntimeMs !== undefined
+								? step.activeRuntimeMs
+								: (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
+						exitCode: step.exitCode ?? 1,
+						error: step.error ?? message,
+						terminationReason: step.terminationReason ?? "process_exit",
+					}
+				: step,
+		)
+		.map((step) =>
+			step.status === "failed" && !step.terminationReason
+				? { ...step, terminationReason: "process_exit" as const }
+				: step,
+		);
 	const repairedStatus: AsyncStatus = {
 		...status,
 		state: "failed",
@@ -300,8 +391,18 @@ function buildFailedRepair(
 				error: step.status === "complete" || step.status === "completed" ? undefined : (step.error ?? message),
 				success: step.status === "complete" || step.status === "completed",
 				model: step.model,
+				modelIdentity: step.modelIdentity,
+				modelResolution: step.modelResolution,
 				attemptedModels: step.attemptedModels,
 				modelAttempts: step.modelAttempts,
+				contextUsage: step.contextUsage,
+				contextPressure: step.contextPressure,
+				contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
+				...(step.terminationReason
+					? { terminationReason: step.terminationReason }
+					: step.status !== "complete" && step.status !== "completed"
+						? { terminationReason: "process_exit" as const }
+						: {}),
 				sessionFile: step.sessionFile,
 				activeRuntimeMs: step.activeRuntimeMs,
 			})),

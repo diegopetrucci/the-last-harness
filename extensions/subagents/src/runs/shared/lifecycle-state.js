@@ -621,10 +621,7 @@ export function finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken,
         throw error;
     }
 }
-export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options = {}) {
-    const current = readLifecycleStatus(asyncDir);
-    if (!current)
-        return { status: null, recovered: false, liveness: "unclaimed" };
+export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options = {}) {
     const continuation = lifecycleContinuationForIndex(current, index);
     if (!continuation?.claimToken)
         return { status: current, recovered: false, liveness: "unclaimed" };
@@ -645,23 +642,35 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
     if (continuation.continuationRunId && continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
         return { status: current, recovered: false, liveness: "blocked" };
     }
-    const recoveredAt = options.now?.() ?? Date.now();
+    return {
+        status: {
+            ...current,
+            lastUpdate: options.now?.() ?? Date.now(),
+            lifecycle: withLifecycleContinuation(current, index, undefined),
+        },
+        recovered: true,
+        liveness,
+    };
+}
+export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options = {}) {
+    const current = readLifecycleStatus(asyncDir);
+    if (!current)
+        return { status: null, recovered: false, liveness: "unclaimed" };
+    const inspected = recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options);
+    if (!inspected.recovered)
+        return inspected;
     try {
         const transitioned = transitionLifecycleStatus({
             asyncDir,
             expectedGeneration: lifecycleGeneration(current),
             lockOptions: options,
-            mutate: (status) => ({
-                ...status,
-                lastUpdate: recoveredAt,
-                lifecycle: withLifecycleContinuation(status, index, undefined),
-            }),
+            mutate: () => inspected.status,
         });
-        return { status: transitioned.status, recovered: true, liveness };
+        return { status: transitioned.status, recovered: true, liveness: inspected.liveness };
     }
     catch (error) {
         if (error instanceof Error && /expected generation/.test(error.message)) {
-            return { status: readLifecycleStatus(asyncDir), recovered: false, liveness };
+            return { status: readLifecycleStatus(asyncDir), recovered: false, liveness: inspected.liveness };
         }
         throw error;
     }

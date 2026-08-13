@@ -88,7 +88,7 @@ describe("async resume lookup", () => {
 				lastUpdate: 200,
 				cwd: root,
 				sessionFile,
-				steps: [{ agent: "worker", status: "complete" }],
+				steps: [{ agent: "worker", status: "complete", contextPressureCrossedThresholds: ["warning", "critical"] }],
 			});
 
 			const target = resolveAsyncResumeTarget(
@@ -103,6 +103,190 @@ describe("async resume lookup", () => {
 			assert.equal(target.cwd, root);
 			assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
 			assert.equal(target.continuationAcceptance, undefined);
+			assert.deepEqual(target.contextPressureCrossedThresholds, ["warning", "critical"]);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("restores canonical child model identity from status and result-only artifacts", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-model-identity-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const statusSession = path.join(root, "status.jsonl");
+			const resultSession = path.join(root, "result.jsonl");
+			fs.writeFileSync(statusSession, "", "utf-8");
+			fs.writeFileSync(resultSession, "", "utf-8");
+			const identity = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" };
+			const resolution = {
+				kind: "restored",
+				original: identity,
+				resumed: identity,
+				reason: "Restored persisted child selection instead of the current parent model.",
+			};
+			writeJson(path.join(asyncRoot, "run-status-model", "status.json"), {
+				runId: "run-status-model",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				cwd: root,
+				steps: [
+					{
+						agent: "worker",
+						status: "complete",
+						sessionFile: statusSession,
+						model: "anthropic/claude-sonnet-4:high",
+						thinking: "high",
+						modelIdentity: identity,
+						modelResolution: resolution,
+					},
+				],
+			});
+			const statusTarget = resolveAsyncResumeTarget(
+				{ id: "run-status-model" },
+				{ asyncDirRoot: asyncRoot, resultsDir },
+			);
+			assert.deepEqual(statusTarget.modelIdentity, identity);
+			assert.deepEqual(statusTarget.modelResolution, resolution);
+
+			writeJson(path.join(resultsDir, "run-result-model.json"), {
+				id: "run-result-model",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				cwd: root,
+				results: [
+					{
+						agent: "worker",
+						success: true,
+						sessionFile: resultSession,
+						model: "anthropic/claude-sonnet-4:high",
+						thinking: "high",
+						modelIdentity: identity,
+						modelResolution: resolution,
+					},
+				],
+			});
+			const resultTarget = resolveAsyncResumeTarget(
+				{ id: "run-result-model" },
+				{ asyncDirRoot: path.join(root, "missing-runs"), resultsDir },
+			);
+			assert.deepEqual(resultTarget.modelIdentity, identity);
+			assert.deepEqual(resultTarget.modelResolution, resolution);
+
+			writeJson(path.join(resultsDir, "run-result-model-strings.json"), {
+				id: "run-result-model-strings",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				cwd: root,
+				results: [
+					{
+						agent: "worker",
+						success: true,
+						sessionFile: resultSession,
+						model: "anthropic/claude-sonnet-4",
+						thinking: "high",
+					},
+				],
+			});
+			const derivedTarget = resolveAsyncResumeTarget(
+				{ id: "run-result-model-strings" },
+				{ asyncDirRoot: path.join(root, "missing-runs"), resultsDir },
+			);
+			assert.deepEqual(derivedTarget.modelIdentity, identity);
+			assert.equal(derivedTarget.modelResolution, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes invalid result thinking while preserving nested model resolution identities", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-thinking-boundary-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "legacy.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(resultsDir, "run-thinking-boundary.json"), {
+				id: "run-thinking-boundary",
+				agent: "worker",
+				success: true,
+				state: "complete",
+				results: [
+					{
+						agent: "worker",
+						sessionFile,
+						thinking: "",
+						modelIdentity: { provider: "openai", model: "gpt-5", thinking: "turbo" },
+						modelResolution: {
+							kind: "fallback",
+							original: { provider: "openai", model: "gpt-5", thinking: "xhigh" },
+							resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+							reason: "provider fallback",
+						},
+					},
+				],
+			});
+
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-thinking-boundary" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
+
+			assert.deepEqual(target.modelIdentity, { provider: "openai", model: "gpt-5" });
+			assert.deepEqual(target.modelResolution, {
+				kind: "fallback",
+				original: { provider: "openai", model: "gpt-5", thinking: "xhigh" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+				reason: "provider fallback",
+			});
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes status model identity and nested resolution before resume target construction", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-status-boundary-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "status.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(asyncRoot, "run-status-boundary", "status.json"), {
+				runId: "run-status-boundary",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{
+						agent: "worker",
+						status: "complete",
+						sessionFile,
+						model: "openai/gpt-5",
+						thinking: "turbo",
+						modelIdentity: { provider: "openai", model: "gpt-5", thinking: "" },
+						modelResolution: {
+							kind: "fallback",
+							original: { provider: "openai", model: "gpt-5", thinking: "turbo" },
+							resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+							reason: "provider fallback",
+						},
+					},
+				],
+			});
+
+			const target = resolveAsyncResumeTarget({ id: "run-status-boundary" }, { asyncDirRoot: asyncRoot, resultsDir });
+
+			assert.deepEqual(target.modelIdentity, { provider: "openai", model: "gpt-5" });
+			assert.deepEqual(target.modelResolution, {
+				kind: "fallback",
+				original: { provider: "openai", model: "gpt-5" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+				reason: "provider fallback",
+			});
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -964,6 +1148,50 @@ describe("async resume lookup", () => {
 		}
 	});
 
+	it("sanitizes malformed optional result diagnostics during result-only recovery", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-diagnostics-"));
+		try {
+			const resultsDir = path.join(root, "results");
+			const sessionFile = path.join(root, "legacy.jsonl");
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			writeJson(path.join(resultsDir, "run-legacy.json"), {
+				id: "run-legacy",
+				agent: "worker",
+				success: false,
+				state: "paused",
+				results: [
+					{
+						agent: "worker",
+						interrupted: true,
+						success: false,
+						exitCode: 0,
+						sessionFile,
+						contextUsage: { contextTokens: "legacy-invalid" },
+						terminationReason: "legacy-invalid",
+						modelIdentity: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+						modelResolution: { kind: "invalid", reason: 42 },
+						acceptance: skippedPausedAcceptanceLedger(),
+					},
+				],
+			});
+
+			const target = resolveAsyncResumeTarget(
+				{ id: "run-legacy" },
+				{ asyncDirRoot: path.join(root, "runs"), resultsDir },
+			);
+			assert.equal(target.kind, "revive");
+			assert.equal(target.state, "paused");
+			assert.equal(target.sessionFile, sessionFile);
+			assert.equal(target.contextUsage, undefined);
+			assert.equal(target.terminationReason, undefined);
+			assert.deepEqual(target.modelIdentity, { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" });
+			assert.equal(target.modelResolution, undefined);
+			assert.deepEqual(target.continuationAcceptance, pausedCheckedAcceptance);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects malformed status session ids", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-malformed-session-id-"));
 		try {
@@ -1153,6 +1381,8 @@ describe("async resume lookup", () => {
 						exitCode: 0,
 						sessionFile,
 						activeRuntimeMs: 375,
+						contextUsage: { restoredTokens: 700, contextTokens: 800, peakTokens: 900 },
+						terminationReason: "paused",
 						acceptance: {
 							status: "skipped",
 							effectiveAcceptance,
@@ -1187,6 +1417,8 @@ describe("async resume lookup", () => {
 			// F3: paused correctly identified via interrupted
 			assert.equal(target.sessionFile, sessionFile);
 			assert.equal(target.activeRuntimeMs, 375);
+			assert.deepEqual(target.contextUsage, { restoredTokens: 700, contextTokens: 800, peakTokens: 900 });
+			assert.equal(target.terminationReason, "paused");
 			// F3: continuationAcceptance applied from result artifact
 			assert.deepEqual(target.continuationAcceptance, effectiveAcceptance);
 		} finally {

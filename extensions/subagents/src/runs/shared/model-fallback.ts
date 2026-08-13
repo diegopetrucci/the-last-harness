@@ -1,5 +1,9 @@
-import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
-import type { Usage } from "../../shared/types.ts";
+import {
+	parseThinkingLevel,
+	splitKnownThinkingSuffix,
+	type ModelInfo as AvailableModelInfo,
+} from "../../shared/model-info.ts";
+import type { SubagentModelIdentity, SubagentModelResolution, Usage } from "../../shared/types.ts";
 import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 
 export type { AvailableModelInfo };
@@ -10,6 +14,39 @@ interface ModelAttemptSummary {
 	exitCode?: number | null;
 	error?: string;
 	usage?: Usage;
+}
+
+function sameModelIdentity(left: SubagentModelIdentity | undefined, right: SubagentModelIdentity): boolean {
+	return Boolean(
+		left && left.provider === right.provider && left.model === right.model && left.thinking === right.thinking,
+	);
+}
+
+/**
+ * Append one completed runtime-fallback transition to the durable resolution.
+ * `sourceAttempt` is the candidate that just failed; callers invoke this at
+ * attempt start and again at terminalization, so crash-window and final
+ * artifacts share the same ordered history.
+ */
+export function appendRuntimeFallbackResolution(input: {
+	previous?: SubagentModelResolution;
+	sourceAttempt?: ModelAttemptSummary;
+	currentIdentity?: SubagentModelIdentity;
+	originalIdentity?: SubagentModelIdentity;
+}): SubagentModelResolution | undefined {
+	const current = input.currentIdentity;
+	const source = input.sourceAttempt;
+	if (!current || !source) return input.previous;
+	if (sameModelIdentity(input.previous?.resumed, current)) return input.previous;
+	const original = input.previous?.original ?? input.originalIdentity ?? canonicalSubagentModelIdentity(source.model);
+	const currentReference = `${current.provider}/${current.model}${current.thinking ? `:${current.thinking}` : ""}`;
+	const transition = `Runtime fallback selected '${currentReference}' after '${source.model}' failed: ${source.error ?? `exit ${source.exitCode ?? 1}`}.`;
+	return {
+		kind: "fallback",
+		...(original ? { original } : {}),
+		resumed: current,
+		reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
+	};
 }
 
 export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
@@ -23,6 +60,75 @@ export function splitThinkingSuffix(model: string): { baseModel: string; thinkin
 
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
 export const INHERIT_MODEL = "inherit";
+
+/**
+ * Convert a canonical provider/model argument and effective thinking level into
+ * the durable identity used by resume artifacts. Model strings without a
+ * provider cannot safely be persisted as an identity because they may resolve
+ * to a different provider after a session reload.
+ */
+export function canonicalSubagentModelIdentity(
+	model: string | undefined,
+	thinking?: string,
+): SubagentModelIdentity | undefined {
+	if (!model) return undefined;
+	const parsed = splitKnownThinkingSuffix(model);
+	const separator = parsed.baseModel.indexOf("/");
+	if (separator <= 0 || separator === parsed.baseModel.length - 1) return undefined;
+	const effectiveThinking = parsed.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : parseThinkingLevel(thinking);
+	return {
+		provider: parsed.baseModel.slice(0, separator),
+		model: parsed.baseModel.slice(separator + 1),
+		...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+	};
+}
+
+/**
+ * Sanitize persisted model identity at artifact boundaries. Provider and model
+ * remain authoritative when valid; unsupported thinking values are omitted.
+ */
+export function sanitizeSubagentModelIdentity(value: unknown): SubagentModelIdentity | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const input = value as Record<string, unknown>;
+	if (
+		typeof input.provider !== "string" ||
+		input.provider.trim() === "" ||
+		typeof input.model !== "string" ||
+		input.model.trim() === ""
+	)
+		return undefined;
+	const thinking = parseThinkingLevel(input.thinking);
+	return {
+		provider: input.provider,
+		model: input.model,
+		...(thinking ? { thinking } : {}),
+	};
+}
+
+/** Sanitize a persisted model resolution, including both nested identities. */
+export function sanitizeSubagentModelResolution(value: unknown): SubagentModelResolution | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const input = value as Record<string, unknown>;
+	if (
+		(input.kind !== "restored" && input.kind !== "override" && input.kind !== "fallback") ||
+		typeof input.reason !== "string" ||
+		input.reason.trim() === ""
+	)
+		return undefined;
+	const original = sanitizeSubagentModelIdentity(input.original);
+	const resumed = sanitizeSubagentModelIdentity(input.resumed);
+	if ((input.original !== undefined && !original) || (input.resumed !== undefined && !resumed)) return undefined;
+	return {
+		kind: input.kind,
+		...(original ? { original } : {}),
+		...(resumed ? { resumed } : {}),
+		reason: input.reason,
+	};
+}
+
+export function modelReferenceFromIdentity(identity: SubagentModelIdentity): string {
+	return `${identity.provider}/${identity.model}`;
+}
 
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
 export interface ParentModel {

@@ -118,7 +118,15 @@ describe("async execution utilities", () => {
 			["skipped", "skipped", "skipped"],
 		);
 		assert.deepEqual(
+			payload.results.map((result) => result.terminationReason),
+			["paused", "paused", "paused"],
+		);
+		assert.deepEqual(
 			status.steps?.map((step) => step.status),
+			["paused", "paused", "paused"],
+		);
+		assert.deepEqual(
+			status.steps?.map((step) => step.terminationReason),
 			["paused", "paused", "paused"],
 		);
 		assert.deepEqual(
@@ -485,7 +493,103 @@ describe("async execution utilities", () => {
 			payload.results.map((result) => result.timedOut),
 			[true, true],
 		);
+		assert.deepEqual(
+			payload.results.map((result) => result.terminationReason),
+			["timed_out", "timed_out"],
+		);
+		assert.deepEqual(
+			status.steps?.map((step) => step.terminationReason),
+			["timed_out", "timed_out"],
+		);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("preserves termination reasons for synthesized parallel result children", {
+		skip: process.platform === "win32" ? "control and timeout delivery are intermittent on Windows CI" : undefined,
+	}, async () => {
+		const launch = (
+			id: string,
+			tasks: Array<{ agent: string; task: string }>,
+			options: { failFast?: boolean; timeoutMs?: number } = {},
+		) =>
+			executeAsyncChain(id, {
+				chain: [{ parallel: tasks, concurrency: 1, ...options }],
+				resultMode: "parallel",
+				agents: tasks.map(({ agent }) => makeAgent(agent)),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-synthesized" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+				...options,
+			});
+
+		mockPi.onCall({ delay: 5_000, output: "paused child" });
+		const pausedId = `async-synthesized-paused-${Date.now().toString(36)}`;
+		launch(pausedId, [
+			{ agent: "paused-one", task: "Wait" },
+			{ agent: "paused-two", task: "Wait" },
+		]);
+		await waitForMockPiCall(mockPi, 0, 10_000);
+		const pausedDir = path.join(ASYNC_DIR, pausedId);
+		const pausedStatus = JSON.parse(
+			fs.readFileSync(path.join(pausedDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload & {
+			pid?: number;
+		};
+		deliverInterruptRequest({ asyncDir: pausedDir, pid: pausedStatus.pid, source: "test" });
+		const pausedPayload = JSON.parse(
+			fs.readFileSync(await waitForAsyncResultFile(pausedId, 30_000), "utf-8"),
+		) as AsyncResultPayload;
+		assert.deepEqual(
+			pausedPayload.results.map((result) => result.terminationReason),
+			["paused", "paused"],
+		);
+
+		mockPi.onCall({ delay: 5_000, output: "timed out child" });
+		const timedOutId = `async-synthesized-timeout-${Date.now().toString(36)}`;
+		launch(
+			timedOutId,
+			[
+				{ agent: "timeout-one", task: "Wait" },
+				{ agent: "timeout-two", task: "Wait" },
+			],
+			{ timeoutMs: 500 },
+		);
+		const timedOutPayload = JSON.parse(
+			fs.readFileSync(await waitForAsyncResultFile(timedOutId, 10_000), "utf-8"),
+		) as AsyncResultPayload;
+		assert.deepEqual(
+			timedOutPayload.results.map((result) => result.terminationReason),
+			["timed_out", "timed_out"],
+		);
+
+		mockPi.onCall({ output: "fail-fast child", exitCode: 1 });
+		const failFastId = `async-synthesized-fail-fast-${Date.now().toString(36)}`;
+		launch(
+			failFastId,
+			[
+				{ agent: "fail-fast-one", task: "Fail" },
+				{ agent: "fail-fast-two", task: "Skipped" },
+			],
+			{ failFast: true },
+		);
+		const failFastResultPath = await waitForAsyncResultFile(failFastId, 10_000);
+		const failFastPayload = JSON.parse(fs.readFileSync(failFastResultPath, "utf-8")) as AsyncResultPayload;
+		const failFastStatus = JSON.parse(
+			fs.readFileSync(path.join(ASYNC_DIR, failFastId, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		assert.deepEqual(
+			failFastPayload.results.map((result) => result.terminationReason),
+			["process_exit", "process_exit"],
+		);
+		assert.equal(failFastStatus.steps?.[1]?.terminationReason, "process_exit");
 	});
 
 	it("cancels async acceptance verification when the run times out", async () => {

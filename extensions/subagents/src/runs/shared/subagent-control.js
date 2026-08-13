@@ -85,6 +85,8 @@ export function buildControlEvent(input) {
         agent: input.agent,
         ...(input.index !== undefined ? { index: input.index } : {}),
         message,
+        ...(input.contextPressureSeverity ? { contextPressureSeverity: input.contextPressureSeverity } : {}),
+        ...(input.contextPressureThreshold ? { contextPressureThreshold: input.contextPressureThreshold } : {}),
         reason: input.reason ?? (type === "active_long_running" ? "active_long_running" : "idle"),
         ...(input.turns !== undefined ? { turns: input.turns } : {}),
         ...(input.tokens !== undefined ? { tokens: input.tokens } : {}),
@@ -99,9 +101,51 @@ export function buildControlEvent(input) {
 export function shouldNotifyControlEvent(config, event) {
     return config.enabled && config.notifyOn.includes(event.type);
 }
+export function parseControlEvent(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const raw = value;
+    if ((raw.type !== "active_long_running" && raw.type !== "needs_attention") ||
+        (raw.to !== "active_long_running" && raw.to !== "needs_attention") ||
+        typeof raw.runId !== "string" ||
+        typeof raw.agent !== "string" ||
+        typeof raw.message !== "string" ||
+        typeof raw.ts !== "number" ||
+        !Number.isFinite(raw.ts))
+        return undefined;
+    const severity = raw.contextPressureSeverity;
+    const threshold = raw.contextPressureThreshold;
+    if ((severity !== undefined && severity !== "warning" && severity !== "critical") ||
+        (threshold !== undefined && threshold !== "warning" && threshold !== "critical"))
+        return undefined;
+    return {
+        type: raw.type,
+        ...(raw.from === "active_long_running" || raw.from === "needs_attention" ? { from: raw.from } : {}),
+        to: raw.to,
+        ts: raw.ts,
+        runId: raw.runId,
+        agent: raw.agent,
+        ...(typeof raw.index === "number" && Number.isInteger(raw.index) ? { index: raw.index } : {}),
+        message: raw.message,
+        ...(severity ? { contextPressureSeverity: severity } : {}),
+        ...(threshold ? { contextPressureThreshold: threshold } : {}),
+        ...(typeof raw.reason === "string" ? { reason: raw.reason } : {}),
+        ...(typeof raw.turns === "number" ? { turns: raw.turns } : {}),
+        ...(typeof raw.tokens === "number" ? { tokens: raw.tokens } : {}),
+        ...(typeof raw.toolCount === "number" ? { toolCount: raw.toolCount } : {}),
+        ...(typeof raw.currentTool === "string" ? { currentTool: raw.currentTool } : {}),
+        ...(typeof raw.currentToolDurationMs === "number" ? { currentToolDurationMs: raw.currentToolDurationMs } : {}),
+        ...(typeof raw.currentPath === "string" ? { currentPath: raw.currentPath } : {}),
+        ...(typeof raw.elapsedMs === "number" ? { elapsedMs: raw.elapsedMs } : {}),
+        ...(typeof raw.recentFailureSummary === "string" ? { recentFailureSummary: raw.recentFailureSummary } : {}),
+    };
+}
 export function controlNotificationKey(event, childIntercomTarget) {
     const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
-    return `${childKey}:${event.type}:${event.reason ?? "idle"}`;
+    const pressureKey = event.reason === "context_pressure"
+        ? `:${event.contextPressureSeverity ?? ""}:${event.contextPressureThreshold ?? ""}`
+        : "";
+    return `${childKey}:${event.type}:${event.reason ?? "idle"}${pressureKey}`;
 }
 export function claimControlNotification(config, event, seenKeys, childIntercomTarget) {
     if (!shouldNotifyControlEvent(config, event))
@@ -137,6 +181,18 @@ export function formatControlNoticeMessage(event, childIntercomTarget) {
             `Signal: ${event.message}`,
             "Next: read the output artifact or session from the subagent result, then retry with a more explicit implementation prompt or handle the fix directly.",
             childIntercomTarget ? `Run intercom target (may be inactive): ${childIntercomTarget}` : undefined,
+        ]
+            .filter((line) => Boolean(line))
+            .join("\n");
+    }
+    if (event.reason === "context_pressure") {
+        return [
+            `Subagent context pressure: ${event.agent}`,
+            `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
+            `Signal: ${event.message}`,
+            "Do not interrupt or compact automatically; inspect status and preserve the child’s progress.",
+            childIntercomTarget ? `Direct intercom target: ${childIntercomTarget}` : undefined,
+            `Status: subagent({ action: "status", id: "${runTarget}" })`,
         ]
             .filter((line) => Boolean(line))
             .join("\n");

@@ -1856,8 +1856,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				tasks: [
 					{ agent: "done", task: "finish" },
 					{ agent: "ask", task: "ask supervisor" },
-					{ agent: "wait", task: "keep working" },
-					{ agent: "started", task: "start late work" },
+					{ agent: "wait", task: "keep working", model: "anthropic/claude-sonnet-4" },
+					{ agent: "started", task: "start late work", model: "openai/gpt-5-mini" },
 					{ agent: "queued", task: "must not start" },
 				],
 				concurrency: 3,
@@ -1876,7 +1876,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		await waitForAsyncState(runId, "paused");
 		const pausedStatus = readAsyncStatusJson<{
 			state?: string;
-			steps?: Array<{ status?: string; pause?: { kind?: string } }>;
+			steps?: Array<{
+				status?: string;
+				pause?: { kind?: string };
+				terminationReason?: string;
+				modelIdentity?: { provider: string; model: string; thinking?: string };
+			}>;
 		}>(runId);
 		assert.equal(pausedStatus.state, "paused");
 		assert.equal(pausedStatus.steps?.[0]?.status, "completed");
@@ -1884,8 +1889,15 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(pausedStatus.steps?.[1]?.pause?.kind, "awaiting_supervisor");
 		assert.equal(pausedStatus.steps?.[2]?.status, "paused");
 		assert.equal(pausedStatus.steps?.[2]?.pause?.kind, "cohort_pause");
+		assert.equal(pausedStatus.steps?.[2]?.terminationReason, "paused");
+		assert.deepEqual(pausedStatus.steps?.[2]?.modelIdentity, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+		});
 		assert.equal(pausedStatus.steps?.[3]?.status, "paused");
 		assert.equal(pausedStatus.steps?.[3]?.pause?.kind, "cohort_pause");
+		assert.equal(pausedStatus.steps?.[3]?.terminationReason, "paused");
+		assert.deepEqual(pausedStatus.steps?.[3]?.modelIdentity, { provider: "openai", model: "gpt-5-mini" });
 		assert.equal(pausedStatus.steps?.[4]?.status, "pending");
 		const requesterIndex = pausedStatus.steps?.findIndex((step) => step.pause?.kind === "awaiting_supervisor") ?? -1;
 		const cohortIndexes =

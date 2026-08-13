@@ -8,8 +8,14 @@ import {
 	type AsyncParallelGroupStatus,
 	type AsyncStatus,
 	type CostSummary,
+	type ContextPressureProjection,
+	type ContextPressureThreshold,
+	type ContextUsageDiagnostics,
 	type NestedRunSummary,
+	type SubagentModelIdentity,
+	type SubagentModelResolution,
 	type SubagentRunMode,
+	type SubagentTerminationReason,
 	type TkTicketMetadata,
 	type TokenUsage,
 	type TurnBudgetState,
@@ -34,6 +40,12 @@ import {
 } from "./async-status-corruption.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import {
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
+	parseContextUsageDiagnostics,
+	parseSubagentTerminationReason,
+} from "../../shared/context-diagnostics.ts";
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -65,6 +77,12 @@ interface AsyncRunStepSummary {
 	skills?: string[];
 	model?: string;
 	thinking?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
 	sessionFile?: string;
 	attemptedModels?: string[];
 	error?: string;
@@ -217,6 +235,14 @@ export function validatePersistedAsyncStatus(asyncDir: string, status: AsyncStat
 		}
 		status.tkTicket = normalizedTkTicket;
 	}
+	for (const step of status.steps ?? []) {
+		step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
+		step.contextPressure = parseContextPressureProjection(step.contextPressure);
+		step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
+			step.contextPressureCrossedThresholds,
+		);
+		step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+	}
 }
 
 function statusToSummary(
@@ -273,6 +299,14 @@ function statusToSummary(
 			...(step.skills ? { skills: step.skills } : {}),
 			...(step.model ? { model: step.model } : {}),
 			...(step.thinking ? { thinking: step.thinking } : {}),
+			...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
+			...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
+			...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+			...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
+			...(step.contextPressureCrossedThresholds
+				? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+				: {}),
+			...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
 			...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
 			...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
 			...(step.error ? { error: step.error } : {}),
@@ -501,6 +535,7 @@ function formatStepLine(step: AsyncRunStepSummary, privacySafe = false): string 
 	if (activity) parts.push(activity);
 	const modelThinking = formatModelThinking(step.model, step.thinking);
 	if (modelThinking) parts.push(modelThinking);
+	if (step.modelResolution?.reason) parts.push(`model decision: ${step.modelResolution.reason}`);
 	if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
 	if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
 	return parts.join(" | ");

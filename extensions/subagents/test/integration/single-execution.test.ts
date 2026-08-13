@@ -25,7 +25,7 @@ import {
 	events,
 	tryImport,
 } from "../support/helpers.ts";
-import { INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
+import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 
 interface ModelAttempt {
@@ -69,7 +69,22 @@ interface RunSyncResult {
 	skillsWarning?: string;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
+	modelIdentity?: { provider: string; model: string; thinking?: string };
+	modelResolution?: {
+		kind?: string;
+		original?: { provider: string; model: string; thinking?: string };
+		resumed?: { provider: string; model: string; thinking?: string };
+		reason?: string;
+	};
 	usage: { turns: number; input: number; output: number };
+	contextUsage?: {
+		restoredTokens?: number;
+		contextTokens?: number;
+		peakTokens?: number;
+		contextWindow?: number;
+		contextPercent?: number;
+	};
+	terminationReason?: string;
 	progress: ProgressSummary;
 	controlEvents?: Array<{
 		type?: string;
@@ -282,6 +297,213 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 
 		const output = getFinalOutput(result.messages);
 		assert.equal(output, "Hello from mock agent");
+	});
+
+	it("classifies the #456 empty terminal as context exhausted and persists failure metadata", async () => {
+		const artifactsDir = path.join(tempDir, "context-exhausted-artifacts");
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "call-456", name: "edit", arguments: { path: "a.ts" } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "  " }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const result = await runSync(
+			tempDir,
+			[makeAgent("worker", { model: "mock/test-model", completionGuard: false })],
+			"worker",
+			"Finish the edit.",
+			{
+				runId: "context-exhausted-foreground",
+				acceptance: false,
+				artifactsDir,
+				artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+				availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			},
+		);
+
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.terminationReason, "context_exhausted");
+		assert.equal(result.contextUsage?.contextPercent, 99);
+		assert.ok(result.artifactPaths, "expected persisted artifacts");
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+			exitCode?: number;
+			terminationReason?: string;
+		};
+		assert.equal(metadata.exitCode, 1);
+		assert.equal(metadata.terminationReason, "context_exhausted");
+	});
+
+	it("delivers foreground warning and critical pressure controls exactly once", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "preserve progress" }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "finish narrowly" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 950, input: 850, output: 100, cacheRead: 0, cacheWrite: 0 },
+					},
+				},
+			],
+		});
+		const events: NonNullable<RunSyncResult["controlEvents"]> = [];
+		const result = await runSync(
+			tempDir,
+			[makeAgent("worker", { model: "mock/test-model", completionGuard: false })],
+			"worker",
+			"Preserve the work.",
+			{
+				runId: "foreground-pressure-controls",
+				acceptance: false,
+				availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+				onControlEvent: (event) => events.push(event),
+			},
+		);
+		assert.equal(result.exitCode, 0);
+		assert.deepEqual(
+			events.map((event) => event.contextPressureSeverity),
+			["warning", "critical"],
+		);
+		assert.deepEqual(
+			result.controlEvents?.map((event) => event.contextPressureThreshold),
+			["warning", "critical"],
+		);
+		assert.equal(events.filter((event) => event.contextPressureSeverity === "warning").length, 1);
+		assert.equal(events.filter((event) => event.contextPressureSeverity === "critical").length, 1);
+	});
+
+	it("does not classify a raw acceptance-report terminal as context exhausted", async () => {
+		const acceptanceReport = [
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "terminal report" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [],
+				validationOutput: [],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "call-acceptance", name: "edit", arguments: { path: "a.ts" } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: acceptanceReport }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const result = await runSync(
+			tempDir,
+			[makeAgent("worker", { model: "mock/test-model", completionGuard: false })],
+			"worker",
+			"Finish the edit.",
+			{
+				runId: "context-acceptance-foreground",
+				acceptance: false,
+				availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			},
+		);
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.terminationReason, "completed");
+		assert.equal(result.contextUsage?.contextPercent, 99);
+		assert.equal(result.finalOutput, "");
+	});
+
+	it("persists fresh and restored context diagnostics from response usage", async () => {
+		mockPi.onCall({
+			jsonl: [
+				mockAssistantMessage("First", "tool_use"),
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Done" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { input: 20, output: 10, cacheRead: 770, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const agents = [makeAgent("echo", { model: "mock/test-model" })];
+		const freshSessionFile = path.join(tempDir, "fresh-preallocated.jsonl");
+		fs.writeFileSync(freshSessionFile, "", "utf-8");
+		const fresh = await runSync(tempDir, agents, "echo", "Task", {
+			runId: "context-fresh",
+			sessionFile: freshSessionFile,
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+		});
+		assert.deepEqual(fresh.contextUsage, {
+			contextTokens: 800,
+			peakTokens: 800,
+			contextWindow: 1000,
+			contextPercent: 80,
+		});
+		assert.equal(fresh.contextUsage?.restoredTokens, undefined);
+		assert.equal(fresh.terminationReason, "completed");
+
+		mockPi.onCall({ output: "Continued" });
+		const restoredSessionFile = path.join(tempDir, "restored.jsonl");
+		fs.writeFileSync(
+			restoredSessionFile,
+			'{"type":"session","version":1,"id":"restored","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n',
+			"utf-8",
+		);
+		const restored = await runSync(tempDir, agents, "echo", "Continue", {
+			runId: "context-restored",
+			sessionFile: restoredSessionFile,
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+		});
+		assert.equal(restored.contextUsage?.restoredTokens, restored.contextUsage?.contextTokens);
 	});
 
 	it("rejects action='single' instead of treating it as execution", {
@@ -578,6 +800,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			runId: "guard-bash-conservative",
 		});
 		assert.equal(withoutOptOut.exitCode, 1);
+		assert.equal(withoutOptOut.terminationReason, "process_exit");
 		assert.match(withoutOptOut.error ?? "", /completed without making edits/);
 
 		const withOptOut = await runSync(tempDir, agents, "test-runner-optout", "Patch the cold start test", {
@@ -973,8 +1196,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			}),
 		];
 
+		const sessionFile = path.join(tempDir, "fallback-preallocated.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
 		const result = await runSync(tempDir, agents, "echo", "Task", {
 			runId: "fallback-sync",
+			sessionFile,
 		});
 
 		assert.equal(result.exitCode, 0);
@@ -983,8 +1209,120 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.modelAttempts?.length, 2);
 		assert.equal(result.modelAttempts?.[0]?.success, false);
 		assert.equal(result.modelAttempts?.[1]?.success, true);
+		assert.equal(result.contextUsage?.restoredTokens, undefined);
+		assert.equal(result.terminationReason, "completed");
 		assert.equal(result.usage.turns, 2);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("keeps the fallback resolution's original identity free of thinking the first attempt dropped", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "temporary provider failure" }],
+						model: "openai/gpt-5-mini",
+						errorMessage: "rate limit exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const availableModels = [
+			{
+				provider: "openai",
+				id: "gpt-5-mini",
+				fullId: "openai/gpt-5-mini",
+				reasoning: true,
+				thinkingLevelMap: { high: null },
+			},
+			{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", reasoning: true },
+		];
+		const agents = [
+			makeAgent("echo", {
+				model: "openai/gpt-5-mini",
+				thinking: "high",
+				fallbackModels: ["anthropic/claude-sonnet-4"],
+			}),
+		];
+
+		const result = await runSync(tempDir, agents, "echo", "Task", {
+			availableModels,
+			runId: "fallback-thinking-dropped-original",
+		});
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.model, "anthropic/claude-sonnet-4:high");
+		assert.equal(result.modelResolution?.kind, "fallback");
+		// Regression: the first attempt actually dropped "high" as unsupported, so
+		// the fallback resolution must not restore it on the original identity.
+		assert.deepEqual(result.modelResolution?.original, { provider: "openai", model: "gpt-5-mini" });
+		assert.deepEqual(result.modelResolution?.resumed, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "high",
+		});
+		assert.match(
+			result.modelResolution?.reason ?? "",
+			/Runtime fallback selected 'anthropic\/claude-sonnet-4:high' after 'openai\/gpt-5-mini' failed/,
+		);
+	});
+
+	it("lets runtime fallback supersede restored model resolution while preserving history", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "temporary provider failure" }],
+						model: "openai/gpt-5-mini",
+						errorMessage: "rate limit exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback" });
+		const original = { provider: "openai", model: "gpt-5-mini", thinking: "high" };
+		const result = await runSync(
+			tempDir,
+			[
+				makeAgent("echo", {
+					model: "openai/gpt-5-mini",
+					fallbackModels: ["anthropic/claude-sonnet-4"],
+				}),
+			],
+			"echo",
+			"Continue",
+			{
+				availableModels: [
+					{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", reasoning: true },
+					{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", reasoning: true },
+				],
+				modelResolution: {
+					kind: "restored",
+					original,
+					resumed: original,
+					reason: "Restored persisted child selection openai/gpt-5-mini:high instead of the current parent model.",
+				},
+				runId: "restored-fallback-resolution",
+			},
+		);
+
+		assert.equal(result.modelResolution?.kind, "fallback");
+		assert.deepEqual(result.modelResolution?.original, original);
+		assert.deepEqual(result.modelResolution?.resumed, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+		});
+		assert.match(result.modelResolution?.reason ?? "", /Restored persisted child selection/);
+		assert.match(result.modelResolution?.reason ?? "", /Runtime fallback selected/);
 	});
 
 	it("tries per-dispatch fallback models before agent fallback models and only shows notices after a retry", {
@@ -1130,6 +1468,81 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			[false, true],
 		);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("does not combine failed high-pressure fallback diagnostics with a successful empty attempt", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "failed-call", name: "edit", arguments: { path: "a.ts" } }],
+						model: "openai/gpt-5-mini",
+						stopReason: "toolUse",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "provider failure" }],
+						model: "openai/gpt-5-mini",
+						stopReason: "error",
+						errorMessage: "429 quota exceeded",
+					},
+				},
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "successful-call", name: "edit", arguments: { path: "b.ts" } }],
+						model: "anthropic/claude-sonnet-4",
+						stopReason: "toolUse",
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "" }],
+						model: "anthropic/claude-sonnet-4",
+						stopReason: "stop",
+					},
+				},
+			],
+		});
+		const result = await runSync(
+			tempDir,
+			[
+				makeAgent("echo", {
+					model: "openai/gpt-5-mini",
+					fallbackModels: ["anthropic/claude-sonnet-4"],
+					completionGuard: false,
+				}),
+			],
+			"echo",
+			"Task",
+			{
+				runId: "fallback-context-pressure-scope",
+				availableModels: [{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", contextWindow: 1000 }],
+			},
+		);
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.terminationReason, "completed");
+		assert.equal(result.error, undefined);
+		assert.equal(result.contextUsage?.contextPercent, 99);
+		assert.deepEqual(
+			result.modelAttempts?.map((attempt) => attempt.success),
+			[false, true],
+		);
 	});
 
 	it("fails zero-exit provider errors when no fallback succeeds", async () => {
@@ -1837,6 +2250,81 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.details?.deadlineAt !== undefined);
 	});
 
+	it("blocks unsafe foreground durable resume at the atomic claim boundary without spawning", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const runId = `foreground-context-race-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\\n`);
+		const state = {
+			baseCwd: tempDir,
+			currentSessionId: null,
+			asyncJobs: new Map(),
+			foregroundRuns: new Map(),
+			foregroundControls: new Map(),
+			lastForegroundControlId: null,
+		};
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			state: "paused",
+			cwd: tempDir,
+			startedAt: 1,
+			updatedAt: 1,
+			children: [
+				{
+					agent: "echo",
+					status: "paused",
+					sessionFile,
+					pause: { kind: "awaiting_supervisor" },
+					contextUsage: { contextTokens: 799, contextWindow: 1000, peakTokens: 799 },
+				},
+			],
+		});
+		fs.writeFileSync(
+			path.join(asyncDir, "status.json"),
+			JSON.stringify({
+				runId,
+				mode: "single",
+				state: "paused",
+				steps: [
+					{
+						agent: "echo",
+						status: "paused",
+						sessionFile,
+						pause: { kind: "awaiting_supervisor" },
+						contextUsage: { contextTokens: 800, contextWindow: 1000, peakTokens: 800 },
+					},
+				],
+			}),
+			"utf-8",
+		);
+		const statusPath = path.join(asyncDir, "status.json");
+		const beforeStatus = fs.readFileSync(statusPath);
+		const beforeSession = fs.readFileSync(sessionFile);
+		try {
+			const result = await makeExecutor([makeAgent("echo")], {}, state).execute(
+				"foreground-context-race-resume",
+				{ action: "resume", id: runId, message: "Continue." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /used tokens 800/);
+			assert.match(result.content[0]?.text ?? "", /80\.00%/);
+			assert.equal(mockPi.callCount(), 0);
+			assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+			assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+			assert.equal((JSON.parse(fs.readFileSync(statusPath, "utf-8")) as { lifecycle?: unknown }).lifecycle, undefined);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
 	it("rejects an ordinary resume once accumulated runtime exhausts the agent ceiling", {
 		skip: !createSubagentExecutor ? "executor not importable" : undefined,
 	}, async () => {
@@ -2504,7 +2992,11 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		setTimeout(() => controller.abort(), 200);
 		const startedAt = Date.now();
 
+		const acceptanceArtifactsDir = path.join(tempDir, "artifacts-acceptance-interrupt");
 		const result = await runSync(tempDir, agents, "slow", "Slow task", {
+			runId: "acceptance-interrupt-metadata",
+			artifactsDir: acceptanceArtifactsDir,
+			artifactConfig: { enabled: true, includeMetadata: true },
 			interruptSignal: controller.signal,
 			acceptance: {
 				level: "verified",
@@ -2522,6 +3014,16 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.equal(result.acceptance?.runtimeChecks?.[0]?.id, "paused");
 		assert.equal(result.acceptance?.verifyRuns?.[0]?.status, undefined);
 		assert.match(result.finalOutput ?? "", /Interrupted/);
+		assert.ok(result.artifactPaths?.metadataPath);
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+			exitCode?: number;
+			terminationReason?: string;
+		};
+		// Acceptance interruption happens after the initial child finalization; the
+		// metadata must agree with the final returned result, not the pre-acceptance snapshot.
+		assert.equal(metadata.exitCode, result.exitCode);
+		assert.equal(metadata.terminationReason, result.terminationReason);
+		assert.equal(result.terminationReason, "interrupted");
 	});
 
 	it("soft-interrupts the current turn and returns a paused result", async () => {

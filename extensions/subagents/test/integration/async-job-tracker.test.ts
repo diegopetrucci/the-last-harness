@@ -1208,6 +1208,356 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("keeps oversized control records in discard mode across polling windows", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		const originalError = console.error;
+		const warnings: string[] = [];
+		console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+		try {
+			const runDir = path.join(asyncRoot, "run-oversized-control");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-oversized-control",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			const control = (message: string) =>
+				JSON.stringify({
+					type: "subagent.control",
+					channels: ["event"],
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: Date.now(),
+						runId: "run-oversized-control",
+						agent: "worker",
+						message,
+					},
+				});
+			const oversized = JSON.stringify({ type: "agent_end", output: "x".repeat(2_300_000) });
+			const eventPath = path.join(runDir, "events.jsonl");
+			fs.writeFileSync(eventPath, `${oversized}\n${control("first")}\n${control("second")}\n`, "utf-8");
+			assert.ok(Buffer.byteLength(oversized) > 2 * 1024 * 1024, "fixture must cross one scan window");
+
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-oversized-control", asyncDir: runDir, agent: "worker" });
+
+			await waitForCondition(
+				() => recorder.events.filter((event) => event.channel === "subagent:control-event").length === 2,
+				"controls after oversized event",
+			);
+			assert.equal(warnings.filter((warning) => warning.includes("malformed async control event")).length, 0);
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 2);
+		} finally {
+			console.error = originalError;
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("restores an oversized skip across tracker recreation and delivers appended controls once", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-recreate-");
+		const originalError = console.error;
+		const warnings: string[] = [];
+		console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "run-recreated-control");
+			const eventPath = path.join(runDir, "events.jsonl");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-recreated-control",
+					mode: "single",
+					state: "running",
+					sessionId: "session-current",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			fs.writeFileSync(eventPath, "x".repeat(2 * 1024 * 1024), "utf-8");
+
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const recorder = createEventRecorder();
+			const firstTracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			firstTracker.handleStarted({
+				id: "run-recreated-control",
+				asyncDir: runDir,
+				sessionId: "session-current",
+				agent: "worker",
+			});
+			await waitForCondition(
+				() => state.asyncJobs.get("run-recreated-control")?.controlEventSkippingOversizedLine === true,
+				"mid-record oversized discard state",
+			);
+			const cursorBeforeRestart = state.asyncJobs.get("run-recreated-control")?.controlEventCursor;
+			assert.equal(cursorBeforeRestart, fs.statSync(eventPath).size);
+			assert.ok(cursorBeforeRestart > 1024 * 1024, "cursor must be in oversized-line discard mode");
+
+			firstTracker.resetJobs();
+			await waitForCondition(() => state.poller === null, "first tracker poller to stop");
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.restoreActiveJobs();
+			const restoredJob = state.asyncJobs.get("run-recreated-control");
+			assert.ok(restoredJob);
+			assert.equal(restoredJob.controlEventCursor, fs.statSync(eventPath).size);
+			assert.equal(restoredJob.controlEventSkippingOversizedLine, true);
+
+			const control = (message: string) =>
+				JSON.stringify({
+					type: "subagent.control",
+					channels: ["event"],
+					event: {
+						type: "needs_attention",
+						to: "needs_attention",
+						ts: Date.now(),
+						runId: "run-recreated-control",
+						agent: "worker",
+						message,
+					},
+				});
+			fs.appendFileSync(eventPath, `remainder\n${control("first")}\n${control("second")}\n`, "utf-8");
+
+			await waitForCondition(
+				() => recorder.events.filter((event) => event.channel === "subagent:control-event").length === 2,
+				"controls after restored oversized record",
+			);
+			assert.equal(warnings.filter((warning) => warning.includes("malformed async control event")).length, 0);
+			assert.equal(state.asyncJobs.get("run-recreated-control")?.controlEventSkippingOversizedLine, false);
+			assert.equal(state.asyncJobs.get("run-recreated-control")?.controlEventCursor, fs.statSync(eventPath).size);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 2);
+		} finally {
+			console.error = originalError;
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("resets skip state when a disappeared log is replaced at the same path and size", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-replacement-");
+		const originalError = console.error;
+		const warnings: string[] = [];
+		console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "run-replaced-control");
+			const eventPath = path.join(runDir, "events.jsonl");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-replaced-control",
+					mode: "single",
+					state: "running",
+					sessionId: "session-current",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			const originalContents = "x".repeat(2_200_000);
+			fs.writeFileSync(eventPath, originalContents, "utf-8");
+			const originalIdentity = (() => {
+				const stat = fs.statSync(eventPath);
+				return `${stat.dev}:${stat.ino}`;
+			})();
+
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({
+				id: "run-replaced-control",
+				asyncDir: runDir,
+				sessionId: "session-current",
+				agent: "worker",
+			});
+			await waitForCondition(
+				() => state.asyncJobs.get("run-replaced-control")?.controlEventSkippingOversizedLine === true,
+				"oversized discard state before replacement",
+			);
+
+			fs.unlinkSync(eventPath);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			const control = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-replaced-control",
+					agent: "worker",
+					message: "new file control",
+				},
+			});
+			const prefix = `${control}\n`;
+			const replacementPath = path.join(runDir, "events.replacement");
+			fs.writeFileSync(
+				replacementPath,
+				`${prefix}${"\n".repeat(originalContents.length - Buffer.byteLength(prefix))}`,
+				"utf-8",
+			);
+			assert.equal(fs.statSync(replacementPath).size, originalContents.length);
+			fs.renameSync(replacementPath, eventPath);
+			const replacementStat = fs.statSync(eventPath);
+			const replacementIdentity = `${replacementStat.dev}:${replacementStat.ino}`;
+			assert.notEqual(replacementIdentity, originalIdentity, "replacement fixture must change dev/ino identity");
+			assert.equal(replacementStat.size, originalContents.length);
+
+			await waitForCondition(
+				() => recorder.events.filter((event) => event.channel === "subagent:control-event").length === 1,
+				"control from replacement log",
+			);
+			await waitForCondition(
+				() => state.asyncJobs.get("run-replaced-control")?.controlEventCursor === replacementStat.size,
+				"replacement log scan completion",
+			);
+			const job = state.asyncJobs.get("run-replaced-control");
+			assert.equal(job?.controlEventFileIdentity, replacementIdentity);
+			assert.equal(job?.controlEventSkippingOversizedLine, false);
+			assert.equal(warnings.filter((warning) => warning.includes("malformed async control event")).length, 0);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 1);
+		} finally {
+			console.error = originalError;
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("warns for malformed complete control records while delivering later records", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		const originalError = console.error;
+		const warnings: string[] = [];
+		console.error = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+		try {
+			const runDir = path.join(asyncRoot, "run-malformed-control");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-malformed-control",
+					mode: "single",
+					state: "running",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			const valid = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-malformed-control",
+					agent: "worker",
+					message: "valid",
+				},
+			});
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `{not-json}\n${valid}\n`, "utf-8");
+			const state = createState();
+			const recorder = createEventRecorder();
+			const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.handleStarted({ id: "run-malformed-control", asyncDir: runDir, agent: "worker" });
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				"valid control after malformed record",
+			);
+			assert.equal(warnings.filter((warning) => warning.includes("malformed async control event")).length, 1);
+		} finally {
+			console.error = originalError;
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("resets oversized discard state after event-log truncation", async () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+		try {
+			const runDir = path.join(asyncRoot, "run-truncated-control");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(runDir, "status.json"),
+				JSON.stringify({
+					runId: "run-truncated-control",
+					mode: "single",
+					state: "running",
+					sessionId: "session-current",
+					startedAt: Date.now() - 1000,
+					lastUpdate: Date.now(),
+					steps: [{ agent: "worker", status: "running" }],
+				}),
+				"utf-8",
+			);
+			const eventPath = path.join(runDir, "events.jsonl");
+			fs.writeFileSync(eventPath, "x".repeat(2_200_000), "utf-8");
+			const state = createState();
+			state.currentSessionId = "session-current";
+			const recorder = createEventRecorder();
+			tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+				pollIntervalMs: 10,
+			});
+			tracker.restoreActiveJobs();
+			const restoredJob = state.asyncJobs.get("run-truncated-control");
+			assert.ok(restoredJob);
+			assert.equal(restoredJob.controlEventCursor, fs.statSync(eventPath).size);
+			assert.equal(restoredJob.controlEventSkippingOversizedLine, true);
+			const valid = JSON.stringify({
+				type: "subagent.control",
+				channels: ["event"],
+				event: {
+					type: "needs_attention",
+					to: "needs_attention",
+					ts: 123,
+					runId: "run-truncated-control",
+					agent: "worker",
+					message: "after truncation",
+				},
+			});
+			fs.writeFileSync(eventPath, `${valid}\n`, "utf-8");
+			await waitForCondition(
+				() => recorder.events.some((event) => event.channel === "subagent:control-event"),
+				"control after truncation",
+			);
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 1);
+			assert.equal(state.asyncJobs.get("run-truncated-control")?.controlEventCursor, fs.statSync(eventPath).size);
+			assert.equal(state.asyncJobs.get("run-truncated-control")?.controlEventSkippingOversizedLine, false);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(recorder.events.filter((event) => event.channel === "subagent:control-event").length, 1);
+		} finally {
+			tracker?.resetJobs();
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("does not tail-skip control events for newly tracked large logs", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {

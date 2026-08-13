@@ -24,6 +24,7 @@ import {
 	readMockPiArgs,
 	waitForAsyncControlCondition,
 	waitForAsyncResultFile,
+	waitForAsyncStatusPredicate,
 	waitForMockPiCall,
 	writePackageSkill,
 } from "../support/async-execution-helpers.ts";
@@ -49,6 +50,81 @@ describe("async execution utilities", () => {
 
 	afterEach(() => {
 		removeTempDir(tempDir);
+	});
+
+	it("background runs deliver warning and critical pressure controls exactly once", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "preserve progress" }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "finish narrowly" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 950, input: 850, output: 100, cacheRead: 0, cacheWrite: 0 },
+					},
+				},
+			],
+		});
+		const id = `async-pressure-controls-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const resultPath = path.join(RESULTS_DIR, `${id}.json`);
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Preserve the work.",
+			agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-pressure" },
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+		assert.equal(run.details.asyncId, id);
+		await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload & {
+			results?: Array<{ contextPressureCrossedThresholds?: string[] }>;
+		};
+		assert.equal(payload.success, true);
+		assert.deepEqual(payload.results?.[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
+		const statusPayload = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		assert.deepEqual(statusPayload.steps[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
+		assert.equal(statusPayload.steps[0]?.contextPressure?.severity, "critical");
+		assert.equal(statusPayload.steps[0]?.contextPressure?.remainingTokens, 50);
+		assert.equal(statusPayload.steps[0]?.contextUsage?.contextPercent, 95);
+		const events = fs
+			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line));
+		const controls = events.filter((event) => event.type === "subagent.control");
+		assert.deepEqual(
+			controls.map((event) => event.event.contextPressureSeverity),
+			["warning", "critical"],
+		);
+		assert.deepEqual(
+			controls.map((event) => event.event.contextPressureThreshold),
+			["warning", "critical"],
+		);
 	});
 
 	it("background runs record fallback attempts and final model", async () => {
@@ -138,6 +214,355 @@ describe("async execution utilities", () => {
 		assert.equal(mockPi.callCount(), 2);
 	});
 
+	it("persists cached-token-heavy context diagnostics and termination reason", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Done" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { input: 10, output: 5, cacheRead: 985, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const id = `async-context-${Date.now().toString(36)}`;
+		const restoredSessionFile = path.join(tempDir, "restored-context.jsonl");
+		fs.writeFileSync(
+			restoredSessionFile,
+			'{"type":"session","version":1,"id":"restored-context","timestamp":"2026-04-16T00:00:00.000Z","cwd":"/tmp"}\n',
+			"utf-8",
+		);
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", { model: "mock/test-model" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 2000 }],
+			sessionFile: restoredSessionFile,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.deepEqual(payload.results[0]?.contextUsage, {
+			restoredTokens: 1000,
+			contextTokens: 1000,
+			peakTokens: 1000,
+			contextWindow: 2000,
+			contextPercent: 50,
+		});
+		assert.equal(payload.results[0]?.terminationReason, "completed");
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.deepEqual(status.steps?.[0]?.contextUsage, payload.results[0]?.contextUsage);
+		assert.equal(status.steps?.[0]?.terminationReason, "completed");
+	});
+
+	it("fresh async runs do not mark a preallocated session path as restored", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Fresh" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { input: 10, output: 5, cacheRead: 985, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const id = `async-context-fresh-${Date.now().toString(36)}`;
+		const sessionFile = path.join(tempDir, "fresh-preallocated.jsonl");
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do fresh work",
+			agentConfig: makeAgent("worker", { model: "mock/test-model" }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 2000 }],
+			sessionFile,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.results[0]?.contextUsage?.restoredTokens, undefined);
+		assert.equal(payload.results[0]?.terminationReason, "completed");
+	});
+
+	it("background durable resumes let explicit model overrides beat the restored identity and label them overrides", async () => {
+		mockPi.onCall({ output: "Resumed with explicit override" });
+		const id = `async-resume-override-${Date.now().toString(36)}`;
+		const availableModels = [
+			{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" },
+			{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+		];
+		const restored = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" } as const;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Continue the paused work",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			modelOverride: "openai/gpt-5",
+			restoredModelIdentity: restored,
+			modelResolution: {
+				kind: "override",
+				original: restored,
+				reason: "Caller explicitly overrode persisted selection anthropic/claude-sonnet-4:high with 'openai/gpt-5'.",
+			},
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "openai/gpt-5");
+		assert.equal(payload.results[0]?.modelResolution?.kind, "override");
+		assert.deepEqual(payload.results[0]?.modelResolution?.original, restored);
+		assert.deepEqual(payload.results[0]?.modelResolution?.resumed, { provider: "openai", model: "gpt-5" });
+		assert.match(payload.results[0]?.modelResolution?.reason ?? "", /explicitly overrode persisted selection/);
+		const args = readMockPiArgs(mockPi, 0);
+		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
+	});
+
+	it("background durable resumes keep unavailable restored models visible through runtime fallback", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "restored model failed" }],
+						model: "anthropic/claude-sonnet-4",
+						errorMessage: "rate limit exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback model" });
+		const id = `async-resume-unavailable-${Date.now().toString(36)}`;
+		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }];
+		const restored = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" } as const;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Continue the paused work",
+			agentConfig: makeAgent("worker", { fallbackModels: ["openai/gpt-5"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			restoredModelIdentity: restored,
+			modelResolution: {
+				kind: "restored",
+				original: restored,
+				resumed: restored,
+				reason:
+					"Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
+			},
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "openai/gpt-5:high");
+		assert.deepEqual(payload.results[0]?.attemptedModels, ["anthropic/claude-sonnet-4:high", "openai/gpt-5:high"]);
+		assert.equal(payload.results[0]?.modelResolution?.kind, "fallback");
+		assert.deepEqual(payload.results[0]?.modelResolution?.original, restored);
+		assert.deepEqual(payload.results[0]?.modelResolution?.resumed, {
+			provider: "openai",
+			model: "gpt-5",
+			thinking: "high",
+		});
+		const reason = payload.results[0]?.modelResolution?.reason ?? "";
+		assert.match(reason, /not present in the current model registry/);
+		assert.match(
+			reason,
+			/Runtime fallback selected 'openai\/gpt-5:high' after 'anthropic\/claude-sonnet-4:high' failed/,
+		);
+		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background runtime fallback persists the full transition in status during the crash window", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "restored model failed" }],
+						model: "anthropic/claude-sonnet-4",
+						errorMessage: "rate limit exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+			],
+			exitCode: 1,
+		});
+		mockPi.onCall({ output: "Recovered on fallback model", delay: 3000 });
+		const id = `async-fallback-crash-window-${Date.now().toString(36)}`;
+		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }];
+		const restored = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" } as const;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Continue the paused work",
+			agentConfig: makeAgent("worker", { fallbackModels: ["openai/gpt-5"] }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			restoredModelIdentity: restored,
+			modelResolution: {
+				kind: "restored",
+				original: restored,
+				resumed: restored,
+				reason:
+					"Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
+			},
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		// Simulated crash window: the second (fallback) attempt is running but the
+		// terminal result has not been persisted yet. The last status write must
+		// already carry the original identity, fallback reason, attempted models,
+		// and completed attempt history so a durable resume after a crash cannot
+		// mistake the fallback for the original selection.
+		const crashWindowStatus = await waitForAsyncStatusPredicate(
+			path.join(ASYNC_DIR, id),
+			(status) =>
+				status.steps?.[0]?.modelResolution?.kind === "fallback" && status.steps?.[0]?.modelAttempts?.length === 1,
+			"fallback transition persisted before the terminal result",
+		);
+		assert.ok(
+			!fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)),
+			"expected the crash-window snapshot before the terminal result was persisted",
+		);
+		const step = crashWindowStatus.steps?.[0];
+		assert.equal(step?.model, "openai/gpt-5:high");
+		assert.deepEqual(step?.modelIdentity, { provider: "openai", model: "gpt-5", thinking: "high" });
+		assert.deepEqual(step?.modelResolution?.original, restored);
+		assert.deepEqual(step?.modelResolution?.resumed, { provider: "openai", model: "gpt-5", thinking: "high" });
+		assert.match(
+			step?.modelResolution?.reason ?? "",
+			/Runtime fallback selected 'openai\/gpt-5:high' after 'anthropic\/claude-sonnet-4:high' failed/,
+		);
+		assert.deepEqual(step?.attemptedModels, ["anthropic/claude-sonnet-4:high", "openai/gpt-5:high"]);
+		assert.equal(step?.modelAttempts?.[0]?.success, false);
+
+		// The run then completes normally with the terminal resolution intact.
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.modelResolution?.kind, "fallback");
+		assert.deepEqual(payload.results[0]?.modelResolution?.original, restored);
+	});
+
+	it("background durable resumes surface model-scope violations for restored selections without silent switches", async () => {
+		mockPi.onCall({ output: "Resumed outside the configured scope" });
+		const id = `async-resume-scope-${Date.now().toString(36)}`;
+		const availableModels = [
+			{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" },
+			{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+		];
+		const restored = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" } as const;
+		const run = executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Continue the paused work",
+			agentConfig: makeAgent("worker"),
+			ctx: {
+				pi: { events: { emit() {} } },
+				cwd: tempDir,
+				currentSessionId: "session-1",
+				modelScope: { enforce: true, allow: ["openai/*"] },
+			},
+			availableModels,
+			restoredModelIdentity: restored,
+			modelResolution: {
+				kind: "restored",
+				original: restored,
+				resumed: restored,
+				reason:
+					"Restored persisted child selection anthropic/claude-sonnet-4:high instead of the current parent model.",
+			},
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(run.details.asyncId, id);
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id), "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.model, "anthropic/claude-sonnet-4:high");
+		assert.equal(payload.results[0]?.modelResolution?.kind, "restored");
+		assert.deepEqual(payload.results[0]?.modelResolution?.resumed, restored);
+		const reason = payload.results[0]?.modelResolution?.reason ?? "";
+		assert.match(reason, /Restored persisted child selection/);
+		assert.match(reason, /outside the configured subagent model scope/);
+		const statusPayload = JSON.parse(
+			fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		assert.equal(statusPayload.steps?.[0]?.modelResolution?.kind, "restored");
+		assert.deepEqual(statusPayload.steps?.[0]?.modelIdentity, restored);
+		assert.equal(statusPayload.steps?.[0]?.thinking, "high");
+	});
+
 	it("background runs surface a dropped thinking level once without changing the model arg", async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 		const id = `async-thinking-drop-${Date.now().toString(36)}`;
@@ -183,6 +608,98 @@ describe("async execution utilities", () => {
 		assert.equal(statusPayload.steps?.[0]?.recentOutput?.filter((line) => line === note).length, 1);
 		const args = readMockPiArgs(mockPi, 0);
 		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
+	});
+
+	it("repeated chain steps keep the later step's identity thinking-free after its duplicate drop note is deduped", async () => {
+		mockPi.onCall({ output: "Step one done" });
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "primary failed" }],
+						model: "anthropic/claude-sonnet-4-5",
+						errorMessage: "429 quota exceeded",
+						usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+					},
+				},
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({ output: "Step two recovered on fallback" });
+		const id = `async-chain-thinking-drop-dedupe-${Date.now().toString(36)}`;
+		const availableModels = [
+			{
+				provider: "anthropic",
+				id: "claude-sonnet-4-5",
+				fullId: "anthropic/claude-sonnet-4-5",
+				reasoning: true,
+			},
+			{
+				provider: "openai",
+				id: "gpt-5",
+				fullId: "openai/gpt-5",
+				reasoning: true,
+				thinkingLevelMap: { max: null },
+			},
+		];
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "worker", task: "Step one" },
+				{ agent: "worker", task: "Step two" },
+			],
+			agents: [
+				makeAgent("worker", {
+					model: "anthropic/claude-sonnet-4-5",
+					fallbackModels: ["openai/gpt-5"],
+					thinking: "max",
+				}),
+			],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels,
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 15_000);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		const statusPayload = JSON.parse(
+			fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
+		assert.ok(note);
+		assert.equal(payload.success, true);
+		// Human-facing notice deduplication is unchanged: only the first step
+		// surfaces the shared drop note.
+		assert.equal(payload.results[0]?.output?.split(note).length - 1, 1);
+		assert.equal(payload.results[1]?.output?.includes(note), false);
+		// The second step fell back to the unsupported model; even though its
+		// duplicate note was deduped away, its persisted identity must stay
+		// thinking-free in both the terminal result and the status file.
+		assert.equal(payload.results[1]?.model, "openai/gpt-5");
+		assert.deepEqual(payload.results[1]?.modelIdentity, { provider: "openai", model: "gpt-5" });
+		assert.equal(payload.results[1]?.modelResolution?.kind, "fallback");
+		assert.deepEqual(payload.results[1]?.modelResolution?.resumed, { provider: "openai", model: "gpt-5" });
+		assert.deepEqual(statusPayload.steps?.[1]?.modelIdentity, { provider: "openai", model: "gpt-5" });
+		assert.equal(statusPayload.steps?.[1]?.thinking, undefined);
+		// The first step's supported primary keeps its thinking level.
+		assert.deepEqual(payload.results[0]?.modelIdentity, {
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			thinking: "max",
+		});
+		const fallbackArgs = readMockPiArgs(mockPi, 2);
+		assert.equal(fallbackArgs[fallbackArgs.indexOf("--model") + 1], "openai/gpt-5");
 	});
 
 	it("background runs preserve a max thinking suffix when capability metadata is missing", async () => {
@@ -390,6 +907,160 @@ describe("async execution utilities", () => {
 			[false, true],
 		);
 		assert.equal(mockPi.callCount(), 2);
+	});
+
+	it("background fallback does not combine failed pressure diagnostics with a later empty attempt", async () => {
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "failed-call", name: "edit", arguments: { path: "a.ts" } }],
+						model: "openai/gpt-5-mini",
+						stopReason: "toolUse",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "provider failure" }],
+						model: "openai/gpt-5-mini",
+						stopReason: "error",
+						errorMessage: "429 quota exceeded",
+					},
+				},
+			],
+			exitCode: 0,
+		});
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "successful-call", name: "edit", arguments: { path: "b.ts" } }],
+						model: "anthropic/claude-sonnet-4",
+						stopReason: "toolUse",
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "" }],
+						model: "anthropic/claude-sonnet-4",
+						stopReason: "stop",
+					},
+				},
+			],
+		});
+		const id = `async-fallback-context-pressure-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Do work",
+			agentConfig: makeAgent("worker", {
+				model: "openai/gpt-5-mini",
+				fallbackModels: ["anthropic/claude-sonnet-4"],
+				completionGuard: false,
+			}),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			availableModels: [
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", contextWindow: 1000 },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", contextWindow: 1000 },
+			],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.notEqual(payload.results[0]?.terminationReason, "context_exhausted");
+		assert.doesNotMatch(payload.results[0]?.error ?? "", /unfinished tool interaction under high context pressure/);
+		assert.equal(payload.results[0]?.contextUsage?.contextPercent, 99);
+		assert.deepEqual(
+			payload.results[0]?.modelAttempts?.map((attempt) => attempt.success),
+			[false, true],
+		);
+	});
+
+	it("background acceptance reports do not become context-exhausted empty terminals", async () => {
+		const acceptanceReport = [
+			"```acceptance-report",
+			JSON.stringify({
+				criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "terminal report" }],
+				changedFiles: [],
+				testsAddedOrUpdated: [],
+				commandsRun: [],
+				validationOutput: [],
+				residualRisks: [],
+				noStagedFiles: true,
+			}),
+			"```",
+		].join("\n");
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "call-acceptance-bg", name: "edit", arguments: { path: "a.ts" } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: acceptanceReport }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const id = `async-context-acceptance-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Finish the edit.",
+			agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			acceptance: false,
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id);
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(payload.success, true);
+		assert.equal(payload.results[0]?.exitCode, 0);
+		assert.equal(payload.results[0]?.terminationReason, "completed");
+		assert.equal(payload.results[0]?.contextUsage?.contextPercent, 99);
+		assert.equal(payload.results[0]?.output, "");
 	});
 
 	it("background runs fail zero-exit provider errors when no fallback succeeds", async () => {

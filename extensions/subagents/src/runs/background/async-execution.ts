@@ -35,6 +35,8 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/
 import {
 	buildFallbackModelList,
 	buildModelCandidates,
+	canonicalSubagentModelIdentity,
+	modelReferenceFromIdentity,
 	resolveSubagentModelOverride,
 	type AvailableModelInfo,
 	type ParentModel,
@@ -53,6 +55,7 @@ import {
 import {
 	type AcceptanceInput,
 	type ArtifactConfig,
+	type ContextUsageDiagnostics,
 	type Details,
 	type MaxOutputConfig,
 	type NestedRouteInfo,
@@ -60,6 +63,8 @@ import {
 	type TkTicketMetadata,
 	type ResolvedTurnBudget,
 	type ResolvedToolBudget,
+	type SubagentModelIdentity,
+	type SubagentModelResolution,
 	type SubagentRunMode,
 	ASYNC_DIR,
 	RESULTS_DIR,
@@ -76,6 +81,10 @@ import {
 	writeNestedEvent,
 } from "../shared/nested-events.ts";
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
+import {
+	parseContextPressureCrossedThresholds,
+	parseContextUsageDiagnostics,
+} from "../../shared/context-diagnostics.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import {
 	detectTkTicketId,
@@ -144,6 +153,13 @@ interface AsyncSingleParams {
 	outputMode?: "inline" | "file-only";
 	outputBaseDir?: string;
 	modelOverride?: string;
+	/** Persisted child identity used when durable resume has no explicit override. */
+	restoredModelIdentity?: SubagentModelIdentity;
+	/** Durable explanation for an explicit override or restored selection. */
+	modelResolution?: SubagentModelResolution;
+	/** Persisted context diagnostics used to initialize a durable continuation. */
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	fallbackModels?: string[];
 	modelFallbackNotice?: string;
 	thinkingOverride?: AgentConfig["thinking"];
@@ -339,13 +355,18 @@ class AsyncStartValidationError extends Error {}
 
 function appendThinkingDropNote(
 	notes: string[],
+	droppedModels: string[],
 	model: string | undefined,
 	thinking: string | false | undefined,
 	replaceExisting: boolean,
 	options: Parameters<typeof getThinkingLevelDropNote>[3],
 ): void {
 	const note = getThinkingLevelDropNote(model, thinking, replaceExisting, options);
-	if (note && !notes.includes(note)) notes.push(note);
+	if (!note) return;
+	if (!notes.includes(note)) notes.push(note);
+	// Per-candidate drop metadata stays on every step even when the duplicate
+	// human-facing note is deduplicated across chain/parallel steps.
+	if (model && !droppedModels.includes(model)) droppedModels.push(model);
 }
 
 function dedupeRunnerAttemptNotes(steps: RunnerStep[]): RunnerStep[] {
@@ -524,8 +545,10 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
 		const effectiveThinking = thinkingOverride !== undefined ? thinkingOverride : a.thinking;
 		const attemptNotes: string[] = [];
+		const thinkingDroppedModels: string[] = [];
 		appendThinkingDropNote(
 			attemptNotes,
+			thinkingDroppedModels,
 			primaryModel,
 			effectiveThinking,
 			thinkingOverride !== undefined,
@@ -537,6 +560,15 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			thinkingOverride !== undefined,
 			thinkingSuffixOptions,
 		);
+		const primaryThinkingDropped = Boolean(
+			getThinkingLevelDropNote(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions),
+		);
+		const modelIdentity = canonicalSubagentModelIdentity(
+			model,
+			primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
+		);
+		const modelThinking =
+			modelIdentity?.thinking ?? (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
 		const modelCandidates = buildModelCandidates(
 			primaryModel,
 			fallbackModels,
@@ -547,6 +579,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			.map((candidate) => {
 				appendThinkingDropNote(
 					attemptNotes,
+					thinkingDroppedModels,
 					candidate,
 					effectiveThinking,
 					thinkingOverride !== undefined,
@@ -565,9 +598,16 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			structured: Boolean(s.outputSchema),
 			cwd: stepCwd,
 			model,
-			thinking: resolveEffectiveThinking(model, effectiveThinking),
+			thinking: modelThinking,
+			...(modelIdentity ? { modelIdentity } : {}),
 			modelCandidates,
+			contextWindows: Object.fromEntries(
+				(availableModels ?? [])
+					.filter((candidate) => typeof candidate.contextWindow === "number" && candidate.contextWindow > 0)
+					.map((candidate) => [candidate.fullId, candidate.contextWindow!]),
+			),
 			...(attemptNotes.length > 0 ? { attemptNotes } : {}),
+			...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
 			modelFallbackNotice: behavior.modelFallbackNotice,
 			tools: a.tools,
 			extensions: a.extensions,
@@ -988,51 +1028,94 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 	const validationError = validateFileOnlyOutputMode(outputMode, outputPath, `Async single run (${agent})`);
 	if (validationError) return formatAsyncStartError("single", validationError);
 	const taskWithOutputInstruction = injectSingleOutputInstruction(task, outputPath);
+	const durableResume = params.modelResolution !== undefined || params.restoredModelIdentity !== undefined;
+	const explicitResumeModel =
+		durableResume && typeof params.modelOverride === "string" && params.modelOverride.trim() !== ""
+			? params.modelOverride.trim() !== "inherit"
+			: false;
+	const restoringModel = Boolean(durableResume && !explicitResumeModel && params.restoredModelIdentity);
+	const requestedPrimaryModel = restoringModel
+		? modelReferenceFromIdentity(params.restoredModelIdentity!)
+		: (params.modelOverride ?? agentConfig.model);
+	const scopeWarnings: string[] = [];
 	const primaryModel = resolveSubagentModelOverride(
-		params.modelOverride ?? agentConfig.model,
+		requestedPrimaryModel,
 		ctx.currentModel,
 		availableModels,
 		ctx.currentModelProvider,
+		durableResume
+			? {
+					scope: ctx.modelScope,
+					source: explicitResumeModel ? "explicit" : "inherited",
+					onWarn: (violation) => scopeWarnings.push(violation.message),
+				}
+			: undefined,
 	);
 	const fallbackModels = buildFallbackModelList(params.fallbackModels, agentConfig.fallbackModels);
-	const effectiveThinking = params.thinkingOverride ?? agentConfig.thinking;
+	const effectiveThinking = restoringModel
+		? params.restoredModelIdentity?.thinking
+		: (params.thinkingOverride ?? agentConfig.thinking);
+	const replaceThinking = !restoringModel && params.thinkingOverride !== undefined;
 	const attemptNotes: string[] = [];
+	const thinkingDroppedModels: string[] = [];
+	const primaryThinkingDropped = Boolean(
+		getThinkingLevelDropNote(primaryModel, effectiveThinking, replaceThinking, thinkingSuffixOptions),
+	);
 	appendThinkingDropNote(
 		attemptNotes,
+		thinkingDroppedModels,
 		primaryModel,
 		effectiveThinking,
-		params.thinkingOverride !== undefined,
+		replaceThinking,
 		thinkingSuffixOptions,
 	);
-	const model = applyThinkingSuffix(
-		primaryModel,
-		effectiveThinking,
-		params.thinkingOverride !== undefined,
-		thinkingSuffixOptions,
+	const model = applyThinkingSuffix(primaryModel, effectiveThinking, replaceThinking, thinkingSuffixOptions);
+	if (
+		restoringModel &&
+		availableModels &&
+		availableModels.length > 0 &&
+		params.restoredModelIdentity &&
+		!availableModels.some((candidate) => candidate.fullId === primaryModel)
+	) {
+		attemptNotes.push(
+			`Notice: Persisted model '${modelReferenceFromIdentity(params.restoredModelIdentity)}' was not present in the current model registry; retaining it so configured runtime fallback policy can apply.`,
+		);
+	}
+	const modelIdentity = canonicalSubagentModelIdentity(
+		model,
+		primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
 	);
 	const modelCandidates = buildModelCandidates(
 		primaryModel,
 		fallbackModels,
 		availableModels,
 		ctx.currentModelProvider,
-		{ scope: ctx.modelScope },
+		{
+			scope: ctx.modelScope,
+			...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
+		},
 	)
 		.map((candidate) => {
 			appendThinkingDropNote(
 				attemptNotes,
+				thinkingDroppedModels,
 				candidate,
 				effectiveThinking,
-				params.thinkingOverride !== undefined,
+				replaceThinking,
 				thinkingSuffixOptions,
 			);
-			return applyThinkingSuffix(
-				candidate,
-				effectiveThinking,
-				params.thinkingOverride !== undefined,
-				thinkingSuffixOptions,
-			);
+			return applyThinkingSuffix(candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
 		})
 		.filter((candidate): candidate is string => candidate !== undefined);
+	const modelThinking =
+		modelIdentity?.thinking ?? (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+	const modelResolution = params.modelResolution
+		? {
+				...params.modelResolution,
+				...(modelIdentity ? { resumed: modelIdentity } : {}),
+				reason: [params.modelResolution.reason, ...scopeWarnings, ...attemptNotes].join(" "),
+			}
+		: undefined;
 	const toolBudgetInput = params.toolBudget ?? agentConfig.toolBudget;
 	const resolvedToolBudget = validateToolBudgetConfig(
 		toolBudgetInput,
@@ -1065,9 +1148,17 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 						task: taskWithOutputInstruction,
 						cwd: runnerCwd,
 						model,
-						thinking: resolveEffectiveThinking(model, effectiveThinking),
+						thinking: modelThinking,
+						...(modelIdentity ? { modelIdentity } : {}),
+						...(modelResolution ? { modelResolution } : {}),
 						modelCandidates,
+						contextWindows: Object.fromEntries(
+							(availableModels ?? [])
+								.filter((candidate) => typeof candidate.contextWindow === "number" && candidate.contextWindow > 0)
+								.map((candidate) => [candidate.fullId, candidate.contextWindow!]),
+						),
 						...(attemptNotes.length > 0 ? { attemptNotes } : {}),
+						...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
 						modelFallbackNotice: params.modelFallbackNotice,
 						tools: agentConfig.tools,
 						extensions: agentConfig.extensions,
@@ -1081,6 +1172,19 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 						outputPath,
 						outputMode,
 						sessionFile,
+						...(parseContextUsageDiagnostics(params.contextUsage)
+							? { contextUsage: parseContextUsageDiagnostics(params.contextUsage) }
+							: {}),
+						// Lifecycle-aware callers omit this field for a newly created
+						// continuation. Revivals of the same persisted execution pass it
+						// through so threshold notifications remain deduplicated.
+						...(parseContextPressureCrossedThresholds(params.contextPressureCrossedThresholds)
+							? {
+									contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
+										params.contextPressureCrossedThresholds,
+									),
+								}
+							: {}),
 						maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agentConfig.maxSubagentDepth),
 						effectiveAcceptance: params.continuationAcceptance
 							? (mergeContinuationAcceptance(params.continuationAcceptance, params.acceptance) ??

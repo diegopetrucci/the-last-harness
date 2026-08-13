@@ -7,6 +7,7 @@ import {
 	deriveActivityState,
 	formatControlIntercomMessage,
 	formatControlNoticeMessage,
+	parseControlEvent,
 	resolveControlConfig,
 	shouldNotifyControlEvent,
 } from "../../src/runs/shared/subagent-control.ts";
@@ -289,5 +290,30 @@ describe("subagent control attention state", () => {
 			claimControlNotification(resolveControlConfig(), terminalEvent, seen, "subagent-worker-run-1-1"),
 			true,
 		);
+	});
+
+	it("dedupes warning and critical pressure events independently", () => {
+		const warning = buildControlEvent({
+			to: "needs_attention",
+			runId: "run-pressure",
+			agent: "worker",
+			reason: "context_pressure",
+			contextPressureSeverity: "warning",
+			contextPressureThreshold: "warning",
+			message: "warning",
+		});
+		const critical = buildControlEvent({
+			...warning,
+			contextPressureSeverity: "critical",
+			contextPressureThreshold: "critical",
+			message: "critical",
+		});
+		const seen = new Set<string>();
+		assert.equal(claimControlNotification(resolveControlConfig(), warning, seen), true);
+		assert.equal(claimControlNotification(resolveControlConfig(), warning, seen), false);
+		assert.equal(claimControlNotification(resolveControlConfig(), critical, seen), true);
+		assert.equal(claimControlNotification(resolveControlConfig(), critical, seen), false);
+		assert.deepEqual(parseControlEvent(JSON.parse(JSON.stringify(critical))), critical);
+		assert.equal(parseControlEvent({ ...critical, contextPressureSeverity: "bogus" }), undefined);
 	});
 });

@@ -10,9 +10,23 @@ export interface RunnerSubagentStep {
 	cwd?: string;
 	model?: string;
 	thinking?: string;
+	modelIdentity?: import("../../shared/types.ts").SubagentModelIdentity;
+	modelResolution?: import("../../shared/types.ts").SubagentModelResolution;
+	/** Persisted context diagnostics used to initialize a durable continuation. */
+	contextUsage?: import("../../shared/types.ts").ContextUsageDiagnostics;
+	contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	/** Notes collected while preparing this dispatch, surfaced with attempt notes. */
 	attemptNotes?: string[];
+	/**
+	 * Model references whose configured thinking level dispatch preparation
+	 * dropped as unsupported. Authoritative per-candidate metadata that survives
+	 * cross-step deduplication of duplicate human-facing attempt notes.
+	 */
+	thinkingDroppedModels?: string[];
 	modelCandidates?: string[];
+	/** Effective context windows keyed by the exact dispatched model candidate. */
+	contextWindows?: Record<string, number>;
 	modelFallbackNotice?: string;
 	tools?: string[];
 	extensions?: string[];

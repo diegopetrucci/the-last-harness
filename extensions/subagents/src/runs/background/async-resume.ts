@@ -6,6 +6,24 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts
 import { deliverInterruptRequest } from "./control-channel.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import {
+	canonicalSubagentModelIdentity,
+	sanitizeSubagentModelIdentity,
+	sanitizeSubagentModelResolution,
+} from "../shared/model-fallback.ts";
+import type {
+	ContextUsageDiagnostics,
+	SubagentModelIdentity,
+	SubagentModelResolution,
+	SubagentTerminationReason,
+} from "../../shared/types.ts";
+import {
+	parseContextPressureCrossedThresholds,
+	parseContextUsageDiagnostics,
+	parseSubagentTerminationReason,
+} from "../../shared/context-diagnostics.ts";
+import { parseThinkingLevel } from "../../shared/model-info.ts";
+import { readStatus } from "../../shared/utils.ts";
 
 export const ASYNC_RESUME_INTERRUPT_SIGNAL: NodeJS.Signals = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
@@ -110,6 +128,8 @@ export interface AsyncResumeDeps {
 
 export interface AsyncResumeOptions {
 	requireSessionFile?: boolean;
+	/** Read persisted state without repairing lifecycle metadata before a resume gate. */
+	readOnly?: boolean;
 }
 
 export type AsyncResumeTarget = {
@@ -123,6 +143,11 @@ export type AsyncResumeTarget = {
 	cwd?: string;
 	sessionFile?: string;
 	tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
 	pauseKind?: import("../../shared/types.ts").AsyncPauseState;
 	claimed?: boolean;
 	continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
@@ -180,12 +205,25 @@ interface AsyncResultFile {
 	success?: boolean;
 	cwd?: string;
 	sessionFile?: string;
+	model?: string;
+	thinking?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
 	results?: Array<{
 		agent?: string;
 		success?: boolean;
 		interrupted?: boolean;
 		sessionFile?: string;
 		intercomTarget?: string;
+		model?: string;
+		thinking?: string;
+		modelIdentity?: SubagentModelIdentity;
+		modelResolution?: SubagentModelResolution;
+		contextUsage?: ContextUsageDiagnostics;
+		contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
+		terminationReason?: SubagentTerminationReason;
 		acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 		activeRuntimeMs?: number;
 	}>;
@@ -221,6 +259,44 @@ function validateOptionalString(
 	return fieldValue;
 }
 
+function validateModelIdentity(value: unknown, source: string, field: string): SubagentModelIdentity | undefined {
+	if (value === undefined) return undefined;
+	const identity = sanitizeSubagentModelIdentity(value);
+	if (!identity) {
+		throw new Error(`Invalid async result file '${source}': ${field} must contain a provider and model.`);
+	}
+	return identity;
+}
+
+function validateModelResolution(value: unknown, source: string, field: string): SubagentModelResolution | undefined {
+	if (value === undefined) return undefined;
+	const resolution = sanitizeSubagentModelResolution(value);
+	if (!resolution) {
+		throw new Error(`Invalid async result file '${source}': ${field} is invalid.`);
+	}
+	return resolution;
+}
+
+function parseResultModelIdentity(value: unknown, source: string, field: string): SubagentModelIdentity | undefined {
+	try {
+		return validateModelIdentity(value, source, field);
+	} catch {
+		return undefined;
+	}
+}
+
+function parseResultModelResolution(
+	value: unknown,
+	source: string,
+	field: string,
+): SubagentModelResolution | undefined {
+	try {
+		return validateModelResolution(value, source, field);
+	} catch {
+		return undefined;
+	}
+}
+
 function validateResultFile(value: unknown, resultPath: string): AsyncResultFile {
 	const data = ensureObject(value, resultPath);
 	const resultsValue = data.results;
@@ -238,6 +314,27 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 				resultPath,
 				`results[${index}].intercomTarget`,
 			);
+			const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
+			const thinking = parseThinkingLevel(child.thinking);
+			const modelIdentity = parseResultModelIdentity(
+				child.modelIdentity,
+				resultPath,
+				`results[${index}].modelIdentity`,
+			);
+			const modelResolution = parseResultModelResolution(
+				child.modelResolution,
+				resultPath,
+				`results[${index}].modelResolution`,
+			);
+			// Result-only artifacts are recovered best-effort: these optional
+			// diagnostics were added after legacy result files were already in use.
+			// Status validation remains strict, while malformed result diagnostics are
+			// omitted so session/acceptance recovery can continue.
+			const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+			const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
+				child.contextPressureCrossedThresholds,
+			);
+			const terminationReason = parseSubagentTerminationReason(child.terminationReason);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean")
 				throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
@@ -264,6 +361,13 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 				intercomTarget,
 				...(typeof success === "boolean" ? { success } : {}),
 				...(typeof interrupted === "boolean" ? { interrupted } : {}),
+				...(model ? { model } : {}),
+				...(thinking ? { thinking } : {}),
+				...(modelIdentity ? { modelIdentity } : {}),
+				...(modelResolution ? { modelResolution } : {}),
+				...(contextUsage ? { contextUsage } : {}),
+				...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+				...(terminationReason ? { terminationReason } : {}),
 				...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
 				...(acceptance ? { acceptance } : {}),
 			};
@@ -280,6 +384,20 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 		state: validateOptionalString(data, "state", resultPath),
 		cwd: validateOptionalString(data, "cwd", resultPath),
 		sessionFile: validateOptionalString(data, "sessionFile", resultPath),
+		model: validateOptionalString(data, "model", resultPath),
+		thinking: parseThinkingLevel(data.thinking),
+		modelIdentity: parseResultModelIdentity(data.modelIdentity, resultPath, "modelIdentity"),
+		modelResolution: parseResultModelResolution(data.modelResolution, resultPath, "modelResolution"),
+		...(parseContextUsageDiagnostics(data.contextUsage)
+			? { contextUsage: parseContextUsageDiagnostics(data.contextUsage) }
+			: {}),
+		...(parseContextPressureCrossedThresholds(data.contextPressureCrossedThresholds)
+			? {
+					contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
+						data.contextPressureCrossedThresholds,
+					),
+				}
+			: {}),
 		...(typeof success === "boolean" ? { success } : {}),
 		...(results ? { results } : {}),
 	};
@@ -404,6 +522,17 @@ export function resolveAsyncRunLocation(
 	return matching[0]!.location;
 }
 
+function persistedModelIdentity(input: {
+	identity?: unknown;
+	model?: string;
+	thinking?: unknown;
+}): SubagentModelIdentity | undefined {
+	return (
+		sanitizeSubagentModelIdentity(input.identity) ??
+		canonicalSubagentModelIdentity(input.model, parseThinkingLevel(input.thinking))
+	);
+}
+
 function resultState(result: AsyncResultFile): AsyncStatus["state"] {
 	if (
 		result.state === "complete" ||
@@ -438,6 +567,23 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
 				throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
 			if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
 				throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+			if (step.model !== undefined && typeof step.model !== "string")
+				throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
+			if (step.thinking !== undefined && typeof step.thinking !== "string")
+				throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
+			validateModelIdentity(step.modelIdentity, source, `steps[${index}].modelIdentity`);
+			validateModelResolution(step.modelResolution, source, `steps[${index}].modelResolution`);
+			if (step.contextUsage !== undefined && !parseContextUsageDiagnostics(step.contextUsage))
+				throw new Error(`Invalid async status '${source}': steps[${index}].contextUsage is invalid.`);
+			if (
+				step.contextPressureCrossedThresholds !== undefined &&
+				!parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds)
+			)
+				throw new Error(
+					`Invalid async status '${source}': steps[${index}].contextPressureCrossedThresholds is invalid.`,
+				);
+			if (step.terminationReason !== undefined && !parseSubagentTerminationReason(step.terminationReason))
+				throw new Error(`Invalid async status '${source}': steps[${index}].terminationReason is invalid.`);
 		});
 	}
 }
@@ -470,10 +616,11 @@ export function resolveAsyncResumeTarget(
 		throw new Error("Async run not found. Provide id or dir.");
 	}
 
-	const reconciliation = location.asyncDir
-		? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
-		: undefined;
-	let status = reconciliation?.status ?? null;
+	const reconciliation =
+		location.asyncDir && !options.readOnly
+			? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
+			: undefined;
+	let status = reconciliation?.status ?? (options.readOnly && location.asyncDir ? readStatus(location.asyncDir) : null);
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
 	const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
 	const runId =
@@ -495,6 +642,34 @@ export function resolveAsyncResumeTarget(
 	if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
 		throw new Error(`Async run '${runId}' index must be an integer.`);
 	const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
+	const modelIdentityForStep = (index: number, step = statusSteps[index]): SubagentModelIdentity | undefined => {
+		const resultStep = resultSteps[index];
+		return (
+			persistedModelIdentity({ identity: step?.modelIdentity, model: step?.model, thinking: step?.thinking }) ??
+			persistedModelIdentity({
+				identity: resultStep?.modelIdentity,
+				model: resultStep?.model,
+				thinking: resultStep?.thinking,
+			}) ??
+			persistedModelIdentity({ identity: result?.modelIdentity, model: result?.model, thinking: result?.thinking })
+		);
+	};
+	const modelResolutionForStep = (index: number, step = statusSteps[index]): SubagentModelResolution | undefined =>
+		sanitizeSubagentModelResolution(step?.modelResolution) ??
+		sanitizeSubagentModelResolution(resultSteps[index]?.modelResolution) ??
+		sanitizeSubagentModelResolution(result?.modelResolution);
+	const contextUsageForStep = (index: number, step = statusSteps[index]): ContextUsageDiagnostics | undefined =>
+		parseContextUsageDiagnostics(step?.contextUsage) ??
+		parseContextUsageDiagnostics(resultSteps[index]?.contextUsage) ??
+		parseContextUsageDiagnostics(result?.contextUsage);
+	const crossedPressureThresholdsForStep = (
+		index: number,
+		step = statusSteps[index],
+	): import("../../shared/types.ts").ContextPressureThreshold[] | undefined =>
+		parseContextPressureCrossedThresholds(step?.contextPressureCrossedThresholds) ??
+		parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds);
+	const terminationReasonForStep = (index: number, step = statusSteps[index]): SubagentTerminationReason | undefined =>
+		step?.terminationReason ?? resultSteps[index]?.terminationReason;
 
 	if (state === "running") {
 		if (requestedIndex !== undefined) {
@@ -512,6 +687,12 @@ export function resolveAsyncResumeTarget(
 					intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+					...(modelIdentityForStep(requestedIndex, selectedStep)
+						? { modelIdentity: modelIdentityForStep(requestedIndex, selectedStep) }
+						: {}),
+					...(modelResolutionForStep(requestedIndex, selectedStep)
+						? { modelResolution: modelResolutionForStep(requestedIndex, selectedStep) }
+						: {}),
 					...(tkTicket ? { tkTicket } : {}),
 				};
 			}
@@ -541,6 +722,12 @@ export function resolveAsyncResumeTarget(
 				intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+				...(modelIdentityForStep(selected.index, selected.step)
+					? { modelIdentity: modelIdentityForStep(selected.index, selected.step) }
+					: {}),
+				...(modelResolutionForStep(selected.index, selected.step)
+					? { modelResolution: modelResolutionForStep(selected.index, selected.step) }
+					: {}),
 				...(tkTicket ? { tkTicket } : {}),
 			};
 		}
@@ -556,6 +743,7 @@ export function resolveAsyncResumeTarget(
 	let selectedStatusStep = statusSteps[index];
 	let selectedContinuation = lifecycleContinuationForIndex(status, index);
 	if (
+		!options.readOnly &&
 		typeof selectedContinuation?.claimToken === "string" &&
 		selectedContinuation.claimToken.length > 0 &&
 		location.asyncDir
@@ -583,7 +771,11 @@ export function resolveAsyncResumeTarget(
 		throw new Error(
 			`Async run '${runId}' child ${index} already launched its continuation and cannot be resumed again.`,
 		);
-	if (typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0) {
+	if (
+		!options.readOnly &&
+		typeof selectedContinuation?.claimToken === "string" &&
+		selectedContinuation.claimToken.length > 0
+	) {
 		const continuationRunId = selectedContinuation.continuationRunId;
 		if ((selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") && continuationRunId) {
 			throw new Error(
@@ -633,6 +825,12 @@ export function resolveAsyncResumeTarget(
 		intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
 		cwd: status?.cwd ?? result?.cwd,
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+		...(modelIdentityForStep(index, selectedStatusStep)
+			? { modelIdentity: modelIdentityForStep(index, selectedStatusStep) }
+			: {}),
+		...(modelResolutionForStep(index, selectedStatusStep)
+			? { modelResolution: modelResolutionForStep(index, selectedStatusStep) }
+			: {}),
 		...(tkTicket ? { tkTicket } : {}),
 		...(selectedStatusStep?.pause?.kind
 			? { pauseKind: selectedStatusStep.pause.kind }
@@ -643,6 +841,15 @@ export function resolveAsyncResumeTarget(
 			? { claimed: true }
 			: {}),
 		...(continuationAcceptance ? { continuationAcceptance } : {}),
+		...(contextUsageForStep(index, selectedStatusStep)
+			? { contextUsage: contextUsageForStep(index, selectedStatusStep) }
+			: {}),
+		...(crossedPressureThresholdsForStep(index, selectedStatusStep)
+			? { contextPressureCrossedThresholds: crossedPressureThresholdsForStep(index, selectedStatusStep) }
+			: {}),
+		...(terminationReasonForStep(index, selectedStatusStep)
+			? { terminationReason: terminationReasonForStep(index, selectedStatusStep) }
+			: {}),
 		...(selectedStatusStep?.activeRuntimeMs !== undefined
 			? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
 			: resultSteps[index]?.activeRuntimeMs !== undefined
