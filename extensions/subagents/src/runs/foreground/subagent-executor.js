@@ -747,9 +747,17 @@ function claimPausedAwaitingSupervisorTarget(target, continuationRunId, effectiv
     if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir)
         return undefined;
     const asyncDir = target.asyncDir;
-    const decision = withLifecycleStatusLock(asyncDir, (persisted) => {
-        if (!persisted)
+    if (!fs.existsSync(asyncDir)) {
+        if (target.state === "paused")
             throw new Error(`Paused run '${target.runId}' was not found.`);
+        return undefined;
+    }
+    const decision = withLifecycleStatusLock(asyncDir, (persisted) => {
+        if (!persisted) {
+            if (target.state === "paused")
+                throw new Error(`Paused run '${target.runId}' was not found.`);
+            return undefined;
+        }
         let current = persisted;
         const recovered = recoverStaleLifecycleContinuationStatus(current, asyncDir, target.index);
         if (recovered.recovered)
@@ -1425,8 +1433,13 @@ function readNestedResumeStatusStep(runId, asyncDir) {
     try {
         parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
     }
-    catch {
-        throw new Error(`Nested run '${runId}' persisted status could not be read safely.`);
+    catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error
+            ? error.code
+            : undefined;
+        if (code === "ENOENT")
+            return undefined;
+        throw new Error(`Nested run '${runId}' persisted status could not be read safely.`, { cause: error });
     }
     if (!Array.isArray(parsed.steps))
         throw new Error(`Nested run '${runId}' persisted status has invalid steps metadata.`);

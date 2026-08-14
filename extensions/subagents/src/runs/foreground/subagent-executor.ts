@@ -1149,10 +1149,21 @@ function claimPausedAwaitingSupervisorTarget(
 ): ContinuationClaimDecision {
 	if (target.kind !== "revive" || !("asyncDir" in target) || !target.asyncDir) return undefined;
 	const asyncDir = target.asyncDir;
+	// A result-only or nested target can retain a historical async-dir path even
+	// after that lifecycle directory has been removed. Do not recreate it merely
+	// to discover that there is no persisted lifecycle state. A paused target is
+	// still fail-closed when its lifecycle directory is absent.
+	if (!fs.existsSync(asyncDir)) {
+		if (target.state === "paused") throw new Error(`Paused run '${target.runId}' was not found.`);
+		return undefined;
+	}
 	const decision = withLifecycleStatusLock<{ claimToken: string } | { blockedMessage: string } | undefined>(
 		asyncDir,
 		(persisted) => {
-			if (!persisted) throw new Error(`Paused run '${target.runId}' was not found.`);
+			if (!persisted) {
+				if (target.state === "paused") throw new Error(`Paused run '${target.runId}' was not found.`);
+				return undefined;
+			}
 			let current = persisted;
 			const recovered = recoverStaleLifecycleContinuationStatus(current, asyncDir, target.index);
 			if (recovered.recovered) current = recovered.status;
@@ -1919,8 +1930,13 @@ function readNestedResumeStatusStep(runId: string, asyncDir: string | undefined)
 	let parsed: { steps?: unknown };
 	try {
 		parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as { steps?: unknown };
-	} catch {
-		throw new Error(`Nested run '${runId}' persisted status could not be read safely.`);
+	} catch (error) {
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
+		if (code === "ENOENT") return undefined;
+		throw new Error(`Nested run '${runId}' persisted status could not be read safely.`, { cause: error });
 	}
 	if (!Array.isArray(parsed.steps))
 		throw new Error(`Nested run '${runId}' persisted status has invalid steps metadata.`);

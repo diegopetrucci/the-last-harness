@@ -15,6 +15,7 @@ import {
 	steerRequestsDir,
 	writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
+import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -1520,6 +1521,244 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			}
 		} finally {
 			fs.rmSync(asyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("resume of a completed foreground child tolerates missing lifecycle status without mutation", async () => {
+		mockPi.onCall({ output: "revived from remembered foreground state" });
+		const runId = `resume-foreground-missing-status-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			cwd: tempDir,
+			updatedAt: 1,
+			children: [{ agent: "worker", index: 0, status: "completed", sessionFile }],
+		});
+		try {
+			const result = await executor.execute(
+				"resume-foreground-missing-status",
+				{ action: "resume", id: runId, message: "Continue the completed child." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.deepEqual(fs.readdirSync(asyncDir), []);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resume of a paused foreground child rejects missing lifecycle status without mutation", async () => {
+		const runId = `resume-foreground-paused-missing-status-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			cwd: tempDir,
+			updatedAt: 1,
+			children: [
+				{
+					agent: "worker",
+					index: 0,
+					status: "paused",
+					sessionFile,
+					pause: { kind: "awaiting_supervisor" },
+				},
+			],
+		});
+		try {
+			const result = await executor.execute(
+				"resume-foreground-paused-missing-status",
+				{ action: "resume", id: runId },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Paused run .* was not found/);
+			assert.deepEqual(fs.readdirSync(asyncDir), []);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resume of a completed result-only background run does not recreate its missing lifecycle directory", async () => {
+		mockPi.onCall({ output: "revived from result-only background state" });
+		const runId = `resume-background-result-only-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+		fs.writeFileSync(
+			resultPath,
+			JSON.stringify({
+				id: runId,
+				agent: "worker",
+				success: true,
+				state: "complete",
+				cwd: tempDir,
+				results: [{ agent: "worker", success: true, sessionFile }],
+			}),
+			"utf-8",
+		);
+		try {
+			assert.equal(fs.existsSync(asyncDir), false);
+			assert.equal(fs.existsSync(resultPath), true);
+			const { executor } = makeExecutor({ bridgeMode: "off" });
+			// Explicit `dir` preserves the missing lifecycle path on the target;
+			// id-only result lookup would normalize asyncDir to null and skip the guard.
+			const result = await executor.execute(
+				"resume-background-result-only",
+				{ action: "resume", id: runId, dir: asyncDir, message: "Continue from the saved result." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.equal(fs.existsSync(asyncDir), false);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(resultPath, { force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resumes a completed nested result when its lifecycle status is missing without recreating the directory", async () => {
+		mockPi.onCall({ output: "revived from nested result" });
+		const runId = `nested-result-missing-status-${Date.now()}`;
+		const route = createNestedRoute(`nested-root-${Date.now()}`);
+		const nestedAsyncDir = path.join(resolveTempRootDir(), "nested-subagent-runs", route.rootRunId, runId);
+		const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(parentSessionFile, "", "utf-8");
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: Date.now(),
+			parentRunId: route.rootRunId,
+			parentStepIndex: 0,
+			child: {
+				id: runId,
+				parentRunId: route.rootRunId,
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: route.rootRunId, stepIndex: 0 }],
+				state: "complete",
+				agent: "worker",
+				ownerState: "gone",
+				asyncDir: nestedAsyncDir,
+				sessionFile,
+			},
+		});
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			nestedRoute: route,
+		});
+		state.lastForegroundControlId = route.rootRunId;
+		try {
+			const context = makeMinimalCtx(tempDir);
+			context.sessionManager.getSessionFile = () => parentSessionFile;
+			const result = await executor.execute(
+				"resume-nested-result-missing-status",
+				{ action: "resume", id: runId, message: "Continue the nested child." },
+				new AbortController().signal,
+				undefined,
+				context,
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.equal(fs.existsSync(nestedAsyncDir), false);
+		} finally {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(parentSessionFile, { force: true });
+			fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a paused nested result when its lifecycle status is missing without recreating the directory", async () => {
+		const runId = `nested-paused-missing-status-${Date.now()}`;
+		const route = createNestedRoute(`nested-root-${Date.now()}`);
+		const nestedAsyncDir = path.join(resolveTempRootDir(), "nested-subagent-runs", route.rootRunId, runId);
+		const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(parentSessionFile, "", "utf-8");
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: Date.now(),
+			parentRunId: route.rootRunId,
+			parentStepIndex: 0,
+			child: {
+				id: runId,
+				parentRunId: route.rootRunId,
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: route.rootRunId, stepIndex: 0 }],
+				state: "paused",
+				agent: "worker",
+				ownerState: "gone",
+				asyncDir: nestedAsyncDir,
+				sessionFile,
+			},
+		});
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			nestedRoute: route,
+		});
+		state.lastForegroundControlId = route.rootRunId;
+		try {
+			const context = makeMinimalCtx(tempDir);
+			context.sessionManager.getSessionFile = () => parentSessionFile;
+			const result = await executor.execute(
+				"resume-nested-paused-missing-status",
+				{ action: "resume", id: runId, message: "Continue the paused nested child." },
+				new AbortController().signal,
+				undefined,
+				context,
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /skipped acceptance ledger could not be read/);
+			assert.equal(fs.existsSync(nestedAsyncDir), false);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(parentSessionFile, { force: true });
+			fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
 		}
 	});
 
