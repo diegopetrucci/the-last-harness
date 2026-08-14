@@ -140,6 +140,20 @@ export type ActivityState = "active_long_running" | "needs_attention";
 export type ControlEventType = "active_long_running" | "needs_attention";
 export type ControlNotificationChannel = "event" | "async" | "intercom";
 
+export type ContextPressureSeverity = "warning" | "critical";
+export type ContextPressureThreshold = ContextPressureSeverity;
+
+/** Latest measured context pressure crossing for one child execution. */
+export interface ContextPressureProjection {
+	severity: ContextPressureSeverity;
+	crossedThreshold: ContextPressureThreshold;
+	contextTokens: number;
+	contextWindow: number;
+	contextPercent: number;
+	remainingTokens: number;
+	warnedAt: number;
+}
+
 export interface ControlConfig {
 	enabled?: boolean;
 	needsAttentionAfterMs?: number;
@@ -192,6 +206,9 @@ export interface ControlEvent {
 	nestedRunId?: string;
 	nestingPath?: NestedRunAddress["path"];
 	message: string;
+	/** Context-pressure diagnostics are carried through every control channel. */
+	contextPressureSeverity?: ContextPressureSeverity;
+	contextPressureThreshold?: ContextPressureThreshold;
 	reason?:
 		| "idle"
 		| "completion_guard"
@@ -199,7 +216,8 @@ export interface ControlEvent {
 		| "tool_failures"
 		| "time_threshold"
 		| "turn_threshold"
-		| "token_threshold";
+		| "token_threshold"
+		| "context_pressure";
 	turns?: number;
 	tokens?: number;
 	toolCount?: number;
@@ -212,6 +230,35 @@ export interface ControlEvent {
 
 export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
 export type SubagentRunMode = "single" | "parallel" | "chain";
+
+/** Stable machine-readable reason why a child execution segment terminated. */
+export type SubagentTerminationReason =
+	| "completed"
+	| "output_limit"
+	| "model_error"
+	| "interrupted"
+	| "timed_out"
+	| "turn_budget_exceeded"
+	| "tool_budget_blocked"
+	| "paused"
+	| "cancelled"
+	| "process_exit"
+	| "context_exhausted"
+	| "unknown";
+
+/** Per-response child context diagnostics. Values are never cumulative billed-token totals. */
+export interface ContextUsageDiagnostics {
+	/** First valid response context observed after restoring an existing child session. */
+	restoredTokens?: number;
+	/** Latest valid assistant-response context total. */
+	contextTokens?: number;
+	/** Maximum valid assistant-response context total observed in this execution segment. */
+	peakTokens?: number;
+	/** Effective model context window, when it can be resolved safely. */
+	contextWindow?: number;
+	/** Latest contextTokens as a percentage of contextWindow. */
+	contextPercent?: number;
+}
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
 export type AsyncLifecycleState =
@@ -289,6 +336,10 @@ export type PublicNestedStepSummary = Pick<
 	| "endedAt"
 	| "error"
 	| "timedOut"
+	| "terminationReason"
+	| "contextUsage"
+	| "contextPressure"
+	| "contextPressureCrossedThresholds"
 > & {
 	children?: PublicNestedRunSummary[];
 };
@@ -581,9 +632,16 @@ export interface SingleResult {
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
 	messages?: Message[];
 	usage: Usage;
 	model?: string;
+	thinking?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
 	attemptedModels?: string[];
 	modelAttempts?: ModelAttempt[];
 	modelFallbackNotice?: string;
@@ -700,6 +758,7 @@ export interface NestedRunAddress {
 export interface NestedStepSummary {
 	agent: string;
 	status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
+	terminationReason?: SubagentTerminationReason;
 	sessionFile?: string;
 	transcriptPath?: string;
 	transcriptError?: string;
@@ -719,6 +778,9 @@ export interface NestedStepSummary {
 	wrapUpRequested?: boolean;
 	toolBudget?: ToolBudgetState;
 	toolBudgetBlocked?: boolean;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
 	children?: NestedRunSummary[];
 }
 
@@ -775,6 +837,21 @@ export interface NestedRouteInfo {
 export interface TkTicketMetadata {
 	id: string;
 	title: string;
+}
+
+/** Canonical provider/model/thinking identity persisted with resumable children. */
+export interface SubagentModelIdentity {
+	provider: string;
+	model: string;
+	thinking?: string;
+}
+
+/** Durable explanation for a restored, overridden, or fallback model selection. */
+export interface SubagentModelResolution {
+	kind: "restored" | "override" | "fallback";
+	original?: SubagentModelIdentity;
+	resumed?: SubagentModelIdentity;
+	reason: string;
 }
 
 export interface AsyncStartedEvent {
@@ -879,10 +956,16 @@ export interface AsyncStatus {
 		wrapUpRequested?: boolean;
 		toolBudget?: ToolBudgetState;
 		toolBudgetBlocked?: boolean;
+		contextUsage?: ContextUsageDiagnostics;
+		contextPressure?: ContextPressureProjection;
+		contextPressureCrossedThresholds?: ContextPressureThreshold[];
+		terminationReason?: SubagentTerminationReason;
 		tokens?: TokenUsage;
 		skills?: string[];
 		model?: string;
 		thinking?: string;
+		modelIdentity?: SubagentModelIdentity;
+		modelResolution?: SubagentModelResolution;
 		attemptedModels?: string[];
 		modelAttempts?: ModelAttempt[];
 		modelFallbackNotice?: string;
@@ -953,6 +1036,10 @@ export interface AsyncJobState {
 	totalTokens?: TokenUsage;
 	sessionFile?: string;
 	controlEventCursor?: number;
+	/** True while the cursor is inside an oversized JSONL record. */
+	controlEventSkippingOversizedLine?: boolean;
+	/** Device/inode identity of the events file at the cursor. */
+	controlEventFileIdentity?: string;
 	nestedRoute?: NestedRouteInfo;
 	nestedChildren?: NestedRunSummary[];
 	tkTicket?: TkTicketMetadata;
@@ -964,6 +1051,10 @@ export interface ForegroundResumeChild {
 	sessionFile?: string;
 	status: SubagentResultStatus;
 	exitCode?: number;
+	model?: string;
+	thinking?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
 	finalOutput?: string;
 	artifactPaths?: ArtifactPaths;
 	transcriptPath?: string;
@@ -972,6 +1063,10 @@ export interface ForegroundResumeChild {
 	acceptance?: AcceptanceLedger;
 	pause?: ForegroundPauseMetadata;
 	cancel?: AsyncCancellationMetadata;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
 	activeRuntimeMs?: number;
 	updatedAt?: number;
 }
@@ -1101,8 +1196,14 @@ export interface RunSyncOptions {
 	nestedRoute?: NestedRouteInfo;
 	/** Override the agent's default model (format: "provider/id" or just "id") */
 	modelOverride?: string;
+	/** Durable explanation for a restored or explicitly overridden model selection. */
+	modelResolution?: SubagentModelResolution;
 	/** Per-execution fallback models tried before agent frontmatter fallback models. */
 	fallbackModels?: string[];
+	/** Latest persisted display projection restored for the same execution segment. */
+	contextPressure?: ContextPressureProjection;
+	/** Thresholds already crossed in this execution, used for restart-safe deduplication. */
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
 	/** Optional sanitized notice shown only if a fallback retry is used. */
 	modelFallbackNotice?: string;
 	/** Override the agent's default thinking level for this run */

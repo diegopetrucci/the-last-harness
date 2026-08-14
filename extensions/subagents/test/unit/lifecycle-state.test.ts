@@ -573,6 +573,152 @@ describe("lifecycle state helpers", () => {
 		}
 	});
 
+	it("rechecks stale continuation recovery under lock without dropping same-generation settlement fields", () => {
+		const root = tempRoot("pi-lifecycle-claim-toctou-");
+		try {
+			const asyncDir = path.join(root, "run-claim-toctou");
+			const initialStatus = {
+				runId: "run-claim-toctou",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				lastUpdate: 180,
+				pause: { kind: "awaiting_supervisor" as const, pausedAt: 170 },
+				steps: [
+					{
+						agent: "worker",
+						status: "paused" as const,
+						pause: { kind: "awaiting_supervisor" as const, pausedAt: 170 },
+					},
+				],
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						phase: "reserved" as const,
+						claimToken: "claim-toctou",
+						claimedAt: 175,
+						ownerPid: 8123,
+						continuationRunId: "resume-toctou",
+					},
+				},
+			};
+			writeNormalizedLifecycleStatus(asyncDir, initialStatus);
+			let killCalls = 0;
+			const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
+				now: () => 250,
+				kill: () => {
+					killCalls += 1;
+					if (killCalls === 1) {
+						// Simulate a same-generation source-runner settlement after the
+						// pre-lock inspection but before recovery acquires its lock.
+						writeNormalizedLifecycleStatus(asyncDir, {
+							...initialStatus,
+							state: "complete",
+							endedAt: 300,
+							lastUpdate: 300,
+							error: "settled before stale recovery",
+							pause: undefined,
+							pid: undefined,
+							steps: [
+								{
+									...initialStatus.steps[0],
+									status: "completed",
+									endedAt: 300,
+									exitCode: 0,
+									tokens: { input: 7, output: 3, total: 10 },
+								},
+							],
+						});
+					}
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
+			});
+			assert.equal(killCalls, 2, "recovery must recheck liveness after acquiring the lock");
+			assert.equal(recovered.recovered, true);
+			assert.equal(recovered.liveness, "dead");
+			const persisted = readStatus(asyncDir);
+			assert.equal(persisted?.state, "complete");
+			assert.equal(persisted?.endedAt, 300);
+			assert.equal(persisted?.lastUpdate, 300, "recovery must not move lastUpdate backwards");
+			assert.equal(persisted?.error, "settled before stale recovery");
+			assert.equal(persisted?.steps?.[0]?.status, "completed");
+			assert.equal(persisted?.steps?.[0]?.endedAt, 300);
+			assert.equal(persisted?.steps?.[0]?.exitCode, 0);
+			assert.deepEqual(persisted?.steps?.[0]?.tokens, { input: 7, output: 3, total: 10 });
+			assert.equal(persisted?.lifecycle?.continuation, undefined);
+			assert.equal(persisted?.lifecycle?.generation, 1);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not clear a same-generation replacement continuation after stale preinspection", () => {
+		const root = tempRoot("pi-lifecycle-claim-replacement-");
+		try {
+			const asyncDir = path.join(root, "run-claim-replacement");
+			const initialStatus = {
+				runId: "run-claim-replacement",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				lastUpdate: 180,
+				steps: [{ agent: "worker", status: "paused" as const }],
+				lifecycle: {
+					generation: 0,
+					continuation: {
+						claimToken: "claim-old",
+						claimedAt: 175,
+						ownerPid: 8123,
+						continuationRunId: "resume-old",
+					},
+				},
+			};
+			writeNormalizedLifecycleStatus(asyncDir, initialStatus);
+			let killCalls = 0;
+			const recovered = recoverStaleLifecycleContinuationClaim(asyncDir, 0, {
+				now: () => 250,
+				kill: (pid) => {
+					killCalls += 1;
+					assert.equal(pid, killCalls === 1 ? 8123 : 8124);
+					if (killCalls === 1) {
+						writeNormalizedLifecycleStatus(asyncDir, {
+							...initialStatus,
+							lastUpdate: 300,
+							lifecycle: {
+								generation: 0,
+								continuation: {
+									claimToken: "claim-new",
+									claimedAt: 295,
+									ownerPid: 8124,
+									continuationRunId: "resume-new",
+								},
+							},
+						});
+					}
+					const error = new Error("dead") as NodeJS.ErrnoException;
+					error.code = "ESRCH";
+					throw error;
+				},
+			});
+			// Both owners are dead and neither continuation target exists, so the
+			// under-lock stale recheck must itself report recovered:true. This call
+			// stays conservative; a later call can inspect and recover claim-new.
+			assert.equal(killCalls, 2, "recovery must recheck the replacement owner");
+			assert.equal(recovered.recovered, false);
+			assert.equal(recovered.liveness, "dead");
+			assert.equal(recovered.status?.lifecycle?.continuation?.claimToken, "claim-new");
+			assert.equal(recovered.status?.lifecycle?.continuation?.continuationRunId, "resume-new");
+			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.claimToken, "claim-new");
+			assert.equal(readStatus(asyncDir)?.lifecycle?.continuation?.continuationRunId, "resume-new");
+			assert.equal(readStatus(asyncDir)?.lastUpdate, 300);
+			assert.equal(readStatus(asyncDir)?.lifecycle?.generation, 0);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("clears dead-owner reserved continuations only when no target launch artifacts exist", () => {
 		const root = tempRoot("pi-lifecycle-reserved-recovery-");
 		try {

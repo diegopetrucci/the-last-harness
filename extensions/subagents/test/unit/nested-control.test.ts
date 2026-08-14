@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+	buildResumeModelResolution,
 	clearForegroundMessageInbox,
 	createSubagentExecutor,
 	registerForegroundMessageInbox,
@@ -180,6 +181,43 @@ function text(result: Awaited<ReturnType<ReturnType<typeof createExecutor>["exec
 }
 
 describe("nested control routing", () => {
+	it("preserves fallback history when restoring a nested child selection", () => {
+		const original = { provider: "openai", model: "gpt-5" };
+		const effective = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" };
+		const resolution = buildResumeModelResolution(
+			{
+				kind: "revive",
+				source: "nested",
+				modelIdentity: effective,
+				modelResolution: { kind: "fallback", original, resumed: effective, reason: "primary quota; fallback selected" },
+			} as any,
+			undefined,
+		);
+		assert.equal(resolution?.kind, "fallback");
+		assert.deepEqual(resolution?.original, original);
+		assert.deepEqual(resolution?.resumed, effective);
+		assert.match(resolution?.reason ?? "", /primary quota; fallback selected/);
+		assert.match(resolution?.reason ?? "", /Restored persisted child selection/);
+	});
+
+	it("labels fallback-history explicit overrides against the persisted effective identity", () => {
+		const original = { provider: "openai", model: "gpt-5" };
+		const effective = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" };
+		const resolution = buildResumeModelResolution(
+			{
+				kind: "revive",
+				source: "nested",
+				modelIdentity: effective,
+				modelResolution: { kind: "fallback", original, resumed: effective, reason: "primary quota; fallback selected" },
+			} as any,
+			"openai/gpt-5-mini",
+		);
+		assert.equal(resolution?.kind, "override");
+		assert.deepEqual(resolution?.original, effective);
+		assert.match(resolution?.reason ?? "", /primary quota; fallback selected/);
+		assert.match(resolution?.reason ?? "", /explicitly overrode persisted selection anthropic\/claude-sonnet-4:high/);
+	});
+
 	it("isolates foreground message inboxes across control lifecycles and removes the lifecycle root", () => {
 		const first = { runId: "same-run", mode: "single" as const, startedAt: 1, updatedAt: 1 };
 		const firstInbox = registerForegroundMessageInbox(first, first.runId, 0);
@@ -521,6 +559,63 @@ describe("nested control routing", () => {
 		}
 	});
 
+	it("blocks unsafe nested durable resume without spawning or mutating durable bytes", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-context-gate-"));
+		const runId = "nested-context-gate";
+		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+		try {
+			const parentSessionFile = path.join(root, "parent.jsonl");
+			const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(parentSessionFile, "");
+			fs.writeFileSync(sessionFile, '{"type":"session","id":"nested-context-gate"}\n');
+			fs.mkdirSync(nestedAsyncDir, { recursive: true });
+			const statusPath = path.join(nestedAsyncDir, "status.json");
+			fs.writeFileSync(
+				statusPath,
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [
+						{
+							agent: "worker",
+							status: "complete",
+							sessionFile,
+							contextUsage: { contextTokens: 800, contextWindow: 1000, peakTokens: 800 },
+						},
+					],
+				}),
+				"utf-8",
+			);
+			const beforeStatus = fs.readFileSync(statusPath);
+			const beforeSession = fs.readFileSync(sessionFile);
+			const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile });
+
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"nested-context-gate-resume",
+				{ action: "resume", id: runId, message: "Continue." },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(text(result), /used tokens 800/);
+			assert.match(text(result), /80\.00%/);
+			assert.match(text(result), /fresh narrowly scoped child/);
+			assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+			assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+			const afterStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as any;
+			assert.equal(afterStatus.lifecycle, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects paused nested resume when persisted index-0 active runtime exhausts the ceiling", async () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-paused-runtime-"));
 		const runId = "nested-paused-runtime";
@@ -577,6 +672,59 @@ describe("nested control routing", () => {
 
 			assert.equal(result.isError, true);
 			assert.match(text(result), /exhausted its maxExecutionTimeMs ceiling after 100ms/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+		}
+	});
+
+	it("omits malformed nested resume model metadata without blocking recovery", async () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-model-boundary-"));
+		const runId = "nested-model-boundary";
+		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+		try {
+			const parentSessionFile = path.join(root, "parent.jsonl");
+			const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(parentSessionFile, "");
+			fs.writeFileSync(sessionFile, "");
+			fs.mkdirSync(nestedAsyncDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [
+						{
+							agent: "worker",
+							status: "complete",
+							sessionFile,
+							model: "legacy/model",
+							modelIdentity: { provider: "", model: "discarded" },
+							modelResolution: {
+								kind: "fallback",
+								original: { provider: "openai", model: "gpt-5" },
+								resumed: { provider: "", model: "discarded" },
+								reason: "discarded",
+							},
+							contextUsage: { contextTokens: "discarded" },
+						},
+					],
+				}),
+				"utf-8",
+			);
+			const route = createNestedRun(runId, "complete", { asyncDir: nestedAsyncDir, sessionFile });
+			const result = await createExecutor(stateWithNestedRoute(route), [
+				{ name: "worker", description: "Worker", prompt: "Do work" },
+			]).execute(
+				"resume",
+				{ action: "resume", id: runId, message: "continue" },
+				new AbortController().signal,
+				undefined,
+				ctx(root, parentSessionFile),
+			);
+			assert.equal(result.isError, undefined, text(result));
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });

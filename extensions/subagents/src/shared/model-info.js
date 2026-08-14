@@ -1,4 +1,7 @@
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+export function parseThinkingLevel(value) {
+    return typeof value === "string" ? THINKING_LEVELS.find((level) => level === value) : undefined;
+}
 export function toModelInfo(model) {
     return {
         provider: model.provider,
@@ -6,6 +9,7 @@ export function toModelInfo(model) {
         fullId: `${model.provider}/${model.id}`,
         reasoning: model.reasoning,
         thinkingLevelMap: model.thinkingLevelMap,
+        contextWindow: model.contextWindow,
     };
 }
 export function resolveEffectiveThinking(model, configThinking) {

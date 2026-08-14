@@ -54,6 +54,64 @@ describe("async status helpers", () => {
 		}
 	});
 
+	it("projects terminal context and termination diagnostics into step summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-diagnostics-"));
+		try {
+			createAsyncDir(root, "run-diagnostics", {
+				runId: "run-diagnostics",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				lastUpdate: 200,
+				steps: [
+					{
+						agent: "worker",
+						status: "complete",
+						contextUsage: { contextTokens: 900, peakTokens: 950, contextWindow: 2000, contextPercent: 45 },
+						terminationReason: "output_limit",
+					},
+				],
+			});
+			const step = listAsyncRuns(root)[0]?.steps[0];
+			assert.deepEqual(step?.contextUsage, {
+				contextTokens: 900,
+				peakTokens: 950,
+				contextWindow: 2000,
+				contextPercent: 45,
+			});
+			assert.equal(step?.terminationReason, "output_limit");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes malformed optional diagnostics while preserving legacy status", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-malformed-diagnostics-"));
+		try {
+			createAsyncDir(root, "run-malformed-diagnostics", {
+				runId: "run-malformed-diagnostics",
+				mode: "single",
+				state: "complete",
+				startedAt: 100,
+				steps: [
+					{
+						agent: "worker",
+						status: "complete",
+						contextUsage: { contextTokens: "not-a-number" },
+						terminationReason: "future_reason",
+					},
+				],
+			});
+
+			const step = listAsyncRuns(root)[0]?.steps[0];
+			assert.equal(step?.contextUsage, undefined);
+			assert.equal(step?.terminationReason, undefined);
+			assert.equal(step?.status, "complete");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("sorts continued runs as terminal non-active work instead of completed success", () => {
 		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-status-continued-"));
 		try {

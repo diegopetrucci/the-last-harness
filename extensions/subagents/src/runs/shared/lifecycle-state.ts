@@ -855,18 +855,24 @@ export function finalizeLifecycleContinuationLaunch(
 	}
 }
 
-export function recoverStaleLifecycleContinuationClaim(
+export interface StaleLifecycleContinuationRecoveryOptions {
+	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+	now?: () => number;
+	asyncDirRoot?: string;
+	resultsDir?: string;
+}
+
+/**
+ * Inspect a status that is already protected by the lifecycle lock and, when
+ * safe, return the in-memory recovery. Callers can compose this with another
+ * guarded decision before persisting either change.
+ */
+export function recoverStaleLifecycleContinuationStatus(
+	current: AsyncStatus,
 	asyncDir: string,
 	index: number,
-	options: {
-		kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-		now?: () => number;
-		asyncDirRoot?: string;
-		resultsDir?: string;
-	} = {},
-): { status: AsyncStatus | null; recovered: boolean; liveness: ContinuationClaimLiveness } {
-	const current = readLifecycleStatus(asyncDir);
-	if (!current) return { status: null, recovered: false, liveness: "unclaimed" };
+	options: StaleLifecycleContinuationRecoveryOptions = {},
+): { status: AsyncStatus; recovered: boolean; liveness: ContinuationClaimLiveness } {
 	const continuation = lifecycleContinuationForIndex(current, index);
 	if (!continuation?.claimToken) return { status: current, recovered: false, liveness: "unclaimed" };
 	if (
@@ -886,25 +892,69 @@ export function recoverStaleLifecycleContinuationClaim(
 	if (continuation.continuationRunId && continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
 		return { status: current, recovered: false, liveness: "blocked" };
 	}
-	const recoveredAt = options.now?.() ?? Date.now();
-	try {
-		const transitioned = transitionLifecycleStatus({
-			asyncDir,
-			expectedGeneration: lifecycleGeneration(current),
-			lockOptions: options,
-			mutate: (status) => ({
-				...status,
-				lastUpdate: recoveredAt,
-				lifecycle: withLifecycleContinuation(status, index, undefined),
-			}),
-		});
-		return { status: transitioned.status, recovered: true, liveness };
-	} catch (error) {
-		if (error instanceof Error && /expected generation/.test(error.message)) {
-			return { status: readLifecycleStatus(asyncDir), recovered: false, liveness };
-		}
-		throw error;
-	}
+	return {
+		status: {
+			...current,
+			lastUpdate: options.now?.() ?? Date.now(),
+			lifecycle: withLifecycleContinuation(current, index, undefined),
+		},
+		recovered: true,
+		liveness,
+	};
+}
+
+export function recoverStaleLifecycleContinuationClaim(
+	asyncDir: string,
+	index: number,
+	options: StaleLifecycleContinuationRecoveryOptions = {},
+): { status: AsyncStatus | null; recovered: boolean; liveness: ContinuationClaimLiveness } {
+	const current = readLifecycleStatus(asyncDir);
+	if (!current) return { status: null, recovered: false, liveness: "unclaimed" };
+	const inspected = recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options);
+	if (!inspected.recovered) return inspected;
+	const expectedGeneration = lifecycleGeneration(current);
+	const inspectedClaimToken = lifecycleContinuationForIndex(current, index)?.claimToken;
+	return withLifecycleStatusLock(
+		asyncDir,
+		(lockedStatus) => {
+			if (!lockedStatus) {
+				throw new Error(
+					`Cannot transition lifecycle state for run '${runLabel(asyncDir)}': persisted status was not found.`,
+				);
+			}
+			const normalizedLockedStatus = normalizeAsyncLifecycleStatus(lockedStatus);
+			const lockedGeneration = lifecycleGeneration(normalizedLockedStatus);
+			if (lockedGeneration !== expectedGeneration) {
+				return { status: normalizedLockedStatus, recovered: false, liveness: inspected.liveness };
+			}
+			const rechecked = recoverStaleLifecycleContinuationStatus(normalizedLockedStatus, asyncDir, index, options);
+			if (!rechecked.recovered) return rechecked;
+			// A same-generation write may have replaced the claim without advancing
+			// the lifecycle CAS generation. Never clear a newer claim just because the
+			// pre-lock inspection found a dead owner for the old one. This call is
+			// deliberately conservative: a later invocation may recover the
+			// replacement after inspecting its claim instead of clearing a claim
+			// different from the preinspection target.
+			if (lifecycleContinuationForIndex(normalizedLockedStatus, index)?.claimToken !== inspectedClaimToken) {
+				return { status: normalizedLockedStatus, recovered: false, liveness: rechecked.liveness };
+			}
+			const recoveryLastUpdate = rechecked.status.lastUpdate ?? Date.now();
+			const lastUpdate =
+				typeof normalizedLockedStatus.lastUpdate === "number" && Number.isFinite(normalizedLockedStatus.lastUpdate)
+					? Math.max(normalizedLockedStatus.lastUpdate, recoveryLastUpdate)
+					: recoveryLastUpdate;
+			const nextStatus = writeNormalizedLifecycleStatus(asyncDir, {
+				...normalizedLockedStatus,
+				lastUpdate,
+				lifecycle: {
+					...withLifecycleContinuation(normalizedLockedStatus, index, undefined),
+					generation: lockedGeneration + 1,
+				},
+			});
+			return { status: nextStatus, recovered: true, liveness: rechecked.liveness };
+		},
+		options,
+	);
 }
 
 export function recoverStoppedLifecycleOwnership(

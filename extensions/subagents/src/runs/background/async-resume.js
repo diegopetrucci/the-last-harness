@@ -6,6 +6,10 @@ import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js
 import { deliverInterruptRequest } from "./control-channel.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { parseThinkingLevel } from "../../shared/model-info.js";
+import { readStatus } from "../../shared/utils.js";
 export const ASYNC_RESUME_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 function isStringArray(x) {
     return Array.isArray(x) && x.every((el) => typeof el === "string");
@@ -104,6 +108,40 @@ function validateOptionalString(value, field, source, displayField = field) {
         throw new Error(`Invalid async result file '${source}': ${displayField} must be a string.`);
     return fieldValue;
 }
+function validateModelIdentity(value, source, field) {
+    if (value === undefined)
+        return undefined;
+    const identity = sanitizeSubagentModelIdentity(value);
+    if (!identity) {
+        throw new Error(`Invalid async result file '${source}': ${field} must contain a provider and model.`);
+    }
+    return identity;
+}
+function validateModelResolution(value, source, field) {
+    if (value === undefined)
+        return undefined;
+    const resolution = sanitizeSubagentModelResolution(value);
+    if (!resolution) {
+        throw new Error(`Invalid async result file '${source}': ${field} is invalid.`);
+    }
+    return resolution;
+}
+function parseResultModelIdentity(value, source, field) {
+    try {
+        return validateModelIdentity(value, source, field);
+    }
+    catch {
+        return undefined;
+    }
+}
+function parseResultModelResolution(value, source, field) {
+    try {
+        return validateModelResolution(value, source, field);
+    }
+    catch {
+        return undefined;
+    }
+}
 function validateResultFile(value, resultPath) {
     const data = ensureObject(value, resultPath);
     const resultsValue = data.results;
@@ -116,6 +154,14 @@ function validateResultFile(value, resultPath) {
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
             const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
+            const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
+            const thinking = parseThinkingLevel(child.thinking);
+            const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
+            const modelResolution = parseResultModelResolution(child.modelResolution, resultPath, `results[${index}].modelResolution`);
+            const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+            const contextPressure = parseContextPressureProjection(child.contextPressure);
+            const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
+            const terminationReason = parseSubagentTerminationReason(child.terminationReason);
             const success = child.success;
             if (success !== undefined && typeof success !== "boolean")
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
@@ -136,6 +182,14 @@ function validateResultFile(value, resultPath) {
                 intercomTarget,
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
+                ...(model ? { model } : {}),
+                ...(thinking ? { thinking } : {}),
+                ...(modelIdentity ? { modelIdentity } : {}),
+                ...(modelResolution ? { modelResolution } : {}),
+                ...(contextUsage ? { contextUsage } : {}),
+                ...(contextPressure ? { contextPressure } : {}),
+                ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+                ...(terminationReason ? { terminationReason } : {}),
                 ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
                 ...(acceptance ? { acceptance } : {}),
             };
@@ -152,6 +206,21 @@ function validateResultFile(value, resultPath) {
         state: validateOptionalString(data, "state", resultPath),
         cwd: validateOptionalString(data, "cwd", resultPath),
         sessionFile: validateOptionalString(data, "sessionFile", resultPath),
+        model: validateOptionalString(data, "model", resultPath),
+        thinking: parseThinkingLevel(data.thinking),
+        modelIdentity: parseResultModelIdentity(data.modelIdentity, resultPath, "modelIdentity"),
+        modelResolution: parseResultModelResolution(data.modelResolution, resultPath, "modelResolution"),
+        ...(parseContextUsageDiagnostics(data.contextUsage)
+            ? { contextUsage: parseContextUsageDiagnostics(data.contextUsage) }
+            : {}),
+        ...(parseContextPressureProjection(data.contextPressure)
+            ? { contextPressure: parseContextPressureProjection(data.contextPressure) }
+            : {}),
+        ...(parseContextPressureCrossedThresholds(data.contextPressureCrossedThresholds)
+            ? {
+                contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(data.contextPressureCrossedThresholds),
+            }
+            : {}),
         ...(typeof success === "boolean" ? { success } : {}),
         ...(results ? { results } : {}),
     };
@@ -265,6 +334,10 @@ export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
     }
     return matching[0].location;
 }
+function persistedModelIdentity(input) {
+    return (sanitizeSubagentModelIdentity(input.identity) ??
+        canonicalSubagentModelIdentity(input.model, parseThinkingLevel(input.thinking)));
+}
 function resultState(result) {
     if (result.state === "complete" ||
         result.state === "failed" ||
@@ -299,6 +372,21 @@ function validateStatusForResume(status, source) {
                 throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
             if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
                 throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+            if (step.model !== undefined && typeof step.model !== "string")
+                throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
+            if (step.thinking !== undefined && typeof step.thinking !== "string")
+                throw new Error(`Invalid async status '${source}': steps[${index}].thinking must be a string.`);
+            validateModelIdentity(step.modelIdentity, source, `steps[${index}].modelIdentity`);
+            validateModelResolution(step.modelResolution, source, `steps[${index}].modelResolution`);
+            if (step.contextUsage !== undefined && !parseContextUsageDiagnostics(step.contextUsage))
+                throw new Error(`Invalid async status '${source}': steps[${index}].contextUsage is invalid.`);
+            if (step.contextPressure !== undefined && !parseContextPressureProjection(step.contextPressure))
+                throw new Error(`Invalid async status '${source}': steps[${index}].contextPressure is invalid.`);
+            if (step.contextPressureCrossedThresholds !== undefined &&
+                !parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds))
+                throw new Error(`Invalid async status '${source}': steps[${index}].contextPressureCrossedThresholds is invalid.`);
+            if (step.terminationReason !== undefined && !parseSubagentTerminationReason(step.terminationReason))
+                throw new Error(`Invalid async status '${source}': steps[${index}].terminationReason is invalid.`);
         });
     }
 }
@@ -321,10 +409,10 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     if (!location.asyncDir && !location.resultPath) {
         throw new Error("Async run not found. Provide id or dir.");
     }
-    const reconciliation = location.asyncDir
+    const reconciliation = location.asyncDir && !options.readOnly
         ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
         : undefined;
-    let status = reconciliation?.status ?? null;
+    let status = reconciliation?.status ?? (options.readOnly && location.asyncDir ? readStatus(location.asyncDir) : null);
     validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
     const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
     const runId = status?.runId ??
@@ -347,6 +435,29 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
         throw new Error(`Async run '${runId}' index must be an integer.`);
     const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
+    const modelIdentityForStep = (index, step = statusSteps[index]) => {
+        const resultStep = resultSteps[index];
+        return (persistedModelIdentity({ identity: step?.modelIdentity, model: step?.model, thinking: step?.thinking }) ??
+            persistedModelIdentity({
+                identity: resultStep?.modelIdentity,
+                model: resultStep?.model,
+                thinking: resultStep?.thinking,
+            }) ??
+            persistedModelIdentity({ identity: result?.modelIdentity, model: result?.model, thinking: result?.thinking }));
+    };
+    const modelResolutionForStep = (index, step = statusSteps[index]) => sanitizeSubagentModelResolution(step?.modelResolution) ??
+        sanitizeSubagentModelResolution(resultSteps[index]?.modelResolution) ??
+        sanitizeSubagentModelResolution(result?.modelResolution);
+    const contextUsageForStep = (index, step = statusSteps[index]) => parseContextUsageDiagnostics(step?.contextUsage) ??
+        parseContextUsageDiagnostics(resultSteps[index]?.contextUsage) ??
+        parseContextUsageDiagnostics(result?.contextUsage);
+    const contextPressureForStep = (index, step = statusSteps[index]) => parseContextPressureProjection(step?.contextPressure) ??
+        parseContextPressureProjection(resultSteps[index]?.contextPressure) ??
+        parseContextPressureProjection(result?.contextPressure);
+    const crossedPressureThresholdsForStep = (index, step = statusSteps[index]) => parseContextPressureCrossedThresholds(step?.contextPressureCrossedThresholds) ??
+        parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds) ??
+        parseContextPressureCrossedThresholds(result?.contextPressureCrossedThresholds);
+    const terminationReasonForStep = (index, step = statusSteps[index]) => step?.terminationReason ?? resultSteps[index]?.terminationReason;
     if (state === "running") {
         if (requestedIndex !== undefined) {
             if (requestedIndex < 0 || requestedIndex >= stepCount)
@@ -363,6 +474,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                     intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
                     cwd: status?.cwd ?? result?.cwd,
                     sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+                    ...(modelIdentityForStep(requestedIndex, selectedStep)
+                        ? { modelIdentity: modelIdentityForStep(requestedIndex, selectedStep) }
+                        : {}),
+                    ...(modelResolutionForStep(requestedIndex, selectedStep)
+                        ? { modelResolution: modelResolutionForStep(requestedIndex, selectedStep) }
+                        : {}),
                     ...(tkTicket ? { tkTicket } : {}),
                 };
             }
@@ -389,6 +506,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
                 cwd: status?.cwd ?? result?.cwd,
                 sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+                ...(modelIdentityForStep(selected.index, selected.step)
+                    ? { modelIdentity: modelIdentityForStep(selected.index, selected.step) }
+                    : {}),
+                ...(modelResolutionForStep(selected.index, selected.step)
+                    ? { modelResolution: modelResolutionForStep(selected.index, selected.step) }
+                    : {}),
                 ...(tkTicket ? { tkTicket } : {}),
             };
         }
@@ -403,7 +526,8 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${index} is out of range.`);
     let selectedStatusStep = statusSteps[index];
     let selectedContinuation = lifecycleContinuationForIndex(status, index);
-    if (typeof selectedContinuation?.claimToken === "string" &&
+    if (!options.readOnly &&
+        typeof selectedContinuation?.claimToken === "string" &&
         selectedContinuation.claimToken.length > 0 &&
         location.asyncDir) {
         const recovered = recoverStaleLifecycleContinuationClaim(location.asyncDir, index, {
@@ -425,7 +549,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         throw new Error(`Async run '${runId}' child ${index} was cancelled and cannot be resumed.`);
     if (selectedStatusStep?.status === "continued")
         throw new Error(`Async run '${runId}' child ${index} already launched its continuation and cannot be resumed again.`);
-    if (typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0) {
+    if (!options.readOnly &&
+        typeof selectedContinuation?.claimToken === "string" &&
+        selectedContinuation.claimToken.length > 0) {
         const continuationRunId = selectedContinuation.continuationRunId;
         if ((selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") && continuationRunId) {
             throw new Error(`Async run '${runId}' child ${index} already launched continuation '${continuationRunId}' and cannot be resumed again.`);
@@ -462,6 +588,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
         cwd: status?.cwd ?? result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+        ...(modelIdentityForStep(index, selectedStatusStep)
+            ? { modelIdentity: modelIdentityForStep(index, selectedStatusStep) }
+            : {}),
+        ...(modelResolutionForStep(index, selectedStatusStep)
+            ? { modelResolution: modelResolutionForStep(index, selectedStatusStep) }
+            : {}),
         ...(tkTicket ? { tkTicket } : {}),
         ...(selectedStatusStep?.pause?.kind
             ? { pauseKind: selectedStatusStep.pause.kind }
@@ -472,6 +604,18 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
             ? { claimed: true }
             : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
+        ...(contextUsageForStep(index, selectedStatusStep)
+            ? { contextUsage: contextUsageForStep(index, selectedStatusStep) }
+            : {}),
+        ...(contextPressureForStep(index, selectedStatusStep)
+            ? { contextPressure: contextPressureForStep(index, selectedStatusStep) }
+            : {}),
+        ...(crossedPressureThresholdsForStep(index, selectedStatusStep)
+            ? { contextPressureCrossedThresholds: crossedPressureThresholdsForStep(index, selectedStatusStep) }
+            : {}),
+        ...(terminationReasonForStep(index, selectedStatusStep)
+            ? { terminationReason: terminationReasonForStep(index, selectedStatusStep) }
+            : {}),
         ...(selectedStatusStep?.activeRuntimeMs !== undefined
             ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
             : resultSteps[index]?.activeRuntimeMs !== undefined

@@ -1,5 +1,9 @@
-import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
-import type { Usage } from "../../shared/types.ts";
+import {
+	parseThinkingLevel,
+	splitKnownThinkingSuffix,
+	type ModelInfo as AvailableModelInfo,
+} from "../../shared/model-info.ts";
+import type { SubagentModelIdentity, SubagentModelResolution, Usage } from "../../shared/types.ts";
 import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 
 export type { AvailableModelInfo };
@@ -10,6 +14,39 @@ interface ModelAttemptSummary {
 	exitCode?: number | null;
 	error?: string;
 	usage?: Usage;
+}
+
+function sameModelIdentity(left: SubagentModelIdentity | undefined, right: SubagentModelIdentity): boolean {
+	return Boolean(
+		left && left.provider === right.provider && left.model === right.model && left.thinking === right.thinking,
+	);
+}
+
+/**
+ * Append one completed runtime-fallback transition to the durable resolution.
+ * `sourceAttempt` is the candidate that just failed; callers invoke this at
+ * attempt start and again at terminalization, so crash-window and final
+ * artifacts share the same ordered history.
+ */
+export function appendRuntimeFallbackResolution(input: {
+	previous?: SubagentModelResolution;
+	sourceAttempt?: ModelAttemptSummary;
+	currentIdentity?: SubagentModelIdentity;
+	originalIdentity?: SubagentModelIdentity;
+}): SubagentModelResolution | undefined {
+	const current = input.currentIdentity;
+	const source = input.sourceAttempt;
+	if (!current || !source) return input.previous;
+	if (sameModelIdentity(input.previous?.resumed, current)) return input.previous;
+	const original = input.previous?.original ?? input.originalIdentity ?? canonicalSubagentModelIdentity(source.model);
+	const currentReference = `${current.provider}/${current.model}${current.thinking ? `:${current.thinking}` : ""}`;
+	const transition = `Runtime fallback selected '${currentReference}' after '${source.model}' failed: ${source.error ?? `exit ${source.exitCode ?? 1}`}.`;
+	return {
+		kind: "fallback",
+		...(original ? { original } : {}),
+		resumed: current,
+		reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
+	};
 }
 
 export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
@@ -23,6 +60,137 @@ export function splitThinkingSuffix(model: string): { baseModel: string; thinkin
 
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
 export const INHERIT_MODEL = "inherit";
+
+/**
+ * Convert a canonical provider/model argument and effective thinking level into
+ * the durable identity used by resume artifacts. Model strings without a
+ * provider cannot safely be persisted as an identity because they may resolve
+ * to a different provider after a session reload.
+ */
+export function canonicalSubagentModelIdentity(
+	model: string | undefined,
+	thinking?: string,
+): SubagentModelIdentity | undefined {
+	if (!model) return undefined;
+	const parsed = splitKnownThinkingSuffix(model);
+	const separator = parsed.baseModel.indexOf("/");
+	if (separator <= 0 || separator === parsed.baseModel.length - 1) return undefined;
+	const effectiveThinking = parsed.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : parseThinkingLevel(thinking);
+	return {
+		provider: parsed.baseModel.slice(0, separator),
+		model: parsed.baseModel.slice(separator + 1),
+		...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+	};
+}
+
+/**
+ * Sanitize persisted model identity at artifact boundaries. Provider and model
+ * remain authoritative when valid; unsupported thinking values are omitted.
+ */
+export function sanitizeSubagentModelIdentity(value: unknown): SubagentModelIdentity | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const input = value as Record<string, unknown>;
+	if (
+		typeof input.provider !== "string" ||
+		input.provider.trim() === "" ||
+		typeof input.model !== "string" ||
+		input.model.trim() === ""
+	)
+		return undefined;
+	const thinking = parseThinkingLevel(input.thinking);
+	return {
+		provider: input.provider.trim(),
+		model: input.model.trim(),
+		...(thinking ? { thinking } : {}),
+	};
+}
+
+/** Sanitize a persisted model resolution, including both nested identities. */
+export function sanitizeSubagentModelResolution(value: unknown): SubagentModelResolution | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const input = value as Record<string, unknown>;
+	if (
+		(input.kind !== "restored" && input.kind !== "override" && input.kind !== "fallback") ||
+		typeof input.reason !== "string" ||
+		input.reason.trim() === ""
+	)
+		return undefined;
+	const original = sanitizeSubagentModelIdentity(input.original);
+	const resumed = sanitizeSubagentModelIdentity(input.resumed);
+	if ((input.original !== undefined && !original) || (input.resumed !== undefined && !resumed)) return undefined;
+	return {
+		kind: input.kind,
+		...(original ? { original } : {}),
+		...(resumed ? { resumed } : {}),
+		reason: input.reason,
+	};
+}
+
+export function modelReferenceFromIdentity(identity: SubagentModelIdentity): string {
+	return `${identity.provider}/${identity.model}`;
+}
+
+export interface RuntimeModelContextResolution {
+	identity: SubagentModelIdentity;
+	contextWindow: number;
+}
+
+const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Model ids are registry-owned values. Keep the boundary conservative without
+// treating `/` or `:` as separators: providers such as OpenRouter and Ollama
+// legitimately report those characters in the model id itself.
+const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
+
+function runtimeIdentityFromFullId(fullId: string, thinkingSuffix: string): SubagentModelIdentity | undefined {
+	// Match canonicalSubagentModelIdentity: only the first slash separates the
+	// provider, so nested provider model ids remain intact.
+	const separator = fullId.indexOf("/");
+	if (separator <= 0 || separator === fullId.length - 1) return undefined;
+	const provider = fullId.slice(0, separator);
+	const model = fullId.slice(separator + 1);
+	if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model)) return undefined;
+	return {
+		provider,
+		model,
+		...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
+	};
+}
+
+/**
+ * Resolve a model identity reported by an untrusted child message only when it
+ * names an exact registered context window. A separately reported provider
+ * scopes the opaque model id; an empty provider accepts a qualified full id.
+ */
+export function resolveRuntimeModelContext(
+	providerValue: unknown,
+	modelValue: unknown,
+	contextWindows: Record<string, number> | undefined,
+): RuntimeModelContextResolution | undefined {
+	if (
+		!contextWindows ||
+		(typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
+		typeof modelValue !== "string" ||
+		(providerValue !== undefined && typeof providerValue !== "string")
+	)
+		return undefined;
+	const provider = typeof providerValue === "string" ? providerValue.trim() : "";
+	const model = modelValue.trim();
+	if (model === "") return undefined;
+	if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider)) return undefined;
+	const parsed = splitKnownThinkingSuffix(model);
+	if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel)) return undefined;
+
+	// With a separately reported provider, the model portion is opaque. This is
+	// what preserves registry ids such as openrouter/anthropic/claude-* and
+	// ollama/qwen3:8b instead of mis-parsing their model portions as providers.
+	const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
+	if (!Object.hasOwn(contextWindows, fullId)) return undefined;
+	const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
+	if (!identity) return undefined;
+	const contextWindow = contextWindows[fullId];
+	if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
+	return { identity, contextWindow };
+}
 
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
 export interface ParentModel {

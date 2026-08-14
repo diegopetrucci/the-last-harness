@@ -7,12 +7,16 @@ import {
 	TEMP_ROOT_DIR,
 	type AsyncJobState,
 	type AsyncStatus,
+	type ContextPressureProjection,
+	type ContextPressureThreshold,
+	type ContextUsageDiagnostics,
 	type NestedRouteInfo,
 	type TurnBudgetState,
 	type NestedRunSummary,
 	type NestedRunState,
 	type NestedStepSummary,
 	type SubagentRunMode,
+	type SubagentTerminationReason,
 	type SubagentState,
 } from "../../shared/types.ts";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, type NestedPathEntry } from "./nested-path.ts";
@@ -27,6 +31,12 @@ import {
 	SUBAGENT_PARENT_RUN_ID_ENV,
 } from "./pi-args.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import {
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
+	parseContextUsageDiagnostics,
+	parseSubagentTerminationReason,
+} from "../../shared/context-diagnostics.ts";
 
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -283,9 +293,11 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		raw.status === "paused"
 			? raw.status
 			: "pending";
+	const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
 	return {
 		agent,
 		status,
+		...(terminationReason ? { terminationReason: terminationReason as SubagentTerminationReason } : {}),
 		...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
 		...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
 			? { activityState: raw.activityState }
@@ -305,6 +317,19 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
 		...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
 		...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
 		...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
+		...(parseContextUsageDiagnostics(raw.contextUsage)
+			? { contextUsage: parseContextUsageDiagnostics(raw.contextUsage) as ContextUsageDiagnostics }
+			: {}),
+		...(parseContextPressureProjection(raw.contextPressure)
+			? { contextPressure: parseContextPressureProjection(raw.contextPressure) as ContextPressureProjection }
+			: {}),
+		...(parseContextPressureCrossedThresholds(raw.contextPressureCrossedThresholds)
+			? {
+					contextPressureCrossedThresholds: parseContextPressureCrossedThresholds(
+						raw.contextPressureCrossedThresholds,
+					) as ContextPressureThreshold[],
+				}
+			: {}),
 		...(depth < MAX_DEPTH && Array.isArray(raw.children)
 			? {
 					children: raw.children
@@ -1160,9 +1185,15 @@ export function nestedSummaryFromAsyncStatus(
 							...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
 							...(step.error ? { error: step.error } : {}),
 							...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+							...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
 							...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
 							...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
 							...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
+							...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+							...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
+							...(step.contextPressureCrossedThresholds
+								? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+								: {}),
 						}))
 						.slice(0, MAX_STEPS),
 				}
