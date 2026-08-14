@@ -1895,22 +1895,6 @@ export async function runSync(
 	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
 	finalizeTerminationReason(result);
 
-	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
-		result.artifactPaths = artifactPathsResult;
-		if (options.artifactConfig?.includeOutput !== false) {
-			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
-		}
-		if (options.maxOutput) {
-			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-			const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
-			if (truncationResult.truncated) result.truncation = truncationResult;
-		}
-	} else if (options.maxOutput) {
-		const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-		const truncationResult = truncateOutput(result.finalOutput ?? "", config);
-		if (truncationResult.truncated) result.truncation = truncationResult;
-	}
-
 	const interruptedAcceptance = buildSkippedAcceptanceLedger({
 		acceptance: effectiveAcceptance,
 		ledgerStatus: "skipped",
@@ -1994,6 +1978,21 @@ export async function runSync(
 			result.progress.error = result.error;
 		}
 		artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
+	}
+	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
+		result.artifactPaths = artifactPathsResult;
+		if (options.artifactConfig?.includeOutput !== false) {
+			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
+		}
+		if (options.maxOutput) {
+			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+			const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
+			if (truncationResult.truncated) result.truncation = truncationResult;
+		}
+	} else if (options.maxOutput) {
+		const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+		const truncationResult = truncateOutput(result.finalOutput ?? "", config);
+		if (truncationResult.truncated) result.truncation = truncationResult;
 	}
 	stripAcceptanceReportsFromMessages(result.messages);
 	if (

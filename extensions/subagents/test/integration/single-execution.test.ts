@@ -359,16 +359,90 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.ok(result.artifactPaths, "expected persisted artifacts");
 		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
 			exitCode?: number;
+			error?: string;
 			terminationReason?: string;
 			contextPressure?: RunSyncResult["contextPressure"];
 			contextPressureCrossedThresholds?: string[];
 		};
+		const artifactText = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+		assert.equal(result.finalOutput, "");
+		assert.equal(artifactText, result.error);
+		assert.equal(artifactText, "Subagent stopped with an unfinished tool interaction under high context pressure.");
+		assert.equal(artifactText.match(/unfinished tool interaction/g)?.length, 1);
+		assert.equal(metadata.exitCode, result.exitCode);
+		assert.equal(metadata.error, result.error);
+		assert.equal(metadata.terminationReason, result.terminationReason);
 		assert.equal(metadata.exitCode, 1);
 		assert.equal(metadata.terminationReason, "context_exhausted");
 		assert.equal(metadata.contextPressure?.severity, "critical");
 		assert.deepEqual(metadata.contextPressureCrossedThresholds, ["warning", "critical"]);
 		assert.deepEqual(metadata.contextPressure, result.contextPressure);
 		assert.deepEqual(metadata.contextPressureCrossedThresholds, result.contextPressureCrossedThresholds);
+	});
+
+	it("preserves ordinary high-context success output and metadata", async () => {
+		const artifactsDir = path.join(tempDir, "ordinary-success-artifacts");
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "toolCall", id: "call-success", name: "edit", arguments: { path: "a.ts" } }],
+						model: "mock/test-model",
+						stopReason: "toolUse",
+						usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+				{
+					type: "tool_result_end",
+					message: {
+						role: "toolResult",
+						toolCallId: "call-success",
+						toolName: "edit",
+						content: [{ type: "text", text: "edited" }],
+					},
+				},
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Ordinary success" }],
+						model: "mock/test-model",
+						stopReason: "stop",
+						usage: { totalTokens: 990, input: 900, output: 90, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+					},
+				},
+			],
+		});
+		const result = await runSync(
+			tempDir,
+			[makeAgent("worker", { model: "mock/test-model", completionGuard: false })],
+			"worker",
+			"Finish the edit.",
+			{
+				runId: "ordinary-success-foreground",
+				acceptance: false,
+				artifactsDir,
+				artifactConfig: { enabled: true, includeOutput: true, includeMetadata: true },
+				availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			},
+		);
+
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(result.terminationReason, "completed");
+		assert.equal(result.finalOutput, "Ordinary success");
+		assert.ok(result.artifactPaths, "expected persisted artifacts");
+		assert.equal(fs.readFileSync(result.artifactPaths.outputPath, "utf-8"), result.finalOutput);
+		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
+			exitCode?: number;
+			error?: string;
+			terminationReason?: string;
+		};
+		assert.equal(metadata.exitCode, result.exitCode);
+		assert.equal(metadata.error, result.error);
+		assert.equal(metadata.terminationReason, result.terminationReason);
 	});
 
 	it("delivers foreground warning and critical pressure controls exactly once", async () => {
