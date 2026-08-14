@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
 
+### Fixed
+
+- Fixed async subagent runs that could hang after being paused and resumed.
+
 ## [0.37.0] - 2026-08-11
 
 ### Model defaults

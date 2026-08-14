@@ -36,7 +36,7 @@ import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcc
 import { cleanupOwnedProcessGroup, formatOwnedProcessGroupCleanup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
-import { boundSupervisorSummary, finalizeLifecycleContinuationLaunch, lifecycleGeneration, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
+import { TERMINAL_RUN_STATES, boundSupervisorSummary, finalizeLifecycleContinuationLaunch, lifecycleGeneration, mergeAndWriteSourceRunnerStatus, transitionLifecycleStatus, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
@@ -1477,7 +1477,18 @@ async function runSubagent(config) {
         if (statusPayload.currentStep !== undefined)
             refreshTrackedSessionFile(statusPayload.currentStep);
         refreshWorkflowGraph();
-        writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+        if (concurrentTerminalStatusAdopted || (interrupted && pausedCheckpointCommitted)) {
+            const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
+            if (TERMINAL_RUN_STATES.has(merged.state) && merged.state !== statusPayload.state) {
+                adoptConcurrentTerminalStatus();
+            }
+            else {
+                statusPayload.lifecycle = merged.lifecycle;
+            }
+        }
+        else {
+            writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+        }
         emitNestedSelfEvent(statusPayload.state === "running" || statusPayload.state === "queued"
             ? "subagent.nested.updated"
             : "subagent.nested.completed");
@@ -1621,6 +1632,7 @@ async function runSubagent(config) {
     let supervisorPauseTransitionFailed = false;
     let durablePausingCheckpointPersisted = false;
     let concurrentTerminalStatusAdopted = false;
+    let pausedCheckpointCommitted = false;
     const pauseMetadataForIndex = (index, pausedAt) => {
         if (!supervisorPauseRequest)
             return undefined;
@@ -1643,6 +1655,8 @@ async function runSubagent(config) {
             return undefined;
         Object.assign(statusPayload, persisted);
         interrupted = persisted.state === "paused";
+        if (persisted.state === "paused")
+            pausedCheckpointCommitted = true;
         concurrentTerminalStatusAdopted = true;
         return persisted;
     };
@@ -1695,6 +1709,7 @@ async function runSubagent(config) {
             Object.assign(statusPayload, transition.status);
             supervisorPauseTransitionFailed = false;
             durablePausingCheckpointPersisted = true;
+            pausedCheckpointCommitted = true;
         }
         catch {
             supervisorPauseTransitionFailed = !adoptConcurrentTerminalStatus();
@@ -2216,6 +2231,7 @@ async function runSubagent(config) {
             }
         }
         writeStatusPayload();
+        pausedCheckpointCommitted = true;
         appendJsonl(eventsPath, JSON.stringify({
             type: "subagent.run.paused",
             ts: now,
@@ -2300,7 +2316,7 @@ async function runSubagent(config) {
     let flatIndex = 0;
     let stepCursor = 0;
     while (true) {
-        if (interrupted || timedOut || turnBudgetExceeded)
+        if (interrupted || timedOut || turnBudgetExceeded || concurrentTerminalStatusAdopted)
             break;
         if (stepCursor >= steps.length)
             break;
@@ -2328,7 +2344,7 @@ async function runSubagent(config) {
                 const fi = groupStartFlatIndex + taskIdx;
                 if (timedOut)
                     return timedOutStepResult(task.agent);
-                if (interrupted)
+                if (interrupted || concurrentTerminalStatusAdopted)
                     return pausedStepResult(task);
                 if (aborted && failFast) {
                     const skippedAt = Date.now();
@@ -3092,12 +3108,12 @@ async function runSubagent(config) {
         (safePausedResultAfterReap && !supervisorPauseTransitionFailed && !concurrentTerminalStatusAdopted
             ? safePausedResultAfterReap
             : undefined);
-    const resultState = timedOut || turnBudgetExceeded
-        ? "failed"
-        : resultPausedAwaitingSupervisor
-            ? "paused"
-            : concurrentTerminalStatusAdopted
-                ? statusPayload.state
+    const resultState = concurrentTerminalStatusAdopted
+        ? statusPayload.state
+        : timedOut || turnBudgetExceeded
+            ? "failed"
+            : resultPausedAwaitingSupervisor
+                ? "paused"
                 : supervisorPauseTransitionFailed
                     ? "failed"
                     : statusPayload.state === "failed" ||
@@ -3111,9 +3127,9 @@ async function runSubagent(config) {
                                 ? "complete"
                                 : "failed";
     const resultSuccess = resultState === "complete";
-    const resultSummary = timedOut
+    const resultSummary = !concurrentTerminalStatusAdopted && timedOut
         ? (timeoutMessage ?? "Subagent timed out.")
-        : turnBudgetExceeded
+        : !concurrentTerminalStatusAdopted && turnBudgetExceeded
             ? (statusPayload.error ?? "Subagent exceeded turn budget.")
             : resultPausedAwaitingSupervisor
                 ? pausedOutputForIndex(supervisorPauseRequest?.requesterIndex ?? 0, statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName)
@@ -3139,9 +3155,9 @@ async function runSubagent(config) {
             ...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
             ...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
             ...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-            ...(timedOut
+            ...(!concurrentTerminalStatusAdopted && timedOut
                 ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
-                : turnBudgetExceeded
+                : !concurrentTerminalStatusAdopted && turnBudgetExceeded
                     ? { error: statusPayload.error ?? "Subagent exceeded turn budget." }
                     : resultState === "failed"
                         ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
