@@ -588,8 +588,10 @@ export async function chooseTlhModelSelectionScope(
 			return "all-sessions";
 		}
 	} catch {
-		// A failed or dismissed picker is treated like cancel: never turn an
-		// interaction that did not receive consent into a global settings write.
+		// A picker failure leaves the active model selected but cannot establish
+		// persistent scope. Keep it session-only; only an explicit dismissal
+		// below cancels and restores the previous model.
+		return "session-only";
 	}
 	return "cancel";
 }

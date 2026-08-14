@@ -5,7 +5,7 @@ REPO="${TLH_REPO:-diegopetrucci/the-last-harness}"
 REF="${TLH_REF:-main}"
 # Keep in sync with MIN_NODE_VERSION and PINNED_PI_VERSION in scripts/tlh-install.mjs.
 TLH_MIN_NODE_VERSION="22.19.0"
-TLH_PINNED_PI_VERSION="0.84.1"
+TLH_PINNED_PI_VERSION="0.84.2"
 
 DRY_RUN=false
 NO_SETTINGS=false

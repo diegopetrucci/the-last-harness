@@ -13,7 +13,7 @@ assert.deepEqual(configuredSettings.packages, [realPackageRoot]);
 
 const piEntryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piPackage = JSON.parse(readFileSync(join(dirname(piEntryPath), "..", "package.json"), "utf8"));
-assert.equal(piPackage.version, "0.84.1");
+assert.equal(piPackage.version, "0.84.2");
 
 const expectedEntrypoints = [
 	"extensions/annotate-git-diff/index.js",

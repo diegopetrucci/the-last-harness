@@ -137,6 +137,45 @@ test("model scope picker exposes the approved labels in order with session-only 
 	assert.deepEqual(calls, [{ title: "Model selection scope", options: [...MODEL_SELECTION_SCOPE_OPTIONS] }]);
 });
 
+test("scope picker exceptions keep the native selection session-only without restoring", async (t) => {
+	const fixture = createIsolatedProfileFixture("tlh-model-scope-picker-error-", { cwd: true, test: t });
+	const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+	const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
+	writeSettings(fixture.agent, { defaultProvider: previousModel.provider, defaultModel: previousModel.id });
+
+	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+		const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+		const { modelSelect, pi } = registerScopeRuntime();
+		pi.model = previousModel;
+		installScopeOverride(() => pi.model);
+		const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
+		Object.defineProperty(context, "model", { get: () => pi.model });
+		context.ui.select = async () => {
+			throw new Error("picker unavailable");
+		};
+		let restorationCalls = 0;
+		pi.setModel = async (model) => {
+			restorationCalls += 1;
+			pi.model = model;
+			return true;
+		};
+
+		await queueNativeSelectorWrites(manager, selectedModel, () => {
+			pi.model = selectedModel;
+		});
+		await modelSelect({ type: "model_select", model: selectedModel, previousModel, source: "set" }, context);
+		await manager.flush();
+
+		assert.deepEqual(pi.model, selectedModel);
+		assert.equal(restorationCalls, 0);
+		assert.deepEqual(readSettings(fixture.agent), {
+			defaultProvider: previousModel.provider,
+			defaultModel: previousModel.id,
+		});
+		assert.equal(readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.architect, undefined);
+	});
+});
+
 test("model persistence interception is idempotent across repeated installation", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-model-scope-idempotent-", { cwd: true, test: t });
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -693,21 +732,37 @@ test("locked-primary session-only is reapplied on the next before_agent_start", 
 	});
 });
 
-test("non-TUI model events retain persistent upstream behavior without showing the scope picker", async (t) => {
+test("non-TUI native model events retain persistent upstream behavior without showing the scope picker", async (t) => {
 	const fixture = createIsolatedProfileFixture("tlh-model-scope-nontui-", { cwd: true, test: t });
 	const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
 	const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
 	writeSettings(fixture.agent, { defaultProvider: previousModel.provider, defaultModel: previousModel.id });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		installScopeOverride(() => selectedModel);
 		const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-		const { modelSelect } = registerScopeRuntime();
-		manager.setDefaultModelAndProvider(selectedModel.provider, selectedModel.id);
+		const { modelSelect, pi } = registerScopeRuntime();
+		pi.model = previousModel;
+		installScopeOverride(() => pi.model);
 		const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
+		Object.defineProperty(context, "model", { get: () => pi.model });
 		context.mode = "json";
 		context.hasUI = false;
+		let pickerCalls = 0;
+		context.ui.select = async () => {
+			pickerCalls += 1;
+			return MODEL_SELECTION_SCOPE_SESSION_ONLY;
+		};
+
+		// Exercise the native selector path instead of calling the settings manager
+		// directly; the non-TUI guard must still bypass the scope picker.
+		await queueNativeSelectorWrites(manager, selectedModel, () => {
+			pi.model = selectedModel;
+		});
 		await modelSelect({ type: "model_select", model: selectedModel, previousModel, source: "set" }, context);
+		await manager.flush();
+		assert.equal(pickerCalls, 0);
+		assert.deepEqual(pi.model, selectedModel);
+		assert.deepEqual(context.model, selectedModel);
 		assert.equal(readSettings(fixture.agent).defaultModel, selectedModel.id);
 	});
 });
