@@ -11,7 +11,6 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
-- `anthropic/claude-opus-4-7` and `openai-codex/gpt-5.6-luna` are now hidden from the model picker and `tlh --list-models` by default.
 
 ### Fixed
 

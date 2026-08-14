@@ -12,8 +12,7 @@ Custom dimensions sent on this event:
 
 - `Tlh.App.version`
 - `Tlh.Runtime.provider`
-- `Tlh.Runtime.model`
-- `Tlh.Runtime.thinking`
+- `Tlh.Runtime.modelEffort`
 - `Tlh.PrimaryAgent.name`
 - `Tlh.Device.osName`
 - `Tlh.Device.osVersion`
@@ -21,14 +20,14 @@ Custom dimensions sent on this event:
 - `Tlh.Experimental.delta-follow-up-reviews`
 - `Tlh.Experimental.ci-failure-investigation`
 - `Tlh.Experimental.embedded-subagents`
-- `Tlh.Subagent.code-reviewer.thinking` and `Tlh.Subagent.code-reviewer.model`
-- `Tlh.Subagent.contrarian.thinking` and `Tlh.Subagent.contrarian.model`
-- `Tlh.Subagent.developer.thinking` and `Tlh.Subagent.developer.model`
-- `Tlh.Subagent.diff-summarizer.thinking` and `Tlh.Subagent.diff-summarizer.model`
-- `Tlh.Subagent.librarian.thinking` and `Tlh.Subagent.librarian.model`
-- `Tlh.Subagent.oracle.thinking` and `Tlh.Subagent.oracle.model`
-- `Tlh.Subagent.repo-scout.thinking` and `Tlh.Subagent.repo-scout.model`
-- `Tlh.Subagent.web-scout.thinking` and `Tlh.Subagent.web-scout.model`
+- `Tlh.Subagent.code-reviewer.modelEffort`
+- `Tlh.Subagent.contrarian.modelEffort`
+- `Tlh.Subagent.developer.modelEffort`
+- `Tlh.Subagent.diff-summarizer.modelEffort`
+- `Tlh.Subagent.librarian.modelEffort`
+- `Tlh.Subagent.oracle.modelEffort`
+- `Tlh.Subagent.repo-scout.modelEffort`
+- `Tlh.Subagent.web-scout.modelEffort`
 
 Experimental feature dimensions are always reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.
 
@@ -39,13 +38,15 @@ Experimental feature dimensions are always reported for registered TLH features 
 Privacy filtering is conservative:
 
 - `Tlh.Runtime.provider` sends the normalized provider ID only when it is in TLH's public allowlist; unknown, stale, or custom IDs become `custom`, and missing values become `unknown`.
-- `Tlh.Runtime.model` sends only the final model segment and only when it matches a public-looking model family pattern such as `gpt-*`, `o*`, `chatgpt-*`, `claude-*`, `gemini-*`, `grok-*`, `deepseek-*`, `qwen*`, `kimi-*`, `mistral-*`, `codestral-*`, `devstral-*`, `llama-*`, `command-*`, `nova-*`, or `mimo-*`; otherwise it becomes `custom`, and missing values become `unknown`.
+- `Tlh.Runtime.modelEffort` is a single colon-joined token `<model>:<effort>` — for example `claude-opus-4-5:high` or `unknown:unknown`. This mirrors the separator used by upstream Pi's `applyThinkingSuffix`. Both sides are **always** joined; there is no bare model or bare effort key.
+  - The model side sends only the final model segment and only when it matches a public-looking model family pattern such as `gpt-*`, `o*`, `chatgpt-*`, `claude-*`, `gemini-*`, `grok-*`, `deepseek-*`, `qwen*`, `kimi-*`, `mistral-*`, `codestral-*`, `devstral-*`, `llama-*`, `command-*`, `nova-*`, or `mimo-*`; otherwise it becomes `custom`, and missing values become `unknown`.
+  - The effort side sends one of the seven canonical thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Any other non-empty string becomes `custom`; missing or empty values become `unknown`. The match is **case-sensitive** — a value like `High` does not match `high` and is reported as `custom`, reflecting that the upstream runtime would not honour it either.
+  - Both sides default independently: `unknown:unknown`, `custom:high`, `claude-opus-4-5:unknown`.
 - `Tlh.PrimaryAgent.name` sends `architect`, `bug-hunter`, `product`, or `rush`; other values become `custom`, and missing values become `unknown`.
-- `Tlh.Runtime.thinking` sends one of the seven canonical thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Any other non-empty string becomes `custom`; missing or empty values become `unknown`. The match is **case-sensitive** — a value like `High` does not match `high` and is reported as `custom`, reflecting that the upstream runtime would not honour it either.
-- `Tlh.Subagent.<name>.thinking` follows the same seven-level vocabulary and the same case-sensitive rule when the value comes from a `subagents.agentOverrides` settings string. However, when the value comes from subagent frontmatter, the frontmatter reader applies an `isThinkingLevel` guard that drops any unrecognised value to `undefined` before the privacy filter is reached — so an invalid frontmatter thinking value surfaces as `unknown`, not `custom`. This also means the case-sensitivity note above applies: a frontmatter value like `High` is unrecognised and becomes `unknown`, not `custom`.
-- All `Tlh.Subagent.<name>.model` keys apply the same final-segment privacy filter as `Tlh.Runtime.model`. Subagent model resolution uses the real available-models registry captured at launch time — the same registry the runtime uses — rather than a synthetic list built from frontmatter. Two behaviours follow from this:
-  - A provider-qualified frontmatter model (e.g. `anthropic/claude-opus-5`) is reported only if that exact entry is present in the available-models list. If it is not, both the `selectProviderAwareAgentDefaults` lookup and the fallback guard in `readSubagentFrontmatterConfig` return `undefined`, and the key is reported as `unknown`. This is deliberate: a plausible-but-wrong model name is worse than `unknown` as a telemetry signal.
-  - A bare, unqualified model name (e.g. `claude-opus-4-5`, no slash) cannot be looked up against the registry and is only used as a fallback when no registry-backed candidate was selected. In that case it is reported as-is after the standard privacy filter; the value reflects what is written in configuration rather than a confirmed effective selection.
+- Each `Tlh.Subagent.<name>.modelEffort` key follows the same colon-joined `<model>:<effort>` format as `Tlh.Runtime.modelEffort`. The effort side follows the same seven-level vocabulary and the same case-sensitive rule when the value comes from a `subagents.agentOverrides` settings string. However, when the value comes from subagent frontmatter, the frontmatter reader applies an `isThinkingLevel` guard that drops any unrecognised value to `undefined` before the privacy filter is reached — so an invalid frontmatter effort value surfaces as `unknown`, not `custom`. This also means the case-sensitivity note above applies: a frontmatter value like `High` is unrecognised and becomes `unknown`, not `custom`.
+  - Subagent model resolution uses the real available-models registry captured at launch time — the same registry the runtime uses — rather than a synthetic list built from frontmatter. Two behaviours follow from this:
+    - A provider-qualified frontmatter model (e.g. `anthropic/claude-opus-5`) is reported only if that exact entry is present in the available-models list. If it is not, both the `selectProviderAwareAgentDefaults` lookup and the fallback guard in `readSubagentFrontmatterConfig` return `undefined`, and the model side is reported as `unknown`. This is deliberate: a plausible-but-wrong model name is worse than `unknown` as a telemetry signal.
+    - A bare, unqualified model name (e.g. `claude-opus-4-5`, no slash) cannot be looked up against the registry and is only used as a fallback when no registry-backed candidate was selected. In that case it is reported as-is after the standard privacy filter; the value reflects what is written in configuration rather than a confirmed effective selection.
   - Model resolution follows this precedence (highest first):
     1. **`preferOppositeProvider`** — if set to `true` and an opposite-provider candidate is available, it wins immediately.
     2. **`preferCurrentOpenaiModel`** — if set to `true`, the current-provider OpenAI candidate is tried before the standard sequence, outranking the generic `model:` field.
@@ -53,8 +54,8 @@ Privacy filtering is conservative:
     4. **Current-provider candidate** — the current-provider OpenAI candidate first, then the current-provider Anthropic candidate.
     5. **`tlhOpenaiModels`** entries — each checked against the available-models list.
     6. **`tlhAnthropicModels`** entries — each checked against the available-models list.
-- When a subagent is disabled via `subagents.agentOverrides`, **both** its `.thinking` and `.model` keys are reported as `disabled`. This value does not collide with any canonical thinking level and signals clearly that the agent is turned off.
-- When an individual key is explicitly cleared via `model: false` or `thinking: false` in `subagents.agentOverrides`, the affected key is reported as `cleared`. This value does not collide with any canonical thinking level or public model ID pattern and signals that the user explicitly removed the bundled default without disabling the agent entirely.
+- When a subagent is disabled via `subagents.agentOverrides`, its `modelEffort` key is reported as the single token `disabled` (not `disabled:disabled`). This value does not collide with any canonical thinking level and signals clearly that the agent is turned off.
+- When an individual side is explicitly cleared via `model: false` or `thinking: false` in `subagents.agentOverrides`, the affected side is reported as `cleared` while the other side is still resolved normally — for example `cleared:medium` or `claude-opus-4-5:cleared`. This sentinel does not collide with any canonical thinking level or public model ID pattern and signals that the user explicitly removed the bundled default without disabling the agent entirely.
 
 ## Installation identity and unique users
 
