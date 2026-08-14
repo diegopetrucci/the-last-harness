@@ -866,7 +866,17 @@ describe("async execution utilities", () => {
 	it("hard-kills async children that ignore timeout SIGTERM", async () => {
 		mockPi.onCall({ delay: 60_000, ignoreSigterm: true, output: "too late" });
 		const id = `async-timeout-hard-kill-${Date.now().toString(36)}`;
-		const timeoutMs = 1_500;
+		// Scale with TLH_TEST_TIMEOUT_SCALE so the run deadline does not fire before
+		// the child is spawned and recorded on a loaded CI runner (corrected rule:
+		// index 0 is just as exposed as any other index).
+		const timeoutMs = scaleTestTimeout(1_500);
+		// Mirrors the production TIMEOUT_HARD_KILL_MS constant in subagent-runner.ts.
+		// It is NOT scaled because it is a fixed platform constant, not a test input.
+		const TIMEOUT_HARD_KILL_MS_MIRROR = 3_000;
+		// Invariant: elapsedBound must stay well below the mock child's 60_000ms delay
+		// at every supported scale, proving the child was hard-killed rather than
+		// allowed to finish. At scale=6: (9_000 + 3_000 + 12_000) = 24_000 << 60_000.
+		const elapsedBound = timeoutMs + TIMEOUT_HARD_KILL_MS_MIRROR + scaleTestTimeout(2_000);
 		const startedAt = Date.now();
 		executeAsyncSingle(id, {
 			agent: "stubborn",
@@ -897,7 +907,10 @@ describe("async execution utilities", () => {
 		assert.equal(payload.results[0]?.error, `Subagent timed out after ${timeoutMs}ms.`);
 		assert.equal(status.timedOut, true);
 		assert.equal(status.steps?.[0]?.timedOut, true);
-		assert.ok(elapsedMs < 7_000, `timeout result should settle after hard kill, elapsed ${elapsedMs}ms`);
+		assert.ok(
+			elapsedMs < elapsedBound,
+			`timeout result should settle after hard kill, elapsed ${elapsedMs}ms (bound: ${elapsedBound}ms)`,
+		);
 		assert.equal(mockPi.callCount(), 1);
 	});
 
