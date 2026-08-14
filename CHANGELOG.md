@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
+- Argument-free `/thinking` and `/effort` selections now offer the same session-only or all-sessions scope; typed levels and thinking cycling remain persistent.
 
 ### Changed
 

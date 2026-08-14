@@ -48,6 +48,7 @@ type TlhModelSelectionPersistenceState = {
 	selectorCandidate: ModelOperation | undefined;
 	selectorClaims: ModelOperation[];
 	standaloneThinkingWrites: ThinkingWrite[];
+	interactiveThinkingSelection: TlhThinkingLevelSelectionClaim | undefined;
 	suppressionDepth: number;
 };
 
@@ -71,6 +72,12 @@ export type TlhModelSelectionDefaultsClaim = {
 	consumed: boolean;
 	nativeSelector: boolean;
 	writes: SuppressedDefaultWrite[];
+};
+
+/** Captures the settings write emitted by one interactive thinking selection. */
+export type TlhThinkingLevelSelectionClaim = {
+	consumed: boolean;
+	writes: ThinkingWrite[];
 };
 
 type PatchedSettingsManagerPrototype = typeof SettingsManager.prototype & {
@@ -340,6 +347,7 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
 		selectorCandidate: undefined,
 		selectorClaims: [],
 		standaloneThinkingWrites: [],
+		interactiveThinkingSelection: undefined,
 		suppressionDepth: 0,
 	};
 	const patch: TlhModelSelectionPersistencePatch = {
@@ -372,6 +380,15 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
 	};
 	prototype.setDefaultThinkingLevel = function (level: DefaultThinkingLevel): void {
 		if (state.suppressionDepth > 0) {
+			return;
+		}
+		const interactiveThinkingSelection = state.interactiveThinkingSelection;
+		if (interactiveThinkingSelection) {
+			interactiveThinkingSelection.writes.push({ kind: "thinking", manager: this, level });
+			// AgentSession.setThinkingLevel performs this default write synchronously.
+			// Detach after that one write so later work cannot be captured while the
+			// command awaits its scope picker.
+			state.interactiveThinkingSelection = undefined;
 			return;
 		}
 		let claim: ModelOperation | undefined;
@@ -547,6 +564,70 @@ export async function persistTlhModelSelectionDefaults(
 	return flushManagers(applySuppressedWrites(patch, writes));
 }
 
+/** Start capturing the synchronous default write for an interactive /thinking selection. */
+export function beginTlhThinkingLevelSelection(): TlhThinkingLevelSelectionClaim | undefined {
+	const patch = getInstalledPatch();
+	if (!patch || patch.state.interactiveThinkingSelection) {
+		return undefined;
+	}
+	const claim: TlhThinkingLevelSelectionClaim = { consumed: false, writes: [] };
+	patch.state.interactiveThinkingSelection = claim;
+	return claim;
+}
+
+/** Detach a thinking claim before any asynchronous scope decision. */
+export function endTlhThinkingLevelSelectionCapture(
+	claim: TlhThinkingLevelSelectionClaim | undefined,
+): TlhThinkingLevelSelectionClaim | undefined {
+	if (!claim || claim.consumed) {
+		return undefined;
+	}
+	const patch = getInstalledPatch();
+	if (patch?.state.interactiveThinkingSelection === claim) {
+		patch.state.interactiveThinkingSelection = undefined;
+	}
+	return claim;
+}
+
+function takeTlhThinkingLevelSelectionWrites(claim: TlhThinkingLevelSelectionClaim | undefined): ThinkingWrite[] {
+	if (!claim || claim.consumed) {
+		return [];
+	}
+	claim.consumed = true;
+	const patch = getInstalledPatch();
+	if (patch?.state.interactiveThinkingSelection === claim) {
+		patch.state.interactiveThinkingSelection = undefined;
+	}
+	return claim.writes;
+}
+
+/** Discard the default write captured for an interactive /thinking selection. */
+export function discardTlhThinkingLevelSelection(claim?: TlhThinkingLevelSelectionClaim): void {
+	takeTlhThinkingLevelSelectionWrites(claim);
+}
+
+/** Persist the default write captured for an interactive /thinking selection. */
+export async function persistTlhThinkingLevelSelection(
+	claim: TlhThinkingLevelSelectionClaim | undefined,
+): Promise<boolean> {
+	if (!claim || claim.consumed) {
+		return false;
+	}
+	const writes = takeTlhThinkingLevelSelectionWrites(claim);
+	if (writes.length === 0 || !canWriteTlhDefaults()) {
+		return false;
+	}
+	const patch = getInstalledPatch();
+	if (!patch) {
+		return false;
+	}
+	try {
+		return await flushManagers(applySuppressedWrites(patch, writes));
+	} catch {
+		return false;
+	}
+}
+
 function takeStandaloneThinkingWrites(): ThinkingWrite[] {
 	const patch = getInstalledPatch();
 	if (!patch) {
@@ -572,15 +653,16 @@ export async function persistTlhStandaloneThinkingDefaults(): Promise<void> {
 	await flushManagers(applySuppressedWrites(patch, writes));
 }
 
-export async function chooseTlhModelSelectionScope(
+async function chooseTlhSelectionScope(
 	ctx: Pick<ExtensionContext, "mode" | "hasUI" | "ui">,
+	title: string,
 ): Promise<TlhModelSelectionScope> {
 	if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
 		return "all-sessions";
 	}
 
 	try {
-		const selected = await ctx.ui.select("Model selection scope", [...MODEL_SELECTION_SCOPE_OPTIONS]);
+		const selected = await ctx.ui.select(title, [...MODEL_SELECTION_SCOPE_OPTIONS]);
 		if (selected === MODEL_SELECTION_SCOPE_SESSION_ONLY) {
 			return "session-only";
 		}
@@ -588,10 +670,22 @@ export async function chooseTlhModelSelectionScope(
 			return "all-sessions";
 		}
 	} catch {
-		// A picker failure leaves the active model selected but cannot establish
-		// persistent scope. Keep it session-only; only an explicit dismissal
-		// below cancels and restores the previous model.
+		// A picker failure leaves the active selection in place but cannot
+		// establish persistent scope. Keep it session-only; only an explicit
+		// dismissal below cancels and restores the previous selection.
 		return "session-only";
 	}
 	return "cancel";
+}
+
+export function chooseTlhModelSelectionScope(
+	ctx: Pick<ExtensionContext, "mode" | "hasUI" | "ui">,
+): Promise<TlhModelSelectionScope> {
+	return chooseTlhSelectionScope(ctx, "Model selection scope");
+}
+
+export function chooseTlhThinkingSelectionScope(
+	ctx: Pick<ExtensionContext, "mode" | "hasUI" | "ui">,
+): Promise<TlhModelSelectionScope> {
+	return chooseTlhSelectionScope(ctx, "Thinking selection scope");
 }
