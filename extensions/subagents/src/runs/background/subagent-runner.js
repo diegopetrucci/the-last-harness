@@ -2398,7 +2398,8 @@ async function runSubagent(config) {
                 flatSteps[flatIndex].contextPressure = pressure;
                 statusPayload.steps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;
                 statusPayload.steps[flatIndex].contextPressure = pressure;
-                writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+                statusPayload.lastUpdate = now;
+                writeStatusPayload();
                 if (controlConfig.enabled) {
                     const previousActivityState = step.activityState;
                     step.activityState = "needs_attention";

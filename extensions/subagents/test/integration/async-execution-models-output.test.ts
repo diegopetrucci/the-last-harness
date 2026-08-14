@@ -14,6 +14,12 @@ import type { MockPi } from "../support/helpers.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import {
+	lifecycleGeneration,
+	transitionLifecycleStatus,
+	withLifecycleContinuation,
+} from "../../src/runs/shared/lifecycle-state.ts";
+import type { AsyncStatus } from "../../src/shared/types.ts";
+import {
 	ASYNC_DIR,
 	type AsyncResultPayload,
 	type AsyncStatusPayload,
@@ -23,6 +29,7 @@ import {
 	executeAsyncSingle,
 	readLastMockPiArgs,
 	readMockPiArgs,
+	requestAsyncInterrupt,
 	waitForAsyncControlCondition,
 	waitForAsyncResultFile,
 	waitForAsyncStatusPredicate,
@@ -147,6 +154,143 @@ describe("async execution utilities", () => {
 			controls.map((event) => event.event.contextPressureThreshold),
 			["warning", "critical"],
 		);
+	});
+
+	it("background pressure projection preserves a paused continuation reservation before its notice", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const markerDir = path.join(tempDir, "pressure-paused-race-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const readyMarker = path.join(markerDir, "child-ready");
+		const releaseMarker = path.join(markerDir, "child-release");
+		const afterPressureMarker = path.join(markerDir, "after-pressure");
+		const pressureMessage = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "buffered pressure update" }],
+				provider: "mock",
+				model: "test-model",
+				stopReason: "toolUse",
+				usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		};
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [
+				{ writeMarker: readyMarker },
+				{ waitForMarker: releaseMarker },
+				{ jsonl: [pressureMessage] },
+				{ waitForMarker: afterPressureMarker },
+			],
+		});
+		const id = `async-pressure-paused-race-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Preserve the work while reporting context pressure.",
+			agentConfig: makeAgent("worker", { completionGuard: false }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-pressure-paused-race" },
+			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const readyDeadline = Date.now() + scaleTestTimeout(20_000);
+		while (!fs.existsSync(readyMarker)) {
+			if (Date.now() > readyDeadline) assert.fail("Timed out waiting for pressure-race child ready marker");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+
+		requestAsyncInterrupt(asyncDir, { source: "tlht-az3z-pressure-race" });
+		const pausedPayload = await waitForAsyncStatusPredicate(
+			asyncDir,
+			(status) => status.state === "paused",
+			"paused checkpoint before buffered pressure message",
+		);
+		const pausedStatus = pausedPayload as unknown as AsyncStatus;
+		const claimToken = "tlht-az3z-pressure-claim";
+		transitionLifecycleStatus({
+			asyncDir,
+			expectedGeneration: lifecycleGeneration(pausedStatus),
+			mutate: (status) => ({
+				...status,
+				lifecycle: withLifecycleContinuation(status, 0, {
+					phase: "reserved",
+					claimToken,
+					claimedAt: 200,
+					ownerPid: process.pid,
+					continuationRunId: "tlht-az3z-pressure-continuation",
+				}),
+			}),
+		});
+
+		// The pressure message is the first buffered assistant output after the
+		// paused checkpoint. This is the stale in-memory payload that the old bare
+		// writer could use to erase the reservation.
+		fs.writeFileSync(releaseMarker, "", "utf-8");
+		const observed = await waitForAsyncControlCondition(asyncDir, (statusPayload, eventText) => {
+			const status = statusPayload as unknown as AsyncStatus;
+			const hasPressureNotice = eventText.split("\n").some((line) => {
+				try {
+					const record = JSON.parse(line) as { type?: string; event?: { reason?: string } };
+					return record.type === "subagent.control" && record.event?.reason === "context_pressure";
+				} catch {
+					return false;
+				}
+			});
+			return (
+				hasPressureNotice &&
+				status.state === "paused" &&
+				status.lifecycle?.continuation?.claimToken === claimToken &&
+				status.steps?.[0]?.contextPressure?.severity === "warning" &&
+				status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning"
+			);
+		});
+		const observedStatus = observed.status as unknown as AsyncStatus;
+		const pressureNotice = observed.eventText
+			.split("\n")
+			.map((line) => {
+				try {
+					return JSON.parse(line) as { type?: string; event?: { reason?: string; ts?: number } };
+				} catch {
+					return undefined;
+				}
+			})
+			.find((record) => record?.type === "subagent.control" && record.event?.reason === "context_pressure");
+		assert.ok(pressureNotice?.event?.ts, "pressure notice must carry its timestamp");
+		assert.ok(
+			(observedStatus.lastUpdate ?? 0) >= pressureNotice.event.ts,
+			"pressure projection lastUpdate must be current before its notice is appended",
+		);
+		assert.equal(observedStatus.lifecycle?.continuation?.claimToken, claimToken);
+		assert.equal(observedStatus.state, "paused");
+		assert.deepEqual(observedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+
+		fs.writeFileSync(afterPressureMarker, "", "utf-8");
+		const resultPath = await waitForAsyncResultFile(id);
+		const finalStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatus;
+		const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(resultPayload.state, "paused");
+		assert.equal(finalStatus.state, "paused");
+		assert.equal(finalStatus.lifecycle?.continuation?.claimToken, claimToken);
+		assert.equal(finalStatus.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.deepEqual(finalStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const controlEvents = observed.eventText
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } })
+			.filter((record) => record.type === "subagent.control" && record.event?.reason === "context_pressure");
+		assert.equal(controlEvents.length, 1, "pressure notice must be emitted exactly once");
 	});
 
 	it("background parallel result persistence survives result-only recovery with pressure diagnostics", async () => {

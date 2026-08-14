@@ -3124,9 +3124,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				flatSteps[flatIndex].contextPressure = pressure;
 				statusPayload.steps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;
 				statusPayload.steps[flatIndex].contextPressure = pressure;
+				statusPayload.lastUpdate = now;
 				// This write intentionally precedes appendControlEvent: the status file
-				// is the durable projection paired with the notification.
-				writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+				// is the durable projection paired with the notification. Use the same
+				// terminal/pause-aware path as the surrounding live status writes so a
+				// buffered message cannot clobber an authoritative state or reservation.
+				writeStatusPayload();
 				if (controlConfig.enabled) {
 					const previousActivityState = step.activityState;
 					step.activityState = "needs_attention";
