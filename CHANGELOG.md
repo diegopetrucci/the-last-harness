@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
+- The collapsed TLH header now shows an always-visible, approximate launch-context allocation across TLH, AGENTS/CLAUDE.md, Skills, Tools, and Other.
 
 ### Changed
 

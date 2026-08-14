@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
-import { DefaultPackageManager, SettingsManager, getAgentDir, loadProjectContextFiles, } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager, getAgentDir, loadProjectContextFiles, loadSkills, } from "@earendil-works/pi-coding-agent";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
 function packageSourceLabel(source) {
@@ -106,18 +106,35 @@ function loadContextFiles(cwd, agentDir) {
 function filterVisibleResources(resources, projectTrusted) {
     return resources.filter((resource) => resource.enabled && existsSync(resource.path) && (projectTrusted || resource.metadata.scope !== "project"));
 }
-export async function collectStartupResources(cwd, options = {}) {
+export async function collectStartupResourceSnapshot(cwd, options = {}) {
     const agentDir = getAgentDir();
     const projectTrusted = resolveProjectTrusted(cwd, agentDir, options);
     const settingsManager = createSettingsManager(cwd, agentDir, projectTrusted);
     const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
     const resolved = await packageManager.resolve(async () => "skip");
     const enabled = (resources) => filterVisibleResources(resources, projectTrusted);
+    const contextFiles = loadContextFiles(cwd, agentDir);
+    const enabledSkills = enabled(resolved.skills);
+    const promptSkills = loadSkills({
+        cwd,
+        agentDir,
+        skillPaths: enabledSkills.map((resource) => resource.path),
+        includeDefaults: false,
+    }).skills.filter((skill) => !skill.disableModelInvocation);
     return {
-        context: loadContextFiles(cwd, agentDir).map((contextFile) => formatPathFromCwd(cwd, contextFile.path)),
-        skills: uniqueSorted(enabled(resolved.skills).map(labelSkill)),
-        prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
-        extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
-        themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+        resources: {
+            context: contextFiles.map((contextFile) => formatPathFromCwd(cwd, contextFile.path)),
+            skills: uniqueSorted(enabledSkills.map(labelSkill)),
+            prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
+            extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
+            themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+        },
+        promptMetadata: {
+            contextFiles,
+            skills: promptSkills.map(({ name, description, filePath }) => ({ name, description, filePath })),
+        },
     };
+}
+export async function collectStartupResources(cwd, options = {}) {
+    return (await collectStartupResourceSnapshot(cwd, options)).resources;
 }

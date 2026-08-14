@@ -10,11 +10,12 @@ import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
-import { collectStartupResources } from "./the-last-harness/resources.js";
+import { collectStartupResourceSnapshot } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
@@ -49,7 +50,7 @@ const EMPTY_STARTUP_RESOURCES = { context: [], skills: [], prompts: [], extensio
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
 };
-let startupResourceCollector = collectStartupResources;
+let startupResourceCollector = collectStartupResourceSnapshot;
 export const __testing = {
     setDeferredStartupTaskSchedulerForTests(scheduler) {
         scheduleDeferredStartupTask = scheduler;
@@ -61,7 +62,7 @@ export const __testing = {
         scheduleDeferredStartupTask = (task) => {
             setImmediate(task);
         };
-        startupResourceCollector = collectStartupResources;
+        startupResourceCollector = collectStartupResourceSnapshot;
     },
 };
 export default function theLastHarness(pi) {
@@ -281,6 +282,7 @@ export default function theLastHarness(pi) {
                 const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
                     requestRender,
                     startupTip,
+                    launchContextAllocation: sessionState.launchContextAllocation,
                 });
                 sessionState.header = header;
                 sessionState.requestRender = requestRender;
@@ -297,15 +299,43 @@ export default function theLastHarness(pi) {
             void maybeNotifyAvailableTlhUpdate(ctx, {
                 canNotify: () => activeTlhHeaderSessionToken === sessionToken,
             }).catch(() => undefined);
+            const launchContextInputs = (() => {
+                try {
+                    const baseSystemPrompt = ctx.getSystemPrompt();
+                    return {
+                        contextWindow: ctx.model?.contextWindow,
+                        baseSystemPrompt,
+                        launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(ctx, baseSystemPrompt),
+                        activeToolNames: pi.getActiveTools(),
+                        allTools: pi.getAllTools(),
+                    };
+                }
+                catch {
+                    return undefined;
+                }
+            })();
             void startupResourceCollector(ctx.cwd, {
                 projectTrusted: getActiveProjectTrustDecision(ctx),
             })
-                .then((resources) => {
+                .then((snapshot) => {
                 if (activeTlhHeaderSessionToken !== sessionToken) {
                     return;
                 }
-                sessionState.resources = resources;
-                sessionState.header?.setResources(resources);
+                let launchContextAllocation;
+                try {
+                    launchContextAllocation = launchContextInputs
+                        ? estimateTlhLaunchContextAllocation({
+                            ...launchContextInputs,
+                            promptMetadata: snapshot.promptMetadata,
+                        })
+                        : undefined;
+                }
+                catch {
+                }
+                sessionState.resources = snapshot.resources;
+                sessionState.launchContextAllocation = launchContextAllocation;
+                sessionState.header?.setResources(snapshot.resources);
+                sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
                 sessionState.requestRender?.();
             })
                 .catch(() => {

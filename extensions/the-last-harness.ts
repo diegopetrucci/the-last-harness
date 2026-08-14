@@ -12,11 +12,12 @@ import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
-import { collectStartupResources } from "./the-last-harness/resources.js";
+import { collectStartupResourceSnapshot } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
@@ -34,7 +35,7 @@ import {
 	persistTlhLastSeenVersion,
 } from "./the-last-harness/update-check.js";
 import { registerVersionCommand } from "./the-last-harness/version.js";
-import type { StartupResources, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
+import type { StartupResources, TlhLaunchContextAllocation, TlhUsageRefreshOptions } from "./the-last-harness/types.js";
 
 const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
 const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
@@ -64,12 +65,12 @@ function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () 
 const EMPTY_STARTUP_RESOURCES: StartupResources = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
 
 type DeferredStartupTaskScheduler = (task: () => void) => void;
-type StartupResourceCollector = typeof collectStartupResources;
+type StartupResourceCollector = typeof collectStartupResourceSnapshot;
 
 let scheduleDeferredStartupTask: DeferredStartupTaskScheduler = (task) => {
 	setImmediate(task);
 };
-let startupResourceCollector: StartupResourceCollector = collectStartupResources;
+let startupResourceCollector: StartupResourceCollector = collectStartupResourceSnapshot;
 
 export const __testing = {
 	setDeferredStartupTaskSchedulerForTests(scheduler: DeferredStartupTaskScheduler) {
@@ -82,7 +83,7 @@ export const __testing = {
 		scheduleDeferredStartupTask = (task) => {
 			setImmediate(task);
 		};
-		startupResourceCollector = collectStartupResources;
+		startupResourceCollector = collectStartupResourceSnapshot;
 	},
 };
 
@@ -312,6 +313,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
 		const sessionState: {
 			resources: StartupResources;
+			launchContextAllocation?: TlhLaunchContextAllocation;
 			header?: ReturnType<typeof createTlhHeader>;
 			requestRender?: () => void;
 		} = { resources: EMPTY_STARTUP_RESOURCES };
@@ -360,6 +362,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
 					{
 						requestRender,
 						startupTip,
+						launchContextAllocation: sessionState.launchContextAllocation,
 					},
 				);
 				sessionState.header = header;
@@ -378,15 +381,44 @@ export default function theLastHarness(pi: ExtensionAPI) {
 			void maybeNotifyAvailableTlhUpdate(ctx, {
 				canNotify: () => activeTlhHeaderSessionToken === sessionToken,
 			}).catch(() => undefined);
+			const launchContextInputs = (() => {
+				try {
+					const baseSystemPrompt = ctx.getSystemPrompt();
+					return {
+						contextWindow: ctx.model?.contextWindow,
+						baseSystemPrompt,
+						launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(ctx, baseSystemPrompt),
+						activeToolNames: pi.getActiveTools(),
+						allTools: pi.getAllTools(),
+					};
+				} catch {
+					return undefined;
+				}
+			})();
 			void startupResourceCollector(ctx.cwd, {
 				projectTrusted: getActiveProjectTrustDecision(ctx),
 			})
-				.then((resources) => {
+				.then((snapshot) => {
 					if (activeTlhHeaderSessionToken !== sessionToken) {
 						return;
 					}
-					sessionState.resources = resources;
-					sessionState.header?.setResources(resources);
+
+					let launchContextAllocation: TlhLaunchContextAllocation | undefined;
+					try {
+						launchContextAllocation = launchContextInputs
+							? estimateTlhLaunchContextAllocation({
+									...launchContextInputs,
+									promptMetadata: snapshot.promptMetadata,
+								})
+							: undefined;
+					} catch {
+						// Resource inventory still hydrates if launch-context attribution is unavailable.
+					}
+
+					sessionState.resources = snapshot.resources;
+					sessionState.launchContextAllocation = launchContextAllocation;
+					sessionState.header?.setResources(snapshot.resources);
+					sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
 					sessionState.requestRender?.();
 				})
 				.catch(() => {

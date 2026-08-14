@@ -91,6 +91,7 @@ export type TlhPrimaryAgentRuntime = {
 	applySessionStart(ctx: ExtensionContext): Promise<void>;
 	currentPrimaryAgentLabel(): string;
 	activePrimaryAgentPrompt(): AgentPrompt | undefined;
+	buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string;
 	/**
 	 * Clear the stored model override for a named primary agent and reapply
 	 * the packaged default to the active session, matching /switch-primary-agent
@@ -511,6 +512,29 @@ function createTlhPrimaryAgentRuntime(
 
 	function currentPrimaryAgentLabel(): string {
 		return primaryAgentLabel(currentPrimaryAgentSelection());
+	}
+
+	function buildActivePrimarySystemPrompt(baseSystemPrompt: string, cwd: string, settings: TlhSettings): string {
+		const primary = activePrimaryAgent();
+		const primaryEnabled = isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection());
+		const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+		const prompts = [
+			baseSystemPrompt,
+			// Embedded-subagent guidance uses the once-per-session snapshot so it matches the
+			// session-start delegation gate and keeps its documented next-session-only semantics.
+			buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+			// Other experimental guidance reads settings fresh to preserve its existing mid-session behavior.
+			buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
+			buildTlhCommitAttributionPrompt(commitAttributionState),
+		];
+		if (shouldAppendGnosisPrompt(cwd)) {
+			prompts.push(GNOSIS_PROMPT);
+		}
+		return prompts.filter(Boolean).join("\n\n");
+	}
+
+	function buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string {
+		return buildActivePrimarySystemPrompt(baseSystemPrompt, ctx.cwd, getTlhGlobalSettings(ctx.cwd));
 	}
 
 	function primaryAgentStatusMessage(ctx: ExtensionContext): string {
@@ -1099,27 +1123,10 @@ function createTlhPrimaryAgentRuntime(
 			replayTlhUnmatchedModelSelectionDefaults();
 			setTlhModelSelectionActiveModelResolver(() => ctx.model);
 			const settings = getTlhGlobalSettings(ctx.cwd);
-			const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
 			syncPrimaryAgentState(ctx);
-			const selection = currentPrimaryAgentSelection();
-			const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
 			activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
 			await applyPrimaryDefaults(ctx);
-			const prompts = [
-				event.systemPrompt,
-				// The embedded-subagents prompt clause uses the once-per-session snapshot so the prompt
-				// policy always matches the session-start embedded delegation gate (documented
-				// next-session-only semantics).
-				buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-				// Other experimental prompt guidance (delta-follow-up-reviews, ci-failure-investigation)
-				// reads settings fresh each turn to preserve its pre-existing mid-session behavior.
-				buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
-				buildTlhCommitAttributionPrompt(commitAttributionState),
-			];
-			if (shouldAppendGnosisPrompt(ctx.cwd)) {
-				prompts.push(GNOSIS_PROMPT);
-			}
-			return { systemPrompt: prompts.filter(Boolean).join("\n\n") };
+			return { systemPrompt: buildActivePrimarySystemPrompt(event.systemPrompt, ctx.cwd, settings) };
 		});
 
 		pi.on("tool_call", async (event, ctx) => {
@@ -1206,6 +1213,7 @@ function createTlhPrimaryAgentRuntime(
 		applySessionStart,
 		currentPrimaryAgentLabel,
 		activePrimaryAgentPrompt: activePrimaryAgent,
+		buildLaunchSystemPrompt,
 		resetPrimaryAgentModelOverride,
 		registerCommands,
 		registerLifecycleHooks,
