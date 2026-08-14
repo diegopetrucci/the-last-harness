@@ -19,6 +19,7 @@ import {
 	transitionLifecycleStatus,
 	withLifecycleContinuation,
 	lifecycleGeneration,
+	writeNormalizedLifecycleStatus,
 } from "../../src/runs/shared/lifecycle-state.ts";
 import {
 	ASYNC_DIR,
@@ -1785,6 +1786,114 @@ describe("async execution utilities", () => {
 			resultPayload.state,
 			"cancelled",
 			"result artifact must reflect the adopted cancelled state (invariant pin)",
+		);
+	});
+
+	// ── Regression test for tlhm-c7so: continuation launch gate writes result artifact
+	//
+	// When runSubagent rejects a continuation at the launch gate, it previously took
+	// an early return that skipped the terminal result writer at the bottom of the
+	// function. Any waiter blocking on RESULTS_DIR/${id}.json would hang until its
+	// own timeout (~20% of CI runs failed this way for four days).
+	//
+	// Fix: write a terminal failure result artifact to resultPath before the early
+	// return (option b — explicit inline payload with documented consumer contract).
+	//
+	// Proof of non-vacuousness: remove the writeAtomicJson call from the gate-rejection
+	// block in subagent-runner.ts and this test FAILS with:
+	//   "Timed out waiting for async result file: .../<id>.json"
+	// Restoring the write makes it PASS.
+	it("continuation launch gate writes a terminal failure result artifact (tlhm-c7so)", async () => {
+		// Set up a source asyncDir. Writing a paused lifecycle status + reservation
+		// makes the gate scenario realistic: the continuation runner starts with a
+		// stale or mismatched claimToken and the gate returns { finalized: false }.
+		const sourceRunId = `gate-reject-source-${Date.now().toString(36)}`;
+		const sourceAsyncDir = path.join(ASYNC_DIR, sourceRunId);
+		fs.mkdirSync(sourceAsyncDir, { recursive: true });
+
+		// Write a paused lifecycle status for the source run.
+		writeNormalizedLifecycleStatus(sourceAsyncDir, {
+			runId: sourceRunId,
+			mode: "single",
+			state: "paused",
+			startedAt: Date.now() - 5000,
+			steps: [{ agent: "worker", status: "paused" }],
+		});
+
+		// Add a continuation reservation with a specific claimToken.
+		const sourceGen = lifecycleGeneration(
+			JSON.parse(fs.readFileSync(path.join(sourceAsyncDir, "status.json"), "utf-8")),
+		);
+		transitionLifecycleStatus({
+			asyncDir: sourceAsyncDir,
+			expectedGeneration: sourceGen,
+			mutate: (status) => ({
+				...status,
+				lifecycle: withLifecycleContinuation(status, 0, {
+					phase: "reserved" as const,
+					claimToken: "original-claim-token",
+					claimedAt: Date.now(),
+					ownerPid: process.pid,
+					continuationRunId: "will-be-overridden",
+				}),
+			}),
+		});
+
+		// Launch the continuation with a DIFFERENT claimToken so the gate rejects.
+		// The subprocess exits immediately — no mock pi invocations occur.
+		const continuationId = `gate-reject-cont-${Date.now().toString(36)}`;
+		executeAsyncSingle(continuationId, {
+			agent: "worker",
+			task: "Resume work",
+			agentConfig: makeAgent("worker"),
+			ctx: {
+				pi: { events: { emit() {} } },
+				cwd: tempDir,
+				currentSessionId: "session-gate-reject",
+			},
+			continuationSource: {
+				asyncDir: sourceAsyncDir,
+				runId: sourceRunId,
+				index: 0,
+				claimToken: "rival-claim-token", // mismatched → gate rejects
+			},
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		// The result file must appear. Without the fix (no writeAtomicJson before the
+		// early return), this times out — proving the test is non-vacuous.
+		const resultPath = await waitForAsyncResultFile(continuationId, scaleTestTimeout(15_000));
+		const result = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
+		assert.equal(result.success, false, "gate-rejected continuation must report success: false");
+		assert.equal(result.state, "failed", "gate-rejected continuation must report state: failed");
+		assert.equal(
+			result.sessionId,
+			"session-gate-reject",
+			"gate-rejected continuation result must carry sessionId for delivery",
+		);
+		assert.equal(
+			(result as AsyncResultPayload & { id?: string }).id,
+			continuationId,
+			"gate-rejected continuation result must carry the continuation run id",
+		);
+		assert.ok(
+			Array.isArray(result.results) && result.results.length === 1,
+			"gate-rejected continuation must have one child result",
+		);
+		assert.equal(result.results[0]?.success, false, "child result must report success: false");
+		assert.ok(
+			typeof result.error === "string" && result.error.includes(sourceRunId),
+			"error must reference the source run id",
 		);
 	});
 });
