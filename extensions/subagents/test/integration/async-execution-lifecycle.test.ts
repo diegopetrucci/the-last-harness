@@ -410,8 +410,15 @@ describe("async execution utilities", () => {
 	it("marks async parallel runs that exceed timeoutMs as timed out", {
 		skip: process.platform === "win32" ? "timeout signal delivery intermittent on Windows CI" : undefined,
 	}, async () => {
-		mockPi.onCall({ delay: 5_000, output: "one done" });
-		mockPi.onCall({ delay: 5_000, output: "two done" });
+		// Invariant: timeoutMs must stay strictly below childDelayMs (run times out
+		// before children finish), and both must scale together under
+		// TLH_TEST_TIMEOUT_SCALE so the ~30% ratio is preserved on loaded CI runners.
+		// This guarantees both children are spawned and recorded before the deadline
+		// fires, while still ensuring the run exceeds its own deadline.
+		const childDelayMs = scaleTestTimeout(5_000);
+		const timeoutMs = scaleTestTimeout(1_500); // ≈30% of childDelayMs at all scales
+		mockPi.onCall({ delay: childDelayMs, output: "one done" });
+		mockPi.onCall({ delay: childDelayMs, output: "two done" });
 		const id = `async-timeout-parallel-${Date.now().toString(36)}`;
 		executeAsyncChain(id, {
 			chain: [
@@ -436,7 +443,7 @@ describe("async execution utilities", () => {
 			},
 			shareEnabled: false,
 			maxSubagentDepth: 2,
-			timeoutMs: 1_500,
+			timeoutMs,
 		});
 
 		await waitForMockPiCall(mockPi, 1);
@@ -446,13 +453,13 @@ describe("async execution utilities", () => {
 		assert.equal(payload.state, "failed");
 		assert.equal(payload.success, false);
 		assert.equal(payload.exitCode, 1);
-		assert.equal(payload.timeoutMs, 1_500);
+		assert.equal(payload.timeoutMs, timeoutMs);
 		assert.equal(payload.timedOut, true);
-		assert.match(payload.summary ?? "", /Subagent timed out after 1500ms\./);
+		assert.match(payload.summary ?? "", new RegExp(`Subagent timed out after ${timeoutMs}ms\.`));
 		assert.equal(status.state, "failed");
-		assert.equal(status.timeoutMs, 1_500);
+		assert.equal(status.timeoutMs, timeoutMs);
 		assert.equal(status.timedOut, true);
-		assert.match(status.error ?? "", /Subagent timed out after 1500ms\./);
+		assert.match(status.error ?? "", new RegExp(`Subagent timed out after ${timeoutMs}ms\.`));
 		assert.deepEqual(
 			status.steps?.map((step) => step.status),
 			["failed", "failed"],
@@ -463,7 +470,7 @@ describe("async execution utilities", () => {
 		);
 		assert.deepEqual(
 			status.steps?.map((step) => step.error),
-			["Subagent timed out after 1500ms.", "Subagent timed out after 1500ms."],
+			[`Subagent timed out after ${timeoutMs}ms.`, `Subagent timed out after ${timeoutMs}ms.`],
 		);
 		assert.deepEqual(
 			payload.results.map((result) => result.timedOut),
@@ -1301,6 +1308,311 @@ describe("async execution utilities", () => {
 			resultPayload.state,
 			"cancelled",
 			"result artifact must reflect the adopted cancelled state, not stale paused",
+		);
+	});
+
+	// ── Regression test for Finding 1 (PR #503 review): concurrent non-pause terminal
+	// adoption must not allow a subsequent step to start ────────────────────────
+	//
+	// When adoptConcurrentTerminalStatus adopts a non-paused terminal state, it sets
+	// interrupted = false. Before the fix, the step-loop break condition only checked
+	// `interrupted || timedOut || turnBudgetExceeded`, so the loop would continue and
+	// the NEXT sequential step would start even though a concurrent actor already
+	// committed a terminal state to disk.
+	//
+	// Proof of non-vacuousness (re-verified against current code):
+	//   Revert BOTH `|| concurrentTerminalStatusAdopted` checks — the one in the
+	//   while-loop break condition and the one in the parallel task callback's
+	//   early-return guard. This test then FAILS with:
+	//     "step 2 must not start after a concurrent terminal is adopted"
+	//     expected: 1   actual: 2   operator: strictEqual
+	//   i.e. step 2 really does execute after the concurrent terminal adoption.
+	it("concurrent terminal adoption: step does not start after non-paused terminal is adopted from disk (finding-1)", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const markerDir = path.join(tempDir, "finding1-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const readyMarker = path.join(markerDir, "child-ready");
+		const releaseMarker = path.join(markerDir, "child-release");
+
+		// Step 1: write the ready marker, then block until the release marker appears.
+		// SIGINT and SIGTERM are ignored so the child stays alive until we control it.
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: readyMarker }, { waitForMarker: releaseMarker }],
+			output: "step one done",
+		});
+
+		// 2-step sequential chain. Step 2 must NEVER start (we will assert callCount).
+		const id = `finding1-no-step-after-terminal-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{ agent: "worker", task: "Step one" },
+				{ agent: "worker", task: "Step two" },
+			],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-finding1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+
+		// ── Step 1: wait for child to signal it is blocking ─────────────────────
+		{
+			const deadline = Date.now() + scaleTestTimeout(20_000);
+			while (!fs.existsSync(readyMarker)) {
+				if (Date.now() > deadline) assert.fail("Timed out waiting for mock child ready marker (finding-1)");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		}
+
+		// ── Step 2: ordinary interrupt so the source runner pauses ────────────
+		// This sets interrupted = true on the runner and writes a paused checkpoint,
+		// gating subsequent writeStatusPayload calls through the locked-merge path
+		// (the path that eventually calls adoptConcurrentTerminalStatus).
+		requestAsyncInterrupt(asyncDir, { source: "finding1-test" });
+
+		// ── Step 3: wait for the paused checkpoint ─────────────────────────
+		await waitForAsyncState(asyncDir, "paused");
+
+		const pausedStatusRaw = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const pausedGen = lifecycleGeneration(pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0]);
+
+		// ── Step 4: inject concurrent CANCELLED state on top of the paused checkpoint ─
+		// This simulates a cancel actor committing a terminal state after the interrupt
+		// but before the source runner’s post-child write. The runner’s next
+		// writeStatusPayload call (after the child exits) will discover this cancelled
+		// state through mergeAndWriteSourceRunnerStatus and call adoptConcurrentTerminalStatus,
+		// which sets interrupted = false (the bug: the loop then continues to step 2).
+		const cancelledAt = Date.now();
+		transitionLifecycleStatus({
+			asyncDir,
+			expectedGeneration: pausedGen,
+			mutate: (status) => ({
+				...status,
+				state: "cancelled" as const,
+				pid: undefined,
+				cancel: { summary: "Test cancellation (finding-1)", cancelledAt },
+				endedAt: cancelledAt,
+				lastUpdate: cancelledAt,
+				steps: status.steps?.map((step) => ({
+					...step,
+					status: "cancelled" as const,
+					endedAt: cancelledAt,
+					exitCode: 0,
+					pause: undefined,
+					cancel: { summary: "Test cancellation (finding-1)", cancelledAt },
+				})),
+			}),
+		});
+
+		// Sanity: cancelled is on disk before releasing the child.
+		const afterCancel = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(afterCancel.state, "cancelled", "sanity: cancelled state must be on disk before releasing child");
+
+		// ── Step 5: release the blocking child ──────────────────────────────
+		// The child exits. The source runner calls writeStatusPayload() (interrupted=true,
+		// pausedCheckpointCommitted=true) — the locked merge finds the cancelled state
+		// and calls adoptConcurrentTerminalStatus(), setting interrupted = false.
+		// Pre-fix: the loop now sees interrupted=false and starts step 2.
+		// Post-fix: the loop sees concurrentTerminalStatusAdopted=true and breaks.
+		fs.writeFileSync(releaseMarker, "", "utf-8");
+
+		// ── Step 6: wait for the result artifact ───────────────────────────
+		const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+
+		// ── Assertions ─────────────────────────────────────────────
+		const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
+		// Step 2 must never have started: callCount() counts actual mock-pi invocations.
+		assert.equal(mockPi.callCount(), 1, "step 2 must not start after a concurrent terminal is adopted");
+		// The result must reflect the concurrent terminal winner.
+		assert.equal(
+			resultPayload.state,
+			"cancelled",
+			"result artifact must reflect the adopted cancelled state (finding-1)",
+		);
+	});
+
+	// ── INVARIANT PIN (not a bug reproduction) ────────────────────────────────
+	//
+	// Invariant: pause + a concurrent cancel committed through the lock/CAS path ⇒
+	// the persisted status still reports `cancelled` with its cancel metadata intact,
+	// and no step is left reporting `paused`, no matter how many post-adoption
+	// child-settle writeStatusPayload calls occur.
+	//
+	// HONESTY NOTE — read before treating this as a regression repro:
+	// This test PASSES both before and after the writeStatusPayload merge-routing
+	// change. It is deliberately NOT claimed to be non-vacuous. An earlier review
+	// hypothesis held that a post-adoption bare write could clobber the persisted
+	// `cancelled` record here; that hypothesis was investigated and found to be
+	// WRONG for the current code, because three independent mechanisms already
+	// prevent the clobber:
+	//   1. the finalization block is gated on `!concurrentTerminalStatusAdopted`, so
+	//      its state mutation and status write are both skipped after adoption;
+	//   2. both step handlers re-set `interrupted = true` via
+	//      `if (childInterrupted) interrupted = true;` before their settle write,
+	//      which pushed the write back onto the locked-merge path; and
+	//   3. `pausedCheckpointCommitted` happened to still be true.
+	// The merge-routing change exists to make the invariant hold BY CONSTRUCTION
+	// instead of by that coincidence, and to keep late settlement fields merged
+	// rather than dropped. This test pins the observable invariant so a future
+	// refactor of any of those three mechanisms cannot silently regress it.
+	it("invariant pin: pause + concurrent cancel keeps the persisted cancelled record intact", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const markerDir = path.join(tempDir, "invariant-pin-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const child0ReadyMarker = path.join(markerDir, "child0-ready");
+		const child1ReadyMarker = path.join(markerDir, "child1-ready");
+		// Both children share a single release marker so they exit at roughly the same
+		// time — ensuring both child-settle writeStatusPayload calls fire and at least
+		// one fires AFTER the first adoption.
+		const releaseMarker = path.join(markerDir, "release");
+
+		// Each child ignores SIGINT/SIGTERM so it survives the ordinary interrupt and
+		// stays blocked until the release marker appears.
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: child0ReadyMarker }, { waitForMarker: releaseMarker }],
+			output: "child 0 done",
+		});
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: child1ReadyMarker }, { waitForMarker: releaseMarker }],
+			output: "child 1 done",
+		});
+
+		const id = `invariant-pin-pause-cancel-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{
+					parallel: [
+						{ agent: "worker", task: "Task A" },
+						{ agent: "worker", task: "Task B" },
+					],
+					concurrency: 2,
+				},
+			],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-invariant-pin" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir = path.join(ASYNC_DIR, id);
+
+		// ── Step 1: wait for both children to signal they are blocking ────────────
+		{
+			const deadline = Date.now() + scaleTestTimeout(20_000);
+			while (!fs.existsSync(child0ReadyMarker) || !fs.existsSync(child1ReadyMarker)) {
+				if (Date.now() > deadline) assert.fail("Timed out waiting for both child ready markers (invariant pin)");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		}
+
+		// ── Step 2: ordinary interrupt → paused checkpoint ────────────────────────
+		requestAsyncInterrupt(asyncDir, { source: "invariant-pin-test" });
+		await waitForAsyncState(asyncDir, "paused");
+
+		const pausedStatusRaw = JSON.parse(
+			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const pausedGen = lifecycleGeneration(pausedStatusRaw as Parameters<typeof lifecycleGeneration>[0]);
+
+		// ── Step 3: commit `cancelled` on top of the paused checkpoint via CAS ────
+		// Simulates a cancel actor committing a terminal state AFTER the paused
+		// checkpoint but BEFORE the source runner's post-child writes.
+		const cancelledAt = Date.now();
+		transitionLifecycleStatus({
+			asyncDir,
+			expectedGeneration: pausedGen,
+			mutate: (status) => ({
+				...status,
+				state: "cancelled" as const,
+				pid: undefined,
+				cancel: { summary: "invariant pin test cancellation", cancelledAt },
+				endedAt: cancelledAt,
+				lastUpdate: cancelledAt,
+				steps: status.steps?.map((step) => ({
+					...step,
+					status: "cancelled" as const,
+					endedAt: cancelledAt,
+					exitCode: 0,
+					pause: undefined,
+					cancel: { summary: "invariant pin test cancellation", cancelledAt },
+				})),
+			}),
+		});
+
+		// Sanity: cancelled is on disk before releasing the children.
+		const afterCancel = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(afterCancel.state, "cancelled", "sanity: cancelled must be on disk before releasing children");
+
+		// ── Step 4: release both children simultaneously ──────────────────────────
+		// When both children exit, their task handlers each call writeStatusPayload().
+		// The first call takes the locked-merge path, detects the cancelled terminal
+		// winner, and calls adoptConcurrentTerminalStatus — setting interrupted=false
+		// and concurrentTerminalStatusAdopted=true while pausedCheckpointCommitted
+		// stays true. The second child's settle write then also runs post-adoption.
+		// With merge routing keyed on concurrentTerminalStatusAdopted, that second
+		// write is merged against disk (persisted terminal wins) instead of being able
+		// to fall through to a bare write.
+		fs.writeFileSync(releaseMarker, "", "utf-8");
+
+		// ── Step 5: wait for the result artifact ─────────────────────────────────
+		const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+
+		// ── Assertions ───────────────────────────────────────────────────────────
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+
+		// Run-level: must retain the cancel record from the CAS commit.
+		assert.equal(status.state, "cancelled", "run state must remain cancelled after post-adoption child-settle writes");
+		assert.equal(
+			status.cancel?.summary,
+			"invariant pin test cancellation",
+			"run-level cancel metadata must be intact after post-adoption child-settle writes",
+		);
+
+		// Step-level: the second child's settle write must NOT have mutated any step
+		// status back to "paused". Both steps must retain their cancelled status.
+		const stepStatuses = status.steps?.map((s) => s.status) ?? [];
+		for (let i = 0; i < stepStatuses.length; i++) {
+			assert.equal(
+				stepStatuses[i],
+				"cancelled",
+				`step statuses must all be cancelled after pause-then-cancel — step ${i} still ${stepStatuses[i]}`,
+			);
+		}
+
+		// Result artifact must reflect the concurrent terminal winner.
+		const resultPayload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+		assert.equal(
+			resultPayload.state,
+			"cancelled",
+			"result artifact must reflect the adopted cancelled state (invariant pin)",
 		);
 	});
 });

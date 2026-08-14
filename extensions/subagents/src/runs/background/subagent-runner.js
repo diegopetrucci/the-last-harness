@@ -1477,7 +1477,7 @@ async function runSubagent(config) {
         if (statusPayload.currentStep !== undefined)
             refreshTrackedSessionFile(statusPayload.currentStep);
         refreshWorkflowGraph();
-        if (interrupted && pausedCheckpointCommitted) {
+        if (concurrentTerminalStatusAdopted || (interrupted && pausedCheckpointCommitted)) {
             const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
             if (TERMINAL_RUN_STATES.has(merged.state) && merged.state !== statusPayload.state) {
                 adoptConcurrentTerminalStatus();
@@ -2316,7 +2316,7 @@ async function runSubagent(config) {
     let flatIndex = 0;
     let stepCursor = 0;
     while (true) {
-        if (interrupted || timedOut || turnBudgetExceeded)
+        if (interrupted || timedOut || turnBudgetExceeded || concurrentTerminalStatusAdopted)
             break;
         if (stepCursor >= steps.length)
             break;
@@ -2344,7 +2344,7 @@ async function runSubagent(config) {
                 const fi = groupStartFlatIndex + taskIdx;
                 if (timedOut)
                     return timedOutStepResult(task.agent);
-                if (interrupted)
+                if (interrupted || concurrentTerminalStatusAdopted)
                     return pausedStepResult(task);
                 if (aborted && failFast) {
                     const skippedAt = Date.now();

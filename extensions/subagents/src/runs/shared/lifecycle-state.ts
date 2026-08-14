@@ -434,7 +434,20 @@ function mergeAndWriteStatus(asyncDir: string, inMemory: AsyncStatus, persisted:
 	const steps = inMemory.steps?.map((step, i) => {
 		const persistedStep = persisted.steps?.[i];
 		if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status)) return step;
-		if (persistedStep.status === step.status) return step;
+		if (persistedStep.status === step.status) {
+			// Both sides agree on the terminal status. The concurrent writer may have
+			// committed lifecycle metadata (cancel, endedAt) after the source runner's
+			// last sync. Merge that metadata in while keeping source-owned settlement
+			// fields (model, tokens, acceptance, processCleanup) from the in-memory step.
+			return {
+				...step,
+				endedAt: persistedStep.endedAt ?? step.endedAt,
+				exitCode: persistedStep.exitCode ?? step.exitCode,
+				...(persistedStep.cancel !== undefined ? { cancel: persistedStep.cancel } : {}),
+				// A terminal step has no active pause.
+				pause: undefined,
+			};
+		}
 		// Persisted step is terminal and in-memory step has a different (non-terminal)
 		// status. Carry the terminal status and its lifecycle metadata from disk;
 		// take all other fields (model, tokens, acceptance, processCleanup, etc.)
@@ -460,6 +473,16 @@ function mergeAndWriteStatus(asyncDir: string, inMemory: AsyncStatus, persisted:
 			? {
 					...(persisted.cancel !== undefined ? { cancel: persisted.cancel } : {}),
 					...(persisted.endedAt !== undefined ? { endedAt: persisted.endedAt } : {}),
+					// Carry the persisted failure reason so a "failed" terminal is not
+					// silently reported with the in-memory error (usually undefined).
+					...(persisted.error !== undefined ? { error: persisted.error } : {}),
+					// Clear stale source-runner ownership fields. A terminal run has no
+					// live PID and no active pause owner. Leaving inMemory.pid / inMemory.pause
+					// in the merged record implies the run is still alive and supervised
+					// (AsyncStatus pid :831, pause :799). Explicitly set undefined so the
+					// absence is preserved, not just the value.
+					pid: undefined,
+					pause: undefined,
 				}
 			: {};
 	const merged: AsyncStatus = {

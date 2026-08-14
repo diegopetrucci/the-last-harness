@@ -1234,6 +1234,195 @@ describe("lifecycle state helpers", () => {
 		}
 	});
 
+	// ── Finding 2: stale run-level pid/pause survive terminal merge ─────────────
+	//
+	// When the persisted run state is terminal and the in-memory state is non-terminal,
+	// the merged record must NOT keep the source runner's stale `pid` or `pause` fields.
+	// A consumer reading `pid` or `pause` on a terminal record would incorrectly
+	// believe the run is still alive and supervised.
+	//
+	// Proof of non-vacuousness: remove `pid: undefined, pause: undefined` from
+	// terminalRunOverrides in lifecycle-state.ts and this test FAILS with:
+	//   "terminal merged record must not carry stale pid"
+	//   "terminal merged record must not carry stale pause"
+	it("mergeAndWriteSourceRunnerStatus clears stale pid and pause on terminal run override (finding-2)", () => {
+		const root = tempRoot("pi-lifecycle-finding2-");
+		try {
+			const asyncDir = path.join(root, "run-finding2");
+
+			// Persisted: run cancelled at generation 2 — committed by a CAS writer.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-finding2",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: 210,
+				cancel: { cancelledAt: 205, summary: "Operator cancelled" },
+				steps: [{ agent: "worker", status: "cancelled" as const }],
+				lifecycle: { generation: 2 },
+			});
+
+			// In-memory: still "pausing" with stale source-runner ownership fields.
+			const staleInMemory = {
+				runId: "run-finding2",
+				mode: "single" as const,
+				state: "pausing" as const,
+				startedAt: 100,
+				// These are the stale ownership fields that must be cleared.
+				pid: 12345,
+				pause: { kind: "awaiting_supervisor" as const, summary: "Waiting for supervisor", ownerPid: 12345 },
+				steps: [{ agent: "worker", status: "pausing" as const }],
+				lifecycle: { generation: 1 },
+			};
+
+			const merged = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			// The terminal run override must clear pid and pause.
+			assert.equal(merged.pid, undefined, "terminal merged record must not carry stale pid");
+			assert.equal(merged.pause, undefined, "terminal merged record must not carry stale pause");
+			// The terminal state and its cancel metadata must survive.
+			assert.equal(merged.state, "cancelled");
+			assert.equal(merged.cancel?.summary, "Operator cancelled");
+			// The persisted record on disk must also have pid/pause cleared.
+			const persisted = readStatus(asyncDir);
+			assert.equal(persisted?.pid, undefined, "persisted record must not carry stale pid");
+			assert.equal(persisted?.pause, undefined, "persisted record must not carry stale pause");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	// ── Finding 3: adopted "failed" terminal loses its error reason ─────────────
+	//
+	// When persisted is "failed" and in-memory is non-terminal, terminalRunOverrides
+	// must carry `error` from the persisted record. Without this fix the merged record
+	// has `state: "failed"` but the in-memory `error` (usually undefined), losing
+	// the failure reason committed by the CAS writer.
+	//
+	// Proof of non-vacuousness: remove the `persisted.error` spread from
+	// terminalRunOverrides in lifecycle-state.ts and this test FAILS with:
+	//   "terminal merged record must carry the persisted failure reason"
+	it("mergeAndWriteSourceRunnerStatus carries persisted error on failed terminal override (finding-3)", () => {
+		const root = tempRoot("pi-lifecycle-finding3-");
+		try {
+			const asyncDir = path.join(root, "run-finding3");
+
+			// Persisted: run failed with a specific error reason at generation 2.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-finding3",
+				mode: "single" as const,
+				state: "failed" as const,
+				startedAt: 100,
+				endedAt: 200,
+				error: "CAS writer: step timed out after 30s",
+				steps: [{ agent: "worker", status: "failed" as const, error: "Timed out" }],
+				lifecycle: { generation: 2 },
+			});
+
+			// In-memory: still "pausing", no error set.
+			const staleInMemory = {
+				runId: "run-finding3",
+				mode: "single" as const,
+				state: "pausing" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "pausing" as const }],
+				lifecycle: { generation: 1 },
+			};
+
+			const merged = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			// The terminal run override must carry the persisted error.
+			assert.equal(
+				merged.error,
+				"CAS writer: step timed out after 30s",
+				"terminal merged record must carry the persisted failure reason",
+			);
+			assert.equal(merged.state, "failed");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	// ── Finding 4: same-terminal step early return drops metadata ─────────────
+	//
+	// When persisted and in-memory steps agree on a terminal status, the persisted
+	// writer may have committed lifecycle metadata (cancel, endedAt) that the
+	// in-memory step does not have. The early return `return step` must be replaced
+	// with a merge that carries persisted metadata while keeping source-owned fields.
+	//
+	// Proof of non-vacuousness: revert the `if (persistedStep.status === step.status)`
+	// block to `return step` in lifecycle-state.ts and this test FAILS with:
+	//   "same-terminal step merge must carry persisted endedAt"
+	//   "same-terminal step merge must carry persisted cancel metadata"
+	it("mergeAndWriteSourceRunnerStatus preserves persisted step metadata when both sides agree on terminal status (finding-4)", () => {
+		const root = tempRoot("pi-lifecycle-finding4-");
+		try {
+			const asyncDir = path.join(root, "run-finding4");
+			const persistedEndedAt = 250;
+			const persistedCancelledAt = 240;
+
+			// Persisted: step "cancelled" WITH cancel metadata and endedAt.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-finding4",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: persistedEndedAt,
+				cancel: { cancelledAt: persistedCancelledAt, summary: "User cancelled" },
+				steps: [
+					{
+						agent: "worker",
+						status: "cancelled" as const,
+						// The concurrent writer committed cancel metadata and endedAt.
+						endedAt: persistedEndedAt,
+						exitCode: 0,
+						cancel: { cancelledAt: persistedCancelledAt, summary: "User cancelled" },
+					},
+				],
+				lifecycle: { generation: 2 },
+			});
+
+			// In-memory: step already "cancelled" (source runner knows the same status)
+			// but WITHOUT the cancel metadata or endedAt — the in-memory step was
+			// settled before the concurrent writer committed metadata.
+			const staleInMemory = {
+				runId: "run-finding4",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [
+					{
+						agent: "worker",
+						// Same terminal status as persisted — triggers the early-return path.
+						status: "cancelled" as const,
+						// Source-owned settlement field that must be preserved.
+						model: "claude-3-5-sonnet-20241022",
+						// No endedAt, no cancel metadata.
+					},
+				],
+				lifecycle: { generation: 1 },
+			};
+
+			const merged = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const mergedStep = merged.steps?.[0];
+			assert.ok(mergedStep, "merged step must exist");
+			// Persisted metadata must be present.
+			assert.equal(mergedStep.endedAt, persistedEndedAt, "same-terminal step merge must carry persisted endedAt");
+			assert.deepEqual(
+				mergedStep.cancel,
+				{ cancelledAt: persistedCancelledAt, summary: "User cancelled" },
+				"same-terminal step merge must carry persisted cancel metadata",
+			);
+			// Source-owned settlement field must be preserved.
+			assert.equal(mergedStep.model, "claude-3-5-sonnet-20241022", "source-owned model field must survive merge");
+			// A terminal step has no active pause.
+			assert.equal(mergedStep.pause, undefined, "terminal step must not carry an active pause");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("drops persisted stopped-state pids without signaling them", () => {
 		const paused = recoverStoppedLifecycleOwnership(
 			{

@@ -306,8 +306,15 @@ function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
         const persistedStep = persisted.steps?.[i];
         if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status))
             return step;
-        if (persistedStep.status === step.status)
-            return step;
+        if (persistedStep.status === step.status) {
+            return {
+                ...step,
+                endedAt: persistedStep.endedAt ?? step.endedAt,
+                exitCode: persistedStep.exitCode ?? step.exitCode,
+                ...(persistedStep.cancel !== undefined ? { cancel: persistedStep.cancel } : {}),
+                pause: undefined,
+            };
+        }
         return {
             ...step,
             status: persistedStep.status,
@@ -321,6 +328,9 @@ function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
         ? {
             ...(persisted.cancel !== undefined ? { cancel: persisted.cancel } : {}),
             ...(persisted.endedAt !== undefined ? { endedAt: persisted.endedAt } : {}),
+            ...(persisted.error !== undefined ? { error: persisted.error } : {}),
+            pid: undefined,
+            pause: undefined,
         }
         : {};
     const merged = {
