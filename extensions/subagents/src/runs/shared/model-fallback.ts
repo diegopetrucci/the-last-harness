@@ -99,8 +99,8 @@ export function sanitizeSubagentModelIdentity(value: unknown): SubagentModelIden
 		return undefined;
 	const thinking = parseThinkingLevel(input.thinking);
 	return {
-		provider: input.provider,
-		model: input.model,
+		provider: input.provider.trim(),
+		model: input.model.trim(),
 		...(thinking ? { thinking } : {}),
 	};
 }

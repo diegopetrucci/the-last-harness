@@ -101,6 +101,8 @@ interface RunSyncResult {
 		type?: string;
 		message: string;
 		reason?: string;
+		contextPressureSeverity?: string;
+		contextPressureThreshold?: string;
 		turns?: number;
 		tokens?: number;
 		currentPath?: string;
@@ -358,9 +360,15 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const metadata = JSON.parse(fs.readFileSync(result.artifactPaths.metadataPath, "utf-8")) as {
 			exitCode?: number;
 			terminationReason?: string;
+			contextPressure?: RunSyncResult["contextPressure"];
+			contextPressureCrossedThresholds?: string[];
 		};
 		assert.equal(metadata.exitCode, 1);
 		assert.equal(metadata.terminationReason, "context_exhausted");
+		assert.equal(metadata.contextPressure?.severity, "critical");
+		assert.deepEqual(metadata.contextPressureCrossedThresholds, ["warning", "critical"]);
+		assert.deepEqual(metadata.contextPressure, result.contextPressure);
+		assert.deepEqual(metadata.contextPressureCrossedThresholds, result.contextPressureCrossedThresholds);
 	});
 
 	it("delivers foreground warning and critical pressure controls exactly once", async () => {
@@ -877,8 +885,9 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.match(text, /Status: completed/);
 		assert.match(text, /Children: 1 completed/);
 		assert.match(text, /1\/1\. oracle — completed/);
-		assert.match(text, /Summary:\nOracle review:\n- finding one\n- finding two/);
-		assert.equal(text.match(/Oracle review:\n- finding one\n- finding two/g)?.length ?? 0, 1);
+		const oracleSummary = "Summary:\nOracle review:\n- finding one\n- finding two";
+		assert.match(text, new RegExp(escapeRegExp(oracleSummary)));
+		assert.equal(text.split(oracleSummary).length - 1, 1);
 	});
 
 	it("fails future-tense implementation summaries when no mutation attempt occurred", async () => {
@@ -2375,7 +2384,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		const asyncDir = path.join(ASYNC_DIR, runId);
 		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
 		fs.mkdirSync(asyncDir, { recursive: true });
-		fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\\n`);
+		fs.writeFileSync(sessionFile, `{"type":"session","id":"${runId}"}\n`);
 		const state = {
 			baseCwd: tempDir,
 			currentSessionId: null,

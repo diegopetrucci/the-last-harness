@@ -2013,6 +2013,8 @@ export async function runSync(
 			timedOut: result.timedOut,
 			terminationReason: result.terminationReason,
 			contextUsage: result.contextUsage,
+			contextPressure: result.contextPressure,
+			contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
 			...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
 				? { sessionFile: result.sessionFile }
 				: {}),

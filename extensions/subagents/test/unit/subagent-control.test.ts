@@ -315,5 +315,55 @@ describe("subagent control attention state", () => {
 		assert.equal(claimControlNotification(resolveControlConfig(), critical, seen), false);
 		assert.deepEqual(parseControlEvent(JSON.parse(JSON.stringify(critical))), critical);
 		assert.equal(parseControlEvent({ ...critical, contextPressureSeverity: "bogus" }), undefined);
+
+		const malformedReason = parseControlEvent({ ...critical, reason: "future_reason" });
+		assert.ok(malformedReason);
+		assert.equal(malformedReason.reason, undefined);
+		assert.match(formatControlNoticeMessage(malformedReason), /Subagent needs attention: worker/);
+		assert.equal(controlNotificationKey(malformedReason), "run-pressure:needs_attention:idle");
+		assert.equal(claimControlNotification(resolveControlConfig(), malformedReason, seen), true);
+		assert.equal(claimControlNotification(resolveControlConfig(), malformedReason, seen), false);
+	});
+
+	it("retains finite control-event metrics and drops JSON exponent overflow", () => {
+		const ordinary = parseControlEvent(
+			JSON.parse(
+				'{"type":"needs_attention","to":"needs_attention","ts":1000,"runId":"run-metrics","agent":"worker","message":"metrics","turns":0,"tokens":42,"toolCount":3,"currentToolDurationMs":0,"elapsedMs":500}',
+			),
+		);
+		assert.ok(ordinary);
+		assert.deepEqual(
+			{
+				turns: ordinary.turns,
+				tokens: ordinary.tokens,
+				toolCount: ordinary.toolCount,
+				currentToolDurationMs: ordinary.currentToolDurationMs,
+				elapsedMs: ordinary.elapsedMs,
+			},
+			{ turns: 0, tokens: 42, toolCount: 3, currentToolDurationMs: 0, elapsedMs: 500 },
+		);
+
+		const overflow = parseControlEvent(
+			JSON.parse(
+				'{"type":"needs_attention","to":"needs_attention","ts":1000,"runId":"run-overflow","agent":"worker","message":"overflow","turns":1e400,"tokens":1e400,"toolCount":1e400,"currentToolDurationMs":1e400,"elapsedMs":1e400}',
+			),
+		);
+		assert.ok(overflow);
+		assert.deepEqual(
+			{
+				turns: overflow.turns,
+				tokens: overflow.tokens,
+				toolCount: overflow.toolCount,
+				currentToolDurationMs: overflow.currentToolDurationMs,
+				elapsedMs: overflow.elapsedMs,
+			},
+			{
+				turns: undefined,
+				tokens: undefined,
+				toolCount: undefined,
+				currentToolDurationMs: undefined,
+				elapsedMs: undefined,
+			},
+		);
 	});
 });

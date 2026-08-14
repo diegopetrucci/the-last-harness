@@ -128,18 +128,18 @@ describe("async execution utilities", () => {
 		const statusPayload = JSON.parse(
 			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
 		) as AsyncStatusPayload;
-		assert.deepEqual(statusPayload.steps[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
-		assert.equal(statusPayload.steps[0]?.contextPressure?.severity, "critical");
-		assert.equal(statusPayload.steps[0]?.contextPressure?.remainingTokens, 50);
-		assert.deepEqual(statusPayload.steps[0]?.contextUsage, payload.results?.[0]?.contextUsage);
-		assert.equal(statusPayload.steps[0]?.model, "mock/test-model:high");
-		assert.equal(statusPayload.steps[0]?.thinking, "high");
-		assert.deepEqual(statusPayload.steps[0]?.modelIdentity, {
+		assert.deepEqual(statusPayload.steps?.[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
+		assert.equal(statusPayload.steps?.[0]?.contextPressure?.severity, "critical");
+		assert.equal(statusPayload.steps?.[0]?.contextPressure?.remainingTokens, 50);
+		assert.deepEqual(statusPayload.steps?.[0]?.contextUsage, payload.results?.[0]?.contextUsage);
+		assert.equal(statusPayload.steps?.[0]?.model, "mock/test-model:high");
+		assert.equal(statusPayload.steps?.[0]?.thinking, "high");
+		assert.deepEqual(statusPayload.steps?.[0]?.modelIdentity, {
 			provider: "mock",
 			model: "test-model",
 			thinking: "high",
 		});
-		assert.equal(statusPayload.steps[0]?.modelResolution, undefined);
+		assert.equal(statusPayload.steps?.[0]?.modelResolution, undefined);
 		const events = fs
 			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
 			.split("\n")
@@ -450,11 +450,11 @@ describe("async execution utilities", () => {
 			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
 		) as AsyncStatusPayload;
 		assert.equal(statusPayload.lifecycleArtifactVersion, 1);
-		assert.equal(statusPayload.steps[0]?.model, "anthropic/claude-sonnet-4:low");
-		assert.equal(statusPayload.steps[0]?.thinking, "low");
+		assert.equal(statusPayload.steps?.[0]?.model, "anthropic/claude-sonnet-4:low");
+		assert.equal(statusPayload.steps?.[0]?.thinking, "low");
 		assert.ok(statusPayload.totalTokens!.total > 0);
-		assert.ok(statusPayload.steps[0]?.tokens!.total > 0);
-		assert.deepEqual(statusPayload.steps[0]?.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
+		assert.ok(statusPayload.steps?.[0]?.tokens!.total > 0);
+		assert.deepEqual(statusPayload.steps?.[0]?.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
 		assert.deepEqual(statusPayload.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
 		const events = fs
 			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
@@ -696,7 +696,7 @@ describe("async execution utilities", () => {
 			],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "Recovered on fallback model", delay: 3000 });
+		mockPi.onCall({ output: "Recovered on fallback model", delay: scaleTestTimeout(3_000) });
 		const id = `async-fallback-crash-window-${Date.now().toString(36)}`;
 		const availableModels = [{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" }];
 		const restored = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" } as const;
@@ -2696,10 +2696,13 @@ describe("async execution utilities", () => {
 
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 		assert.deepEqual(
-			status.steps[0].recentTools.map((tool: { tool: string; args: string }) => ({ tool: tool.tool, args: tool.args })),
+			status.steps?.[0]?.recentTools?.map((tool: { tool: string; args: string }) => ({
+				tool: tool.tool,
+				args: tool.args,
+			})),
 			[{ tool: "bash", args: "ls" }],
 		);
-		assert.deepEqual(status.steps[0].recentOutput, ["file-a", "file-b", "Done streaming"]);
+		assert.deepEqual(status.steps?.[0]?.recentOutput, ["file-a", "file-b", "Done streaming"]);
 	});
 
 	it("keeps non-object child JSON in background output and preserves unknown object events", async () => {

@@ -18,16 +18,18 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
     const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
     const resultsDir = options.resultsDir ?? RESULTS_DIR;
     const restoreWarningDedupe = new Set();
+    const restoreControlEventProbeFailures = new Set();
+    const eventFs = options.fs ?? fs;
     const rerenderWidget = (ctx, jobs = Array.from(state.asyncJobs.values())) => {
         renderWidget(ctx, jobs, state.liveDetailController);
     };
     const restoredControlEventCursor = (asyncDir) => {
         const eventsPath = path.join(asyncDir, "events.jsonl");
         try {
-            const stat = fs.statSync(eventsPath);
+            const stat = eventFs.statSync(eventsPath);
             let skippingOversizedLine = false;
             if (stat.size > MAX_CONTROL_EVENT_LINE_BYTES) {
-                const fd = fs.openSync(eventsPath, "r");
+                const fd = eventFs.openSync(eventsPath, "r");
                 try {
                     const probeStart = Math.max(0, stat.size - MAX_CONTROL_EVENT_LINE_BYTES - 1);
                     let readCursor = probeStart;
@@ -35,7 +37,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     while (readCursor < stat.size) {
                         const toRead = Math.min(CONTROL_EVENT_READ_CHUNK_BYTES, stat.size - readCursor);
                         const buffer = Buffer.alloc(toRead);
-                        const bytesRead = fs.readSync(fd, buffer, 0, toRead, readCursor);
+                        const bytesRead = eventFs.readSync(fd, buffer, 0, toRead, readCursor);
                         if (bytesRead <= 0)
                             break;
                         for (let index = 0; index < bytesRead; index++) {
@@ -47,7 +49,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     skippingOversizedLine = stat.size - lastNewline - 1 > MAX_CONTROL_EVENT_LINE_BYTES;
                 }
                 finally {
-                    fs.closeSync(fd);
+                    eventFs.closeSync(fd);
                 }
             }
             return { cursor: stat.size, identity: `${stat.dev}:${stat.ino}`, skippingOversizedLine };
@@ -55,7 +57,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         catch (error) {
             if (error.code === "ENOENT")
                 return { cursor: 0, identity: undefined, skippingOversizedLine: false };
-            throw error;
+            restoreControlEventProbeFailures.add(asyncDir);
+            return { cursor: 0, identity: undefined, skippingOversizedLine: false };
         }
     };
     const summaryToJob = (run) => {
@@ -512,6 +515,7 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             state.lastUiContext = ctx;
         if (!state.currentSessionId)
             return;
+        restoreControlEventProbeFailures.clear();
         let runs;
         let issues;
         try {
@@ -563,6 +567,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
         for (const run of runs) {
             state.asyncJobs.set(run.id, summaryToJob(run));
+        }
+        if (restoreControlEventProbeFailures.size > 0 && !restoreWarningDedupe.has("control-event-probe-failure")) {
+            restoreWarningDedupe.add("control-event-probe-failure");
+            const count = restoreControlEventProbeFailures.size;
+            warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);
         }
         if (runs.length === 0)
             return;

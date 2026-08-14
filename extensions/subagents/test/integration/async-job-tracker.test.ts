@@ -16,6 +16,7 @@ interface AsyncJobTrackerModule {
 			resultsDir?: string;
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
+			fs?: Pick<typeof fs, "statSync" | "openSync" | "readSync" | "closeSync">;
 		},
 	): {
 		ensurePoller(): void;
@@ -208,6 +209,91 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(recorder.events.length, 0, "historical control events should not be replayed during restore");
 		} finally {
 			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("continues restoring jobs when a persisted control-event tail probe fails", async () => {
+		for (const failure of [
+			{ operation: "stat", code: "EACCES" },
+			{ operation: "open", code: "EISDIR" },
+			{ operation: "read", code: "EMFILE" },
+		] as const) {
+			const asyncRoot = createTempDir(`pi-async-job-restore-events-${failure.operation}-`);
+			const warnings: string[] = [];
+			const originalWarn = console.warn;
+			console.warn = (message?: unknown) => warnings.push(String(message ?? ""));
+			let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+			try {
+				const failingDir = path.join(asyncRoot, `run-failing-${failure.operation}`);
+				const healthyDir = path.join(asyncRoot, "run-healthy");
+				fs.mkdirSync(failingDir, { recursive: true });
+				fs.mkdirSync(healthyDir, { recursive: true });
+				const writeStatus = (runDir: string, runId: string) =>
+					fs.writeFileSync(
+						path.join(runDir, "status.json"),
+						JSON.stringify({
+							runId,
+							mode: "single",
+							state: "running",
+							sessionId: "session-owner",
+							startedAt: 1000,
+							steps: [{ agent: "worker", status: "running" }],
+						}),
+						"utf-8",
+					);
+				writeStatus(failingDir, `run-failing-${failure.operation}`);
+				writeStatus(healthyDir, "run-healthy");
+				const eventsPath = path.join(failingDir, "events.jsonl");
+				if (failure.operation !== "stat") fs.writeFileSync(eventsPath, "x".repeat(1_100_000), "utf-8");
+
+				const fail = (): never => {
+					const error = new Error(failure.code) as NodeJS.ErrnoException;
+					error.code = failure.code;
+					throw error;
+				};
+				const injectedFs = {
+					statSync: ((filePath: fs.PathLike) => {
+						if (failure.operation === "stat" && filePath === eventsPath) return fail();
+						return fs.statSync(filePath);
+					}) as typeof fs.statSync,
+					openSync: ((filePath: fs.PathLike, flags: string | number) => {
+						if (failure.operation === "open" && filePath === eventsPath) return fail();
+						return fs.openSync(filePath, flags);
+					}) as typeof fs.openSync,
+					readSync: ((
+						fd: number,
+						buffer: NodeJS.ArrayBufferView,
+						offset: number,
+						length: number,
+						position?: number | null,
+					) => {
+						if (failure.operation === "read") return fail();
+						return fs.readSync(fd, buffer, offset, length, position);
+					}) as typeof fs.readSync,
+					closeSync: fs.closeSync,
+				};
+
+				const state = createState();
+				state.currentSessionId = "session-owner";
+				tracker = trackerMod!.createAsyncJobTracker(createEventRecorder().pi, state as never, asyncRoot, {
+					pollIntervalMs: 100,
+					fs: injectedFs,
+				});
+				assert.doesNotThrow(() => tracker!.restoreActiveJobs());
+				assert.deepEqual([...state.asyncJobs.keys()], [`run-failing-${failure.operation}`, "run-healthy"]);
+				assert.equal(state.asyncJobs.get(`run-failing-${failure.operation}`)?.status, "running");
+				assert.equal(state.asyncJobs.get("run-healthy")?.status, "running");
+				assert.equal(warnings.length, 1, `${failure.operation} probe failure should warn once`);
+
+				tracker.resetJobs();
+				await waitForCondition(() => state.poller === null, `${failure.operation} restore poller to stop`);
+				tracker.restoreActiveJobs();
+				assert.equal(warnings.length, 1, `${failure.operation} probe warning should be deduplicated`);
+			} finally {
+				console.warn = originalWarn;
+				tracker?.resetJobs();
+				removeTempDir(asyncRoot);
+			}
 		}
 	});
 

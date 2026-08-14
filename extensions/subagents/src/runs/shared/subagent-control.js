@@ -1,6 +1,19 @@
 import {} from "../../shared/types.js";
 const CONTROL_EVENT_TYPES = ["active_long_running", "needs_attention"];
 const CONTROL_NOTIFICATION_CHANNELS = ["event", "async", "intercom"];
+const CONTROL_EVENT_REASONS = {
+    idle: true,
+    completion_guard: true,
+    active_long_running: true,
+    tool_failures: true,
+    time_threshold: true,
+    turn_threshold: true,
+    token_threshold: true,
+    context_pressure: true,
+};
+function isControlEventReason(value) {
+    return typeof value === "string" && Object.hasOwn(CONTROL_EVENT_REASONS, value);
+}
 const DEFAULT_NOTIFY_CHANNELS = ["event", "async"];
 const DEFAULT_NOTIFY_ON = ["active_long_running", "needs_attention"];
 export const DEFAULT_CONTROL_CONFIG = {
@@ -17,6 +30,9 @@ function parsePositiveInt(value) {
     if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1)
         return undefined;
     return value;
+}
+function parseFiniteNumber(value) {
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 function parseControlList(value, allowed) {
     if (!Array.isArray(value))
@@ -118,6 +134,11 @@ export function parseControlEvent(value) {
     if ((severity !== undefined && severity !== "warning" && severity !== "critical") ||
         (threshold !== undefined && threshold !== "warning" && threshold !== "critical"))
         return undefined;
+    const turns = parseFiniteNumber(raw.turns);
+    const tokens = parseFiniteNumber(raw.tokens);
+    const toolCount = parseFiniteNumber(raw.toolCount);
+    const currentToolDurationMs = parseFiniteNumber(raw.currentToolDurationMs);
+    const elapsedMs = parseFiniteNumber(raw.elapsedMs);
     return {
         type: raw.type,
         ...(raw.from === "active_long_running" || raw.from === "needs_attention" ? { from: raw.from } : {}),
@@ -129,14 +150,14 @@ export function parseControlEvent(value) {
         message: raw.message,
         ...(severity ? { contextPressureSeverity: severity } : {}),
         ...(threshold ? { contextPressureThreshold: threshold } : {}),
-        ...(typeof raw.reason === "string" ? { reason: raw.reason } : {}),
-        ...(typeof raw.turns === "number" ? { turns: raw.turns } : {}),
-        ...(typeof raw.tokens === "number" ? { tokens: raw.tokens } : {}),
-        ...(typeof raw.toolCount === "number" ? { toolCount: raw.toolCount } : {}),
+        ...(isControlEventReason(raw.reason) ? { reason: raw.reason } : {}),
+        ...(turns !== undefined ? { turns } : {}),
+        ...(tokens !== undefined ? { tokens } : {}),
+        ...(toolCount !== undefined ? { toolCount } : {}),
         ...(typeof raw.currentTool === "string" ? { currentTool: raw.currentTool } : {}),
-        ...(typeof raw.currentToolDurationMs === "number" ? { currentToolDurationMs: raw.currentToolDurationMs } : {}),
+        ...(currentToolDurationMs !== undefined ? { currentToolDurationMs } : {}),
         ...(typeof raw.currentPath === "string" ? { currentPath: raw.currentPath } : {}),
-        ...(typeof raw.elapsedMs === "number" ? { elapsedMs: raw.elapsedMs } : {}),
+        ...(elapsedMs !== undefined ? { elapsedMs } : {}),
         ...(typeof raw.recentFailureSummary === "string" ? { recentFailureSummary: raw.recentFailureSummary } : {}),
     };
 }

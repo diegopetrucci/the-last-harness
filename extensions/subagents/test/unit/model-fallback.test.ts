@@ -13,6 +13,7 @@ import {
 	resolveRuntimeModelContext,
 	resolveSubagentModelOverride,
 	sanitizeModelFallbackNotice,
+	sanitizeSubagentModelIdentity,
 } from "../../src/runs/shared/model-fallback.ts";
 
 describe("model fallback helpers", () => {
@@ -446,6 +447,23 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 });
 
 describe("canonical subagent model identity", () => {
+	it("trims persisted provider/model identity before downstream reference use", () => {
+		const persisted = { provider: "  anthropic  ", model: "  claude-sonnet-4  ", thinking: "high" };
+		const identity = sanitizeSubagentModelIdentity(persisted);
+
+		assert.deepEqual(identity, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "high",
+		});
+		assert.notEqual(identity, persisted);
+		assert.equal(modelReferenceFromIdentity(identity!), "anthropic/claude-sonnet-4");
+		assert.deepEqual(
+			canonicalSubagentModelIdentity(modelReferenceFromIdentity(identity!), identity?.thinking),
+			identity,
+		);
+	});
+
 	it("extracts provider, model, and thinking from a suffixed reference", () => {
 		assert.deepEqual(canonicalSubagentModelIdentity("anthropic/claude-sonnet-4:high"), {
 			provider: "anthropic",

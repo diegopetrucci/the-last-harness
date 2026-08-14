@@ -25,7 +25,7 @@ export interface RunnerSubagentStep {
 	 */
 	thinkingDroppedModels?: string[];
 	modelCandidates?: string[];
-	/** Effective context windows keyed by the exact dispatched model candidate. */
+	/** Effective context windows keyed by provider-qualified base model ids, without thinking suffixes. */
 	contextWindows?: Record<string, number>;
 	modelFallbackNotice?: string;
 	tools?: string[];

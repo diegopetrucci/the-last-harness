@@ -28,6 +28,8 @@ interface AsyncJobTrackerOptions {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
 	quarantine?: AsyncStatusQuarantineOptions;
+	/** Test seam for failures while probing restored control-event logs. */
+	fs?: Pick<typeof fs, "statSync" | "openSync" | "readSync" | "closeSync">;
 }
 
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
@@ -50,16 +52,20 @@ export function createAsyncJobTracker(
 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
 	const restoreWarningDedupe = new Set<string>();
+	const restoreControlEventProbeFailures = new Set<string>();
+	const eventFs = options.fs ?? fs;
 	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
 		renderWidget(ctx, jobs, state.liveDetailController);
 	};
-	const restoredControlEventCursor = (asyncDir: string) => {
+	const restoredControlEventCursor = (
+		asyncDir: string,
+	): { cursor?: number; identity?: string; skippingOversizedLine: boolean } => {
 		const eventsPath = path.join(asyncDir, "events.jsonl");
 		try {
-			const stat = fs.statSync(eventsPath);
+			const stat = eventFs.statSync(eventsPath);
 			let skippingOversizedLine = false;
 			if (stat.size > MAX_CONTROL_EVENT_LINE_BYTES) {
-				const fd = fs.openSync(eventsPath, "r");
+				const fd = eventFs.openSync(eventsPath, "r");
 				try {
 					const probeStart = Math.max(0, stat.size - MAX_CONTROL_EVENT_LINE_BYTES - 1);
 					let readCursor = probeStart;
@@ -67,7 +73,7 @@ export function createAsyncJobTracker(
 					while (readCursor < stat.size) {
 						const toRead = Math.min(CONTROL_EVENT_READ_CHUNK_BYTES, stat.size - readCursor);
 						const buffer = Buffer.alloc(toRead);
-						const bytesRead = fs.readSync(fd, buffer, 0, toRead, readCursor);
+						const bytesRead = eventFs.readSync(fd, buffer, 0, toRead, readCursor);
 						if (bytesRead <= 0) break;
 						for (let index = 0; index < bytesRead; index++) {
 							if (buffer[index] === 0x0a) lastNewline = readCursor + index;
@@ -76,14 +82,19 @@ export function createAsyncJobTracker(
 					}
 					skippingOversizedLine = stat.size - lastNewline - 1 > MAX_CONTROL_EVENT_LINE_BYTES;
 				} finally {
-					fs.closeSync(fd);
+					eventFs.closeSync(fd);
 				}
 			}
 			return { cursor: stat.size, identity: `${stat.dev}:${stat.ino}`, skippingOversizedLine };
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === "ENOENT")
 				return { cursor: 0, identity: undefined, skippingOversizedLine: false };
-			throw error;
+			// Startup restoration must not fail all jobs because one historical
+			// control-event log cannot be probed. Starting from zero is the
+			// conservative fallback: a later poll can still deliver every readable
+			// event rather than silently skipping one.
+			restoreControlEventProbeFailures.add(asyncDir);
+			return { cursor: 0, identity: undefined, skippingOversizedLine: false };
 		}
 	};
 	const summaryToJob = (run: AsyncRunSummary): AsyncJobState => {
@@ -538,6 +549,7 @@ export function createAsyncJobTracker(
 	const restoreActiveJobs = (ctx?: ExtensionContext) => {
 		if (ctx?.hasUI) state.lastUiContext = ctx;
 		if (!state.currentSessionId) return;
+		restoreControlEventProbeFailures.clear();
 		let runs: AsyncRunSummary[];
 		let issues: ReturnType<typeof scanAsyncRunsForRestore>["issues"];
 		try {
@@ -582,6 +594,13 @@ export function createAsyncJobTracker(
 		if (warnings.length > 1) warnRestoreIssues(`Async restore skipped corrupt startup runs: ${warnings.join("; ")}.`);
 		for (const run of runs) {
 			state.asyncJobs.set(run.id, summaryToJob(run));
+		}
+		if (restoreControlEventProbeFailures.size > 0 && !restoreWarningDedupe.has("control-event-probe-failure")) {
+			restoreWarningDedupe.add("control-event-probe-failure");
+			const count = restoreControlEventProbeFailures.size;
+			warnRestoreIssues(
+				`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`,
+			);
 		}
 		if (runs.length === 0) return;
 		ensurePoller();

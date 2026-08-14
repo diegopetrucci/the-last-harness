@@ -145,7 +145,7 @@ describe("async execution utilities", () => {
 			assert.equal(status.steps?.[0]?.pause?.kind, "awaiting_supervisor");
 			assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
 			assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) > 0);
-			const pausedActiveRuntimeMs = status.steps[0].activeRuntimeMs;
+			const pausedActiveRuntimeMs = status.steps?.[0]?.activeRuntimeMs;
 			const payload = (await readAsyncPayload(id)) as any;
 			assert.equal(payload.state, "paused");
 			assert.equal(payload.pause?.kind, "awaiting_supervisor");
@@ -235,7 +235,8 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
+			await waitForPidsToExit(startedMockPiPids(mockPi), `paused context-gate run ${id}`);
 			const statusPath = path.join(asyncDir, "status.json");
 			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 			status.steps![0]!.contextUsage = { contextTokens: 800, contextWindow: 1000, peakTokens: 1200 };
@@ -320,7 +321,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
 			const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.deepEqual(pausedStatus.steps?.[0]?.modelIdentity, {
 				provider: "anthropic",
@@ -345,7 +346,7 @@ describe("async execution utilities", () => {
 				},
 			);
 			assert.equal(resumed.isError, undefined);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued", scaleTestTimeout(10_000));
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
 			assert.equal(typeof continuationRunId, "string");

@@ -106,6 +106,13 @@ describe("subagent context and termination diagnostics", () => {
 		assert.match(formatDurableResumeContextBlock(blocked), /80\.00%/);
 		assert.match(formatDurableResumeContextBlock(blocked), /remaining tokens 200/);
 		assert.match(formatDurableResumeContextBlock(blocked), /fresh narrowly scoped child/);
+
+		const exhausted = assessDurableResumeContext({ contextTokens: 1200, contextWindow: 1000 }, 1000);
+		assert.equal(exhausted.blocked, true);
+		assert.equal(exhausted.remainingTokens, 0);
+		assert.equal(exhausted.contextPercent, 120);
+		assert.match(formatDurableResumeContextBlock(exhausted), /remaining tokens 0/);
+		assert.match(formatDurableResumeContextBlock(exhausted), /fresh narrowly scoped child/);
 	});
 
 	it("proceeds with unknown diagnostics instead of inventing measurements", () => {

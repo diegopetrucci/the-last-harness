@@ -546,7 +546,7 @@ describe("async execution utilities", () => {
 		};
 		deliverInterruptRequest({ asyncDir: pausedDir, pid: pausedStatus.pid, source: "test" });
 		const pausedPayload = JSON.parse(
-			fs.readFileSync(await waitForAsyncResultFile(pausedId, 30_000), "utf-8"),
+			fs.readFileSync(await waitForAsyncResultFile(pausedId, scaleTestTimeout(30_000)), "utf-8"),
 		) as AsyncResultPayload;
 		assert.deepEqual(
 			pausedPayload.results.map((result) => result.terminationReason),

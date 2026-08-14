@@ -220,7 +220,7 @@ export function assessDurableResumeContext(
 		usedTokens,
 		contextWindow,
 		contextPercent,
-		remainingTokens: contextWindow - usedTokens,
+		remainingTokens: Math.max(0, contextWindow - usedTokens),
 	};
 }
 

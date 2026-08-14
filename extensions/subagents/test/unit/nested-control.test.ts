@@ -568,7 +568,7 @@ describe("nested control routing", () => {
 			const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
 			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
 			fs.writeFileSync(parentSessionFile, "");
-			fs.writeFileSync(sessionFile, '{"type":"session","id":"nested-context-gate"}\\n');
+			fs.writeFileSync(sessionFile, '{"type":"session","id":"nested-context-gate"}\n');
 			fs.mkdirSync(nestedAsyncDir, { recursive: true });
 			const statusPath = path.join(nestedAsyncDir, "status.json");
 			fs.writeFileSync(

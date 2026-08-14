@@ -1208,7 +1208,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			(status) =>
 				status.state === "running" &&
 				status.steps?.[0]?.status === "running" &&
-				!!(status.steps[0]?.sessionFile ?? status.sessionFile),
+				!!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
 			"running child session",
 			pausedResumeWaitMs,
 		);
@@ -1227,8 +1227,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			(status) =>
 				status.state === "paused" &&
 				status.steps?.[0]?.status === "paused" &&
-				status.steps[0]?.acceptance?.status === "skipped" &&
-				!!(status.steps[0]?.sessionFile ?? status.sessionFile),
+				status.steps?.[0]?.acceptance?.status === "skipped" &&
+				!!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
 			"paused skipped acceptance ledger",
 			pausedResumeWaitMs,
 		);
@@ -1389,8 +1389,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				status.state === "paused" &&
 				status.steps?.[0]?.status === "paused" &&
 				status.steps?.[1]?.status === "paused" &&
-				status.steps[0]?.acceptance?.status === "skipped" &&
-				status.steps[1]?.acceptance?.status === "skipped",
+				status.steps?.[0]?.acceptance?.status === "skipped" &&
+				status.steps?.[1]?.acceptance?.status === "skipped",
 			"paused parallel skipped acceptance ledgers",
 			pausedResumeWaitMs,
 		);
@@ -1836,13 +1836,13 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 						events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" }),
 					],
 				},
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({
 			steps: [
 				{
-					delay: 1_000,
+					delay: scaleTestTimeout(1_000),
 					jsonl: [pressureMessage("resumed after supervisor reply", 1600, "mock/resume-model")],
 				},
 			],
@@ -1947,7 +1947,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed without extra guidance" });
@@ -1983,7 +1983,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed after persisted pause" });
@@ -2042,7 +2042,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed after reload" });
@@ -2147,7 +2147,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					delay: 200,
 					jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })],
 				},
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({
@@ -2419,7 +2419,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("after reply")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("after reply")] },
 			],
 		});
 		const { executor } = makeExecutor({
@@ -2513,7 +2513,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need direction" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("received pong")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("received pong")] },
 			],
 		});
 		const { executor } = makeExecutor({

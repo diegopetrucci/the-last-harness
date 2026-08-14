@@ -78,9 +78,9 @@ describe("async stale-run reconciliation", () => {
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
-			assert.equal(status.steps[0].status, "failed");
-			assert.equal(status.steps[0].activeRuntimeMs, 1250);
-			assert.match(status.steps[0].error, /process 12345 exited or disappeared/);
+			assert.equal(status.steps?.[0]?.status, "failed");
+			assert.equal(status.steps?.[0]?.activeRuntimeMs, 1250);
+			assert.match(status.steps?.[0]?.error, /process 12345 exited or disappeared/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"));
 			assert.equal(resultJson.success, false);
 			assert.equal(resultJson.sessionId, "session-current");
@@ -131,7 +131,7 @@ describe("async stale-run reconciliation", () => {
 			assert.match(result.message ?? "", /Runner stderr tail:/);
 			assert.match(result.message ?? "", /missing peer package/);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-			assert.match(status.steps[0].error, /missing peer package/);
+			assert.match(status.steps?.[0]?.error, /missing peer package/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-stderr.json"), "utf-8"));
 			assert.match(resultJson.summary, /missing peer package/);
 		} finally {

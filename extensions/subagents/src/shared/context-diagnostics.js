@@ -176,7 +176,7 @@ export function assessDurableResumeContext(contextUsage, effectiveContextWindow)
         usedTokens,
         contextWindow,
         contextPercent,
-        remainingTokens: contextWindow - usedTokens,
+        remainingTokens: Math.max(0, contextWindow - usedTokens),
     };
 }
 export function formatDurableResumeContextBlock(assessment) {
