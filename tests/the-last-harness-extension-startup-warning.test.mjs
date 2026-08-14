@@ -37,6 +37,8 @@ const LATEST_STABLE_INSTALL_STATE = {
 	track: "latest-release",
 };
 
+const TEST_CONTEXT_MODEL = { contextWindow: 100_000 };
+
 function createPi() {
 	const handlers = new Map();
 	const shortcuts = new Map();
@@ -73,11 +75,20 @@ ${name} content
 	);
 }
 
-function createCtx({ cwd, notifications, hasUI = true, onSetHeader, onSetFooter, projectTrusted }) {
+function createCtx({
+	cwd,
+	notifications,
+	hasUI = true,
+	onSetHeader,
+	onSetFooter,
+	projectTrusted,
+	model,
+	systemPrompt = "",
+}) {
 	return {
 		hasUI,
 		cwd,
-		model: undefined,
+		model,
 		modelRegistry: {
 			isUsingOAuth: () => false,
 			getApiKeyForProvider: async () => undefined,
@@ -91,6 +102,7 @@ function createCtx({ cwd, notifications, hasUI = true, onSetHeader, onSetFooter,
 			getBranch: () => undefined,
 		},
 		getContextUsage: () => undefined,
+		getSystemPrompt: () => systemPrompt,
 		ui: {
 			addAutocompleteProvider() {},
 			setFooter(factory) {
@@ -109,6 +121,10 @@ function createCtx({ cwd, notifications, hasUI = true, onSetHeader, onSetFooter,
 	};
 }
 
+function startupSnapshot(resources, promptMetadata = { contextFiles: [], skills: [] }) {
+	return { resources, promptMetadata };
+}
+
 function restoreEnv(previousEnv) {
 	for (const [key, value] of Object.entries(previousEnv)) {
 		if (value === undefined) {
@@ -116,6 +132,16 @@ function restoreEnv(previousEnv) {
 		} else {
 			process.env[key] = value;
 		}
+	}
+}
+
+function withProcessPath(path, callback) {
+	const previousPath = process.env.PATH;
+	process.env.PATH = path;
+	try {
+		return callback();
+	} finally {
+		restoreEnv({ PATH: previousPath });
 	}
 }
 
@@ -149,7 +175,9 @@ async function createExtensionHarness({
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-startup-warning-"));
 	const agentDir = join(tempDir, "agent");
 	const cwd = join(tempDir, "workspace");
+	const emptyBinDir = join(tempDir, "empty-bin");
 	const previousEnv = {
+		PATH: process.env.PATH,
 		PI_SUBAGENT_CHILD: process.env.PI_SUBAGENT_CHILD,
 		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 		TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
@@ -161,18 +189,20 @@ async function createExtensionHarness({
 	process.env.TLH_SKIP_UPDATE_CHECK = "1";
 	process.env.TLH_SKIP_TELEMETRY = "1";
 	mkdirSync(cwd, { recursive: true });
+	mkdirSync(emptyBinDir, { recursive: true });
 	setupWorkspace?.(cwd);
 	writeProfileFixture(agentDir, installState);
 	__testing.reset();
-	if (deferredStartupTaskScheduler) {
-		__testing.setDeferredStartupTaskSchedulerForTests(deferredStartupTaskScheduler);
-	}
+	const scheduleDeferredTask = deferredStartupTaskScheduler ?? ((task) => setImmediate(task));
+	__testing.setDeferredStartupTaskSchedulerForTests((task) => {
+		scheduleDeferredTask(() => withProcessPath(emptyBinDir, task));
+	});
 	if (startupResourceCollector) {
 		__testing.setStartupResourceCollectorForTests(startupResourceCollector);
 	}
 
 	const pi = createPi();
-	theLastHarness(pi);
+	withProcessPath(emptyBinDir, () => theLastHarness(pi));
 	const sessionStartHandlers = pi.handlers.get("session_start") ?? [];
 	const sessionShutdownHandlers = pi.handlers.get("session_shutdown") ?? [];
 	assert.ok(sessionStartHandlers.length > 0, "session_start handler must be registered by the extension");
@@ -180,13 +210,14 @@ async function createExtensionHarness({
 	return {
 		agentDir,
 		cwd,
+		emptyBinDir,
 		shortcuts: pi.shortcuts,
 		async shutdownSession(ctx) {
 			for (const handler of sessionShutdownHandlers) {
 				await handler({}, ctx);
 			}
 		},
-		async startSession({ reason, hasUI = true, projectTrusted } = {}) {
+		async startSession({ reason, hasUI = true, projectTrusted, model, systemPrompt } = {}) {
 			const notifications = [];
 			let headerFactory;
 			let footerFactory;
@@ -196,6 +227,8 @@ async function createExtensionHarness({
 				notifications,
 				hasUI,
 				projectTrusted,
+				model,
+				systemPrompt,
 				onSetHeader(factory) {
 					headerFactory = factory;
 				},
@@ -245,6 +278,8 @@ async function runSessionStart({
 	setupWorkspace,
 	startupResourceCollector,
 	deferredStartupTaskScheduler,
+	model,
+	systemPrompt,
 }) {
 	const harness = await createExtensionHarness({
 		installState,
@@ -254,7 +289,7 @@ async function runSessionStart({
 	});
 
 	try {
-		const session = await harness.startSession({ reason, hasUI, projectTrusted });
+		const session = await harness.startSession({ reason, hasUI, projectTrusted, model, systemPrompt });
 		await new Promise((resolve) => setImmediate(resolve));
 		const header = session.buildHeader();
 		const headerLines = header?.render(200);
@@ -359,7 +394,7 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
 	assert.ok(header);
 	assert.ok(headerLines);
-	assert.ok(headerLines.includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"));
+	assert.ok(headerLines.includes("Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions"));
 
 	const shortcut = shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
 	assert.ok(shortcut, "expected TLH header toggle shortcut to be registered");
@@ -369,12 +404,17 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
 	await shortcut.handler(shortcutCtx);
 	const expandedLines = header.render(200);
-	assert.equal(expandedLines.includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"), false);
+	assert.equal(
+		expandedLines.includes("Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions"),
+		false,
+	);
 	assert.ok(expandedLines.includes("Warning: running TLH from v0.10.0 track"));
 	assert.equal(requestRenderCalls(), 1);
 
 	await shortcut.handler(shortcutCtx);
-	assert.ok(header.render(200).includes("Press Ctrl+Shift+E to show loaded skills, prompts, and extensions"));
+	assert.ok(
+		header.render(200).includes("Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions"),
+	);
 	assert.equal(requestRenderCalls(), 2);
 });
 
@@ -436,6 +476,7 @@ test("startup installs the header before delayed resource collection resolves an
 	const scheduledTasks = [];
 	const deferredResources = createDeferred();
 	let collectorCalls = 0;
+	let collectorPath;
 	const harness = await createExtensionHarness({
 		installState: LATEST_STABLE_INSTALL_STATE,
 		deferredStartupTaskScheduler(task) {
@@ -443,12 +484,18 @@ test("startup installs the header before delayed resource collection resolves an
 		},
 		startupResourceCollector: async () => {
 			collectorCalls += 1;
+			collectorPath = process.env.PATH;
 			return deferredResources.promise;
 		},
 	});
 
 	try {
-		const session = await harness.startSession({ reason: "restore", projectTrusted: true });
+		const session = await harness.startSession({
+			reason: "restore",
+			projectTrusted: true,
+			model: TEST_CONTEXT_MODEL,
+			systemPrompt: "Pi base prompt",
+		});
 		assert.ok(session.headerFactory, "expected TLH header installation before resource collection completes");
 		assert.equal(scheduledTasks.length, 1, "expected one startup resource collection to be scheduled");
 		const header = session.buildHeader();
@@ -463,7 +510,10 @@ test("startup installs the header before delayed resource collection resolves an
 
 		await scheduledTasks[0]();
 		assert.equal(collectorCalls, 1);
-		deferredResources.resolve({ context: [], skills: ["project-skill"], prompts: [], extensions: [], themes: [] });
+		assert.equal(collectorPath, harness.emptyBinDir, "deferred task should run with the isolated PATH");
+		deferredResources.resolve(
+			startupSnapshot({ context: [], skills: ["project-skill"], prompts: [], extensions: [], themes: [] }),
+		);
 		await deferredResources.promise;
 		await Promise.resolve();
 
@@ -474,6 +524,11 @@ test("startup installs the header before delayed resource collection resolves an
 		);
 		assert.ok(header.render(200).includes("[Skills]"));
 		assert.ok(header.render(200).some((line) => line.includes("project-skill")));
+		header.setExpanded(false);
+		assert.ok(
+			header.render(200).some((line) => line.startsWith("Context at launch: TLH ")),
+			"expected deferred hydration to add the launch allocation before the first turn",
+		);
 	} finally {
 		harness.cleanup();
 	}
@@ -496,18 +551,30 @@ test("stale startup resource completion stays isolated from the replacement sess
 	});
 
 	try {
-		const firstSession = await harness.startSession({ reason: "restore", projectTrusted: true });
+		const firstSession = await harness.startSession({
+			reason: "restore",
+			projectTrusted: true,
+			model: TEST_CONTEXT_MODEL,
+			systemPrompt: "First Pi base prompt",
+		});
 		const firstHeader = firstSession.buildHeader();
 		assert.ok(firstHeader);
 		firstHeader.setExpanded(true);
-		const secondSession = await harness.startSession({ reason: "restore", projectTrusted: true });
+		const secondSession = await harness.startSession({
+			reason: "restore",
+			projectTrusted: true,
+			model: TEST_CONTEXT_MODEL,
+			systemPrompt: "Second Pi base prompt",
+		});
 		const secondHeader = secondSession.buildHeader();
 		assert.ok(secondHeader);
 		secondHeader.setExpanded(true);
 		assert.equal(scheduledTasks.length, 2, "expected one scheduled collection per UI session");
 
 		await scheduledTasks[0]();
-		firstDeferred.resolve({ context: [], skills: ["stale-skill"], prompts: [], extensions: [], themes: [] });
+		firstDeferred.resolve(
+			startupSnapshot({ context: [], skills: ["stale-skill"], prompts: [], extensions: [], themes: [] }),
+		);
 		await firstDeferred.promise;
 		await Promise.resolve();
 
@@ -525,14 +592,31 @@ test("stale startup resource completion stays isolated from the replacement sess
 			secondHeader.render(200).some((line) => line.includes("stale-skill")),
 			false,
 		);
+		firstHeader.setExpanded(false);
+		secondHeader.setExpanded(false);
+		assert.equal(
+			firstHeader.render(200).some((line) => line.startsWith("Context at launch:")),
+			false,
+			"stale hydration must not add an allocation to the replaced header",
+		);
+		assert.equal(
+			secondHeader.render(200).some((line) => line.startsWith("Context at launch:")),
+			false,
+			"stale hydration must not add an allocation to the replacement header",
+		);
+		secondHeader.setExpanded(true);
 
 		await scheduledTasks[1]();
-		secondDeferred.resolve({ context: [], skills: ["current-skill"], prompts: [], extensions: [], themes: [] });
+		secondDeferred.resolve(
+			startupSnapshot({ context: [], skills: ["current-skill"], prompts: [], extensions: [], themes: [] }),
+		);
 		await secondDeferred.promise;
 		await Promise.resolve();
 
 		assert.equal(secondSession.requestRenderCalls(), 1, "current session completion should request one render");
 		assert.ok(secondHeader.render(200).some((line) => line.includes("current-skill")));
+		secondHeader.setExpanded(false);
+		assert.ok(secondHeader.render(200).some((line) => line.startsWith("Context at launch: TLH ")));
 	} finally {
 		harness.cleanup();
 	}
@@ -559,7 +643,9 @@ test("non-UI replacement invalidates pending startup resource hydration", async 
 
 		const nonUiSession = await harness.startSession({ reason: "restore", hasUI: false, projectTrusted: true });
 		assert.equal(nonUiSession.headerFactory, undefined);
-		deferredResources.resolve({ context: [], skills: ["stale-after-non-ui"], prompts: [], extensions: [], themes: [] });
+		deferredResources.resolve(
+			startupSnapshot({ context: [], skills: ["stale-after-non-ui"], prompts: [], extensions: [], themes: [] }),
+		);
 		await deferredResources.promise;
 		await Promise.resolve();
 
@@ -593,13 +679,15 @@ test("session shutdown invalidates pending startup resource hydration", async ()
 		scheduledTasks[0]();
 
 		await harness.shutdownSession(session.ctx);
-		deferredResources.resolve({
-			context: [],
-			skills: ["stale-after-shutdown"],
-			prompts: [],
-			extensions: [],
-			themes: [],
-		});
+		deferredResources.resolve(
+			startupSnapshot({
+				context: [],
+				skills: ["stale-after-shutdown"],
+				prompts: [],
+				extensions: [],
+				themes: [],
+			}),
+		);
 		await deferredResources.promise;
 		await Promise.resolve();
 

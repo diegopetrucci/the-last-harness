@@ -9,7 +9,9 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { collectStartupResources } = await jiti.import("../extensions/the-last-harness/resources.ts");
+const { collectStartupResources, collectStartupResourceSnapshot } = await jiti.import(
+	"../extensions/the-last-harness/resources.ts",
+);
 
 function writeSkill(baseDir, name, skillRoot = ".pi/skills") {
 	mkdirSync(join(baseDir, skillRoot, name), { recursive: true });
@@ -54,10 +56,20 @@ test("startup resources show project-local inputs for an exact saved trust decis
 	writeTrust(fixture.agent, { [realpathSync(fixture.cwd)]: true });
 
 	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const resources = await collectStartupResources(fixture.cwd);
+		const snapshot = await collectStartupResourceSnapshot(fixture.cwd);
 
-		assert.deepEqual(resources.context, ["AGENTS.md"]);
-		assert.deepEqual(resources.skills, ["project-skill"]);
+		assert.deepEqual(snapshot.resources.context, ["AGENTS.md"]);
+		assert.deepEqual(snapshot.resources.skills, ["project-skill"]);
+		assert.deepEqual(snapshot.promptMetadata.contextFiles, [
+			{ path: join(fixture.cwd, "AGENTS.md"), content: "AGENTS.md instructions" },
+		]);
+		assert.deepEqual(snapshot.promptMetadata.skills, [
+			{
+				name: "project-skill",
+				description: "project-skill",
+				filePath: join(fixture.cwd, ".pi", "skills", "project-skill", "SKILL.md"),
+			},
+		]);
 	});
 });
 
