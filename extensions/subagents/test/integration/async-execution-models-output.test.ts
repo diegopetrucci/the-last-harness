@@ -27,6 +27,7 @@ import {
 	waitForMockPiCall,
 	writePackageSkill,
 } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 describe("async execution utilities", () => {
 	let tempDir: string;
@@ -100,7 +101,7 @@ describe("async execution utilities", () => {
 
 		const started = Date.now();
 		while (!fs.existsSync(resultPath)) {
-			if (Date.now() - started > 15000) {
+			if (Date.now() - started > scaleTestTimeout(15_000)) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -268,7 +269,7 @@ describe("async execution utilities", () => {
 
 		const started = Date.now();
 		while (!fs.existsSync(resultPath)) {
-			if (Date.now() - started > 15000) {
+			if (Date.now() - started > scaleTestTimeout(15_000)) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			}
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -568,7 +569,7 @@ describe("async execution utilities", () => {
 		});
 
 		assert.equal(run.details.asyncId, id);
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -718,7 +719,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -757,7 +758,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -804,7 +805,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
@@ -850,7 +851,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -892,7 +893,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "deepseek/deepseek-v4-flash");
@@ -928,7 +929,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "deepseek/deepseek-v4-flash");
@@ -984,7 +985,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 
-			await waitForAsyncResultFile(id, 10_000);
+			await waitForAsyncResultFile(id);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 			assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
 			assert.deepEqual(
@@ -1026,7 +1027,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		await waitForAsyncResultFile(id, 10_000);
+		await waitForAsyncResultFile(id);
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
 	});
@@ -1085,7 +1086,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 
-			await waitForAsyncResultFile(id, 10_000);
+			await waitForAsyncResultFile(id);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 			assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
 			assert.deepEqual(
@@ -1124,7 +1125,7 @@ describe("async execution utilities", () => {
 				sessionRoot: path.join(tempDir, "sessions"),
 				maxSubagentDepth: 2,
 			});
-			await waitForAsyncResultFile(ambiguousId, 10_000);
+			await waitForAsyncResultFile(ambiguousId);
 			const ambiguousStatus = JSON.parse(
 				fs.readFileSync(path.join(ASYNC_DIR, ambiguousId, "status.json"), "utf-8"),
 			) as AsyncStatusPayload;
@@ -1165,7 +1166,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 
-			const deadline = Date.now() + 10_000;
+			const deadline = Date.now() + scaleTestTimeout(10_000);
 			while (!fs.existsSync(resultPath)) {
 				if (Date.now() > deadline) {
 					assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -1260,7 +1261,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 
-			const deadline = Date.now() + 10_000;
+			const deadline = Date.now() + scaleTestTimeout(10_000);
 			while (!fs.existsSync(resultPath)) {
 				if (Date.now() > deadline) {
 					assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -1326,7 +1327,7 @@ describe("async execution utilities", () => {
 		});
 
 		const statusPath = path.join(asyncDir, "status.json");
-		const doneDeadline = Date.now() + 10_000;
+		const doneDeadline = Date.now() + scaleTestTimeout(10_000);
 		let sawRunningTool = false;
 		let invariantViolated = false;
 		while (!fs.existsSync(resultPath) && Date.now() < doneDeadline) {
@@ -1394,7 +1395,7 @@ describe("async execution utilities", () => {
 		});
 
 		const statusPath = path.join(asyncDir, "status.json");
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		let eventText = "";
 		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
@@ -1423,7 +1424,7 @@ describe("async execution utilities", () => {
 		assert.equal(statusDuringEvent.activityState, "active_long_running");
 		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "active_long_running");
 
-		const doneDeadline = Date.now() + 10_000;
+		const doneDeadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > doneDeadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1469,7 +1470,7 @@ describe("async execution utilities", () => {
 			},
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const eventText = fs.existsSync(path.join(asyncDir, "events.jsonl"))
 			? fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
@@ -1531,7 +1532,7 @@ describe("async execution utilities", () => {
 		assert.match(observed.eventText, /"type":"needs_attention"/);
 		assert.match(observed.eventText, /"reason":"idle"/);
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.state, "complete");
 		assert.equal(payload.success, true);
@@ -1599,7 +1600,7 @@ describe("async execution utilities", () => {
 		});
 
 		const statusPath = path.join(asyncDir, "status.json");
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		let eventText = "";
 		let statusDuringEvent: AsyncStatusPayload | undefined;
 		while (Date.now() < deadline) {
@@ -1626,7 +1627,7 @@ describe("async execution utilities", () => {
 		assert.equal(statusDuringEvent.activityState, "needs_attention");
 		assert.equal(statusDuringEvent.steps?.[0]?.activityState, "needs_attention");
 
-		const doneDeadline = Date.now() + 10_000;
+		const doneDeadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > doneDeadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1682,7 +1683,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 
-			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const resultPath = await waitForAsyncResultFile(id);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output, "Done after noisy stream");
@@ -1733,7 +1734,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const liveDeadline = Date.now() + 10_000;
+		const liveDeadline = Date.now() + scaleTestTimeout(10_000);
 		let sawChildEvent = false;
 		let sawLiveOutput = false;
 		while (Date.now() < liveDeadline && (!sawChildEvent || !sawLiveOutput)) {
@@ -1755,7 +1756,7 @@ describe("async execution utilities", () => {
 		assert.equal(sawChildEvent, true, "expected child JSON events to be streamed into events.jsonl");
 		assert.equal(sawLiveOutput, true, "expected output-0.log to receive live child output");
 
-		const doneDeadline = Date.now() + 10_000;
+		const doneDeadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > doneDeadline) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);

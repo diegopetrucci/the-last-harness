@@ -78,7 +78,7 @@ async function waitForAsyncResultFile(id: string, timeoutMs = scaleTestTimeout(1
 }
 
 async function readAsyncPayload(id: string): Promise<AsyncSingleResultPayload> {
-	const resultPath = await waitForAsyncResultFile(id, 10_000);
+	const resultPath = await waitForAsyncResultFile(id);
 	return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncSingleResultPayload;
 }
 

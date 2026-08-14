@@ -321,6 +321,37 @@ async function writeResponseEntries(entries, jsonMode, args) {
 	}
 }
 
+/**
+ * Write a marker file at the given path, creating parent directories as needed.
+ * Used by writeMarker response/step fields for deterministic rendezvous without
+ * wall-clock sleeps.
+ */
+function writeMarkerFile(markerPath) {
+	fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+	fs.writeFileSync(markerPath, "", "utf-8");
+}
+
+/**
+ * Poll until the marker file at the given path exists, then return.
+ * Uses a 20ms poll interval to minimise latency without busy-spinning.
+ *
+ * Safety valve: exits non-zero after 120 seconds if the marker is never
+ * written (e.g. due to a test failure or throw before the marker is created).
+ * This prevents indefinitely-blocked mock children from leaking on CI.
+ * The cap is intentionally generous so it is never tight enough to be
+ * load-sensitive; it is NOT a synchronisation mechanism.
+ */
+async function waitForMarkerFile(markerPath) {
+	const deadline = Date.now() + 120_000;
+	while (!fs.existsSync(markerPath)) {
+		if (Date.now() >= deadline) {
+			process.stderr.write(`mock-pi-script: timed out waiting for marker file: ${markerPath}\n`);
+			process.exit(1);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
 async function maybeWriteStructuredOutput(response, jsonMode) {
 	if (!Object.hasOwn(response, "structuredOutput")) return;
 	const outputPath = process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
@@ -371,12 +402,24 @@ async function main() {
 		"utf-8",
 	);
 
+	if (typeof response.writeMarker === "string" && response.writeMarker.length > 0) {
+		writeMarkerFile(response.writeMarker);
+	}
+	if (typeof response.waitForMarker === "string" && response.waitForMarker.length > 0) {
+		await waitForMarkerFile(response.waitForMarker);
+	}
 	if (typeof response.delay === "number" && response.delay > 0) {
 		await new Promise((resolve) => setTimeout(resolve, response.delay));
 	}
 
 	if (Array.isArray(response.steps) && response.steps.length > 0) {
 		for (const step of response.steps) {
+			if (typeof step?.writeMarker === "string" && step.writeMarker.length > 0) {
+				writeMarkerFile(step.writeMarker);
+			}
+			if (typeof step?.waitForMarker === "string" && step.waitForMarker.length > 0) {
+				await waitForMarkerFile(step.waitForMarker);
+			}
 			if (typeof step?.delay === "number" && step.delay > 0) {
 				await new Promise((resolve) => setTimeout(resolve, step.delay));
 			}

@@ -24,6 +24,18 @@ const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 export type PidLiveness = "alive" | "dead" | "unknown";
 export type ContinuationClaimLiveness = PidLiveness | "missing-owner" | "completed" | "blocked" | "unclaimed";
 
+/**
+ * Thrown by acquireTransitionLock when the retry budget is exhausted without
+ * acquiring the lock. Callers that want to distinguish lock-contention from
+ * genuine I/O errors catch this specific class.
+ */
+export class LifecycleLockExhaustedError extends Error {
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
+		this.name = "LifecycleLockExhaustedError";
+	}
+}
+
 export interface LifecycleLockOptions {
 	kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 	now?: () => number;
@@ -353,6 +365,190 @@ export function writeNormalizedLifecycleStatus(asyncDir: string, status: AsyncSt
 	return normalized;
 }
 
+// Terminal run states: states that a concurrent lock/CAS writer can commit and
+// that a stale source-runner write must never downgrade.
+//
+// Rationale for each value:
+//   "continued" — the resuming actor finalized the continuation via lock/CAS.
+//   "cancelled" — the cancel action commits through the same lock/CAS path as
+//                 a continuation reservation; a stale paused write from the
+//                 source runner must not resurrect the run.
+//   "failed"    — a concurrent failure (e.g. a timeout committed via lock/CAS)
+//                 must not be overwritten with a stale "paused" payload.
+//   "complete"  — a concurrent successful completion committed via lock/CAS must
+//                 not be overwritten.
+//
+// "queued", "running", "pausing", and "paused" are non-terminal: the source
+// runner legitimately owns writes in those states without going through lock/CAS.
+//
+// Exported so callers (e.g. writeStatusPayload in subagent-runner) can inspect
+// the set without duplicating the definition.
+export const TERMINAL_RUN_STATES: ReadonlySet<string> = new Set(["continued", "cancelled", "failed", "complete"]);
+
+// Terminal step statuses: same reasoning at the per-step level. "completed" is
+// a legacy alias for "complete" that also appears in the union; both are guarded.
+const TERMINAL_STEP_STATUSES: ReadonlySet<string> = new Set([
+	"continued",
+	"cancelled",
+	"failed",
+	"complete",
+	"completed",
+]);
+
+/**
+ * Merge in-memory status with persisted status and write atomically.
+ */
+function mergeAndWriteStatus(asyncDir: string, inMemory: AsyncStatus, persisted: AsyncStatus | null): AsyncStatus {
+	if (!persisted) {
+		// No persisted status yet — write in-memory as-is.
+		return writeNormalizedLifecycleStatus(asyncDir, inMemory);
+	}
+	const persistedGen = lifecycleGeneration(persisted);
+	const inMemoryGen = lifecycleGeneration(inMemory);
+	// If persisted generation is ahead of ours, a lifecycle transition occurred
+	// after our last sync (e.g. a continuation reservation by the resuming actor).
+	// Preserve the persisted lifecycle verbatim so the reservation is not clobbered.
+	// Ordering invariant: persistedGen can only advance, never retreat, so this
+	// check is monotonically safe across multiple consecutive writes.
+	const lifecycle = persistedGen > inMemoryGen ? persisted.lifecycle : inMemory.lifecycle;
+	// Preserve any terminal run state committed by a concurrent lock/CAS writer.
+	// The source runner's in-memory state is stale once a terminal transition has
+	// been committed; allowing a non-terminal in-memory state to overwrite it
+	// would, for example, turn a cancelled or continued run back to "paused".
+	// Persisted terminal run state always wins over any in-memory state —
+	// including another terminal state — because it was committed through the
+	// lifecycle lock/CAS path. The exiting source runner is the loser in every
+	// conflicting-terminal scenario (e.g. persisted="cancelled", in-memory="failed").
+	//
+	// Precedence rule: persisted terminal beats any non-matching in-memory state.
+	// "Same terminal" (both sides agree on state) is left unchanged — no conflict.
+	let state = inMemory.state;
+	if (TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== state) {
+		state = persisted.state;
+	}
+	// Preserve persisted terminal step transitions; the source runner's in-memory
+	// step status may be stale. For each terminal persisted step we keep the
+	// terminal status and its associated lifecycle metadata (cancel, endedAt,
+	// exitCode) while still merging in source-owned settlement fields (tokens,
+	// model info, acceptance, etc.) from the in-memory step for unaffected steps.
+	const steps = inMemory.steps?.map((step, i) => {
+		const persistedStep = persisted.steps?.[i];
+		if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status)) return step;
+		// Lifecycle-owned metadata comes from the persisted winner authoritatively,
+		// including its absence: status, endedAt, exitCode, cancel, error, pause.
+		// Source-owned settlement data (model, tokens, acceptance, processCleanup)
+		// continues to come from the in-memory step so it is not lost.
+		const lifecycleOverrides = {
+			status: persistedStep.status,
+			endedAt: persistedStep.endedAt,
+			exitCode: persistedStep.exitCode,
+			cancel: persistedStep.cancel,
+			error: persistedStep.error,
+			// A terminal step has no active pause.
+			pause: undefined as undefined,
+		};
+		if (persistedStep.status === step.status) {
+			// Both sides agree on the terminal status. The concurrent writer may have
+			// committed lifecycle metadata (cancel, endedAt, error) after the source
+			// runner's last sync. Apply persisted lifecycle fields authoritatively,
+			// including clearing fields absent from the persisted winner (e.g. a
+			// cancelled step has no error — a stale in-memory error must not survive).
+			return { ...step, ...lifecycleOverrides };
+		}
+		// Persisted step is terminal and in-memory step has a different status.
+		// Carry the terminal lifecycle metadata from disk; take source-owned
+		// settlement fields (model, tokens, acceptance, processCleanup, etc.)
+		// from the in-memory step so settlement data is not lost.
+		return { ...step, ...lifecycleOverrides };
+	});
+	// When the persisted run state is terminal and differs from the in-memory state,
+	// lifecycle-owned metadata comes from the persisted winner authoritatively —
+	// INCLUDING its absence. A stale in-memory error/cancel/endedAt/exitCode/pid/pause
+	// must NOT survive onto the persisted winner's record. Source-owned settlement
+	// data (model, attempts, tokens, acceptance, processCleanup) continues to come
+	// from the in-memory record. This applies to both terminal-vs-non-terminal and
+	// terminal-vs-conflicting-terminal scenarios.
+	const terminalRunOverrides =
+		TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state
+			? {
+					// Lifecycle-owned fields from the persisted winner — set unconditionally
+					// so that absence on the winner clears any stale value from inMemory.
+					cancel: persisted.cancel,
+					endedAt: persisted.endedAt,
+					error: persisted.error,
+					// A terminal run has no live PID and no active pause owner.
+					// Explicitly set undefined so absence is preserved, not just the value.
+					pid: undefined,
+					pause: undefined,
+				}
+			: {};
+	const merged: AsyncStatus = {
+		...inMemory,
+		...terminalRunOverrides,
+		state,
+		...(steps !== undefined ? { steps } : {}),
+		lifecycle,
+	};
+	return writeNormalizedLifecycleStatus(asyncDir, merged);
+}
+
+/**
+ * Safe post-pause variant of writeNormalizedLifecycleStatus for source-runner
+ * writes that happen after a paused checkpoint was committed to disk.
+ *
+ * Reads the currently persisted status and merges the in-memory status against
+ * it before writing. This preserves any continuation reservation (or finalized
+ * continuation) that a concurrent resuming actor may have committed between the
+ * source runner's last sync and this write call.
+ *
+ * Invariants maintained:
+ *   - A persisted "continued" run state is never downgraded to "paused".
+ *   - A step already moved to "continued" on disk is never reverted to "paused".
+ *   - When persisted generation > in-memory generation (a lifecycle transition
+ *     the source runner doesn't know about has occurred), the persisted lifecycle
+ *     section – including continuation reservation and generation – is kept intact.
+ *
+ * Callers MUST update their in-memory lifecycle from the returned status so that
+ * subsequent writes see the correct generation and continuation metadata.
+ *
+ * Lock-acquisition semantics: the lifecycle lock is attempted with the default
+ * retry schedule so that the read-merge-write is atomic with respect to other
+ * CAS lifecycle transitions (e.g. the resume actor reserving a continuation).
+ * If the lock cannot be acquired after retries, the function SKIPS THE WRITE
+ * entirely and returns the currently persisted status (or the in-memory status
+ * if nothing is persisted yet). This is the correct ownership model: once a
+ * paused checkpoint exists, the exiting source runner's status write is a
+ * best-effort observability update, while the resuming actor owns the lifecycle
+ * through the lock/CAS path. Losing that observability update is strictly
+ * preferable to introducing a lockless read-merge-write window that can erase
+ * a reservation and hang a waiter forever — which is exactly the race this
+ * function exists to eliminate.
+ *
+ * This function is intentionally synchronous: withLifecycleStatusLock uses
+ * Atomics.wait, so no new await window is opened and no concurrent timer or
+ * event-loop observer can mutate shared state between the lock acquisition,
+ * the disk read, and the write.
+ */
+export function mergeAndWriteSourceRunnerStatus(asyncDir: string, inMemory: AsyncStatus): AsyncStatus {
+	try {
+		// Primary path: acquire the lifecycle lock so that the read-merge-write
+		// is atomic with respect to other CAS lifecycle transitions (e.g. the
+		// resume actor reserving or finalizing a continuation).
+		return withLifecycleStatusLock(asyncDir, (persisted) => mergeAndWriteStatus(asyncDir, inMemory, persisted));
+	} catch (error) {
+		// Re-throw genuine I/O or logic errors immediately.
+		if (!(error instanceof LifecycleLockExhaustedError)) throw error;
+		// Lock-acquisition exhaustion: the lifecycle is currently owned by a
+		// concurrent CAS writer (e.g. the resume actor reserving or finalizing a
+		// continuation). DO NOT WRITE. Returning the persisted status (or the
+		// in-memory status if the run directory is brand-new) skips this
+		// observability write without risking a lockless read-merge-write that
+		// could erase the reservation between the read and the write.
+		const persisted = readLifecycleStatus(asyncDir);
+		return persisted ?? inMemory;
+	}
+}
+
 function waitSync(delayMs: number): void {
 	if (delayMs <= 0) return;
 	if (WAIT_VIEW) {
@@ -495,7 +691,7 @@ function acquireTransitionLock(asyncDir: string, options: LifecycleLockOptions =
 				continue;
 			}
 			const ownerSummary = transitionLockOwnerSummary(readTransitionLockOwner(asyncDir));
-			throw new Error(
+			throw new LifecycleLockExhaustedError(
 				`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`,
 				{ cause: error },
 			);
