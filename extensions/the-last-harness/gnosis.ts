@@ -4,6 +4,20 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { GNOSIS_VALIDATION_TIMEOUT_MS } from "./constants.js";
 
+type GnosisHelpRunner = (command: string, args: string[]) => void;
+type GnosisCommandCacheEntry = { command?: string; checkedAt: number };
+
+const GNOSIS_NEGATIVE_CACHE_TTL_MS = 30_000;
+
+// Launch estimation and before_agent_start build the same prompt in sequence. Successful
+// validation is stable for this process; failures expire so transient spawn/timeouts recover.
+const validatedGnosisCommands = new Map<string, GnosisCommandCacheEntry>();
+const runGnosisHelpWithSubprocess: GnosisHelpRunner = (command, args) => {
+	execFileSync(command, args, { stdio: "ignore", timeout: GNOSIS_VALIDATION_TIMEOUT_MS });
+};
+let runGnosisHelp = runGnosisHelpWithSubprocess;
+let currentTime = Date.now;
+
 function uniqueGnosisCandidates(candidates: Array<string | undefined>): string[] {
 	const seen = new Set<string>();
 	const unique: string[] = [];
@@ -23,7 +37,7 @@ function validateGnosisCommand(command: string): boolean {
 			["help", "plan"],
 			["help", "review"],
 		]) {
-			execFileSync(command, args, { stdio: "ignore", timeout: GNOSIS_VALIDATION_TIMEOUT_MS });
+			runGnosisHelp(command, args);
 		}
 		return true;
 	} catch {
@@ -40,19 +54,50 @@ function prependProcessPath(dir: string): void {
 	process.env.PATH = [dir, ...entries].join(delimiter);
 }
 
-function findValidGnosisCommand(agentDir: string, options: { prependPath?: boolean } = {}): string | undefined {
+function findValidGnosisCommand(agentDir: string): string | undefined {
 	const candidates = uniqueGnosisCandidates([join(agentDir, "bin", "gn"), "gn"]);
 	for (const candidate of candidates) {
-		if (!validateGnosisCommand(candidate)) continue;
-		if (options.prependPath && candidate !== "gn") {
-			prependProcessPath(dirname(candidate));
+		if (validateGnosisCommand(candidate)) {
+			return candidate;
 		}
-		return candidate;
 	}
 	return undefined;
 }
 
-export function shouldAppendGnosisPrompt(_cwd: string): boolean {
-	const agentDir = getAgentDir();
-	return Boolean(findValidGnosisCommand(agentDir, { prependPath: true }));
+function shouldAppendGnosisPromptForAgentDir(agentDir: string): boolean {
+	const resolvedAgentDir = resolve(agentDir);
+	const now = currentTime();
+	const cached = validatedGnosisCommands.get(resolvedAgentDir);
+	let command = cached?.command;
+	if (!cached || (!cached.command && now - cached.checkedAt >= GNOSIS_NEGATIVE_CACHE_TTL_MS)) {
+		command = findValidGnosisCommand(resolvedAgentDir);
+		validatedGnosisCommands.set(resolvedAgentDir, { command, checkedAt: currentTime() });
+	}
+
+	if (command && command !== "gn") {
+		prependProcessPath(dirname(command));
+	}
+	return command !== undefined;
 }
+
+export function shouldAppendGnosisPrompt(_cwd: string): boolean {
+	return shouldAppendGnosisPromptForAgentDir(getAgentDir());
+}
+
+/** @internal Exported only for deterministic unit coverage. */
+export const __testing = {
+	shouldAppendGnosisPromptForAgentDir,
+	setGnosisHelpRunnerForTests(runner: GnosisHelpRunner) {
+		runGnosisHelp = runner;
+		validatedGnosisCommands.clear();
+	},
+	setClockForTests(clock: () => number) {
+		currentTime = clock;
+		validatedGnosisCommands.clear();
+	},
+	resetForTests() {
+		runGnosisHelp = runGnosisHelpWithSubprocess;
+		currentTime = Date.now;
+		validatedGnosisCommands.clear();
+	},
+};

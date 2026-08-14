@@ -1831,6 +1831,51 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					: step,
 			);
 			writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+			// Option (b): explicit inline failure artifact. The terminal result writer at
+			// the bottom of runSubagent is unreachable from this early return, so any waiter
+			// blocking on RESULTS_DIR/${id}.json would hang until its own timeout without
+			// this write. Consumer contract verified against result-watcher.ts handleResult:
+			//   - sessionId    CRITICAL: delivery gate; result-watcher drops the file if absent
+			//                  or mismatched against state.currentSessionId.
+			//   - id           Primary dedup key; buildCompletionKey uses `id:${id}` when present.
+			//   - state/success Drive child-status resolution and resolvePausedArtifactDecision
+			//                  (returns "compat" for state !== "paused", so delivery proceeds).
+			//   - summary/error User-visible failure message surfaced in the UI.
+			//   - results       Child array consumed by the normalizedChildren path.
+			//   - asyncDir      Read by resolvePausedArtifactDecision only when state === "paused";
+			//                  included for forward compatibility.
+			// Safe to omit: outputs (empty map, unused), workflowGraph, durationMs,
+			//   totalTokens, totalCost, truncated, cwd, sessionFile, shareUrl,
+			//   intercomTarget — none are load-bearing for delivery or failure surfacing.
+			const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
+			try {
+				writeAtomicJson(resultPath, {
+					lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+					id,
+					agent: gateRejectAgent,
+					mode: statusPayload.mode,
+					success: false,
+					state: "failed" as const,
+					summary: statusPayload.error,
+					error: statusPayload.error,
+					results: [
+						{
+							agent: gateRejectAgent,
+							output: statusPayload.error,
+							error: statusPayload.error,
+							success: false,
+							exitCode: 1,
+						},
+					],
+					exitCode: 1,
+					timestamp: statusPayload.endedAt,
+					durationMs: 0,
+					asyncDir,
+					sessionId: config.sessionId,
+				});
+			} catch (err) {
+				console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
+			}
 			return;
 		}
 	}

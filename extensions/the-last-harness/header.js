@@ -1,9 +1,30 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
+function formatLaunchContextPercent(tokens, contextWindow) {
+    if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+        return "0%";
+    }
+    const percent = (tokens / contextWindow) * 100;
+    if (percent < 1) {
+        return "<1%";
+    }
+    return `~${Math.round(percent)}%`;
+}
+export function formatTlhLaunchContextAllocation(allocation) {
+    const { contextWindow, estimatedTokens } = allocation;
+    return [
+        `Context at launch: TLH ${formatLaunchContextPercent(estimatedTokens.tlh, contextWindow)}`,
+        `AGENTS/CLAUDE.md ${formatLaunchContextPercent(estimatedTokens.agentsClaude, contextWindow)}`,
+        `Skills ${formatLaunchContextPercent(estimatedTokens.skills, contextWindow)}`,
+        `Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`,
+        `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`,
+    ].join(" • ");
+}
 export function createTlhHeader(theme, resources, headerUpdate, installNotice, options = {}) {
     let expanded = false;
     let startupResources = resources;
+    let launchContextAllocation = options.launchContextAllocation;
     const color = {
         heading: (text) => theme.fg("mdHeading", text),
         dim: (text) => theme.fg("dim", text),
@@ -75,13 +96,22 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
             ? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
             : color.dim(`${continuationIndent}${line}`));
     };
+    const launchContextLines = (width) => {
+        if (!launchContextAllocation) {
+            return [];
+        }
+        if (width <= 0) {
+            return [""];
+        }
+        return wrapTextWithAnsi(formatTlhLaunchContextAllocation(launchContextAllocation), width).map((line) => color.dim(line));
+    };
     const collapsedContextHintLines = (width) => {
-        const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-        const plainText = startupResources.context.length === 0 ? hint : `Context: ${startupResources.context.join(", ")}. ${hint}`;
-        return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
+        const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded context files, skills, prompts, and extensions`;
+        return wrapTextWithAnsi(hint, width).map((line) => color.dim(line));
     };
     const headerDetails = (width) => [
         ...installWarningLine(width),
+        ...launchContextLines(width),
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
@@ -89,6 +119,7 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
             logo,
             "",
             ...installWarningLine(width),
+            ...launchContextLines(width),
             ...collapsedContextHintLines(width),
             ...startupTipLine(width),
         ];
@@ -124,6 +155,9 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
         },
         setResources(nextResources) {
             startupResources = nextResources;
+        },
+        setLaunchContextAllocation(nextAllocation) {
+            launchContextAllocation = nextAllocation;
         },
         toggleExpanded() {
             expanded = !expanded;

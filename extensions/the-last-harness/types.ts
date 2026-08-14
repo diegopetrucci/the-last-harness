@@ -8,6 +8,29 @@ export type StartupResources = {
 	themes: string[];
 };
 
+export type StartupPromptResourceMetadata = {
+	contextFiles: Array<{ path: string; content: string }>;
+	skills: Array<{ name: string; description: string; filePath: string }>;
+};
+
+export type StartupResourceSnapshot = {
+	resources: StartupResources;
+	promptMetadata: StartupPromptResourceMetadata;
+};
+
+export type TlhLaunchContextTokenAllocation = {
+	tlh: number;
+	agentsClaude: number;
+	skills: number;
+	tools: number;
+	other: number;
+};
+
+export type TlhLaunchContextAllocation = {
+	contextWindow: number;
+	estimatedTokens: TlhLaunchContextTokenAllocation;
+};
+
 export type TlhUsageLimitsConfig = {
 	showWeekly?: boolean;
 };

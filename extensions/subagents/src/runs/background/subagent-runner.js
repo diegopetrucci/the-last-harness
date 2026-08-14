@@ -1345,6 +1345,36 @@ async function runSubagent(config) {
                 ? { ...step, status: "failed", endedAt: statusPayload.endedAt, exitCode: 1, error: statusPayload.error }
                 : step);
             writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+            const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
+            try {
+                writeAtomicJson(resultPath, {
+                    lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+                    id,
+                    agent: gateRejectAgent,
+                    mode: statusPayload.mode,
+                    success: false,
+                    state: "failed",
+                    summary: statusPayload.error,
+                    error: statusPayload.error,
+                    results: [
+                        {
+                            agent: gateRejectAgent,
+                            output: statusPayload.error,
+                            error: statusPayload.error,
+                            success: false,
+                            exitCode: 1,
+                        },
+                    ],
+                    exitCode: 1,
+                    timestamp: statusPayload.endedAt,
+                    durationMs: 0,
+                    asyncDir,
+                    sessionId: config.sessionId,
+                });
+            }
+            catch (err) {
+                console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
+            }
             return;
         }
     }
