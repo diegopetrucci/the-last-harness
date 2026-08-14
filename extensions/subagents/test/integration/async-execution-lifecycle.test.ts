@@ -530,13 +530,14 @@ describe("async execution utilities", () => {
 				...options,
 			});
 
-		mockPi.onCall({ delay: 5_000, output: "paused child" });
+		const childDelayMs = scaleTestTimeout(5_000);
+		mockPi.onCall({ matchArgIncludes: "Pause first", delay: childDelayMs, output: "paused child" });
 		const pausedId = `async-synthesized-paused-${Date.now().toString(36)}`;
 		launch(pausedId, [
-			{ agent: "paused-one", task: "Wait" },
-			{ agent: "paused-two", task: "Wait" },
+			{ agent: "paused-one", task: "Pause first" },
+			{ agent: "paused-two", task: "Pause second" },
 		]);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0, scaleTestTimeout(10_000));
 		const pausedDir = path.join(ASYNC_DIR, pausedId);
 		const pausedStatus = JSON.parse(
 			fs.readFileSync(path.join(pausedDir, "status.json"), "utf-8"),
@@ -552,43 +553,60 @@ describe("async execution utilities", () => {
 			["paused", "paused"],
 		);
 
-		mockPi.onCall({ delay: 5_000, output: "timed out child" });
+		// The interrupted child can leave a response queued while its sibling is
+		// synthesized. Start the next phase from a fresh mock generation so a
+		// later phase cannot consume that stale response.
+		mockPi.reset();
+		mockPi.onCall({ matchArgIncludes: "Timeout first", delay: childDelayMs, output: "timed out child" });
 		const timedOutId = `async-synthesized-timeout-${Date.now().toString(36)}`;
+		const timedOutMs = scaleTestTimeout(500);
 		launch(
 			timedOutId,
 			[
-				{ agent: "timeout-one", task: "Wait" },
-				{ agent: "timeout-two", task: "Wait" },
+				{ agent: "timeout-one", task: "Timeout first" },
+				{ agent: "timeout-two", task: "Timeout second" },
 			],
-			{ timeoutMs: 500 },
+			{ timeoutMs: timedOutMs },
 		);
 		const timedOutPayload = JSON.parse(
-			fs.readFileSync(await waitForAsyncResultFile(timedOutId, 10_000), "utf-8"),
+			fs.readFileSync(await waitForAsyncResultFile(timedOutId, scaleTestTimeout(10_000)), "utf-8"),
 		) as AsyncResultPayload;
+		assert.equal(timedOutPayload.state, "failed");
+		assert.equal(timedOutPayload.timedOut, true);
 		assert.deepEqual(
 			timedOutPayload.results.map((result) => result.terminationReason),
 			["timed_out", "timed_out"],
 		);
+		assert.deepEqual(
+			timedOutPayload.results.map((result) => result.timedOut),
+			[true, true],
+		);
 
-		mockPi.onCall({ output: "fail-fast child", exitCode: 1 });
+		mockPi.reset();
+		mockPi.onCall({ matchArgIncludes: "Fail fast first", output: "fail-fast child", exitCode: 1 });
 		const failFastId = `async-synthesized-fail-fast-${Date.now().toString(36)}`;
 		launch(
 			failFastId,
 			[
-				{ agent: "fail-fast-one", task: "Fail" },
-				{ agent: "fail-fast-two", task: "Skipped" },
+				{ agent: "fail-fast-one", task: "Fail fast first" },
+				{ agent: "fail-fast-two", task: "Fail fast skipped" },
 			],
 			{ failFast: true },
 		);
-		const failFastResultPath = await waitForAsyncResultFile(failFastId, 10_000);
+		const failFastResultPath = await waitForAsyncResultFile(failFastId, scaleTestTimeout(10_000));
 		const failFastPayload = JSON.parse(fs.readFileSync(failFastResultPath, "utf-8")) as AsyncResultPayload;
 		const failFastStatus = JSON.parse(
 			fs.readFileSync(path.join(ASYNC_DIR, failFastId, "status.json"), "utf-8"),
 		) as AsyncStatusPayload;
+		assert.equal(failFastPayload.state, "failed");
+		assert.equal(failFastPayload.success, false);
 		assert.deepEqual(
 			failFastPayload.results.map((result) => result.terminationReason),
 			["process_exit", "process_exit"],
 		);
+		assert.match(failFastPayload.results[0]?.output ?? "", /fail-fast child/);
+		assert.equal(failFastPayload.results[0]?.timedOut, undefined);
+		assert.equal(failFastStatus.steps?.[0]?.terminationReason, "process_exit");
 		assert.equal(failFastStatus.steps?.[1]?.terminationReason, "process_exit");
 	});
 

@@ -95,6 +95,7 @@ import {
 	appendRuntimeFallbackResolution,
 	canonicalSubagentModelIdentity,
 	formatModelAttemptNote,
+	resolveRuntimeModelContext,
 	isRetryableModelFailure,
 	sanitizeModelFallbackNotice,
 } from "../shared/model-fallback.ts";
@@ -422,6 +423,7 @@ interface ChildUsage {
 }
 
 type ChildMessage = Message & {
+	provider?: unknown;
 	model?: string;
 	errorMessage?: string;
 	usage?: ChildUsage;
@@ -478,6 +480,8 @@ interface RunPiStreamingResult {
 	messages: Message[];
 	usage: Usage;
 	model?: string;
+	runtimeModelIdentity?: SubagentModelIdentity;
+	configuredModel?: string;
 	error?: string;
 	finalOutput: string;
 	interrupted?: boolean;
@@ -505,6 +509,10 @@ function contextWindowForModel(
 	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function runtimeModelReference(identity: SubagentModelIdentity): string {
+	return `${identity.provider}/${identity.model}${identity.thinking ? `:${identity.thinking}` : ""}`;
+}
+
 function runPiStreaming(
 	args: string[],
 	cwd: string,
@@ -520,7 +528,12 @@ function runPiStreaming(
 	registerTimeout?: (interrupt: (() => void) | undefined) => void,
 	timeoutMessage?: string,
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
-	context?: { restored: boolean; contextWindow?: number },
+	context?: {
+		restored: boolean;
+		configuredModel?: string;
+		contextWindow?: number;
+		contextWindows?: Record<string, number>;
+	},
 ): Promise<RunPiStreamingResult> {
 	return new Promise((resolve) => {
 		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -553,6 +566,7 @@ function runPiStreaming(
 		let turnBudget: TurnBudgetState | undefined;
 		let observedMutationAttempt = false;
 		let contextUsage: ContextUsageDiagnostics | undefined;
+		let runtimeModelIdentity: SubagentModelIdentity | undefined;
 		let finalAssistantStopReason: string | undefined;
 		let wroteHumanReadableOutput = false;
 		const rawStdoutLines: string[] = [];
@@ -629,7 +643,19 @@ function runPiStreaming(
 				if (text) writeOutputText(text);
 
 				if (event.type !== "message_end" || event.message.role !== "assistant") return;
-				if (event.message.model) model = event.message.model;
+				if (context && !context.configuredModel && runtimeModelIdentity === undefined) {
+					const reportedModel = resolveRuntimeModelContext(
+						event.message.provider,
+						event.message.model,
+						context.contextWindows,
+					);
+					if (reportedModel) {
+						runtimeModelIdentity = reportedModel.identity;
+						context.contextWindow = reportedModel.contextWindow;
+						model = runtimeModelReference(reportedModel.identity);
+					}
+				}
+				if (event.message.model && runtimeModelIdentity === undefined) model = event.message.model;
 				if (event.message.errorMessage) assistantError = event.message.errorMessage;
 				finalAssistantStopReason = assistantStopReason(event.message);
 				contextUsage = updateContextUsageDiagnostics(contextUsage, event.message, {
@@ -799,6 +825,8 @@ function runPiStreaming(
 				processGroupId,
 				processCleanup,
 				contextUsage,
+				runtimeModelIdentity,
+				configuredModel: context?.configuredModel,
 				assistantStopReason: finalAssistantStopReason,
 				contextExhausted: contextExhausted === "context_exhausted" || undefined,
 			});
@@ -973,6 +1001,8 @@ function runPiStreaming(
 				processGroupId,
 				processCleanup,
 				contextUsage,
+				runtimeModelIdentity,
+				configuredModel: context?.configuredModel,
 				assistantStopReason: finalAssistantStopReason,
 			});
 		});
@@ -1383,7 +1413,9 @@ async function runSingleStep(
 			ctx.registerTurnBudgetAbort,
 			{
 				restored: restoredSession,
+				configuredModel: candidate,
 				contextWindow: contextWindowForModel(candidate, step.contextWindows),
+				contextWindows: step.contextWindows,
 			},
 		);
 		finalAttemptContextUsage = run.contextUsage;
@@ -1529,19 +1561,25 @@ async function runSingleStep(
 	const modelFallbackNotice =
 		modelAttempts.length > 1 ? sanitizeModelFallbackNotice(step.modelFallbackNotice) : undefined;
 	const finalModel = finalResult?.model;
-	const finalModelIdentity = canonicalSubagentModelIdentity(
-		finalModel,
-		dispatchThinkingDropped(step, finalModel) ? undefined : step.thinking,
-	);
-	if (modelAttempts.length > 1 && finalModelIdentity) {
+	// A dispatched candidate is authoritative. For an unconfigured run, only the
+	// first validated child report is eligible to become the effective identity;
+	// runtime observation is not a model-resolution override or fallback.
+	const finalConfiguredIdentity = finalResult?.configuredModel
+		? canonicalSubagentModelIdentity(
+				finalResult.configuredModel,
+				dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking,
+			)
+		: undefined;
+	const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
+	if (modelAttempts.length > 1 && finalConfiguredIdentity) {
 		modelResolution = appendRuntimeFallbackResolution({
 			previous: modelResolution,
 			sourceAttempt: modelAttempts.at(-2),
-			currentIdentity: finalModelIdentity,
+			currentIdentity: finalConfiguredIdentity,
 			originalIdentity: firstAttemptIdentity,
 		});
-	} else if (modelResolution && finalModelIdentity) {
-		modelResolution = { ...modelResolution, resumed: finalModelIdentity };
+	} else if (modelResolution && finalConfiguredIdentity) {
+		modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
 	}
 	if (modelResolution) {
 		const resolutionNotice = `Notice: ${modelResolution.reason}`;
@@ -2711,6 +2749,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const emittedControlEventKeys = new Set<string>();
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
+	// Runtime-reported identity is trusted only after exact registry validation and
+	// is scoped to the currently dispatched child attempt. A fallback invokes
+	// onAttemptStart again, which deliberately clears the prior observation.
+	const runtimeModelContexts: Array<{ identity: SubagentModelIdentity; contextWindow: number } | undefined> =
+		initialStatusSteps.map(() => undefined);
+	const activeConfiguredModels: Array<string | undefined> = initialStatusSteps.map(() => undefined);
 	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> =
 		initialStatusSteps.map(() => undefined);
 	const flatStepAcceptances: Array<SubagentStep["effectiveAcceptance"]> = flatSteps.map(
@@ -2861,6 +2905,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 	const updateStepModel = (flatIndex: number, attempt: ModelAttemptStart, now = Date.now()): void => {
 		const step = statusPayload.steps[flatIndex];
 		if (!step) return;
+		// This callback is the attempt boundary: only a dispatched candidate starts
+		// a new scope. Arbitrary child message model changes never do.
+		runtimeModelContexts[flatIndex] = undefined;
+		activeConfiguredModels[flatIndex] = attempt.model;
 		step.model = attempt.model;
 		step.thinking = attempt.modelIdentity ? attempt.modelIdentity.thinking : attempt.thinking;
 		step.modelIdentity = attempt.modelIdentity ?? canonicalSubagentModelIdentity(attempt.model, attempt.thinking);
@@ -3036,9 +3084,25 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 				stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10),
 			);
 			step.turnCount = (step.turnCount ?? 0) + 1;
+			const configuredModel = activeConfiguredModels[flatIndex];
+			const configuredContextWindow = contextWindowForModel(configuredModel, flatSteps[flatIndex]?.contextWindows);
+			let runtimeModelContext = runtimeModelContexts[flatIndex];
+			if (!configuredModel && runtimeModelContext === undefined) {
+				runtimeModelContext = resolveRuntimeModelContext(
+					event.message.provider,
+					event.message.model,
+					flatSteps[flatIndex]?.contextWindows,
+				);
+				if (runtimeModelContext) {
+					runtimeModelContexts[flatIndex] = runtimeModelContext;
+					step.model = runtimeModelReference(runtimeModelContext.identity);
+					step.thinking = runtimeModelContext.identity.thinking;
+					step.modelIdentity = runtimeModelContext.identity;
+				}
+			}
 			step.contextUsage = updateContextUsageDiagnostics(step.contextUsage, event.message, {
 				restored: false,
-				contextWindow: contextWindowForModel(step.model, flatSteps[flatIndex]?.contextWindows),
+				contextWindow: configuredContextWindow ?? runtimeModelContext?.contextWindow,
 			});
 			// Keep the persisted live status projection in sync before publishing any
 			// pressure control event. Consumers can therefore resolve the event's

@@ -130,6 +130,68 @@ export function modelReferenceFromIdentity(identity: SubagentModelIdentity): str
 	return `${identity.provider}/${identity.model}`;
 }
 
+export interface RuntimeModelContextResolution {
+	identity: SubagentModelIdentity;
+	contextWindow: number;
+}
+
+const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Model ids are registry-owned values. Keep the boundary conservative without
+// treating `/` or `:` as separators: providers such as OpenRouter and Ollama
+// legitimately report those characters in the model id itself.
+const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
+
+function runtimeIdentityFromFullId(fullId: string, thinkingSuffix: string): SubagentModelIdentity | undefined {
+	// Match canonicalSubagentModelIdentity: only the first slash separates the
+	// provider, so nested provider model ids remain intact.
+	const separator = fullId.indexOf("/");
+	if (separator <= 0 || separator === fullId.length - 1) return undefined;
+	const provider = fullId.slice(0, separator);
+	const model = fullId.slice(separator + 1);
+	if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model)) return undefined;
+	return {
+		provider,
+		model,
+		...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
+	};
+}
+
+/**
+ * Resolve a model identity reported by an untrusted child message only when it
+ * names an exact registered context window. A separately reported provider
+ * scopes the opaque model id; an empty provider accepts a qualified full id.
+ */
+export function resolveRuntimeModelContext(
+	providerValue: unknown,
+	modelValue: unknown,
+	contextWindows: Record<string, number> | undefined,
+): RuntimeModelContextResolution | undefined {
+	if (
+		!contextWindows ||
+		(typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
+		typeof modelValue !== "string" ||
+		(providerValue !== undefined && typeof providerValue !== "string")
+	)
+		return undefined;
+	const provider = typeof providerValue === "string" ? providerValue.trim() : "";
+	const model = modelValue.trim();
+	if (model === "") return undefined;
+	if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider)) return undefined;
+	const parsed = splitKnownThinkingSuffix(model);
+	if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel)) return undefined;
+
+	// With a separately reported provider, the model portion is opaque. This is
+	// what preserves registry ids such as openrouter/anthropic/claude-* and
+	// ollama/qwen3:8b instead of mis-parsing their model portions as providers.
+	const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
+	if (!Object.hasOwn(contextWindows, fullId)) return undefined;
+	const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
+	if (!identity) return undefined;
+	const contextWindow = contextWindows[fullId];
+	if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
+	return { identity, contextWindow };
+}
+
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
 export interface ParentModel {
 	provider: string;

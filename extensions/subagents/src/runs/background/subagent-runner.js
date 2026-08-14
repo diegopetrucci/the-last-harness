@@ -23,7 +23,7 @@ import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.js";
 import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
-import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
+import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, resolveRuntimeModelContext, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { appendRecentProgressItem } from "../../shared/recent-progress.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
@@ -213,6 +213,9 @@ function contextWindowForModel(model, contextWindows) {
     const value = contextWindows[baseModel];
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
+function runtimeModelReference(identity) {
+    return `${identity.provider}/${identity.model}${identity.thinking ? `:${identity.thinking}` : ""}`;
+}
 function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxSubagentDepth, childEventContext, registerInterrupt, onChildEvent, transcriptWriter, registerTimeout, timeoutMessage, registerTurnBudgetAbort, context) {
     return new Promise((resolve) => {
         const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
@@ -245,6 +248,7 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
         let turnBudget;
         let observedMutationAttempt = false;
         let contextUsage;
+        let runtimeModelIdentity;
         let finalAssistantStopReason;
         let wroteHumanReadableOutput = false;
         const rawStdoutLines = [];
@@ -317,7 +321,15 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                     writeOutputText(text);
                 if (event.type !== "message_end" || event.message.role !== "assistant")
                     return;
-                if (event.message.model)
+                if (context && !context.configuredModel && runtimeModelIdentity === undefined) {
+                    const reportedModel = resolveRuntimeModelContext(event.message.provider, event.message.model, context.contextWindows);
+                    if (reportedModel) {
+                        runtimeModelIdentity = reportedModel.identity;
+                        context.contextWindow = reportedModel.contextWindow;
+                        model = runtimeModelReference(reportedModel.identity);
+                    }
+                }
+                if (event.message.model && runtimeModelIdentity === undefined)
                     model = event.message.model;
                 if (event.message.errorMessage)
                     assistantError = event.message.errorMessage;
@@ -487,6 +499,8 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                 processGroupId,
                 processCleanup,
                 contextUsage,
+                runtimeModelIdentity,
+                configuredModel: context?.configuredModel,
                 assistantStopReason: finalAssistantStopReason,
                 contextExhausted: contextExhausted === "context_exhausted" || undefined,
             });
@@ -674,6 +688,8 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
                 processGroupId,
                 processCleanup,
                 contextUsage,
+                runtimeModelIdentity,
+                configuredModel: context?.configuredModel,
                 assistantStopReason: finalAssistantStopReason,
             });
         });
@@ -948,7 +964,9 @@ async function runSingleStep(step, ctx) {
         });
         const run = await runPiStreaming(args, step.cwd ?? ctx.cwd, ctx.outputFile, env, ctx.piPackageRoot, ctx.piArgv1, step.maxSubagentDepth, { eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent }, ctx.registerInterrupt, ctx.onChildEvent, transcriptWriter, ctx.registerTimeout, ctx.timeoutMessage, ctx.registerTurnBudgetAbort, {
             restored: restoredSession,
+            configuredModel: candidate,
             contextWindow: contextWindowForModel(candidate, step.contextWindows),
+            contextWindows: step.contextWindows,
         });
         finalAttemptContextUsage = run.contextUsage;
         aggregateContextUsage = mergeContextUsageDiagnostics(aggregateContextUsage, run.contextUsage);
@@ -1074,17 +1092,20 @@ async function runSingleStep(step, ctx) {
         skipOwnedProcessGroupCleanup(supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform", finalResult?.processGroupId);
     const modelFallbackNotice = modelAttempts.length > 1 ? sanitizeModelFallbackNotice(step.modelFallbackNotice) : undefined;
     const finalModel = finalResult?.model;
-    const finalModelIdentity = canonicalSubagentModelIdentity(finalModel, dispatchThinkingDropped(step, finalModel) ? undefined : step.thinking);
-    if (modelAttempts.length > 1 && finalModelIdentity) {
+    const finalConfiguredIdentity = finalResult?.configuredModel
+        ? canonicalSubagentModelIdentity(finalResult.configuredModel, dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking)
+        : undefined;
+    const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
+    if (modelAttempts.length > 1 && finalConfiguredIdentity) {
         modelResolution = appendRuntimeFallbackResolution({
             previous: modelResolution,
             sourceAttempt: modelAttempts.at(-2),
-            currentIdentity: finalModelIdentity,
+            currentIdentity: finalConfiguredIdentity,
             originalIdentity: firstAttemptIdentity,
         });
     }
-    else if (modelResolution && finalModelIdentity) {
-        modelResolution = { ...modelResolution, resumed: finalModelIdentity };
+    else if (modelResolution && finalConfiguredIdentity) {
+        modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
     }
     if (modelResolution) {
         const resolutionNotice = `Notice: ${modelResolution.reason}`;
@@ -2036,6 +2057,8 @@ async function runSubagent(config) {
     const emittedControlEventKeys = new Set();
     const activeLongRunningSteps = new Set();
     const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
+    const runtimeModelContexts = initialStatusSteps.map(() => undefined);
+    const activeConfiguredModels = initialStatusSteps.map(() => undefined);
     const pendingToolResults = initialStatusSteps.map(() => undefined);
     const flatStepAcceptances = flatSteps.map((step) => step.effectiveAcceptance);
     const mutatingFailureWindowMs = 5 * 60_000;
@@ -2180,6 +2203,8 @@ async function runSubagent(config) {
         const step = statusPayload.steps[flatIndex];
         if (!step)
             return;
+        runtimeModelContexts[flatIndex] = undefined;
+        activeConfiguredModels[flatIndex] = attempt.model;
         step.model = attempt.model;
         step.thinking = attempt.modelIdentity ? attempt.modelIdentity.thinking : attempt.thinking;
         step.modelIdentity = attempt.modelIdentity ?? canonicalSubagentModelIdentity(attempt.model, attempt.thinking);
@@ -2343,9 +2368,21 @@ async function runSubagent(config) {
         else if (event.type === "message_end" && event.message?.role === "assistant") {
             appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
             step.turnCount = (step.turnCount ?? 0) + 1;
+            const configuredModel = activeConfiguredModels[flatIndex];
+            const configuredContextWindow = contextWindowForModel(configuredModel, flatSteps[flatIndex]?.contextWindows);
+            let runtimeModelContext = runtimeModelContexts[flatIndex];
+            if (!configuredModel && runtimeModelContext === undefined) {
+                runtimeModelContext = resolveRuntimeModelContext(event.message.provider, event.message.model, flatSteps[flatIndex]?.contextWindows);
+                if (runtimeModelContext) {
+                    runtimeModelContexts[flatIndex] = runtimeModelContext;
+                    step.model = runtimeModelReference(runtimeModelContext.identity);
+                    step.thinking = runtimeModelContext.identity.thinking;
+                    step.modelIdentity = runtimeModelContext.identity;
+                }
+            }
             step.contextUsage = updateContextUsageDiagnostics(step.contextUsage, event.message, {
                 restored: false,
-                contextWindow: contextWindowForModel(step.model, flatSteps[flatIndex]?.contextWindows),
+                contextWindow: configuredContextWindow ?? runtimeModelContext?.contextWindow,
             });
             statusPayload.steps[flatIndex].contextUsage = step.contextUsage;
             statusPayload.steps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;

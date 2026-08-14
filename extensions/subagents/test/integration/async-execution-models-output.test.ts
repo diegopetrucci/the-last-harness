@@ -61,7 +61,8 @@ describe("async execution utilities", () => {
 					message: {
 						role: "assistant",
 						content: [{ type: "text", text: "preserve progress" }],
-						model: "mock/test-model",
+						provider: "mock",
+						model: "test-model:high",
 						stopReason: "toolUse",
 						usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
 					},
@@ -71,7 +72,8 @@ describe("async execution utilities", () => {
 					message: {
 						role: "assistant",
 						content: [{ type: "text", text: "finish narrowly" }],
-						model: "mock/test-model",
+						provider: "other",
+						model: "other-model",
 						stopReason: "stop",
 						usage: { totalTokens: 950, input: 850, output: 100, cacheRead: 0, cacheWrite: 0 },
 					},
@@ -84,9 +86,12 @@ describe("async execution utilities", () => {
 		const run = executeAsyncSingle(id, {
 			agent: "worker",
 			task: "Preserve the work.",
-			agentConfig: makeAgent("worker", { model: "mock/test-model", completionGuard: false }),
+			agentConfig: makeAgent("worker", { completionGuard: false }),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-pressure" },
-			availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
+			availableModels: [
+				{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 },
+				{ provider: "other", id: "other-model", fullId: "other/other-model", contextWindow: 2000 },
+			],
 			artifactConfig: {
 				enabled: false,
 				includeInput: false,
@@ -100,18 +105,34 @@ describe("async execution utilities", () => {
 		});
 		assert.equal(run.details.asyncId, id);
 		await waitForAsyncResultFile(id);
-		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload & {
-			results?: Array<{ contextPressureCrossedThresholds?: string[] }>;
-		};
+		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+
 		assert.equal(payload.success, true);
 		assert.deepEqual(payload.results?.[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
+		assert.equal(payload.results?.[0]?.contextUsage?.contextWindow, 1000);
+		assert.equal(payload.results?.[0]?.contextUsage?.contextPercent, 95);
+		assert.equal(payload.results[0]?.model, "mock/test-model:high");
+		assert.deepEqual(payload.results[0]?.modelIdentity, {
+			provider: "mock",
+			model: "test-model",
+			thinking: "high",
+		});
+		assert.equal(payload.results[0]?.modelResolution, undefined);
 		const statusPayload = JSON.parse(
 			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
 		) as AsyncStatusPayload;
 		assert.deepEqual(statusPayload.steps[0]?.contextPressureCrossedThresholds, ["warning", "critical"]);
 		assert.equal(statusPayload.steps[0]?.contextPressure?.severity, "critical");
 		assert.equal(statusPayload.steps[0]?.contextPressure?.remainingTokens, 50);
-		assert.equal(statusPayload.steps[0]?.contextUsage?.contextPercent, 95);
+		assert.deepEqual(statusPayload.steps[0]?.contextUsage, payload.results?.[0]?.contextUsage);
+		assert.equal(statusPayload.steps[0]?.model, "mock/test-model:high");
+		assert.equal(statusPayload.steps[0]?.thinking, "high");
+		assert.deepEqual(statusPayload.steps[0]?.modelIdentity, {
+			provider: "mock",
+			model: "test-model",
+			thinking: "high",
+		});
+		assert.equal(statusPayload.steps[0]?.modelResolution, undefined);
 		const events = fs
 			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
 			.split("\n")
@@ -213,7 +234,21 @@ describe("async execution utilities", () => {
 			],
 			exitCode: 1,
 		});
-		mockPi.onCall({ output: "Recovered asynchronously" });
+		mockPi.onCall({
+			jsonl: [
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "Recovered asynchronously" }],
+						provider: "mock",
+						model: "test-model",
+						stopReason: "stop",
+						usage: { input: 1900, output: 0, cacheRead: 0, cacheWrite: 0 },
+					},
+				},
+			],
+		});
 		const id = `async-fallback-${Date.now().toString(36)}`;
 		const sessionRoot = path.join(tempDir, "sessions");
 		const asyncDir = path.join(ASYNC_DIR, id);
@@ -227,8 +262,8 @@ describe("async execution utilities", () => {
 			}),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			availableModels: [
-				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini" },
-				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+				{ provider: "openai", id: "gpt-5-mini", fullId: "openai/gpt-5-mini", contextWindow: 1000 },
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4", contextWindow: 2000 },
 			],
 			artifactConfig: {
 				enabled: false,
@@ -257,10 +292,16 @@ describe("async execution utilities", () => {
 		assert.equal(payload.lifecycleArtifactVersion, 1);
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0].model, "anthropic/claude-sonnet-4:low");
+		assert.deepEqual(payload.results[0].modelIdentity, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+			thinking: "low",
+		});
+		assert.equal(payload.results[0].contextUsage?.contextWindow, 2000);
 		assert.deepEqual(payload.results[0].attemptedModels, ["openai/gpt-5-mini:high", "anthropic/claude-sonnet-4:low"]);
 		assert.equal(payload.results[0].modelAttempts.length, 2);
-		assert.deepEqual(payload.results[0].totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
-		assert.deepEqual(payload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
+		assert.deepEqual(payload.results[0].totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
+		assert.deepEqual(payload.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
 		const statusPayload = JSON.parse(
 			fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
 		) as AsyncStatusPayload;
@@ -269,8 +310,8 @@ describe("async execution utilities", () => {
 		assert.equal(statusPayload.steps[0]?.thinking, "low");
 		assert.ok(statusPayload.totalTokens!.total > 0);
 		assert.ok(statusPayload.steps[0]?.tokens!.total > 0);
-		assert.deepEqual(statusPayload.steps[0]?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
-		assert.deepEqual(statusPayload.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
+		assert.deepEqual(statusPayload.steps[0]?.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
+		assert.deepEqual(statusPayload.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
 		const events = fs
 			.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
 			.trim()
@@ -279,7 +320,7 @@ describe("async execution utilities", () => {
 		assert.equal(events.find((event) => event.type === "subagent.run.started")?.lifecycleArtifactVersion, 1);
 		const completed = events.find((event) => event.type === "subagent.run.completed");
 		assert.equal(completed?.lifecycleArtifactVersion, 1);
-		assert.deepEqual(completed?.totalCost, { inputTokens: 110, outputTokens: 55, costUsd: 0.011 });
+		assert.deepEqual(completed?.totalCost, { inputTokens: 1910, outputTokens: 5, costUsd: 0.01 });
 		assert.match(fs.readFileSync(path.join(asyncDir, "output-0.log"), "utf-8"), /Recovered asynchronously/);
 		assert.equal(mockPi.callCount(), 2);
 	});

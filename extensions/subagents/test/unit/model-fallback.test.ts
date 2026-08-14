@@ -10,6 +10,7 @@ import {
 	modelReferenceFromIdentity,
 	normalizeModelSegment,
 	resolveModelCandidate,
+	resolveRuntimeModelContext,
 	resolveSubagentModelOverride,
 	sanitizeModelFallbackNotice,
 } from "../../src/runs/shared/model-fallback.ts";
@@ -22,6 +23,49 @@ describe("model fallback helpers", () => {
 
 	it("keeps explicit provider/model ids unchanged", () => {
 		assert.equal(resolveModelCandidate("openai/gpt-5-mini", availableModels), "openai/gpt-5-mini");
+	});
+
+	it("resolves exact runtime identities with nested slash and colon model ids", () => {
+		const contextWindows = {
+			"mock/test-model": 1000,
+			"openrouter/anthropic/claude-3.5-sonnet": 4096,
+			"ollama/qwen3:8b": 8192,
+		};
+		assert.deepEqual(resolveRuntimeModelContext("mock", "test-model", contextWindows), {
+			identity: { provider: "mock", model: "test-model" },
+			contextWindow: 1000,
+		});
+		assert.deepEqual(resolveRuntimeModelContext("openrouter", "anthropic/claude-3.5-sonnet:high", contextWindows), {
+			identity: { provider: "openrouter", model: "anthropic/claude-3.5-sonnet", thinking: "high" },
+			contextWindow: 4096,
+		});
+		assert.deepEqual(resolveRuntimeModelContext("ollama", "qwen3:8b", contextWindows), {
+			identity: { provider: "ollama", model: "qwen3:8b" },
+			contextWindow: 8192,
+		});
+		assert.deepEqual(
+			resolveRuntimeModelContext(undefined, "openrouter/anthropic/claude-3.5-sonnet:low", contextWindows),
+			{
+				identity: { provider: "openrouter", model: "anthropic/claude-3.5-sonnet", thinking: "low" },
+				contextWindow: 4096,
+			},
+		);
+	});
+
+	it("rejects malformed, mismatched, missing, inherited, and unregistered runtime identities", () => {
+		const contextWindows = { "mock/test-model": 1000, "other/test-model": 2000 };
+		assert.equal(resolveRuntimeModelContext(undefined, undefined, contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext(undefined, 42, contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext(null, "test-model", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext("bad provider", "test-model", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext("mock", "/model", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext("mock", "model/", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext("other", "mock/test-model", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext("mock", "missing-model", contextWindows), undefined);
+		assert.equal(resolveRuntimeModelContext(undefined, "test-model", contextWindows), undefined);
+
+		const inheritedContextWindows = Object.create({ "mock/inherited-model": 3000 }) as Record<string, number>;
+		assert.equal(resolveRuntimeModelContext("mock", "inherited-model", inheritedContextWindows), undefined);
 	});
 
 	it("resolves a bare id when there is exactly one registry match", () => {
