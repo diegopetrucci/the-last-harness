@@ -334,6 +334,24 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     function currentPrimaryAgentLabel() {
         return primaryAgentLabel(currentPrimaryAgentSelection());
     }
+    function buildActivePrimarySystemPrompt(baseSystemPrompt, cwd, settings) {
+        const primary = activePrimaryAgent();
+        const primaryEnabled = isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection());
+        const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+        const prompts = [
+            baseSystemPrompt,
+            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+            buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
+            buildTlhCommitAttributionPrompt(commitAttributionState),
+        ];
+        if (shouldAppendGnosisPrompt(cwd)) {
+            prompts.push(GNOSIS_PROMPT);
+        }
+        return prompts.filter(Boolean).join("\n\n");
+    }
+    function buildLaunchSystemPrompt(ctx, baseSystemPrompt) {
+        return buildActivePrimarySystemPrompt(baseSystemPrompt, ctx.cwd, getTlhGlobalSettings(ctx.cwd));
+    }
     function primaryAgentStatusMessage(ctx) {
         syncPrimaryAgentState(ctx);
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
@@ -772,22 +790,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             replayTlhUnmatchedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(() => ctx.model);
             const settings = getTlhGlobalSettings(ctx.cwd);
-            const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
             syncPrimaryAgentState(ctx);
-            const selection = currentPrimaryAgentSelection();
-            const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
             activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
             await applyPrimaryDefaults(ctx);
-            const prompts = [
-                event.systemPrompt,
-                buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-                buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
-                buildTlhCommitAttributionPrompt(commitAttributionState),
-            ];
-            if (shouldAppendGnosisPrompt(ctx.cwd)) {
-                prompts.push(GNOSIS_PROMPT);
-            }
-            return { systemPrompt: prompts.filter(Boolean).join("\n\n") };
+            return { systemPrompt: buildActivePrimarySystemPrompt(event.systemPrompt, ctx.cwd, settings) };
         });
         pi.on("tool_call", async (event, ctx) => {
             if (event.toolName === "bash") {
@@ -858,6 +864,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         applySessionStart,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
+        buildLaunchSystemPrompt,
         resetPrimaryAgentModelOverride,
         registerCommands,
         registerLifecycleHooks,

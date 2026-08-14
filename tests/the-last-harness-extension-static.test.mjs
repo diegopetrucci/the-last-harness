@@ -458,6 +458,11 @@ test("before_agent_start reapplies primary defaults without a one-shot model gat
 test("before_agent_start activates ticket runtime without disabled-ticket prompt branching", () => {
 	const lifecycleHooks = sourceSection(primaryRuntimeSource, "function registerLifecycleHooks()", "\n\n\treturn {");
 	const beforeAgentStart = sourceSection(lifecycleHooks, 'pi.on("before_agent_start"', 'pi.on("tool_call"');
+	const activePromptBuilder = sourceSection(
+		primaryRuntimeSource,
+		"function buildActivePrimarySystemPrompt(",
+		"function buildLaunchSystemPrompt(",
+	);
 	const applySessionStart = sourceSection(
 		primaryRuntimeSource,
 		"async function applySessionStart(",
@@ -468,16 +473,14 @@ test("before_agent_start activates ticket runtime without disabled-ticket prompt
 	assert.match(beforeAgentStart, /const settings = getTlhGlobalSettings\(ctx\.cwd\);/);
 	assert.doesNotMatch(beforeAgentStart, /ticketIntegrationEnabled/);
 	assert.match(beforeAgentStart, /activateTlhTicketRuntime\(settings, getAgentDir\(\), ctx\.cwd\);/);
+	assert.match(beforeAgentStart, /buildActivePrimarySystemPrompt\(event\.systemPrompt, ctx\.cwd, settings\)/);
 	// The per-turn refresh must NOT be reintroduced in before_agent_start.
 	assert.doesNotMatch(beforeAgentStart, /sessionExperimentalSnapshot =/);
-	// delta/ci prompt guidance reads settings fresh per turn.
+	// delta/ci prompt guidance reads settings fresh per turn through the shared launch builder.
+	assert.match(activePromptBuilder, /buildPrimaryExperimentalPrompt\(primary, settings\.tlh\?\.experimental\)/);
 	assert.match(
-		beforeAgentStart,
-		/buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/,
-	);
-	assert.match(
-		beforeAgentStart,
-		/buildTlhSystemPrompt\(activePrimaryAgent\(\), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/,
+		activePromptBuilder,
+		/buildTlhSystemPrompt\(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot\)/,
 	);
 	// The embedded snapshot is captured once per session in applySessionStart.
 	assert.match(
@@ -878,7 +881,7 @@ test("extension runs primary session_start work before UI startup in one handler
 	);
 	assert.match(
 		primaryRuntimeSource,
-		/return\s+\{\s*applySessionStart,\s*currentPrimaryAgentLabel,\s*activePrimaryAgentPrompt:\s*activePrimaryAgent,\s*resetPrimaryAgentModelOverride,\s*registerCommands,\s*registerLifecycleHooks,?\s*\};/,
+		/return\s+\{\s*applySessionStart,\s*currentPrimaryAgentLabel,\s*activePrimaryAgentPrompt:\s*activePrimaryAgent,\s*buildLaunchSystemPrompt,\s*resetPrimaryAgentModelOverride,\s*registerCommands,\s*registerLifecycleHooks,?\s*\};/,
 	);
 	assert.doesNotMatch(lifecycleHooks, /pi\.on\("session_start"/);
 });
@@ -1096,10 +1099,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
 	assert.match(typesSource, /enabledFeatures\?: string\[];/);
 	assert.match(typesSource, /export type TlhExperimentalFeatureId = string;/);
 	assert.match(primaryRuntimeSource, /from "\.\/experimental\.js"/);
-	assert.match(
-		primaryRuntimeSource,
-		/buildPrimaryExperimentalPrompt\(activePrimaryAgent\(\), settings\.tlh\?\.experimental\)/,
-	);
+	assert.match(primaryRuntimeSource, /buildPrimaryExperimentalPrompt\(primary, settings\.tlh\?\.experimental\)/);
 	assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
 	assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
 	assert.match(attributionSource, /import\("\.\/attribution-command\.js"\)/);
