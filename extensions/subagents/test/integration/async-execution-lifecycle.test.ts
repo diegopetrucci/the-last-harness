@@ -455,11 +455,19 @@ describe("async execution utilities", () => {
 		assert.equal(payload.exitCode, 1);
 		assert.equal(payload.timeoutMs, timeoutMs);
 		assert.equal(payload.timedOut, true);
-		assert.match(payload.summary ?? "", new RegExp(`Subagent timed out after ${timeoutMs}ms\.`));
+		// Plain substring check: the template-literal `\.` loses its backslash, so
+		// a regex would match any character instead of a literal dot (CodeQL escape).
+		assert.ok(
+			(payload.summary ?? "").includes(`Subagent timed out after ${timeoutMs}ms.`),
+			`payload.summary must contain "Subagent timed out after ${timeoutMs}ms."`,
+		);
 		assert.equal(status.state, "failed");
 		assert.equal(status.timeoutMs, timeoutMs);
 		assert.equal(status.timedOut, true);
-		assert.match(status.error ?? "", new RegExp(`Subagent timed out after ${timeoutMs}ms\.`));
+		assert.ok(
+			(status.error ?? "").includes(`Subagent timed out after ${timeoutMs}ms.`),
+			`status.error must contain "Subagent timed out after ${timeoutMs}ms."`,
+		);
 		assert.deepEqual(
 			status.steps?.map((step) => step.status),
 			["failed", "failed"],
@@ -483,6 +491,14 @@ describe("async execution utilities", () => {
 		mockPi.onCall({ output: "implementation complete" });
 		const id = `async-timeout-acceptance-${Date.now().toString(36)}`;
 		const timeoutMs = 1_000;
+		// Both the verify sleep and the verify command timeout are scaled so that
+		// the ratio invariant holds at any TLH_TEST_TIMEOUT_SCALE factor:
+		//   verifySleepMs (scale*30_000) >> timeoutMs (1_000) + scaleTestTimeout(4_000) (scale*4_000)
+		//   i.e. scale*30_000 > 1_000 + scale*4_000  ⟺  scale*26_000 > 1_000, true for all scale > 0.
+		// Without scaling both sides, a sufficiently large scale factor would let the
+		// bound exceed the sleep, making a non-cancelling runner appear to pass.
+		const verifySleepMs = scaleTestTimeout(30_000);
+		const verifyTimeoutMs = scaleTestTimeout(60_000);
 		const startedAt = Date.now();
 		executeAsyncSingle(id, {
 			agent: "worker",
@@ -503,7 +519,11 @@ describe("async execution utilities", () => {
 			acceptance: {
 				level: "verified",
 				verify: [
-					{ id: "slow", command: `${process.execPath} -e "setTimeout(()=>process.exit(0), 30000)"`, timeoutMs: 60_000 },
+					{
+						id: "slow",
+						command: `${process.execPath} -e "setTimeout(()=>process.exit(0), ${verifySleepMs})"`,
+						timeoutMs: verifyTimeoutMs,
+					},
 				],
 			},
 		});
@@ -520,8 +540,8 @@ describe("async execution utilities", () => {
 		assert.ok(
 			// The 4_000ms slack is load-sensitive: on a slow CI machine shutdown
 			// overhead after the timeout fires can exceed a fixed constant.
-			// Scale it so the bound absorbs machine slowness. The verify sleep
-			// (30_000ms) vastly exceeds the scaled bound so the ratio is safe.
+			// Scale it so the bound absorbs machine slowness. verifySleepMs
+			// is also scaled (see above) so the ratio invariant is maintained.
 			elapsedMs < timeoutMs + scaleTestTimeout(4_000),
 			`timeout should cancel acceptance verification well before the verify command completes, elapsed ${elapsedMs}ms`,
 		);
@@ -1320,13 +1340,17 @@ describe("async execution utilities", () => {
 	// the NEXT sequential step would start even though a concurrent actor already
 	// committed a terminal state to disk.
 	//
-	// Proof of non-vacuousness (re-verified against current code):
-	//   Revert BOTH `|| concurrentTerminalStatusAdopted` checks — the one in the
-	//   while-loop break condition and the one in the parallel task callback's
-	//   early-return guard. This test then FAILS with:
+	// This test uses a two-step SEQUENTIAL chain, so it exercises the OUTER LOOP
+	// GUARD at subagent-runner.ts (the `concurrentTerminalStatusAdopted` check in
+	// the while-loop break condition). It does NOT reach the parallel queued-task
+	// callback guard — see the parallel-group test below for that pin.
+	//
+	// Proof of non-vacuousness (pins the outer loop guard):
+	//   Revert ONLY the outer loop `|| concurrentTerminalStatusAdopted` check
+	//   (leave the parallel callback guard in place). This test then FAILS with:
 	//     "step 2 must not start after a concurrent terminal is adopted"
 	//     expected: 1   actual: 2   operator: strictEqual
-	//   i.e. step 2 really does execute after the concurrent terminal adoption.
+	//   i.e. the sequential step 2 really does execute after terminal adoption.
 	it("concurrent terminal adoption: step does not start after non-paused terminal is adopted from disk (finding-1)", {
 		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
 	}, async () => {
@@ -1443,6 +1467,154 @@ describe("async execution utilities", () => {
 			resultPayload.state,
 			"cancelled",
 			"result artifact must reflect the adopted cancelled state (finding-1)",
+		);
+	});
+
+	// ── Finding 1 parallel-group pin: concurrent terminal adoption must prevent a
+	// queued parallel task from starting ─────────────────────────────────────────
+	//
+	// This test pins the PARALLEL CALLBACK GUARD in subagent-runner.ts — the early
+	// return inside mapConcurrent's callback that checks
+	// `interrupted || concurrentTerminalStatusAdopted`. With concurrency:1, task 2
+	// is queued while task 1 runs. After task 1 releases, the callback for task 2
+	// must observe concurrentTerminalStatusAdopted=true and return early without
+	// launching a child process.
+	//
+	// The sequential Finding 1 test above does NOT reach this guard because it uses
+	// a two-step sequential chain; the outer loop guard stops the loop before
+	// entering the parallel group. This test exercises the callback guard
+	// independently.
+	//
+	// Proof of non-vacuousness (pins the parallel callback guard):
+	//   Revert ONLY the parallel callback guard —
+	//   `if (interrupted || concurrentTerminalStatusAdopted) return pausedStepResult(task);`
+	//   inside mapConcurrent — leaving the outer loop guard intact.
+	//   With that guard removed this test FAILS with:
+	//     "parallel task 2 must not start after concurrent terminal adoption"
+	//     expected: 1   actual: 2   operator: strictEqual
+	//   (verified against current code; see PR #503 review, Finding 1).
+	it("concurrent terminal adoption: queued parallel task does not start after non-paused terminal is adopted (parallel callback guard)", {
+		skip: process.platform === "win32" ? "cross-process interrupt delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const markerDir = path.join(tempDir, "finding1-parallel-markers");
+		fs.mkdirSync(markerDir, { recursive: true });
+		const task1ReadyMarker = path.join(markerDir, "task1-ready");
+		const task1ReleaseMarker = path.join(markerDir, "task1-release");
+
+		// Task 1: write the ready marker, then block until the release marker appears.
+		// Ignores SIGINT/SIGTERM so it stays alive until we control it.
+		mockPi.onCall({
+			ignoreSigint: true,
+			ignoreSigterm: true,
+			steps: [{ writeMarker: task1ReadyMarker }, { waitForMarker: task1ReleaseMarker }],
+			output: "task 1 done",
+		});
+
+		// Task 2 is deliberately not queued on mockPi — if it starts, the mock will
+		// have an unexpected call and the callCount assertion will catch it.
+
+		// Single parallel group with concurrency:1 so task 2 is queued while task 1 runs.
+		const id = `finding1-parallel-no-task2-${Date.now().toString(36)}`;
+		executeAsyncChain(id, {
+			chain: [
+				{
+					parallel: [
+						{ agent: "worker", task: "Parallel task one" },
+						{ agent: "worker", task: "Parallel task two" },
+					],
+					concurrency: 1,
+				},
+			],
+			agents: [makeAgent("worker")],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-finding1-parallel" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			maxSubagentDepth: 2,
+		});
+
+		const asyncDir2 = path.join(ASYNC_DIR, id);
+
+		// ── Step 1: wait for task 1 to signal it is blocking ─────────────────────
+		{
+			const deadline = Date.now() + scaleTestTimeout(20_000);
+			while (!fs.existsSync(task1ReadyMarker)) {
+				if (Date.now() > deadline) assert.fail("Timed out waiting for task 1 ready marker (finding-1-parallel)");
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
+		}
+
+		// ── Step 2: ordinary interrupt so the source runner pauses ─────────────────
+		requestAsyncInterrupt(asyncDir2, { source: "finding1-parallel-test" });
+		await waitForAsyncState(asyncDir2, "paused");
+
+		const pausedStatusRaw2 = JSON.parse(
+			fs.readFileSync(path.join(asyncDir2, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		const pausedGen2 = lifecycleGeneration(pausedStatusRaw2 as Parameters<typeof lifecycleGeneration>[0]);
+
+		// ── Step 3: inject concurrent CANCELLED state on top of the paused checkpoint
+		// With concurrency:1, task 2 is queued in mapConcurrent but has not started.
+		// When we release task 1 below, mapConcurrent will pick up task 2 next.
+		// The parallel callback guard must observe concurrentTerminalStatusAdopted=true
+		// and return early before launching a child process for task 2.
+		const cancelledAt2 = Date.now();
+		transitionLifecycleStatus({
+			asyncDir: asyncDir2,
+			expectedGeneration: pausedGen2,
+			mutate: (status) => ({
+				...status,
+				state: "cancelled" as const,
+				pid: undefined,
+				cancel: { summary: "Test cancellation (finding-1-parallel)", cancelledAt: cancelledAt2 },
+				endedAt: cancelledAt2,
+				lastUpdate: cancelledAt2,
+				steps: status.steps?.map((step) => ({
+					...step,
+					status: "cancelled" as const,
+					endedAt: cancelledAt2,
+					exitCode: 0,
+					pause: undefined,
+					cancel: { summary: "Test cancellation (finding-1-parallel)", cancelledAt: cancelledAt2 },
+				})),
+			}),
+		});
+
+		const afterCancel2 = JSON.parse(
+			fs.readFileSync(path.join(asyncDir2, "status.json"), "utf-8"),
+		) as AsyncStatusPayload;
+		assert.equal(
+			afterCancel2.state,
+			"cancelled",
+			"sanity: cancelled state must be on disk before releasing task 1 (parallel)",
+		);
+
+		// ── Step 4: release task 1 ────────────────────────────────────────────────
+		// Task 1 exits. mapConcurrent processes task 2's callback next (concurrency:1).
+		// Pre-fix (parallel guard removed): task 2 would launch a child process.
+		// Post-fix: the callback guard checks concurrentTerminalStatusAdopted=true and
+		// returns pausedStepResult without starting a child.
+		fs.writeFileSync(task1ReleaseMarker, "", "utf-8");
+
+		// ── Step 5: wait for the result artifact ────────────────────────────────
+		const resultPath2 = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
+
+		// ── Assertions ────────────────────────────────────────────────────────────
+		const resultPayload2 = JSON.parse(fs.readFileSync(resultPath2, "utf-8")) as AsyncResultPayload;
+
+		// Task 2 must never have started: callCount() counts actual mock-pi invocations.
+		assert.equal(mockPi.callCount(), 1, "parallel task 2 must not start after concurrent terminal adoption");
+		// The result must reflect the concurrent terminal winner.
+		assert.equal(
+			resultPayload2.state,
+			"cancelled",
+			"result artifact must reflect the adopted cancelled state (finding-1-parallel)",
 		);
 	});
 

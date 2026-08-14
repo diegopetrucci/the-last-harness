@@ -1098,6 +1098,9 @@ describe("lifecycle state helpers", () => {
 			// Step must carry the persisted terminal status and cancel metadata.
 			assert.equal(persisted?.steps?.[0]?.status, "cancelled");
 			assert.equal(persisted?.steps?.[0]?.cancel?.summary, "Operator cancelled");
+			// A cancelled winner has no error — the stale in-memory error must NOT survive.
+			assert.equal(persisted?.error, undefined, "cancelled winner must not retain stale in-memory error");
+			assert.equal(written.error, undefined, "returned merged record must not carry stale error");
 			// Generation must not regress.
 			assert.ok((persisted?.lifecycle?.generation ?? 0) >= 2, "generation must not regress");
 			// Return value reflects the merged on-disk content.
@@ -1111,18 +1114,135 @@ describe("lifecycle state helpers", () => {
 		}
 	});
 
-	it("CAS downgrade blocked: merged.lifecycle is not advanced after terminal override, so finalization CAS fails on generation mismatch", () => {
-		// This test verifies the second half of the fix: writeStatusPayload must NOT
-		// advance statusPayload.lifecycle.generation when mergeAndWriteSourceRunnerStatus
-		// adopted a persisted terminal state. If it did, the finalization CAS would
-		// pass its expectedGeneration check and could write a non-terminal (e.g.
-		// "paused") state over the persisted terminal winner.
+	it("persisted failed step error survives onto the merged record (not cleared by in-memory step)", () => {
+		// FIX 1 assertion (a): a persisted failed step's error must be preserved
+		// in the merged result, not overwritten by a stale in-memory step without error.
+		const root = tempRoot("pi-lifecycle-step-error-survives-");
+		try {
+			const asyncDir = path.join(root, "run-step-error-survives");
+
+			// Persisted: step failed with an error committed by the CAS writer.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-step-error-survives",
+				mode: "single" as const,
+				state: "failed" as const,
+				startedAt: 100,
+				endedAt: 200,
+				error: "winner step failure",
+				steps: [
+					{
+						agent: "worker",
+						status: "failed" as const,
+						exitCode: 1,
+						endedAt: 200,
+						error: "winner step failure",
+					},
+				],
+				lifecycle: { generation: 2 },
+			});
+
+			// In-memory: stale paused step with no error.
+			const staleInMemory = {
+				runId: "run-step-error-survives",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const }],
+				lifecycle: { generation: 1 },
+			};
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// Run-level error from persisted winner must survive.
+			assert.equal(
+				persisted?.error,
+				"winner step failure",
+				"persisted failed run error must survive onto merged record",
+			);
+			assert.equal(written.error, "winner step failure", "returned merged record must carry persisted run error");
+			// Step-level error from persisted winner must survive.
+			assert.equal(
+				persisted?.steps?.[0]?.error,
+				"winner step failure",
+				"persisted failed step error must survive onto merged record",
+			);
+			assert.equal(
+				written.steps?.[0]?.error,
+				"winner step failure",
+				"returned merged step must carry persisted step error",
+			);
+			assert.equal(persisted?.state, "failed");
+			assert.equal(persisted?.steps?.[0]?.status, "failed");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("cancelled winner clears stale in-memory error at both run and step level (FIX 1 assertion b)", () => {
+		// FIX 1 assertion (b): a cancelled winner (no error) must clear a stale
+		// in-memory error/failed payload at both run and step level.
+		// Concrete case from PR #503 review.
+		const root = tempRoot("pi-lifecycle-cancel-clears-error-");
+		try {
+			const asyncDir = path.join(root, "run-cancel-clears-error");
+
+			// Persisted: run was cancelled — no error field.
+			writeNormalizedLifecycleStatus(asyncDir, {
+				runId: "run-cancel-clears-error",
+				mode: "single" as const,
+				state: "cancelled" as const,
+				startedAt: 100,
+				endedAt: 210,
+				cancel: { cancelledAt: 205, summary: "Operator cancel" },
+				steps: [
+					{
+						agent: "worker",
+						status: "cancelled" as const,
+						exitCode: 0,
+						endedAt: 210,
+						cancel: { cancelledAt: 205, summary: "Operator cancel" },
+					},
+				],
+				lifecycle: { generation: 2 },
+			});
+
+			// In-memory: stale failed step with an error.
+			const staleInMemory = {
+				runId: "run-cancel-clears-error",
+				mode: "single" as const,
+				state: "paused" as const,
+				startedAt: 100,
+				steps: [{ agent: "worker", status: "paused" as const, error: "stale step error" }],
+				lifecycle: { generation: 1 },
+			};
+			const written = mergeAndWriteSourceRunnerStatus(asyncDir, staleInMemory);
+
+			const persisted = readStatus(asyncDir);
+			// Cancelled winner has no error — stale in-memory error must be cleared.
+			assert.equal(persisted?.error, undefined, "cancelled winner must clear stale run-level error");
+			assert.equal(written.error, undefined, "returned merged record must not carry stale run error");
+			// Step-level: cancelled step has no error — stale step error must be cleared.
+			assert.equal(persisted?.steps?.[0]?.error, undefined, "cancelled winner must clear stale step error");
+			assert.equal(written.steps?.[0]?.error, undefined, "returned merged step must not carry stale step error");
+			assert.equal(persisted?.state, "cancelled");
+			assert.equal(persisted?.steps?.[0]?.status, "cancelled");
+			// Cancel metadata from persisted winner must be intact.
+			assert.equal(persisted?.cancel?.summary, "Operator cancel");
+			assert.equal(persisted?.steps?.[0]?.cancel?.summary, "Operator cancel");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("stale-generation CAS invariant: transitionLifecycleStatus with an old generation is rejected", () => {
+		// This test verifies the generic CAS invariant: a transitionLifecycleStatus call
+		// that presents a generation number that is behind the persisted generation is
+		// rejected with an "expected generation" error. This prevents any stale writer
+		// from downgrading a persisted terminal state.
 		//
-		// We simulate this directly: call mergeAndWriteSourceRunnerStatus (which
-		// adopts the persisted terminal state and returns the merged generation),
-		// then attempt transitionLifecycleStatus with the ORIGINAL (pre-terminal)
-		// generation to prove it fails — just as it would when writeStatusPayload
-		// correctly withholds the generation sync after a terminal override.
+		// Note: this test verifies the CAS mechanism directly by calling
+		// transitionLifecycleStatus with a manually retained old generation. It does
+		// not exercise writeStatusPayload or the runner finalization path.
 		const root = tempRoot("pi-lifecycle-cas-downgrade-");
 		try {
 			const asyncDir = path.join(root, "run-cas-downgrade");
@@ -1155,12 +1275,11 @@ describe("lifecycle state helpers", () => {
 			assert.equal(merged.state, "cancelled");
 			assert.equal(lifecycleGeneration(merged), 2);
 
-			// Simulate writeStatusPayload NOT advancing the generation when the merge
-			// adopted a terminal override: the runner keeps the old generation (1).
+			// Hold onto the old generation (1) to simulate a stale caller.
 			const originalGen = lifecycleGeneration(staleInMemory); // = 1
 
-			// Attempt a finalization CAS using the old generation (1). This would be
-			// the downgrade attempt (e.g. writing "paused" over "cancelled").
+			// Attempt a CAS using the old generation (1). This would be a downgrade
+			// attempt (e.g. writing "paused" over "cancelled").
 			// It MUST fail because the persisted status is at generation 2.
 			assert.throws(
 				() =>
@@ -1170,7 +1289,7 @@ describe("lifecycle state helpers", () => {
 						mutate: (status) => ({ ...status, state: "paused" }), // would downgrade
 					}),
 				/expected generation/,
-				"finalization CAS with old generation must be rejected",
+				"CAS with old generation must be rejected",
 			);
 
 			// Persisted state must still be "cancelled" after the failed CAS attempt.

@@ -434,53 +434,50 @@ function mergeAndWriteStatus(asyncDir: string, inMemory: AsyncStatus, persisted:
 	const steps = inMemory.steps?.map((step, i) => {
 		const persistedStep = persisted.steps?.[i];
 		if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status)) return step;
+		// Lifecycle-owned metadata comes from the persisted winner authoritatively,
+		// including its absence: status, endedAt, exitCode, cancel, error, pause.
+		// Source-owned settlement data (model, tokens, acceptance, processCleanup)
+		// continues to come from the in-memory step so it is not lost.
+		const lifecycleOverrides = {
+			status: persistedStep.status,
+			endedAt: persistedStep.endedAt,
+			exitCode: persistedStep.exitCode,
+			cancel: persistedStep.cancel,
+			error: persistedStep.error,
+			// A terminal step has no active pause.
+			pause: undefined as undefined,
+		};
 		if (persistedStep.status === step.status) {
 			// Both sides agree on the terminal status. The concurrent writer may have
-			// committed lifecycle metadata (cancel, endedAt) after the source runner's
-			// last sync. Merge that metadata in while keeping source-owned settlement
-			// fields (model, tokens, acceptance, processCleanup) from the in-memory step.
-			return {
-				...step,
-				endedAt: persistedStep.endedAt ?? step.endedAt,
-				exitCode: persistedStep.exitCode ?? step.exitCode,
-				...(persistedStep.cancel !== undefined ? { cancel: persistedStep.cancel } : {}),
-				// A terminal step has no active pause.
-				pause: undefined,
-			};
+			// committed lifecycle metadata (cancel, endedAt, error) after the source
+			// runner's last sync. Apply persisted lifecycle fields authoritatively,
+			// including clearing fields absent from the persisted winner (e.g. a
+			// cancelled step has no error — a stale in-memory error must not survive).
+			return { ...step, ...lifecycleOverrides };
 		}
-		// Persisted step is terminal and in-memory step has a different (non-terminal)
-		// status. Carry the terminal status and its lifecycle metadata from disk;
-		// take all other fields (model, tokens, acceptance, processCleanup, etc.)
-		// from the source runner's in-memory step so settlement data is not lost.
-		return {
-			...step,
-			status: persistedStep.status,
-			endedAt: persistedStep.endedAt ?? step.endedAt,
-			exitCode: persistedStep.exitCode ?? step.exitCode,
-			// Preserve cancellation metadata so consumers see the full cancel record.
-			...(persistedStep.cancel !== undefined ? { cancel: persistedStep.cancel } : {}),
-			// A terminal step has no active pause.
-			pause: undefined,
-		};
+		// Persisted step is terminal and in-memory step has a different status.
+		// Carry the terminal lifecycle metadata from disk; take source-owned
+		// settlement fields (model, tokens, acceptance, processCleanup, etc.)
+		// from the in-memory step so settlement data is not lost.
+		return { ...step, ...lifecycleOverrides };
 	});
-	// When the persisted run state is terminal and differs from the in-memory
-	// state, carry the run-level metadata committed by the CAS writer so the
-	// merged record stays coherent: cancel metadata, the canonical endedAt
-	// timestamp, and the exit code (when present). This applies equally to
-	// terminal-vs-non-terminal and terminal-vs-conflicting-terminal scenarios.
+	// When the persisted run state is terminal and differs from the in-memory state,
+	// lifecycle-owned metadata comes from the persisted winner authoritatively —
+	// INCLUDING its absence. A stale in-memory error/cancel/endedAt/exitCode/pid/pause
+	// must NOT survive onto the persisted winner's record. Source-owned settlement
+	// data (model, attempts, tokens, acceptance, processCleanup) continues to come
+	// from the in-memory record. This applies to both terminal-vs-non-terminal and
+	// terminal-vs-conflicting-terminal scenarios.
 	const terminalRunOverrides =
 		TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state
 			? {
-					...(persisted.cancel !== undefined ? { cancel: persisted.cancel } : {}),
-					...(persisted.endedAt !== undefined ? { endedAt: persisted.endedAt } : {}),
-					// Carry the persisted failure reason so a "failed" terminal is not
-					// silently reported with the in-memory error (usually undefined).
-					...(persisted.error !== undefined ? { error: persisted.error } : {}),
-					// Clear stale source-runner ownership fields. A terminal run has no
-					// live PID and no active pause owner. Leaving inMemory.pid / inMemory.pause
-					// in the merged record implies the run is still alive and supervised
-					// (AsyncStatus pid :831, pause :799). Explicitly set undefined so the
-					// absence is preserved, not just the value.
+					// Lifecycle-owned fields from the persisted winner — set unconditionally
+					// so that absence on the winner clears any stale value from inMemory.
+					cancel: persisted.cancel,
+					endedAt: persisted.endedAt,
+					error: persisted.error,
+					// A terminal run has no live PID and no active pause owner.
+					// Explicitly set undefined so absence is preserved, not just the value.
 					pid: undefined,
 					pause: undefined,
 				}
