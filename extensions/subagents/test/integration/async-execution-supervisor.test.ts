@@ -129,10 +129,10 @@ describe("async execution utilities", () => {
 			assert.equal(started.isError, undefined);
 			const asyncDir = path.join(ASYNC_DIR, id);
 			assert.ok(runnerPid, "expected async runner pid from started event");
-			await waitForMockPiCall(mockPi, 0, 10_000);
+			await waitForMockPiCall(mockPi, 0);
 			const childPids = startedMockPiPids(mockPi);
 			assert.equal(childPids.length, 1);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(status.state, "paused");
 			assert.equal(status.pid, undefined);
@@ -166,7 +166,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			await waitForMockPiCall(mockPi, 1);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			assert.equal(mockPi.callCount(), 2);
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(continuedStatus.state, "continued");
@@ -235,7 +235,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const pausedPayload = await readAsyncPayload(id);
 			assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
 			mockPi.onCall({ output: "resumed unchanged after reload" });
@@ -248,7 +248,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			assert.equal(resumed.isError, undefined);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
 			assert.equal(typeof continuationRunId, "string");
@@ -289,7 +289,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const reloaded = makeAsyncExecutor();
 		const cancelled = await reloaded.execute(
 			"async-supervisor-cancelled",
@@ -345,7 +345,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			pausedStatus.lifecycle = {
 				...(pausedStatus.lifecycle ?? {}),
@@ -362,7 +362,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			assert.equal(resumed.isError, undefined);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(continuedStatus.state, "continued");
 			assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
@@ -398,7 +398,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 		pausedStatus.lifecycle = {
 			...(pausedStatus.lifecycle ?? {}),
@@ -447,7 +447,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		mockPi.onCall({ output: "resumed race winner" });
 		const reloaded = makeAsyncExecutor([makeAgent("worker", { acceptance: { level: "checked" } })]);
 		const [resumeResult, cancelResult] = await Promise.allSettled([
@@ -537,10 +537,10 @@ describe("async execution utilities", () => {
 				status.state === "pausing" && typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
 			"pausing before interrupt hard kill",
 		);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const childPids = startedMockPiPids(mockPi);
 		assert.equal(childPids.length, 1);
-		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM", 10_000);
+		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM");
 		const payload = await readAsyncPayload(id);
 		const elapsedMs = Date.now() - startedAt;
 		assert.equal(payload.state, "paused");
@@ -602,7 +602,7 @@ describe("async execution utilities", () => {
 				status.state === "running" && typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
 			"running pid before lock contention",
 		);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const childPids = startedMockPiPids(mockPi);
 		assert.equal(childPids.length, 1);
 		writeLifecycleLock(asyncDir);
@@ -912,10 +912,10 @@ describe("async execution utilities", () => {
 		assert.equal(started.isError, undefined);
 		const asyncDir = path.join(ASYNC_DIR, cohortId);
 		assert.ok(runnerPid, "expected async runner pid from started event");
-		await waitForMockPiCall(mockPi, 4, 10_000);
+		await waitForMockPiCall(mockPi, 4);
 		const childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
 		assert.equal(childPids.length, 3);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 		assert.deepEqual(
 			status.steps?.map((step: any) => step.status),

@@ -97,7 +97,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		await waitForMockPiCall(mockPi, 2, 10_000);
+		await waitForMockPiCall(mockPi, 2);
 		const asyncDir = path.join(ASYNC_DIR, id);
 		const statusPath = path.join(asyncDir, "status.json");
 		const statusBeforeInterrupt = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload & {
@@ -105,7 +105,8 @@ describe("async execution utilities", () => {
 		};
 		deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
 
-		const resultPath = await waitForAsyncResultFile(id, 30_000);
+		// 30s base: spawns 3 parallel children; extra headroom for slow runners.
+		const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
@@ -169,7 +170,7 @@ describe("async execution utilities", () => {
 			});
 
 			// Wait for both children to be running before delivering the interrupt.
-			await waitForMockPiCall(mockPi, 1, 10_000);
+			await waitForMockPiCall(mockPi, 1);
 			const asyncDir = path.join(ASYNC_DIR, id);
 			const statusPath = path.join(asyncDir, "status.json");
 			const statusBeforeInterrupt = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload & {
@@ -177,7 +178,8 @@ describe("async execution utilities", () => {
 			};
 			deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
 
-			const resultPath = await waitForAsyncResultFile(id, 30_000);
+			// 30s base: spawns 2 parallel children; extra headroom for slow runners.
+			const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 
@@ -260,7 +262,7 @@ describe("async execution utilities", () => {
 				sessionRoot,
 			});
 
-			await waitForMockPiCall(mockPi, 1, 10_000);
+			await waitForMockPiCall(mockPi, 1);
 			const runAsyncDir = path.join(ASYNC_DIR, id);
 			const statusPath = path.join(runAsyncDir, "status.json");
 			const statusBeforeInterrupt = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload & {
@@ -269,7 +271,8 @@ describe("async execution utilities", () => {
 			deliverInterruptRequest({ asyncDir: runAsyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
 
 			// Wait for the result artifact (state: "complete" is the persisted string).
-			const resultPath = await waitForAsyncResultFile(id, 30_000);
+			// 30s base: spawns 2 parallel children; extra headroom for slow runners.
+			const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.state, "paused");
 
@@ -326,7 +329,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const asyncDir = path.join(ASYNC_DIR, id);
 		const statusPath = path.join(asyncDir, "status.json");
 		const statusBeforeInterrupt = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload & {
@@ -334,7 +337,8 @@ describe("async execution utilities", () => {
 		};
 		deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
 
-		const resultPath = await waitForAsyncResultFile(id, 30_000);
+		// 30s base: chain step interrupt; extra headroom for slow runners.
+		const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(30_000));
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
 		const eventLog = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8");
@@ -435,8 +439,8 @@ describe("async execution utilities", () => {
 			timeoutMs: 1_500,
 		});
 
-		await waitForMockPiCall(mockPi, 1, 10_000);
-		const resultPath = await waitForAsyncResultFile(id, 8_000);
+		await waitForMockPiCall(mockPi, 1);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "failed");
@@ -497,7 +501,7 @@ describe("async execution utilities", () => {
 			},
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 5_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
@@ -507,7 +511,11 @@ describe("async execution utilities", () => {
 		assert.equal(payload.results[0]?.acceptance, undefined);
 		assert.equal(status.steps?.[0]?.timedOut, true);
 		assert.ok(
-			elapsedMs < timeoutMs + 4_000,
+			// The 4_000ms slack is load-sensitive: on a slow CI machine shutdown
+			// overhead after the timeout fires can exceed a fixed constant.
+			// Scale it so the bound absorbs machine slowness. The verify sleep
+			// (30_000ms) vastly exceeds the scaled bound so the ratio is safe.
+			elapsedMs < timeoutMs + scaleTestTimeout(4_000),
 			`timeout should cancel acceptance verification well before the verify command completes, elapsed ${elapsedMs}ms`,
 		);
 	});
@@ -517,6 +525,15 @@ describe("async execution utilities", () => {
 	}, async () => {
 		mockPi.onCall({ output: "implementation complete" });
 		const id = `async-interrupt-acceptance-${Date.now().toString(36)}`;
+		// Ratio invariant: verifySleepMs sets a floor that proves interrupt aborted
+		// verification rather than waiting for it to complete. promptnessMs must
+		// remain strictly below verifySleepMs on every machine, and both must scale
+		// together so the invariant is preserved under TLH_TEST_TIMEOUT_SCALE.
+		// verifyTimeoutMs must remain safely above verifySleepMs so the step cannot
+		// time out on its own before the interrupt lands.
+		const verifySleepMs = scaleTestTimeout(5_000);
+		const promptnessMs = scaleTestTimeout(3_000);
+		const verifyTimeoutMs = verifySleepMs * 2;
 		const startedAt = Date.now();
 		executeAsyncSingle(id, {
 			agent: "worker",
@@ -536,22 +553,26 @@ describe("async execution utilities", () => {
 			acceptance: {
 				level: "verified",
 				verify: [
-					{ id: "slow", command: `${process.execPath} -e "setTimeout(()=>process.exit(0), 5000)"`, timeoutMs: 10_000 },
+					{
+						id: "slow",
+						command: `${process.execPath} -e "setTimeout(()=>process.exit(0), ${verifySleepMs})"`,
+						timeoutMs: verifyTimeoutMs,
+					},
 				],
 			},
 		});
 
 		const asyncDir = path.join(ASYNC_DIR, id);
 		const statusPath = path.join(asyncDir, "status.json");
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		await waitForAsyncState(asyncDir, "running");
 		const statusBeforeInterrupt = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload & {
 			pid?: number;
 		};
 		deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
 
-		const resultPath = await waitForAsyncResultFile(id, 8_000);
-		await waitForAsyncState(asyncDir, "paused", 8_000);
+		const resultPath = await waitForAsyncResultFile(id);
+		await waitForAsyncState(asyncDir, "paused");
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
@@ -561,7 +582,10 @@ describe("async execution utilities", () => {
 		assert.equal(payload.results[0]?.acceptance?.status, "skipped");
 		assert.equal(status.steps?.[0]?.status, "paused");
 		assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
-		assert.ok(elapsedMs < 3_000, `interrupt should abort async verification promptly, elapsed ${elapsedMs}ms`);
+		assert.ok(
+			elapsedMs < promptnessMs,
+			`interrupt should abort async verification promptly, elapsed ${elapsedMs}ms (bound=${promptnessMs}ms, verifySleep=${verifySleepMs}ms)`,
+		);
 	});
 
 	it("async turn budget allows a terminal final grace turn", async () => {
@@ -590,7 +614,7 @@ describe("async execution utilities", () => {
 			turnBudget: { maxTurns: 1, graceTurns: 1 },
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.success, true);
@@ -635,7 +659,7 @@ describe("async execution utilities", () => {
 			turnBudget: { maxTurns: 1, graceTurns: 1 },
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.success, false);
@@ -656,10 +680,16 @@ describe("async execution utilities", () => {
 	});
 
 	it("background forced drain after final assistant output is cleanup success", async () => {
+		// Ratio invariant: keepaliveMs sets the mock's natural exit boundary.
+		// elapsed < drainBoundMs proves the runner cleaned up the child proactively
+		// rather than waiting for the keepalive to expire. Both must scale together
+		// so the invariant is preserved under TLH_TEST_TIMEOUT_SCALE.
+		const keepaliveMs = scaleTestTimeout(10_000);
+		const drainBoundMs = scaleTestTimeout(9_000);
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("async-done-before-drain")],
 			stderr: "Done after 1 turn(s). Ready for input.\n",
-			keepAliveAfterFinalMessageMs: 10000,
+			keepAliveAfterFinalMessageMs: keepaliveMs,
 		});
 
 		const id = `async-final-drain-${Date.now().toString(36)}`;
@@ -685,7 +715,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) {
 				assert.fail(`Timed out waiting for async result file: ${resultPath}`);
@@ -696,8 +726,8 @@ describe("async execution utilities", () => {
 		const elapsed = Date.now() - start;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.ok(
-			elapsed < 9000,
-			`should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms`,
+			elapsed < drainBoundMs,
+			`should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms (bound=${drainBoundMs}ms, keepalive=${keepaliveMs}ms)`,
 		);
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
@@ -706,9 +736,15 @@ describe("async execution utilities", () => {
 	});
 
 	it("background forced drain after empty terminal assistant output is cleanup success", async () => {
+		// Ratio invariant: keepaliveMsEmpty sets the mock's natural exit boundary.
+		// elapsed < drainBoundMsEmpty proves the runner cleaned up the child proactively
+		// rather than waiting for the keepalive to expire. Both must scale together
+		// so the invariant is preserved under TLH_TEST_TIMEOUT_SCALE.
+		const keepaliveMsEmpty = scaleTestTimeout(10_000);
+		const drainBoundMsEmpty = scaleTestTimeout(9_000);
 		mockPi.onCall({
 			jsonl: [events.assistantMessage("")],
-			keepAliveAfterFinalMessageMs: 10000,
+			keepAliveAfterFinalMessageMs: keepaliveMsEmpty,
 		});
 
 		const id = `async-final-drain-empty-${Date.now().toString(36)}`;
@@ -733,7 +769,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -742,8 +778,8 @@ describe("async execution utilities", () => {
 		const elapsed = Date.now() - start;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
 		assert.ok(
-			elapsed < 9000,
-			`should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms`,
+			elapsed < drainBoundMsEmpty,
+			`should clean up async child before the mock's natural keepalive exit, took ${elapsed}ms (bound=${drainBoundMsEmpty}ms, keepalive=${keepaliveMsEmpty}ms)`,
 		);
 		assert.equal(payload.success, true);
 		assert.equal(payload.exitCode, 0);
@@ -790,7 +826,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -833,7 +869,7 @@ describe("async execution utilities", () => {
 		await waitForAsyncState(asyncDir, "running");
 		requestAsyncInterrupt(asyncDir, { source: "async-execution-test" });
 
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		const processCleanup = payload.results[0]?.processCleanup;
@@ -970,10 +1006,10 @@ describe("async execution utilities", () => {
 				status.state === "pausing" && typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
 			"pausing pid before finalization lock contention",
 		);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const childPids = startedMockPiPids(mockPi);
 		assert.equal(childPids.length, 1);
-		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM", 10_000);
+		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM");
 		writeLifecycleLock(asyncDir);
 		const lockedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(lockedStatus.state, "pausing");
@@ -1259,18 +1295,12 @@ describe("async execution utilities", () => {
 		// not deferred to a CAS block that only runs when supervisorPauseRequest
 		// is set. Without the fix resultState falls through to `interrupted ? "paused"`
 		// and the artifact says `state: "paused"`.
+		// FIX 11: the adopted terminal state also beats any stale turnBudgetExceeded
+		// flag in resultState precedence (concurrentTerminalStatusAdopted wins).
 		assert.equal(
 			resultPayload.state,
 			"cancelled",
 			"result artifact must reflect the adopted cancelled state, not stale paused",
-		);
-		// FIX 11: the adopted terminal state must also beat any stale turnBudgetExceeded
-		// flag in resultState precedence. Even if a late message_end fired updateStepTurnBudget
-		// before the interrupt write, concurrentTerminalStatusAdopted wins.
-		assert.equal(
-			resultPayload.state !== "failed",
-			true,
-			"result artifact must not be failed due to stale budget state",
 		);
 	});
 });

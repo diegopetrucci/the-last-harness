@@ -40,6 +40,7 @@ import {
 	waitForMockPiArgs,
 	waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 describe("async execution utilities", () => {
 	let tempDir: string;
@@ -110,7 +111,7 @@ describe("async execution utilities", () => {
 			});
 
 			assert.equal(result.isError, undefined);
-			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const resultPath = await waitForAsyncResultFile(id);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output, "non-node exec async done");
@@ -149,7 +150,7 @@ describe("async execution utilities", () => {
 			});
 
 			assert.equal(result.isError, undefined);
-			const resultPath = await waitForAsyncResultFile(id, 10_000);
+			const resultPath = await waitForAsyncResultFile(id);
 			const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 			assert.equal(payload.success, true);
 			assert.equal(payload.results[0]?.output, "stale node exec async done");
@@ -278,7 +279,7 @@ describe("async execution utilities", () => {
 			childIntercomTarget: (agent, index) => `subagent-${agent}-${id}-${index + 1}`,
 		});
 		assert.equal(run.isError, undefined);
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		assert.equal(payload.success, true);
 		assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
@@ -316,7 +317,7 @@ describe("async execution utilities", () => {
 		assert.match(singleResult.content[0]?.text ?? "", /^Async: worker \[[^\]\n]+\]$/);
 		assert.doesNotMatch(singleResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.equal(singleResult.content[0]?.text?.includes("\n"), false);
-		await waitForAsyncResultFile(singleId, 30_000);
+		await waitForAsyncResultFile(singleId, scaleTestTimeout(30_000));
 
 		mockPi.onCall({ output: "parallel one done" });
 		mockPi.onCall({ output: "parallel two done" });
@@ -337,7 +338,7 @@ describe("async execution utilities", () => {
 		assert.match(parallelResult.content[0]?.text ?? "", /^Async parallel: .+ \[[^\]\n]+\]$/);
 		assert.doesNotMatch(parallelResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.equal(parallelResult.content[0]?.text?.includes("\n"), false);
-		const parallelResultPath = await waitForAsyncResultFile(parallelId, 10_000);
+		const parallelResultPath = await waitForAsyncResultFile(parallelId);
 		const parallelPayload = JSON.parse(fs.readFileSync(parallelResultPath, "utf-8")) as {
 			agent?: string;
 			mode?: string;
@@ -355,7 +356,7 @@ describe("async execution utilities", () => {
 		assert.match(chainResult.content[0]?.text ?? "", /^Async chain: .+ \[[^\]\n]+\]$/);
 		assert.doesNotMatch(chainResult.content[0]?.text ?? "", /Do not run sleep timers or polling loops/);
 		assert.equal(chainResult.content[0]?.text?.includes("\n"), false);
-		await waitForAsyncResultFile(chainId, 10_000);
+		await waitForAsyncResultFile(chainId);
 	});
 
 	it("applies agent acceptance roles to inferred async acceptance", async () => {
@@ -480,7 +481,7 @@ describe("async execution utilities", () => {
 		assert.ok(asyncId, "expected asyncId");
 		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
 		const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -501,7 +502,7 @@ describe("async execution utilities", () => {
 			asyncId,
 			"async-top-output.md",
 		);
-		const outputDeadline = Date.now() + 5_000;
+		const outputDeadline = Date.now() + scaleTestTimeout(5_000);
 		while (!fs.existsSync(outputPath)) {
 			if (Date.now() > outputDeadline) {
 				assert.fail(`Timed out waiting for saved output file: ${outputPath}`);
@@ -587,7 +588,7 @@ describe("async execution utilities", () => {
 		const asyncId = result.details?.asyncId;
 		assert.ok(asyncId, "expected asyncId");
 		const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
-		const deadline = Date.now() + 10_000;
+		const deadline = Date.now() + scaleTestTimeout(10_000);
 		while (!fs.existsSync(resultPath)) {
 			if (Date.now() > deadline) assert.fail(`Timed out waiting for async result file: ${resultPath}`);
 			await new Promise((resolve) => setTimeout(resolve, 100));
@@ -658,7 +659,7 @@ describe("async execution utilities", () => {
 		});
 
 		assert.ok(!result.isError);
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.deepEqual(payload.results[0]?.structuredOutput, { value: "Alpha structured" });
@@ -720,7 +721,7 @@ describe("async execution utilities", () => {
 		});
 
 		assert.ok(!result.isError, `should launch: ${JSON.stringify(result.content)}`);
-		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const resultPath = await waitForAsyncResultFile(id);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.success, true);
@@ -797,13 +798,12 @@ describe("async execution utilities", () => {
 		const firstSessionFile = path.join(sessionDir, "first.jsonl");
 		const secondSessionFile = path.join(sessionDir, "second.jsonl");
 
-		await waitForAsyncControlCondition(asyncDir, (status) => status.steps?.[0]?.status === "running", 10_000);
+		await waitForAsyncControlCondition(asyncDir, (status) => status.steps?.[0]?.status === "running");
 		fs.mkdirSync(sessionDir, { recursive: true });
 		fs.writeFileSync(firstSessionFile, "", "utf-8");
 		await waitForAsyncControlCondition(
 			asyncDir,
 			(status) => status.steps?.[0]?.status === "complete" && status.steps?.[1]?.status === "running",
-			10_000,
 		);
 		fs.writeFileSync(secondSessionFile, "", "utf-8");
 
@@ -815,7 +815,6 @@ describe("async execution utilities", () => {
 		const { status } = await waitForAsyncControlCondition(
 			asyncDir,
 			(current) => current.state === "paused" && current.steps?.[1]?.status === "paused",
-			10_000,
 		);
 		assert.equal(status.steps?.[0]?.sessionFile, path.resolve(firstSessionFile));
 		assert.equal(status.steps?.[1]?.sessionFile, path.resolve(secondSessionFile));
@@ -887,8 +886,8 @@ describe("async execution utilities", () => {
 			timeoutMs,
 		});
 
-		await waitForMockPiCall(mockPi, 0, 10_000);
-		const resultPath = await waitForAsyncResultFile(id, 8_000);
+		await waitForMockPiCall(mockPi, 0);
+		const resultPath = await waitForAsyncResultFile(id);
 		const elapsedMs = Date.now() - startedAt;
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8")) as AsyncStatusPayload;
