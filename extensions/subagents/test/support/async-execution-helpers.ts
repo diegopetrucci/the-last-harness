@@ -534,6 +534,6 @@ export function removeLifecycleLock(asyncDir: string): void {
 // ---------------------------------------------------------------------------
 
 export async function readAsyncPayload(id: string): Promise<AsyncResultPayload> {
-	const resultPath = await waitForAsyncResultFile(id, 10_000);
+	const resultPath = await waitForAsyncResultFile(id);
 	return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 }

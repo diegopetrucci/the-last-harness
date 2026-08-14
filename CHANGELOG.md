@@ -10,7 +10,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Bumped the pinned Pi runtime to `0.84.2`.
+- Refreshed bundled npm default-extension pins: `pi-openai-fast` `0.1.13`→`0.1.15`, `pi-anthropic-auth` `2.0.1`→`2.0.3`, `pi-inline-bash` `0.1.8`→`0.1.9`, `pi-notify` `0.1.14`→`0.1.15`, `pi-context-inspector` `0.1.10`→`0.1.11`, `pi-quiet-tools` `0.1.9`→`0.1.10`, and `pi-dirty-repo-guard` `0.1.8`→`0.1.9`; `mcporter` `2.11.0` and `pi-web-access` `0.10.10` were already current and remain unchanged.
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
+
+### Fixed
+
+- Fixed async subagent runs that could hang after being paused and resumed.
 
 ## [0.37.0] - 2026-08-11
 

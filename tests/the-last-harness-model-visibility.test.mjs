@@ -114,6 +114,7 @@ test("hidden model defaults stay pinned to the approved ordered list", () => {
 		"anthropic/claude-opus-4-5",
 		"anthropic/claude-opus-4-5-20251101",
 		"anthropic/claude-opus-4-6",
+		"anthropic/claude-opus-4-7",
 		"anthropic/claude-sonnet-4-0",
 		"anthropic/claude-sonnet-4-20250514",
 		"anthropic/claude-sonnet-4-5",
@@ -123,6 +124,7 @@ test("hidden model defaults stay pinned to the approved ordered list", () => {
 		"openai-codex/gpt-5.3-codex-spark",
 		"openai-codex/gpt-5.4",
 		"openai-codex/gpt-5.4-mini",
+		"openai-codex/gpt-5.6-luna",
 	]);
 });
 
