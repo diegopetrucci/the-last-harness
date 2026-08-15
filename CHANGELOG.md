@@ -6,19 +6,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
-- Argument-free `/thinking` and `/effort` selections now offer the same session-only or all-sessions scope; typed levels and thinking cycling remain persistent.
-- The collapsed TLH header now shows an always-visible, approximate launch-context allocation across TLH, AGENTS/CLAUDE.md, Skills, Tools, and Other.
-- The launch-context header allocation now includes a conditional `MCP` segment between `Skills` and `Tools` when one or more MCP tools are active at launch. `Tools` now reports non-MCP tools only; MCP cost is carved out and shown separately. The `MCP` segment is omitted entirely when no MCP tools are present.
+- Changing `/model`, `/thinking` or `/effort` now asks you whether it should apply to only that session, or 
+- At launch, TLH now shows what’s eating up your context.
 
 ### Changed
 
-- MCP tool classification is now unified across the launch header, footer live-context percentage, and `/tokens` breakdown. The footer's MCP percentage may be higher for MCP adapters not on the built-in allowlist: adapters loaded from an `npm:` or `git:` package identifier whose name matches `mcp` are now counted. Locally-loaded packages (bare filesystem paths) and loose extensions (`local`) are intentionally excluded. The `/tokens` view classifies tools by source string only, not file path.
 - Bumped the pinned Pi runtime to `0.84.2`.
-- Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
-- Refreshed bundled npm default-extension pins: `pi-openai-fast` `0.1.13`→`0.1.15`, `pi-anthropic-auth` `2.0.1`→`2.0.3`, `pi-inline-bash` `0.1.8`→`0.1.9`, `pi-notify` `0.1.14`→`0.1.15`, `pi-context-inspector` `0.1.10`→`0.1.11`, `pi-quiet-tools` `0.1.9`→`0.1.10`, and `pi-dirty-repo-guard` `0.1.8`→`0.1.9`; `mcporter` `2.11.0` and `pi-web-access` `0.10.10` were already current and remain unchanged.
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
-- The installer's default output is now more coincise.```
+- The installer's default output is now more coincise.
 
 ### Fixed
 
