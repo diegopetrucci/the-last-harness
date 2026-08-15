@@ -101,7 +101,7 @@ describe("async execution utilities", () => {
 			const started = executeAsyncSingle!(id, {
 				agent: "worker",
 				task: "Ask for a supervisor decision and stop there.",
-				agentConfig: makeAgent("worker", { acceptance: { level: "checked" }, maxExecutionTimeMs: 5_000 }),
+				agentConfig: makeAgent("worker", { maxExecutionTimeMs: 5_000 }),
 				ctx: {
 					pi: {
 						events: {
@@ -157,9 +157,7 @@ describe("async execution utilities", () => {
 			assert.equal(resumeTarget.kind, "revive");
 			assert.equal(resumeTarget.pauseKind, "awaiting_supervisor");
 			mockPi.onCall({ output: "resumed after supervisor reply" });
-			const reloaded = makeAsyncExecutor([
-				makeAgent("worker", { acceptance: { level: "checked" }, maxExecutionTimeMs: 5_000 }),
-			]);
+			const reloaded = makeAsyncExecutor([makeAgent("worker", { maxExecutionTimeMs: 5_000 })]);
 			await reloaded.execute(
 				"async-supervisor-resume",
 				{ action: "resume", id, message: "Supervisor replied: continue.", timeoutMs: resumeTimeoutMs },
@@ -220,7 +218,7 @@ describe("async execution utilities", () => {
 			executeAsyncSingle!(id, {
 				agent: "worker",
 				task: "Ask on intercom and wait.",
-				agentConfig: makeAgent("worker", { acceptance: { level: "checked" } }),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -298,7 +296,6 @@ describe("async execution utilities", () => {
 				agentConfig: makeAgent("worker", {
 					model: "anthropic/claude-sonnet-4",
 					thinking: "high",
-					acceptance: { level: "checked" },
 				}),
 				ctx: {
 					pi: { events: { emit() {} } },
@@ -331,9 +328,8 @@ describe("async execution utilities", () => {
 			await waitForPidsToExit(startedMockPiPids(mockPi), `paused model-identity run ${id}`);
 
 			mockPi.onCall({ output: "resumed on the persisted child model" });
-			const reloaded = makeAsyncExecutor([
-				makeAgent("worker", { model: "openai/gpt-5", thinking: "low", acceptance: { level: "checked" } }),
-			]);
+			const reloaded = makeAsyncExecutor([makeAgent("worker", { model: "openai/gpt-5", thinking: "low" })]);
+
 			const resumed = await reloaded.execute(
 				"async-supervisor-model-restore-resume",
 				{ action: "resume", id, message: "Supervisor replied: continue." },
@@ -386,7 +382,7 @@ describe("async execution utilities", () => {
 			executeAsyncSingle!(id, {
 				agent: "worker",
 				task: "Ask for a supervisor decision and stop there.",
-				agentConfig: makeAgent("worker", { acceptance: { level: "checked" } }),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -405,7 +401,7 @@ describe("async execution utilities", () => {
 			const pausedPayload = await readAsyncPayload(id);
 			assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
 			mockPi.onCall({ output: "resumed unchanged after reload" });
-			const reloaded = makeAsyncExecutor([makeAgent("worker", { acceptance: { level: "checked" } })]);
+			const reloaded = makeAsyncExecutor([makeAgent("worker")]);
 			const resumed = await reloaded.execute(
 				"async-supervisor-resume-unchanged",
 				{ action: "resume", id },
@@ -496,7 +492,7 @@ describe("async execution utilities", () => {
 			executeAsyncSingle!(id, {
 				agent: "worker",
 				task: "Ask on intercom and wait.",
-				agentConfig: makeAgent("worker", { acceptance: { level: "checked" } }),
+				agentConfig: makeAgent("worker"),
 				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 				artifactConfig: {
 					enabled: false,
@@ -519,7 +515,7 @@ describe("async execution utilities", () => {
 			};
 			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify(pausedStatus, null, 2), "utf-8");
 			mockPi.onCall({ output: "resumed after dead-owner recovery" });
-			const reloaded = makeAsyncExecutor([makeAgent("worker", { acceptance: { level: "checked" } })]);
+			const reloaded = makeAsyncExecutor([makeAgent("worker")]);
 			const resumed = await reloaded.execute(
 				"async-supervisor-resume-recover",
 				{ action: "resume", id, message: "Continue." },
@@ -598,7 +594,7 @@ describe("async execution utilities", () => {
 		executeAsyncSingle!(id, {
 			agent: "worker",
 			task: "Ask for a supervisor decision and stop there.",
-			agentConfig: makeAgent("worker", { acceptance: { level: "checked" } }),
+			agentConfig: makeAgent("worker"),
 			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
 			artifactConfig: {
 				enabled: false,
@@ -615,7 +611,8 @@ describe("async execution utilities", () => {
 		const asyncDir = path.join(ASYNC_DIR, id);
 		await waitForAsyncState(asyncDir, "paused");
 		mockPi.onCall({ output: "resumed race winner" });
-		const reloaded = makeAsyncExecutor([makeAgent("worker", { acceptance: { level: "checked" } })]);
+		const reloaded = makeAsyncExecutor([makeAgent("worker")]);
+
 		const [resumeResult, cancelResult] = await Promise.allSettled([
 			reloaded.execute(
 				"async-supervisor-race-resume",

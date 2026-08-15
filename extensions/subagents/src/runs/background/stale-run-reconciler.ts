@@ -4,6 +4,7 @@ import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
 	RESULTS_DIR,
 	type AsyncParallelGroupStatus,
+	type AsyncResultArtifact,
 	type AsyncStatus,
 	type ContextPressureProjection,
 	type ContextPressureThreshold,
@@ -328,7 +329,7 @@ function buildFailedRepair(
 	asyncDir: string,
 	now: number,
 	reason?: string,
-): { status: AsyncStatus; result: object; message: string } {
+): { status: AsyncStatus; result: AsyncResultArtifact; message: string } {
 	const runId = status.runId || path.basename(asyncDir);
 	const pid = typeof status.pid === "number" ? status.pid : "unknown";
 	const baseMessage =
@@ -412,7 +413,7 @@ function buildFailedRepair(
 			asyncDir,
 			sessionId: status.sessionId,
 			sessionFile: status.sessionFile,
-		},
+		} satisfies AsyncResultArtifact,
 	};
 }
 

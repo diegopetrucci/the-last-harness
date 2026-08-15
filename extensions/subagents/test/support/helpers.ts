@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import type { AcceptanceInput, AgentProgress, PublicNestedRunSummary, NestedRunState } from "../../src/shared/types.ts";
+import type { AgentProgress, PublicNestedRunSummary, NestedRunState } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import type { AsyncRunnerStepBuildParams } from "../../src/runs/background/async-execution.ts";
 import type {
@@ -72,15 +72,9 @@ export function makeAgentConfigs(names: string[]): AgentConfig[] {
 }
 
 /**
- * Creates a minimal AgentConfig for test fixtures. The `acceptance` extension
- * is accepted in overrides for supervisor tests that set per-invocation
- * acceptance requirements; it is not in the production AgentConfig shape but
- * is carried on the runtime object without being part of the declared return type.
+ * Creates a minimal AgentConfig for test fixtures.
  */
-export function makeAgent(
-	name: string,
-	overrides: Partial<AgentConfig> & { acceptance?: AcceptanceInput } = {},
-): AgentConfig {
+export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		name,
 		description: `Test agent: ${name}`,

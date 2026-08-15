@@ -15,7 +15,12 @@ import * as path from "node:path";
 import { tryImport } from "./helpers.ts";
 import type { MockPi } from "./helpers.ts";
 import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
-import type { AsyncStatus, ContextPressureProjection, ContextPressureThreshold } from "../../src/shared/types.ts";
+import type {
+	AsyncResultArtifact,
+	AsyncStatus,
+	ContextPressureProjection,
+	ContextPressureThreshold,
+} from "../../src/shared/types.ts";
 
 export type { MockPi };
 
@@ -29,114 +34,12 @@ export interface AsyncExecutionResult {
 	details: { asyncId?: string; timeoutMs?: number; deadlineAt?: number };
 }
 
-export interface AsyncResultPayload {
-	lifecycleArtifactVersion?: number;
-	success: boolean;
-	state?: string;
-	exitCode?: number;
-	sessionId?: string;
-	mode?: string;
-	summary?: string;
-	error?: string;
-	pause?: { kind?: string };
-	timeoutMs?: number;
-	deadlineAt?: number;
-	timedOut?: boolean;
-	turnBudget?: {
-		maxTurns: number;
-		graceTurns: number;
-		outcome: string;
-		turnCount: number;
-		wrapUpRequestedAtTurn?: number;
-		exceededAtTurn?: number;
-	};
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
-	totalTokens?: { input: number; output: number; total: number };
-	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{
-		agent?: string;
-		output?: string;
-		success?: boolean;
-		error?: string;
-		interrupted?: boolean;
-		sessionFile?: string;
-		timedOut?: boolean;
-		terminationReason?: string;
-		contextUsage?: {
-			restoredTokens?: number;
-			contextTokens?: number;
-			peakTokens?: number;
-			contextWindow?: number;
-			contextPercent?: number;
-		};
-		turnBudget?: {
-			maxTurns: number;
-			graceTurns: number;
-			outcome: string;
-			turnCount: number;
-			wrapUpRequestedAtTurn?: number;
-			exceededAtTurn?: number;
-		};
-		turnBudgetExceeded?: boolean;
-		wrapUpRequested?: boolean;
-		model?: string;
-		thinking?: string;
-		modelIdentity?: { provider: string; model: string; thinking?: string };
-		modelResolution?: {
-			kind?: string;
-			original?: { provider: string; model: string; thinking?: string };
-			resumed?: { provider: string; model: string; thinking?: string };
-			reason?: string;
-		};
-		attemptedModels?: string[];
-		modelAttempts?: Array<{ success?: boolean; error?: string }>;
-		modelFallbackNotice?: string;
-		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-		structuredOutput?: unknown;
-		intercomTarget?: string;
-		activeRuntimeMs?: number;
-		artifactPaths?: { metadataPath?: string };
-		acceptance?: {
-			status?: string;
-			effectiveAcceptance?: { level?: string };
-			childReport?: unknown;
-			runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
-		};
-		exitCode?: number | null;
-		contextPressure?: ContextPressureProjection;
-		contextPressureCrossedThresholds?: ContextPressureThreshold[];
-		processCleanup?: {
-			attempted?: boolean;
-			terminated?: boolean;
-			processGroupId?: number;
-			liveProcessesDetected?: boolean;
-			skippedReason?: string;
-			signals?: string[];
-		};
-	}>;
-	outputs?: Record<string, { text?: string; structured?: unknown }>;
-	workflowGraph?: {
-		nodes?: Array<{
-			kind?: string;
-			label?: string;
-			phase?: string;
-			status?: string;
-			acceptanceStatus?: string;
-			error?: string;
-			outputName?: string;
-			structured?: boolean;
-			children?: Array<{
-				label?: string;
-				outputName?: string;
-				itemKey?: string;
-				status?: string;
-				acceptanceStatus?: string;
-				error?: string;
-			}>;
-		}>;
-	};
-}
+/**
+ * Test mirror of the async result artifact. Derived from the canonical
+ * AsyncResultArtifact so that field names and types stay in sync automatically.
+ * Tests cast parsed JSON to this type; the canonical type validates writers.
+ */
+export type AsyncResultPayload = AsyncResultArtifact;
 
 /**
  * Typed directly from the production AsyncStatus so test fixtures stay in sync.
