@@ -33,6 +33,7 @@ extensions/the-last-harness/activity-reporters.js linguist-generated=true
 extensions/the-last-harness/activity-tracker.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message/prompt.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message/session.js linguist-generated=true
+extensions/the-last-harness/annotate-last-message/theme.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message/types.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message/ui.js linguist-generated=true
 extensions/the-last-harness/annotate-last-message.js linguist-generated=true

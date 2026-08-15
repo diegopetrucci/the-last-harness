@@ -4,6 +4,9 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
+const { buildAnnotateLastMessageHtml } = await jiti.import(
+  "../extensions/the-last-harness/annotate-last-message/ui.ts",
+);
 const { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback } = await jiti.import(
   "../extensions/the-last-harness/annotate-last-message/prompt.ts",
 );
@@ -540,4 +543,129 @@ test("annotate-last-message sends feedback to the agent via sendUserMessage with
   assert.match(sent[0].message, /^Please revisit your last assistant message/);
   assert.deepEqual(sent[0].options, { deliverAs: "followUp" });
   assert.equal(context.notifications.at(-1)?.message, "Annotation feedback sent to the agent.");
+});
+
+// ---------------------------------------------------------------------------
+// buildAnnotateLastMessageHtml — theme injection
+// ---------------------------------------------------------------------------
+
+const MINIMAL_DATA = {
+  text: "Hello",
+  lines: [{ number: 1, text: "Hello" }],
+  sections: [
+    { id: "section-1", index: 1, startLine: 1, endLine: 1, preview: "Hello", text: "Hello" },
+  ],
+};
+
+test("buildAnnotateLastMessageHtml: built HTML contains injected theme custom properties", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA);
+  // The vars must be declared inside the injected <style id="tlh-theme-vars"> block,
+  // not merely referenced in CSS rules elsewhere in the page.
+  const match = html.match(/<style[^>]+id="tlh-theme-vars"[^>]*>([\s\S]*?)<\/style>/);
+  assert.ok(match, '<style id="tlh-theme-vars"> element must be present in the built HTML');
+  const styleContent = match[1];
+  assert.match(styleContent, /--mdHeading/, "injected block must declare --mdHeading");
+  assert.match(styleContent, /--mdCode/, "injected block must declare --mdCode");
+  assert.match(styleContent, /--accent/, "injected block must declare --accent");
+  assert.match(styleContent, /--muted/, "injected block must declare --muted");
+  assert.match(styleContent, /--dim/, "injected block must declare --dim");
+});
+
+test("buildAnnotateLastMessageHtml: __INLINE_THEME__ placeholder is replaced", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA);
+  assert.doesNotMatch(html, /__INLINE_THEME__/);
+});
+
+test("buildAnnotateLastMessageHtml: injected :root block appears after static :root defaults", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA);
+  // The static :root with fallback --accent: #f4c95d must appear before the
+  // injected :root block (which also defines --accent), so the injected value
+  // wins the cascade.
+  const staticDefaultPos = html.indexOf("--accent: #f4c95d");
+  const tlhThemeVarsPos = html.indexOf('id="tlh-theme-vars"');
+  assert.ok(staticDefaultPos !== -1, "static --accent fallback not found");
+  assert.ok(tlhThemeVarsPos !== -1, "tlh-theme-vars style element not found");
+  assert.ok(
+    staticDefaultPos < tlhThemeVarsPos,
+    "injected theme vars must appear after the static :root defaults to win the cascade",
+  );
+});
+
+test("buildAnnotateLastMessageHtml: existing inline-data escaping behaviour is unchanged", () => {
+  const dataWithSpecialChars = {
+    text: "<script>alert('xss')</script>",
+    lines: [{ number: 1, text: "<script>alert('xss')</script>" }],
+    sections: [],
+  };
+  const html = buildAnnotateLastMessageHtml(dataWithSpecialChars);
+  // Angle brackets must be escaped in the JSON payload.
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /\\u003cscript\\u003e/);
+});
+
+test("buildAnnotateLastMessageHtml: $-pattern sequences in assistant text are inlined literally without corruption", () => {
+  // Regression: String.replace(token, string) interprets $& $` $' $$ as
+  // replacement patterns, corrupting the injected JSON payload when the
+  // assistant message contains those sequences.
+  const specialText = "cost is $& and $` plus $' and $$";
+  const data = {
+    text: specialText,
+    lines: [{ number: 1, text: specialText }],
+    sections: [],
+  };
+  const html = buildAnnotateLastMessageHtml(data);
+
+  // Extract the inlined JSON payload from the inline-data script element.
+  const scriptMatch = html.match(
+    /<script[^>]*\bid="annotate-last-message-data"[^>]*>([\s\S]*?)<\/script>/,
+  );
+  assert.ok(scriptMatch, "could not find inline-data script element in built HTML");
+  const inlinedText = scriptMatch[1].trim();
+
+  // The payload must be valid JSON that round-trips the original text.
+  let parsed;
+  assert.doesNotThrow(() => {
+    parsed = JSON.parse(inlinedText);
+  }, "inlined JSON payload must be parseable ($ patterns must not corrupt it)");
+  assert.equal(
+    parsed.text,
+    specialText,
+    "parsed text must round-trip back to the original, including $& $` $' $$ sequences",
+  );
+});
+
+test("buildAnnotateLastMessageHtml: markdown-content CSS classes are defined in the output", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA);
+  assert.match(html, /\.markdown-content/);
+  assert.match(html, /--mdHeading/);
+  assert.match(html, /--mdCode/);
+  assert.match(html, /--mdQuoteBorder/);
+  assert.match(html, /--mdListBullet/);
+  assert.match(html, /--mdHr/);
+  assert.match(html, /font-weight: bold/);
+  assert.match(html, /font-style: italic/);
+});
+
+// ---------------------------------------------------------------------------
+// Guard tests: renderer is inlined from md-renderer.js, not duplicated in app.js
+// ---------------------------------------------------------------------------
+
+test("buildAnnotateLastMessageHtml: renderer definition appears exactly once in built HTML", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA);
+  // applyFenceState is a distinctive symbol that only lives in md-renderer.js.
+  const occurrences = (html.match(/function applyFenceState/g) ?? []).length;
+  assert.equal(occurrences, 1, "applyFenceState must be defined exactly once in the built HTML");
+});
+
+test("buildAnnotateLastMessageHtml: app.js does not contain the parsing function definitions", async () => {
+  // Verify the single-source guarantee: the shipped app.js must not define
+  // the parsing functions that md-renderer.js owns.
+  const { readFileSync } = await import("node:fs");
+  const appJs = readFileSync(
+    new URL("../extensions/the-last-harness/annotate-last-message/web/app.js", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(appJs, /function applyFenceState/, "app.js must not define applyFenceState");
+  assert.doesNotMatch(appJs, /function classifyLine/, "app.js must not define classifyLine");
+  assert.doesNotMatch(appJs, /function tokenizeLine/, "app.js must not define tokenizeLine");
 });

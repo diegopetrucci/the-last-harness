@@ -6,8 +6,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or 
-- At launch, TLH now shows what’s eating up your context.
+- After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
+- Argument-free `/thinking` and `/effort` selections now offer the same session-only or all-sessions scope; typed levels and thinking cycling remain persistent.
+- The collapsed TLH header now shows an always-visible, approximate launch-context allocation across TLH, AGENTS/CLAUDE.md, Skills, Tools, and Other.
+- The `/annotate-last-message` window now renders message content with markdown (bold, italic, inline code, headings, fenced code blocks) — Markdown markers (`**`, backticks, `#`) are hidden from the rendered view. The window follows the active Pi theme for **colours** (spacing and fonts are static).
 
 ### Changed
 
@@ -18,6 +20,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Fixed async subagent runs that could hang after being paused and resumed.
+- Fixed a `$`-pattern inlining bug in the annotate-last-message extension that could corrupt annotation text containing dollar-sign replacement sequences (`$&`, dollar-backtick, `$'`, `$$`) when using a string search pattern with `String.prototype.replace`.
 
 ## [0.37.0] - 2026-08-11
 
