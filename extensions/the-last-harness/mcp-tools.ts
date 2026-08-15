@@ -8,11 +8,13 @@
  * A tool is classified as an MCP tool when ANY of the following is true:
  *   1. The tool name is exactly "mcp" → kind "proxy"
  *   2. The adapter source string is in the KNOWN_PI_MCP_ADAPTER_SOURCES allowlist → kind "direct"
- *   3. The adapter source string matches /mcp/i (non-allowlisted adapters whose
- *      own package name indicates MCP) → kind "direct"
+ *   3. The adapter source string is a scheme-prefixed package identifier matching
+ *      /^(npm|git):/ AND also matches /mcp/i → kind "direct"
  *
- * Note: only the *source* field is checked against the regex; the tool path is
- * deliberately excluded to avoid false positives from coincidental path segments.
+ * Note: the /mcp/i heuristic is restricted to package identifiers (npm: or git:
+ * prefixed) because Pi sets sourceInfo.source to an absolute filesystem path for
+ * locally-loaded packages. A bare path such as "/work/mcp-experiments/tools"
+ * carries no reliable MCP evidence and must not trigger classification.
  */
 
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
@@ -71,7 +73,7 @@ export function hasPersistedDirectMcpResultDetails(toolName: string, details: un
  *
  * Returns:
  *  - "proxy"   when the tool name is "mcp" (the Pi MCP proxy tool)
- *  - "direct"  when the source is in the allowlist OR the source matches /mcp/i
+ *  - "direct"  when the source is in the allowlist OR (source matches /^(npm|git):/ AND source matches /mcp/i)
  *  - undefined when the tool is not MCP
  */
 export function getMcpToolKind(
@@ -85,7 +87,7 @@ export function getMcpToolKind(
 	if (hasKnownPiMcpAdapterSource(source)) {
 		return "direct";
 	}
-	if (typeof source === "string" && /mcp/i.test(source)) {
+	if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
 		return "direct";
 	}
 	return undefined;

@@ -13,7 +13,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- MCP tool classification is now unified across the launch header, footer live-context percentage, and `/tokens` breakdown. The footer's MCP percentage may be higher for MCP adapters not on the built-in allowlist (any adapter whose source string matches `/mcp/i` is now counted). The `/tokens` view classifies tools by source string only, not file path.
+- MCP tool classification is now unified across the launch header, footer live-context percentage, and `/tokens` breakdown. The footer's MCP percentage may be higher for MCP adapters not on the built-in allowlist: adapters loaded from an `npm:` or `git:` package identifier whose name matches `mcp` are now counted. Locally-loaded packages (bare filesystem paths) and loose extensions (`local`) are intentionally excluded. The `/tokens` view classifies tools by source string only, not file path.
 - Bumped the pinned Pi runtime to `0.84.2`.
 - Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
 - Refreshed bundled npm default-extension pins: `pi-openai-fast` `0.1.13`→`0.1.15`, `pi-anthropic-auth` `2.0.1`→`2.0.3`, `pi-inline-bash` `0.1.8`→`0.1.9`, `pi-notify` `0.1.14`→`0.1.15`, `pi-context-inspector` `0.1.10`→`0.1.11`, `pi-quiet-tools` `0.1.9`→`0.1.10`, and `pi-dirty-repo-guard` `0.1.8`→`0.1.9`; `mcporter` `2.11.0` and `pi-web-access` `0.10.10` were already current and remain unchanged.

@@ -57,7 +57,7 @@ test("getMcpToolKind returns undefined for non-MCP tools (no match)", () => {
 	assert.equal(getMcpToolKind("jiraSearch"), undefined);
 });
 
-test("getMcpToolKind does NOT classify by path alone – only source is checked for /mcp/i", () => {
+test("getMcpToolKind does NOT classify by path alone – only scheme-prefixed source is checked for /mcp/i", () => {
 	// Tool whose source is unrelated but path happens to mention 'mcp'
 	assert.equal(
 		getMcpToolKind("jiraSearch", {
@@ -66,6 +66,39 @@ test("getMcpToolKind does NOT classify by path alone – only source is checked 
 		undefined,
 		"path alone must not trigger MCP classification",
 	);
+});
+
+test("getMcpToolKind does NOT classify an absolute local-package path containing 'mcp'", () => {
+	// Pi sets sourceInfo.source to the absolute package root for locally-loaded packages.
+	// Even if 'mcp' appears in the path, a bare filesystem path carries no MCP evidence.
+	assert.equal(
+		getMcpToolKind("some_tool", { sourceInfo: { source: "/work/mcp-experiments/general-tools" } }),
+		undefined,
+		"absolute local-package path containing mcp must not be classified",
+	);
+	assert.equal(
+		getMcpToolKind("some_tool", { sourceInfo: { source: "/home/user/.local/share/mcp/adapter" } }),
+		undefined,
+		"absolute path with mcp segment must not be classified",
+	);
+});
+
+test("getMcpToolKind does NOT classify the literal source 'local'", () => {
+	// Pi sets sourceInfo.source to 'local' for loose top-level extensions.
+	assert.equal(
+		getMcpToolKind("some_tool", { sourceInfo: { source: "local" } }),
+		undefined,
+		"literal 'local' source must not be classified as MCP",
+	);
+});
+
+test("getMcpToolKind returns 'direct' for npm: scheme source containing 'mcp' (package-identifier gate)", () => {
+	assert.equal(getMcpToolKind("some_tool", { sourceInfo: { source: "npm:acme-mcp-adapter" } }), "direct");
+	assert.equal(getMcpToolKind("some_tool", { sourceInfo: { source: "npm:acme-mcp-adapter@1.2.3" } }), "direct");
+});
+
+test("getMcpToolKind returns 'direct' for git: scheme source containing 'mcp' (package-identifier gate)", () => {
+	assert.equal(getMcpToolKind("some_tool", { sourceInfo: { source: "git:github.com/example/mcp-tools" } }), "direct");
 });
 
 test("getMcpToolKind returns undefined when sourceInfo is absent or incomplete", () => {

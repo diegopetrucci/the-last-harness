@@ -30,7 +30,7 @@ export function getMcpToolKind(toolName, toolInfo) {
     if (hasKnownPiMcpAdapterSource(source)) {
         return "direct";
     }
-    if (typeof source === "string" && /mcp/i.test(source)) {
+    if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
         return "direct";
     }
     return undefined;
