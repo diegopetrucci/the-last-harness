@@ -276,7 +276,7 @@ describe("async execution utilities", () => {
 			shareEnabled: false,
 			maxSubagentDepth: 2,
 			controlIntercomTarget: "subagent-chat-parent",
-			childIntercomTarget: (agent, index) => `subagent-${agent}-${id}-${index + 1}`,
+			childIntercomTarget: (agent: string, index: number) => `subagent-${agent}-${id}-${index + 1}`,
 		});
 		assert.equal(run.isError, undefined);
 		const resultPath = await waitForAsyncResultFile(id);

@@ -1,0 +1,21 @@
+{
+  // Dedicated tsconfig covering ALL test files under extensions/subagents/test.
+  // These files are also covered by the root tsconfig (which no longer excludes
+  // extensions/subagents/test), so this target is retained as a developer
+  // convenience for targeted runs (npm run typecheck:subagents-test) rather
+  // than as a CI-only baseline step.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "extensions/subagents/test/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tmp",
+    ".git",
+    ".tickets",
+    ".understand-anything"
+  ]
+}

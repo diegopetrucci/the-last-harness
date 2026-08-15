@@ -6,7 +6,8 @@ import { afterEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { executeAsyncChain, executeAsyncSingle } from "../../src/runs/background/async-execution.ts";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, type SubagentState } from "../../src/shared/types.ts";
-import { makeAgent, makeMinimalCtx } from "../support/helpers.ts";
+import { makeAgent, makeAsyncCtx, makeMinimalCtx } from "../support/helpers.ts";
+import type { TextContent } from "@earendil-works/pi-ai";
 
 const tempDirs: string[] = [];
 
@@ -110,7 +111,8 @@ describe("reviewed dispatch route preflight", () => {
 				makeMinimalCtx(root),
 			);
 			assert.equal(result.isError, true, testCase.label);
-			assertReviewedRejection(result.content[0]?.text ?? "");
+			// The executor always returns TextContent for rejection results; ImageContent is not possible here.
+			assertReviewedRejection((result.content[0] as TextContent | undefined)?.text ?? "");
 		}
 	});
 
@@ -122,7 +124,7 @@ describe("reviewed dispatch route preflight", () => {
 			agent: "worker",
 			task: "Implement fix",
 			agentConfig: makeAgent("worker"),
-			ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "session" },
+			ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
 			artifactConfig: {
 				enabled: false,
 				includeInput: false,
@@ -155,7 +157,7 @@ describe("reviewed dispatch route preflight", () => {
 			const result = executeAsyncChain(testCase.id, {
 				chain: testCase.chain as any,
 				agents: [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")],
-				ctx: { pi: { events: { emit() {} } }, cwd: root, currentSessionId: "session" },
+				ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
 				artifactConfig: {
 					enabled: false,
 					includeInput: false,
@@ -233,7 +235,11 @@ describe("reviewed dispatch route preflight", () => {
 		);
 
 		assert.equal(result.isError, true);
-		assert.match(result.content[0]?.text ?? "", /Saved chains are deliberately unsupported in The Last Harness/);
+		// The executor always returns TextContent for rejection results; ImageContent is not possible here.
+		assert.match(
+			(result.content[0] as TextContent | undefined)?.text ?? "",
+			/Saved chains are deliberately unsupported in The Last Harness/,
+		);
 		assert.equal(result.details?.asyncId, undefined);
 		assert.equal(
 			events.emitted.some((entry) => entry.channel === SUBAGENT_ASYNC_STARTED_EVENT),

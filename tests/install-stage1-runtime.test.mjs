@@ -120,7 +120,7 @@ test("stage-1 repairs the TLH private Pi runtime to the pinned version when it i
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
+	assert.match(output, new RegExp(`Pinning local Pi runtime to ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);
@@ -213,7 +213,7 @@ test("stage-1 repairs the TLH private Pi runtime even when a supported Pi exists
 	const output = `${result.stdout}\n${result.stderr}`;
 
 	assert.equal(result.status, 0, output);
-	assert.match(output, new RegExp(`Repairing TLH private Pi runtime to pinned ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
+	assert.match(output, new RegExp(`Pinning local Pi runtime to ${escapeRegExp(TLH_PINNED_PI_VERSION)}`));
 	assert.deepEqual(readFileSync(npmLog, "utf8").trim().split(/\r?\n/).filter(Boolean), [
 		`install -g --ignore-scripts --prefix ${runtimeDir} ${TLH_PI_PACKAGE_SPEC}`,
 	]);

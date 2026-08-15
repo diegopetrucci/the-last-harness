@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildAsyncRunnerSteps, resolveAsyncRunnerLogPaths } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
+import { makeAsyncCtx } from "../support/helpers.ts";
 
 const agent = (name: string, toolBudget?: AgentConfig["toolBudget"], maxExecutionTimeMs?: number): AgentConfig => ({
 	name,
@@ -17,13 +19,7 @@ const agent = (name: string, toolBudget?: AgentConfig["toolBudget"], maxExecutio
 	...(maxExecutionTimeMs !== undefined ? { maxExecutionTimeMs } : {}),
 });
 
-const ctx = {
-	cwd: process.cwd(),
-	currentSessionId: "session-1",
-	currentModel: undefined,
-	currentModelProvider: undefined,
-	modelScope: undefined,
-};
+const ctx = makeAsyncCtx(process.cwd(), { currentSessionId: "session-1" });
 
 describe("async runner execution", () => {
 	it("places detached runner stdio logs in the async run directory", () => {
@@ -52,8 +48,9 @@ describe("async runner execution", () => {
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
-		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 3, block: ["find"] });
-		assert.deepEqual(result.steps[1]?.toolBudget, { hard: 2, block: ["grep"] });
+		// Sequential chains only produce RunnerSubagentStep entries (no parallel groups).
+		assert.deepEqual((result.steps[0] as RunnerSubagentStep)?.toolBudget, { hard: 3, block: ["find"] });
+		assert.deepEqual((result.steps[1] as RunnerSubagentStep)?.toolBudget, { hard: 2, block: ["grep"] });
 	});
 
 	it("uses agent tool budget when no step or run override exists", () => {
@@ -66,7 +63,8 @@ describe("async runner execution", () => {
 		});
 
 		assert.ok("steps" in result, "expected successful step build");
-		assert.deepEqual(result.steps[0]?.toolBudget, { hard: 4, block: ["read"] });
+		// Sequential chains only produce RunnerSubagentStep entries (no parallel groups).
+		assert.deepEqual((result.steps[0] as RunnerSubagentStep)?.toolBudget, { hard: 4, block: ["read"] });
 	});
 
 	it("preserves independent agent ceilings while a shorter caller timeout remains global", () => {

@@ -1,36 +1,27 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { KeybindingsManager } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+import {
+	KeybindingsManager,
+	type KeyId,
+} from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Text, getKeybindings, setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
+import type { AsyncJobState, AsyncJobStep } from "../../src/shared/types.ts";
 import {
 	createSubagentLiveDetailController,
 	type SubagentLiveDetailController,
 } from "../../src/shared/subagent-shortcuts.ts";
+import { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } from "../../src/tui/render.ts";
 import { WHIMSICAL_THINKING_PHRASES, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
-const { buildWidgetLines, clearLegacyResultAnimationTimer, renderWidget } = (await import(
-	"../../src/tui/render.ts"
-)) as {
-	buildWidgetLines: (
-		jobs: Array<Record<string, unknown>>,
-		theme: { fg(name: string, text: string): string; bold(text: string): string },
-		width?: number,
-		expanded?: boolean,
-	) => string[];
-	clearLegacyResultAnimationTimer: (context: {
-		state: { subagentResultAnimationTimer?: ReturnType<typeof setInterval> };
-	}) => void;
-	renderWidget: (
-		ctx: Record<string, unknown>,
-		jobs: Array<Record<string, unknown>>,
-		controller?: SubagentLiveDetailController,
-	) => void;
-};
-
+// Theme is an SDK class with private colour-table fields; a plain object with
+// the two methods the render functions actually call is sufficient for tests.
+// Casting to the real Theme type (not a handwritten local shape) means the
+// compiler still validates everything except the theme argument itself.
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-};
+} as unknown as Theme;
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
 
@@ -141,7 +132,7 @@ function resetWidgetLayout(): void {
 }
 
 const originalKeybindings = getKeybindings();
-const configuredExpandKeybindings = new KeybindingsManager({ "app.tools.expand": "configured+expand+key" });
+const configuredExpandKeybindings = new KeybindingsManager({ "app.tools.expand": "configured+expand+key" as KeyId });
 
 function useConfiguredExpandKey(): void {
 	setKeybindings(configuredExpandKeybindings);
@@ -220,7 +211,7 @@ describe("subagent async widget rendering", () => {
 					stepsTotal: 1,
 					turnCount: 5,
 					toolCount: 1,
-					totalTokens: { input: 8000, output: 4000, cache: 0, total: 12_000 },
+					totalTokens: { input: 8000, output: 4000, total: 12_000 },
 					lastActivityAt: now,
 					startedAt: now - 2000,
 					updatedAt: now,
@@ -461,7 +452,7 @@ describe("subagent async widget rendering", () => {
 
 	it("suppresses whimsical phrases while surfacing async and parallel health warnings", () => {
 		const now = 20_000;
-		const jobs = [
+		const jobs: AsyncJobState[] = [
 			{
 				asyncId: "health-attention",
 				asyncDir: "/tmp/health-attention",
@@ -503,7 +494,7 @@ describe("subagent async widget rendering", () => {
 						activityState: "needs_attention",
 						turnCount: 13,
 						toolCount: 7,
-						tokens: { input: 8_000, output: 5_000, cache: 0, total: 13_000 },
+						tokens: { input: 8_000, output: 5_000, total: 13_000 },
 						durationMs: 9_000,
 						lastActivityAt: now - 5_000,
 					},
@@ -920,7 +911,7 @@ describe("subagent async widget rendering", () => {
 						lastActivityAt: now,
 						turnCount: 5,
 						toolCount: 18,
-						tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 },
+						tokens: { input: 30_000, output: 10_000, total: 44_000 },
 					},
 					{
 						index: 1,
@@ -929,7 +920,7 @@ describe("subagent async widget rendering", () => {
 						lastActivityAt: now - 2000,
 						turnCount: 4,
 						toolCount: 13,
-						tokens: { input: 16_000, output: 4_000, cache: 2_000, total: 22_000 },
+						tokens: { input: 16_000, output: 4_000, total: 22_000 },
 					},
 					{
 						index: 2,
@@ -939,7 +930,7 @@ describe("subagent async widget rendering", () => {
 						currentToolStartedAt: now - 1000,
 						turnCount: 3,
 						toolCount: 11,
-						tokens: { input: 14_000, output: 3_000, cache: 2_000, total: 19_000 },
+						tokens: { input: 14_000, output: 3_000, total: 19_000 },
 					},
 				],
 			},
@@ -1227,7 +1218,7 @@ describe("subagent async widget rendering", () => {
 
 	it("budgets multi-job branch and detail rows for real Text padding at 40/50 columns", () => {
 		const now = 20_000;
-		const jobs = [
+		const jobs: AsyncJobState[] = [
 			{
 				asyncId: "multi-job-width",
 				asyncDir: "/tmp/multi-job-width",
@@ -1278,15 +1269,18 @@ describe("subagent async widget rendering", () => {
 
 	it("locks crowded widget rows at the reviewer narrow-width probes", () => {
 		const now = 20_000;
-		const jobs = Array.from({ length: 8 }, (_, index) => ({
-			asyncId: `crowded-width-${index}`,
-			asyncDir: `/tmp/crowded-width-${index}`,
-			status: "running",
-			mode: "single",
-			agents: [`crowded-agent-with-a-long-name-${index}`],
-			lastActivityAt: now - index * 1_000,
-			updatedAt: now,
-		}));
+		const jobs: AsyncJobState[] = Array.from(
+			{ length: 8 },
+			(_, index): AsyncJobState => ({
+				asyncId: `crowded-width-${index}`,
+				asyncDir: `/tmp/crowded-width-${index}`,
+				status: "running",
+				mode: "single",
+				agents: [`crowded-agent-with-a-long-name-${index}`],
+				lastActivityAt: now - index * 1_000,
+				updatedAt: now,
+			}),
+		);
 
 		for (const { rows, columns, expectedRows, description, jobs: probeJobs } of [
 			{ rows: 22, columns: 20, expectedRows: 2, description: "progressive", jobs },
@@ -1362,12 +1356,12 @@ describe("subagent async widget rendering", () => {
 									status: "running",
 									turnCount: 5,
 									toolCount: 7,
-									tokens: { input: 8_000, output: 5_000, cache: 0, total: 13_000 },
+									tokens: { input: 8_000, output: 5_000, total: 13_000 },
 									durationMs: 9_000,
 									currentTool: "read-long-tool-name",
 									currentToolArgs: "src/tui/render.ts --very-long-argument-here",
 									currentToolStartedAt: now - 2_000,
-									recentTools: [{ tool: "grep", args: "long args" }],
+									recentTools: [{ tool: "grep", args: "long args", endMs: 1 }],
 									recentOutput: ["expanded telemetry output"],
 								},
 							],
@@ -1443,22 +1437,25 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 		withStdoutSize(30, 120, () => {
 			const now = 20_000;
-			const crowdedJobs = Array.from({ length: 3 }, (_, jobIndex) => ({
-				asyncId: `run-${jobIndex + 1}`,
-				asyncDir: `/tmp/run-${jobIndex + 1}`,
-				status: "running",
-				mode: "parallel",
-				agents: ["scout", "reviewer"],
-				activeParallelGroup: true,
-				runningSteps: 2,
-				completedSteps: 0,
-				stepsTotal: 2,
-				updatedAt: now + jobIndex,
-				steps: [
-					{ index: 0, agent: "scout", status: "running", currentTool: "read", currentToolStartedAt: now - 1000 },
-					{ index: 1, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 2000 },
-				],
-			}));
+			const crowdedJobs: AsyncJobState[] = Array.from(
+				{ length: 3 },
+				(_, jobIndex): AsyncJobState => ({
+					asyncId: `run-${jobIndex + 1}`,
+					asyncDir: `/tmp/run-${jobIndex + 1}`,
+					status: "running",
+					mode: "parallel",
+					agents: ["scout", "reviewer"],
+					activeParallelGroup: true,
+					runningSteps: 2,
+					completedSteps: 0,
+					stepsTotal: 2,
+					updatedAt: now + jobIndex,
+					steps: [
+						{ index: 0, agent: "scout", status: "running", currentTool: "read", currentToolStartedAt: now - 1000 },
+						{ index: 1, agent: "reviewer", status: "running", currentTool: "grep", currentToolStartedAt: now - 2000 },
+					],
+				}),
+			);
 			const ui = createUiContext();
 
 			renderWidget(ui.ctx as never, crowdedJobs);
@@ -1506,7 +1503,7 @@ describe("subagent async widget rendering", () => {
 		resetWidgetLayout();
 		withStdoutSize(50, 120, () => {
 			const ui = createUiContext();
-			const jobs = [
+			const jobs: AsyncJobState[] = [
 				{
 					asyncId: "run-wide",
 					asyncDir: "/tmp/run-wide",
@@ -1554,7 +1551,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeMultiJob = (id: string) => ({
+			const makeMultiJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1580,7 +1577,7 @@ describe("subagent async widget rendering", () => {
 
 			// Drain to one quiet job (all steps complete). The !singleJob bypass in
 			// fitAdaptiveWidgetLines must prevent reuse of the progressive session.
-			const quietJob = {
+			const quietJob: AsyncJobState = {
 				asyncId: "developer-run-quiet",
 				asyncDir: "/tmp/developer-run-quiet",
 				status: "running",
@@ -1626,7 +1623,7 @@ describe("subagent async widget rendering", () => {
 			const now = 20_000;
 			const ui = createUiContext();
 
-			const tallJob = {
+			const tallJob: AsyncJobState = {
 				asyncId: "developer-idle-tall",
 				asyncDir: "/tmp/developer-idle-tall",
 				status: "running",
@@ -1640,10 +1637,20 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 12 }, (_, i) => ({
 					index: i,
 					agent: i % 2 === 0 ? "developer" : "code-reviewer",
-					status: "running",
+					status: "running" as const,
 					currentTool: "read",
 					currentToolStartedAt: now - 1_000,
-					children: [{ agent: `nested-${i}`, status: "running", currentTool: "grep" }],
+					children: [
+						{
+							id: `nested-run-${i}`,
+							parentRunId: "developer-idle-tall",
+							depth: 1,
+							path: [{ runId: "developer-idle-tall", stepIndex: i }],
+							state: "running" as const,
+							agent: `nested-${i}`,
+							currentTool: "grep",
+						},
+					],
 				})),
 			};
 
@@ -1681,7 +1688,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeMultiJob = (id: string) => ({
+			const makeMultiJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1707,7 +1714,7 @@ describe("subagent async widget rendering", () => {
 			// Drain to one idle job with a job-level health activityState.
 			// The !singleJob bypass in fitAdaptiveWidgetLines must prevent reuse of the
 			// progressive session, so the health warning and expand hint both appear.
-			const idleJob = {
+			const idleJob: AsyncJobState = {
 				asyncId: "developer-idle-1",
 				asyncDir: "/tmp/developer-idle-1",
 				status: "running",
@@ -1723,7 +1730,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 12 }, (_, i) => ({
 					index: i,
 					agent: i % 2 === 0 ? "developer" : "code-reviewer",
-					status: "running",
+					status: "running" as const,
 				})),
 			};
 
@@ -1768,7 +1775,7 @@ describe("subagent async widget rendering", () => {
 			// availableRows = 30 - 19 = 11; budget = collapsedWidgetLineBudget(30) = 10.
 			const now = 20_000;
 			const ui = createUiContext();
-			const tallSingleJob = {
+			const tallSingleJob: AsyncJobState = {
 				asyncId: "auxo-tall-1",
 				asyncDir: "/tmp/auxo-tall-1",
 				status: "running",
@@ -1782,7 +1789,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 10 }, (_, i) => ({
 					index: i,
 					agent: `agent-${i}`,
-					status: "running",
+					status: "running" as const,
 					currentTool: "read",
 				})),
 			};
@@ -1818,7 +1825,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeJob = (id: string) => ({
+			const makeJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1843,7 +1850,7 @@ describe("subagent async widget rendering", () => {
 
 			// Drain to one tall job. The !singleJob bypass in fitAdaptiveWidgetLines must
 			// prevent reuse of the progressive session so the single job routes full-tier.
-			const drainJob = {
+			const drainJob: AsyncJobState = {
 				asyncId: "developer",
 				asyncDir: "/tmp/developer",
 				status: "running",
@@ -1857,7 +1864,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 10 }, (_, i) => ({
 					index: i,
 					agent: `agent-${i}`,
-					status: "running",
+					status: "running" as const,
 					currentTool: "grep",
 				})),
 			};
@@ -1906,7 +1913,7 @@ describe("subagent async widget rendering", () => {
 				resetWidgetLayout();
 				withStdoutSize(30, 120, () => {
 					const ui = createUiContext();
-					const job: Record<string, unknown> = {
+					const job: AsyncJobState = {
 						asyncId: `health-${mode}-${steps}`,
 						asyncDir: "/tmp/health",
 						status: "running",
@@ -1915,22 +1922,26 @@ describe("subagent async widget rendering", () => {
 						activityState,
 						lastActivityAt,
 						updatedAt: now,
+						...(mode === "parallel"
+							? {
+									activeParallelGroup: true,
+									runningSteps: steps,
+									completedSteps: 0,
+									stepsTotal: Math.max(1, steps),
+								}
+							: {}),
+						...(steps > 0
+							? {
+									// Deliberately no step-level activityState: this is the shape that lost
+									// the signal before jobHealthWarningLines existed.
+									steps: Array.from({ length: steps }, (_, i) => ({
+										index: i,
+										agent: `agent-${i}`,
+										status: "running" as const,
+									})),
+								}
+							: {}),
 					};
-					if (mode === "parallel") {
-						job.activeParallelGroup = true;
-						job.runningSteps = steps;
-						job.completedSteps = 0;
-						job.stepsTotal = Math.max(1, steps);
-					}
-					if (steps > 0) {
-						// Deliberately no step-level activityState: this is the shape that lost
-						// the signal before jobHealthWarningLines existed.
-						job.steps = Array.from({ length: steps }, (_, i) => ({
-							index: i,
-							agent: `agent-${i}`,
-							status: "running",
-						}));
-					}
 
 					renderWidget(ui.ctx as never, [job]);
 					const lines = renderWidgetLines(ui.widgets.at(-1));
@@ -2017,19 +2028,19 @@ describe("subagent async widget rendering", () => {
 		withStdoutSize(30, 120, () => {
 			const ui = createUiContext();
 			// First 13 steps: running with a currentTool (no inline health warning in step row)
-			const earlySteps = Array.from({ length: 13 }, (_, i) => ({
+			const earlySteps: AsyncJobStep[] = Array.from({ length: 13 }, (_, i) => ({
 				index: i,
 				agent: `agent-${i}`,
-				status: "running",
+				status: "running" as const,
 				currentTool: "read",
 			}));
 			// Last 2 steps: running with active_long_running, no currentTool
 			// These are the steps that trigger the old dedupe AND would appear beyond the budget.
-			const lateSteps = Array.from({ length: 2 }, (_, i) => ({
+			const lateSteps: AsyncJobStep[] = Array.from({ length: 2 }, (_, i) => ({
 				index: 13 + i,
 				agent: `agent-${13 + i}`,
-				status: "running",
-				activityState: "active_long_running",
+				status: "running" as const,
+				activityState: "active_long_running" as const,
 				lastActivityAt,
 			}));
 			const steps = [...earlySteps, ...lateSteps];
@@ -2116,7 +2127,7 @@ describe("subagent async widget rendering", () => {
 		withStdoutSize(22, 120, () => {
 			const now = Date.now();
 			const ui = createUiContext();
-			const jobs = [
+			const jobs: AsyncJobState[] = [
 				{
 					asyncId: "run-1",
 					asyncDir: "/tmp/run-1",
@@ -2183,7 +2194,7 @@ describe("subagent async widget rendering", () => {
 					agents: ["thinker"],
 					turnCount: 5,
 					toolCount: 18,
-					totalTokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 },
+					totalTokens: { input: 30_000, output: 10_000, total: 44_000 },
 					lastActivityAt: now,
 					startedAt: now - 7_000,
 					updatedAt: now,
@@ -2413,7 +2424,7 @@ describe("subagent async widget rendering", () => {
 					steps: [
 						{ agent: "reviewer", status: "running", lastActivityAt: now, toolCount: 2 },
 						{ agent: "reviewer", status: "running", currentTool: "read", currentToolStartedAt: now - 2000 },
-						{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, cache: 0, total: 1500 } },
+						{ agent: "reviewer", status: "complete", tokens: { input: 1000, output: 500, total: 1500 } },
 					],
 				},
 			],
@@ -2508,7 +2519,7 @@ describe("subagent async widget rendering", () => {
 	it("cycles compact async thinking phrases per turn while expanded rows retain telemetry", () => {
 		assert.equal(WHIMSICAL_THINKING_PHRASES.length, 453);
 		const now = Date.now();
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "run-thinking",
 			asyncDir: "/tmp/thinking",
 			status: "running",
@@ -2525,7 +2536,7 @@ describe("subagent async widget rendering", () => {
 					lastActivityAt: now,
 					turnCount: 5,
 					toolCount: 18,
-					tokens: { input: 30_000, output: 10_000, cache: 4_000, total: 44_000 },
+					tokens: { input: 30_000, output: 10_000, total: 44_000 },
 					durationMs: 7_000,
 				},
 			],
@@ -2535,7 +2546,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(collapsed, new RegExp(`⎿  ${escapeRegExp(whimsicalThinkingPhrase(5))}\\n\\s+active now`));
 		assert.doesNotMatch(collapsed, /5 turns|18 tool uses|44k token|7\.0s/);
 
-		const next = buildWidgetLines([{ ...job, steps: [{ ...job.steps[0], turnCount: 6 }] }], theme, 180).join("\n");
+		const next = buildWidgetLines([{ ...job, steps: [{ ...job.steps![0]!, turnCount: 6 }] }], theme, 180).join("\n");
 		assert.match(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(6))));
 		assert.doesNotMatch(next, new RegExp(escapeRegExp(whimsicalThinkingPhrase(5))));
 
@@ -2544,7 +2555,7 @@ describe("subagent async widget rendering", () => {
 		assert.match(expanded, /active now/);
 
 		const activeTool = buildWidgetLines(
-			[{ ...job, steps: [{ ...job.steps[0], currentTool: "read", currentToolStartedAt: now - 2_000 }] }],
+			[{ ...job, steps: [{ ...job.steps![0]!, currentTool: "read", currentToolStartedAt: now - 2_000 }] }],
 			theme,
 			180,
 		).join("\n");
@@ -2585,7 +2596,7 @@ describe("subagent async widget rendering", () => {
 
 	it("shows inline live detail for expanded async parallel widget rows", () => {
 		const now = Date.now();
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "run-1",
 			asyncDir: "/tmp/1",
 			status: "running",
@@ -2626,7 +2637,7 @@ describe("subagent async widget rendering", () => {
 
 	it("shows a generic title and one unnumbered agent summary for running single async jobs", () => {
 		const now = Date.now();
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "single-run",
 			asyncDir: "/tmp/single-run",
 			status: "running",
@@ -2644,7 +2655,7 @@ describe("subagent async widget rendering", () => {
 					thinking: "high",
 					turnCount: 2,
 					toolCount: 3,
-					tokens: { input: 8_000, output: 4_000, cache: 0, total: 12_000 },
+					tokens: { input: 8_000, output: 4_000, total: 12_000 },
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
 					currentToolStartedAt: now - 2000,
@@ -2729,7 +2740,7 @@ describe("subagent async widget rendering", () => {
 
 	it("uses terminal job status when a retained single step still reports running", () => {
 		const now = Date.now();
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "single-terminal-before-step-refresh",
 			asyncDir: "/tmp/single-terminal-before-step-refresh",
 			status: "complete",
@@ -2747,7 +2758,7 @@ describe("subagent async widget rendering", () => {
 					thinking: "high",
 					turnCount: 2,
 					toolCount: 3,
-					tokens: { input: 8_000, output: 4_000, cache: 0, total: 12_000 },
+					tokens: { input: 8_000, output: 4_000, total: 12_000 },
 					currentTool: "read",
 					currentToolArgs: "src/tui/render.ts",
 					currentToolStartedAt: now - 2000,
@@ -2799,7 +2810,7 @@ describe("subagent async widget rendering", () => {
 					agents: ["worker"],
 					currentStep: 0,
 					toolCount: 2,
-					totalTokens: { input: 3000, output: 2000, cache: 0, total: 5000 },
+					totalTokens: { input: 3000, output: 2000, total: 5000 },
 					currentTool: "read",
 					currentToolStartedAt: now - 1000,
 					startedAt: now - 3000,
@@ -2846,7 +2857,7 @@ describe("subagent async widget rendering", () => {
 	});
 
 	it("uses logical chain steps after an async chain parallel group finishes", () => {
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "run-chain",
 			asyncDir: "/tmp/chain",
 			status: "running",
@@ -3018,7 +3029,7 @@ describe("subagent async widget rendering", () => {
 	});
 
 	it("keeps running widget output stable when progress seed is unchanged", async () => {
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "run-stable",
 			asyncDir: "/tmp/run",
 			status: "running",
@@ -3042,7 +3053,7 @@ describe("subagent async widget rendering", () => {
 		const longArgs = `--path=${"src/deep/".repeat(14)}report.json --query=${"needle-".repeat(18)}`;
 		const longOutput = `recent-output-${"value-".repeat(18)}`;
 		const longTicket = `Wrap ${"complete-ticket-title-".repeat(10)}`;
-		const job = {
+		const job: AsyncJobState = {
 			asyncId: "narrow-wrap",
 			asyncDir: "/tmp/narrow-wrap",
 			status: "running",
@@ -3058,7 +3069,7 @@ describe("subagent async widget rendering", () => {
 					status: "running",
 					currentTool: "grep",
 					currentToolArgs: longArgs,
-					recentTools: [{ tool: "grep", args: longArgs }],
+					recentTools: [{ tool: "grep", args: longArgs, endMs: 1 }],
 					recentOutput: [longOutput],
 				},
 			],

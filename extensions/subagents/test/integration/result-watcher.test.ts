@@ -276,7 +276,7 @@ describe("result watcher", () => {
 				},
 				close() {},
 				unref() {},
-			} as fs.FSWatcher;
+			} as unknown as fs.FSWatcher;
 			const realpathSync = ((target: fs.PathLike, options?: unknown) =>
 				fs.realpathSync(target, options as BufferEncoding)) as typeof fs.realpathSync;
 			realpathSync.native = ((target: fs.PathLike) =>
@@ -344,10 +344,10 @@ describe("result watcher", () => {
 				timers: {
 					setTimeout,
 					clearTimeout() {},
-					setInterval(handler: () => void) {
+					setInterval: ((handler: () => void) => {
 						poll = handler;
 						return { unref() {} } as NodeJS.Timeout;
-					},
+					}) as typeof setInterval,
 					clearInterval() {
 						poll = undefined;
 					},
@@ -458,10 +458,10 @@ describe("result watcher", () => {
 				timers: {
 					setTimeout,
 					clearTimeout() {},
-					setInterval(handler: () => void) {
+					setInterval: ((handler: () => void) => {
 						poll = handler;
 						return { unref() {} } as NodeJS.Timeout;
-					},
+					}) as typeof setInterval,
 					clearInterval() {
 						poll = undefined;
 					},
@@ -1027,7 +1027,7 @@ describe("result watcher", () => {
 				false,
 			);
 			const completion = emitted.find((entry) => entry.event === "subagent:async-complete")?.data as
-				| { mode?: string; state?: string; results?: Array<{ status?: string }> }
+				| { mode?: string; state?: string; results?: Array<{ status?: string; index?: number }> }
 				| undefined;
 			assert.equal(completion?.mode, "chain");
 			assert.equal(completion?.state, "paused");

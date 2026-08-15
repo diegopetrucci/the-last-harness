@@ -10,6 +10,7 @@ import {
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	resolveTempRootDir,
 } from "../../src/shared/types.ts";
+import type { ArtifactPaths } from "../../src/shared/types.ts";
 import {
 	consumeChildMessageRequests,
 	steerRequestsDir,
@@ -24,6 +25,7 @@ import {
 	events,
 	makeAgent,
 	makeMinimalCtx,
+	makeModel,
 	removeTempDir,
 	tryImport,
 } from "../support/helpers.ts";
@@ -44,6 +46,8 @@ interface ExecutorResult {
 			truncation?: { truncated?: boolean };
 			attemptedModels?: string[];
 			modelFallbackNotice?: string;
+			sessionFile?: string;
+			artifactPaths?: ArtifactPaths;
 		}>;
 		asyncId?: string;
 	};
@@ -287,7 +291,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			asyncJobs: new Map(),
 			foregroundRuns: new Map(),
 			foregroundControls: new Map(),
-			lastForegroundControlId: null,
+			lastForegroundControlId: null as string | null,
 			cleanupTimers: new Map(),
 			lastUiContext: null,
 			poller: null,
@@ -1548,7 +1552,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
 			await waitForRevivedAsyncResult(result);
 			assert.deepEqual(fs.readdirSync(asyncDir), []);
 		} finally {
@@ -1632,7 +1636,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeMinimalCtx(tempDir),
 			);
 
-			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
 			await waitForRevivedAsyncResult(result);
 			assert.equal(fs.existsSync(asyncDir), false);
 		} finally {
@@ -1691,7 +1695,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				context,
 			);
 
-			assert.equal(result.isError, undefined, result.content[0]?.text);
+			assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
 			await waitForRevivedAsyncResult(result);
 			assert.equal(fs.existsSync(nestedAsyncDir), false);
 		} finally {
@@ -1821,10 +1825,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		});
 		const pressureContext = () => {
 			const context = makeMinimalCtx(tempDir);
-			context.model = { provider: "mock", id: "test-model" };
+			context.model = makeModel("test-model", { provider: "mock" });
 			context.modelRegistry.getAvailable = () => [
-				{ provider: "mock", id: "test-model", contextWindow: 1000 },
-				{ provider: "mock", id: "resume-model", contextWindow: 2000 },
+				makeModel("test-model", { provider: "mock", contextWindow: 1000 }),
+				makeModel("resume-model", { provider: "mock", contextWindow: 2000 }),
 			];
 			return context;
 		};
@@ -2172,10 +2176,10 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			],
 		});
 		const cohortContext = makeMinimalCtx(tempDir);
-		cohortContext.model = { provider: "mock", id: "test-model" };
+		cohortContext.model = makeModel("test-model", { provider: "mock" });
 		cohortContext.modelRegistry.getAvailable = () => [
-			{ provider: "anthropic", id: "claude-sonnet-4", contextWindow: 1000 },
-			{ provider: "openai", id: "gpt-5-mini", contextWindow: 1000 },
+			makeModel("claude-sonnet-4", { provider: "anthropic", contextWindow: 1000 }),
+			makeModel("gpt-5-mini", { provider: "openai", contextWindow: 1000 }),
 		];
 		const original = await first.executor.execute(
 			"foreground-parallel-pause-original",

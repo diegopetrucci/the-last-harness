@@ -44,9 +44,9 @@
     "test:subagents:integration": "node scripts/run-subagents-tests.mjs integration",
     "test:subagents:e2e": "node scripts/run-subagents-tests.mjs e2e",
     "typecheck": "tsc --noEmit",
-    "typecheck:subagents-test-support": "tsc --noEmit --project tsconfig.subagents-test-support.json",
+    "typecheck:subagents-test": "tsc --noEmit --project tsconfig.subagents-test.json",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
-    "validate": "npm run check:package-versions && npm run check:package-contents && npm run typecheck && npm run typecheck:subagents-test-support && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && npm run check:package-contents && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",

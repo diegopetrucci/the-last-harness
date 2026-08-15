@@ -383,9 +383,20 @@ describe("nested event parsing and projection", () => {
 					{
 						agent: "leaf",
 						status: "running",
-						contextUsage: { contextTokens: "bad" },
-						contextPressure: { severity: "warning" },
-						contextPressureCrossedThresholds: ["warning", "bogus"],
+						// Deliberately invalid data: tests that the validation layer rejects
+						// malformed contextUsage, incomplete ContextPressureProjection, and
+						// an unknown threshold value. Casts are safe because the assertion
+						// below verifies the validated output is undefined.
+						contextUsage: {
+							contextTokens: "bad",
+						} as unknown as import("../../src/shared/types.ts").ContextUsageDiagnostics,
+						contextPressure: {
+							severity: "warning",
+						} as unknown as import("../../src/shared/types.ts").ContextPressureProjection,
+						contextPressureCrossedThresholds: [
+							"warning",
+							"bogus",
+						] as unknown as import("../../src/shared/types.ts").ContextPressureThreshold[],
 					},
 				],
 			},

@@ -984,14 +984,14 @@ describe("native supervisor channel", () => {
 		const registeredTools = new Map<
 			string,
 			{
-				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown;
+				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown>;
 			}
 		>();
 		const pi = {
 			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
 			registerTool: (tool: {
 				name: string;
-				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown> | unknown;
+				execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown>;
 			}) => {
 				registeredTools.set(tool.name, tool);
 			},

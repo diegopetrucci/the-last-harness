@@ -1,37 +1,21 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
+import { renderSubagentResult } from "../../src/tui/render.ts";
 import { WHIMSICAL_THINKING_PHRASES, whimsicalThinkingPhrase } from "../../src/tui/whimsical-phrases.ts";
 
-type RenderSubagentResult = (
-	result: {
-		content: Array<{ type: "text"; text: string }>;
-		isError?: boolean;
-		details?: {
-			mode: "single" | "parallel" | "chain" | "management";
-			context?: "fresh" | "fork";
-			asyncId?: string;
-			results: unknown[];
-		};
-	},
-	options: { expanded: boolean },
-	theme: {
-		fg(name: string, text: string): string;
-		bold(text: string): string;
-	},
-) => { render(width: number): string[] };
-
-const { renderSubagentResult } = (await import("../../src/tui/render.ts")) as {
-	renderSubagentResult: RenderSubagentResult;
-};
-
+// Theme is an SDK class with private colour-table fields; a plain object with
+// the two methods the render functions actually call is sufficient for tests.
+// Casting to the real Theme type (not a handwritten local shape) means the
+// compiler still validates everything except the theme argument itself.
 const theme = {
 	fg: (_name: string, text: string) => text,
 	bold: (text: string) => text,
-};
+} as unknown as Theme;
 
 const expandKey = liveDetailShortcutDisplay();
 const expandHint = `Press ${expandKey} for full output`;
@@ -73,7 +57,7 @@ describe("renderSubagentResult fork indicator", () => {
 			progress: {
 				index: 0,
 				agent: "worker",
-				status: "running",
+				status: "running" as const,
 				task: "Run `tk show psr-raw4` first.",
 				recentTools: [],
 				recentOutput: [],
@@ -316,6 +300,7 @@ describe("renderSubagentResult fork indicator", () => {
 
 	it("styles keyboard instruction hints with the dim theme", () => {
 		const hintStyles: string[] = [];
+		// Theme is an SDK class with private fields; cast to allow a test stub.
 		const styledTheme = {
 			fg(name: string, text: string): string {
 				if (text.includes("Press ")) hintStyles.push(name);
@@ -324,7 +309,7 @@ describe("renderSubagentResult fork indicator", () => {
 			bold(text: string): string {
 				return text;
 			},
-		};
+		} as unknown as Theme;
 		const activeResult = {
 			agent: "worker",
 			task: "review",
@@ -362,6 +347,11 @@ describe("renderSubagentResult fork indicator", () => {
 		const unstructured = renderSubagentResult!(
 			{
 				content: [{ type: "text", text: "Error:\nfirst detail\nsecond detail" }],
+				// isError=true prevents the multiline-compact fold so all lines remain visible.
+				// details must be provided (required by AgentToolResult<Details>); empty results
+				// combined with isError=true exercises the unstructured content display path.
+				details: { mode: "single" as const, results: [] },
+				isError: true,
 			},
 			{ expanded: false },
 			theme,
@@ -584,7 +574,11 @@ describe("renderSubagentResult fork indicator", () => {
 						exitCode: 0,
 						messages: [],
 						artifactPaths: {
+							inputPath: "",
 							outputPath: "/tmp/reviewer_output.md",
+							jsonlPath: "",
+							transcriptPath: "",
+							metadataPath: "",
 						},
 						usage: emptyUsage,
 						progress: {
@@ -785,7 +779,11 @@ describe("renderSubagentResult fork indicator", () => {
 						messages: [],
 						usage: emptyUsage,
 						artifactPaths: {
+							inputPath: "",
 							outputPath: "/tmp/reviewer_output.md",
+							jsonlPath: "",
+							transcriptPath: "",
+							metadataPath: "",
 						},
 						truncation,
 					},
@@ -1011,7 +1009,11 @@ describe("renderSubagentResult fork indicator", () => {
 						messages: [],
 						usage: emptyUsage,
 						artifactPaths: {
+							inputPath: "",
 							outputPath: "/tmp/scout-output.md",
+							jsonlPath: "",
+							transcriptPath: "",
+							metadataPath: "",
 						},
 						truncation: {
 							text: "trimmed scout output",
@@ -1027,7 +1029,11 @@ describe("renderSubagentResult fork indicator", () => {
 						messages: [],
 						usage: emptyUsage,
 						artifactPaths: {
+							inputPath: "",
 							outputPath: "/tmp/reviewer-output.md",
+							jsonlPath: "",
+							transcriptPath: "",
+							metadataPath: "",
 						},
 						progress: {
 							index: 1,

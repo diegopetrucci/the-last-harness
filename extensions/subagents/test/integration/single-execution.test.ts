@@ -22,10 +22,12 @@ import {
 	makeAgentConfigs,
 	makeAgent,
 	makeMinimalCtx,
+	makeModel,
 	events,
 	tryImport,
 } from "../support/helpers.ts";
 import { ASYNC_DIR, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT } from "../../src/shared/types.ts";
+import type { ChildProcessCleanupResult, ContextUsageDiagnostics, SingleResult } from "../../src/shared/types.ts";
 import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
@@ -78,13 +80,8 @@ interface RunSyncResult {
 		reason?: string;
 	};
 	usage: { turns: number; input: number; output: number };
-	contextUsage?: {
-		restoredTokens?: number;
-		contextTokens?: number;
-		peakTokens?: number;
-		contextWindow?: number;
-		contextPercent?: number;
-	};
+	/** Typed from production ContextUsageDiagnostics so new fields are caught. */
+	contextUsage?: ContextUsageDiagnostics;
 	contextPressure?: {
 		severity?: string;
 		crossedThreshold?: string;
@@ -145,6 +142,8 @@ interface RunSyncResult {
 		verifyRuns?: Array<{ status?: string }>;
 		runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
 	};
+	/** Typed from production ChildProcessCleanupResult so new fields are caught. */
+	processCleanup?: ChildProcessCleanupResult;
 }
 
 interface MockPiCallRecord {
@@ -199,6 +198,8 @@ interface ExecutorToolResult {
 		timeoutMs?: number;
 		deadlineAt?: number;
 		asyncId?: string;
+		/** Typed from production SingleResult so structural drift is caught. */
+		results?: Pick<SingleResult, "agent" | "attemptedModels" | "modelFallbackNotice" | "progress" | "tkTicket">[];
 	};
 }
 
@@ -480,7 +481,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				runId: "foreground-pressure-controls",
 				acceptance: false,
 				availableModels: [{ provider: "mock", id: "test-model", fullId: "mock/test-model", contextWindow: 1000 }],
-				onControlEvent: (event) => events.push(event),
+				onControlEvent: (event: unknown) => events.push(event as (typeof events)[number]),
 			},
 		);
 		assert.equal(result.exitCode, 0);
@@ -535,8 +536,8 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			],
 		});
 		const context = makeMinimalCtx(tempDir);
-		context.model = { provider: "mock", id: "test-model" };
-		context.modelRegistry.getAvailable = () => [{ provider: "mock", id: "test-model", contextWindow: 1000 }];
+		context.model = makeModel("test-model", { provider: "mock" });
+		context.modelRegistry.getAvailable = () => [makeModel("test-model", { provider: "mock", contextWindow: 1000 })];
 		const executor = makeExecutor([makeAgent("echo", { model: "mock/test-model", completionGuard: false })], {}, state);
 		const terminalPressure = {
 			type: "message_end",
@@ -687,8 +688,10 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			peakTokens: 800,
 			contextWindow: 1000,
 			contextPercent: 80,
-		});
-		assert.equal(fresh.contextUsage?.restoredTokens, undefined);
+		} satisfies ContextUsageDiagnostics);
+		// Cast to ContextUsageDiagnostics (full production type) to prevent TypeScript
+		// narrowing fresh.contextUsage to the literal shape of the deepEqual expected above.
+		assert.equal((fresh.contextUsage as ContextUsageDiagnostics)?.restoredTokens, undefined);
 		assert.equal(fresh.terminationReason, "completed");
 
 		mockPi.onCall({ output: "Continued" });
@@ -892,7 +895,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				"single-ticket",
 				{ agent: "echo", task: "Run `tk show psr-raw4` first." },
 				new AbortController().signal,
-				(update) => updates.push(update as (typeof updates)[number]),
+				(update: unknown) => updates.push(update as (typeof updates)[number]),
 				makeMinimalCtx(tempDir),
 			);
 
@@ -3364,7 +3367,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 				allowIntercomDetach: true,
 				pauseBlockingSupervisor: true,
 				intercomEvents: eventBus,
-				onUpdate: (update) => {
+				onUpdate: (update: unknown) => {
 					if (detachEmitted) return;
 					const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
 					const sawCoordinationTool = Array.isArray(progress) && progress.some((p) => p?.currentTool === toolName);
@@ -3517,7 +3520,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			runId: "pause-ordering",
 			allowIntercomDetach: true,
 			pauseBlockingSupervisor: true,
-			onSupervisorPauseTransition: (transition) => {
+			onSupervisorPauseTransition: (transition: unknown) => {
 				transitions.push(transition as { stage: "pausing" | "paused"; ownerPid?: number; result: RunSyncResult });
 			},
 		});
@@ -3549,7 +3552,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			runId: "pause-persist-fails",
 			allowIntercomDetach: true,
 			pauseBlockingSupervisor: true,
-			onSupervisorPauseTransition: ({ stage }) => {
+			onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
 				if (stage === "pausing") throw new Error(`pause persistence failed at ${secret}`);
 			},
 		});
@@ -3576,7 +3579,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			runId: "pause-finalize-fails",
 			allowIntercomDetach: true,
 			pauseBlockingSupervisor: true,
-			onSupervisorPauseTransition: ({ stage }) => {
+			onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
 				if (stage === "paused") throw new Error(`pause finalization failed at ${secret}`);
 			},
 		});
@@ -3669,7 +3672,7 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			runId: "active-intercom",
 			allowIntercomDetach: true,
 			intercomEvents: eventBus,
-			onUpdate: (update) => {
+			onUpdate: (update: unknown) => {
 				if (detachEmitted) return;
 				const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } }).details?.progress;
 				const sawIntercom = Array.isArray(progress) && progress.some((p) => p?.currentTool === "intercom");

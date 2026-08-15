@@ -244,7 +244,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 					],
 				},
 				new AbortController().signal,
-				(update) => updates.push(update as (typeof updates)[number]),
+				(update: unknown) => updates.push(update as (typeof updates)[number]),
 				makeMinimalCtx(tempDir),
 			);
 

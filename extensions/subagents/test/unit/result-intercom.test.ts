@@ -7,42 +7,43 @@ import {
 	formatForegroundNativeSubagentResult,
 	resolveSubagentResultStatus,
 } from "../../src/intercom/result-intercom.ts";
+import type { SubagentResultIntercomChild } from "../../src/shared/types.ts";
+import { makePublicNestedRunSummary } from "../support/helpers.ts";
 
 describe("result intercom formatter", () => {
 	it("attaches compact nested children under their parent result child without route secrets", () => {
-		const children = attachNestedChildrenToResultChildren(
-			"root-run",
-			[
-				{ agent: "owner-a", status: "completed", summary: "done", index: 0 },
-				{ agent: "owner-b", status: "completed", summary: "done", index: 1 },
-			],
-			[
-				{
-					id: "nested-a",
-					parentRunId: "root-run",
-					parentStepIndex: 1,
-					depth: 1,
-					path: [{ runId: "root-run", stepIndex: 1 }],
-					state: "complete",
-					agent: "reviewer",
-					sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
-					controlInbox: "/tmp/should-not-leak",
-					capabilityToken: "secret-token",
-					children: [
-						{
-							id: "nested-grandchild",
-							parentRunId: "nested-a",
-							depth: 2,
-							path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
-							state: "complete",
-							agent: "auditor",
-							controlInbox: "/tmp/grandchild-should-not-leak",
-							capabilityToken: "grandchild-secret",
-						},
-					],
-				},
-			],
-		);
+		// Typed as SubagentResultIntercomChild[] so T is inferred as the full interface,
+		// making children (which the function attaches) accessible on the return type.
+		const items: SubagentResultIntercomChild[] = [
+			{ agent: "owner-a", status: "completed", summary: "done", index: 0 },
+			{ agent: "owner-b", status: "completed", summary: "done", index: 1 },
+		];
+		const children = attachNestedChildrenToResultChildren("root-run", items, [
+			{
+				id: "nested-a",
+				parentRunId: "root-run",
+				parentStepIndex: 1,
+				depth: 1,
+				path: [{ runId: "root-run", stepIndex: 1 }],
+				state: "complete",
+				agent: "reviewer",
+				sessionFile: path.join(os.tmpdir(), "nested-a.jsonl"),
+				controlInbox: "/tmp/should-not-leak",
+				capabilityToken: "secret-token",
+				children: [
+					{
+						id: "nested-grandchild",
+						parentRunId: "nested-a",
+						depth: 2,
+						path: [{ runId: "root-run", stepIndex: 1 }, { runId: "nested-a" }],
+						state: "complete",
+						agent: "auditor",
+						controlInbox: "/tmp/grandchild-should-not-leak",
+						capabilityToken: "grandchild-secret",
+					},
+				],
+			},
+		]);
 
 		const nested = children[1]?.children?.[0];
 		const grandchild = nested?.children?.[0];
@@ -254,14 +255,7 @@ describe("formatForegroundNativeSubagentText ceiling-contract sweep", () => {
 	}
 
 	function makeNestedEntry(id: string) {
-		return {
-			id,
-			parentRunId: "root",
-			depth: 1 as const,
-			path: [{ runId: "root" }],
-			state: "complete",
-			agent: `nested-${id}`,
-		};
+		return makePublicNestedRunSummary(id, { agent: `nested-${id}` });
 	}
 
 	// -------------------------------------------------------------------------

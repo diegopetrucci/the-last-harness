@@ -1,6 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, type AsyncStatus, type SubagentState } from "../../shared/types.ts";
+import {
+	ASYNC_DIR,
+	RESULTS_DIR,
+	type AsyncResultArtifact,
+	type AsyncStatus,
+	type SubagentState,
+} from "../../shared/types.ts";
 import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim } from "../shared/lifecycle-state.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { deliverInterruptRequest } from "./control-channel.ts";
@@ -199,15 +205,32 @@ export function interruptLiveAsyncResumeTarget(input: {
 	}
 }
 
-interface AsyncResultFile {
-	id?: string;
+/**
+ * Defensive top-level widener: makes every field optional and widens
+ * string-literal-union values to `string` for safe untrusted-JSON parsing.
+ * Array items are shallow-widened one level deep.
+ */
+type Defensive<T> = {
+	[K in keyof T]?: T[K] extends string
+		? string
+		: T[K] extends Array<infer U>
+			? Array<{ [IK in keyof U]?: U[IK] extends string ? string : U[IK] }>
+			: T[K];
+};
+
+/**
+ * All-optional defensive reader type derived from the canonical
+ * AsyncResultArtifact so that field renames are caught at compile time.
+ * Every field is optional because the file may be truncated or malformed.
+ *
+ * Legacy top-level fields (runId, model, thinking, modelIdentity,
+ * modelResolution, contextUsage, contextPressure,
+ * contextPressureCrossedThresholds) were written by older result formats;
+ * the current writers only emit these inside results items.
+ */
+type AsyncResultFile = Defensive<AsyncResultArtifact> & {
+	// Legacy top-level reader fields not present in current writer output.
 	runId?: string;
-	agent?: string;
-	mode?: string;
-	state?: string;
-	success?: boolean;
-	cwd?: string;
-	sessionFile?: string;
 	model?: string;
 	thinking?: string;
 	modelIdentity?: SubagentModelIdentity;
@@ -215,24 +238,16 @@ interface AsyncResultFile {
 	contextUsage?: ContextUsageDiagnostics;
 	contextPressure?: ContextPressureProjection;
 	contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
-	results?: Array<{
-		agent?: string;
-		success?: boolean;
-		interrupted?: boolean;
-		sessionFile?: string;
-		intercomTarget?: string;
-		model?: string;
-		thinking?: string;
-		modelIdentity?: SubagentModelIdentity;
-		modelResolution?: SubagentModelResolution;
-		contextUsage?: ContextUsageDiagnostics;
-		contextPressure?: ContextPressureProjection;
-		contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
-		terminationReason?: SubagentTerminationReason;
-		acceptance?: import("../../shared/types.ts").AcceptanceLedger;
-		activeRuntimeMs?: number;
-	}>;
-}
+	// Override results to add legacy per-item `thinking` field (written by
+	// older runners but not part of the current canonical result item type).
+	results?: Array<
+		{
+			[IK in keyof import("../../shared/types.ts").AsyncResultArtifactResultItem]?: import("../../shared/types.ts").AsyncResultArtifactResultItem[IK] extends string
+				? string
+				: import("../../shared/types.ts").AsyncResultArtifactResultItem[IK];
+		} & { thinking?: string }
+	>;
+};
 
 export interface AsyncRunLocation {
 	asyncDir: string | null;

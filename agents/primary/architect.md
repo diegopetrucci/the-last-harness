@@ -89,6 +89,7 @@ After approval:
 4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
 5. Present the ticket tree to the user.
 6. Do not launch `developer` until the user approves the created tickets.
+7. Just before launching `developer`, if still on `main`/`master` branch, create a new branch for the work.
 
 The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
 

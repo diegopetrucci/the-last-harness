@@ -76,8 +76,14 @@ function getPropertySchema(schema: JsonSchemaNode | undefined, path: string[]): 
 	return current && typeof current === "object" ? (current as JsonSchemaNode) : undefined;
 }
 
-const schemas = (await import("../../src/extension/schemas.ts")) as Record<string, JsonSchemaNode>;
-const SubagentParams = schemas.SubagentParams as SubagentParamsSchema;
+// Import from the real module so the compiler tracks the actual exports.
+// SubagentParams is cast to the test-local SubagentParamsSchema type to enable
+// .properties access; if the real export is removed or renamed this line breaks.
+// schemas is typed as a string-keyed record so structural-invariant tests can
+// iterate over all exported schemas without knowing their specific TypeBox types.
+const schemasModule = await import("../../src/extension/schemas.ts");
+const SubagentParams = schemasModule.SubagentParams as unknown as SubagentParamsSchema;
+const schemas: Record<string, unknown> = schemasModule as unknown as Record<string, unknown>;
 type CompileSchemaFunction = (schema: unknown) => {
 	Check(value: unknown): boolean;
 	Errors(value: unknown): Iterable<{ message: string }>;
