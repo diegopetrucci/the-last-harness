@@ -1485,8 +1485,12 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				"oversized discard state before replacement",
 			);
 
-			fs.unlinkSync(eventPath);
-			await new Promise((resolve) => setTimeout(resolve, 30));
+			// Create the replacement file BEFORE unlinking the original so that both
+			// files are live at the same time. POSIX guarantees distinct inodes when
+			// two names exist simultaneously. Unlink-then-create lets ext4 hand the
+			// freed inode straight back to the new file; APFS never reuses inodes,
+			// which is why macOS shards pass while ubuntu fails. This ordering is
+			// load-bearing and must not be simplified back to unlink-then-create.
 			const control = JSON.stringify({
 				type: "subagent.control",
 				channels: ["event"],
@@ -1507,6 +1511,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				"utf-8",
 			);
 			assert.equal(fs.statSync(replacementPath).size, originalContents.length);
+			fs.unlinkSync(eventPath);
+			await new Promise((resolve) => setTimeout(resolve, 30));
 			fs.renameSync(replacementPath, eventPath);
 			const replacementStat = fs.statSync(eventPath);
 			const replacementIdentity = `${replacementStat.dev}:${replacementStat.ino}`;
