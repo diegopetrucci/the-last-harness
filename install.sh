@@ -597,7 +597,8 @@ canonicalize_stage0_installer() {
   TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
 
   local canonical_installer="${TMP_DIR}/install.sh"
-  log "Refreshing installer stage-0 from ${RAW_BASE}/install.sh before fetching support files."
+  log "Refreshing installer..."
+  verbose_log "Refreshing installer stage-0 from ${RAW_BASE}/install.sh before fetching support files."
   if ! fetch_support_file "${RAW_BASE}/install.sh" "${canonical_installer}"; then
     rm -f "${canonical_installer}"
     die "unable to refresh installer stage-0 from ${RAW_BASE}/install.sh for ref ${REF}"
