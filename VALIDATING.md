@@ -10,7 +10,7 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow. It checks managed version pins and package contents; runs the main, subagent-test-support, and runtime TypeScript targets; verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint and formatting checks via Biome and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint and formatting checks via Biome and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
 The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
