@@ -11,10 +11,11 @@ describe("foreground tool-call compaction", () => {
 			exitCode: 0,
 			messages: [
 				{
-					role: "assistant",
+					role: "assistant" as const,
 					content: [
 						{
-							type: "toolCall",
+							type: "toolCall" as const,
+							id: "tool-call-1",
 							name: "write",
 							arguments: {
 								path: "/tmp/report.md",
@@ -22,6 +23,19 @@ describe("foreground tool-call compaction", () => {
 							},
 						},
 					],
+					api: "anthropic-messages" as const,
+					provider: "anthropic",
+					model: "test-model",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop" as const,
+					timestamp: Date.now(),
 				},
 			],
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },

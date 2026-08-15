@@ -34,6 +34,7 @@ import {
 	SUBAGENT_CONTROL_INTERCOM_EVENT,
 	TEMP_ROOT_DIR,
 	type SubagentState,
+	type ForegroundRunControl,
 } from "../../src/shared/types.ts";
 // Legacy event name kept as a test-local literal for the no-emission regression guard.
 // Do not re-add this constant to production types or result-intercom — the delivery/receipt
@@ -219,12 +220,13 @@ describe("nested control routing", () => {
 	});
 
 	it("isolates foreground message inboxes across control lifecycles and removes the lifecycle root", () => {
-		const first = { runId: "same-run", mode: "single" as const, startedAt: 1, updatedAt: 1 };
+		// Typed as ForegroundRunControl so messageInboxRoot (mutated by registerForegroundMessageInbox) is accessible.
+		const first: ForegroundRunControl = { runId: "same-run", mode: "single", startedAt: 1, updatedAt: 1 };
 		const firstInbox = registerForegroundMessageInbox(first, first.runId, 0);
 		fs.writeFileSync(path.join(firstInbox, "stale.json"), "{}", "utf-8");
 		const firstRoot = first.messageInboxRoot!;
 
-		const second = { runId: "same-run", mode: "single" as const, startedAt: 2, updatedAt: 2 };
+		const second: ForegroundRunControl = { runId: "same-run", mode: "single", startedAt: 2, updatedAt: 2 };
 		const secondInbox = registerForegroundMessageInbox(second, second.runId, 0);
 		assert.notEqual(second.messageInboxRoot, firstRoot);
 		assert.equal(fs.existsSync(path.join(secondInbox, "stale.json")), false);

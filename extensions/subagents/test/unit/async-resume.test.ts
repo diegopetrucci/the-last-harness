@@ -4,13 +4,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildRevivedAsyncTask, resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import type { ResolvedAcceptanceConfig } from "../../src/shared/types.ts";
 
 function writeJson(filePath: string, value: object): void {
 	fs.mkdirSync(path.dirname(filePath), { recursive: true });
 	fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
 
-const pausedCheckedAcceptance = {
+const pausedCheckedAcceptance: ResolvedAcceptanceConfig = {
 	level: "checked",
 	explicit: true,
 	inferredReason: ["async write-capable or risky run"],
@@ -25,9 +26,9 @@ const pausedCheckedAcceptance = {
 	evidence: ["changed-files", "commands-run", "no-staged-files"],
 	verify: [{ id: "tests", command: "npm test" }],
 	stopRules: ["Do not widen scope"],
-} as const;
+};
 
-const pausedNoneAcceptance = {
+const pausedNoneAcceptance: ResolvedAcceptanceConfig = {
 	level: "none",
 	explicit: false,
 	inferredReason: [],
@@ -35,7 +36,7 @@ const pausedNoneAcceptance = {
 	evidence: [],
 	verify: [],
 	stopRules: [],
-} as const;
+};
 
 function skippedPausedAcceptanceLedger(effectiveAcceptance = pausedCheckedAcceptance) {
 	return {

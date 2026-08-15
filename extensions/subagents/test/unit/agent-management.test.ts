@@ -14,7 +14,7 @@ function readText(result: { content: Array<{ type: string; text?: string }> }): 
 	const first = result.content[0];
 	assert.ok(first);
 	assert.equal(first.type, "text");
-	assert.equal(typeof first.text, "string");
+	if (typeof first.text !== "string") throw new Error("Expected text content to be a string");
 	return first.text;
 }
 

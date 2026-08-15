@@ -44,7 +44,7 @@ Subagent successes remain concise in that aggregate command. Subagent failures a
 
 ## TypeScript scope
 
-`npm run typecheck` and `npm run typecheck:runtime` cover production subagent sources. `npm run typecheck:subagents-test-support` deliberately covers only typed support modules and focused TLH adaptation regressions. It does **not** claim full imported-test type coverage: legacy fixture mocks are not strict-compatible. The review-time full-tree probe reported 320 TypeScript errors (319 after the required-dependency adaptations in this port). Runtime execution remains authoritative for the rest of the imported fixtures.
+`npm run typecheck` covers production subagent sources and all subagent test files under `extensions/subagents/test` (the exclusion that previously omitted that subtree has been removed). `npm run typecheck:runtime` covers runtime-specific sources. All 114 subagent test files pass strict typechecking with zero errors; the `ScaledMs` branded type enforces that wait helpers receive a scaled timeout rather than a raw literal. `npm run typecheck:subagents-test` provides a developer-convenience target for running the subagents-test typecheck in isolation.
 
 For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 

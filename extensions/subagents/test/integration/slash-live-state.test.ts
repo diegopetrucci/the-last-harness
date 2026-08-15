@@ -6,16 +6,11 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-interface SlashLiveStateModule {
-	applySlashUpdate: typeof import("../../src/slash/slash-live-state.ts").applySlashUpdate;
-	createSlashResultComponent: typeof import("../../src/extension/index.ts").createSlashResultComponent;
-	buildSlashInitialResult: typeof import("../../src/slash/slash-live-state.ts").buildSlashInitialResult;
-	clearSlashSnapshots: typeof import("../../src/slash/slash-live-state.ts").clearSlashSnapshots;
-	finalizeSlashResult: typeof import("../../src/slash/slash-live-state.ts").finalizeSlashResult;
-	getSlashRenderableSnapshot: typeof import("../../src/slash/slash-live-state.ts").getSlashRenderableSnapshot;
-	restoreSlashFinalSnapshots: typeof import("../../src/slash/slash-live-state.ts").restoreSlashFinalSnapshots;
-}
-
+// Dynamic imports preserve module-evaluation order: slash-live-state.ts
+// initialises module-level Maps (liveSnapshots, finalSnapshots) that the
+// tests reset via clearSlashSnapshots(); importing after other module code
+// has run keeps that state isolated from any future top-level setup code
+// added above these lines.
 const {
 	applySlashUpdate,
 	buildSlashInitialResult,
@@ -23,8 +18,8 @@ const {
 	finalizeSlashResult,
 	getSlashRenderableSnapshot,
 	restoreSlashFinalSnapshots,
-} = (await import("../../src/slash/slash-live-state.ts")) as SlashLiveStateModule;
-const { createSlashResultComponent } = (await import("../../src/extension/index.ts")) as SlashLiveStateModule;
+} = await import("../../src/slash/slash-live-state.ts");
+const { createSlashResultComponent } = await import("../../src/extension/index.ts");
 const available = true;
 
 describe("slash live state", { skip: !available ? "slash-live-state.ts not importable" : undefined }, () => {
@@ -41,6 +36,7 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 			toolCount: 2,
 			progress: [
 				{
+					index: 0,
 					agent: "scout",
 					status: "running",
 					task: "scan codebase",
@@ -89,10 +85,10 @@ describe("slash live state", { skip: !available ? "slash-live-state.ts not impor
 		applySlashUpdate!("req-live-render", {
 			requestId: "req-live-render",
 			currentTool: "read",
-			currentToolArgs: longArgs,
 			toolCount: 1,
 			progress: [
 				{
+					index: 0,
 					agent: "scout",
 					status: "running",
 					task: "inspect the active slash result",

@@ -4,14 +4,14 @@
  *
  * Usage: node scripts/run-ci-validation.mjs
  *
- * Runs all 11 non-test validation checks in concurrent lanes.
+ * Runs all 10 non-test validation checks in concurrent lanes.
  * This is the CI-only parallel runner; 'npm run validate' stays sequential for contributors.
  *
  * Lane grouping:
  *   - smoke:        bash scripts/check-installer-smoke.sh (~15s)
  *   - typecheck-rt: npm run typecheck:runtime (~10s)
  *   - check-rt:     npm run check:runtime (~10s)
- *   - typecheck:    npm run typecheck → npm run typecheck:subagents-test-support (~8s)
+ *   - typecheck:    npm run typecheck (~8s)
  *   - lint:         npm run lint → npm run lint:sh (~6.5s)
  *   - pkg:          npm run check:package-versions → npm run check:package-contents →
  *                   node scripts/merge-settings.mjs --dry-run → npm pack --dry-run (~5s)
@@ -56,10 +56,7 @@ export const LANES = [
 	},
 	{
 		name: "typecheck",
-		commands: [
-			["npm", "run", "typecheck"],
-			["npm", "run", "typecheck:subagents-test-support"],
-		],
+		commands: [["npm", "run", "typecheck"]],
 	},
 	{
 		name: "lint",

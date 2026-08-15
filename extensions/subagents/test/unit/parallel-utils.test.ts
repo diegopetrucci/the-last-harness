@@ -12,20 +12,18 @@ import {
 	type ParallelStepGroup,
 	type RunnerStep,
 } from "../../src/runs/shared/parallel-utils.ts";
+import { makeRunnerStep } from "../support/helpers.ts";
 
 describe("isParallelGroup", () => {
 	it("returns true for a parallel step group", () => {
 		const step: ParallelStepGroup = {
-			parallel: [
-				{ agent: "a", task: "do stuff" },
-				{ agent: "b", task: "do other stuff" },
-			],
+			parallel: [makeRunnerStep("a", "do stuff"), makeRunnerStep("b", "do other stuff")],
 		};
 		assert.equal(isParallelGroup(step), true);
 	});
 
 	it("returns false for a sequential step", () => {
-		const step: RunnerSubagentStep = { agent: "a", task: "do stuff" };
+		const step: RunnerSubagentStep = makeRunnerStep("a", "do stuff");
 		assert.equal(isParallelGroup(step), false);
 	});
 
@@ -37,10 +35,7 @@ describe("isParallelGroup", () => {
 
 describe("flattenSteps", () => {
 	it("returns sequential steps unchanged", () => {
-		const steps: RunnerStep[] = [
-			{ agent: "a", task: "t1" },
-			{ agent: "b", task: "t2" },
-		];
+		const steps: RunnerStep[] = [makeRunnerStep("a", "t1"), makeRunnerStep("b", "t2")];
 		const flat = flattenSteps(steps);
 		assert.equal(flat.length, 2);
 		assert.equal(flat[0].agent, "a");
@@ -49,14 +44,11 @@ describe("flattenSteps", () => {
 
 	it("expands parallel groups into individual steps", () => {
 		const steps: RunnerStep[] = [
-			{ agent: "scout", task: "find info" },
+			makeRunnerStep("scout", "find info"),
 			{
-				parallel: [
-					{ agent: "reviewer-a", task: "review part 1" },
-					{ agent: "reviewer-b", task: "review part 2" },
-				],
+				parallel: [makeRunnerStep("reviewer-a", "review part 1"), makeRunnerStep("reviewer-b", "review part 2")],
 			},
-			{ agent: "summarizer", task: "combine" },
+			makeRunnerStep("summarizer", "combine"),
 		];
 		const flat = flattenSteps(steps);
 		assert.equal(flat.length, 4);
@@ -71,7 +63,7 @@ describe("flattenSteps", () => {
 	});
 
 	it("handles empty parallel group", () => {
-		const steps: RunnerStep[] = [{ agent: "before", task: "x" }, { parallel: [] }, { agent: "after", task: "y" }];
+		const steps: RunnerStep[] = [makeRunnerStep("before", "x"), { parallel: [] }, makeRunnerStep("after", "y")];
 		const flat = flattenSteps(steps);
 		assert.equal(flat.length, 2);
 		assert.deepEqual(

@@ -4,6 +4,17 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
+import type { AgentConfig } from "../../src/agents/agents.ts";
+import type { AcceptanceInput, AgentProgress, PublicNestedRunSummary, NestedRunState } from "../../src/shared/types.ts";
+import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
+import type { AsyncRunnerStepBuildParams } from "../../src/runs/background/async-execution.ts";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionUIContext,
+	ModelRegistry,
+} from "@earendil-works/pi-coding-agent";
+import type { Model, Api } from "@earendil-works/pi-ai";
 
 export type { MockPi };
 
@@ -43,41 +54,33 @@ export function createEventBus() {
 	};
 }
 
-interface AgentConfig {
-	name: string;
-	description?: string;
-	systemPrompt?: string;
-	model?: string;
-	fallbackModels?: string[];
-	tools?: string[];
-	extensions?: string[];
-	subagentOnlyExtensions?: string[];
-	skills?: string[];
-	thinking?: string;
-	systemPromptMode?: string;
-	inheritProjectContext?: boolean;
-	inheritSkills?: boolean;
-	scope?: string;
-	output?: string | false;
-	reads?: string[] | false;
-	progress?: boolean;
-	maxSubagentDepth?: number;
-	completionGuard?: boolean;
-	maxExecutionTimeMs?: number;
-}
+// AgentConfig is imported from production so test fixtures stay in sync with the
+// real shape; exporting it lets test files import the type from this helper.
+export type { AgentConfig };
 
 export function makeAgentConfigs(names: string[]): AgentConfig[] {
 	return names.map((name) => ({
 		name,
 		description: `Test agent: ${name}`,
 		systemPrompt: "",
-		systemPromptMode: "replace",
+		systemPromptMode: "replace" as const,
 		inheritProjectContext: false,
 		inheritSkills: false,
+		source: "user" as const,
+		filePath: "",
 	}));
 }
 
-export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): AgentConfig {
+/**
+ * Creates a minimal AgentConfig for test fixtures. The `acceptance` extension
+ * is accepted in overrides for supervisor tests that set per-invocation
+ * acceptance requirements; it is not in the production AgentConfig shape but
+ * is carried on the runtime object without being part of the declared return type.
+ */
+export function makeAgent(
+	name: string,
+	overrides: Partial<AgentConfig> & { acceptance?: AcceptanceInput } = {},
+): AgentConfig {
 	return {
 		name,
 		description: `Test agent: ${name}`,
@@ -85,37 +88,193 @@ export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): A
 		systemPromptMode: "replace",
 		inheritProjectContext: false,
 		inheritSkills: false,
+		source: "user",
+		filePath: "",
 		...overrides,
 	};
 }
 
-interface MinimalCtx {
-	cwd: string;
-	hasUI: boolean;
-	ui: Record<string, never>;
-	sessionManager: {
-		getSessionId: () => string;
-		getSessionFile: () => string | null;
+/**
+ * Creates a complete RunnerSubagentStep fixture typed from the production interface.
+ * Only `agent` and `task` are required; all optional fields may be supplied via
+ * overrides. Defaults `inheritProjectContext` and `inheritSkills` to `false`.
+ */
+export function makeRunnerStep(
+	agent: string,
+	task: string,
+	overrides: Partial<RunnerSubagentStep> = {},
+): RunnerSubagentStep {
+	return {
+		agent,
+		task,
+		inheritProjectContext: false,
+		inheritSkills: false,
+		...overrides,
 	};
-	modelRegistry: {
-		getAvailable: () => Array<{ provider: string; id: string }>;
-	};
-	model?: { provider: string; id?: string };
 }
 
-export function makeMinimalCtx(cwd: string): MinimalCtx {
+/**
+ * Creates a complete AgentProgress fixture typed from the production interface.
+ * `agent`, `status`, and `task` are required parameters; all other required
+ * fields default to inert/zero values so call sites express only what they test.
+ */
+export function makeAgentProgress(
+	overrides: Pick<AgentProgress, "agent" | "status" | "task"> & Partial<AgentProgress>,
+): AgentProgress {
 	return {
+		index: 0,
+		recentTools: [],
+		recentOutput: [],
+		toolCount: 0,
+		tokens: 0,
+		durationMs: 0,
+		...overrides,
+	};
+}
+
+/**
+ * Creates a complete PublicNestedRunSummary fixture typed from the production type.
+ * `id` is required; required address fields default to inert values.
+ */
+export function makePublicNestedRunSummary(
+	id: string,
+	overrides: Partial<PublicNestedRunSummary> & { state?: NestedRunState } = {},
+): PublicNestedRunSummary {
+	return {
+		id,
+		parentRunId: "root",
+		depth: 1,
+		path: [{ runId: "root" }],
+		state: "complete",
+		...overrides,
+	};
+}
+
+/**
+ * Creates a minimal Model<Api> fixture typed from the production interface.
+ * Defaults are inert (zero cost, empty input types). Supply `contextWindow` and
+ * other fields via overrides when the test logic depends on them.
+ *
+ * `api` and `baseUrl` are derived from the effective provider so the fixture
+ * stays coherent when `provider` is overridden. Explicit `api` or `baseUrl`
+ * values in `overrides` take precedence over the derived values.
+ */
+export function makeModel(
+	id: string,
+	overrides: Partial<Model<Api>> & { provider?: string; contextWindow?: number } = {},
+): Model<Api> {
+	const provider = overrides.provider ?? "anthropic";
+	// Derive coherent api/baseUrl from provider so overriding provider to "openai"
+	// or "mock" does not leave Anthropic metadata in the fixture.
+	const derivedApi: Api =
+		provider === "openai"
+			? ("openai-completions" as Api)
+			: provider === "anthropic"
+				? ("anthropic-messages" as Api)
+				: (provider as Api);
+	const derivedBaseUrl =
+		provider === "openai" ? "https://api.openai.com" : provider === "anthropic" ? "https://api.anthropic.com" : "";
+	return {
+		id,
+		name: id,
+		api: derivedApi,
+		provider,
+		baseUrl: derivedBaseUrl,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 200_000,
+		maxTokens: 16_384,
+		...overrides,
+	};
+}
+
+/**
+ * Creates a minimal AsyncExecutionContext for tests of buildAsyncRunnerSteps,
+ * executeAsyncChain, and executeAsyncSingle. The `pi` field is stubbed with a
+ * no-op EventBus; the tested code paths in those functions only access
+ * pi.events.emit() and only after precondition guards that fire before pi is used.
+ *
+ * Typed from AsyncRunnerStepBuildParams['ctx'] (AsyncExecutionContext) so that
+ * newly required fields surface here rather than at each call site.
+ */
+export function makeAsyncCtx(
+	cwd: string,
+	overrides: Partial<AsyncRunnerStepBuildParams["ctx"]> = {},
+): AsyncRunnerStepBuildParams["ctx"] {
+	return {
+		// ExtensionAPI has 25+ methods; the code paths exercised in async-execution
+		// tests only call pi.events.emit() (and only after reviewed-rejection checks).
+		// A structural cast is used instead of a full mock to avoid duplicating the
+		// SDK interface and to keep the fixture small and auditable.
+		pi: {
+			events: {
+				emit(_channel: string, _data: unknown) {},
+				on(_channel: string, _handler: (data: unknown) => void) {
+					return () => {};
+				},
+			},
+		} as unknown as ExtensionAPI,
 		cwd,
+		currentSessionId: "session-1",
+		currentModel: undefined,
+		currentModelProvider: undefined,
+		modelScope: undefined,
+		...overrides,
+	};
+}
+
+/**
+ * Creates a minimal ExtensionContext for test fixtures. Typed from the production
+ * interface so that newly required fields surface at this factory rather than at
+ * every call site. Complex SDK sub-types (ExtensionUIContext, ModelRegistry,
+ * ReadonlySessionManager) are stubbed via structural casts; only the methods used
+ * by the tested code paths are implemented.
+ */
+export function makeMinimalCtx(cwd: string): ExtensionContext {
+	// Explicit type annotation ensures TypeScript checks all required top-level
+	// fields of ExtensionContext here. SDK sub-interfaces that require private
+	// class members or complex TUI types are stubbed with as-unknown casts.
+	const ctx: ExtensionContext = {
+		cwd,
+		mode: "json",
 		hasUI: false,
-		ui: {},
+		// ExtensionUIContext has 15+ async methods requiring TUI/Theme types from
+		// the SDK; none are called in tests that use makeMinimalCtx.
+		ui: {} as unknown as ExtensionUIContext,
 		sessionManager: {
 			getSessionId: () => "session-123",
-			getSessionFile: () => null,
-		},
+			getSessionFile: () => undefined,
+			// Remaining ReadonlySessionManager methods are unused in these tests.
+		} as unknown as ExtensionContext["sessionManager"],
+		// ModelRegistry is a class with a private `runtime` field; structural
+		// casting is the only way to supply a no-op instance.
 		modelRegistry: {
 			getAvailable: () => [],
-		},
+		} as unknown as ModelRegistry,
+		model: undefined,
+		scopedModels: [],
+		isIdle: () => true,
+		isProjectTrusted: () => false,
+		signal: undefined,
+		abort: () => {},
+		hasPendingMessages: () => false,
+		shutdown: () => {},
+		getContextUsage: () => undefined,
+		compact: () => {},
+		getSystemPrompt: () => "",
 	};
+	return ctx;
+}
+
+/**
+ * Creates a minimal ExtensionAPI stub for unit tests.
+ * The real ExtensionAPI has 25+ methods; most tests only need a small subset.
+ * Using `as unknown as ExtensionAPI` once here keeps call sites clean and avoids
+ * scattered suppression casts throughout the test suite.
+ */
+export function makeExtensionAPI(overrides: Record<string, unknown> = {}): ExtensionAPI {
+	return overrides as unknown as ExtensionAPI;
 }
 
 /**

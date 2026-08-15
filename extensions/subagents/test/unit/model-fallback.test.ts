@@ -15,6 +15,7 @@ import {
 	sanitizeModelFallbackNotice,
 	sanitizeSubagentModelIdentity,
 } from "../../src/runs/shared/model-fallback.ts";
+import type { ModelScopeConfig } from "../../src/runs/shared/model-scope.ts";
 
 describe("model fallback helpers", () => {
 	const availableModels = [
@@ -354,7 +355,7 @@ describe("resolveSubagentModelOverride scope enforcement", () => {
 		{ provider: "deepseek", id: "deepseek-v4", fullId: "deepseek/deepseek-v4" },
 	];
 	const parentModel = { provider: "deepseek", id: "deepseek-v4" };
-	const scope = { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] } as const;
+	const scope: ModelScopeConfig = { enforce: true, allow: ["anthropic/*", "openai/gpt-5-*"] };
 
 	it("is a no-op when scope is not enforced", () => {
 		assert.equal(
