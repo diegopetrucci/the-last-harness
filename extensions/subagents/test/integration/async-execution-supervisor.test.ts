@@ -31,6 +31,7 @@ import {
 	executeAsyncChain,
 	executeAsyncSingle,
 	readAsyncPayload,
+	readMockPiArgs,
 	removeLifecycleLock,
 	startedMockPiPids,
 	waitForAsyncState,
@@ -129,21 +130,22 @@ describe("async execution utilities", () => {
 			assert.equal(started.isError, undefined);
 			const asyncDir = path.join(ASYNC_DIR, id);
 			assert.ok(runnerPid, "expected async runner pid from started event");
-			await waitForMockPiCall(mockPi, 0, 10_000);
+			await waitForMockPiCall(mockPi, 0);
 			const childPids = startedMockPiPids(mockPi);
 			assert.equal(childPids.length, 1);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(status.state, "paused");
 			assert.equal(status.pid, undefined);
 			assert.equal(status.pause?.kind, "awaiting_supervisor");
 			assert.equal(status.pause?.ownerPid, undefined);
+			assert.equal(status.steps?.[0]?.terminationReason, "paused");
 			assert.equal(status.pause?.request?.tool, "contact_supervisor");
 			assert.equal(status.steps?.[0]?.status, "paused");
 			assert.equal(status.steps?.[0]?.pause?.kind, "awaiting_supervisor");
 			assert.equal(status.steps?.[0]?.acceptance?.status, "skipped");
 			assert.ok((status.steps?.[0]?.activeRuntimeMs ?? 0) > 0);
-			const pausedActiveRuntimeMs = status.steps[0].activeRuntimeMs;
+			const pausedActiveRuntimeMs = status.steps?.[0]?.activeRuntimeMs;
 			const payload = (await readAsyncPayload(id)) as any;
 			assert.equal(payload.state, "paused");
 			assert.equal(payload.pause?.kind, "awaiting_supervisor");
@@ -166,7 +168,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			await waitForMockPiCall(mockPi, 1);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			assert.equal(mockPi.callCount(), 2);
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(continuedStatus.state, "continued");
@@ -204,6 +206,170 @@ describe("async execution utilities", () => {
 		}
 	});
 
+	it("blocks unsafe durable resume before claiming or spawning and preserves paused artifacts", {
+		skip: process.platform === "win32" ? "cross-process supervisor pause delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
+		process.env.MOCK_PI_SESSION_DIR_FILE = "1";
+		try {
+			const id = `async-supervisor-context-gate-${Date.now().toString(36)}`;
+			mockPi.onCall({
+				steps: [{ jsonl: [events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" })] }],
+				keepAliveAfterFinalMessageMs: 5_000,
+			});
+			executeAsyncSingle!(id, {
+				agent: "worker",
+				task: "Ask on intercom and wait.",
+				agentConfig: makeAgent("worker", { acceptance: { level: "checked" } }),
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+			const asyncDir = path.join(ASYNC_DIR, id);
+			await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
+			await waitForPidsToExit(startedMockPiPids(mockPi), `paused context-gate run ${id}`);
+			const statusPath = path.join(asyncDir, "status.json");
+			const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+			status.steps![0]!.contextUsage = { contextTokens: 800, contextWindow: 1000, peakTokens: 1200 };
+			fs.writeFileSync(statusPath, JSON.stringify(status, null, 2), "utf-8");
+			const beforeStatus = fs.readFileSync(statusPath);
+			const initialChildSpawnCount = startedMockPiPids(mockPi).length;
+			const sessionFile = status.steps![0]!.sessionFile!;
+			const beforeSession = fs.readFileSync(sessionFile);
+			const beforeResult = fs.existsSync(path.join(RESULTS_DIR, `${id}.json`))
+				? fs.readFileSync(path.join(RESULTS_DIR, `${id}.json`))
+				: undefined;
+
+			const resumed = await makeAsyncExecutor([makeAgent("worker")]).execute(
+				"async-supervisor-context-gate-resume",
+				{ action: "resume", id, message: "Continue.", model: "explicit/model" },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+			assert.equal(resumed.isError, true);
+			assert.equal(startedMockPiPids(mockPi).length - initialChildSpawnCount, 0);
+			assert.match(resumed.content[0]?.text ?? "", /used tokens 800/);
+			assert.match(resumed.content[0]?.text ?? "", /context window 1000/);
+			assert.match(resumed.content[0]?.text ?? "", /80\.00%/);
+			assert.match(resumed.content[0]?.text ?? "", /remaining tokens 200/);
+			assert.match(resumed.content[0]?.text ?? "", /fresh narrowly scoped child/);
+			assert.deepEqual(fs.readFileSync(statusPath), beforeStatus);
+			assert.deepEqual(fs.readFileSync(sessionFile), beforeSession);
+			if (beforeResult) assert.deepEqual(fs.readFileSync(path.join(RESULTS_DIR, `${id}.json`)), beforeResult);
+			const afterStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+			assert.equal(afterStatus.state, "paused");
+			assert.equal(afterStatus.lifecycle?.continuation, undefined);
+		} finally {
+			if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
+			else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
+		}
+	});
+
+	it("restores the paused child model when the reloaded parent uses a different model", {
+		skip: process.platform === "win32" ? "cross-process supervisor pause delivery unreliable on Windows CI" : undefined,
+	}, async () => {
+		const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
+		process.env.MOCK_PI_SESSION_DIR_FILE = "1";
+		try {
+			const id = `async-supervisor-model-restore-${Date.now().toString(36)}`;
+			const availableModels = [
+				{ provider: "anthropic", id: "claude-sonnet-4", fullId: "anthropic/claude-sonnet-4" },
+				{ provider: "openai", id: "gpt-5", fullId: "openai/gpt-5" },
+			];
+			mockPi.onCall({
+				steps: [
+					{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
+				],
+				keepAliveAfterFinalMessageMs: 5_000,
+			});
+			executeAsyncSingle!(id, {
+				agent: "worker",
+				task: "Ask for a supervisor decision and stop there.",
+				agentConfig: makeAgent("worker", {
+					model: "anthropic/claude-sonnet-4",
+					thinking: "high",
+					acceptance: { level: "checked" },
+				}),
+				ctx: {
+					pi: { events: { emit() {} } },
+					cwd: tempDir,
+					currentSessionId: "session-1",
+					currentModelProvider: "anthropic",
+					currentModel: { provider: "anthropic", id: "claude-sonnet-4" },
+				},
+				availableModels,
+				artifactConfig: {
+					enabled: false,
+					includeInput: false,
+					includeOutput: false,
+					includeJsonl: false,
+					includeMetadata: false,
+					cleanupDays: 7,
+				},
+				shareEnabled: false,
+				sessionRoot: path.join(tempDir, "sessions"),
+				maxSubagentDepth: 2,
+			});
+			const asyncDir = path.join(ASYNC_DIR, id);
+			await waitForAsyncState(asyncDir, "paused", scaleTestTimeout(10_000));
+			const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
+			assert.deepEqual(pausedStatus.steps?.[0]?.modelIdentity, {
+				provider: "anthropic",
+				model: "claude-sonnet-4",
+				thinking: "high",
+			});
+			await waitForPidsToExit(startedMockPiPids(mockPi), `paused model-identity run ${id}`);
+
+			mockPi.onCall({ output: "resumed on the persisted child model" });
+			const reloaded = makeAsyncExecutor([
+				makeAgent("worker", { model: "openai/gpt-5", thinking: "low", acceptance: { level: "checked" } }),
+			]);
+			const resumed = await reloaded.execute(
+				"async-supervisor-model-restore-resume",
+				{ action: "resume", id, message: "Supervisor replied: continue." },
+				new AbortController().signal,
+				undefined,
+				{
+					...makeMinimalCtx(tempDir),
+					model: { provider: "openai", id: "gpt-5" },
+					modelRegistry: { getAvailable: () => availableModels },
+				},
+			);
+			assert.equal(resumed.isError, undefined);
+			await waitForAsyncState(asyncDir, "continued", scaleTestTimeout(10_000));
+			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
+			const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
+			assert.equal(typeof continuationRunId, "string");
+			const continuationPayload = await readAsyncPayload(continuationRunId);
+			assert.equal(continuationPayload.results?.[0]?.model, "anthropic/claude-sonnet-4:high");
+			assert.deepEqual(continuationPayload.results?.[0]?.modelIdentity, {
+				provider: "anthropic",
+				model: "claude-sonnet-4",
+				thinking: "high",
+			});
+			assert.equal(continuationPayload.results?.[0]?.modelResolution?.kind, "restored");
+			assert.match(
+				continuationPayload.results?.[0]?.modelResolution?.reason ?? "",
+				/instead of the current parent model/,
+			);
+			const resumedArgs = readMockPiArgs(mockPi, 1);
+			assert.equal(resumedArgs[resumedArgs.indexOf("--model") + 1], "anthropic/claude-sonnet-4:high");
+		} finally {
+			if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
+			else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
+		}
+	});
+
 	it("resumes paused async supervisor runs unchanged after disk reload and evaluates continuation acceptance once", {
 		skip: process.platform === "win32" ? "cross-process supervisor pause delivery unreliable on Windows CI" : undefined,
 	}, async () => {
@@ -235,7 +401,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const pausedPayload = await readAsyncPayload(id);
 			assert.equal(pausedPayload.results[0]?.acceptance?.status, "skipped");
 			mockPi.onCall({ output: "resumed unchanged after reload" });
@@ -248,7 +414,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			assert.equal(resumed.isError, undefined);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			const continuationRunId = continuedStatus.lifecycle?.continuation?.continuationRunId;
 			assert.equal(typeof continuationRunId, "string");
@@ -289,7 +455,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const reloaded = makeAsyncExecutor();
 		const cancelled = await reloaded.execute(
 			"async-supervisor-cancelled",
@@ -345,7 +511,7 @@ describe("async execution utilities", () => {
 				maxSubagentDepth: 2,
 			});
 			const asyncDir = path.join(ASYNC_DIR, id);
-			await waitForAsyncState(asyncDir, "paused", 10_000);
+			await waitForAsyncState(asyncDir, "paused");
 			const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			pausedStatus.lifecycle = {
 				...(pausedStatus.lifecycle ?? {}),
@@ -362,7 +528,7 @@ describe("async execution utilities", () => {
 				makeMinimalCtx(tempDir),
 			);
 			assert.equal(resumed.isError, undefined);
-			await waitForAsyncState(asyncDir, "continued", 10_000);
+			await waitForAsyncState(asyncDir, "continued");
 			const continuedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 			assert.equal(continuedStatus.state, "continued");
 			assert.equal(typeof continuedStatus.lifecycle?.continuation?.continuationRunId, "string");
@@ -398,7 +564,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const pausedStatus = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 		pausedStatus.lifecycle = {
 			...(pausedStatus.lifecycle ?? {}),
@@ -447,7 +613,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 		const asyncDir = path.join(ASYNC_DIR, id);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		mockPi.onCall({ output: "resumed race winner" });
 		const reloaded = makeAsyncExecutor([makeAgent("worker", { acceptance: { level: "checked" } })]);
 		const [resumeResult, cancelResult] = await Promise.allSettled([
@@ -537,10 +703,10 @@ describe("async execution utilities", () => {
 				status.state === "pausing" && typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
 			"pausing before interrupt hard kill",
 		);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const childPids = startedMockPiPids(mockPi);
 		assert.equal(childPids.length, 1);
-		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM", 10_000);
+		await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM");
 		const payload = await readAsyncPayload(id);
 		const elapsedMs = Date.now() - startedAt;
 		assert.equal(payload.state, "paused");
@@ -602,7 +768,7 @@ describe("async execution utilities", () => {
 				status.state === "running" && typeof (status as AsyncStatusPayload & { pid?: number }).pid === "number",
 			"running pid before lock contention",
 		);
-		await waitForMockPiCall(mockPi, 0, 10_000);
+		await waitForMockPiCall(mockPi, 0);
 		const childPids = startedMockPiPids(mockPi);
 		assert.equal(childPids.length, 1);
 		writeLifecycleLock(asyncDir);
@@ -656,12 +822,15 @@ describe("async execution utilities", () => {
 			(status) => status.state === "pausing",
 			"pausing before concurrent terminal winner",
 		);
+		// Hold the lifecycle lock to prevent the runner's finalization CAS write from
+		// overwriting the concurrent terminal winner we are about to inject. Note:
+		// with skip-on-exhaustion (FIX 1, tlhm-8typ), the runner's intermediate
+		// post-child status writes are skipped while the lock is held. We therefore
+		// write the cancelled status immediately without waiting for the step-update
+		// write — the adopted cancelled status already carries the correct step state.
 		writeLifecycleLock(asyncDir);
-		await waitForAsyncStatusPredicate(
-			asyncDir,
-			(status) => status.state === "pausing" && status.steps?.[0]?.status === "paused",
-			"paused step before concurrent terminal winner",
-		);
+		// Write the concurrent terminal status immediately; writeNormalizedLifecycleStatus
+		// bypasses the lifecycle lock so this write succeeds even while the lock is held.
 		writeNormalizedLifecycleStatus(asyncDir, {
 			...pausingStatus,
 			state: "cancelled",
@@ -682,6 +851,8 @@ describe("async execution utilities", () => {
 					1,
 			},
 		});
+		// The runner's finalization CAS will fail (lock held), causing it to call
+		// adoptConcurrentTerminalStatus which reads the cancelled status and exits.
 		const payload = await readAsyncPayload(id);
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
 		assert.equal(payload.state, "cancelled");
@@ -907,10 +1078,10 @@ describe("async execution utilities", () => {
 		assert.equal(started.isError, undefined);
 		const asyncDir = path.join(ASYNC_DIR, cohortId);
 		assert.ok(runnerPid, "expected async runner pid from started event");
-		await waitForMockPiCall(mockPi, 4, 10_000);
+		await waitForMockPiCall(mockPi, 4);
 		const childPids = startedMockPiPids(mockPi).filter((pid) => !existingPids.has(pid));
 		assert.equal(childPids.length, 3);
-		await waitForAsyncState(asyncDir, "paused", 10_000);
+		await waitForAsyncState(asyncDir, "paused");
 		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as any;
 		assert.deepEqual(
 			status.steps?.map((step: any) => step.status),

@@ -78,9 +78,9 @@ describe("async stale-run reconciliation", () => {
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
 			assert.equal(status.state, "failed");
 			assert.equal(status.sessionId, "session-current");
-			assert.equal(status.steps[0].status, "failed");
-			assert.equal(status.steps[0].activeRuntimeMs, 1250);
-			assert.match(status.steps[0].error, /process 12345 exited or disappeared/);
+			assert.equal(status.steps?.[0]?.status, "failed");
+			assert.equal(status.steps?.[0]?.activeRuntimeMs, 1250);
+			assert.match(status.steps?.[0]?.error, /process 12345 exited or disappeared/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"));
 			assert.equal(resultJson.success, false);
 			assert.equal(resultJson.sessionId, "session-current");
@@ -131,9 +131,114 @@ describe("async stale-run reconciliation", () => {
 			assert.match(result.message ?? "", /Runner stderr tail:/);
 			assert.match(result.message ?? "", /missing peer package/);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"));
-			assert.match(status.steps[0].error, /missing peer package/);
+			assert.match(status.steps?.[0]?.error, /missing peer package/);
 			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-dead-stderr.json"), "utf-8"));
 			assert.match(resultJson.summary, /missing peer package/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes status model metadata before result merge and failed repair", () => {
+		const root = tempRoot("pi-stale-status-boundary-");
+		try {
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			const fallbackDir = path.join(root, "run-status-fallback");
+			writeStatus(fallbackDir, {
+				runId: "run-status-fallback",
+				mode: "single",
+				state: "running",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [
+					{
+						agent: "worker",
+						status: "running",
+						modelIdentity: { provider: "", model: "gpt-5", thinking: "turbo" },
+						modelResolution: { kind: "invalid", reason: "bad status metadata" },
+					},
+				],
+			});
+			fs.writeFileSync(
+				path.join(resultsDir, "run-status-fallback.json"),
+				JSON.stringify({
+					id: "run-status-fallback",
+					success: false,
+					state: "failed",
+					results: [
+						{
+							agent: "worker",
+							success: false,
+							modelIdentity: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+							modelResolution: {
+								kind: "restored",
+								original: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+								resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+								reason: "valid result metadata",
+							},
+						},
+					],
+				}),
+				"utf-8",
+			);
+
+			const merged = reconcileAsyncRun(fallbackDir, { resultsDir, now: () => 2000 });
+			assert.deepEqual(merged.status?.steps?.[0]?.modelIdentity, {
+				provider: "anthropic",
+				model: "claude-sonnet-4",
+				thinking: "high",
+			});
+			assert.deepEqual(merged.status?.steps?.[0]?.modelResolution, {
+				kind: "restored",
+				original: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" },
+				reason: "valid result metadata",
+			});
+
+			const repairDir = path.join(root, "run-status-no-fallback");
+			writeStatus(repairDir, {
+				runId: "run-status-no-fallback",
+				mode: "single",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [
+					{
+						agent: "worker",
+						status: "running",
+						thinking: "turbo",
+						modelIdentity: { provider: "openai", model: "gpt-5", thinking: "turbo" },
+						modelResolution: {
+							kind: "fallback",
+							original: { provider: "openai", model: "gpt-5", thinking: "" },
+							resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+							reason: "sanitized status metadata",
+						},
+					},
+				],
+			});
+			const repaired = reconcileAsyncRun(repairDir, {
+				resultsDir,
+				kill: () => {
+					throw errno("ESRCH");
+				},
+				now: () => 2000,
+			});
+			assert.deepEqual(repaired.status?.steps?.[0]?.modelIdentity, { provider: "openai", model: "gpt-5" });
+			assert.deepEqual(repaired.status?.steps?.[0]?.modelResolution, {
+				kind: "fallback",
+				original: { provider: "openai", model: "gpt-5" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+				reason: "sanitized status metadata",
+			});
+			const repairedArtifact = JSON.parse(
+				fs.readFileSync(path.join(resultsDir, "run-status-no-fallback.json"), "utf-8"),
+			);
+			assert.deepEqual(repairedArtifact.results[0].modelIdentity, { provider: "openai", model: "gpt-5" });
+			assert.deepEqual(repairedArtifact.results[0].modelResolution, repaired.status?.steps?.[0]?.modelResolution);
+			assert.equal(repairedArtifact.results[0].thinking, undefined);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -205,8 +310,29 @@ describe("async stale-run reconciliation", () => {
 						success: false,
 						state: "failed",
 						results: [
-							{ agent: "scout", success: true, sessionFile: scoutSession, model: "fast" },
-							{ agent: "worker", success: false, error: "boom", sessionFile: workerSession, model: "careful" },
+							{
+								agent: "scout",
+								success: true,
+								sessionFile: scoutSession,
+								model: "fast",
+								contextUsage: { restoredTokens: 400, contextTokens: 500, peakTokens: 600 },
+								terminationReason: "completed",
+							},
+							{
+								agent: "worker",
+								success: false,
+								error: "boom",
+								sessionFile: workerSession,
+								model: "careful",
+								modelIdentity: { provider: "", model: "careful" },
+								modelResolution: {
+									kind: "fallback",
+									reason: "",
+									original: { provider: "openai", model: "gpt-5" },
+									resumed: { provider: "", model: "careful" },
+								},
+								contextUsage: { contextTokens: 700, peakTokens: 800 },
+							},
 						],
 					},
 					null,
@@ -229,11 +355,105 @@ describe("async stale-run reconciliation", () => {
 			assert.equal(result.status?.steps?.[0]?.exitCode, 0);
 			assert.equal(result.status?.steps?.[0]?.model, "fast");
 			assert.equal(result.status?.steps?.[0]?.sessionFile, scoutSession);
+			assert.deepEqual(result.status?.steps?.[0]?.contextUsage, {
+				restoredTokens: 400,
+				contextTokens: 500,
+				peakTokens: 600,
+			});
+			assert.equal(result.status?.steps?.[0]?.terminationReason, "completed");
 			assert.equal(result.status?.steps?.[1]?.status, "failed");
 			assert.equal(result.status?.steps?.[1]?.exitCode, 1);
 			assert.equal(result.status?.steps?.[1]?.error, "boom");
 			assert.equal(result.status?.steps?.[1]?.model, "careful");
+			assert.equal(result.status?.steps?.[1]?.modelIdentity, undefined);
+			assert.equal(result.status?.steps?.[1]?.modelResolution, undefined);
 			assert.equal(result.status?.steps?.[1]?.sessionFile, workerSession);
+			assert.deepEqual(result.status?.steps?.[1]?.contextUsage, { contextTokens: 700, peakTokens: 800 });
+			assert.equal(result.status?.steps?.[1]?.terminationReason, "process_exit");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sanitizes invalid thinking in repaired model diagnostics", () => {
+		const root = tempRoot("pi-stale-thinking-boundary-");
+		try {
+			const asyncDir = path.join(root, "run-thinking-boundary");
+			const resultsDir = path.join(root, "results");
+			fs.mkdirSync(resultsDir, { recursive: true });
+			writeStatus(asyncDir, {
+				runId: "run-thinking-boundary",
+				mode: "parallel",
+				state: "running",
+				pid: 12345,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [
+					{ agent: "worker", status: "running", startedAt: 1000 },
+					{ agent: "reviewer", status: "running", startedAt: 1000 },
+				],
+			});
+			fs.writeFileSync(
+				path.join(resultsDir, "run-thinking-boundary.json"),
+				JSON.stringify({
+					id: "run-thinking-boundary",
+					success: false,
+					state: "failed",
+					results: [
+						{
+							agent: "worker",
+							success: false,
+							modelIdentity: { provider: "openai", model: "gpt-5", thinking: "turbo" },
+							modelResolution: {
+								kind: "fallback",
+								original: { provider: "openai", model: "gpt-5", thinking: "" },
+								resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "xhigh" },
+								reason: "provider fallback",
+							},
+						},
+						{
+							agent: "reviewer",
+							success: false,
+							modelIdentity: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+							modelResolution: {
+								kind: "restored",
+								original: { provider: "anthropic", model: "claude-sonnet-4", thinking: "xhigh" },
+								resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+								reason: "restored selection",
+							},
+						},
+					],
+				}),
+				"utf-8",
+			);
+
+			const result = reconcileAsyncRun(asyncDir, {
+				resultsDir,
+				kill: () => {
+					throw errno("ESRCH");
+				},
+				now: () => 2000,
+			});
+
+			assert.deepEqual(result.status?.steps?.[0]?.modelIdentity, { provider: "openai", model: "gpt-5" });
+			assert.deepEqual(result.status?.steps?.[0]?.modelResolution, {
+				kind: "fallback",
+				original: { provider: "openai", model: "gpt-5" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "xhigh" },
+				reason: "provider fallback",
+			});
+			assert.deepEqual(result.status?.steps?.[1]?.modelIdentity, {
+				provider: "anthropic",
+				model: "claude-sonnet-4",
+				thinking: "max",
+			});
+			assert.deepEqual(result.status?.steps?.[1]?.modelResolution, {
+				kind: "restored",
+				original: { provider: "anthropic", model: "claude-sonnet-4", thinking: "xhigh" },
+				resumed: { provider: "anthropic", model: "claude-sonnet-4", thinking: "max" },
+				reason: "restored selection",
+			});
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

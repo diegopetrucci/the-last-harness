@@ -12,6 +12,7 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -82,6 +83,12 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         }
         status.tkTicket = normalizedTkTicket;
     }
+    for (const step of status.steps ?? []) {
+        step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
+        step.contextPressure = parseContextPressureProjection(step.contextPressure);
+        step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
+        step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
+    }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
@@ -131,6 +138,14 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.skills ? { skills: step.skills } : {}),
             ...(step.model ? { model: step.model } : {}),
             ...(step.thinking ? { thinking: step.thinking } : {}),
+            ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
+            ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
+            ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+            ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
+            ...(step.contextPressureCrossedThresholds
+                ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+                : {}),
+            ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
             ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
             ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
             ...(step.error ? { error: step.error } : {}),
@@ -345,6 +360,8 @@ function formatStepLine(step, privacySafe = false) {
     const modelThinking = formatModelThinking(step.model, step.thinking);
     if (modelThinking)
         parts.push(modelThinking);
+    if (step.modelResolution?.reason)
+        parts.push(`model decision: ${step.modelResolution.reason}`);
     if (step.durationMs !== undefined)
         parts.push(formatDuration(step.durationMs));
     if (step.tokens)

@@ -2,12 +2,18 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
 
+/** Parse a persisted thinking level against the canonical runtime vocabulary. */
+export function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
+	return typeof value === "string" ? THINKING_LEVELS.find((level) => level === value) : undefined;
+}
+
 export interface ModelInfo {
 	provider: string;
 	id: string;
 	fullId: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
+	contextWindow?: number;
 }
 
 interface RegistryModelLike {
@@ -15,6 +21,7 @@ interface RegistryModelLike {
 	id: string;
 	reasoning?: boolean;
 	thinkingLevelMap?: ThinkingLevelMap;
+	contextWindow?: number;
 }
 
 export function toModelInfo(model: RegistryModelLike): ModelInfo {
@@ -24,6 +31,7 @@ export function toModelInfo(model: RegistryModelLike): ModelInfo {
 		fullId: `${model.provider}/${model.id}`,
 		reasoning: model.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
+		contextWindow: model.contextWindow,
 	};
 }
 

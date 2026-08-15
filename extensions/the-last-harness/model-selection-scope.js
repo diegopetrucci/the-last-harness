@@ -194,6 +194,7 @@ export function installTlhModelSelectionPersistenceOverride() {
         selectorCandidate: undefined,
         selectorClaims: [],
         standaloneThinkingWrites: [],
+        interactiveThinkingSelection: undefined,
         suppressionDepth: 0,
     };
     const patch = {
@@ -225,6 +226,12 @@ export function installTlhModelSelectionPersistenceOverride() {
     };
     prototype.setDefaultThinkingLevel = function (level) {
         if (state.suppressionDepth > 0) {
+            return;
+        }
+        const interactiveThinkingSelection = state.interactiveThinkingSelection;
+        if (interactiveThinkingSelection) {
+            interactiveThinkingSelection.writes.push({ kind: "thinking", manager: this, level });
+            state.interactiveThinkingSelection = undefined;
             return;
         }
         let claim;
@@ -366,6 +373,58 @@ export async function persistTlhModelSelectionDefaults(claim, _cwd, _model) {
     }
     return flushManagers(applySuppressedWrites(patch, writes));
 }
+export function beginTlhThinkingLevelSelection() {
+    const patch = getInstalledPatch();
+    if (!patch || patch.state.interactiveThinkingSelection) {
+        return undefined;
+    }
+    const claim = { consumed: false, writes: [] };
+    patch.state.interactiveThinkingSelection = claim;
+    return claim;
+}
+export function endTlhThinkingLevelSelectionCapture(claim) {
+    if (!claim || claim.consumed) {
+        return undefined;
+    }
+    const patch = getInstalledPatch();
+    if (patch?.state.interactiveThinkingSelection === claim) {
+        patch.state.interactiveThinkingSelection = undefined;
+    }
+    return claim;
+}
+function takeTlhThinkingLevelSelectionWrites(claim) {
+    if (!claim || claim.consumed) {
+        return [];
+    }
+    claim.consumed = true;
+    const patch = getInstalledPatch();
+    if (patch?.state.interactiveThinkingSelection === claim) {
+        patch.state.interactiveThinkingSelection = undefined;
+    }
+    return claim.writes;
+}
+export function discardTlhThinkingLevelSelection(claim) {
+    takeTlhThinkingLevelSelectionWrites(claim);
+}
+export async function persistTlhThinkingLevelSelection(claim) {
+    if (!claim || claim.consumed) {
+        return false;
+    }
+    const writes = takeTlhThinkingLevelSelectionWrites(claim);
+    if (writes.length === 0 || !canWriteTlhDefaults()) {
+        return false;
+    }
+    const patch = getInstalledPatch();
+    if (!patch) {
+        return false;
+    }
+    try {
+        return await flushManagers(applySuppressedWrites(patch, writes));
+    }
+    catch {
+        return false;
+    }
+}
 function takeStandaloneThinkingWrites() {
     const patch = getInstalledPatch();
     if (!patch) {
@@ -386,12 +445,12 @@ export async function persistTlhStandaloneThinkingDefaults() {
     }
     await flushManagers(applySuppressedWrites(patch, writes));
 }
-export async function chooseTlhModelSelectionScope(ctx) {
+async function chooseTlhSelectionScope(ctx, title) {
     if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
         return "all-sessions";
     }
     try {
-        const selected = await ctx.ui.select("Model selection scope", [...MODEL_SELECTION_SCOPE_OPTIONS]);
+        const selected = await ctx.ui.select(title, [...MODEL_SELECTION_SCOPE_OPTIONS]);
         if (selected === MODEL_SELECTION_SCOPE_SESSION_ONLY) {
             return "session-only";
         }
@@ -400,6 +459,13 @@ export async function chooseTlhModelSelectionScope(ctx) {
         }
     }
     catch {
+        return "session-only";
     }
     return "cancel";
+}
+export function chooseTlhModelSelectionScope(ctx) {
+    return chooseTlhSelectionScope(ctx, "Model selection scope");
+}
+export function chooseTlhThinkingSelectionScope(ctx) {
+    return chooseTlhSelectionScope(ctx, "Thinking selection scope");
 }

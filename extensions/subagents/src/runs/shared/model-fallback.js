@@ -1,4 +1,25 @@
+import { parseThinkingLevel, splitKnownThinkingSuffix, } from "../../shared/model-info.js";
 import { checkModelScope } from "./model-scope.js";
+function sameModelIdentity(left, right) {
+    return Boolean(left && left.provider === right.provider && left.model === right.model && left.thinking === right.thinking);
+}
+export function appendRuntimeFallbackResolution(input) {
+    const current = input.currentIdentity;
+    const source = input.sourceAttempt;
+    if (!current || !source)
+        return input.previous;
+    if (sameModelIdentity(input.previous?.resumed, current))
+        return input.previous;
+    const original = input.previous?.original ?? input.originalIdentity ?? canonicalSubagentModelIdentity(source.model);
+    const currentReference = `${current.provider}/${current.model}${current.thinking ? `:${current.thinking}` : ""}`;
+    const transition = `Runtime fallback selected '${currentReference}' after '${source.model}' failed: ${source.error ?? `exit ${source.exitCode ?? 1}`}.`;
+    return {
+        kind: "fallback",
+        ...(original ? { original } : {}),
+        resumed: current,
+        reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
+    };
+}
 export function splitThinkingSuffix(model) {
     const colonIdx = model.lastIndexOf(":");
     if (colonIdx === -1)
@@ -9,6 +30,100 @@ export function splitThinkingSuffix(model) {
     };
 }
 export const INHERIT_MODEL = "inherit";
+export function canonicalSubagentModelIdentity(model, thinking) {
+    if (!model)
+        return undefined;
+    const parsed = splitKnownThinkingSuffix(model);
+    const separator = parsed.baseModel.indexOf("/");
+    if (separator <= 0 || separator === parsed.baseModel.length - 1)
+        return undefined;
+    const effectiveThinking = parsed.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : parseThinkingLevel(thinking);
+    return {
+        provider: parsed.baseModel.slice(0, separator),
+        model: parsed.baseModel.slice(separator + 1),
+        ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+    };
+}
+export function sanitizeSubagentModelIdentity(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const input = value;
+    if (typeof input.provider !== "string" ||
+        input.provider.trim() === "" ||
+        typeof input.model !== "string" ||
+        input.model.trim() === "")
+        return undefined;
+    const thinking = parseThinkingLevel(input.thinking);
+    return {
+        provider: input.provider.trim(),
+        model: input.model.trim(),
+        ...(thinking ? { thinking } : {}),
+    };
+}
+export function sanitizeSubagentModelResolution(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return undefined;
+    const input = value;
+    if ((input.kind !== "restored" && input.kind !== "override" && input.kind !== "fallback") ||
+        typeof input.reason !== "string" ||
+        input.reason.trim() === "")
+        return undefined;
+    const original = sanitizeSubagentModelIdentity(input.original);
+    const resumed = sanitizeSubagentModelIdentity(input.resumed);
+    if ((input.original !== undefined && !original) || (input.resumed !== undefined && !resumed))
+        return undefined;
+    return {
+        kind: input.kind,
+        ...(original ? { original } : {}),
+        ...(resumed ? { resumed } : {}),
+        reason: input.reason,
+    };
+}
+export function modelReferenceFromIdentity(identity) {
+    return `${identity.provider}/${identity.model}`;
+}
+const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
+function runtimeIdentityFromFullId(fullId, thinkingSuffix) {
+    const separator = fullId.indexOf("/");
+    if (separator <= 0 || separator === fullId.length - 1)
+        return undefined;
+    const provider = fullId.slice(0, separator);
+    const model = fullId.slice(separator + 1);
+    if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model))
+        return undefined;
+    return {
+        provider,
+        model,
+        ...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
+    };
+}
+export function resolveRuntimeModelContext(providerValue, modelValue, contextWindows) {
+    if (!contextWindows ||
+        (typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
+        typeof modelValue !== "string" ||
+        (providerValue !== undefined && typeof providerValue !== "string"))
+        return undefined;
+    const provider = typeof providerValue === "string" ? providerValue.trim() : "";
+    const model = modelValue.trim();
+    if (model === "")
+        return undefined;
+    if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider))
+        return undefined;
+    const parsed = splitKnownThinkingSuffix(model);
+    if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel))
+        return undefined;
+    const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
+    if (!Object.hasOwn(contextWindows, fullId))
+        return undefined;
+    const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
+    if (!identity)
+        return undefined;
+    const contextWindow = contextWindows[fullId];
+    if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
+        return undefined;
+    return { identity, contextWindow };
+}
 export function normalizeModelSegment(segment) {
     return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }

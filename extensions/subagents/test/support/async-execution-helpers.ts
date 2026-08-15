@@ -61,6 +61,14 @@ export interface AsyncResultPayload {
 		interrupted?: boolean;
 		sessionFile?: string;
 		timedOut?: boolean;
+		terminationReason?: string;
+		contextUsage?: {
+			restoredTokens?: number;
+			contextTokens?: number;
+			peakTokens?: number;
+			contextWindow?: number;
+			contextPercent?: number;
+		};
 		turnBudget?: {
 			maxTurns: number;
 			graceTurns: number;
@@ -72,6 +80,14 @@ export interface AsyncResultPayload {
 		turnBudgetExceeded?: boolean;
 		wrapUpRequested?: boolean;
 		model?: string;
+		thinking?: string;
+		modelIdentity?: { provider: string; model: string; thinking?: string };
+		modelResolution?: {
+			kind?: string;
+			original?: { provider: string; model: string; thinking?: string };
+			resumed?: { provider: string; model: string; thinking?: string };
+			reason?: string;
+		};
 		attemptedModels?: string[];
 		modelAttempts?: Array<{ success?: boolean; error?: string }>;
 		modelFallbackNotice?: string;
@@ -153,6 +169,14 @@ export interface AsyncStatusPayload {
 		status?: string;
 		exitCode?: number;
 		timedOut?: boolean;
+		terminationReason?: string;
+		contextUsage?: {
+			restoredTokens?: number;
+			contextTokens?: number;
+			peakTokens?: number;
+			contextWindow?: number;
+			contextPercent?: number;
+		};
 		activeRuntimeMs?: number;
 		startedAt?: number;
 		timeoutMs?: number;
@@ -160,6 +184,15 @@ export interface AsyncStatusPayload {
 		error?: string;
 		model?: string;
 		thinking?: string;
+		modelIdentity?: { provider: string; model: string; thinking?: string };
+		modelResolution?: {
+			kind?: string;
+			original?: { provider: string; model: string; thinking?: string };
+			resumed?: { provider: string; model: string; thinking?: string };
+			reason?: string;
+		};
+		attemptedModels?: string[];
+		modelAttempts?: Array<{ model?: string; success?: boolean; exitCode?: number; error?: string }>;
 		tokens?: { total: number };
 		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
 		acceptance?: { status?: string };
@@ -534,6 +567,6 @@ export function removeLifecycleLock(asyncDir: string): void {
 // ---------------------------------------------------------------------------
 
 export async function readAsyncPayload(id: string): Promise<AsyncResultPayload> {
-	const resultPath = await waitForAsyncResultFile(id, 10_000);
+	const resultPath = await waitForAsyncResultFile(id);
 	return JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 }

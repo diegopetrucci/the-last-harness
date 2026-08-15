@@ -8,11 +8,12 @@ import {
 	SettingsManager,
 	getAgentDir,
 	loadProjectContextFiles,
+	loadSkills,
 	type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
-import type { StartupResources } from "./types.js";
+import type { StartupResources, StartupResourceSnapshot } from "./types.js";
 
 export type CollectStartupResourcesOptions = {
 	projectTrusted?: boolean;
@@ -146,22 +147,43 @@ function filterVisibleResources(resources: ResolvedResource[], projectTrusted: b
 	);
 }
 
-export async function collectStartupResources(
+export async function collectStartupResourceSnapshot(
 	cwd: string,
 	options: CollectStartupResourcesOptions = {},
-): Promise<StartupResources> {
+): Promise<StartupResourceSnapshot> {
 	const agentDir = getAgentDir();
 	const projectTrusted = resolveProjectTrusted(cwd, agentDir, options);
 	const settingsManager = createSettingsManager(cwd, agentDir, projectTrusted);
 	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
 	const resolved = await packageManager.resolve(async () => "skip");
 	const enabled = (resources: ResolvedResource[]) => filterVisibleResources(resources, projectTrusted);
+	const contextFiles = loadContextFiles(cwd, agentDir);
+	const enabledSkills = enabled(resolved.skills);
+	const promptSkills = loadSkills({
+		cwd,
+		agentDir,
+		skillPaths: enabledSkills.map((resource) => resource.path),
+		includeDefaults: false,
+	}).skills.filter((skill) => !skill.disableModelInvocation);
 
 	return {
-		context: loadContextFiles(cwd, agentDir).map((contextFile) => formatPathFromCwd(cwd, contextFile.path)),
-		skills: uniqueSorted(enabled(resolved.skills).map(labelSkill)),
-		prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
-		extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
-		themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+		resources: {
+			context: contextFiles.map((contextFile) => formatPathFromCwd(cwd, contextFile.path)),
+			skills: uniqueSorted(enabledSkills.map(labelSkill)),
+			prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
+			extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
+			themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+		},
+		promptMetadata: {
+			contextFiles,
+			skills: promptSkills.map(({ name, description, filePath }) => ({ name, description, filePath })),
+		},
 	};
+}
+
+export async function collectStartupResources(
+	cwd: string,
+	options: CollectStartupResourcesOptions = {},
+): Promise<StartupResources> {
+	return (await collectStartupResourceSnapshot(cwd, options)).resources;
 }

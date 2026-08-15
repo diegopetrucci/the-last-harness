@@ -2,17 +2,44 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import type { StartupResources, TlhHeaderUpdate, TlhInstallNotice } from "./types.js";
+import type { StartupResources, TlhHeaderUpdate, TlhInstallNotice, TlhLaunchContextAllocation } from "./types.js";
+
+function formatLaunchContextPercent(tokens: number, contextWindow: number): string {
+	if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+		return "0%";
+	}
+	const percent = (tokens / contextWindow) * 100;
+	if (percent < 1) {
+		return "<1%";
+	}
+	return `~${Math.round(percent)}%`;
+}
+
+export function formatTlhLaunchContextAllocation(allocation: TlhLaunchContextAllocation): string {
+	const { contextWindow, estimatedTokens } = allocation;
+	return [
+		`Context at launch: TLH ${formatLaunchContextPercent(estimatedTokens.tlh, contextWindow)}`,
+		`AGENTS/CLAUDE.md ${formatLaunchContextPercent(estimatedTokens.agentsClaude, contextWindow)}`,
+		`Skills ${formatLaunchContextPercent(estimatedTokens.skills, contextWindow)}`,
+		`Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`,
+		`Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`,
+	].join(" • ");
+}
 
 export function createTlhHeader(
 	theme: Theme,
 	resources: StartupResources,
 	headerUpdate: TlhHeaderUpdate | undefined,
 	installNotice?: TlhInstallNotice,
-	options: { requestRender?: () => void; startupTip?: string } = {},
+	options: {
+		requestRender?: () => void;
+		startupTip?: string;
+		launchContextAllocation?: TlhLaunchContextAllocation;
+	} = {},
 ) {
 	let expanded = false;
 	let startupResources = resources;
+	let launchContextAllocation = options.launchContextAllocation;
 	const color = {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		dim: (text: string) => theme.fg("dim", text),
@@ -101,15 +128,26 @@ export function createTlhHeader(
 		);
 	};
 
+	const launchContextLines = (width: number): string[] => {
+		if (!launchContextAllocation) {
+			return [];
+		}
+		if (width <= 0) {
+			return [""];
+		}
+		return wrapTextWithAnsi(formatTlhLaunchContextAllocation(launchContextAllocation), width).map((line) =>
+			color.dim(line),
+		);
+	};
+
 	const collapsedContextHintLines = (width: number): string[] => {
-		const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-		const plainText =
-			startupResources.context.length === 0 ? hint : `Context: ${startupResources.context.join(", ")}. ${hint}`;
-		return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
+		const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded context files, skills, prompts, and extensions`;
+		return wrapTextWithAnsi(hint, width).map((line) => color.dim(line));
 	};
 
 	const headerDetails = (width: number): string[] => [
 		...installWarningLine(width),
+		...launchContextLines(width),
 		...contextLine(startupResources.context, width),
 	];
 
@@ -118,6 +156,7 @@ export function createTlhHeader(
 			logo,
 			"",
 			...installWarningLine(width),
+			...launchContextLines(width),
 			...collapsedContextHintLines(width),
 			...startupTipLine(width),
 		];
@@ -157,6 +196,9 @@ export function createTlhHeader(
 		},
 		setResources(nextResources: StartupResources) {
 			startupResources = nextResources;
+		},
+		setLaunchContextAllocation(nextAllocation: TlhLaunchContextAllocation | undefined) {
+			launchContextAllocation = nextAllocation;
 		},
 		toggleExpanded() {
 			expanded = !expanded;

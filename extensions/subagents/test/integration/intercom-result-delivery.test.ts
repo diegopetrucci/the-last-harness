@@ -15,6 +15,7 @@ import {
 	steerRequestsDir,
 	writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
+import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
@@ -1207,7 +1208,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			(status) =>
 				status.state === "running" &&
 				status.steps?.[0]?.status === "running" &&
-				!!(status.steps[0]?.sessionFile ?? status.sessionFile),
+				!!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
 			"running child session",
 			pausedResumeWaitMs,
 		);
@@ -1226,8 +1227,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			(status) =>
 				status.state === "paused" &&
 				status.steps?.[0]?.status === "paused" &&
-				status.steps[0]?.acceptance?.status === "skipped" &&
-				!!(status.steps[0]?.sessionFile ?? status.sessionFile),
+				status.steps?.[0]?.acceptance?.status === "skipped" &&
+				!!(status.steps?.[0]?.sessionFile ?? status.sessionFile),
 			"paused skipped acceptance ledger",
 			pausedResumeWaitMs,
 		);
@@ -1388,8 +1389,8 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				status.state === "paused" &&
 				status.steps?.[0]?.status === "paused" &&
 				status.steps?.[1]?.status === "paused" &&
-				status.steps[0]?.acceptance?.status === "skipped" &&
-				status.steps[1]?.acceptance?.status === "skipped",
+				status.steps?.[0]?.acceptance?.status === "skipped" &&
+				status.steps?.[1]?.acceptance?.status === "skipped",
 			"paused parallel skipped acceptance ledgers",
 			pausedResumeWaitMs,
 		);
@@ -1523,6 +1524,244 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
+	it("resume of a completed foreground child tolerates missing lifecycle status without mutation", async () => {
+		mockPi.onCall({ output: "revived from remembered foreground state" });
+		const runId = `resume-foreground-missing-status-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			cwd: tempDir,
+			updatedAt: 1,
+			children: [{ agent: "worker", index: 0, status: "completed", sessionFile }],
+		});
+		try {
+			const result = await executor.execute(
+				"resume-foreground-missing-status",
+				{ action: "resume", id: runId, message: "Continue the completed child." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.deepEqual(fs.readdirSync(asyncDir), []);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resume of a paused foreground child rejects missing lifecycle status without mutation", async () => {
+		const runId = `resume-foreground-paused-missing-status-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		state.foregroundRuns.set(runId, {
+			runId,
+			mode: "single",
+			cwd: tempDir,
+			updatedAt: 1,
+			children: [
+				{
+					agent: "worker",
+					index: 0,
+					status: "paused",
+					sessionFile,
+					pause: { kind: "awaiting_supervisor" },
+				},
+			],
+		});
+		try {
+			const result = await executor.execute(
+				"resume-foreground-paused-missing-status",
+				{ action: "resume", id: runId },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Paused run .* was not found/);
+			assert.deepEqual(fs.readdirSync(asyncDir), []);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resume of a completed result-only background run does not recreate its missing lifecycle directory", async () => {
+		mockPi.onCall({ output: "revived from result-only background state" });
+		const runId = `resume-background-result-only-${Date.now()}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const resultPath = path.join(RESULTS_DIR, `${runId}.json`);
+		const sessionFile = path.join(tempDir, `${runId}.jsonl`);
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.mkdirSync(path.dirname(resultPath), { recursive: true });
+		fs.writeFileSync(
+			resultPath,
+			JSON.stringify({
+				id: runId,
+				agent: "worker",
+				success: true,
+				state: "complete",
+				cwd: tempDir,
+				results: [{ agent: "worker", success: true, sessionFile }],
+			}),
+			"utf-8",
+		);
+		try {
+			assert.equal(fs.existsSync(asyncDir), false);
+			assert.equal(fs.existsSync(resultPath), true);
+			const { executor } = makeExecutor({ bridgeMode: "off" });
+			// Explicit `dir` preserves the missing lifecycle path on the target;
+			// id-only result lookup would normalize asyncDir to null and skip the guard.
+			const result = await executor.execute(
+				"resume-background-result-only",
+				{ action: "resume", id: runId, dir: asyncDir, message: "Continue from the saved result." },
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.equal(fs.existsSync(asyncDir), false);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
+			fs.rmSync(resultPath, { force: true });
+			fs.rmSync(sessionFile, { force: true });
+		}
+	});
+
+	it("resumes a completed nested result when its lifecycle status is missing without recreating the directory", async () => {
+		mockPi.onCall({ output: "revived from nested result" });
+		const runId = `nested-result-missing-status-${Date.now()}`;
+		const route = createNestedRoute(`nested-root-${Date.now()}`);
+		const nestedAsyncDir = path.join(resolveTempRootDir(), "nested-subagent-runs", route.rootRunId, runId);
+		const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(parentSessionFile, "", "utf-8");
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: Date.now(),
+			parentRunId: route.rootRunId,
+			parentStepIndex: 0,
+			child: {
+				id: runId,
+				parentRunId: route.rootRunId,
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: route.rootRunId, stepIndex: 0 }],
+				state: "complete",
+				agent: "worker",
+				ownerState: "gone",
+				asyncDir: nestedAsyncDir,
+				sessionFile,
+			},
+		});
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			nestedRoute: route,
+		});
+		state.lastForegroundControlId = route.rootRunId;
+		try {
+			const context = makeMinimalCtx(tempDir);
+			context.sessionManager.getSessionFile = () => parentSessionFile;
+			const result = await executor.execute(
+				"resume-nested-result-missing-status",
+				{ action: "resume", id: runId, message: "Continue the nested child." },
+				new AbortController().signal,
+				undefined,
+				context,
+			);
+
+			assert.equal(result.isError, undefined, result.content[0]?.text);
+			await waitForRevivedAsyncResult(result);
+			assert.equal(fs.existsSync(nestedAsyncDir), false);
+		} finally {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(parentSessionFile, { force: true });
+			fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a paused nested result when its lifecycle status is missing without recreating the directory", async () => {
+		const runId = `nested-paused-missing-status-${Date.now()}`;
+		const route = createNestedRoute(`nested-root-${Date.now()}`);
+		const nestedAsyncDir = path.join(resolveTempRootDir(), "nested-subagent-runs", route.rootRunId, runId);
+		const sessionFile = path.join(tempDir, runId, "run-0", "session.jsonl");
+		const parentSessionFile = path.join(tempDir, "parent.jsonl");
+		fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+		fs.mkdirSync(path.dirname(nestedAsyncDir), { recursive: true });
+		fs.writeFileSync(sessionFile, "", "utf-8");
+		fs.writeFileSync(parentSessionFile, "", "utf-8");
+		writeNestedEvent(route, {
+			type: "subagent.nested.completed",
+			ts: Date.now(),
+			parentRunId: route.rootRunId,
+			parentStepIndex: 0,
+			child: {
+				id: runId,
+				parentRunId: route.rootRunId,
+				parentStepIndex: 0,
+				depth: 1,
+				path: [{ runId: route.rootRunId, stepIndex: 0 }],
+				state: "paused",
+				agent: "worker",
+				ownerState: "gone",
+				asyncDir: nestedAsyncDir,
+				sessionFile,
+			},
+		});
+		const { executor, state } = makeExecutor({ bridgeMode: "off" });
+		state.foregroundControls.set(route.rootRunId, {
+			runId: route.rootRunId,
+			mode: "single",
+			startedAt: 1,
+			updatedAt: 1,
+			nestedRoute: route,
+		});
+		state.lastForegroundControlId = route.rootRunId;
+		try {
+			const context = makeMinimalCtx(tempDir);
+			context.sessionManager.getSessionFile = () => parentSessionFile;
+			const result = await executor.execute(
+				"resume-nested-paused-missing-status",
+				{ action: "resume", id: runId, message: "Continue the paused nested child." },
+				new AbortController().signal,
+				undefined,
+				context,
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /skipped acceptance ledger could not be read/);
+			assert.equal(fs.existsSync(nestedAsyncDir), false);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
+			fs.rmSync(parentSessionFile, { force: true });
+			fs.rmSync(path.dirname(sessionFile), { recursive: true, force: true });
+		}
+	});
+
 	it("resume action revives a completed foreground child by index", async () => {
 		mockPi.onCall({ output: "first child done" });
 		mockPi.onCall({ output: "second child done" });
@@ -1569,14 +1808,45 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		}
 	});
 
-	it("status keeps paused foreground supervisor runs actionable and guided resume revives the same session once", async () => {
+	it("status keeps paused foreground supervisor runs actionable and guided resume starts independent pressure state", async () => {
+		const pressureMessage = (text: string, totalTokens = 800, model = "mock/test-model") => ({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				model,
+				stopReason: "stop",
+				usage: { totalTokens, input: totalTokens - 100, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		});
+		const pressureContext = () => {
+			const context = makeMinimalCtx(tempDir);
+			context.model = { provider: "mock", id: "test-model" };
+			context.modelRegistry.getAvailable = () => [
+				{ provider: "mock", id: "test-model", contextWindow: 1000 },
+				{ provider: "mock", id: "resume-model", contextWindow: 2000 },
+			];
+			return context;
+		};
 		mockPi.onCall({
 			steps: [
-				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{
+					jsonl: [
+						pressureMessage("preserve before asking"),
+						events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" }),
+					],
+				},
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
-		mockPi.onCall({ output: "resumed after supervisor reply" });
+		mockPi.onCall({
+			steps: [
+				{
+					delay: scaleTestTimeout(1_000),
+					jsonl: [pressureMessage("resumed after supervisor reply", 1600, "mock/resume-model")],
+				},
+			],
+		});
 		const { executor } = makeExecutor({
 			agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
 		});
@@ -1585,10 +1855,19 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			{ agent: "a", task: "ask supervisor" },
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
+		const pausedPressureStatus = readAsyncStatusJson<{
+			steps?: Array<{
+				contextPressure?: { severity?: string; crossedThreshold?: string };
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		}>(runId);
+		assert.equal(pausedPressureStatus.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.equal(pausedPressureStatus.steps?.[0]?.contextPressure?.crossedThreshold, "warning");
+		assert.deepEqual(pausedPressureStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
 		assert.match(original.content[0]?.text ?? "", /paused awaiting supervisor/i);
 		assert.match(original.content[0]?.text ?? "", /Resume unchanged: subagent\(\{ action: "resume", id: "/);
 		assert.match(
@@ -1602,7 +1881,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 			{ action: "status", id: runId },
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		const statusText = status.content[0]?.text ?? "";
 		assert.match(statusText, /State: remembered foreground/);
@@ -1617,14 +1896,46 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 
 		const revived = await executor.execute(
 			"foreground-paused-resume",
-			{ action: "resume", id: runId, message: "Supervisor replied: proceed with option A." },
+			{
+				action: "resume",
+				id: runId,
+				message: "Supervisor replied: proceed with option A.",
+				model: "mock/resume-model",
+			},
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			pressureContext(),
 		);
 		assert.equal(revived.isError, undefined);
 		assert.match(revived.content[0]?.text ?? "", /Revived foreground subagent from/);
+		const revivedId = revived.details?.asyncId;
+		assert.ok(revivedId, "expected revived async id");
+		await waitForAsyncStatusPredicate(revivedId, (status) => status.state === "running", "revived pressure reset");
+		const initialRevivedStatus = readAsyncStatusJson<{
+			steps?: Array<{ contextPressure?: unknown; contextPressureCrossedThresholds?: unknown }>;
+		}>(revivedId);
+		assert.equal(initialRevivedStatus.steps?.[0]?.contextPressure, undefined);
+		assert.equal(initialRevivedStatus.steps?.[0]?.contextPressureCrossedThresholds, undefined);
 		await waitForRevivedAsyncResult(revived);
+		const completedRevivedStatus = readAsyncStatusJson<{
+			steps?: Array<{
+				contextPressure?: { severity?: string };
+				contextPressureCrossedThresholds?: string[];
+			}>;
+		}>(revivedId);
+		assert.equal(completedRevivedStatus.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.deepEqual(completedRevivedStatus.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const revivedControlEvents = fs
+			.readFileSync(path.join(ASYNC_DIR, revivedId, "events.jsonl"), "utf-8")
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => JSON.parse(line) as { type?: string; event?: { reason?: string } });
+		assert.equal(
+			revivedControlEvents.filter(
+				(event) => event.type === "subagent.control" && event.event?.reason === "context_pressure",
+			).length,
+			1,
+		);
 		const selectedSession = original.details?.results?.[0]?.sessionFile;
 		assert.ok(selectedSession, "expected paused child session file");
 		const reviveArgs = await readMockCallArgs(1);
@@ -1636,7 +1947,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed without extra guidance" });
@@ -1672,7 +1983,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed after persisted pause" });
@@ -1731,7 +2042,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({ output: "resumed after reload" });
@@ -1815,6 +2126,16 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 	});
 
 	it("persists paused foreground parallel cohorts with per-index actions and terminal transitions", async () => {
+		const cohortPressureMessage = {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "running sibling partial output" }],
+				model: "anthropic/claude-sonnet-4",
+				stopReason: "stop",
+				usage: { totalTokens: 800, input: 700, output: 100, cacheRead: 0, cacheWrite: 0 },
+			},
+		};
 		mockPi.onCall({
 			matchArgIncludes: "finish",
 			jsonl: [events.assistantMessage("completed sibling")],
@@ -1826,12 +2147,12 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 					delay: 200,
 					jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })],
 				},
-				{ delay: 1_000, jsonl: [events.assistantMessage("should not replay before resume")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("should not replay before resume")] },
 			],
 		});
 		mockPi.onCall({
 			matchArgIncludes: "keep working",
-			steps: [{ delay: 50, jsonl: [events.assistantMessage("running sibling partial output")] }, { delay: 10_000 }],
+			steps: [{ delay: 50, jsonl: [cohortPressureMessage] }, { delay: 10_000 }],
 		});
 		mockPi.onCall({
 			matchArgIncludes: "start late work",
@@ -1850,21 +2171,27 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 				makeAgent("queued"),
 			],
 		});
+		const cohortContext = makeMinimalCtx(tempDir);
+		cohortContext.model = { provider: "mock", id: "test-model" };
+		cohortContext.modelRegistry.getAvailable = () => [
+			{ provider: "anthropic", id: "claude-sonnet-4", contextWindow: 1000 },
+			{ provider: "openai", id: "gpt-5-mini", contextWindow: 1000 },
+		];
 		const original = await first.executor.execute(
 			"foreground-parallel-pause-original",
 			{
 				tasks: [
 					{ agent: "done", task: "finish" },
 					{ agent: "ask", task: "ask supervisor" },
-					{ agent: "wait", task: "keep working" },
-					{ agent: "started", task: "start late work" },
+					{ agent: "wait", task: "keep working", model: "anthropic/claude-sonnet-4" },
+					{ agent: "started", task: "start late work", model: "openai/gpt-5-mini" },
 					{ agent: "queued", task: "must not start" },
 				],
 				concurrency: 3,
 			},
 			new AbortController().signal,
 			undefined,
-			makeMinimalCtx(tempDir),
+			cohortContext,
 		);
 		const runId = original.details?.runId;
 		assert.ok(runId, "expected foreground run id");
@@ -1876,7 +2203,14 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		await waitForAsyncState(runId, "paused");
 		const pausedStatus = readAsyncStatusJson<{
 			state?: string;
-			steps?: Array<{ status?: string; pause?: { kind?: string } }>;
+			steps?: Array<{
+				status?: string;
+				pause?: { kind?: string };
+				terminationReason?: string;
+				modelIdentity?: { provider: string; model: string; thinking?: string };
+				contextPressure?: { severity?: string; crossedThreshold?: string };
+				contextPressureCrossedThresholds?: string[];
+			}>;
 		}>(runId);
 		assert.equal(pausedStatus.state, "paused");
 		assert.equal(pausedStatus.steps?.[0]?.status, "completed");
@@ -1884,8 +2218,18 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		assert.equal(pausedStatus.steps?.[1]?.pause?.kind, "awaiting_supervisor");
 		assert.equal(pausedStatus.steps?.[2]?.status, "paused");
 		assert.equal(pausedStatus.steps?.[2]?.pause?.kind, "cohort_pause");
+		assert.equal(pausedStatus.steps?.[2]?.terminationReason, "paused");
+		assert.deepEqual(pausedStatus.steps?.[2]?.modelIdentity, {
+			provider: "anthropic",
+			model: "claude-sonnet-4",
+		});
+		assert.equal(pausedStatus.steps?.[2]?.contextPressure?.severity, "warning");
+		assert.equal(pausedStatus.steps?.[2]?.contextPressure?.crossedThreshold, "warning");
+		assert.deepEqual(pausedStatus.steps?.[2]?.contextPressureCrossedThresholds, ["warning"]);
 		assert.equal(pausedStatus.steps?.[3]?.status, "paused");
 		assert.equal(pausedStatus.steps?.[3]?.pause?.kind, "cohort_pause");
+		assert.equal(pausedStatus.steps?.[3]?.terminationReason, "paused");
+		assert.deepEqual(pausedStatus.steps?.[3]?.modelIdentity, { provider: "openai", model: "gpt-5-mini" });
 		assert.equal(pausedStatus.steps?.[4]?.status, "pending");
 		const requesterIndex = pausedStatus.steps?.findIndex((step) => step.pause?.kind === "awaiting_supervisor") ?? -1;
 		const cohortIndexes =
@@ -2075,7 +2419,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need a decision" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("after reply")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("after reply")] },
 			],
 		});
 		const { executor } = makeExecutor({
@@ -2169,7 +2513,7 @@ describe("intercom result delivery cutover", { skip: !available ? "executor not 
 		mockPi.onCall({
 			steps: [
 				{ jsonl: [events.toolStart("contact_supervisor", { reason: "need_decision", message: "Need direction" })] },
-				{ delay: 1_000, jsonl: [events.assistantMessage("received pong")] },
+				{ delay: scaleTestTimeout(1_000), jsonl: [events.assistantMessage("received pong")] },
 			],
 		});
 		const { executor } = makeExecutor({

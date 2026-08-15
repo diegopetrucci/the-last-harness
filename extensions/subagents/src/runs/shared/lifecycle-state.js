@@ -10,6 +10,12 @@ const DEFAULT_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
+export class LifecycleLockExhaustedError extends Error {
+    constructor(message, options) {
+        super(message, options);
+        this.name = "LifecycleLockExhaustedError";
+    }
+}
 function replaceControlCharacters(value) {
     return [...value]
         .map((character) => {
@@ -277,6 +283,71 @@ export function writeNormalizedLifecycleStatus(asyncDir, status) {
     invalidateStatusCache(filePath);
     return normalized;
 }
+export const TERMINAL_RUN_STATES = new Set(["continued", "cancelled", "failed", "complete"]);
+const TERMINAL_STEP_STATUSES = new Set([
+    "continued",
+    "cancelled",
+    "failed",
+    "complete",
+    "completed",
+]);
+function mergeAndWriteStatus(asyncDir, inMemory, persisted) {
+    if (!persisted) {
+        return writeNormalizedLifecycleStatus(asyncDir, inMemory);
+    }
+    const persistedGen = lifecycleGeneration(persisted);
+    const inMemoryGen = lifecycleGeneration(inMemory);
+    const lifecycle = persistedGen > inMemoryGen ? persisted.lifecycle : inMemory.lifecycle;
+    let state = inMemory.state;
+    if (TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== state) {
+        state = persisted.state;
+    }
+    const steps = inMemory.steps?.map((step, i) => {
+        const persistedStep = persisted.steps?.[i];
+        if (!persistedStep || !TERMINAL_STEP_STATUSES.has(persistedStep.status))
+            return step;
+        const lifecycleOverrides = {
+            status: persistedStep.status,
+            endedAt: persistedStep.endedAt,
+            exitCode: persistedStep.exitCode,
+            cancel: persistedStep.cancel,
+            error: persistedStep.error,
+            pause: undefined,
+        };
+        if (persistedStep.status === step.status) {
+            return { ...step, ...lifecycleOverrides };
+        }
+        return { ...step, ...lifecycleOverrides };
+    });
+    const terminalRunOverrides = TERMINAL_RUN_STATES.has(persisted.state) && persisted.state !== inMemory.state
+        ? {
+            cancel: persisted.cancel,
+            endedAt: persisted.endedAt,
+            error: persisted.error,
+            pid: undefined,
+            pause: undefined,
+        }
+        : {};
+    const merged = {
+        ...inMemory,
+        ...terminalRunOverrides,
+        state,
+        ...(steps !== undefined ? { steps } : {}),
+        lifecycle,
+    };
+    return writeNormalizedLifecycleStatus(asyncDir, merged);
+}
+export function mergeAndWriteSourceRunnerStatus(asyncDir, inMemory) {
+    try {
+        return withLifecycleStatusLock(asyncDir, (persisted) => mergeAndWriteStatus(asyncDir, inMemory, persisted));
+    }
+    catch (error) {
+        if (!(error instanceof LifecycleLockExhaustedError))
+            throw error;
+        const persisted = readLifecycleStatus(asyncDir);
+        return persisted ?? inMemory;
+    }
+}
 function waitSync(delayMs) {
     if (delayMs <= 0)
         return;
@@ -414,7 +485,7 @@ function acquireTransitionLock(asyncDir, options = {}) {
                 continue;
             }
             const ownerSummary = transitionLockOwnerSummary(readTransitionLockOwner(asyncDir));
-            throw new Error(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`, { cause: error });
+            throw new LifecycleLockExhaustedError(`Lifecycle transition rejected for run '${runLabel(asyncDir)}': another transition holds the status lock${ownerSummary ? ` (${ownerSummary})` : ""}. Wait for it to finish or clear the stale lifecycle lock only after verifying the run is idle.`, { cause: error });
         }
     }
     try {
@@ -550,10 +621,7 @@ export function finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken,
         throw error;
     }
 }
-export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options = {}) {
-    const current = readLifecycleStatus(asyncDir);
-    if (!current)
-        return { status: null, recovered: false, liveness: "unclaimed" };
+export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options = {}) {
     const continuation = lifecycleContinuationForIndex(current, index);
     if (!continuation?.claimToken)
         return { status: current, recovered: false, liveness: "unclaimed" };
@@ -574,26 +642,54 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
     if (continuation.continuationRunId && continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
         return { status: current, recovered: false, liveness: "blocked" };
     }
-    const recoveredAt = options.now?.() ?? Date.now();
-    try {
-        const transitioned = transitionLifecycleStatus({
-            asyncDir,
-            expectedGeneration: lifecycleGeneration(current),
-            lockOptions: options,
-            mutate: (status) => ({
-                ...status,
-                lastUpdate: recoveredAt,
-                lifecycle: withLifecycleContinuation(status, index, undefined),
-            }),
-        });
-        return { status: transitioned.status, recovered: true, liveness };
-    }
-    catch (error) {
-        if (error instanceof Error && /expected generation/.test(error.message)) {
-            return { status: readLifecycleStatus(asyncDir), recovered: false, liveness };
+    return {
+        status: {
+            ...current,
+            lastUpdate: options.now?.() ?? Date.now(),
+            lifecycle: withLifecycleContinuation(current, index, undefined),
+        },
+        recovered: true,
+        liveness,
+    };
+}
+export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options = {}) {
+    const current = readLifecycleStatus(asyncDir);
+    if (!current)
+        return { status: null, recovered: false, liveness: "unclaimed" };
+    const inspected = recoverStaleLifecycleContinuationStatus(current, asyncDir, index, options);
+    if (!inspected.recovered)
+        return inspected;
+    const expectedGeneration = lifecycleGeneration(current);
+    const inspectedClaimToken = lifecycleContinuationForIndex(current, index)?.claimToken;
+    return withLifecycleStatusLock(asyncDir, (lockedStatus) => {
+        if (!lockedStatus) {
+            throw new Error(`Cannot transition lifecycle state for run '${runLabel(asyncDir)}': persisted status was not found.`);
         }
-        throw error;
-    }
+        const normalizedLockedStatus = normalizeAsyncLifecycleStatus(lockedStatus);
+        const lockedGeneration = lifecycleGeneration(normalizedLockedStatus);
+        if (lockedGeneration !== expectedGeneration) {
+            return { status: normalizedLockedStatus, recovered: false, liveness: inspected.liveness };
+        }
+        const rechecked = recoverStaleLifecycleContinuationStatus(normalizedLockedStatus, asyncDir, index, options);
+        if (!rechecked.recovered)
+            return rechecked;
+        if (lifecycleContinuationForIndex(normalizedLockedStatus, index)?.claimToken !== inspectedClaimToken) {
+            return { status: normalizedLockedStatus, recovered: false, liveness: rechecked.liveness };
+        }
+        const recoveryLastUpdate = rechecked.status.lastUpdate ?? Date.now();
+        const lastUpdate = typeof normalizedLockedStatus.lastUpdate === "number" && Number.isFinite(normalizedLockedStatus.lastUpdate)
+            ? Math.max(normalizedLockedStatus.lastUpdate, recoveryLastUpdate)
+            : recoveryLastUpdate;
+        const nextStatus = writeNormalizedLifecycleStatus(asyncDir, {
+            ...normalizedLockedStatus,
+            lastUpdate,
+            lifecycle: {
+                ...withLifecycleContinuation(normalizedLockedStatus, index, undefined),
+                generation: lockedGeneration + 1,
+            },
+        });
+        return { status: nextStatus, recovered: true, liveness: rechecked.liveness };
+    }, options);
 }
 export function recoverStoppedLifecycleOwnership(status, options = {}) {
     const normalized = normalizeAsyncLifecycleStatus(status);

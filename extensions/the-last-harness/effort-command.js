@@ -1,3 +1,4 @@
+import { beginTlhModelSelectionDefaultSuppression, beginTlhThinkingLevelSelection, chooseTlhThinkingSelectionScope, discardTlhThinkingLevelSelection, endTlhThinkingLevelSelectionCapture, persistTlhStandaloneThinkingDefaults, persistTlhThinkingLevelSelection, replayTlhUnmatchedModelSelectionDefaults, } from "./model-selection-scope.js";
 import { selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import { formatThinkingLevelOption, getAvailableThinkingLevels, isThinkingLevel, parseThinkingLevelOption, setExtensionThinkingLevel, thinkingLevelAtLeast, } from "./thinking.js";
 export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
@@ -42,6 +43,72 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
     if (!selectedLevel) {
         return;
     }
-    setExtensionThinkingLevel(pi, selectedLevel);
-    ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()}.`, "info");
+    await persistTlhStandaloneThinkingDefaults();
+    replayTlhUnmatchedModelSelectionDefaults();
+    const thinkingCapture = beginTlhThinkingLevelSelection();
+    let thinkingSelection = thinkingCapture;
+    try {
+        try {
+            setExtensionThinkingLevel(pi, selectedLevel);
+        }
+        finally {
+            thinkingSelection = endTlhThinkingLevelSelectionCapture(thinkingCapture);
+        }
+        const nextLevel = pi.getThinkingLevel();
+        if (nextLevel === currentLevel) {
+            discardTlhThinkingLevelSelection(thinkingSelection);
+            ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
+            return;
+        }
+        if (!thinkingSelection) {
+            ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
+            return;
+        }
+        const scope = await chooseTlhThinkingSelectionScope(ctx);
+        if (scope === "cancel") {
+            discardTlhThinkingLevelSelection(thinkingSelection);
+            let resultingLevel;
+            const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
+            try {
+                try {
+                    setExtensionThinkingLevel(pi, currentLevel);
+                }
+                catch {
+                }
+            }
+            finally {
+                releaseDefaultSuppression();
+            }
+            try {
+                resultingLevel = pi.getThinkingLevel();
+            }
+            catch {
+            }
+            if (resultingLevel === currentLevel) {
+                ctx.ui.notify(`Kept thinking level at ${resultingLevel} after cancelling thinking selection.`, "info");
+            }
+            else if (resultingLevel !== undefined) {
+                ctx.ui.notify(`TLH could not restore thinking level to ${currentLevel} after cancelling thinking selection; active level remains ${resultingLevel}.`, "warning");
+            }
+            else {
+                ctx.ui.notify(`TLH could not verify the active thinking level after cancelling thinking selection; expected ${currentLevel}.`, "warning");
+            }
+            return;
+        }
+        if (scope === "session-only") {
+            discardTlhThinkingLevelSelection(thinkingSelection);
+            ctx.ui.notify(`Thinking level set to ${nextLevel} for this session.`, "info");
+            return;
+        }
+        const persisted = await persistTlhThinkingLevelSelection(thinkingSelection);
+        if (!persisted) {
+            ctx.ui.notify(`Thinking level set to ${nextLevel} for this session, but TLH could not update the persistent default.`, "warning");
+            return;
+        }
+        ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
+    }
+    catch (error) {
+        await persistTlhThinkingLevelSelection(thinkingSelection);
+        throw error;
+    }
 }

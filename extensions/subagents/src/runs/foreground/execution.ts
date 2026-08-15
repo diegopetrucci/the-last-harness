@@ -12,10 +12,13 @@ import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../s
 import {
 	type AgentProgress,
 	type ArtifactPaths,
+	type ContextPressureProjection,
+	type ContextPressureThreshold,
 	type ControlEvent,
 	type ModelAttempt,
 	type RunSyncOptions,
 	type SingleResult,
+	type SubagentModelIdentity,
 	type Usage,
 	DEFAULT_MAX_OUTPUT,
 	INTERCOM_DETACH_REQUEST_EVENT,
@@ -59,6 +62,8 @@ import {
 import {
 	buildFallbackModelList,
 	buildModelCandidates,
+	appendRuntimeFallbackResolution,
+	canonicalSubagentModelIdentity,
 	formatModelAttemptNote,
 	isRetryableModelFailure,
 	sanitizeModelFallbackNotice,
@@ -105,6 +110,20 @@ import {
 	skipOwnedProcessGroupCleanup,
 	supportsOwnedProcessGroupCleanup,
 } from "../shared/process-group-cleanup.ts";
+import {
+	assistantStopReason,
+	classifyContextExhaustedTermination,
+	CONTEXT_EXHAUSTED_TERMINATION_MESSAGE,
+	hasUsableSessionArtifact,
+	mergeContextUsageDiagnostics,
+	resolveEffectiveContextWindow,
+	resolveSubagentTerminationReason,
+	updateContextUsageDiagnostics,
+	detectContextPressureCrossing,
+	formatContextPressureGuidance,
+	parseContextPressureCrossedThresholds,
+	parseContextPressureProjection,
+} from "../../shared/context-diagnostics.ts";
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -122,6 +141,28 @@ function sumUsage(target: Usage, source: Usage): void {
 	target.cacheWrite += source.cacheWrite;
 	target.cost += source.cost;
 	target.turns += source.turns;
+}
+
+function finalAssistantStopReason(messages: Message[] | undefined): string | undefined {
+	for (let index = (messages?.length ?? 0) - 1; index >= 0; index--) {
+		const stopReason = assistantStopReason(messages![index]);
+		if (stopReason !== undefined) return stopReason;
+	}
+	return undefined;
+}
+
+function finalizeTerminationReason(result: SingleResult): void {
+	result.terminationReason = resolveSubagentTerminationReason({
+		cancelled: Boolean(result.cancel),
+		paused: Boolean(result.pause),
+		timedOut: result.timedOut,
+		turnBudgetExceeded: result.turnBudgetExceeded,
+		toolBudgetBlocked: result.toolBudgetBlocked,
+		interrupted: result.interrupted,
+		assistantStopReason: finalAssistantStopReason(result.messages),
+		effectiveExitCode: result.exitCode,
+		processCompleted: !result.detached,
+	});
 }
 
 function formatTimeoutMessage(timeoutMs: number): string {
@@ -261,6 +302,10 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
 					? [...result.messages]
 					: undefined,
 		usage: { ...result.usage },
+		contextPressure: result.contextPressure ? { ...result.contextPressure } : undefined,
+		contextPressureCrossedThresholds: result.contextPressureCrossedThresholds
+			? [...result.contextPressureCrossedThresholds]
+			: undefined,
 		skills: result.skills ? [...result.skills] : undefined,
 		attemptedModels: result.attemptedModels ? [...result.attemptedModels] : undefined,
 		modelAttempts: result.modelAttempts
@@ -387,8 +432,11 @@ async function runSingleAttempt(
 		artifactPaths?: ArtifactPaths;
 		transcriptWriter?: ChildTranscriptWriter;
 		attemptNotes: string[];
+		restoredSession: boolean;
 		outputSnapshot?: SingleOutputSnapshot;
 		originalTask?: string;
+		contextPressureCrossedThresholds: Set<ContextPressureThreshold>;
+		contextPressure?: ContextPressureProjection;
 	},
 ): Promise<SingleResult> {
 	const effectiveThinking = options.thinkingOverride ?? agent.thinking;
@@ -408,6 +456,10 @@ async function runSingleAttempt(
 		effectiveThinking,
 		options.thinkingOverride !== undefined,
 		thinkingSuffixOptions,
+	);
+	const modelIdentity = canonicalSubagentModelIdentity(
+		modelArg,
+		thinkingDropNote || typeof effectiveThinking !== "string" ? undefined : effectiveThinking,
 	);
 	const {
 		args,
@@ -452,6 +504,7 @@ async function runSingleAttempt(
 		messages: [],
 		usage: emptyUsage(),
 		model: modelArg,
+		...(modelIdentity ? { thinking: modelIdentity.thinking, modelIdentity } : {}),
 		artifactPaths: shared.artifactPaths,
 		transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
 		skills: shared.resolvedSkillNames,
@@ -736,6 +789,8 @@ async function runSingleAttempt(
 			now: number,
 			input: {
 				message?: string;
+				contextPressureSeverity?: import("../../shared/types.ts").ContextPressureSeverity;
+				contextPressureThreshold?: import("../../shared/types.ts").ContextPressureThreshold;
 				reason?: ControlEvent["reason"];
 				recentFailureSummary?: string;
 				currentTool?: string;
@@ -756,6 +811,8 @@ async function runSingleAttempt(
 				ts: now,
 				lastActivityAt: progress.lastActivityAt,
 				message: input.message,
+				contextPressureSeverity: input.contextPressureSeverity,
+				contextPressureThreshold: input.contextPressureThreshold,
 				reason: input.reason ?? "idle",
 				turns: result.usage.turns,
 				tokens: progress.tokens,
@@ -995,6 +1052,32 @@ async function runSingleAttempt(
 						evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
 					const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
 					updateTurnBudget(result.usage.turns, terminalAssistantStop);
+					result.contextUsage = updateContextUsageDiagnostics(result.contextUsage, evt.message, {
+						restored: shared.restoredSession,
+						contextWindow: resolveEffectiveContextWindow(
+							result.model ?? model,
+							options.availableModels,
+							options.preferredModelProvider,
+						),
+					});
+					while (true) {
+						const pressure = detectContextPressureCrossing(
+							result.contextUsage,
+							[...shared.contextPressureCrossedThresholds],
+							now,
+						);
+						if (!pressure) break;
+						shared.contextPressureCrossedThresholds.add(pressure.crossedThreshold);
+						shared.contextPressure = pressure;
+						result.contextPressure = pressure;
+						result.contextPressureCrossedThresholds = [...shared.contextPressureCrossedThresholds];
+						emitNeedsAttention(now, {
+							message: formatContextPressureGuidance(pressure),
+							contextPressureSeverity: pressure.severity,
+							contextPressureThreshold: pressure.crossedThreshold,
+							reason: "context_pressure",
+						});
+					}
 					const u = evt.message.usage;
 					if (u) {
 						result.usage.input += u.input || 0;
@@ -1382,10 +1465,29 @@ async function runSingleAttempt(
 				: `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
 		}
 	}
+	const preNormalizationTerminationReason = result.timedOut
+		? "timed_out"
+		: result.turnBudgetExceeded
+			? "turn_budget_exceeded"
+			: result.toolBudgetBlocked
+				? "tool_budget_blocked"
+				: result.interrupted
+					? "interrupted"
+					: "completed";
+	const contextExhaustedSignature = classifyContextExhaustedTermination({
+		messages: result.messages,
+		contextUsage: result.contextUsage,
+		exitCode: result.exitCode,
+		error: result.error,
+		// At this pre-normalization point a zero-exit, error-free child is the
+		// completed candidate; later post-processing may otherwise rewrite the
+		// reason to process_exit before the narrow empty-terminal check runs.
+		terminationReason: preNormalizationTerminationReason,
+	});
 	if (result.exitCode === 0 && !result.error) {
 		const finalText = getFinalOutput(result.messages ?? []);
 		const missingStructuredOutput = options.structuredOutput ? !existsSync(options.structuredOutput.outputPath) : false;
-		if (!finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
+		if (!contextExhaustedSignature && !finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
 			result.exitCode = 1;
 			result.error = "Subagent produced no output (possible model cold-start or empty response).";
 		}
@@ -1513,6 +1615,7 @@ async function runSingleAttempt(
 		result.finalOutput = preservedFinalOutput;
 	}
 	result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+	finalizeTerminationReason(result);
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";
 		const progressSnapshot = snapshotProgress(progress);
@@ -1586,6 +1689,10 @@ export async function runSync(
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance);
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
+	// A configured session path is often preallocated for a fresh run. Capture
+	// whether an artifact existed before the first child is spawned so fallback
+	// attempts in this invocation cannot become restored attempts.
+	const restoredSession = hasUsableSessionArtifact(options.sessionFile);
 	const skillNames = options.skills ?? agent.skills ?? [];
 	const skillCwd = options.cwd ?? runtimeCwd;
 	const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(
@@ -1623,6 +1730,10 @@ export async function runSync(
 	const modelAttempts: ModelAttempt[] = [];
 	const aggregateUsage = emptyUsage();
 	const attemptNotes: string[] = [];
+	const contextPressureCrossedThresholds = new Set<ContextPressureThreshold>(
+		parseContextPressureCrossedThresholds(options.contextPressureCrossedThresholds) ?? [],
+	);
+	let contextPressure = parseContextPressureProjection(options.contextPressure);
 	let totalToolCount = 0;
 	let totalDurationMs = 0;
 
@@ -1652,6 +1763,10 @@ export async function runSync(
 	}
 
 	let lastResult: SingleResult | undefined;
+	let aggregateContextUsage: SingleResult["contextUsage"];
+	let finalAttemptContextUsage: SingleResult["contextUsage"];
+	let firstAttemptModelIdentity: SubagentModelIdentity | undefined;
+	let modelResolution = options.modelResolution;
 	const modelsToTry = candidates.length > 0 ? candidates : [undefined];
 	for (let i = 0; i < modelsToTry.length; i++) {
 		const candidate = modelsToTry[i];
@@ -1665,10 +1780,25 @@ export async function runSync(
 			artifactPaths: artifactPathsResult,
 			transcriptWriter,
 			attemptNotes,
+			restoredSession,
 			outputSnapshot,
 			originalTask: task,
+			contextPressureCrossedThresholds,
+			contextPressure,
 		});
 		lastResult = result;
+		contextPressure = result.contextPressure ?? contextPressure;
+		finalAttemptContextUsage = result.contextUsage;
+		aggregateContextUsage = mergeContextUsageDiagnostics(aggregateContextUsage, result.contextUsage);
+		if (i === 0) firstAttemptModelIdentity = result.modelIdentity;
+		if (i > 0) {
+			modelResolution = appendRuntimeFallbackResolution({
+				previous: modelResolution,
+				sourceAttempt: modelAttempts.at(-1),
+				currentIdentity: result.modelIdentity,
+				originalIdentity: firstAttemptModelIdentity,
+			});
+		}
 		if (result.model) attemptedModels.push(result.model);
 		else if (candidate) attemptedModels.push(candidate);
 		sumUsage(aggregateUsage, result.usage);
@@ -1706,7 +1836,23 @@ export async function runSync(
 			error: "Subagent did not produce a result.",
 		} satisfies SingleResult);
 
+	if (modelAttempts.length > 1 && result.modelIdentity) {
+		modelResolution = appendRuntimeFallbackResolution({
+			previous: modelResolution,
+			sourceAttempt: modelAttempts.at(-2),
+			currentIdentity: result.modelIdentity,
+			originalIdentity: firstAttemptModelIdentity,
+		});
+	} else if (modelResolution && result.modelIdentity) {
+		modelResolution = { ...modelResolution, resumed: result.modelIdentity };
+	}
+	result.modelResolution = modelResolution;
 	result.usage = aggregateUsage;
+	result.contextUsage = aggregateContextUsage;
+	result.contextPressure = contextPressure;
+	result.contextPressureCrossedThresholds = contextPressureCrossedThresholds.size
+		? [...contextPressureCrossedThresholds]
+		: undefined;
 	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
 	result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
 	if (modelFallbackNotice && modelAttempts.length > 1) result.modelFallbackNotice = modelFallbackNotice;
@@ -1747,52 +1893,7 @@ export async function runSync(
 	}
 	if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
 	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
-
-	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
-		result.artifactPaths = artifactPathsResult;
-		if (options.artifactConfig?.includeOutput !== false) {
-			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
-		}
-		if (options.artifactConfig?.includeMetadata !== false) {
-			writeMetadata(artifactPathsResult.metadataPath, {
-				runId: options.runId,
-				agent: agentName,
-				task,
-				exitCode: result.exitCode,
-				exitSignal: result.exitSignal,
-				timedOut: result.timedOut,
-				...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
-					? { sessionFile: result.sessionFile }
-					: {}),
-				usage: result.usage,
-				model: result.model,
-				attemptedModels: result.attemptedModels,
-				modelAttempts: result.modelAttempts,
-				modelFallbackNotice: result.modelFallbackNotice,
-				durationMs: result.progressSummary?.durationMs,
-				activeRuntimeMs: result.activeRuntimeMs,
-				timeoutMs: options.timeoutMs,
-				deadlineAt: options.deadlineAt,
-				toolCount: result.progressSummary?.toolCount,
-				error: result.error,
-				...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
-				transcriptError: result.transcriptError,
-				skills: result.skills,
-				skillsWarning: result.skillsWarning,
-				timestamp: Date.now(),
-			});
-		}
-
-		if (options.maxOutput) {
-			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-			const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
-			if (truncationResult.truncated) result.truncation = truncationResult;
-		}
-	} else if (options.maxOutput) {
-		const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-		const truncationResult = truncateOutput(result.finalOutput ?? "", config);
-		if (truncationResult.truncated) result.truncation = truncationResult;
-	}
+	finalizeTerminationReason(result);
 
 	const interruptedAcceptance = buildSkippedAcceptanceLedger({
 		acceptance: effectiveAcceptance,
@@ -1840,7 +1941,6 @@ export async function runSync(
 		}
 	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
-	stripAcceptanceReportsFromMessages(result.messages);
 	if (
 		acceptanceFailure &&
 		result.acceptance.explicit &&
@@ -1857,5 +1957,86 @@ export async function runSync(
 		}
 	}
 
+	finalizeTerminationReason(result);
+	// Classify from raw model messages before acceptance-report stripping can turn
+	// a report-only terminal assistant message into empty text.
+	const contextExhaustedReason = classifyContextExhaustedTermination({
+		messages: result.messages,
+		// Classification belongs to the final model attempt. Keep the aggregate
+		// diagnostics on the result for reporting and durable artifacts.
+		contextUsage: finalAttemptContextUsage,
+		exitCode: result.exitCode,
+		error: result.error,
+		terminationReason: result.terminationReason,
+	});
+	if (contextExhaustedReason) {
+		result.exitCode = 1;
+		result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
+		result.terminationReason = contextExhaustedReason;
+		if (result.progress) {
+			result.progress.status = "failed";
+			result.progress.error = result.error;
+		}
+		artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
+	}
+	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
+		result.artifactPaths = artifactPathsResult;
+		if (options.artifactConfig?.includeOutput !== false) {
+			writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
+		}
+		if (options.maxOutput) {
+			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+			const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
+			if (truncationResult.truncated) result.truncation = truncationResult;
+		}
+	} else if (options.maxOutput) {
+		const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+		const truncationResult = truncateOutput(result.finalOutput ?? "", config);
+		if (truncationResult.truncated) result.truncation = truncationResult;
+	}
+	stripAcceptanceReportsFromMessages(result.messages);
+	if (
+		artifactPathsResult &&
+		options.artifactConfig?.enabled !== false &&
+		options.artifactConfig?.includeMetadata !== false
+	) {
+		// Acceptance can change exitCode, error, interruption, and therefore the
+		// canonical termination reason. Write metadata only after that finalization
+		// so recovery observes the same terminal result returned to the caller.
+		writeMetadata(artifactPathsResult.metadataPath, {
+			runId: options.runId,
+			agent: agentName,
+			task,
+			exitCode: result.exitCode,
+			exitSignal: result.exitSignal,
+			timedOut: result.timedOut,
+			terminationReason: result.terminationReason,
+			contextUsage: result.contextUsage,
+			contextPressure: result.contextPressure,
+			contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
+			...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
+				? { sessionFile: result.sessionFile }
+				: {}),
+			usage: result.usage,
+			model: result.model,
+			thinking: result.thinking,
+			modelIdentity: result.modelIdentity,
+			modelResolution: result.modelResolution,
+			attemptedModels: result.attemptedModels,
+			modelAttempts: result.modelAttempts,
+			modelFallbackNotice: result.modelFallbackNotice,
+			durationMs: result.progressSummary?.durationMs,
+			activeRuntimeMs: result.activeRuntimeMs,
+			timeoutMs: options.timeoutMs,
+			deadlineAt: options.deadlineAt,
+			toolCount: result.progressSummary?.toolCount,
+			error: result.error,
+			...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
+			transcriptError: result.transcriptError,
+			skills: result.skills,
+			skillsWarning: result.skillsWarning,
+			timestamp: Date.now(),
+		});
+	}
 	return result;
 }

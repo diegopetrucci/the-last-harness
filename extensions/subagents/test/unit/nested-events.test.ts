@@ -14,6 +14,7 @@ import {
 	sanitizeSummary,
 	updateAsyncJobNestedProjection,
 	updateForegroundNestedProjection,
+	nestedSummaryFromAsyncStatus,
 	writeNestedEvent,
 } from "../../src/runs/shared/nested-events.ts";
 import {
@@ -315,6 +316,89 @@ describe("nested event parsing and projection", () => {
 			]),
 			true,
 		);
+	});
+
+	it("projects valid and invalid nested termination reasons at the event boundary", () => {
+		const valid = sanitizeSummary({
+			...child("nested-terminal-reason", "complete", 100),
+			steps: [{ agent: "leaf", status: "complete", terminationReason: "context_exhausted" }],
+		});
+		assert.equal(valid?.steps?.[0]?.terminationReason, "context_exhausted");
+		const projected = nestedSummaryFromAsyncStatus(
+			{
+				runId: "nested-terminal-status",
+				mode: "single",
+				state: "complete",
+				startedAt: 1,
+				lastUpdate: 2,
+				steps: [{ agent: "leaf", status: "complete", terminationReason: "output_limit" }],
+			},
+			"/tmp/nested-terminal-status",
+			{ id: "nested-terminal-status", parentRunId: "parent", depth: 1, ts: 2 },
+		);
+		assert.equal(projected.steps?.[0]?.terminationReason, "output_limit");
+		const invalid = sanitizeSummary({
+			...child("nested-invalid-reason", "complete", 100),
+			steps: [{ agent: "leaf", status: "complete", terminationReason: "future_reason" }],
+		});
+		assert.equal(invalid?.steps?.[0]?.terminationReason, undefined);
+	});
+
+	it("projects valid nested context diagnostics and omits invalid optional diagnostics", () => {
+		const route = trackRoute();
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 100,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: {
+				...child("nested-valid-pressure", "running", 100),
+				steps: [
+					{
+						agent: "leaf",
+						status: "running",
+						contextUsage: { contextTokens: 800, contextWindow: 1000, contextPercent: 80 },
+						contextPressure: {
+							severity: "warning",
+							crossedThreshold: "warning",
+							contextTokens: 800,
+							contextWindow: 1000,
+							contextPercent: 80,
+							remainingTokens: 200,
+							warnedAt: 100,
+						},
+						contextPressureCrossedThresholds: ["warning"],
+					},
+				],
+			},
+		});
+		writeNestedEvent(route, {
+			type: "subagent.nested.updated",
+			ts: 200,
+			parentRunId: "root-run",
+			parentStepIndex: 1,
+			child: {
+				...child("nested-invalid-pressure", "running", 200),
+				steps: [
+					{
+						agent: "leaf",
+						status: "running",
+						contextUsage: { contextTokens: "bad" },
+						contextPressure: { severity: "warning" },
+						contextPressureCrossedThresholds: ["warning", "bogus"],
+					},
+				],
+			},
+		});
+		const registry = projectNestedEvents(route);
+		const valid = registry.children.find((item) => item.id === "nested-valid-pressure");
+		assert.deepEqual(valid?.steps?.[0]?.contextUsage, { contextTokens: 800, contextWindow: 1000, contextPercent: 80 });
+		assert.equal(valid?.steps?.[0]?.contextPressure?.severity, "warning");
+		assert.deepEqual(valid?.steps?.[0]?.contextPressureCrossedThresholds, ["warning"]);
+		const invalid = registry.children.find((item) => item.id === "nested-invalid-pressure");
+		assert.equal(invalid?.steps?.[0]?.contextUsage, undefined);
+		assert.equal(invalid?.steps?.[0]?.contextPressure, undefined);
+		assert.equal(invalid?.steps?.[0]?.contextPressureCrossedThresholds, undefined);
 	});
 
 	it("accepts only complete numeric token usage at the nested event boundary", () => {

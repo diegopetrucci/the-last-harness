@@ -6,6 +6,9 @@ import { createAsyncStatusJsonParseError } from "./async-status-corruption.js";
 import { normalizeParallelGroups } from "./parallel-groups.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
+import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution } from "../shared/model-fallback.js";
+import { parseThinkingLevel } from "../../shared/model-info.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -73,17 +76,69 @@ function readStatusFile(asyncDir) {
         });
     }
 }
+function sanitizeStatusStep(step) {
+    const { modelIdentity: _modelIdentity, modelResolution: _modelResolution, thinking: _thinking, ...rest } = step;
+    const modelIdentity = sanitizeSubagentModelIdentity(step.modelIdentity);
+    const modelResolution = sanitizeSubagentModelResolution(step.modelResolution);
+    const thinking = parseThinkingLevel(step.thinking);
+    return {
+        ...rest,
+        ...(modelIdentity ? { modelIdentity } : {}),
+        ...(modelResolution ? { modelResolution } : {}),
+        ...(thinking ? { thinking } : {}),
+    };
+}
 function readResultRepairData(resultPath) {
     try {
-        const data = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
-        const state = data.success
+        const parsed = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error(`Async result file '${resultPath}' must contain a JSON object.`);
+        }
+        const data = parsed;
+        const state = data.success === true
             ? "complete"
             : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
                 ? data.state
                 : data.state === "paused" || data.exitCode === 0
                     ? "paused"
                     : "failed";
-        return { state, ...(Array.isArray(data.results) ? { results: data.results } : {}) };
+        const results = Array.isArray(data.results)
+            ? data.results.map((entry) => {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry))
+                    return {};
+                const child = entry;
+                const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+                const contextPressure = parseContextPressureProjection(child.contextPressure);
+                const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
+                const terminationReason = parseSubagentTerminationReason(child.terminationReason);
+                const modelIdentity = sanitizeSubagentModelIdentity(child.modelIdentity);
+                const modelResolution = sanitizeSubagentModelResolution(child.modelResolution);
+                const attemptedModels = Array.isArray(child.attemptedModels)
+                    ? child.attemptedModels.filter((value) => typeof value === "string")
+                    : undefined;
+                const activeRuntimeMs = typeof child.activeRuntimeMs === "number" &&
+                    Number.isFinite(child.activeRuntimeMs) &&
+                    child.activeRuntimeMs >= 0
+                    ? child.activeRuntimeMs
+                    : undefined;
+                return {
+                    ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
+                    ...(typeof child.success === "boolean" ? { success: child.success } : {}),
+                    ...(typeof child.error === "string" ? { error: child.error } : {}),
+                    ...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
+                    ...(typeof child.model === "string" ? { model: child.model } : {}),
+                    ...(modelIdentity ? { modelIdentity } : {}),
+                    ...(modelResolution ? { modelResolution } : {}),
+                    ...(attemptedModels?.length ? { attemptedModels } : {}),
+                    ...(contextUsage ? { contextUsage } : {}),
+                    ...(contextPressure ? { contextPressure } : {}),
+                    ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+                    ...(terminationReason ? { terminationReason } : {}),
+                    ...(activeRuntimeMs !== undefined ? { activeRuntimeMs } : {}),
+                };
+            })
+            : undefined;
+        return { state, ...(results ? { results } : {}) };
     }
     catch (error) {
         if (isNotFoundError(error))
@@ -105,12 +160,13 @@ function terminalStatusFromResult(status, resultPath, now) {
     if (!repair)
         return undefined;
     const steps = (status.steps ?? []).map((step, index) => {
+        const sanitizedStep = sanitizeStatusStep(step);
         if (step.status !== "running" && step.status !== "pending")
-            return step;
+            return sanitizedStep;
         const child = repair.results?.[index];
         const state = childState(repair.state, child);
         return {
-            ...step,
+            ...sanitizedStep,
             status: state === "complete"
                 ? "complete"
                 : state === "continued"
@@ -128,8 +184,14 @@ function terminalStatusFromResult(status, resultPath, now) {
             error: state === "failed" ? (step.error ?? child?.error) : step.error,
             sessionFile: step.sessionFile ?? child?.sessionFile,
             model: step.model ?? child?.model,
+            modelIdentity: sanitizedStep.modelIdentity ?? child?.modelIdentity,
+            modelResolution: sanitizedStep.modelResolution ?? child?.modelResolution,
             attemptedModels: step.attemptedModels ?? child?.attemptedModels,
             modelAttempts: step.modelAttempts ?? child?.modelAttempts,
+            contextUsage: step.contextUsage ?? child?.contextUsage,
+            contextPressure: step.contextPressure ?? child?.contextPressure,
+            contextPressureCrossedThresholds: step.contextPressureCrossedThresholds ?? child?.contextPressureCrossedThresholds,
+            terminationReason: step.terminationReason ?? child?.terminationReason ?? (state === "failed" ? "process_exit" : undefined),
         };
     });
     return {
@@ -174,8 +236,9 @@ function buildFailedRepair(status, asyncDir, now, reason) {
         `Async runner process ${pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
     const diagnostics = readRunnerStartupDiagnostics(asyncDir);
     const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
-    const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" }];
-    const repairedSteps = steps.map((step) => step.status === "running" || step.status === "pending" || step.status === "pausing"
+    const steps = (status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" }]).map(sanitizeStatusStep);
+    const repairedSteps = steps
+        .map((step) => step.status === "running" || step.status === "pending" || step.status === "pausing"
         ? {
             ...step,
             status: "failed",
@@ -189,7 +252,11 @@ function buildFailedRepair(status, asyncDir, now, reason) {
                 : (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
             exitCode: step.exitCode ?? 1,
             error: step.error ?? message,
+            terminationReason: step.terminationReason ?? "process_exit",
         }
+        : step)
+        .map((step) => step.status === "failed" && !step.terminationReason
+        ? { ...step, terminationReason: "process_exit" }
         : step);
     const repairedStatus = {
         ...status,
@@ -216,8 +283,18 @@ function buildFailedRepair(status, asyncDir, now, reason) {
                 error: step.status === "complete" || step.status === "completed" ? undefined : (step.error ?? message),
                 success: step.status === "complete" || step.status === "completed",
                 model: step.model,
+                modelIdentity: step.modelIdentity,
+                modelResolution: step.modelResolution,
                 attemptedModels: step.attemptedModels,
                 modelAttempts: step.modelAttempts,
+                contextUsage: step.contextUsage,
+                contextPressure: step.contextPressure,
+                contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
+                ...(step.terminationReason
+                    ? { terminationReason: step.terminationReason }
+                    : step.status !== "complete" && step.status !== "completed"
+                        ? { terminationReason: "process_exit" }
+                        : {}),
                 sessionFile: step.sessionFile,
                 activeRuntimeMs: step.activeRuntimeMs,
             })),
