@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Changing `/model`, `/thinking` or `/effort` now asks you whether it should apply to only that session, or 
+- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or 
 - At launch, TLH now shows what’s eating up your context.
 
 ### Changed
