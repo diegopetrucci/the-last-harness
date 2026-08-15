@@ -14,7 +14,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { tryImport } from "./helpers.ts";
 import type { MockPi } from "./helpers.ts";
-import { scaleTestTimeout } from "./scale-timeout.ts";
+import { type ScaledMs, scaleTestTimeout } from "./scale-timeout.ts";
+import type {
+	AsyncResultArtifact,
+	AsyncStatus,
+	ContextPressureProjection,
+	ContextPressureThreshold,
+} from "../../src/shared/types.ts";
 
 export type { MockPi };
 
@@ -28,188 +34,18 @@ export interface AsyncExecutionResult {
 	details: { asyncId?: string; timeoutMs?: number; deadlineAt?: number };
 }
 
-export interface AsyncResultPayload {
-	lifecycleArtifactVersion?: number;
-	success: boolean;
-	state?: string;
-	exitCode?: number;
-	sessionId?: string;
-	mode?: string;
-	summary?: string;
-	error?: string;
-	pause?: { kind?: string };
-	timeoutMs?: number;
-	deadlineAt?: number;
-	timedOut?: boolean;
-	turnBudget?: {
-		maxTurns: number;
-		graceTurns: number;
-		outcome: string;
-		turnCount: number;
-		wrapUpRequestedAtTurn?: number;
-		exceededAtTurn?: number;
-	};
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
-	totalTokens?: { input: number; output: number; total: number };
-	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	results: Array<{
-		agent?: string;
-		output?: string;
-		success?: boolean;
-		error?: string;
-		interrupted?: boolean;
-		sessionFile?: string;
-		timedOut?: boolean;
-		terminationReason?: string;
-		contextUsage?: {
-			restoredTokens?: number;
-			contextTokens?: number;
-			peakTokens?: number;
-			contextWindow?: number;
-			contextPercent?: number;
-		};
-		turnBudget?: {
-			maxTurns: number;
-			graceTurns: number;
-			outcome: string;
-			turnCount: number;
-			wrapUpRequestedAtTurn?: number;
-			exceededAtTurn?: number;
-		};
-		turnBudgetExceeded?: boolean;
-		wrapUpRequested?: boolean;
-		model?: string;
-		thinking?: string;
-		modelIdentity?: { provider: string; model: string; thinking?: string };
-		modelResolution?: {
-			kind?: string;
-			original?: { provider: string; model: string; thinking?: string };
-			resumed?: { provider: string; model: string; thinking?: string };
-			reason?: string;
-		};
-		attemptedModels?: string[];
-		modelAttempts?: Array<{ success?: boolean; error?: string }>;
-		modelFallbackNotice?: string;
-		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-		structuredOutput?: unknown;
-		intercomTarget?: string;
-		activeRuntimeMs?: number;
-		artifactPaths?: { metadataPath?: string };
-		acceptance?: {
-			status?: string;
-			effectiveAcceptance?: { level?: string };
-			childReport?: unknown;
-			runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
-		};
-		processCleanup?: {
-			attempted?: boolean;
-			terminated?: boolean;
-			processGroupId?: number;
-			liveProcessesDetected?: boolean;
-			skippedReason?: string;
-		};
-	}>;
-	outputs?: Record<string, { text?: string; structured?: unknown }>;
-	workflowGraph?: {
-		nodes?: Array<{
-			kind?: string;
-			label?: string;
-			phase?: string;
-			status?: string;
-			acceptanceStatus?: string;
-			error?: string;
-			outputName?: string;
-			structured?: boolean;
-			children?: Array<{
-				label?: string;
-				outputName?: string;
-				itemKey?: string;
-				status?: string;
-				acceptanceStatus?: string;
-				error?: string;
-			}>;
-		}>;
-	};
-}
+/**
+ * Test mirror of the async result artifact. Derived from the canonical
+ * AsyncResultArtifact so that field names and types stay in sync automatically.
+ * Tests cast parsed JSON to this type; the canonical type validates writers.
+ */
+export type AsyncResultPayload = AsyncResultArtifact;
 
-export interface AsyncStatusPayload {
-	lifecycleArtifactVersion?: number;
-	sessionId?: string;
-	activityState?: string;
-	currentTool?: string;
-	currentPath?: string;
-	state?: string;
-	error?: string;
-	tkTicket?: { id: string; title: string };
-	timeoutMs?: number;
-	deadlineAt?: number;
-	timedOut?: boolean;
-	turnBudget?: {
-		maxTurns: number;
-		graceTurns: number;
-		outcome: string;
-		turnCount: number;
-		wrapUpRequestedAtTurn?: number;
-		exceededAtTurn?: number;
-	};
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
-	totalTokens?: { total: number };
-	totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-	parallelGroups?: Array<{ start: number; count: number; stepIndex: number }>;
-	steps?: Array<{
-		label?: string;
-		phase?: string;
-		outputName?: string;
-		structured?: boolean;
-		skills?: string[];
-		activityState?: string;
-		currentTool?: string;
-		status?: string;
-		exitCode?: number;
-		timedOut?: boolean;
-		terminationReason?: string;
-		contextUsage?: {
-			restoredTokens?: number;
-			contextTokens?: number;
-			peakTokens?: number;
-			contextWindow?: number;
-			contextPercent?: number;
-		};
-		activeRuntimeMs?: number;
-		startedAt?: number;
-		timeoutMs?: number;
-		deadlineAt?: number;
-		error?: string;
-		model?: string;
-		thinking?: string;
-		modelIdentity?: { provider: string; model: string; thinking?: string };
-		modelResolution?: {
-			kind?: string;
-			original?: { provider: string; model: string; thinking?: string };
-			resumed?: { provider: string; model: string; thinking?: string };
-			reason?: string;
-		};
-		attemptedModels?: string[];
-		modelAttempts?: Array<{ model?: string; success?: boolean; exitCode?: number; error?: string }>;
-		tokens?: { total: number };
-		totalCost?: { inputTokens: number; outputTokens: number; costUsd: number };
-		acceptance?: { status?: string };
-		turnBudget?: {
-			maxTurns: number;
-			graceTurns: number;
-			outcome: string;
-			turnCount: number;
-			wrapUpRequestedAtTurn?: number;
-			exceededAtTurn?: number;
-		};
-		turnBudgetExceeded?: boolean;
-		wrapUpRequested?: boolean;
-		sessionFile?: string;
-		recentOutput?: string[];
-	}>;
-}
+/**
+ * Typed directly from the production AsyncStatus so test fixtures stay in sync.
+ * status.json is written by the async runner as AsyncStatus (src/shared/types.ts).
+ */
+export type AsyncStatusPayload = AsyncStatus;
 
 export interface MockPiCallRecord {
 	args?: string[];
@@ -341,7 +177,10 @@ export function writePackageSkill(packageRoot: string, skillName: string): void 
 // Wait / polling helpers
 // ---------------------------------------------------------------------------
 
-export async function waitForAsyncResultFile(id: string, timeoutMs = scaleTestTimeout(15_000)): Promise<string> {
+export async function waitForAsyncResultFile(
+	id: string,
+	timeoutMs: ScaledMs = scaleTestTimeout(15_000),
+): Promise<string> {
 	const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 	const deadline = Date.now() + timeoutMs;
 	while (!fs.existsSync(resultPath)) {
@@ -354,7 +193,7 @@ export async function waitForAsyncResultFile(id: string, timeoutMs = scaleTestTi
 export async function waitForAsyncState(
 	asyncDir: string,
 	state: string,
-	timeoutMs = scaleTestTimeout(15_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(15_000),
 ): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
 	while (readStatus(asyncDir)?.state !== state) {
@@ -367,7 +206,7 @@ export async function waitForAsyncStatusPredicate(
 	asyncDir: string,
 	predicate: (status: AsyncStatusPayload) => boolean,
 	label: string,
-	timeoutMs = scaleTestTimeout(15_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(15_000),
 ): Promise<AsyncStatusPayload> {
 	const statusPath = path.join(asyncDir, "status.json");
 	const deadline = Date.now() + timeoutMs;
@@ -384,7 +223,7 @@ export async function waitForAsyncStatusPredicate(
 export async function waitForAsyncControlCondition(
 	asyncDir: string,
 	predicate: (status: AsyncStatusPayload, eventText: string) => boolean,
-	timeoutMs = scaleTestTimeout(10_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<{ status: AsyncStatusPayload; eventText: string }> {
 	const eventsPath = path.join(asyncDir, "events.jsonl");
 	const statusPath = path.join(asyncDir, "status.json");
@@ -407,7 +246,7 @@ export async function waitForAsyncControlCondition(
 export async function waitForMockPiCall(
 	mockPi: MockPi,
 	index: number,
-	timeoutMs = scaleTestTimeout(30_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(30_000),
 ): Promise<{ args: string[]; systemPrompts: NonNullable<MockPiCallRecord["systemPrompts"]> }> {
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
@@ -429,7 +268,7 @@ export async function waitForMockPiCall(
 export async function waitForMockPiArgs(
 	mockPi: MockPi,
 	index: number,
-	timeoutMs = scaleTestTimeout(30_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(30_000),
 ): Promise<string[]> {
 	return (await waitForMockPiCall(mockPi, index, timeoutMs)).args;
 }
@@ -483,7 +322,7 @@ export async function waitForMockPiSignal(
 	mockPi: MockPi,
 	pid: number,
 	signal: "SIGINT" | "SIGTERM",
-	timeoutMs = scaleTestTimeout(10_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
 	const signalLogPath = path.join(mockPi.dir, `signals-${pid}.jsonl`);
 	const deadline = Date.now() + timeoutMs;
@@ -514,7 +353,7 @@ export function assertPidExited(pid: number | undefined, label: string): void {
 export async function waitForPidsToExit(
 	pids: Array<number | undefined>,
 	label: string,
-	timeoutMs = scaleTestTimeout(10_000),
+	timeoutMs: ScaledMs = scaleTestTimeout(10_000),
 ): Promise<void> {
 	const live = pids.filter((pid): pid is number => typeof pid === "number" && pid > 0);
 	const deadline = Date.now() + timeoutMs;

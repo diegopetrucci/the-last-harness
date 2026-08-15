@@ -86,13 +86,6 @@ test("LANES: npm run typecheck is present", () => {
 	);
 });
 
-test("LANES: npm run typecheck:subagents-test-support is present", () => {
-	assertHasCommand(
-		(c) => c.includes("npm") && c.includes("run") && c.includes("typecheck:subagents-test-support"),
-		"npm run typecheck:subagents-test-support",
-	);
-});
-
 test("LANES: npm run typecheck:runtime is present", () => {
 	assertHasCommand(
 		(c) => c.includes("npm") && c.includes("run") && c.includes("typecheck:runtime"),
@@ -143,9 +136,13 @@ test("LANES: npm pack --dry-run is present", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * The 11 canonical check commands that must be present in LANES, in sorted
+ * The 10 canonical check commands that must be present in LANES, in sorted
  * order. Uses the same normalisation as canonicalCmd (process.execPath → "node",
  * absolute .mjs paths → basename).
+ *
+ * typecheck:subagents-test-support was removed: the root tsconfig now covers
+ * extensions/subagents/test directly, so the dedicated support-only target is
+ * redundant. typecheck subsumes all subagent test files.
  */
 const EXPECTED_COMMANDS_SORTED = [
 	"bash scripts/check-installer-smoke.sh",
@@ -158,10 +155,9 @@ const EXPECTED_COMMANDS_SORTED = [
 	"npm run lint:sh",
 	"npm run typecheck",
 	"npm run typecheck:runtime",
-	"npm run typecheck:subagents-test-support",
 ];
 
-test("LANES: command set matches the 11 expected canonical commands (no check silently added or removed)", () => {
+test("LANES: command set matches the 10 expected canonical commands (no check silently added or removed)", () => {
 	const actualSorted = allCommands().map(canonicalCmd).sort();
 	const missing = EXPECTED_COMMANDS_SORTED.filter((c) => !actualSorted.includes(c));
 	const extra = actualSorted.filter((c) => !EXPECTED_COMMANDS_SORTED.includes(c));
@@ -169,7 +165,7 @@ test("LANES: command set matches the 11 expected canonical commands (no check si
 		actualSorted,
 		EXPECTED_COMMANDS_SORTED,
 		[
-			"LANES command set does not match the 11 expected canonical commands.",
+			"LANES command set does not match the 10 expected canonical commands.",
 			...(missing.length > 0 ? [`  Missing: ${missing.join(", ")}`] : []),
 			...(extra.length > 0 ? [`  Extra:   ${extra.join(", ")}`] : []),
 			`  Actual commands:\n${actualSorted.map((c) => `    ${c}`).join("\n")}`,

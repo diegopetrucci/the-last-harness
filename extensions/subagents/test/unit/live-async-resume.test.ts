@@ -7,6 +7,7 @@ import {
 	ASYNC_RESUME_INTERRUPT_SIGNAL,
 	interruptLiveAsyncResumeTarget,
 	resolveAsyncResumeTarget,
+	type AsyncResumeTarget,
 } from "../../src/runs/background/async-resume.ts";
 
 function writeJson(filePath: string, value: object): void {
@@ -31,8 +32,9 @@ describe("live async resume interrupt", () => {
 				lastUpdate: Date.now(),
 				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			});
-			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir });
-			assert.equal(target.kind, "live");
+			const targetRaw = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(targetRaw.kind, "live");
+			const target = targetRaw as AsyncResumeTarget & { kind: "live" };
 
 			const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
 			const state = {
@@ -92,8 +94,9 @@ describe("live async resume interrupt", () => {
 				lastUpdate: Date.now(),
 				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			});
-			const target = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir });
-			assert.equal(target.kind, "live");
+			const targetRaw = resolveAsyncResumeTarget({ id: "run-live" }, { asyncDirRoot: asyncRoot, resultsDir });
+			assert.equal(targetRaw.kind, "live");
+			const target = targetRaw as AsyncResumeTarget & { kind: "live" };
 
 			const state = {
 				asyncJobs: new Map([
@@ -149,7 +152,7 @@ describe("live async resume interrupt", () => {
 				lastUpdate: Date.now(),
 				steps: [{ agent: "worker", status: "running", startedAt: 100 }],
 			});
-			const target = resolveAsyncResumeTarget(
+			const targetRaw = resolveAsyncResumeTarget(
 				{ id: "run-live" },
 				{
 					asyncDirRoot: asyncRoot,
@@ -162,7 +165,8 @@ describe("live async resume interrupt", () => {
 					},
 				},
 			);
-			assert.equal(target.kind, "live");
+			assert.equal(targetRaw.kind, "live");
+			const target = targetRaw as AsyncResumeTarget & { kind: "live" };
 
 			const result = interruptLiveAsyncResumeTarget({
 				target,

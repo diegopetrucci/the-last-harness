@@ -35,6 +35,7 @@ import {
 	type ArtifactConfig,
 	type ArtifactPaths,
 	type AsyncParallelGroupStatus,
+	type AsyncResultArtifact,
 	type AsyncStatus,
 	type ChainOutputMap,
 	type ChildProcessCleanupResult,
@@ -2175,7 +2176,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 					durationMs: 0,
 					asyncDir,
 					sessionId: config.sessionId,
-				});
+				} satisfies AsyncResultArtifact);
 			} catch (err) {
 				console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
 			}
@@ -4395,7 +4396,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
 			shareError,
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
-		});
+		} satisfies AsyncResultArtifact);
 	} catch (err) {
 		console.error(`Failed to write result file ${resultPath}:`, err);
 	}

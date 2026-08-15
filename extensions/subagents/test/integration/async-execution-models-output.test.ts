@@ -859,8 +859,8 @@ describe("async execution utilities", () => {
 		assert.ok(note);
 		assert.equal(payload.success, true);
 		assert.equal(payload.results[0]?.model, "openai/gpt-5");
-		assert.equal(payload.results[0]?.output?.split(note).length - 1, 1);
-		assert.equal(statusPayload.steps?.[0]?.recentOutput?.filter((line) => line === note).length, 1);
+		assert.equal((payload.results[0]?.output?.split(note) ?? []).length - 1, 1);
+		assert.equal((statusPayload.steps?.[0]?.recentOutput?.filter((line) => line === note) ?? []).length, 1);
 		const args = readMockPiArgs(mockPi, 0);
 		assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
 	});
@@ -926,7 +926,7 @@ describe("async execution utilities", () => {
 			maxSubagentDepth: 2,
 		});
 
-		const resultPath = await waitForAsyncResultFile(id, 15_000);
+		const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
 		const statusPayload = JSON.parse(
 			fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
@@ -936,7 +936,7 @@ describe("async execution utilities", () => {
 		assert.equal(payload.success, true);
 		// Human-facing notice deduplication is unchanged: only the first step
 		// surfaces the shared drop note.
-		assert.equal(payload.results[0]?.output?.split(note).length - 1, 1);
+		assert.equal((payload.results[0]?.output?.split(note) ?? []).length - 1, 1);
 		assert.equal(payload.results[1]?.output?.includes(note), false);
 		// The second step fell back to the unsupported model; even though its
 		// duplicate note was deduped away, its persisted identity must stay

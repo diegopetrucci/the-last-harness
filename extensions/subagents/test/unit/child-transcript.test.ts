@@ -81,15 +81,32 @@ describe("createChildTranscriptWriter", () => {
 			type: "message_end",
 			message: {
 				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
 				content: [{ type: "text", text: "all done" }],
 				model: "gpt-5.5",
-				stopReason: "end_turn",
-				usage: { input: 10, output: 5, cost: { total: 0.01 } },
+				stopReason: "stop",
+				timestamp: 0,
+				usage: {
+					input: 10,
+					output: 5,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 15,
+					cost: { input: 0, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+				},
 			},
 		});
 		writer.writeChildEvent({
 			type: "tool_result_end",
-			message: { role: "toolResult", toolName: "bash", content: [{ type: "text", text: "ok" }] },
+			message: {
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "bash",
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+				timestamp: 0,
+			},
 		});
 
 		const records = readRecords(transcriptPath);
@@ -99,7 +116,7 @@ describe("createChildTranscriptWriter", () => {
 		assert.equal(records[0]!.role, "assistant");
 		assert.equal(records[0]!.text, "all done");
 		assert.equal(records[0]!.model, "gpt-5.5");
-		assert.equal(records[0]!.stopReason, "end_turn");
+		assert.equal(records[0]!.stopReason, "stop");
 		assert.deepEqual(records[0]!.usage, { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 });
 		assert.equal(records[1]!.recordType, "message");
 		assert.equal(records[1]!.sourceEventType, "tool_result_end");

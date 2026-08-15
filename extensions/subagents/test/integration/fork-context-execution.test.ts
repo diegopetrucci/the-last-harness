@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { MockPi } from "../support/helpers.ts";
-import { createEventBus, createMockPi, createTempDir, events, removeTempDir, tryImport } from "../support/helpers.ts";
+import {
+	createEventBus,
+	createMockPi,
+	createTempDir,
+	events,
+	makeAgent,
+	removeTempDir,
+	tryImport,
+} from "../support/helpers.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT } from "../../src/shared/types.ts";
 
@@ -13,7 +21,7 @@ interface ExecutorModule {
 			id: string,
 			params: Record<string, unknown>,
 			signal: AbortSignal,
-			onUpdate: ((result: unknown) => void) | undefined,
+			onUpdate: ((result: ProgressUpdate) => void) | undefined,
 			ctx: unknown,
 		) => Promise<{
 			isError?: boolean;
@@ -122,8 +130,8 @@ describe("fork context execution wiring", () => {
 		return makeExecutorWithDiscoverAgents(
 			() => ({
 				agents: [
-					{ name: "echo", description: "Echo test agent" },
-					{ name: "second", description: "Second test agent" },
+					makeAgent("echo", { description: "Echo test agent" }),
+					makeAgent("second", { description: "Second test agent" }),
 				],
 				projectAgentsDir: null,
 			}),
@@ -338,7 +346,7 @@ describe("fork context execution wiring", () => {
 			leafId: "leaf-current",
 		});
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "worker", description: "Worker", defaultContext: "fork" }],
+			agents: [makeAgent("worker", { description: "Worker", defaultContext: "fork" })],
 			projectAgentsDir: null,
 		}));
 
@@ -416,13 +424,12 @@ describe("fork context execution wiring", () => {
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{
-					name: "worker",
+				makeAgent("worker", {
 					description: "Worker",
 					defaultContext: "fork",
 					model: "anthropic/claude-sonnet-4-5:high",
 					thinking: "high",
-				},
+				}),
 			],
 			projectAgentsDir: null,
 		}));
@@ -517,14 +524,13 @@ describe("fork context execution wiring", () => {
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{
-					name: "worker",
+				makeAgent("worker", {
 					description: "Worker",
 					defaultContext: "fork",
 					model: "openai/gpt-5-mini:high",
 					fallbackModels: ["anthropic/claude-sonnet-4:low"],
 					thinking: "high",
-				},
+				}),
 			],
 			projectAgentsDir: null,
 		}));
@@ -546,7 +552,7 @@ describe("fork context execution wiring", () => {
 		const parentSessionFile = path.join(tempDir, "parent.jsonl");
 		const { manager } = makeForkingSessionManagerRecorder({ sessionFile: parentSessionFile, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "worker", description: "Worker", defaultContext: "fork" }],
+			agents: [makeAgent("worker", { description: "Worker", defaultContext: "fork" })],
 			projectAgentsDir: null,
 		}));
 
@@ -569,7 +575,7 @@ describe("fork context execution wiring", () => {
 			leafId: "leaf-current",
 		});
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "oracle", description: "Oracle", defaultContext: "fork" }],
+			agents: [makeAgent("oracle", { description: "Oracle", defaultContext: "fork" })],
 			projectAgentsDir: null,
 		}));
 
@@ -596,8 +602,8 @@ describe("fork context execution wiring", () => {
 		});
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "worker", description: "Worker", defaultContext: "fork" },
-				{ name: "second", description: "Second" },
+				makeAgent("worker", { description: "Worker", defaultContext: "fork" }),
+				makeAgent("second", { description: "Second" }),
 			],
 			projectAgentsDir: null,
 		}));
@@ -635,8 +641,8 @@ describe("fork context execution wiring", () => {
 		});
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "worker", description: "Worker", defaultContext: "fork" },
-				{ name: "second", description: "Second" },
+				makeAgent("worker", { description: "Worker", defaultContext: "fork" }),
+				makeAgent("second", { description: "Second" }),
 			],
 			projectAgentsDir: null,
 		}));
@@ -668,8 +674,8 @@ describe("fork context execution wiring", () => {
 		});
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "echo", description: "Echo" },
-				{ name: "worker", description: "Worker", defaultContext: "fork" },
+				makeAgent("echo", { description: "Echo" }),
+				makeAgent("worker", { description: "Worker", defaultContext: "fork" }),
 			],
 			projectAgentsDir: null,
 		}));
@@ -713,8 +719,8 @@ describe("fork context execution wiring", () => {
 		};
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "scout", description: "Scout", defaultContext: "fresh" },
-				{ name: "worker", description: "Worker", defaultContext: "fork" },
+				makeAgent("scout", { description: "Scout", defaultContext: "fresh" }),
+				makeAgent("worker", { description: "Worker", defaultContext: "fork" }),
 			],
 			projectAgentsDir: null,
 		}));
@@ -741,7 +747,7 @@ describe("fork context execution wiring", () => {
 	it("reports unknown top-level parallel agents before default-fork preconditions", async () => {
 		const { manager } = makeSessionManagerRecorder({ sessionFile: undefined, leafId: "leaf-current" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "worker", description: "Worker", defaultContext: "fork" }],
+			agents: [makeAgent("worker", { description: "Worker", defaultContext: "fork" })],
 			projectAgentsDir: null,
 		}));
 
@@ -1008,8 +1014,8 @@ describe("fork context execution wiring", () => {
 		mockPi.onCall({ matchArgIncludes: "continue", output: "other done" });
 		const executor = makeExecutorWithDiscoverAgents(() => ({
 			agents: [
-				{ name: "echo", description: "Echo", systemPrompt: "Intercom orchestration channel:" },
-				{ name: "second", description: "Second", systemPrompt: "Intercom orchestration channel:" },
+				makeAgent("echo", { description: "Echo", systemPrompt: "Intercom orchestration channel:" }),
+				makeAgent("second", { description: "Second", systemPrompt: "Intercom orchestration channel:" }),
 			],
 			projectAgentsDir: null,
 		}));
@@ -1189,7 +1195,7 @@ describe("fork context execution wiring", () => {
 
 		assert.equal(result.isError, true);
 		const text = Array.isArray(result.content)
-			? result.content.map((c: { type: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : "")).join("")
+			? result.content.map((c: { text?: string }) => c.text ?? "").join("")
 			: "";
 		assert.match(text, /Unknown action: create/);
 		assert.equal(fs.existsSync(path.join(worktreeDir, ".pi", "agents", "local-helper.md")), false);
@@ -1225,7 +1231,7 @@ describe("fork context execution wiring", () => {
 		const worktreeDir = path.join(tempDir, "worktree");
 		writePackageSkill(path.join(worktreeDir, "packages", "app"), "parallel-step-skill");
 		const executor = makeExecutorWithDiscoverAgents(() => ({
-			agents: [{ name: "echo", description: "Echo test agent", skills: ["parallel-step-skill"] }],
+			agents: [makeAgent("echo", { description: "Echo test agent", skills: ["parallel-step-skill"] })],
 			projectAgentsDir: null,
 		}));
 

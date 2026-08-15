@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import type { Dirent } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -155,7 +156,8 @@ describe("pause-all shortcut handler", () => {
 			if (target === NESTED_RUNS_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
 			if (target === ASYNC_DIR && Array.isArray(entries))
-				return entries.filter((entry) => entry.name === path.basename(asyncDir));
+				// Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -201,7 +203,8 @@ describe("pause-all shortcut handler", () => {
 			}
 			const entries = originalReaddirSync(target, options as never);
 			if (target === ASYNC_DIR && Array.isArray(entries))
-				return entries.filter((entry) => entry.name === path.basename(asyncDir));
+				// Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -245,9 +248,11 @@ describe("pause-all shortcut handler", () => {
 		) => {
 			if (target === ASYNC_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
+			// Production readdirSync on nested directories uses { withFileTypes: true }, so entries are Dirents.
 			if (target === NESTED_RUNS_DIR && Array.isArray(entries))
-				return entries.filter((entry) => entry.name === rootRunId);
-			if (target === rootDir && Array.isArray(entries)) return entries.filter((entry) => entry.name === childRunId);
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === rootRunId);
+			if (target === rootDir && Array.isArray(entries))
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === childRunId);
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -295,9 +300,11 @@ describe("pause-all shortcut handler", () => {
 		) => {
 			if (target === ASYNC_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
+			// Production readdirSync on nested directories uses { withFileTypes: true }, so entries are Dirents.
 			if (target === NESTED_RUNS_DIR && Array.isArray(entries))
-				return entries.filter((entry) => entry.name === rootRunId);
-			if (target === rootDir && Array.isArray(entries)) return entries.filter((entry) => entry.name === childRunId);
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === rootRunId);
+			if (target === rootDir && Array.isArray(entries))
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === childRunId);
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();
@@ -344,7 +351,8 @@ describe("pause-all shortcut handler", () => {
 			if (target === NESTED_RUNS_DIR) return [];
 			const entries = originalReaddirSync(target, options as never);
 			if (target === ASYNC_DIR && Array.isArray(entries))
-				return entries.filter((entry) => entry.name === path.basename(asyncDir));
+				// Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
+				return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === path.basename(asyncDir));
 			return entries;
 		}) as typeof fs.readdirSync;
 		syncBuiltinESMExports();

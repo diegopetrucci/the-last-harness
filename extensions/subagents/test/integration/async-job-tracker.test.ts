@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import type { AsyncStatusQuarantineOptions } from "../../src/runs/background/async-status-quarantine.ts";
 
 interface AsyncJobTrackerModule {
 	createAsyncJobTracker(
@@ -17,6 +18,8 @@ interface AsyncJobTrackerModule {
 			kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 			now?: () => number;
 			fs?: Pick<typeof fs, "statSync" | "openSync" | "readSync" | "closeSync">;
+			/** Typed from production AsyncStatusQuarantineOptions. */
+			quarantine?: AsyncStatusQuarantineOptions;
 		},
 	): {
 		ensurePoller(): void;
@@ -33,7 +36,7 @@ const available = !!trackerMod;
 function createState() {
 	return {
 		baseCwd: "/repo",
-		currentSessionId: null,
+		currentSessionId: null as string | null,
 		asyncJobs: new Map(),
 		cleanupTimers: new Map(),
 		lastUiContext: null,
@@ -268,7 +271,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 						position?: number | null,
 					) => {
 						if (failure.operation === "read") return fail();
-						return fs.readSync(fd, buffer, offset, length, position);
+						return fs.readSync(fd, buffer, offset, length, position ?? null);
 					}) as typeof fs.readSync,
 					closeSync: fs.closeSync,
 				};
@@ -414,7 +417,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			await waitForCondition(
 				() => !state.asyncJobs.has("run-owner"),
 				"owned job cleanup after matching completion",
-				1000,
+				scaleTestTimeout(1000),
 			);
 		} finally {
 			removeTempDir(asyncRoot);

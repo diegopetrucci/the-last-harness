@@ -13,10 +13,20 @@ interface MockPiResponse {
 	ignoreSigint?: boolean;
 	spawnStubbornDescendants?: boolean;
 	jsonl?: unknown[];
+	/** Write a marker file at this path before any delay or jsonl output. */
+	writeMarker?: string;
+	/** Wait for a marker file at this path before any delay or jsonl output. */
+	waitForMarker?: string;
+	/** Structured output to capture at PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE. */
+	structuredOutput?: unknown;
 	steps?: Array<{
 		delay?: number;
 		jsonl?: unknown[];
 		stderr?: string;
+		/** Write a marker file at this path before step delay/jsonl. */
+		writeMarker?: string;
+		/** Wait for a marker file at this path before step delay/jsonl. */
+		waitForMarker?: string;
 	}>;
 	echoEnv?: string[];
 	matchArgIncludes?: string | string[];

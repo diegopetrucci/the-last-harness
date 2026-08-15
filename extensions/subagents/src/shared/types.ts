@@ -994,6 +994,106 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 	index?: number;
 };
 
+// ============================================================================
+// Async Result Artifact
+// ============================================================================
+
+/**
+ * Shape of one child step entry in the async result artifact.
+ * All three result writers must be structurally compatible with this type.
+ */
+export interface AsyncResultArtifactResultItem {
+	agent: string;
+	success: boolean;
+	output?: string;
+	error?: string;
+	exitCode?: number | null;
+	exitSignal?: NodeJS.Signals;
+	skipped?: boolean;
+	interrupted?: boolean;
+	timedOut?: boolean;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
+	contextUsage?: ContextUsageDiagnostics;
+	contextPressure?: ContextPressureProjection;
+	contextPressureCrossedThresholds?: ContextPressureThreshold[];
+	terminationReason?: SubagentTerminationReason;
+	sessionFile?: string;
+	intercomTarget?: string;
+	model?: string;
+	modelIdentity?: SubagentModelIdentity;
+	modelResolution?: SubagentModelResolution;
+	attemptedModels?: string[];
+	modelAttempts?: ModelAttempt[];
+	modelFallbackNotice?: string;
+	totalCost?: CostSummary;
+	artifactPaths?: ArtifactPaths;
+	processCleanup?: ChildProcessCleanupResult;
+	truncated?: boolean;
+	transcriptPath?: string;
+	transcriptError?: string;
+	structuredOutput?: unknown;
+	structuredOutputPath?: string;
+	structuredOutputSchemaPath?: string;
+	acceptance?: AcceptanceLedger;
+	pause?: AsyncPauseMetadata;
+	activeRuntimeMs?: number;
+}
+
+/**
+ * Canonical shape of the async result artifact written to disk by all three
+ * result writers. Apply with `satisfies AsyncResultArtifact` — never with a
+ * type annotation or cast — so literals are validated without widening and
+ * the emitted JSON remains byte-identical.
+ *
+ * Fields are optional when any writer legitimately omits them:
+ * - `lifecycleArtifactVersion` — omitted by the stale-run repair writer
+ * - `summary`/`timestamp` — may be `undefined` in the gate-rejection writer
+ * - Most top-level fields — omitted by gate-rejection and repair writers
+ */
+export interface AsyncResultArtifact {
+	lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+	id: string;
+	agent: string;
+	mode: SubagentRunMode;
+	success: boolean;
+	state: AsyncLifecycleState;
+	summary?: string;
+	error?: string;
+	timeoutMs?: number;
+	deadlineAt?: number;
+	turnBudget?: TurnBudgetState;
+	turnBudgetExceeded?: boolean;
+	wrapUpRequested?: boolean;
+	toolBudget?: ToolBudgetState;
+	toolBudgetBlocked?: boolean;
+	timedOut?: boolean;
+	pause?: AsyncPauseMetadata;
+	results: AsyncResultArtifactResultItem[];
+	outputs?: ChainOutputMap;
+	workflowGraph?: WorkflowGraphSnapshot;
+	exitCode: number;
+	timestamp?: number;
+	durationMs: number;
+	totalTokens?: TokenUsage;
+	totalCost?: CostSummary;
+	truncated?: boolean;
+	artifactsDir?: string;
+	cwd?: string;
+	asyncDir: string;
+	sessionId?: string | null;
+	sessionFile?: string;
+	intercomTarget?: string;
+	shareUrl?: string;
+	gistUrl?: string;
+	shareError?: string;
+	taskIndex?: number;
+	totalTasks?: number;
+}
+
 export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
