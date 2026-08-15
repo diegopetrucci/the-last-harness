@@ -1024,7 +1024,8 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
 				config,
 				`TLH private Pi runtime needs repair: ${error instanceof Error ? error.message : String(error)}`,
 			);
-			log(
+			log(config, `Pinning local Pi runtime to ${PINNED_PI_VERSION}...`);
+			verboseLog(
 				config,
 				`Repairing TLH private Pi runtime to pinned ${PINNED_PI_VERSION} at ${prefix} (per-user, no sudo)...`,
 			);
@@ -1037,7 +1038,8 @@ function installPiIfNeeded(config: InstallConfig): PiInstallResult {
 			return { installed: false, piCmd: piBin };
 		}
 	} else {
-		log(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
+		log(config, `Pinning local Pi runtime to ${PINNED_PI_VERSION}...`);
+		verboseLog(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
 	}
 
 	verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
@@ -1381,7 +1383,7 @@ function installHarnessPackage(config: InstallConfig): void {
 	else mkdirSync(config.agentDir, { recursive: true });
 	backupExistingSettingsBeforePiInstall(config);
 
-	log(config, "Installing The Last Harness package...");
+	log(config, "Installing package...");
 	verboseLog(config, `Package source: ${config.packageSource}`);
 	const piPackageSource = packageSourcePiSource(config.packageSource, { agentDir: config.agentDir });
 	assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo());
@@ -1766,7 +1768,8 @@ function installDefaultExtensions(config: InstallConfig): void {
 		return;
 	}
 
-	log(config, `Installing bundled default extensions (${sources.length})...`);
+	log(config, "Installing bundled default extensions...");
+	verboseLog(config, `Installing bundled default extensions (${sources.length})...`);
 	preflightCriticalDefaultExtensionTargets(config, criticalSources);
 	const failures = updateNonCriticalDefaultExtensions(config, nonCriticalSources);
 	if (failures !== 0) warn(`${failures} bundled default extension package(s) failed to update`);
@@ -1914,18 +1917,17 @@ function pathContainsBinDir(config: InstallConfig): boolean {
 }
 
 function printSummary(config: InstallConfig): void {
+	if (!config.noWrapper && !pathContainsBinDir(config)) {
+		warn(`${config.binDir} is not on PATH. Add it with: export PATH="${config.binDir}:$PATH"`);
+	}
 	log(config, "");
-	log(config, "Done. The Last Harness is ready.");
+	log(config, "Done. The Last Harness is ready. Start with:");
+	log(config, "");
 	if (!config.noWrapper) {
-		if (pathContainsBinDir(config)) {
-			log(config, `Start with: ${config.wrapperName}`);
-		} else {
-			warn(`${config.binDir} is not on PATH. Add it with: export PATH="${config.binDir}:$PATH"`);
-			log(config, `Start with: ${config.wrapperName}`);
-		}
+		log(config, `\`${config.wrapperName}\``);
 		detailLog(config, `Wrapper: ${config.wrapperPath}`);
 	} else {
-		log(config, `Start with: PI_CODING_AGENT_DIR="${config.agentDir}" "${dirname(config.agentDir)}/runtime/bin/pi"`);
+		log(config, `\`PI_CODING_AGENT_DIR="${config.agentDir}" "${dirname(config.agentDir)}/runtime/bin/pi"\``);
 	}
 	detailLog(config, `Settings: ${config.settingsPath}`);
 	if (config.gnosisSummary) detailLog(config, config.gnosisSummary);
@@ -2037,7 +2039,7 @@ export function reclaimRetiredExtensionResidues(config: InstallConfig): void {
 }
 
 async function runInstallFlow(config: InstallConfig): Promise<void> {
-	log(config, "The Last Harness installer");
+	verboseLog(config, "The Last Harness installer");
 	detailLog(config, `Isolated profile: ${config.agentDir}`);
 	if (!config.packageSourceIsDefault || config.verbose) log(config, `Package source: ${config.packageSource}`);
 	verboseLog(config, `Repository: ${config.repo}`);

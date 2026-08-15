@@ -27,7 +27,7 @@ run_stage0_node_preflight_smoke() {
     cat "${combined_file}" >&2
     fail "stage-0 old Node remote preflight unexpectedly succeeded"
   fi
-  assert_contains "${combined_file}" "Refreshing installer stage-0 from ${raw_base}/install.sh before fetching support files."
+  assert_contains "${combined_file}" "Refreshing installer..."
   assert_contains "${combined_file}" "Node.js >= 22.19.0 is required (found v22.18.9). Install or upgrade Node.js, then rerun the installer."
   assert_not_contains "${combined_file}" "BUG: fake local stage-1 was invoked"
   assert_absent "${agent_dir}"
@@ -209,7 +209,7 @@ run_missing_required_helper_preflight_smoke() {
   fi
   assert_not_contains "${combined_file}" "required installer support files not found for ref"
   # Confirm the install step was reached (preflight passed) and the runtime provision failed.
-  assert_contains "${combined_file}" "Installing TLH private Pi runtime to"
+  assert_contains "${combined_file}" "Pinning local Pi runtime to"
 }
 
 run_stale_stage0_manifest_compatibility_smoke() {
@@ -269,7 +269,7 @@ run_stage0_canonical_handoff_smoke() {
   run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_SUPPORT_ROOT="${support_root}" FAKE_RAW_BASE="${raw_base}" TLH_REF="main" TLH_RAW_BASE="${raw_base}" bash "${stale_installer}" --agent-dir "${agent_dir}" --bin-dir "${bin_dir}" >"${stdout_file}" 2>"${stderr_file}"
   combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
 
-  assert_contains "${combined_file}" "Refreshing installer stage-0 from ${raw_base}/install.sh before fetching support files."
+  assert_contains "${combined_file}" "Refreshing installer..."
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_contains "${combined_file}" "compat_librarian_present=false"
   assert_contains "${combined_file}" "compat_query_present=false"

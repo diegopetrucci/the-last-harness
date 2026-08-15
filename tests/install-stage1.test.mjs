@@ -600,3 +600,22 @@ test("stage-1 canonicalizes relative target dirs before deriving wrapper and sta
 	assert.notEqual(state.agentDir, normalPiAgentIfLeftRelative);
 	assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
+
+test("stage-1 --no-wrapper summary emits done header, blank line, and PI_CODING_AGENT_DIR command in backticks", (t) => {
+	const { result, agentDir } = runStage1LocalPackageInstall(t);
+	assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+
+	const lines = result.stdout.split(/\r?\n/);
+	const headerIdx = lines.findIndex((l) => l === "Done. The Last Harness is ready. Start with:");
+	assert.ok(headerIdx !== -1, `summary header not found in stdout:\n${result.stdout}`);
+	// The line immediately after the header must be blank (blank-line separation).
+	assert.equal(lines[headerIdx + 1], "", "expected blank line directly after summary header");
+	// The command must appear wrapped in literal backticks — not as 'Start with: <cmd>' on the same line.
+	const runtimePi = join(dirname(agentDir), "runtime", "bin", "pi");
+	const expectedCmd = `\`PI_CODING_AGENT_DIR="${agentDir}" "${runtimePi}"\``;
+	assert.equal(
+		lines[headerIdx + 2],
+		expectedCmd,
+		`expected backtick-wrapped PI_CODING_AGENT_DIR command on the line after the blank; got: ${JSON.stringify(lines[headerIdx + 2])}`,
+	);
+});
