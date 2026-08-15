@@ -1,5 +1,6 @@
 import type { ExtensionContext, SessionEntry, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
+import { getMcpToolKind } from "./mcp-tools.js";
 
 // Cache-miss detection ported from pi-coding-agent@0.80.6 core/cache-stats.
 // See ../../docs/upstream-sync-inventory.md for sync/review guidance.
@@ -933,7 +934,9 @@ function collectActiveBranchIds(activeLeafId: string | null | undefined, byId: M
 }
 
 function estimateToolSource(toolName: string, catalogEntry?: TlhToolCatalogEntry): TlhToolSourceEstimate {
-	if (toolName === "mcp") {
+	const mcpKind = getMcpToolKind(toolName, catalogEntry);
+
+	if (mcpKind === "proxy") {
 		return {
 			key: catalogEntry?.sourceInfo?.source ? `mcp-proxy:${catalogEntry.sourceInfo.source}` : "mcp-proxy",
 			label: catalogEntry?.sourceInfo?.source ? `MCP proxy (${catalogEntry.sourceInfo.source})` : "MCP proxy",
@@ -945,10 +948,7 @@ function estimateToolSource(toolName: string, catalogEntry?: TlhToolCatalogEntry
 		};
 	}
 
-	const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path]
-		.filter((value) => typeof value === "string")
-		.join(" ");
-	if (sourceHint && /mcp/i.test(sourceHint)) {
+	if (mcpKind === "direct") {
 		return {
 			key: catalogEntry?.sourceInfo?.source ? `mcp-direct:${catalogEntry.sourceInfo.source}` : `mcp-direct:${toolName}`,
 			label: catalogEntry?.sourceInfo?.source

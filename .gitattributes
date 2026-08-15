@@ -57,6 +57,7 @@ extensions/the-last-harness/header.js linguist-generated=true
 extensions/the-last-harness/install-state.js linguist-generated=true
 extensions/the-last-harness/launch-context.js linguist-generated=true
 extensions/the-last-harness/launch-telemetry.js linguist-generated=true
+extensions/the-last-harness/mcp-tools.js linguist-generated=true
 extensions/the-last-harness/model-defaults.js linguist-generated=true
 extensions/the-last-harness/model-effort-notice.js linguist-generated=true
 extensions/the-last-harness/model-effort-reconcile.js linguist-generated=true
