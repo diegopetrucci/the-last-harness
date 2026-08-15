@@ -6,7 +6,7 @@ import {
 } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Container, Text, getKeybindings, setKeybindings, visibleWidth } from "@earendil-works/pi-tui";
-import type { AsyncJobState } from "../../src/shared/types.ts";
+import type { AsyncJobState, AsyncJobStep } from "../../src/shared/types.ts";
 import {
 	createSubagentLiveDetailController,
 	type SubagentLiveDetailController,
@@ -1551,7 +1551,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeMultiJob = (id: string) => ({
+			const makeMultiJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1577,7 +1577,7 @@ describe("subagent async widget rendering", () => {
 
 			// Drain to one quiet job (all steps complete). The !singleJob bypass in
 			// fitAdaptiveWidgetLines must prevent reuse of the progressive session.
-			const quietJob = {
+			const quietJob: AsyncJobState = {
 				asyncId: "developer-run-quiet",
 				asyncDir: "/tmp/developer-run-quiet",
 				status: "running",
@@ -1623,7 +1623,7 @@ describe("subagent async widget rendering", () => {
 			const now = 20_000;
 			const ui = createUiContext();
 
-			const tallJob = {
+			const tallJob: AsyncJobState = {
 				asyncId: "developer-idle-tall",
 				asyncDir: "/tmp/developer-idle-tall",
 				status: "running",
@@ -1637,10 +1637,20 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 12 }, (_, i) => ({
 					index: i,
 					agent: i % 2 === 0 ? "developer" : "code-reviewer",
-					status: "running",
+					status: "running" as const,
 					currentTool: "read",
 					currentToolStartedAt: now - 1_000,
-					children: [{ agent: `nested-${i}`, status: "running", currentTool: "grep" }],
+					children: [
+						{
+							id: `nested-run-${i}`,
+							parentRunId: "developer-idle-tall",
+							depth: 1,
+							path: [{ runId: "developer-idle-tall", stepIndex: i }],
+							state: "running" as const,
+							agent: `nested-${i}`,
+							currentTool: "grep",
+						},
+					],
 				})),
 			};
 
@@ -1678,7 +1688,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeMultiJob = (id: string) => ({
+			const makeMultiJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1704,7 +1714,7 @@ describe("subagent async widget rendering", () => {
 			// Drain to one idle job with a job-level health activityState.
 			// The !singleJob bypass in fitAdaptiveWidgetLines must prevent reuse of the
 			// progressive session, so the health warning and expand hint both appear.
-			const idleJob = {
+			const idleJob: AsyncJobState = {
 				asyncId: "developer-idle-1",
 				asyncDir: "/tmp/developer-idle-1",
 				status: "running",
@@ -1720,7 +1730,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 12 }, (_, i) => ({
 					index: i,
 					agent: i % 2 === 0 ? "developer" : "code-reviewer",
-					status: "running",
+					status: "running" as const,
 				})),
 			};
 
@@ -1765,7 +1775,7 @@ describe("subagent async widget rendering", () => {
 			// availableRows = 30 - 19 = 11; budget = collapsedWidgetLineBudget(30) = 10.
 			const now = 20_000;
 			const ui = createUiContext();
-			const tallSingleJob = {
+			const tallSingleJob: AsyncJobState = {
 				asyncId: "auxo-tall-1",
 				asyncDir: "/tmp/auxo-tall-1",
 				status: "running",
@@ -1779,7 +1789,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 10 }, (_, i) => ({
 					index: i,
 					agent: `agent-${i}`,
-					status: "running",
+					status: "running" as const,
 					currentTool: "read",
 				})),
 			};
@@ -1815,7 +1825,7 @@ describe("subagent async widget rendering", () => {
 			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
 			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
 			// lockedRows = min(3, 10) = 3.
-			const makeJob = (id: string) => ({
+			const makeJob = (id: string): AsyncJobState => ({
 				asyncId: id,
 				asyncDir: `/tmp/${id}`,
 				status: "running",
@@ -1840,7 +1850,7 @@ describe("subagent async widget rendering", () => {
 
 			// Drain to one tall job. The !singleJob bypass in fitAdaptiveWidgetLines must
 			// prevent reuse of the progressive session so the single job routes full-tier.
-			const drainJob = {
+			const drainJob: AsyncJobState = {
 				asyncId: "developer",
 				asyncDir: "/tmp/developer",
 				status: "running",
@@ -1854,7 +1864,7 @@ describe("subagent async widget rendering", () => {
 				steps: Array.from({ length: 10 }, (_, i) => ({
 					index: i,
 					agent: `agent-${i}`,
-					status: "running",
+					status: "running" as const,
 					currentTool: "grep",
 				})),
 			};
@@ -1903,7 +1913,7 @@ describe("subagent async widget rendering", () => {
 				resetWidgetLayout();
 				withStdoutSize(30, 120, () => {
 					const ui = createUiContext();
-					const job: Record<string, unknown> = {
+					const job: AsyncJobState = {
 						asyncId: `health-${mode}-${steps}`,
 						asyncDir: "/tmp/health",
 						status: "running",
@@ -1912,22 +1922,26 @@ describe("subagent async widget rendering", () => {
 						activityState,
 						lastActivityAt,
 						updatedAt: now,
+						...(mode === "parallel"
+							? {
+									activeParallelGroup: true,
+									runningSteps: steps,
+									completedSteps: 0,
+									stepsTotal: Math.max(1, steps),
+								}
+							: {}),
+						...(steps > 0
+							? {
+									// Deliberately no step-level activityState: this is the shape that lost
+									// the signal before jobHealthWarningLines existed.
+									steps: Array.from({ length: steps }, (_, i) => ({
+										index: i,
+										agent: `agent-${i}`,
+										status: "running" as const,
+									})),
+								}
+							: {}),
 					};
-					if (mode === "parallel") {
-						job.activeParallelGroup = true;
-						job.runningSteps = steps;
-						job.completedSteps = 0;
-						job.stepsTotal = Math.max(1, steps);
-					}
-					if (steps > 0) {
-						// Deliberately no step-level activityState: this is the shape that lost
-						// the signal before jobHealthWarningLines existed.
-						job.steps = Array.from({ length: steps }, (_, i) => ({
-							index: i,
-							agent: `agent-${i}`,
-							status: "running",
-						}));
-					}
 
 					renderWidget(ui.ctx as never, [job]);
 					const lines = renderWidgetLines(ui.widgets.at(-1));
@@ -2014,19 +2028,19 @@ describe("subagent async widget rendering", () => {
 		withStdoutSize(30, 120, () => {
 			const ui = createUiContext();
 			// First 13 steps: running with a currentTool (no inline health warning in step row)
-			const earlySteps = Array.from({ length: 13 }, (_, i) => ({
+			const earlySteps: AsyncJobStep[] = Array.from({ length: 13 }, (_, i) => ({
 				index: i,
 				agent: `agent-${i}`,
-				status: "running",
+				status: "running" as const,
 				currentTool: "read",
 			}));
 			// Last 2 steps: running with active_long_running, no currentTool
 			// These are the steps that trigger the old dedupe AND would appear beyond the budget.
-			const lateSteps = Array.from({ length: 2 }, (_, i) => ({
+			const lateSteps: AsyncJobStep[] = Array.from({ length: 2 }, (_, i) => ({
 				index: 13 + i,
 				agent: `agent-${13 + i}`,
-				status: "running",
-				activityState: "active_long_running",
+				status: "running" as const,
+				activityState: "active_long_running" as const,
 				lastActivityAt,
 			}));
 			const steps = [...earlySteps, ...lateSteps];
