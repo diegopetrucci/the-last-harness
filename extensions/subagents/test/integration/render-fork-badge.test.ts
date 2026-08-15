@@ -688,7 +688,9 @@ describe("renderSubagentResult fork indicator", () => {
 				.render(120)
 				.join("\n");
 			assert.doesNotMatch(warning, new RegExp(escapeRegExp(whimsicalThinkingPhrase(0))));
-			assert.match(warning, activityState === "needs_attention" ? /no activity for/ : /active but long-running/);
+			// The fixture's lastActivityAt is sub-second, so the health label carries no age clause here.
+			// These strings stand in for "a health warning replaced the thinking phrase" on the activity line.
+			assert.match(warning, activityState === "needs_attention" ? /⎿  needs attention/ : /⎿  active but long-running/);
 		}
 	});
 

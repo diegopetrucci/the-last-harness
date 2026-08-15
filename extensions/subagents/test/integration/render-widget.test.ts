@@ -1289,7 +1289,7 @@ describe("subagent async widget rendering", () => {
 		}));
 
 		for (const { rows, columns, expectedRows, description, jobs: probeJobs } of [
-			{ rows: 22, columns: 20, expectedRows: 3, description: "progressive", jobs },
+			{ rows: 22, columns: 20, expectedRows: 2, description: "progressive", jobs },
 			{ rows: 6, columns: 20, expectedRows: 1, description: "single-line", jobs: jobs.slice(0, 6) },
 		] as const) {
 			resetWidgetLayout();
@@ -1463,7 +1463,9 @@ describe("subagent async widget rendering", () => {
 
 			renderWidget(ui.ctx as never, crowdedJobs);
 			const crowdedLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(crowdedLines.length, 10, "30 terminal rows should keep the compact widget cap while locking height");
+			// Natural progressive height: 1 header row + 1 row per visible job (3 jobs).
+			// Under the lockedRows=10 cap, so no truncation and no filler padding.
+			assert.equal(crowdedLines.length, 4, "crowded collapsed widget renders at natural height under the compact cap");
 			assert.match(crowdedLines.join("\n"), /Async agents/);
 			assert.doesNotMatch(crowdedLines.join("\n"), /\b(?:agents?|jobs?) running\b/);
 
@@ -1480,8 +1482,15 @@ describe("subagent async widget rendering", () => {
 				},
 			]);
 			const settledLines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(settledLines.length, 10, "collapsed widget keeps its locked row count until cleared or resized");
-			assert.match(settledLines.join("\n"), /parallel · done/);
+			// Single-job drain: the progressive lock is bypassed and the completed parallel
+			// job renders through the full tier as a compact single-job form.
+			// 2 header rows + 2 step rows (both complete) = 4 lines, within budget=10.
+			assert.equal(settledLines.length, 4, "collapsed widget renders single-job compact form after drain");
+			assert.ok(
+				!settledLines.join("").includes("\u200c"),
+				"drained collapsed widget must not emit zero-width non-joiner filler rows",
+			);
+			assert.match(settledLines.join("\n"), /2\/2 done/);
 
 			renderWidget(ui.ctx as never, []);
 			renderWidget(ui.ctx as never, [
@@ -1519,9 +1528,585 @@ describe("subagent async widget rendering", () => {
 
 			renderWidget(ui.ctx as never, jobs);
 			const lines = renderWidgetLines(ui.widgets.at(-1));
-			assert.equal(lines.length, 14);
-			assert.match(lines.join("\n"), /parallel · 0\/40 done/);
+			// Single-job: routes through the full tier. compactSingleWidgetLines produces
+			// header(2) + 40 step rows + 1 hint = 43 lines, truncated by fitWidgetLineBudget
+			// to budget=14 (collapsedWidgetLineBudget(50)) with the expand hint.
+			assert.equal(lines.length, 14, "medium terminal truncates single-job compact form to the budget with hint");
+			assert.ok(!lines.join("").includes("\u200c"), "medium terminal fallback must not emit filler rows");
+			assert.match(lines.join("\n"), /0\/40 done/);
+			assert.match(lines.join("\n"), /lines hidden.*expands/);
 			assert.doesNotMatch(lines.join("\n"), /· running\b/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("single quiet job after progressive lock does not render trailing blank rows", () => {
+		// tlhmf-ve09 regression: a progressive lock taken while multiple jobs were live
+		// must not persist after the set drains to one quiet job. The single job must
+		// route through the full tier (fitWidgetLineBudget) rather than the stale
+		// progressive session, so the expand hint is shown and no filler rows appear.
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			// rows=22: availableRows=22-19=3, collapsedWidgetLineBudget(22)=10, lockedRows=min(3,10)=3.
+			const now = 20_000;
+			const ui = createUiContext();
+
+			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
+			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
+			// lockedRows = min(3, 10) = 3.
+			const makeMultiJob = (id: string) => ({
+				asyncId: id,
+				asyncDir: `/tmp/${id}`,
+				status: "running",
+				mode: "single",
+				agents: [id],
+				currentTool: "read",
+				updatedAt: now,
+			});
+			const multiJobs = ["alpha", "bravo", "charlie"].map(makeMultiJob);
+
+			renderWidget(ui.ctx as never, multiJobs);
+			const multiLines = renderWidgetLines(ui.widgets.at(-1));
+			// Progressive output with lockedRows=3: 1 header + 1 visible job + "+2 more" = 3 lines.
+			// No fitWidgetLineBudget hint in the progressive tier.
+			assert.equal(multiLines.length, 3, "three jobs must lock the progressive tier at lockedRows=3");
+			assert.match(multiLines.join("\n"), /\+2 more/, "progressive tier shows hidden-count line");
+			assert.doesNotMatch(
+				multiLines.join("\n"),
+				/lines hidden.*expands/,
+				"progressive tier must not show the full-tier expand hint",
+			);
+			assert.ok(!multiLines.join("").includes("\u200c"), "progressive tier must not emit filler rows");
+
+			// Drain to one quiet job (all steps complete). The !singleJob bypass in
+			// fitAdaptiveWidgetLines must prevent reuse of the progressive session.
+			const quietJob = {
+				asyncId: "developer-run-quiet",
+				asyncDir: "/tmp/developer-run-quiet",
+				status: "running",
+				mode: "parallel",
+				agents: Array.from({ length: 15 }, (_, i) => `subagent-${i}`),
+				activeParallelGroup: true,
+				runningSteps: 0,
+				completedSteps: 15,
+				stepsTotal: 15,
+				updatedAt: now + 10_000,
+				steps: Array.from({ length: 15 }, (_, i) => ({
+					index: i,
+					agent: `subagent-${i}`,
+					status: "complete" as const,
+				})),
+			};
+
+			renderWidget(ui.ctx as never, [quietJob]);
+			const quietLines = renderWidgetLines(ui.widgets.at(-1));
+
+			// Single-job full tier: compact form with 15 complete steps = ~17 lines,
+			// truncated to budget=collapsedWidgetLineBudget(22)=10 with the expand hint.
+			assert.ok(
+				!quietLines.join("").includes("\u200c"),
+				"quiet single job must not emit zero-width non-joiner filler rows",
+			);
+			assert.equal(quietLines.length, 10, "quiet single job routes through full tier, not the stale progressive lock");
+			assert.match(
+				quietLines.join("\n"),
+				/lines hidden.*expands/,
+				"quiet single job must show the expand shortcut hint (full tier)",
+			);
+		});
+		resetWidgetLayout();
+	});
+
+	it("single parallel job with nested children stays in full tier (no progressive involvement)", () => {
+		// Full-tier regression: a single parallel job with nested children must route
+		// through fitWidgetLineBudget rather than the progressive tier. This is the
+		// full-tier half of the progressive-drain scenario preserved from tlhmf-ve09.
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const now = 20_000;
+			const ui = createUiContext();
+
+			const tallJob = {
+				asyncId: "developer-idle-tall",
+				asyncDir: "/tmp/developer-idle-tall",
+				status: "running",
+				mode: "parallel",
+				agents: ["developer", "code-reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 12,
+				completedSteps: 0,
+				stepsTotal: 12,
+				updatedAt: now,
+				steps: Array.from({ length: 12 }, (_, i) => ({
+					index: i,
+					agent: i % 2 === 0 ? "developer" : "code-reviewer",
+					status: "running",
+					currentTool: "read",
+					currentToolStartedAt: now - 1_000,
+					children: [{ agent: `nested-${i}`, status: "running", currentTool: "grep" }],
+				})),
+			};
+
+			renderWidget(ui.ctx as never, [tallJob]);
+			const tallLines = renderWidgetLines(ui.widgets.at(-1));
+			// Height 10 (budget=10 for 30-row terminal): single-job bypasses the progressive
+			// tier; steps+children push the compact render past the budget, so
+			// fitWidgetLineBudget truncates with the expand hint.
+			assert.equal(
+				tallLines.length,
+				10,
+				"tall parallel job with children routes through full tier with truncation hint",
+			);
+			assert.ok(!tallLines.join("").includes("\u200c"), "tall parallel job with children must not emit filler rows");
+			assert.match(
+				tallLines.join("\n"),
+				/lines hidden.*expands/,
+				"tall parallel job with children must show the expand shortcut hint",
+			);
+		});
+		resetWidgetLayout();
+	});
+
+	it("single still-running idle job after progressive lock does not render trailing blank rows", () => {
+		// tlhmf-ve09 regression: a progressive lock taken while multiple jobs were live
+		// must not persist after the set drains to one idle (health-state) job. The single
+		// job must route through the full tier (fitWidgetLineBudget) rather than the stale
+		// progressive session, preserving the health signal and the expand hint.
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			// rows=22: availableRows=22-19=3, collapsedWidgetLineBudget(22)=10, lockedRows=min(3,10)=3.
+			const now = 20_000;
+			const ui = createUiContext();
+
+			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
+			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
+			// lockedRows = min(3, 10) = 3.
+			const makeMultiJob = (id: string) => ({
+				asyncId: id,
+				asyncDir: `/tmp/${id}`,
+				status: "running",
+				mode: "single",
+				agents: [id],
+				currentTool: "read",
+				updatedAt: now,
+			});
+			const multiJobs = ["alpha", "bravo", "charlie"].map(makeMultiJob);
+
+			renderWidget(ui.ctx as never, multiJobs);
+			const multiLines = renderWidgetLines(ui.widgets.at(-1));
+			// Progressive output with lockedRows=3: 1 header + 1 visible job + "+2 more" = 3 lines.
+			assert.equal(multiLines.length, 3, "three jobs must lock the progressive tier at lockedRows=3");
+			assert.match(multiLines.join("\n"), /\+2 more/, "progressive tier shows hidden-count line");
+			assert.doesNotMatch(
+				multiLines.join("\n"),
+				/lines hidden.*expands/,
+				"progressive tier must not show the full-tier expand hint",
+			);
+			assert.ok(!multiLines.join("").includes("\u200c"), "progressive tier must not emit filler rows");
+
+			// Drain to one idle job with a job-level health activityState.
+			// The !singleJob bypass in fitAdaptiveWidgetLines must prevent reuse of the
+			// progressive session, so the health warning and expand hint both appear.
+			const idleJob = {
+				asyncId: "developer-idle-1",
+				asyncDir: "/tmp/developer-idle-1",
+				status: "running",
+				mode: "parallel",
+				agents: ["developer", "code-reviewer"],
+				activeParallelGroup: true,
+				runningSteps: 12,
+				completedSteps: 0,
+				stepsTotal: 12,
+				activityState: "active_long_running",
+				lastActivityAt: now,
+				updatedAt: now + 5_000,
+				steps: Array.from({ length: 12 }, (_, i) => ({
+					index: i,
+					agent: i % 2 === 0 ? "developer" : "code-reviewer",
+					status: "running",
+				})),
+			};
+
+			renderWidget(ui.ctx as never, [idleJob]);
+			const idleLines = renderWidgetLines(ui.widgets.at(-1));
+
+			// The job-level long-running health state is a staleness signal and must survive
+			// the compact step-detail render: jobHealthWarningLines surfaces it under the
+			// header because no step carries a step-level health state here.
+			assert.match(
+				idleLines.join("\n"),
+				/active but long-running/,
+				"job-level long-running health signal must survive the compact single-job render",
+			);
+			// Single-job full tier: compact form with 12 idle step rows (no currentTool) =
+			// header(2) + 1 job health row + 12 rows + 1 hint = 16 lines, truncated to
+			// budget=collapsedWidgetLineBudget(22)=10.
+			assert.equal(
+				idleLines.length,
+				10,
+				"still-running idle job routes through full tier, not the stale progressive lock",
+			);
+			assert.match(
+				idleLines.join("\n"),
+				/lines hidden.*expands/,
+				"still-running idle job must show the expand shortcut hint (full tier)",
+			);
+			assert.ok(
+				!idleLines.join("").includes("\u200c"),
+				"still-running idle job must not emit zero-width non-joiner filler rows",
+			);
+		});
+		resetWidgetLayout();
+	});
+
+	it("single job exceeding available rows routes through full tier with expand hint", () => {
+		// tlhmf-auxo regression: a fresh single-job render that cannot fit in availableRows
+		// must route through the full tier (fitWidgetLineBudget) rather than the progressive
+		// tier, so step detail is visible and the expand shortcut is discoverable.
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			// availableRows = 30 - 19 = 11; budget = collapsedWidgetLineBudget(30) = 10.
+			const now = 20_000;
+			const ui = createUiContext();
+			const tallSingleJob = {
+				asyncId: "auxo-tall-1",
+				asyncDir: "/tmp/auxo-tall-1",
+				status: "running",
+				mode: "parallel",
+				agents: Array.from({ length: 10 }, (_, i) => `agent-${i}`),
+				activeParallelGroup: true,
+				runningSteps: 10,
+				completedSteps: 0,
+				stepsTotal: 10,
+				updatedAt: now,
+				steps: Array.from({ length: 10 }, (_, i) => ({
+					index: i,
+					agent: `agent-${i}`,
+					status: "running",
+					currentTool: "read",
+				})),
+			};
+
+			renderWidget(ui.ctx as never, [tallSingleJob]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+
+			// compactSingleWidgetLines: header(2) + 10 step rows + 1 hint = 13 lines > budget=10.
+			// fitWidgetLineBudget truncates to exactly 10 (9 visible + 1 expand hint).
+			assert.equal(lines.length, 10, "single job exceeding available rows truncates to budget via full tier");
+			assert.match(
+				lines.join("\n"),
+				/lines hidden.*expands/,
+				"single job must carry the expand shortcut hint when truncated",
+			);
+			assert.ok(!lines.join("").includes("\u200c"), "must not emit zero-width non-joiner filler rows");
+			// Step detail must be present (not the bare progressive summary row).
+			assert.match(lines.join("\n"), /Agent 1\/10/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("multi-job progressive lock does not persist when set drains to a single tall job", () => {
+		// tlhmf-ve09 regression: a progressive lock genuinely taken while multiple jobs were
+		// live must not survive a drain to one job. After the drain, the single job must
+		// render through the full tier with step detail and the expand hint.
+		resetWidgetLayout();
+		withStdoutSize(22, 120, () => {
+			// rows=22: availableRows=22-19=3, budget=collapsedWidgetLineBudget(22)=10, lockedRows=min(3,10)=3.
+			const now = 20_000;
+			const ui = createUiContext();
+
+			// Three single-mode jobs: buildWidgetLines = 1 header + 3×(1 main + 1 activity) =
+			// 7 lines > availableRows=3 → fitAdaptiveWidgetLines enters progressive tier,
+			// lockedRows = min(3, 10) = 3.
+			const makeJob = (id: string) => ({
+				asyncId: id,
+				asyncDir: `/tmp/${id}`,
+				status: "running",
+				mode: "single",
+				agents: [id],
+				currentTool: "read",
+				updatedAt: now,
+			});
+			const multiJobs = [makeJob("developer"), makeJob("code-reviewer"), makeJob("scout")];
+
+			renderWidget(ui.ctx as never, multiJobs);
+			const multiLines = renderWidgetLines(ui.widgets.at(-1));
+			// Progressive output with lockedRows=3: 1 header + 1 visible job + "+2 more" = 3 lines.
+			assert.equal(multiLines.length, 3, "three jobs lock the progressive tier at lockedRows=3");
+			assert.match(multiLines.join("\n"), /\+2 more/, "progressive tier shows hidden-count line");
+			assert.doesNotMatch(
+				multiLines.join("\n"),
+				/lines hidden.*expands/,
+				"progressive tier must not show the full-tier expand hint",
+			);
+			assert.ok(!multiLines.join("").includes("\u200c"), "progressive tier must not emit filler rows");
+
+			// Drain to one tall job. The !singleJob bypass in fitAdaptiveWidgetLines must
+			// prevent reuse of the progressive session so the single job routes full-tier.
+			const drainJob = {
+				asyncId: "developer",
+				asyncDir: "/tmp/developer",
+				status: "running",
+				mode: "parallel",
+				agents: Array.from({ length: 10 }, (_, i) => `agent-${i}`),
+				activeParallelGroup: true,
+				runningSteps: 10,
+				completedSteps: 0,
+				stepsTotal: 10,
+				updatedAt: now + 1_000,
+				steps: Array.from({ length: 10 }, (_, i) => ({
+					index: i,
+					agent: `agent-${i}`,
+					status: "running",
+					currentTool: "grep",
+				})),
+			};
+
+			renderWidget(ui.ctx as never, [drainJob]);
+			const drainLines = renderWidgetLines(ui.widgets.at(-1));
+
+			// The progressive lock must NOT persist: single job routes through full tier.
+			// compactSingleWidgetLines: header(2) + 10 step rows + 1 hint = 13 > budget=10.
+			assert.equal(
+				drainLines.length,
+				10,
+				"drained single job routes through full tier, not the stale progressive lock",
+			);
+			assert.match(
+				drainLines.join("\n"),
+				/lines hidden.*expands/,
+				"drained single job must carry the expand shortcut hint",
+			);
+			assert.ok(!drainLines.join("").includes("\u200c"), "drained single job must not emit filler rows");
+			assert.match(drainLines.join("\n"), /Agent 1\/10/);
+		});
+		resetWidgetLayout();
+	});
+
+	it("surfaces job-level health state in compact single-job renders with and without steps", () => {
+		// tlhmf-auxo: job-level activityState is a staleness signal ("a run may be stuck"),
+		// not flavour text like whimsicalThinkingPhrase. It must survive the compact
+		// single-job render in BOTH branches of the single-job detail builders:
+		//   - with steps    -> singleWidgetAgentDetails `if (step)` /
+		//                      foregroundStyleWidgetDetails steps loop (needs jobHealthWarningLines)
+		//   - without steps -> those builders' no-steps branch (already calls
+		//                      widgetActivityDetailLines(job, ...))
+		const now = 200_000;
+		const lastActivityAt = now - 180_000; // 3m gap: avoids the "now ago" strings owned by tlhmf-6y0z
+		for (const [activityState, expected] of [
+			["active_long_running", /active but long-running · last activity 3m ago/],
+			["needs_attention", /no activity for 3m/],
+		] as const) {
+			for (const [label, mode, steps, expectedHeight] of [
+				["single mode with steps", "single", 1, 5],
+				["single mode without steps", "single", 0, 3],
+				["parallel mode with steps", "parallel", 3, 7],
+				["parallel mode without steps", "parallel", 0, 3],
+			] as const) {
+				resetWidgetLayout();
+				withStdoutSize(30, 120, () => {
+					const ui = createUiContext();
+					const job: Record<string, unknown> = {
+						asyncId: `health-${mode}-${steps}`,
+						asyncDir: "/tmp/health",
+						status: "running",
+						mode,
+						agents: steps > 0 ? Array.from({ length: steps }, (_, i) => `agent-${i}`) : ["developer"],
+						activityState,
+						lastActivityAt,
+						updatedAt: now,
+					};
+					if (mode === "parallel") {
+						job.activeParallelGroup = true;
+						job.runningSteps = steps;
+						job.completedSteps = 0;
+						job.stepsTotal = Math.max(1, steps);
+					}
+					if (steps > 0) {
+						// Deliberately no step-level activityState: this is the shape that lost
+						// the signal before jobHealthWarningLines existed.
+						job.steps = Array.from({ length: steps }, (_, i) => ({
+							index: i,
+							agent: `agent-${i}`,
+							status: "running",
+						}));
+					}
+
+					renderWidget(ui.ctx as never, [job]);
+					const lines = renderWidgetLines(ui.widgets.at(-1));
+					const text = lines.join("\n");
+
+					assert.match(text, expected, `${activityState} health signal must survive: ${label}`);
+					assert.equal(
+						lines.filter((line) => expected.test(line)).length,
+						1,
+						`${activityState} health signal must appear exactly once: ${label}`,
+					);
+					assert.equal(lines.length, expectedHeight, `${activityState} render height: ${label}`);
+					assert.ok(!lines.join("").includes("\u200c"), `must not emit filler rows: ${label}`);
+				});
+			}
+		}
+		resetWidgetLayout();
+	});
+
+	it("job-level health warning always emits even when a step carries the same state", () => {
+		// tlhmf-ve09: the previous dedupe (suppressing the job-level warning when a running
+		// step already carried a health activityState) was unsound: step rows can be
+		// truncated by fitWidgetLineBudget AFTER jobHealthWarningLines runs, leaving no
+		// health signal at all. The fix is to always emit the job-level warning directly
+		// under the header (the truncation-safe region). Duplication is a cosmetic cost;
+		// a missing health signal is the bug.
+		const now = 200_000;
+		const lastActivityAt = now - 180_000;
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "health-always-emit",
+					asyncDir: "/tmp/health-always-emit",
+					status: "running",
+					mode: "single",
+					agents: ["developer"],
+					activityState: "active_long_running",
+					lastActivityAt,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "developer",
+							status: "running",
+							activityState: "active_long_running",
+							lastActivityAt,
+						},
+					],
+				},
+			]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			// Job-level warning (line 2, in truncation-safe header region) + step-level
+			// warning (in the step row). Both appear; the job-level one is guaranteed
+			// to survive fitWidgetLineBudget truncation.
+			assert.equal(
+				lines.filter((line) => /active but long-running/.test(line)).length,
+				2,
+				"job-level health warning must always emit alongside the step-level one",
+			);
+			assert.equal(lines.length, 5, "job-level + step-level health signals add one extra line to the render");
+		});
+		resetWidgetLayout();
+	});
+
+	it("job-level health warning survives fitWidgetLineBudget truncation when step rows are cut", () => {
+		// tlhmf-ve09 (truncation safety): reviewer probe – a 15-step job rendered ten rows
+		// ending in the expand hint with NO health warning. The old unsound dedupe suppressed
+		// the job-level warning when a running step already carried a health activityState,
+		// but step rows are cut AFTER jobHealthWarningLines runs. The fix: always emit the
+		// job-level warning under the header (the only truncation-safe region).
+		//
+		// Shape: parallel job, 15 steps. The FIRST 13 steps carry currentTool (so their rows
+		// render without an inline health signal). Steps 13-14 carry active_long_running without
+		// currentTool (the steps that would trigger the old dedupe). At 30 rows,
+		// collapsedWidgetLineBudget(30)=10; with 2-line header + 15 step rows + hint = 18+
+		// lines the budget forces truncation, cutting steps 7-14 (the health-carrying ones).
+		// Without the job-level warning, no health signal survives. With the fix, the job-level
+		// warning at position 2 (header-region) is guaranteed to survive.
+		const now = 200_000;
+		const lastActivityAt = now - 180_000;
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const ui = createUiContext();
+			// First 13 steps: running with a currentTool (no inline health warning in step row)
+			const earlySteps = Array.from({ length: 13 }, (_, i) => ({
+				index: i,
+				agent: `agent-${i}`,
+				status: "running",
+				currentTool: "read",
+			}));
+			// Last 2 steps: running with active_long_running, no currentTool
+			// These are the steps that trigger the old dedupe AND would appear beyond the budget.
+			const lateSteps = Array.from({ length: 2 }, (_, i) => ({
+				index: 13 + i,
+				agent: `agent-${13 + i}`,
+				status: "running",
+				activityState: "active_long_running",
+				lastActivityAt,
+			}));
+			const steps = [...earlySteps, ...lateSteps];
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "health-truncation",
+					asyncDir: "/tmp/health-truncation",
+					status: "running",
+					mode: "parallel",
+					agents: steps.map((s) => s.agent),
+					activityState: "active_long_running",
+					lastActivityAt,
+					updatedAt: now,
+					activeParallelGroup: true,
+					stepsTotal: 15,
+					runningSteps: 15,
+					completedSteps: 0,
+					steps,
+				},
+			]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			// Verify truncation happened so this test is meaningful.
+			assert.ok(
+				lines.some((l) => /lines hidden/.test(l)),
+				"render must be truncated (expand hint must appear) for this test to be meaningful",
+			);
+			// The health-carrying late steps are beyond the budget, so no step-level signal
+			// survives. Only the job-level warning (truncation-safe header region) remains.
+			assert.ok(
+				lines.some((l) => /active but long-running/.test(l)),
+				"job-level health warning must survive fitWidgetLineBudget truncation even when health-carrying step rows are cut",
+			);
+		});
+		resetWidgetLayout();
+	});
+
+	it("job-level needs_attention is not suppressed by a weaker step-level active_long_running", () => {
+		// tlhmf-ve09 (severity disagreement): reviewer probe – a needs_attention job with a
+		// running step carrying active_long_running rendered only 'active but long-running'.
+		// The old dedupe checked only whether any running step had *any* health state, not
+		// whether the step-level severity matched the job-level one. The fix: always emit
+		// the job-level warning unconditionally so needs_attention is never downgraded.
+		const now = 200_000;
+		const lastActivityAt = now - 180_000;
+		resetWidgetLayout();
+		withStdoutSize(30, 120, () => {
+			const ui = createUiContext();
+			renderWidget(ui.ctx as never, [
+				{
+					asyncId: "health-severity",
+					asyncDir: "/tmp/health-severity",
+					status: "running",
+					mode: "single",
+					agents: ["developer"],
+					// Job is needs_attention (stronger signal)
+					activityState: "needs_attention",
+					lastActivityAt,
+					updatedAt: now,
+					steps: [
+						{
+							index: 0,
+							agent: "developer",
+							status: "running",
+							// Step is only active_long_running (weaker signal)
+							activityState: "active_long_running",
+							lastActivityAt,
+						},
+					],
+				},
+			]);
+			const lines = renderWidgetLines(ui.widgets.at(-1));
+			const text = lines.join("\n");
+			// The stronger job-level needs_attention signal must appear.
+			assert.ok(
+				/no activity for/.test(text),
+				"job-level needs_attention must surface even when step carries weaker active_long_running",
+			);
 		});
 		resetWidgetLayout();
 	});

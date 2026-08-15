@@ -1456,12 +1456,43 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 	];
 }
 
+// Job-level health state (active_long_running / needs_attention) is a staleness
+// signal, not flavour text: it tells the user a run may be stuck. The step-detail
+// render paths (singleWidgetAgentDetails' `if (step)` branch,
+// foregroundStyleWidgetDetails' steps branch, and compactSingleWidgetLines' own
+// loop) build rows per step and never call widgetActivityDetailLines(job, ...),
+// so a job-level health state with no step-level counterpart would be dropped
+// entirely. The no-steps branches already surface it via widgetActivityDetailLines,
+// and multi-job rows surface it per job, so only the with-steps case needs this.
+//
+// The warning is emitted unconditionally (subject only to the pausing guard below)
+// because the only truncation-safe region is directly under the header. A step that
+// carries the same health state may be scrolled off by fitWidgetLineBudget, making
+// a step-level dedup unsound: the job-level signal would already be suppressed while
+// the step row is cut from the output. Duplication is a cosmetic cost; a missing
+// health signal is the bug.
+function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
+	if (!isHealthActivityState(job.activityState)) return [];
+	if (!job.steps?.length) return [];
+	// Pausing/interruption takes precedence: do not add a competing health line
+	// alongside the "pausing…" signal.
+	if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job)) return [];
+	const warning = buildLiveStatusLine(
+		{ activityState: job.activityState, lastActivityAt: job.lastActivityAt },
+		job.updatedAt,
+	);
+	return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
+}
+
 function buildSingleWidgetLines(job: AsyncJobState, theme: Theme, contentWidth: number, expanded: boolean): string[] {
 	const details =
 		job.mode === "single"
 			? singleWidgetAgentDetails(job, theme, expanded, contentWidth)
 			: foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
-	return wrapDisplayLines([...singleWidgetHeaderLines(job, theme, expanded), ...details], contentWidth);
+	return wrapDisplayLines(
+		[...singleWidgetHeaderLines(job, theme, expanded), ...jobHealthWarningLines(job, theme), ...details],
+		contentWidth,
+	);
 }
 
 function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: number): string[] {
@@ -1475,6 +1506,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
 	const lines = [
 		...wrapDisplayLines(singleWidgetHeaderLines(job, theme, false), contentWidth),
+		...jobHealthWarningLines(job, theme),
 		...widgetTkTicketLines(job, theme),
 	];
 	for (const [index, step] of job.steps.entries()) {
@@ -1771,13 +1803,13 @@ function buildProgressiveWidgetLines(
 	const hiddenLines = hiddenJobs.length > 0 ? progressiveHiddenLine(hiddenJobs, theme, width) : [];
 	const lines = [...headerLines, ...bodyLines, ...hiddenLines];
 	if (lines.length > rowCount) {
-		// Job rows are optional in a locked-height summary. Keep the one-line
-		// header and explicit hidden-work count if a future detail variant wraps.
+		// Job rows are optional when the cap is exceeded. Keep the one-line header
+		// and explicit hidden-work count if a future detail variant wraps.
+		// rowCount is a maximum, not a fixed height: degrade rather than pad.
 		const boundedLines = [headerLines[0]!, ...(hiddenLines.length > 0 ? [hiddenLines[0]!] : [])];
-		while (boundedLines.length < rowCount) boundedLines.push("\u200c");
 		return { lines: boundedLines.slice(0, rowCount), visibleJobKeys: [] };
 	}
-	while (lines.length < rowCount) lines.push("\u200c");
+	// rowCount is a maximum, not a fixed height: return the natural line count.
 	return { lines, visibleJobKeys };
 }
 
@@ -1820,12 +1852,18 @@ function fitAdaptiveWidgetLines(
 	const rows = currentTerminalRows();
 	const columns = currentTerminalColumns();
 	const availableRows = estimateAvailableWidgetRows();
+	const singleJob = jobs.length === 1;
 
 	if (hasMatchingSession && widgetLayoutSession?.tier === "single-line") {
 		return buildSingleLineWidgetLines(jobs, theme, width);
 	}
 
+	// Single-job renders must not enter or reuse the progressive tier: with one job
+	// there is nothing to ration across jobs, and the progressive tier strips step
+	// detail and the live-detail hint. A progressive lock taken while multiple jobs
+	// were live must not persist after the set drains to one.
 	if (
+		!singleJob &&
 		hasMatchingSession &&
 		widgetLayoutSession?.tier === "progressive" &&
 		widgetLayoutSession.lockedRows !== undefined
@@ -1849,6 +1887,14 @@ function fitAdaptiveWidgetLines(
 	if (availableRows <= 2) {
 		widgetLayoutSession = { expanded, rows, columns, tier: "single-line", visibleJobKeys: [] };
 		return buildSingleLineWidgetLines(jobs, theme, width);
+	}
+
+	// Single-job: route through the full tier so fitWidgetLineBudget truncates with
+	// the '… N lines hidden · <key> expands' hint. This preserves step detail and
+	// makes the expand shortcut discoverable even when lines exceed availableRows.
+	if (singleJob) {
+		widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
+		return fitWidgetLineBudget(lines, theme, width, false);
 	}
 
 	const lockedRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));

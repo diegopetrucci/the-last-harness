@@ -1154,11 +1154,21 @@ function singleWidgetHeaderLines(job, theme, expanded) {
         `${widgetStatusGlyph(job, theme)} ${themeBold(theme, mode)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
 }
+function jobHealthWarningLines(job, theme) {
+    if (!isHealthActivityState(job.activityState))
+        return [];
+    if (!job.steps?.length)
+        return [];
+    if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job))
+        return [];
+    const warning = buildLiveStatusLine({ activityState: job.activityState, lastActivityAt: job.lastActivityAt }, job.updatedAt);
+    return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
+}
 function buildSingleWidgetLines(job, theme, contentWidth, expanded) {
     const details = job.mode === "single"
         ? singleWidgetAgentDetails(job, theme, expanded, contentWidth)
         : foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
-    return wrapDisplayLines([...singleWidgetHeaderLines(job, theme, expanded), ...details], contentWidth);
+    return wrapDisplayLines([...singleWidgetHeaderLines(job, theme, expanded), ...jobHealthWarningLines(job, theme), ...details], contentWidth);
 }
 function compactSingleWidgetLines(job, theme, width) {
     const contentWidth = Math.max(1, width - 2);
@@ -1170,6 +1180,7 @@ function compactSingleWidgetLines(job, theme, width) {
     const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
     const lines = [
         ...wrapDisplayLines(singleWidgetHeaderLines(job, theme, false), contentWidth),
+        ...jobHealthWarningLines(job, theme),
         ...widgetTkTicketLines(job, theme),
     ];
     for (const [index, step] of job.steps.entries()) {
@@ -1432,12 +1443,8 @@ function buildProgressiveWidgetLines(jobs, theme, width, lockedRows, previousKey
     const lines = [...headerLines, ...bodyLines, ...hiddenLines];
     if (lines.length > rowCount) {
         const boundedLines = [headerLines[0], ...(hiddenLines.length > 0 ? [hiddenLines[0]] : [])];
-        while (boundedLines.length < rowCount)
-            boundedLines.push("\u200c");
         return { lines: boundedLines.slice(0, rowCount), visibleJobKeys: [] };
     }
-    while (lines.length < rowCount)
-        lines.push("\u200c");
     return { lines, visibleJobKeys };
 }
 function collapsedWidgetLineBudget(rows) {
@@ -1471,10 +1478,12 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
     const rows = currentTerminalRows();
     const columns = currentTerminalColumns();
     const availableRows = estimateAvailableWidgetRows();
+    const singleJob = jobs.length === 1;
     if (hasMatchingSession && widgetLayoutSession?.tier === "single-line") {
         return buildSingleLineWidgetLines(jobs, theme, width);
     }
-    if (hasMatchingSession &&
+    if (!singleJob &&
+        hasMatchingSession &&
         widgetLayoutSession?.tier === "progressive" &&
         widgetLayoutSession.lockedRows !== undefined) {
         const rendered = buildProgressiveWidgetLines(jobs, theme, width, widgetLayoutSession.lockedRows, widgetLayoutSession.visibleJobKeys);
@@ -1488,6 +1497,10 @@ function fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded) {
     if (availableRows <= 2) {
         widgetLayoutSession = { expanded, rows, columns, tier: "single-line", visibleJobKeys: [] };
         return buildSingleLineWidgetLines(jobs, theme, width);
+    }
+    if (singleJob) {
+        widgetLayoutSession = { expanded, rows, columns, tier: "full", visibleJobKeys: [] };
+        return fitWidgetLineBudget(lines, theme, width, false);
     }
     const lockedRows = Math.min(availableRows, collapsedWidgetLineBudget(rows));
     const rendered = buildProgressiveWidgetLines(jobs, theme, width, lockedRows, []);
