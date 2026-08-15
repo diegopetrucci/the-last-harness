@@ -1,4 +1,5 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
+import { getMcpToolKind } from "./mcp-tools.js";
 import type {
 	StartupPromptResourceMetadata,
 	TlhLaunchContextAllocation,
@@ -103,20 +104,33 @@ function consumeSkillMetadata(
 	return chars;
 }
 
-function consumeToolGuidelines(tracker: PromptContributionTracker, tools: readonly ToolInfo[]): number {
-	let chars = 0;
+// Process all tools in a single pass with one shared `seen` set so each guideline
+// is claimed against the tracker at most once. Returns the char counts split by
+// MCP vs non-MCP for bucket attribution.
+function consumeToolGuidelinesPartitioned(
+	tracker: PromptContributionTracker,
+	tools: readonly ToolInfo[],
+): { mcp: number; nonMcp: number } {
+	let mcpChars = 0;
+	let nonMcpChars = 0;
 	const seen = new Set<string>();
 	for (const tool of tools) {
+		const isMcp = getMcpToolKind(tool.name, tool) !== undefined;
 		for (const guideline of tool.promptGuidelines ?? []) {
 			const normalized = guideline.trim();
 			if (!normalized || seen.has(normalized)) {
 				continue;
 			}
 			seen.add(normalized);
-			chars += tracker.consume(normalized);
+			const claimed = tracker.consume(normalized);
+			if (isMcp) {
+				mcpChars += claimed;
+			} else {
+				nonMcpChars += claimed;
+			}
 		}
 	}
-	return chars;
+	return { mcp: mcpChars, nonMcp: nonMcpChars };
 }
 
 // Prompt guidelines are embedded in the base system prompt and claimed above. The
@@ -140,6 +154,7 @@ function tokenAllocationFromChars(chars: TlhLaunchContextCharacterAllocation): T
 		agentsClaude: estimateTokensFromChars(chars.agentsClaude),
 		skills: estimateTokensFromChars(chars.skills),
 		tools: estimateTokensFromChars(chars.tools),
+		mcp: estimateTokensFromChars(chars.mcp),
 		other: estimateTokensFromChars(chars.other),
 	};
 }
@@ -157,11 +172,14 @@ export function estimateTlhLaunchContextAllocation(
 
 	const tracker = new PromptContributionTracker(options.baseSystemPrompt);
 	const activeTools = activeToolsForEstimate(options.activeToolNames, options.allTools);
+	const mcpActiveTools = activeTools.filter((tool) => getMcpToolKind(tool.name, tool) !== undefined);
 	const agentsClaudeChars = consumeContextMetadata(tracker, options.promptMetadata);
 	const skillsChars = options.activeToolNames.includes("read")
 		? consumeSkillMetadata(tracker, options.promptMetadata)
 		: 0;
-	const embeddedToolChars = consumeToolGuidelines(tracker, activeTools);
+	// Single pass across all active tools preserves the one-claim-per-guideline invariant.
+	const guidelineChars = consumeToolGuidelinesPartitioned(tracker, activeTools);
+	const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp;
 	const baseInstructionChars = Math.max(
 		0,
 		options.baseSystemPrompt.length - agentsClaudeChars - skillsChars - embeddedToolChars,
@@ -178,7 +196,10 @@ export function estimateTlhLaunchContextAllocation(
 			tlh: baseInstructionChars + appendedTlhChars,
 			agentsClaude: agentsClaudeChars,
 			skills: skillsChars,
-			tools: embeddedToolChars + toolDefinitionChars(activeTools),
+			// Compute combined definition chars once; subtract the MCP partition to avoid
+			// counting JSON array framing twice and keep tools + mcp == the pre-split total.
+			tools: guidelineChars.nonMcp + toolDefinitionChars(activeTools) - toolDefinitionChars(mcpActiveTools),
+			mcp: guidelineChars.mcp + toolDefinitionChars(mcpActiveTools),
 			other: 0,
 		}),
 	};

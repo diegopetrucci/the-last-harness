@@ -1,4 +1,5 @@
 import { computeMedian, pairToolCalls } from "./tool-pairing.js";
+import { getMcpToolKind } from "./mcp-tools.js";
 const NOISE_FLOOR_TOKENS = 1024;
 const BUILT_IN_TOOL_NAMES = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 const CHARS_PER_TOKEN = 4;
@@ -546,7 +547,8 @@ function collectActiveBranchIds(activeLeafId, byId) {
     return branch;
 }
 function estimateToolSource(toolName, catalogEntry) {
-    if (toolName === "mcp") {
+    const mcpKind = getMcpToolKind(toolName, catalogEntry);
+    if (mcpKind === "proxy") {
         return {
             key: catalogEntry?.sourceInfo?.source ? `mcp-proxy:${catalogEntry.sourceInfo.source}` : "mcp-proxy",
             label: catalogEntry?.sourceInfo?.source ? `MCP proxy (${catalogEntry.sourceInfo.source})` : "MCP proxy",
@@ -557,10 +559,7 @@ function estimateToolSource(toolName, catalogEntry) {
             estimated: true,
         };
     }
-    const sourceHint = [catalogEntry?.sourceInfo?.source, catalogEntry?.sourceInfo?.path]
-        .filter((value) => typeof value === "string")
-        .join(" ");
-    if (sourceHint && /mcp/i.test(sourceHint)) {
+    if (mcpKind === "direct") {
         return {
             key: catalogEntry?.sourceInfo?.source ? `mcp-direct:${catalogEntry.sourceInfo.source}` : `mcp-direct:${toolName}`,
             label: catalogEntry?.sourceInfo?.source

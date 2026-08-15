@@ -1,3 +1,4 @@
+import { getMcpToolKind } from "./mcp-tools.js";
 const CHARS_PER_TOKEN = 4;
 function estimateTokensFromChars(charCount) {
     return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
@@ -68,20 +69,28 @@ function consumeSkillMetadata(tracker, promptMetadata) {
     }
     return chars;
 }
-function consumeToolGuidelines(tracker, tools) {
-    let chars = 0;
+function consumeToolGuidelinesPartitioned(tracker, tools) {
+    let mcpChars = 0;
+    let nonMcpChars = 0;
     const seen = new Set();
     for (const tool of tools) {
+        const isMcp = getMcpToolKind(tool.name, tool) !== undefined;
         for (const guideline of tool.promptGuidelines ?? []) {
             const normalized = guideline.trim();
             if (!normalized || seen.has(normalized)) {
                 continue;
             }
             seen.add(normalized);
-            chars += tracker.consume(normalized);
+            const claimed = tracker.consume(normalized);
+            if (isMcp) {
+                mcpChars += claimed;
+            }
+            else {
+                nonMcpChars += claimed;
+            }
         }
     }
-    return chars;
+    return { mcp: mcpChars, nonMcp: nonMcpChars };
 }
 function toolDefinitionChars(tools) {
     if (tools.length === 0) {
@@ -99,6 +108,7 @@ function tokenAllocationFromChars(chars) {
         agentsClaude: estimateTokensFromChars(chars.agentsClaude),
         skills: estimateTokensFromChars(chars.skills),
         tools: estimateTokensFromChars(chars.tools),
+        mcp: estimateTokensFromChars(chars.mcp),
         other: estimateTokensFromChars(chars.other),
     };
 }
@@ -110,11 +120,13 @@ export function estimateTlhLaunchContextAllocation(options) {
     }
     const tracker = new PromptContributionTracker(options.baseSystemPrompt);
     const activeTools = activeToolsForEstimate(options.activeToolNames, options.allTools);
+    const mcpActiveTools = activeTools.filter((tool) => getMcpToolKind(tool.name, tool) !== undefined);
     const agentsClaudeChars = consumeContextMetadata(tracker, options.promptMetadata);
     const skillsChars = options.activeToolNames.includes("read")
         ? consumeSkillMetadata(tracker, options.promptMetadata)
         : 0;
-    const embeddedToolChars = consumeToolGuidelines(tracker, activeTools);
+    const guidelineChars = consumeToolGuidelinesPartitioned(tracker, activeTools);
+    const embeddedToolChars = guidelineChars.mcp + guidelineChars.nonMcp;
     const baseInstructionChars = Math.max(0, options.baseSystemPrompt.length - agentsClaudeChars - skillsChars - embeddedToolChars);
     const appendedTlhChars = options.launchSystemPrompt.startsWith(options.baseSystemPrompt)
         ? options.launchSystemPrompt.length - options.baseSystemPrompt.length
@@ -125,7 +137,8 @@ export function estimateTlhLaunchContextAllocation(options) {
             tlh: baseInstructionChars + appendedTlhChars,
             agentsClaude: agentsClaudeChars,
             skills: skillsChars,
-            tools: embeddedToolChars + toolDefinitionChars(activeTools),
+            tools: guidelineChars.nonMcp + toolDefinitionChars(activeTools) - toolDefinitionChars(mcpActiveTools),
+            mcp: guidelineChars.mcp + toolDefinitionChars(mcpActiveTools),
             other: 0,
         }),
     };

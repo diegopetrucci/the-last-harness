@@ -17,13 +17,19 @@ function formatLaunchContextPercent(tokens: number, contextWindow: number): stri
 
 export function formatTlhLaunchContextAllocation(allocation: TlhLaunchContextAllocation): string {
 	const { contextWindow, estimatedTokens } = allocation;
-	return [
+	const segments = [
 		`Context at launch: TLH ${formatLaunchContextPercent(estimatedTokens.tlh, contextWindow)}`,
 		`AGENTS/CLAUDE.md ${formatLaunchContextPercent(estimatedTokens.agentsClaude, contextWindow)}`,
 		`Skills ${formatLaunchContextPercent(estimatedTokens.skills, contextWindow)}`,
+	];
+	if (estimatedTokens.mcp > 0) {
+		segments.push(`MCP ${formatLaunchContextPercent(estimatedTokens.mcp, contextWindow)}`);
+	}
+	segments.push(
 		`Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`,
 		`Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`,
-	].join(" • ");
+	);
+	return segments.join(" • ");
 }
 
 export function createTlhHeader(

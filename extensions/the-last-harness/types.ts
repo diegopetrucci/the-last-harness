@@ -23,6 +23,7 @@ export type TlhLaunchContextTokenAllocation = {
 	agentsClaude: number;
 	skills: number;
 	tools: number;
+	mcp: number;
 	other: number;
 };
 
