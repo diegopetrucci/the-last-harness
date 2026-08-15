@@ -20,14 +20,19 @@ import {
 	escapeRegExp,
 	repoRoot,
 	runHelper,
+	runInstaller,
 	scrubInstallerEnv,
 	writeFakeCommand,
+	writeFakeNpmInstaller,
 	writeFakePi,
+	writeFakeTk,
+	writeLoggingPi,
 	writeVersionedWrapperPi,
 	writeWrapperHelperLogger,
 } from "./install-stage1-core-test-helpers.mjs";
 
 import { buildInstallConfig, parseArgs } from "../scripts/tlh-install.mjs";
+import { renderShellWords } from "../scripts/lib/tlh-install-utils.mjs";
 
 test("wrapper skips stale fallback package helpers for unlocatable custom sources", (t) => {
 	const root = makeTempDir();
@@ -1406,5 +1411,126 @@ test("wrapper pi exec path exports NODE_COMPILE_CACHE pointing at the runtime pr
 		piRecord.compile_cache,
 		join(runtimeDir, "node-compile-cache"),
 		`NODE_COMPILE_CACHE must be runtimeDir/node-compile-cache; got: ${piRecord.compile_cache}`,
+	);
+});
+
+test("stage-1 wrapper summary emits done header, blank line, and backtick-wrapped wrapper name", (t) => {
+	const root = makeTempDir("tlh-install-stage1-wrapper-summary-");
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const piLog = join(root, "pi.log");
+	const templateDir = join(root, "pi-template");
+	const npmLog = join(root, "npm.log");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakeTk(fakebin);
+	writeLoggingPi(fakebin, piLog);
+	writeLoggingPi(templateDir, piLog);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
+	});
+
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${binDir}:${process.env.PATH || ""}`,
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+	const result = runInstaller(
+		["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--no-settings"],
+		env,
+	);
+	assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+	const lines = result.stdout.split(/\r?\n/);
+	const headerIdx = lines.findIndex((l) => l === "Done. The Last Harness is ready. Start with:");
+	assert.ok(headerIdx !== -1, `summary header not found in stdout:\n${result.stdout}`);
+	// The line immediately after the header must be blank (blank-line separation).
+	assert.equal(lines[headerIdx + 1], "", "expected blank line directly after summary header");
+	// The command must appear as the backtick-wrapped wrapper name — not as 'Start with: <cmd>' on the same line.
+	assert.equal(
+		lines[headerIdx + 2],
+		"`tlh`",
+		`expected backtick-wrapped wrapper name on the line after the blank; got: ${JSON.stringify(lines[headerIdx + 2])}`,
+	);
+});
+
+test("stage-1 wrapper summary PATH warning appears before summary block when binDir not on PATH", (t) => {
+	const root = makeTempDir("tlh-install-stage1-wrapper-path-warning-");
+	const homeDir = join(root, "home");
+	const agentDir = join(root, "agent");
+	const binDir = join(root, "bin");
+	const fakebin = join(root, "fakebin");
+	const packageDir = join(root, "package-source");
+	const piLog = join(root, "pi.log");
+	const templateDir = join(root, "pi-template");
+	const npmLog = join(root, "npm.log");
+	mkdirSync(homeDir, { recursive: true });
+	mkdirSync(packageDir, { recursive: true });
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+
+	writeFakeTk(fakebin);
+	writeLoggingPi(fakebin, piLog);
+	writeLoggingPi(templateDir, piLog);
+	writeFakeNpmInstaller(fakebin, {
+		npmLog,
+		templatePiPath: join(templateDir, "pi"),
+		installedPiPath: join(dirname(agentDir), "runtime", "bin", "pi"),
+	});
+
+	// binDir intentionally NOT on PATH so the PATH warning fires.
+	const env = scrubInstallerEnv({
+		HOME: homeDir,
+		PATH: `${fakebin}:${process.env.PATH || ""}`,
+		TLH_PACKAGE_SOURCE: packageDir,
+		TLH_SKIP_GNOSIS_INSTALL: "1",
+	});
+
+	// Run the installer with stdout and stderr merged at the OS level (2>&1) so the
+	// captured output reflects true emission order — a naive stdout+stderr concatenation
+	// would pass even if the bug came back, defeating the point of this test.
+	const installerPath = join(repoRoot, "scripts/tlh-install.mjs");
+	const args = ["--agent-dir", agentDir, "--bin-dir", binDir, "--wrapper-name", "tlh", "--no-settings"];
+	const shellCmd = renderShellWords([process.execPath, installerPath, ...args]) + " 2>&1";
+	const merged = spawnSync("/bin/sh", ["-c", shellCmd], { cwd: repoRoot, env, encoding: "utf8" });
+
+	assert.equal(merged.status, 0, `installer failed:\n${merged.stdout}`);
+
+	const lines = merged.stdout.split(/\r?\n/);
+
+	// The PATH warning must appear somewhere in the merged output.
+	const warnIdx = lines.findIndex((l) => l.includes("is not on PATH"));
+	assert.ok(warnIdx !== -1, `PATH warning not found in merged output:\n${merged.stdout}`);
+
+	// The summary header must appear.
+	const headerIdx = lines.findIndex((l) => l === "Done. The Last Harness is ready. Start with:");
+	assert.ok(headerIdx !== -1, `summary header not found in merged output:\n${merged.stdout}`);
+
+	// Warning must come BEFORE the header — not inside the summary block.
+	assert.ok(
+		warnIdx < headerIdx,
+		`PATH warning (line ${warnIdx}) must appear before the summary header (line ${headerIdx}) in merged output:\n${merged.stdout}`,
+	);
+
+	// The summary block must remain intact: header → blank → backtick command.
+	assert.equal(lines[headerIdx + 1], "", "expected blank line directly after summary header");
+	assert.equal(
+		lines[headerIdx + 2],
+		"`tlh`",
+		`expected backtick-wrapped wrapper name on the line after the blank; got: ${JSON.stringify(lines[headerIdx + 2])}`,
+	);
+
+	// No warning between the header and the backtick command.
+	const linesBetween = lines.slice(headerIdx + 1, headerIdx + 3);
+	assert.ok(
+		!linesBetween.some((l) => l.includes("is not on PATH")),
+		`PATH warning must not appear between header and backtick command; lines between: ${JSON.stringify(linesBetween)}`,
 	);
 });
