@@ -30,11 +30,6 @@
     "description": "Expand inline bash commands in user prompts."
   },
   {
-    "id": "notify",
-    "source": "npm:@diegopetrucci/pi-notify@0.1.15",
-    "description": "Send a notification when an agent turn finishes."
-  },
-  {
     "id": "context-inspector",
     "source": "npm:@diegopetrucci/pi-context-inspector@0.1.11",
     "description": "Open a local HTML dashboard explaining where the current session context is going."

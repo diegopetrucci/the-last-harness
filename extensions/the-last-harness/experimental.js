@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
@@ -166,21 +166,8 @@ export function buildChildExperimentalPrompt(childAgentName, config) {
     }
     return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
 }
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
-export function registerExperimentalCommand(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ??
-        (() => import("./experimental-command.js")));
+import { handleExperimentalCommand } from "./experimental-command.js";
+export function registerExperimentalCommand(pi) {
     pi.registerCommand("experimental", {
         description: "List or change TLH experimental features",
         getArgumentCompletions: (prefix) => {
@@ -192,9 +179,6 @@ export function registerExperimentalCommand(pi, options = {}) {
             }));
             return completions.length > 0 ? completions : null;
         },
-        handler: async (args, ctx) => {
-            const module = await loadModule();
-            await module.handleExperimentalCommand(pi, args, ctx);
-        },
+        handler: (args, ctx) => handleExperimentalCommand(pi, args, ctx),
     });
 }
