@@ -2,7 +2,10 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 function formatLaunchContextPercent(tokens, contextWindow) {
-    if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    if (!Number.isFinite(tokens) ||
+        tokens <= 0 ||
+        !Number.isFinite(contextWindow) ||
+        contextWindow <= 0) {
         return "0%";
     }
     const percent = (tokens / contextWindow) * 100;
@@ -13,13 +16,16 @@ function formatLaunchContextPercent(tokens, contextWindow) {
 }
 export function formatTlhLaunchContextAllocation(allocation) {
     const { contextWindow, estimatedTokens } = allocation;
-    return [
+    const segments = [
         `Context at launch: TLH ${formatLaunchContextPercent(estimatedTokens.tlh, contextWindow)}`,
         `AGENTS/CLAUDE.md ${formatLaunchContextPercent(estimatedTokens.agentsClaude, contextWindow)}`,
         `Skills ${formatLaunchContextPercent(estimatedTokens.skills, contextWindow)}`,
-        `Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`,
-        `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`,
-    ].join(" • ");
+    ];
+    if (estimatedTokens.mcp > 0) {
+        segments.push(`MCP ${formatLaunchContextPercent(estimatedTokens.mcp, contextWindow)}`);
+    }
+    segments.push(`Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`, `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`);
+    return segments.join(" • ");
 }
 export function createTlhHeader(theme, resources, headerUpdate, installNotice, options = {}) {
     let expanded = false;

@@ -41,13 +41,21 @@ export function writeSteerRequestToDir(dir, request) {
 }
 export function requestAsyncInterrupt(asyncDir, payload = {}, deps = {}) {
     const requestPath = interruptRequestPath(asyncDir);
-    const request = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "interrupt" };
+    const request = {
+        ...payload,
+        ts: payload.ts ?? deps.now?.() ?? Date.now(),
+        type: "interrupt",
+    };
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
 export function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
     const requestPath = timeoutRequestPath(asyncDir);
-    const request = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "timeout" };
+    const request = {
+        ...payload,
+        ts: payload.ts ?? deps.now?.() ?? Date.now(),
+        type: "timeout",
+    };
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
@@ -55,7 +63,8 @@ function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
     const message = payload.message.trim();
     if (!message)
         throw new Error(`${type} message must not be empty.`);
-    if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
+    if (payload.targetIndex !== undefined &&
+        (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
         throw new Error(`${type} targetIndex must be a non-negative integer.`);
     }
     if (payload.deliveryDeadlineAt !== undefined &&
@@ -68,7 +77,9 @@ function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
         ts: payload.ts ?? deps.now?.() ?? Date.now(),
         message,
         ...(payload.targetIndex !== undefined ? { targetIndex: payload.targetIndex } : {}),
-        ...(payload.deliveryDeadlineAt !== undefined ? { deliveryDeadlineAt: payload.deliveryDeadlineAt } : {}),
+        ...(payload.deliveryDeadlineAt !== undefined
+            ? { deliveryDeadlineAt: payload.deliveryDeadlineAt }
+            : {}),
         ...(payload.source ? { source: payload.source } : {}),
     };
     return writeChildMessageRequestToDir(steerRequestsDir(asyncDir), request);
@@ -82,7 +93,10 @@ export function requestAsyncResume(asyncDir, payload, deps = {}) {
 export function enqueueStepChildMessage(asyncDir, index, request) {
     if (!Number.isInteger(index) || index < 0)
         throw new Error("child message index must be a non-negative integer.");
-    return writeChildMessageRequestToDir(stepSteerInboxDir(asyncDir, index), { ...request, targetIndex: index });
+    return writeChildMessageRequestToDir(stepSteerInboxDir(asyncDir, index), {
+        ...request,
+        targetIndex: index,
+    });
 }
 export function enqueueStepSteer(asyncDir, index, request) {
     return enqueueStepChildMessage(asyncDir, index, { ...request, type: "steer" });
@@ -97,7 +111,10 @@ export function acceptChildMessageRequest(input) {
     const rejected = [];
     if (input.request.deliveryDeadlineAt !== undefined &&
         (input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt) {
-        return { acceptedIndexes, rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })) };
+        return {
+            acceptedIndexes,
+            rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })),
+        };
     }
     for (const index of targets) {
         const step = input.steps[index];
@@ -134,7 +151,11 @@ export function childMessageRequestRequiresAcceptance(request) {
 export function writeChildMessageAcceptanceForRequest(asyncDir, request, acceptance) {
     if (!childMessageRequestRequiresAcceptance(request))
         return undefined;
-    return writeChildMessageAcceptance(asyncDir, { ...acceptance, requestId: request.id, type: request.type });
+    return writeChildMessageAcceptance(asyncDir, {
+        ...acceptance,
+        requestId: request.id,
+        type: request.type,
+    });
 }
 function parseChildMessageAcceptance(raw, requestId) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -197,7 +218,8 @@ function parseChildMessageRequest(raw) {
         return undefined;
     if (typeof input.message !== "string" || !input.message.trim())
         return undefined;
-    if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
+    if (input.targetIndex !== undefined &&
+        (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
         return undefined;
     if (input.deliveryDeadlineAt !== undefined &&
         (typeof input.deliveryDeadlineAt !== "number" ||
@@ -210,7 +232,9 @@ function parseChildMessageRequest(raw) {
         ts: input.ts,
         message: input.message.trim(),
         ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}),
-        ...(input.deliveryDeadlineAt !== undefined ? { deliveryDeadlineAt: input.deliveryDeadlineAt } : {}),
+        ...(input.deliveryDeadlineAt !== undefined
+            ? { deliveryDeadlineAt: input.deliveryDeadlineAt }
+            : {}),
         ...(typeof input.source === "string" && input.source.trim() ? { source: input.source } : {}),
     };
 }
@@ -310,7 +334,9 @@ export function deliverInterruptRequest(input) {
     }
 }
 export function deliverTimeoutRequest(input) {
-    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+        now: input.now,
+    });
 }
 export function watchAsyncControlInbox(asyncDir, opts) {
     const fsImpl = opts.fs ?? fs;

@@ -7,16 +7,16 @@ import { getTlhVersion } from "./package-version.js";
  * Exported for unit testing without side effects.
  */
 export function formatVersionOutput(tlhVersion: string, piVersion: string): string {
-	return `tlh: ${tlhVersion}  |  pi: ${piVersion}`;
+  return `tlh: ${tlhVersion}  |  pi: ${piVersion}`;
 }
 
 export function registerVersionCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("version", {
-		description: "Show the installed TLH and Pi runtime versions",
-		handler: async (_args, ctx) => {
-			const tlhVersion = getTlhVersion();
-			const piVersion = VERSION;
-			ctx.ui.notify(formatVersionOutput(tlhVersion, piVersion), "info");
-		},
-	});
+  pi.registerCommand("version", {
+    description: "Show the installed TLH and Pi runtime versions",
+    handler: async (_args, ctx) => {
+      const tlhVersion = getTlhVersion();
+      const piVersion = VERSION;
+      ctx.ui.notify(formatVersionOutput(tlhVersion, piVersion), "info");
+    },
+  });
 }

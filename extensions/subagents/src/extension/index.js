@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Spacer, Text, isKeyRelease, matchesKey, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
-import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir } from "../shared/artifacts.js";
+import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { cleanupOldChainDirs } from "../shared/settings.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
@@ -12,9 +12,9 @@ import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
 import { cleanupRuntimeDirs } from "./runtime-cleanup.js";
 import { createSubagentLiveDetailController, SUBAGENT_LIVE_DETAIL_SHORTCUT, SUBAGENT_PAUSE_ALL_SHORTCUT, } from "../shared/subagent-shortcuts.js";
-import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult } from "../tui/render.js";
+import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } from "../tui/render.js";
 import { SubagentParams } from "./schemas.js";
-import { createSubagentExecutor } from "../runs/foreground/subagent-executor.js";
+import { createSubagentExecutor, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
@@ -107,7 +107,7 @@ function ensureSubagentResultAnimation(context) {
     }, 80);
 }
 function isSlashResultError(result) {
-    return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
+    return (result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false);
 }
 function isStaleExtensionContextError(error) {
     return error instanceof Error && error.message.includes("Extension context no longer active");
@@ -150,7 +150,8 @@ function parseSubagentNotifyContent(content) {
     const body = lines.slice(2);
     let sessionIndex = -1;
     for (let i = body.length - 1; i >= 1; i--) {
-        if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(body[i])) {
+        if (body[i - 1]?.trim() === "" &&
+            /^(Session|Session file|Session share error):\s+/.test(body[i])) {
             sessionIndex = i;
             break;
         }
@@ -351,7 +352,10 @@ export default function registerSubagentExtension(pi) {
         const parsedContent = parseSubagentNotifyContent(content);
         const structuredDetails = message.details;
         const parsedSession = parsedContent?.details.sessionLabel && parsedContent.details.sessionValue
-            ? { sessionLabel: parsedContent.details.sessionLabel, sessionValue: parsedContent.details.sessionValue }
+            ? {
+                sessionLabel: parsedContent.details.sessionLabel,
+                sessionValue: parsedContent.details.sessionValue,
+            }
             : undefined;
         const rawParsedPreview = parsedContent?.details.resultPreview;
         const displayPreview = rawParsedPreview !== undefined
@@ -363,11 +367,16 @@ export default function registerSubagentExtension(pi) {
             ? {
                 ...structuredDetails,
                 resultPreview: displayPreview ?? structuredDetails.resultPreview,
-                ...(structuredDetails.sessionValue ? { sessionValue: boundedReference(structuredDetails.sessionValue) } : {}),
+                ...(structuredDetails.sessionValue
+                    ? { sessionValue: boundedReference(structuredDetails.sessionValue) }
+                    : {}),
                 ...parsedSession,
             }
             : parsedContent?.details
-                ? { ...parsedContent.details, resultPreview: displayPreview ?? parsedContent.details.resultPreview }
+                ? {
+                    ...parsedContent.details,
+                    resultPreview: displayPreview ?? parsedContent.details.resultPreview,
+                }
                 : undefined;
         if (!details) {
             const displayContent = content.length <= MAX_DISPLAY_SUMMARY_CHARS
@@ -495,7 +504,9 @@ export default function registerSubagentExtension(pi) {
     }
     registerSubagentNotify(pi, state, {});
     const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
-    const visibleControlNotices = existingVisibleControlNotices instanceof Set ? existingVisibleControlNotices : new Set();
+    const visibleControlNotices = existingVisibleControlNotices instanceof Set
+        ? existingVisibleControlNotices
+        : new Set();
     globalStore[controlNoticeSeenStoreKey] = visibleControlNotices;
     let controlNoticeSessionContext = null;
     const isControlNoticeIdle = () => controlNoticeSessionContext?.isIdle() ?? true;

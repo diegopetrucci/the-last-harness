@@ -7,7 +7,7 @@ export { buildReviewEnvelope } from "./review-envelope.js";
 import { isGhGraphqlQuotaFailure, resolveGitHubPrRef, fetchPrMetadataViaRest, fetchPrDiffViaRest, } from "./review-github.js";
 import { DynamicBorder, getAgentDir, getSelectListTheme, SettingsManager, } from "@earendil-works/pi-coding-agent";
 import { Container, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
-import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig } from "../the-last-harness-primary-agent.mjs";
+import { primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
@@ -373,7 +373,13 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
             message: "PR mode requires the GitHub CLI. Install: https://cli.github.com — then run `gh auth login`.",
         };
     }
-    const prViewResult = await pi.exec("gh", ["pr", "view", nOrUrl, "--json", "number,headRefName,baseRefName,isCrossRepository,headRepository"], { cwd });
+    const prViewResult = await pi.exec("gh", [
+        "pr",
+        "view",
+        nOrUrl,
+        "--json",
+        "number,headRefName,baseRefName,isCrossRepository,headRepository",
+    ], { cwd });
     let prRef;
     let prData;
     if (prViewResult.code !== 0) {
@@ -384,7 +390,9 @@ async function gatherPr(pi, cmdCtx, nOrUrl) {
                 message: `Could not resolve PR '${nOrUrl}': ${firstLine}`,
             };
         }
-        const prNumberHint = /^\d+$/u.test(nOrUrl.trim()) ? Number.parseInt(nOrUrl.trim(), 10) : undefined;
+        const prNumberHint = /^\d+$/u.test(nOrUrl.trim())
+            ? Number.parseInt(nOrUrl.trim(), 10)
+            : undefined;
         const prRefResult = await resolveGitHubPrRef(pi, cwd, nOrUrl, prNumberHint);
         if (prRefResult.ok === false) {
             return {

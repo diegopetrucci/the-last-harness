@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { ModelSelectorComponent, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ModelSelectorComponent, SettingsManager, } from "@earendil-works/pi-coding-agent";
 import { safeTlhProfileFilePath } from "./profile-state.js";
 export const MODEL_SELECTION_SCOPE_SESSION_ONLY = "This session only — default";
 export const MODEL_SELECTION_SCOPE_ALL_SESSIONS = "All sessions";
@@ -35,7 +35,9 @@ function modelMatches(left, right) {
     return left.provider === right.provider && left.modelId === right.id;
 }
 function operationsMatch(left, right) {
-    return left.manager === right.manager && left.provider === right.provider && left.modelId === right.modelId;
+    return (left.manager === right.manager &&
+        left.provider === right.provider &&
+        left.modelId === right.modelId);
 }
 function applySuppressedWrites(patch, writes) {
     const groups = new Map();
@@ -206,7 +208,12 @@ export function installTlhModelSelectionPersistenceOverride() {
         return patch.nativeSelectorContext.run(true, () => originals.handleModelSelect.call(this, model));
     };
     prototype.setDefaultModelAndProvider = function (provider, modelId) {
-        interceptCombinedModelWrite(patch, { kind: "model-and-provider", manager: this, provider, modelId });
+        interceptCombinedModelWrite(patch, {
+            kind: "model-and-provider",
+            manager: this,
+            provider,
+            modelId,
+        });
     };
     prototype.setDefaultModel = function (modelId) {
         if (state.suppressionDepth > 0) {

@@ -200,7 +200,9 @@ function formatExportPathList(paths) {
     return paths.map((file) => `- \`${file}\``).join("\n");
 }
 function collectResultPaths(results, getPath) {
-    return results.map(getPath).filter((file) => typeof file === "string" && file.length > 0);
+    return results
+        .map(getPath)
+        .filter((file) => typeof file === "string" && file.length > 0);
 }
 function buildSlashExportText(response) {
     const output = extractSlashMessageText(response.result.content) || response.errorText || "(no output)";

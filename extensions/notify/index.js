@@ -68,7 +68,9 @@ function canReadProjectConfig(ctx) {
 }
 function loadConfig(ctx) {
     const globalConfig = readConfigFile(join(getAgentDir(), "extensions", "notify.json"));
-    const projectConfig = canReadProjectConfig(ctx) ? readConfigFile(join(ctx.cwd, CONFIG_DIR_NAME, "notify.json")) : {};
+    const projectConfig = canReadProjectConfig(ctx)
+        ? readConfigFile(join(ctx.cwd, CONFIG_DIR_NAME, "notify.json"))
+        : {};
     return mergeConfig(mergeConfig(DEFAULT_CONFIG, globalConfig), projectConfig);
 }
 function powershellString(value) {
@@ -152,7 +154,11 @@ function appleScriptString(value) {
 }
 function sendDesktopNotification(title, body, backend) {
     if (backend === "windows-toast") {
-        return runCommand("powershell.exe", ["-NoProfile", "-Command", windowsToastScript(title, body)]);
+        return runCommand("powershell.exe", [
+            "-NoProfile",
+            "-Command",
+            windowsToastScript(title, body),
+        ]);
     }
     if (backend === "macos") {
         return runCommand("osascript", [
@@ -290,7 +296,9 @@ export function createNotifyExtension(options = {}) {
                     return;
                 if (typeof ctx.isIdle === "function" && !ctx.isIdle())
                     return;
-                if (config.suppressWhileActive && latestActiveAsyncJobIds !== undefined && latestActiveAsyncJobIds.length > 0) {
+                if (config.suppressWhileActive &&
+                    latestActiveAsyncJobIds !== undefined &&
+                    latestActiveAsyncJobIds.length > 0) {
                     pendingSettleCtx = {
                         cwd: ctx.cwd,
                         hasUI: ctx.hasUI,

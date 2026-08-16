@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.js";
+import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel } from "../../shared/status-format.js";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
@@ -35,13 +35,16 @@ function resolveMaybeRelative(asyncDir, filePath) {
 function pathWithin(base, candidate) {
     const resolvedBase = path.resolve(base);
     const resolvedCandidate = path.resolve(candidate);
-    return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
+    return (resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`));
 }
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
 function isNotFoundError(error) {
-    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
 }
 function readTextTail(filePath, maxLines) {
     let stat;
@@ -68,7 +71,11 @@ function readTextTail(filePath, maxLines) {
             lines = lines.slice(1);
         if (lines.at(-1) === "")
             lines = lines.slice(0, -1);
-        return { path: filePath, lines: lines.slice(-maxLines), truncated: start > 0 || lines.length > maxLines };
+        return {
+            path: filePath,
+            lines: lines.slice(-maxLines),
+            truncated: start > 0 || lines.length > maxLines,
+        };
     }
     catch (error) {
         return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
@@ -122,7 +129,9 @@ function readContainedTextTail(filePath, maxLines, trustedRoots, label) {
     let realRoots;
     try {
         realPath = fs.realpathSync(resolvedPath);
-        realRoots = trustedRoots.filter((root) => fs.existsSync(root)).map((root) => fs.realpathSync(root));
+        realRoots = trustedRoots
+            .filter((root) => fs.existsSync(root))
+            .map((root) => fs.realpathSync(root));
     }
     catch (error) {
         return { path: filePath, lines: [], truncated: false, error: getErrorMessage(error) };
@@ -158,7 +167,11 @@ function contentText(content) {
         if (typeof entry.text === "string")
             return entry.text;
         if (entry.type === "toolCall" || entry.type === "tool_call") {
-            const name = typeof entry.name === "string" ? entry.name : typeof entry.toolName === "string" ? entry.toolName : "tool";
+            const name = typeof entry.name === "string"
+                ? entry.name
+                : typeof entry.toolName === "string"
+                    ? entry.toolName
+                    : "tool";
             return `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]`;
         }
         if (entry.type === "toolResult" || entry.type === "tool_result") {
@@ -254,7 +267,11 @@ function formatForegroundFleetLines(controls) {
         lines.push(`- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`);
         lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
         lines.push("  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.");
-        lines.push(...formatNestedRunStatusLines(control.nestedChildren, { indent: "  ", commandHints: true, maxLines: 12 }));
+        lines.push(...formatNestedRunStatusLines(control.nestedChildren, {
+            indent: "  ",
+            commandHints: true,
+            maxLines: 12,
+        }));
     }
     return lines;
 }
@@ -277,7 +294,12 @@ function formatAsyncFleetLines(runs) {
             const phase = step.phase ? `[${step.phase}] ` : "";
             const stepActivity = formatActivityFacts(step);
             const modelThinking = formatModelThinking(step.model, step.thinking);
-            const parts = [`${step.index}. ${phase}${display}`, step.status, stepActivity, modelThinking].filter(Boolean);
+            const parts = [
+                `${step.index}. ${phase}${display}`,
+                step.status,
+                stepActivity,
+                modelThinking,
+            ].filter(Boolean);
             lines.push(`  ${parts.join(" | ")}`);
             const output = path.join(run.asyncDir, `output-${step.index}.log`);
             if (fs.existsSync(output))
@@ -287,7 +309,11 @@ function formatAsyncFleetLines(runs) {
             if (step.status === "running" || step.recentOutput?.length || fs.existsSync(output)) {
                 lines.push(`    transcript: subagent({ action: "status", id: "${run.id}", index: ${step.index}, view: "transcript" })`);
             }
-            lines.push(...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true, maxLines: 12 }));
+            lines.push(...formatNestedRunStatusLines(step.children, {
+                indent: "    ",
+                commandHints: true,
+                maxLines: 12,
+            }));
         }
         const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
         const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
@@ -329,7 +355,11 @@ export function inspectSubagentFleet(_params, deps = {}) {
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
+        return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
     }
     const foregroundControls = deps.state ? [...deps.state.foregroundControls.values()] : [];
     const total = foregroundControls.length + asyncRuns.length;
@@ -438,7 +468,9 @@ export function formatAsyncRunTranscript(status, asyncDir, options = {}) {
     const outputPaths = selected.index !== undefined
         ? uniqueStrings([
             stepOutputPath,
-            runOutputPath && stepOutputPath && path.resolve(runOutputPath) === path.resolve(stepOutputPath)
+            runOutputPath &&
+                stepOutputPath &&
+                path.resolve(runOutputPath) === path.resolve(stepOutputPath)
                 ? runOutputPath
                 : undefined,
         ])
@@ -503,7 +535,11 @@ export function formatNestedRunTranscript(run, options = {}) {
         `Nested run: ${run.id}`,
         `State: ${run.state}`,
         run.mode ? `Mode: ${run.mode}` : undefined,
-        run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
+        run.agent
+            ? `Agent: ${run.agent}`
+            : run.agents?.length
+                ? `Agents: ${run.agents.join(", ")}`
+                : undefined,
     ].filter((line) => Boolean(line));
     appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
     if (!run.sessionFile) {
@@ -546,7 +582,10 @@ export function formatAsyncResultTranscript(data, resultPath, options = {}) {
         throw new Error(`Transcript index ${index} is out of range for ${children.length} result child${children.length === 1 ? "" : "ren"}.`);
     const child = index !== undefined ? children[index] : undefined;
     const output = index !== undefined
-        ? (child?.output ?? child?.summary ?? (children.length === 1 ? (data.output ?? data.summary) : undefined) ?? "")
+        ? (child?.output ??
+            child?.summary ??
+            (children.length === 1 ? (data.output ?? data.summary) : undefined) ??
+            "")
         : (data.output ?? data.summary ?? "");
     const transcriptLines = output.split(/\r?\n/).slice(-lineLimit);
     const sessionFile = child?.sessionFile ?? data.sessionFile;

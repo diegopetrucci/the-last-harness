@@ -12,8 +12,8 @@ export const TLH_EFFECTIVE_ACTIVITY_EVENT = "tlh:effective-activity";
 
 /** Payload carried by TLH_EFFECTIVE_ACTIVITY_EVENT. */
 export type TlhEffectiveActivityPayload = {
-	/** True when primary agent work or background async subagents are in flight. */
-	inProgress: boolean;
-	/** Sorted IDs of async subagent jobs currently tracked as active. */
-	activeAsyncJobIds: string[];
+  /** True when primary agent work or background async subagents are in flight. */
+  inProgress: boolean;
+  /** Sorted IDs of async subagent jobs currently tracked as active. */
+  activeAsyncJobIds: string[];
 };

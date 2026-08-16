@@ -120,7 +120,9 @@ function aggregateFile(window, sessionsRoot, file, caveats) {
         caveats.push(`${basename(filePath)}: ${malformedLineCount} malformed line(s) skipped`);
     }
     const providerTotals = [...providerUsageMap.values()].sort((a, b) => b.usage.totalTokens - a.usage.totalTokens);
-    const projectLabel = sessionCwd ? basename(sessionCwd) : deriveProjectLabel(filePath, sessionsRoot);
+    const projectLabel = sessionCwd
+        ? basename(sessionCwd)
+        : deriveProjectLabel(filePath, sessionsRoot);
     const sessionName = sessionInfoName ?? sessionHeaderName;
     return {
         filePath,

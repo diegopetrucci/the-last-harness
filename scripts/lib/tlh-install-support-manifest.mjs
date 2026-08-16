@@ -161,12 +161,20 @@ const SETTINGS_SUPPORT_FILES = Object.freeze([
 function cloneSupportFile(file) {
     return { ...file };
 }
-export function supportFileManifest({ noSettings = false } = {}) {
-    const files = noSettings ? BASE_SUPPORT_FILES : [...BASE_SUPPORT_FILES, ...SETTINGS_SUPPORT_FILES];
+export function supportFileManifest({ noSettings = false, } = {}) {
+    const files = noSettings
+        ? BASE_SUPPORT_FILES
+        : [...BASE_SUPPORT_FILES, ...SETTINGS_SUPPORT_FILES];
     return files.map(cloneSupportFile);
 }
 function formatSupportFileManifestRow(file) {
-    return [file.variable, file.requirement, file.relativePath, file.tempPath, file.installName || ""].join("|");
+    return [
+        file.variable,
+        file.requirement,
+        file.relativePath,
+        file.tempPath,
+        file.installName || "",
+    ].join("|");
 }
 export function formatSupportFileManifest(options = {}) {
     return supportFileManifest(options).map(formatSupportFileManifestRow).join("\n");

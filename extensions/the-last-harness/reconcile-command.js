@@ -1,7 +1,7 @@
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath, isRecord } from "./common.js";
 import { computeModelEffortDrift, readReconcileState, updateReconcileAcknowledgedSnapshot, } from "./model-effort-reconcile.js";
-import { clearPrimaryAgentModelOverrideByName } from "./primary-agent-runtime.js";
+import { clearPrimaryAgentModelOverrideByName, } from "./primary-agent-runtime.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import { resetSubagentOverride } from "./subagent-settings.js";
@@ -62,13 +62,19 @@ function formatDriftStatus(drift) {
 function buildAcknowledgedSnapshot(entries, provider) {
     return Object.fromEntries(entries.map((entry) => [
         entry.name,
-        { byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } } },
+        {
+            byProvider: {
+                [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
+            },
+        },
     ]));
 }
 function buildSingleAcknowledgedSnapshot(entry, provider) {
     return {
         [entry.name]: {
-            byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } },
+            byProvider: {
+                [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
+            },
         },
     };
 }
@@ -181,7 +187,9 @@ async function runReconcilePicker(ctx, provider, runtime) {
         if (acknowledgmentFailed) {
             summaryParts.push("Acknowledgment could not be persisted; the notice may reappear.");
         }
-        ctx.ui.notify(`TLH reconcile: ${summaryParts.join(" ")}`, unrecognizedNames.length > 0 || acknowledgmentFailed || failedNames.length > 0 ? "error" : "info");
+        ctx.ui.notify(`TLH reconcile: ${summaryParts.join(" ")}`, unrecognizedNames.length > 0 || acknowledgmentFailed || failedNames.length > 0
+            ? "error"
+            : "info");
         return;
     }
     const entry = driftByLabel.get(selected);

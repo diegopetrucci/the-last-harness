@@ -119,7 +119,9 @@ function parseSubagentDiscoveryFrontmatter(content) {
         const rawBlock = currentBlockLines.join("\n");
         const prefix = rawBlock.match(/^([ \t]+)/m)?.[1] ?? "";
         frontmatter[currentKey] = prefix
-            ? rawBlock.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "").replace(/^\n/, "")
+            ? rawBlock
+                .replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "")
+                .replace(/^\n/, "")
             : rawBlock;
         currentKey = undefined;
         currentBlockLines = undefined;
@@ -127,7 +129,9 @@ function parseSubagentDiscoveryFrontmatter(content) {
     };
     for (const line of normalized.slice(4, endIndex).split("\n")) {
         const indent = line.search(/\S|$/);
-        if (currentKey !== undefined && currentBlockLines !== undefined && indent > (currentIndent ?? 0)) {
+        if (currentKey !== undefined &&
+            currentBlockLines !== undefined &&
+            indent > (currentIndent ?? 0)) {
             currentBlockLines.push(line);
             continue;
         }
@@ -137,7 +141,8 @@ function parseSubagentDiscoveryFrontmatter(content) {
             continue;
         }
         let value = match[2].trim();
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
         }
         if (value === "") {

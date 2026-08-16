@@ -4,143 +4,162 @@ import { join } from "node:path";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import("../extensions/the-last-harness/attribution.ts");
-export const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE, EMBEDDED_SUBAGENTS_FEATURE } =
-	await jiti.import("../extensions/the-last-harness/experimental.ts");
+export const { TLH_DEFAULT_COMMIT_ATTRIBUTION } = await jiti.import(
+  "../extensions/the-last-harness/attribution.ts",
+);
+export const {
+  CI_FAILURE_INVESTIGATION_FEATURE,
+  DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  EMBEDDED_SUBAGENTS_FEATURE,
+} = await jiti.import("../extensions/the-last-harness/experimental.ts");
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
-	"../extensions/the-last-harness/primary-agent-runtime.ts",
+  "../extensions/the-last-harness/primary-agent-runtime.ts",
 );
 
 export function createPiHarness() {
-	const commands = new Map();
-	const shortcuts = new Map();
-	return {
-		events: [],
-		commands,
-		shortcuts,
-		activeTools: [],
-		allTools: [{ name: "subagent" }],
-		thinkingLevel: "normal",
-		on(name, handler) {
-			this.events.push({ name, handler });
-		},
-		registerCommand(name, options) {
-			commands.set(name, options);
-		},
-		registerShortcut(name, options) {
-			shortcuts.set(name, options);
-		},
-		getAllTools() {
-			return this.allTools;
-		},
-		getActiveTools() {
-			return this.activeTools;
-		},
-		setActiveTools(tools) {
-			this.activeTools = tools;
-		},
-		async setModel(model) {
-			this.model = model;
-			return true;
-		},
-		getThinkingLevel() {
-			return this.thinkingLevel;
-		},
-		setThinkingLevel(level) {
-			this.thinkingLevel = level;
-		},
-		appendEntry() {},
-	};
+  const commands = new Map();
+  const shortcuts = new Map();
+  return {
+    events: [],
+    commands,
+    shortcuts,
+    activeTools: [],
+    allTools: [{ name: "subagent" }],
+    thinkingLevel: "normal",
+    on(name, handler) {
+      this.events.push({ name, handler });
+    },
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
+    registerShortcut(name, options) {
+      shortcuts.set(name, options);
+    },
+    getAllTools() {
+      return this.allTools;
+    },
+    getActiveTools() {
+      return this.activeTools;
+    },
+    setActiveTools(tools) {
+      this.activeTools = tools;
+    },
+    async setModel(model) {
+      this.model = model;
+      return true;
+    },
+    getThinkingLevel() {
+      return this.thinkingLevel;
+    },
+    setThinkingLevel(level) {
+      this.thinkingLevel = level;
+    },
+    appendEntry() {},
+  };
 }
 
 export function createToolCallContext(branchEntries = [], notifications, overrides = {}) {
-	return {
-		cwd: process.cwd(),
-		sessionManager: { getBranch: () => branchEntries },
-		ui: {
-			notify(message, type = "info") {
-				notifications?.push({ message, type });
-			},
-		},
-		modelRegistry: {
-			getAvailable: () => [
-				{ provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true, thinkingLevelMap: { max: "max" } },
-			],
-		},
-		model: { provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true, thinkingLevelMap: { max: "max" } },
-		...overrides,
-	};
+  return {
+    cwd: process.cwd(),
+    sessionManager: { getBranch: () => branchEntries },
+    ui: {
+      notify(message, type = "info") {
+        notifications?.push({ message, type });
+      },
+    },
+    modelRegistry: {
+      getAvailable: () => [
+        {
+          provider: "openai-codex",
+          id: "gpt-5.6-luna",
+          reasoning: true,
+          thinkingLevelMap: { max: "max" },
+        },
+      ],
+    },
+    model: {
+      provider: "openai-codex",
+      id: "gpt-5.6-luna",
+      reasoning: true,
+      thinkingLevelMap: { max: "max" },
+    },
+    ...overrides,
+  };
 }
 
 export function registerRuntimeHarness(options = {}) {
-	const pi = createPiHarness();
-	const runtime = registerTlhPrimaryAgentRuntime(pi, { env: {}, ...options });
-	const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;
-	const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
-	assert.equal(typeof beforeAgentStart, "function");
-	assert.equal(typeof toolCall, "function");
-	const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
-	return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };
+  const pi = createPiHarness();
+  const runtime = registerTlhPrimaryAgentRuntime(pi, { env: {}, ...options });
+  const beforeAgentStart = pi.events.find((event) => event.name === "before_agent_start")?.handler;
+  const toolCall = pi.events.find((event) => event.name === "tool_call")?.handler;
+  assert.equal(typeof beforeAgentStart, "function");
+  assert.equal(typeof toolCall, "function");
+  const applySessionStart = (ctx) => runtime?.applySessionStart(ctx);
+  return { pi, runtime, beforeAgentStart, toolCall, applySessionStart };
 }
 
 export function writePrimaryConfig(agentDir, primaryAgent = {}) {
-	writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ tlh: { primaryAgent } }, null, 2)}\n`);
+  writeFileSync(
+    join(agentDir, "settings.json"),
+    `${JSON.stringify({ tlh: { primaryAgent } }, null, 2)}\n`,
+  );
 }
 
 export function createPrimaryPrompt(name, overrides = {}) {
-	return {
-		name,
-		description: "Test primary",
-		tools: ["subagent"],
-		systemPrompt: "test",
-		filePath: `agents/primary/${name}.md`,
-		...overrides,
-	};
+  return {
+    name,
+    description: "Test primary",
+    tools: ["subagent"],
+    systemPrompt: "test",
+    filePath: `agents/primary/${name}.md`,
+    ...overrides,
+  };
 }
 
 export function selectablePrimaryAgents() {
-	return new Map([
-		["architect", createPrimaryPrompt("architect")],
-		["rush", createPrimaryPrompt("rush")],
-		["product", createPrimaryPrompt("product")],
-		["bug-hunter", createPrimaryPrompt("bug-hunter")],
-	]);
+  return new Map([
+    ["architect", createPrimaryPrompt("architect")],
+    ["rush", createPrimaryPrompt("rush")],
+    ["product", createPrimaryPrompt("product")],
+    ["bug-hunter", createPrimaryPrompt("bug-hunter")],
+  ]);
 }
 
 export function contrarianMetadata() {
-	return {
-		name: "contrarian",
-		description: "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
-		tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-		tlhAnthropicModels: ["anthropic/claude-opus-5"],
-		preferOppositeProvider: true,
-	};
+  return {
+    name: "contrarian",
+    description:
+      "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+    tlhAnthropicModels: ["anthropic/claude-opus-5"],
+    preferOppositeProvider: true,
+  };
 }
 
 export function rushLikePrimary(name = "architect") {
-	return createPrimaryPrompt(name, {
-		model: "anthropic/claude-sonnet-4-6",
-		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-		thinking: "low",
-		tlhOpenaiThinking: "medium",
-		applyModel: true,
-		applyThinking: true,
-	});
+  return createPrimaryPrompt(name, {
+    model: "anthropic/claude-sonnet-4-6",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+    thinking: "low",
+    tlhOpenaiThinking: "medium",
+    applyModel: true,
+    applyThinking: true,
+  });
 }
 
 export function lockedRushPrimary() {
-	return createPrimaryPrompt("rush", {
-		model: "anthropic/claude-sonnet-4-6",
-		tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-		thinking: "low",
-		tlhOpenaiThinking: "medium",
-		applyModel: true,
-		applyThinking: true,
-		lockThinking: true,
-	});
+  return createPrimaryPrompt("rush", {
+    model: "anthropic/claude-sonnet-4-6",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+    thinking: "low",
+    tlhOpenaiThinking: "medium",
+    applyModel: true,
+    applyThinking: true,
+    lockThinking: true,
+  });
 }
 
 export function createCommandContext(branchEntries = [], overrides = {}) {
-	const notifications = [];
-	return { notifications, ctx: createToolCallContext(branchEntries, notifications, overrides) };
+  const notifications = [];
+  return { notifications, ctx: createToolCallContext(branchEntries, notifications, overrides) };
 }

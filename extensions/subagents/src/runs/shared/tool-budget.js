@@ -16,7 +16,8 @@ export function validateToolBudgetConfig(raw, label = "toolBudget") {
     if (typeof value.hard !== "number" || !Number.isInteger(value.hard) || value.hard < 1) {
         return { error: `${label}.hard must be an integer >= 1.` };
     }
-    if (value.soft !== undefined && (typeof value.soft !== "number" || !Number.isInteger(value.soft) || value.soft < 1)) {
+    if (value.soft !== undefined &&
+        (typeof value.soft !== "number" || !Number.isInteger(value.soft) || value.soft < 1)) {
         return { error: `${label}.soft must be an integer >= 1 when provided.` };
     }
     if (value.soft !== undefined && value.soft > value.hard) {

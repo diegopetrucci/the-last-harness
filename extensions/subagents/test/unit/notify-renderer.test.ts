@@ -7,8 +7,8 @@ import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 describe("native completion notification renderer", () => {
-	it("renders structured and legacy single notices result-first while retaining references when expanded", () => {
-		const script = String.raw`
+  it("renders structured and legacy single notices result-first while retaining references when expanded", () => {
+    const script = String.raw`
 			import { createRequire } from "node:module";
 			import { pathToFileURL } from "node:url";
 			import registerSubagentExtension from "./src/extension/index.ts";
@@ -135,24 +135,24 @@ describe("native completion notification renderer", () => {
 			if (!shareErrorExpanded.includes("2.5s")) throw new Error("share error rendering lost structured duration metadata");
 			if (shareErrorExpanded.length > 2_000) throw new Error("share error expanded rendering was not bounded: " + shareErrorExpanded.length);
 		`;
-		const env = { ...process.env };
-		delete env[SUBAGENT_CHILD_ENV];
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env, stdio: "pipe" },
-		);
-	});
+    const env = { ...process.env };
+    delete env[SUBAGENT_CHILD_ENV];
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env, stdio: "pipe" },
+    );
+  });
 
-	it("renders wrapped control notices with a connected top border", () => {
-		const script = String.raw`
+  it("renders wrapped control notices with a connected top border", () => {
+    const script = String.raw`
 			import { createRequire } from "node:module";
 			import { pathToFileURL } from "node:url";
 			import registerSubagentExtension from "./src/extension/index.ts";
@@ -225,28 +225,28 @@ describe("native completion notification renderer", () => {
 				throw new Error("wrapped header lost the agent name: " + lines.join("\\n"));
 			}
 		`;
-		const env = { ...process.env };
-		delete env[SUBAGENT_CHILD_ENV];
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env, stdio: "pipe" },
-		);
-	});
+    const env = { ...process.env };
+    delete env[SUBAGENT_CHILD_ENV];
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env, stdio: "pipe" },
+    );
+  });
 
-	it("bounds the display of grouped notices and any other unparsed content at the render-time display cap", () => {
-		// Defect 3: the renderer parser only matches the singular-completion header regex.
-		// Grouped notices use 'Background tasks completed (N):' which does not match, so
-		// the renderer falls through to new Text(content). Before the fix, the full 32 000-char
-		// content was displayed. After the fix, the fallback bounds to MAX_DISPLAY_SUMMARY_CHARS.
-		const script = String.raw`
+  it("bounds the display of grouped notices and any other unparsed content at the render-time display cap", () => {
+    // Defect 3: the renderer parser only matches the singular-completion header regex.
+    // Grouped notices use 'Background tasks completed (N):' which does not match, so
+    // the renderer falls through to new Text(content). Before the fix, the full 32 000-char
+    // content was displayed. After the fix, the fallback bounds to MAX_DISPLAY_SUMMARY_CHARS.
+    const script = String.raw`
 			import { createRequire } from "node:module";
 			import { pathToFileURL } from "node:url";
 			import registerSubagentExtension from "./src/extension/index.ts";
@@ -318,19 +318,19 @@ describe("native completion notification renderer", () => {
 				throw new Error("grouped notice renderer fallback exposed too much content: " + renderedContentChars + " chars (limit: " + (MAX_DISPLAY_SUMMARY_CHARS * 10) + ")");
 			}
 		`;
-		const env = { ...process.env };
-		delete env[SUBAGENT_CHILD_ENV];
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env, stdio: "pipe" },
-		);
-	});
+    const env = { ...process.env };
+    delete env[SUBAGENT_CHILD_ENV];
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env, stdio: "pipe" },
+    );
+  });
 });

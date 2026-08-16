@@ -42,7 +42,7 @@ export class Semaphore {
 }
 export async function mapConcurrent(items, limit, fn, globalSemaphore) {
     const safeLimit = Math.max(1, Math.floor(limit) || 1);
-    const results = new Array(items.length);
+    const results = Array.from({ length: items.length });
     let next = 0;
     async function worker(_workerIndex) {
         while (next < items.length) {

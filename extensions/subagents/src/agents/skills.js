@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getLegacyGlobalAgentsDir, hasCustomPiAgentDir, isGlobalAgentsDir } from "../shared/profile.js";
+import { getLegacyGlobalAgentsDir, hasCustomPiAgentDir, isGlobalAgentsDir, } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 const skillCache = new Map();
 const MAX_CACHE_SIZE = 50;
@@ -38,7 +38,9 @@ function readOptionalJsonFile(filePath, label) {
         return JSON.parse(fs.readFileSync(filePath, "utf-8"));
     }
     catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+        const code = typeof error === "object" && error !== null && "code" in error
+            ? error.code
+            : undefined;
         if (code === "ENOENT")
             return null;
         const message = error instanceof Error ? error.message : String(error);
@@ -140,8 +142,16 @@ function collectSettingsSkillPaths(cwd, agentDir) {
     const results = [];
     const projectConfigDir = getProjectConfigDir(cwd);
     const settingsFiles = [
-        { file: path.join(projectConfigDir, "settings.json"), base: projectConfigDir, source: "project-settings" },
-        { file: path.join(agentDir, "settings.json"), base: agentDir, source: "user-settings" },
+        {
+            file: path.join(projectConfigDir, "settings.json"),
+            base: projectConfigDir,
+            source: "project-settings",
+        },
+        {
+            file: path.join(agentDir, "settings.json"),
+            base: agentDir,
+            source: "user-settings",
+        },
     ];
     for (const { file, base, source } of settingsFiles) {
         const settings = readOptionalJsonFile(file, "skills settings file");
@@ -242,7 +252,10 @@ function resolveSettingsPackageRoot(source, baseDir) {
         return path.join(os.homedir(), normalized.slice(2));
     if (path.isAbsolute(normalized))
         return normalized;
-    if (normalized === "." || normalized === ".." || normalized.startsWith("./") || normalized.startsWith("../")) {
+    if (normalized === "." ||
+        normalized === ".." ||
+        normalized.startsWith("./") ||
+        normalized.startsWith("../")) {
         return path.resolve(baseDir, normalized);
     }
     return undefined;
@@ -250,7 +263,11 @@ function resolveSettingsPackageRoot(source, baseDir) {
 function collectSettingsPackageSkillPaths(cwd, agentDir) {
     const projectConfigDir = getProjectConfigDir(cwd);
     const settingsFiles = [
-        { file: path.join(projectConfigDir, "settings.json"), base: projectConfigDir, source: "project-package" },
+        {
+            file: path.join(projectConfigDir, "settings.json"),
+            base: projectConfigDir,
+            source: "project-package",
+        },
         { file: path.join(agentDir, "settings.json"), base: agentDir, source: "user-package" },
     ];
     const results = [];
@@ -264,7 +281,9 @@ function collectSettingsPackageSkillPaths(cwd, agentDir) {
         for (const entry of packages) {
             const packageSource = typeof entry === "string"
                 ? entry
-                : typeof entry === "object" && entry !== null && typeof entry.source === "string"
+                : typeof entry === "object" &&
+                    entry !== null &&
+                    typeof entry.source === "string"
                     ? entry.source
                     : undefined;
             if (!packageSource)
@@ -287,7 +306,9 @@ function buildSkillPaths(cwd, agentDir) {
             ? []
             : [{ path: path.join(projectLegacyAgentsDir, "skills"), source: "project" }]),
         { path: path.join(agentDir, "skills"), source: "user" },
-        ...(legacyGlobalAgentsDir ? [{ path: path.join(legacyGlobalAgentsDir, "skills"), source: "user" }] : []),
+        ...(legacyGlobalAgentsDir
+            ? [{ path: path.join(legacyGlobalAgentsDir, "skills"), source: "user" }]
+            : []),
         ...collectInstalledPackageSkillPaths(cwd, agentDir),
         ...collectSettingsPackageSkillPaths(cwd, agentDir),
         ...extractSkillPathsFromPackageRoot(cwd, "project-package"),
@@ -297,7 +318,8 @@ function buildSkillPaths(cwd, agentDir) {
     for (const entry of skillPaths) {
         const resolvedPath = path.resolve(entry.path);
         const existing = deduped.get(resolvedPath);
-        if (!existing || (SOURCE_PRIORITY[entry.source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
+        if (!existing ||
+            (SOURCE_PRIORITY[entry.source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
             deduped.set(resolvedPath, { path: resolvedPath, source: entry.source });
         }
     }
@@ -310,7 +332,9 @@ function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
     const projectSkillsRoot = path.resolve(projectConfigRoot, "skills");
     const projectPackagesRoot = path.resolve(projectConfigRoot, "npm", "node_modules");
     const rawProjectAgentsRoot = path.resolve(cwd, ".agents");
-    const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot) ? undefined : rawProjectAgentsRoot;
+    const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
+        ? undefined
+        : rawProjectAgentsRoot;
     const userSkillsRoot = path.resolve(agentDir, "skills");
     const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
     const userAgentRoot = path.resolve(agentDir);
@@ -318,13 +342,15 @@ function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
     const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
     if (isWithinPath(filePath, projectPackagesRoot))
         return "project-package";
-    if (isWithinPath(filePath, projectSkillsRoot) || (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
+    if (isWithinPath(filePath, projectSkillsRoot) ||
+        (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
         return "project";
     if (isWithinPath(filePath, projectConfigRoot))
         return "project-settings";
     if (isWithinPath(filePath, userPackagesRoot))
         return "user-package";
-    if (isWithinPath(filePath, userSkillsRoot) || (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
+    if (isWithinPath(filePath, userSkillsRoot) ||
+        (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
         return "user";
     if (isWithinPath(filePath, userAgentRoot))
         return "user-settings";

@@ -46,11 +46,16 @@ export function setCachedTlhUsageWeeklyVisibility(showWeekly) {
 }
 function usageCommandCompletions(prefix) {
     const normalizedPrefix = prefix.trim().toLowerCase();
-    const completions = USAGE_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({ value: option.value, label: option.value, description: option.description }));
+    const completions = USAGE_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({
+        value: option.value,
+        label: option.value,
+        description: option.description,
+    }));
     return completions.length > 0 ? completions : null;
 }
 export function registerUsageCommand(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./usage-limits-command.js")));
+    const loadModule = createRetryableLazyImport(options.loadModule ??
+        (() => import("./usage-limits-command.js")));
     pi.registerCommand("usage", {
         description: "Show or change TLH usage-limit footer preferences",
         getArgumentCompletions: usageCommandCompletions,

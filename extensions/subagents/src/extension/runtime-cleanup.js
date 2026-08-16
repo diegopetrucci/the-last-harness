@@ -170,7 +170,8 @@ function inspectAsyncDir(entry, now, kill) {
         return {
             entry,
             rootRunId,
-            keep: now - terminalReferenceMs(status, statusMtimeMs, dirMtimeMs) < TERMINAL_ASYNC_DIR_MAX_AGE_MS,
+            keep: now - terminalReferenceMs(status, statusMtimeMs, dirMtimeMs) <
+                TERMINAL_ASYNC_DIR_MAX_AGE_MS,
             activeOrLive: false,
         };
     }

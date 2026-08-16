@@ -7,11 +7,11 @@ import type { SubagentLiveDetailController } from "../shared/subagent-shortcuts.
  * helper remains independent of async job tracking.
  */
 export function handleSubagentLiveDetailShortcut(
-	controller: SubagentLiveDetailController,
-	ctx: ExtensionContext,
-	rerenderWidget?: () => void,
+  controller: SubagentLiveDetailController,
+  ctx: ExtensionContext,
+  rerenderWidget?: () => void,
 ): boolean {
-	const expanded = controller.toggle();
-	if (ctx.hasUI) rerenderWidget?.();
-	return expanded;
+  const expanded = controller.toggle();
+  if (ctx.hasUI) rerenderWidget?.();
+  return expanded;
 }

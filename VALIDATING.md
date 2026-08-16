@@ -10,9 +10,9 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow. It checks managed version pins and package contents; runs the main, subagent-test-support, and runtime TypeScript targets; verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint and formatting checks via Biome and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
-The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
+The validation scripts keep Oxlint's default rule selection while enforcing zero findings: `npm run lint` runs `oxlint --deny-warnings scripts tests extensions`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check`, which only selects Oxfmt check mode. The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
 ## Test suites and output modes
 
@@ -44,7 +44,7 @@ Subagent successes remain concise in that aggregate command. Subagent failures a
 
 ## TypeScript scope
 
-`npm run typecheck` and `npm run typecheck:runtime` cover production subagent sources. `npm run typecheck:subagents-test-support` deliberately covers only typed support modules and focused TLH adaptation regressions. It does **not** claim full imported-test type coverage: legacy fixture mocks are not strict-compatible. The review-time full-tree probe reported 320 TypeScript errors (319 after the required-dependency adaptations in this port). Runtime execution remains authoritative for the rest of the imported fixtures.
+`npm run typecheck` covers production subagent sources and all subagent test files under `extensions/subagents/test` (the exclusion that previously omitted that subtree has been removed). `npm run typecheck:runtime` covers runtime-specific sources. All 114 subagent test files pass strict typechecking with zero errors; the `ScaledMs` branded type enforces that wait helpers receive a scaled timeout rather than a raw literal. `npm run typecheck:subagents-test` provides a developer-convenience target for running the subagents-test typecheck in isolation.
 
 For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run typecheck:runtime` for the focused runtime-only typecheck, `npm run check:runtime` to confirm the generated `scripts/**/*.mjs` and same-layout `extensions/**/*.js` files are fresh without mutating the worktree, and `npm run build` only when you intentionally want to refresh those generated outputs. Review and edit the TypeScript sources rather than the generated `.mjs`/`.js` mirrors.
 
@@ -71,6 +71,13 @@ bash -n install.sh
 node --check scripts/tlh-gnosis.mjs
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
+```
+
+To run the focused Oxlint and Oxfmt checks:
+
+```sh
+npm run lint
+npm run format:check
 ```
 
 To lint all tracked shell scripts for ShellCheck findings:

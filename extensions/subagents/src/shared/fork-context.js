@@ -49,7 +49,9 @@ function appendThinkingOffEntry(entries) {
 function sanitizeUnsafeThinkingBlocks(entries) {
     let sanitized = false;
     for (const entry of entries) {
-        if (entry.type !== "message" || entry.message?.role !== "assistant" || !Array.isArray(entry.message.content))
+        if (entry.type !== "message" ||
+            entry.message?.role !== "assistant" ||
+            !Array.isArray(entry.message.content))
             continue;
         const filtered = entry.message.content.filter((block) => !isUnsafeAnthropicThinkingBlock(entry.message, block));
         if (filtered.length === entry.message.content.length)

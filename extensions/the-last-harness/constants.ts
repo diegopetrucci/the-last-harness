@@ -40,8 +40,8 @@ The Last Harness (tlh) profile is active. Prefer safe, transparent, and reviewab
 `;
 
 export const GNOSIS_PROMPT = [
-	"At the start of any task, run `gn help plan` and follow its instructions.",
-	"After finishing a task, run `gn help review`.",
+  "At the start of any task, run `gn help plan` and follow its instructions.",
+  "After finishing a task, run `gn help review`.",
 ].join("\n");
 
 export const CHILD_SUBAGENT_PROMPT = `
@@ -56,15 +56,29 @@ You are running inside a delegated TLH child subagent session.
 
 export const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
 
-export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-export const FALLBACK_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+export const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+export const FALLBACK_THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+];
 
 export const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No extra reasoning effort",
-	minimal: "Smallest reasoning budget",
-	low: "Light reasoning budget",
-	medium: "Balanced default reasoning budget",
-	high: "Deeper reasoning budget",
-	xhigh: "Extra-high reasoning budget when the model supports it",
-	max: "Maximum reasoning budget when the model supports it",
+  off: "No extra reasoning effort",
+  minimal: "Smallest reasoning budget",
+  low: "Light reasoning budget",
+  medium: "Balanced default reasoning budget",
+  high: "Deeper reasoning budget",
+  xhigh: "Extra-high reasoning budget when the model supports it",
+  max: "Maximum reasoning budget when the model supports it",
 };

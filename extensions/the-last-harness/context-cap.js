@@ -109,7 +109,9 @@ export function registerContextCap(pi) {
             }
             try {
                 const result = toggleContextCapSetting(ctx.cwd);
-                const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                const backupLabel = result.backupPath
+                    ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                    : "";
                 if (result.nowDisabled) {
                     restoreContextCapForSession(ctx);
                     ctx.ui.notify(`Context cap disabled. Updated TLH settings at ${formatHomePath(result.settingsPath)}.${backupLabel}`, "info");

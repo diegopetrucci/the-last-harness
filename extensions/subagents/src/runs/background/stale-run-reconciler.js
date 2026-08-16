@@ -7,7 +7,7 @@ import { normalizeParallelGroups } from "./parallel-groups.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
-import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution } from "../shared/model-fallback.js";
+import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -41,7 +41,10 @@ function readRunnerStartupDiagnostics(asyncDir) {
     return lines.length > 4000 ? `${lines.slice(-4000)}\n[stderr tail truncated]` : lines;
 }
 function isNotFoundError(error) {
-    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
 }
 function appendJsonlBestEffort(filePath, payload) {
     try {
@@ -179,7 +182,8 @@ function terminalStatusFromResult(status, resultPath, now) {
                 ? Math.max(0, now - step.startedAt)
                 : step.durationMs,
             activeRuntimeMs: child?.activeRuntimeMs ??
-                (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
+                (step.activeRuntimeMs ?? 0) +
+                    (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
             exitCode: step.exitCode ?? (state === "complete" || state === "paused" ? 0 : 1),
             error: state === "failed" ? (step.error ?? child?.error) : step.error,
             sessionFile: step.sessionFile ?? child?.sessionFile,
@@ -191,7 +195,9 @@ function terminalStatusFromResult(status, resultPath, now) {
             contextUsage: step.contextUsage ?? child?.contextUsage,
             contextPressure: step.contextPressure ?? child?.contextPressure,
             contextPressureCrossedThresholds: step.contextPressureCrossedThresholds ?? child?.contextPressureCrossedThresholds,
-            terminationReason: step.terminationReason ?? child?.terminationReason ?? (state === "failed" ? "process_exit" : undefined),
+            terminationReason: step.terminationReason ??
+                child?.terminationReason ??
+                (state === "failed" ? "process_exit" : undefined),
         };
     });
     return {
@@ -235,7 +241,9 @@ function buildFailedRepair(status, asyncDir, now, reason) {
     const baseMessage = reason ??
         `Async runner process ${pid} exited or disappeared before writing a result. Marked run failed by stale-run reconciliation.`;
     const diagnostics = readRunnerStartupDiagnostics(asyncDir);
-    const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
+    const message = diagnostics
+        ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}`
+        : baseMessage;
     const steps = (status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" }]).map(sanitizeStatusStep);
     const repairedSteps = steps
         .map((step) => step.status === "running" || step.status === "pending" || step.status === "pausing"
@@ -249,7 +257,8 @@ function buildFailedRepair(status, asyncDir, now, reason) {
                 : step.durationMs,
             activeRuntimeMs: step.status === "pausing" && step.activeRuntimeMs !== undefined
                 ? step.activeRuntimeMs
-                : (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
+                : (step.activeRuntimeMs ?? 0) +
+                    (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0),
             exitCode: step.exitCode ?? 1,
             error: step.error ?? message,
             terminationReason: step.terminationReason ?? "process_exit",
@@ -280,7 +289,9 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             results: repairedSteps.map((step) => ({
                 agent: step.agent,
                 output: step.status === "complete" || step.status === "completed" ? "" : message,
-                error: step.status === "complete" || step.status === "completed" ? undefined : (step.error ?? message),
+                error: step.status === "complete" || step.status === "completed"
+                    ? undefined
+                    : (step.error ?? message),
                 success: step.status === "complete" || step.status === "completed",
                 model: step.model,
                 modelIdentity: step.modelIdentity,
@@ -322,7 +333,11 @@ function writeFailedRepair(asyncDir, status, resultPath, now, reason) {
     return { status: repair.status, repaired: true, resultPath, message: repair.message };
 }
 function terminal(state) {
-    return (state === "complete" || state === "failed" || state === "paused" || state === "cancelled" || state === "continued");
+    return (state === "complete" ||
+        state === "failed" ||
+        state === "paused" ||
+        state === "cancelled" ||
+        state === "continued");
 }
 function* nestedRuns(children) {
     for (const child of children ?? []) {
@@ -370,7 +385,9 @@ export { checkPidLiveness };
 export function reconcileAsyncRun(asyncDir, options = {}) {
     const now = options.now?.() ?? Date.now();
     const status = readStatusFile(asyncDir);
-    const startedStatus = !status && options.startedRun ? buildStartedStatus(asyncDir, options.startedRun, now) : undefined;
+    const startedStatus = !status && options.startedRun
+        ? buildStartedStatus(asyncDir, options.startedRun, now)
+        : undefined;
     const effectiveStatus = status ?? startedStatus;
     if (!effectiveStatus)
         return { status: null, repaired: false };
@@ -380,7 +397,10 @@ export function reconcileAsyncRun(asyncDir, options = {}) {
         effectiveStatus.state === "cancelled" ||
         effectiveStatus.state === "continued" ||
         effectiveStatus.state === "pausing") {
-        const recovered = recoverStoppedLifecycleOwnership(effectiveStatus, { kill: options.kill, now: options.now });
+        const recovered = recoverStoppedLifecycleOwnership(effectiveStatus, {
+            kill: options.kill,
+            now: options.now,
+        });
         if (recovered.repaired) {
             writeAtomicJson(path.join(asyncDir, "status.json"), recovered.status);
             return {

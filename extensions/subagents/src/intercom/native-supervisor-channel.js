@@ -47,7 +47,12 @@ function readChildMetadata() {
     const agent = readTextEnv(SUBAGENT_CHILD_AGENT_ENV);
     const rawIndex = readTextEnv(SUBAGENT_CHILD_INDEX_ENV);
     const orchestratorSessionId = readTextEnv(SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV);
-    if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex))
+    if (!channelDir ||
+        !runId ||
+        !agent ||
+        !orchestratorSessionId ||
+        rawIndex === undefined ||
+        !/^\d+$/.test(rawIndex))
         return undefined;
     return {
         channelDir,
@@ -122,7 +127,9 @@ async function sendSupervisorRequest(params, signal) {
     const metadata = readChildMetadata();
     if (!metadata)
         throw new Error("Native supervisor channel is not available for this subagent.");
-    if (params.reason !== "progress_update" && !params.message?.trim() && params.reason !== "interview_request") {
+    if (params.reason !== "progress_update" &&
+        !params.message?.trim() &&
+        params.reason !== "interview_request") {
         throw new Error("message is required for supervisor decisions.");
     }
     ensureSupervisorChannelDir(metadata.channelDir);
@@ -146,7 +153,9 @@ async function sendSupervisorRequest(params, signal) {
         message,
         expectsReply,
         ...(metadata.orchestratorTarget ? { orchestratorTarget: metadata.orchestratorTarget } : {}),
-        ...(metadata.orchestratorSessionId ? { orchestratorSessionId: metadata.orchestratorSessionId } : {}),
+        ...(metadata.orchestratorSessionId
+            ? { orchestratorSessionId: metadata.orchestratorSessionId }
+            : {}),
         runId: metadata.runId,
         agent: metadata.agent,
         childIndex: metadata.childIndex,
@@ -205,7 +214,9 @@ function parseRequestFile(file, channelDir) {
             return undefined;
         if (typeof parsed.message !== "string" || !parsed.message)
             return undefined;
-        if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number")
+        if (typeof parsed.runId !== "string" ||
+            typeof parsed.agent !== "string" ||
+            typeof parsed.childIndex !== "number")
             return undefined;
         return { ...parsed, channelDir, requestFile: file };
     }
@@ -346,14 +357,15 @@ function requestExpiresAt(request, now) {
     return Number.isFinite(request.createdAt) ? request.createdAt + askTimeoutMs() : now;
 }
 function isAwaitingSupervisorPause(pause) {
-    return Boolean(pause && typeof pause === "object" && pause.kind === "awaiting_supervisor");
+    return Boolean(pause &&
+        typeof pause === "object" &&
+        pause.kind === "awaiting_supervisor");
 }
 function requestBlockingPhase(request, state) {
     if (state.foregroundControls.has(request.runId))
         return "pausing";
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
-        foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
     if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {
         return foregroundChild.status === "paused" ? "paused" : "pausing";
     }
@@ -369,8 +381,7 @@ function requestBlockingPhase(request, state) {
 }
 function requestTerminalState(request, state) {
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
-        foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
     if (foregroundChild?.cancel?.cancelledAt)
         return "cancelled";
     if (foregroundChild?.status === "completed")
@@ -385,7 +396,9 @@ function requestTerminalState(request, state) {
         return "cancelled";
     if (step?.status === "failed" || asyncJob?.status === "failed")
         return "failed";
-    if (step?.status === "complete" || step?.status === "completed" || asyncJob?.status === "complete")
+    if (step?.status === "complete" ||
+        step?.status === "completed" ||
+        asyncJob?.status === "complete")
         return "completed";
     return undefined;
 }
@@ -468,7 +481,12 @@ function buildParentSupervisorTool(pending, state) {
             const input = params;
             if (input.action === "status") {
                 return {
-                    content: [{ type: "text", text: `Native supervisor channel active. Pending requests: ${pending.size}.` }],
+                    content: [
+                        {
+                            type: "text",
+                            text: `Native supervisor channel active. Pending requests: ${pending.size}.`,
+                        },
+                    ],
                     details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
                 };
             }
@@ -477,7 +495,12 @@ function buildParentSupervisorTool(pending, state) {
                     .filter((request) => request.expectsReply)
                     .map((request) => formatPendingLine(request, state));
                 return {
-                    content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }],
+                    content: [
+                        {
+                            type: "text",
+                            text: lines.length ? lines.join("\n") : "No pending supervisor requests.",
+                        },
+                    ],
                     details: { pending: publicPendingRequests(pending) },
                 };
             }

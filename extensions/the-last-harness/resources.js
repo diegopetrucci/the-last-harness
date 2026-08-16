@@ -104,7 +104,9 @@ function loadContextFiles(cwd, agentDir) {
     return load({ cwd, agentDir });
 }
 function filterVisibleResources(resources, projectTrusted) {
-    return resources.filter((resource) => resource.enabled && existsSync(resource.path) && (projectTrusted || resource.metadata.scope !== "project"));
+    return resources.filter((resource) => resource.enabled &&
+        existsSync(resource.path) &&
+        (projectTrusted || resource.metadata.scope !== "project"));
 }
 export async function collectStartupResourceSnapshot(cwd, options = {}) {
     const agentDir = getAgentDir();
@@ -131,7 +133,11 @@ export async function collectStartupResourceSnapshot(cwd, options = {}) {
         },
         promptMetadata: {
             contextFiles,
-            skills: promptSkills.map(({ name, description, filePath }) => ({ name, description, filePath })),
+            skills: promptSkills.map(({ name, description, filePath }) => ({
+                name,
+                description,
+                filePath,
+            })),
         },
     };
 }

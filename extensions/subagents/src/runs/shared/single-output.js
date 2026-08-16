@@ -114,10 +114,13 @@ export function resolveSingleOutput(outputPath, fallbackOutput, beforeRun) {
     let changedSinceStart = false;
     try {
         const stat = fs.statSync(outputPath);
-        changedSinceStart = !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
+        changedSinceStart =
+            !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
     }
     catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        const code = error && typeof error === "object" && "code" in error
+            ? error.code
+            : undefined;
         if (code !== "ENOENT" && code !== "ENOTDIR") {
             return {
                 fullOutput: fallbackOutput,
@@ -146,7 +149,11 @@ export function finalizeSingleOutput(params) {
     if (params.exitCode === 0 && params.savedPath) {
         const outputReference = params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
         if (params.outputMode === "file-only") {
-            return { displayOutput: outputReference.message, savedPath: params.savedPath, outputReference };
+            return {
+                displayOutput: outputReference.message,
+                savedPath: params.savedPath,
+                outputReference,
+            };
         }
         displayOutput += `\n\n${outputReference.message}`;
         return { displayOutput, savedPath: params.savedPath, outputReference };

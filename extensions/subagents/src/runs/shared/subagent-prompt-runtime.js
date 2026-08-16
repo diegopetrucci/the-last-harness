@@ -54,7 +54,10 @@ export function stripProjectContext(prompt) {
     const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
     if (startIndex === -1)
         return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [
+        SKILLS_HEADER,
+        DATE_HEADER,
+    ]);
     return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
 }
 export function stripInheritedSkills(prompt) {
@@ -84,7 +87,9 @@ export function rewriteSubagentPrompt(prompt, options) {
     }
     rewritten = stripSubagentOrchestrationSkill(rewritten);
     rewritten = stripChildBoundaryInstructions(rewritten);
-    const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
+    const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV]
+        ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}`
+        : "";
     return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
 }
 function userMessageTextContent(message) {
@@ -102,7 +107,9 @@ function userMessageTextContent(message) {
 }
 function isParentOnlySubagentMessage(message) {
     const m = message;
-    if (m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
+    if (m?.role === "custom" &&
+        typeof m.customType === "string" &&
+        PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
         return true;
     const text = userMessageTextContent(message);
     if (text !== undefined && PARENT_ONLY_NUDGE_TEXTS.has(text))
@@ -173,8 +180,7 @@ function registerToolBudget(pi, budget) {
         return;
     let toolCount = 0;
     let softNudged = false;
-    const sendUserMessage = pi
-        .sendUserMessage;
+    const sendUserMessage = pi.sendUserMessage;
     const onRuntimeEvent = pi.on;
     onRuntimeEvent("tool_call", (event) => {
         const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
@@ -196,8 +202,7 @@ function registerSteeringInbox(pi) {
     const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
     if (!steerInbox)
         return;
-    const sendUserMessage = pi
-        .sendUserMessage;
+    const sendUserMessage = pi.sendUserMessage;
     if (typeof sendUserMessage !== "function")
         return;
     let canSteer = false;
@@ -322,7 +327,9 @@ export default function registerSubagentPromptRuntime(pi) {
         });
     }
     onRuntimeEvent("context", (event) => {
-        if (!event || typeof event !== "object" || !Array.isArray(event.messages))
+        if (!event ||
+            typeof event !== "object" ||
+            !Array.isArray(event.messages))
             return undefined;
         const contextEvent = event;
         const messages = stripParentOnlySubagentMessages(contextEvent.messages);
@@ -331,7 +338,9 @@ export default function registerSubagentPromptRuntime(pi) {
         return { messages };
     });
     onRuntimeEvent("before_agent_start", async (event) => {
-        if (!event || typeof event !== "object" || typeof event.systemPrompt !== "string")
+        if (!event ||
+            typeof event !== "object" ||
+            typeof event.systemPrompt !== "string")
             return undefined;
         const startEvent = event;
         const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();

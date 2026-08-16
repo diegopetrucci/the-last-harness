@@ -6,9 +6,8 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- After the architect's native `/model` picker changes the active model, TLH now prompts whether to apply the selection only to the current session or across all sessions.
-- Argument-free `/thinking` and `/effort` selections now offer the same session-only or all-sessions scope; typed levels and thinking cycling remain persistent.
-- The collapsed TLH header now shows an always-visible, approximate launch-context allocation across TLH, AGENTS/CLAUDE.md, Skills, Tools, and Other.
+- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or 
+- At launch, TLH now shows what’s eating up your context.
 
 ### Changed
 
@@ -19,7 +18,7 @@ All notable changes to The Last Harness will be documented in this file.
 
   **Migration:** `tlh defaults disable notify` no longer works and will fail with `Unknown default extension 'notify'`. To disable notifications, set `{"enabled": false}` in `~/.the-last-harness/agent/extensions/notify.json` (default path; use your custom `--agent-dir` path if you installed to a non-default location), or in `<project>/.pi/notify.json` for per-project control. If you previously ran `tlh defaults disable notify`, your `tlh.disabledDefaultExtensions` entry is now inert and harmless — notifications will resume on the next `tlh update`. A first-class opt-out command for bundled extensions is tracked in [#517](https://github.com/diegopetrucci/the-last-harness/issues/517).
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
-- The installer's default output is now more coincise.```
+- The installer's default output is now more coincise.
 
 ### Fixed
 

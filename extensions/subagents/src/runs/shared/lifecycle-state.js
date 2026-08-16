@@ -20,7 +20,11 @@ function replaceControlCharacters(value) {
     return [...value]
         .map((character) => {
         const code = character.codePointAt(0) ?? 0;
-        return code <= 0x08 || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f) || code === 0x7f
+        return code <= 0x08 ||
+            code === 0x0b ||
+            code === 0x0c ||
+            (code >= 0x0e && code <= 0x1f) ||
+            code === 0x7f
             ? " "
             : character;
     })
@@ -63,7 +67,8 @@ function normalizeSupervisorRequestMetadata(request) {
     if (!tool)
         return undefined;
     const action = tool === "intercom" && raw.action === "ask" ? "ask" : undefined;
-    const reason = tool === "contact_supervisor" && (raw.reason === "need_decision" || raw.reason === "interview_request")
+    const reason = tool === "contact_supervisor" &&
+        (raw.reason === "need_decision" || raw.reason === "interview_request")
         ? raw.reason
         : undefined;
     const requestId = boundLifecycleToken(raw.requestId);
@@ -109,7 +114,10 @@ function normalizeCancellationMetadata(cancel) {
     };
 }
 function parseContinuationPhase(value) {
-    return value === "claimed" || value === "reserved" || value === "launched" || value === "continued"
+    return value === "claimed" ||
+        value === "reserved" ||
+        value === "launched" ||
+        value === "continued"
         ? value
         : undefined;
 }
@@ -156,7 +164,9 @@ function normalizeContinuationMap(value) {
         .map(([key, continuation]) => {
         const normalizedKey = normalizeContinuationIndexKey(key);
         const normalizedContinuation = normalizeContinuationMetadata(continuation);
-        return normalizedKey && normalizedContinuation ? [normalizedKey, normalizedContinuation] : undefined;
+        return normalizedKey && normalizedContinuation
+            ? [normalizedKey, normalizedContinuation]
+            : undefined;
     })
         .filter((entry) => entry !== undefined);
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
@@ -174,7 +184,7 @@ export function withLifecycleContinuation(status, index, continuation) {
     const key = normalizeContinuationIndexKey(index);
     if (!key)
         return status.lifecycle ?? { generation: lifecycleGeneration(status) };
-    const nextIndexed = { ...(status.lifecycle?.continuationsByIndex ?? {}) };
+    const nextIndexed = { ...status.lifecycle?.continuationsByIndex };
     if (continuation)
         nextIndexed[key] = continuation;
     else
@@ -191,11 +201,18 @@ function hasActionablePausedChildren(status) {
 }
 export function finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId) {
     const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === index
-        ? { ...step, status: "continued", endedAt: continuedAt, exitCode: 0, pause: undefined }
+        ? {
+            ...step,
+            status: "continued",
+            endedAt: continuedAt,
+            exitCode: 0,
+            pause: undefined,
+        }
         : step);
     const remainingActionable = hasActionablePausedChildren(nextSteps);
     const nextRootPause = remainingActionable
-        ? nextSteps?.find((step) => step.pause?.kind === "awaiting_supervisor" && (step.status === "paused" || step.status === "pausing"))?.pause
+        ? nextSteps?.find((step) => step.pause?.kind === "awaiting_supervisor" &&
+            (step.status === "paused" || step.status === "pausing"))?.pause
         : (status.steps?.length ?? 0) <= 1
             ? status.pause
             : undefined;
@@ -236,7 +253,9 @@ export function checkPidLiveness(pid, kill = process.kill) {
 }
 export function lifecycleGeneration(status) {
     const generation = status?.lifecycle?.generation;
-    return typeof generation === "number" && Number.isInteger(generation) && generation >= 0 ? generation : 0;
+    return typeof generation === "number" && Number.isInteger(generation) && generation >= 0
+        ? generation
+        : 0;
 }
 export function normalizeAsyncLifecycleStatus(status) {
     const pause = normalizePauseMetadata(status.pause);
@@ -283,7 +302,12 @@ export function writeNormalizedLifecycleStatus(asyncDir, status) {
     invalidateStatusCache(filePath);
     return normalized;
 }
-export const TERMINAL_RUN_STATES = new Set(["continued", "cancelled", "failed", "complete"]);
+export const TERMINAL_RUN_STATES = new Set([
+    "continued",
+    "cancelled",
+    "failed",
+    "complete",
+]);
 const TERMINAL_STEP_STATUSES = new Set([
     "continued",
     "cancelled",
@@ -377,7 +401,9 @@ function transitionLockInfoPath(asyncDir) {
 function transitionLockOwnerSummary(owner) {
     const details = [
         owner.pid !== undefined ? `pid ${owner.pid}` : undefined,
-        owner.acquiredAt !== undefined ? `acquired ${new Date(owner.acquiredAt).toISOString()}` : undefined,
+        owner.acquiredAt !== undefined
+            ? `acquired ${new Date(owner.acquiredAt).toISOString()}`
+            : undefined,
     ].filter(Boolean);
     return details.length > 0 ? details.join(", ") : undefined;
 }
@@ -548,7 +574,8 @@ function continuationTargetExists(sourceAsyncDir, continuationRunId, options) {
     const asyncTargetDir = path.join(asyncDirRoot, continuationRunId);
     if (fs.existsSync(asyncTargetDir))
         return true;
-    if (options.resultsDir && fs.existsSync(path.join(options.resultsDir, `${continuationRunId}.json`)))
+    if (options.resultsDir &&
+        fs.existsSync(path.join(options.resultsDir, `${continuationRunId}.json`)))
         return true;
     return false;
 }
@@ -558,14 +585,21 @@ export function markLifecycleContinuationSpawned(asyncDir, index, claimToken, co
         return { status: null, transitioned: false, final: false, lost: true };
     const continuation = lifecycleContinuationForIndex(current, index);
     if (current.state === "continued" || current.steps?.[index]?.status === "continued") {
-        const sameTarget = continuation?.claimToken === claimToken && continuation.continuationRunId === continuationRunId;
+        const sameTarget = continuation?.claimToken === claimToken &&
+            continuation.continuationRunId === continuationRunId;
         return { status: current, transitioned: false, final: sameTarget, lost: !sameTarget };
     }
-    if (continuation?.claimToken !== claimToken || continuation.continuationRunId !== continuationRunId) {
+    if (continuation?.claimToken !== claimToken ||
+        continuation.continuationRunId !== continuationRunId) {
         return { status: current, transitioned: false, final: false, lost: true };
     }
     if (continuation.phase === "launched" || continuation.phase === "continued") {
-        return { status: current, transitioned: false, final: continuation.phase === "continued", lost: false };
+        return {
+            status: current,
+            transitioned: false,
+            final: continuation.phase === "continued",
+            lost: false,
+        };
     }
     const launchedAt = options.now?.() ?? Date.now();
     try {
@@ -599,10 +633,12 @@ export function finalizeLifecycleContinuationLaunch(asyncDir, index, claimToken,
         return { status: null, finalized: false, lost: true };
     const continuation = lifecycleContinuationForIndex(current, index);
     if (current.state === "continued" || current.steps?.[index]?.status === "continued") {
-        const sameTarget = continuation?.claimToken === claimToken && continuation.continuationRunId === continuationRunId;
+        const sameTarget = continuation?.claimToken === claimToken &&
+            continuation.continuationRunId === continuationRunId;
         return { status: current, finalized: sameTarget, lost: !sameTarget };
     }
-    if (continuation?.claimToken !== claimToken || continuation.continuationRunId !== continuationRunId) {
+    if (continuation?.claimToken !== claimToken ||
+        continuation.continuationRunId !== continuationRunId) {
         return { status: current, finalized: false, lost: true };
     }
     const continuedAt = options.now?.() ?? Date.now();
@@ -639,7 +675,8 @@ export function recoverStaleLifecycleContinuationStatus(current, asyncDir, index
     const liveness = checkPidLiveness(continuation.ownerPid, options.kill);
     if (liveness !== "dead")
         return { status: current, recovered: false, liveness };
-    if (continuation.continuationRunId && continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
+    if (continuation.continuationRunId &&
+        continuationTargetExists(asyncDir, continuation.continuationRunId, options)) {
         return { status: current, recovered: false, liveness: "blocked" };
     }
     return {
@@ -673,11 +710,13 @@ export function recoverStaleLifecycleContinuationClaim(asyncDir, index, options 
         const rechecked = recoverStaleLifecycleContinuationStatus(normalizedLockedStatus, asyncDir, index, options);
         if (!rechecked.recovered)
             return rechecked;
-        if (lifecycleContinuationForIndex(normalizedLockedStatus, index)?.claimToken !== inspectedClaimToken) {
+        if (lifecycleContinuationForIndex(normalizedLockedStatus, index)?.claimToken !==
+            inspectedClaimToken) {
             return { status: normalizedLockedStatus, recovered: false, liveness: rechecked.liveness };
         }
         const recoveryLastUpdate = rechecked.status.lastUpdate ?? Date.now();
-        const lastUpdate = typeof normalizedLockedStatus.lastUpdate === "number" && Number.isFinite(normalizedLockedStatus.lastUpdate)
+        const lastUpdate = typeof normalizedLockedStatus.lastUpdate === "number" &&
+            Number.isFinite(normalizedLockedStatus.lastUpdate)
             ? Math.max(normalizedLockedStatus.lastUpdate, recoveryLastUpdate)
             : recoveryLastUpdate;
         const nextStatus = writeNormalizedLifecycleStatus(asyncDir, {

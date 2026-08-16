@@ -36,7 +36,9 @@ export function resolveStepBehavior(agentConfig, stepOverrides) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
     const output = stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
     const reads = stepOverrides.reads !== undefined ? stepOverrides.reads : (agentConfig.defaultReads ?? false);
-    const progress = stepOverrides.progress !== undefined ? stepOverrides.progress : (agentConfig.defaultProgress ?? false);
+    const progress = stepOverrides.progress !== undefined
+        ? stepOverrides.progress
+        : (agentConfig.defaultProgress ?? false);
     let skills;
     if (stepOverrides.skills === false) {
         skills = false;
@@ -51,7 +53,16 @@ export function resolveStepBehavior(agentConfig, stepOverrides) {
     const model = stepOverrides.model ?? agentConfig.model;
     const fallbackModels = stepOverrides.fallbackModels;
     const modelFallbackNotice = stepOverrides.modelFallbackNotice;
-    return { output, outputMode, reads, progress, skills, model, fallbackModels, modelFallbackNotice };
+    return {
+        output,
+        outputMode,
+        reads,
+        progress,
+        skills,
+        model,
+        fallbackModels,
+        modelFallbackNotice,
+    };
 }
 export function resolveTaskTextForFileUpdatePolicy(task, originalTask) {
     if (!task)
@@ -69,7 +80,9 @@ export function taskDisallowsFileUpdates(task) {
 }
 export function suppressProgressForReadOnlyTask(behavior, task, originalTask) {
     const policyTask = resolveTaskTextForFileUpdatePolicy(task, originalTask);
-    return behavior.progress && taskDisallowsFileUpdates(policyTask) ? { ...behavior, progress: false } : behavior;
+    return behavior.progress && taskDisallowsFileUpdates(policyTask)
+        ? { ...behavior, progress: false }
+        : behavior;
 }
 function resolveChainPath(filePath, chainDir) {
     return path.isAbsolute(filePath) ? filePath : path.join(chainDir, filePath);
