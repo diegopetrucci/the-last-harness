@@ -141,7 +141,7 @@ node scripts/merge-settings.mjs config/settings.defaults.json \
 node scripts/tlh-defaults.mjs \
   --settings "$tmp/settings.json" \
   --defaults config/default-extensions.json \
-  disable notify
+  disable context-inspector
 ```
 
 ## Test the Gnosis manager
