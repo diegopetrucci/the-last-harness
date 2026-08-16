@@ -33,7 +33,9 @@ export function registerSlashSubagentBridge(options) {
             const response = {
                 requestId,
                 result: {
-                    content: [{ type: "text", text: "No active extension context for slash subagent execution." }],
+                    content: [
+                        { type: "text", text: "No active extension context for slash subagent execution." },
+                    ],
                     details: { mode: "single", results: [] },
                 },
                 isError: true,

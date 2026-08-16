@@ -14,7 +14,9 @@ export class AsyncStatusCorruptionError extends Error {
         this.statusPath = input.statusPath ?? path.join(input.asyncDir, "status.json");
         this.fingerprint =
             input.fingerprint ??
-                (typeof input.content === "string" ? fingerprintAsyncStatusContent(input.content) : undefined);
+                (typeof input.content === "string"
+                    ? fingerprintAsyncStatusContent(input.content)
+                    : undefined);
     }
 }
 export function fingerprintAsyncStatusContent(content) {

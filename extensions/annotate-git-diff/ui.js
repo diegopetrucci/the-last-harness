@@ -66,7 +66,9 @@ function resolveReviewUiAssets() {
         const monacoLoaderJs = readFileSync(join(monacoBasePath, "loader.js"), "utf8");
         const monacoEntryJs = readFileSync(monacoEntryPath, "utf8");
         const monacoEditorCssPath = join(monacoBasePath, "editor", "editor.main.css");
-        const monacoEditorCss = existsSync(monacoEditorCssPath) ? readFileSync(monacoEditorCssPath, "utf8") : "";
+        const monacoEditorCss = existsSync(monacoEditorCssPath)
+            ? readFileSync(monacoEditorCssPath, "utf8")
+            : "";
         const monacoWorkerJs = resolveMonacoEditorWorkerJs(monacoBasePath);
         const monacoRuntimeJs = resolveMonacoRuntimeJs(monacoBasePath, monacoEntryPath);
         return {

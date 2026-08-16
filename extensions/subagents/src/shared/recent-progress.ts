@@ -5,8 +5,8 @@
 export const RECENT_PROGRESS_ITEM_LIMIT = 50;
 
 export function appendRecentProgressItem<T>(items: T[], item: T): void {
-	items.push(item);
-	if (items.length > RECENT_PROGRESS_ITEM_LIMIT) {
-		items.splice(0, items.length - RECENT_PROGRESS_ITEM_LIMIT);
-	}
+  items.push(item);
+  if (items.length > RECENT_PROGRESS_ITEM_LIMIT) {
+    items.splice(0, items.length - RECENT_PROGRESS_ITEM_LIMIT);
+  }
 }

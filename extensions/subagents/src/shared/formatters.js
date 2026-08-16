@@ -1,18 +1,26 @@
 import { splitKnownThinkingSuffix, THINKING_LEVELS } from "./model-info.js";
 export function formatTokens(n) {
-    return n < 1000 ? String(n) : n < 10000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
+    return n < 1000
+        ? String(n)
+        : n < 10000
+            ? `${(n / 1000).toFixed(1)}k`
+            : `${Math.round(n / 1000)}k`;
 }
 export function formatModelThinking(model, thinking) {
     const parsed = model ? splitKnownThinkingSuffix(model) : undefined;
     let displayModel = parsed?.baseModel ?? model;
     const explicitThinking = THINKING_LEVELS.find((level) => level === thinking?.trim());
-    const displayThinking = parsed?.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : explicitThinking;
+    const displayThinking = parsed?.thinkingSuffix
+        ? parsed.thinkingSuffix.slice(1)
+        : explicitThinking;
     if (displayModel) {
         const slashIdx = displayModel.lastIndexOf("/");
         if (slashIdx !== -1)
             displayModel = displayModel.slice(slashIdx + 1);
     }
-    return [displayModel, displayThinking ? `thinking ${displayThinking}` : undefined].filter(Boolean).join(" · ");
+    return [displayModel, displayThinking ? `thinking ${displayThinking}` : undefined]
+        .filter(Boolean)
+        .join(" · ");
 }
 export function formatUsage(u, model) {
     const parts = [];
@@ -48,7 +56,11 @@ export function formatToolCall(name, args, _expanded = false) {
         case "read":
         case "write":
         case "edit": {
-            const target = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+            const target = typeof args.path === "string"
+                ? args.path
+                : typeof args.file_path === "string"
+                    ? args.file_path
+                    : "";
             return `${name} ${shortenPath(target)}`;
         }
         default: {

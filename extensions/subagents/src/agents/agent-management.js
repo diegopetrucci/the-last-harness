@@ -1,6 +1,10 @@
-import { discoverAgentsAll, frontmatterNameForConfig } from "./agents.js";
+import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
 function result(text, isError = false) {
-    return { content: [{ type: "text", text }], isError, details: { mode: "management", results: [] } };
+    return {
+        content: [{ type: "text", text }],
+        isError,
+        details: { mode: "management", results: [] },
+    };
 }
 const SAVED_CHAIN_UNSUPPORTED = "Saved chains are deliberately unsupported in The Last Harness; existing .chain.md/.chain.json files are left untouched.";
 function unsupportedSavedChainResult(detail) {

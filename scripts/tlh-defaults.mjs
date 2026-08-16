@@ -137,7 +137,8 @@ function findPackageSource(settings, source) {
     const index = findPackageIndex(settings, source);
     if (index === -1)
         return undefined;
-    return packageSourceOf(settingsPackages(settings)[index]) || (typeof source === "string" ? source : undefined);
+    return (packageSourceOf(settingsPackages(settings)[index]) ||
+        (typeof source === "string" ? source : undefined));
 }
 function removePackage(settings, source) {
     let index;
@@ -195,7 +196,10 @@ function enablePackage(settings, extension) {
     if (!isPlainObject(current)) {
         return;
     }
-    const next = { ...cloneJsonObject(current), source: packageSourceOf(current) || extension.source };
+    const next = {
+        ...cloneJsonObject(current),
+        source: packageSourceOf(current) || extension.source,
+    };
     delete next.extensions;
     if (Object.keys(next).length === 1 && typeof next.source === "string") {
         settingsPackages(settings)[index] = next.source;
@@ -223,7 +227,10 @@ function defaultStatus(settings, extension, defaultExtensions) {
         const action = extension.migrateReplacements === true
             ? "installer will switch it to the bundled TLH source"
             : "installer --force will switch it";
-        return { enabled: true, reason: `enabled with replaced package (${replacementSource}); ${action}` };
+        return {
+            enabled: true,
+            reason: `enabled with replaced package (${replacementSource}); ${action}`,
+        };
     }
     return { enabled: true, reason: "enabled by default; package will be added by installer" };
 }
@@ -267,7 +274,9 @@ function writeSettings(settingsPath, value, previousRaw) {
     return backupPath;
 }
 function loadSettings(settingsPath) {
-    const previousRaw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "") : "";
+    const previousRaw = existsSync(settingsPath)
+        ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "")
+        : "";
     const settings = readJsonFile(settingsPath, { missingValue: {} });
     return { settings, previousRaw };
 }
@@ -294,7 +303,8 @@ function commandSources(settings, defaultExtensions, { criticalOnly = false } = 
                 console.log(extension.source);
             continue;
         }
-        if (!isDefaultDisabled(settings, extension, defaultExtensions) && !isDefaultSourceDeferred(settings, extension)) {
+        if (!isDefaultDisabled(settings, extension, defaultExtensions) &&
+            !isDefaultSourceDeferred(settings, extension)) {
             console.log(extension.source);
         }
     }
@@ -366,7 +376,8 @@ function main() {
         return;
     }
     const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath()) || defaultTlhSettingsPath());
-    const defaultExtensionsPath = resolve(expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()) || defaultDefaultExtensionsPath());
+    const defaultExtensionsPath = resolve(expandHomePath(args.defaultExtensionsPath || defaultDefaultExtensionsPath()) ||
+        defaultDefaultExtensionsPath());
     const mutatesSettings = args.command === "disable" || args.command === "enable";
     if (mutatesSettings)
         assertNotNormalPiSettings(settingsPath);
@@ -378,7 +389,9 @@ function main() {
         return;
     }
     if (args.command === "sources" || args.command === "critical-sources") {
-        commandSources(settings, defaultExtensions, { criticalOnly: args.command === "critical-sources" });
+        commandSources(settings, defaultExtensions, {
+            criticalOnly: args.command === "critical-sources",
+        });
         return;
     }
     ensureMutableSettings(settings);

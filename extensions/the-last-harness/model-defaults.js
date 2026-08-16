@@ -351,7 +351,8 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         ? selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel)
         : undefined;
     const fallbackModels = fallbackModel &&
-        (!selectedModel || formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
+        (!selectedModel ||
+            formatProviderModelReference(fallbackModel) !== formatProviderModelReference(selectedModel))
         ? [fallbackModel]
         : [];
     const resolveThinkingResult = (m, generatedFallback = false) => override === undefined
@@ -432,14 +433,19 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider);
         if (oppositeProviderModel) {
             const fallbackModel = selectOppositeProviderFallbackModel(agent, availableModels, currentProvider, currentModel);
-            const fallbackModelBase = fallbackModel ? formatProviderModelReference(fallbackModel) : undefined;
+            const fallbackModelBase = fallbackModel
+                ? formatProviderModelReference(fallbackModel)
+                : undefined;
             if (fallbackModelBase && fallbackModelBase !== selectedModel) {
                 const fallbackThinking = resolveThinkingForProvider(agent, fallbackModel.provider);
-                const fallbackModelId = fallbackThinking ? `${fallbackModelBase}:${fallbackThinking}` : fallbackModelBase;
+                const fallbackModelId = fallbackThinking
+                    ? `${fallbackModelBase}:${fallbackThinking}`
+                    : fallbackModelBase;
                 if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
                     target.fallbackModels = [fallbackModelId];
                 }
-                if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {
+                if (!Object.hasOwn(target, "modelFallbackNotice") ||
+                    target.modelFallbackNotice === undefined) {
                     target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
                 }
             }

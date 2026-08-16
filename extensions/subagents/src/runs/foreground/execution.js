@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
-import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.js";
-import { createChildTranscriptWriter } from "../../shared/child-transcript.js";
+import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeMetadata, } from "../../shared/artifacts.js";
+import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, extractToolArgsPreview, extractTextFromContent, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
@@ -13,7 +13,7 @@ import { createJsonlWriter } from "../../shared/jsonl-writer.js";
 import { appendRecentProgressItem } from "../../shared/recent-progress.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
 import { scheduleDeadline } from "../shared/deadline-timer.js";
-import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote } from "../shared/pi-args.js";
+import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote, } from "../shared/pi-args.js";
 import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
@@ -119,7 +119,12 @@ function formatTimeoutDiagnostics(result, options, artifactPaths) {
         details.push(`Current tool: ${progress.currentTool}`);
     if (progress?.currentPath)
         details.push(`Current path: ${progress.currentPath}`);
-    const sections = [timeoutMessage, "", "Recovery diagnostics:", ...details.map((detail) => `- ${detail}`)];
+    const sections = [
+        timeoutMessage,
+        "",
+        "Recovery diagnostics:",
+        ...details.map((detail) => `- ${detail}`),
+    ];
     if (recentTools.length > 0) {
         sections.push("", "Recent tools:");
         for (const tool of recentTools) {
@@ -194,7 +199,9 @@ function snapshotResult(result, progress) {
                 usage: attempt.usage ? { ...attempt.usage } : undefined,
             }))
             : undefined,
-        controlEvents: result.controlEvents ? result.controlEvents.map((event) => ({ ...event })) : undefined,
+        controlEvents: result.controlEvents
+            ? result.controlEvents.map((event) => ({ ...event }))
+            : undefined,
         progress,
         progressSummary: result.progressSummary ? { ...result.progressSummary } : undefined,
         artifactPaths: result.artifactPaths ? { ...result.artifactPaths } : undefined,
@@ -210,7 +217,9 @@ function findSupervisorRequestMetadata(input) {
             .map((name) => path.join(requestsDir, name));
         for (const file of files) {
             const parsed = JSON.parse(readFileSync(file, "utf-8"));
-            if (parsed.runId !== input.runId || parsed.agent !== input.agent || parsed.childIndex !== input.index)
+            if (parsed.runId !== input.runId ||
+                parsed.agent !== input.agent ||
+                parsed.childIndex !== input.index)
                 continue;
             if (input.reason && parsed.reason !== input.reason)
                 continue;
@@ -219,7 +228,9 @@ function findSupervisorRequestMetadata(input) {
                 continue;
             return {
                 ...(typeof parsed.id === "string" && parsed.id ? { requestId: parsed.id } : {}),
-                ...(boundSupervisorSummary(parsed.message) ? { summary: boundSupervisorSummary(parsed.message) } : {}),
+                ...(boundSupervisorSummary(parsed.message)
+                    ? { summary: boundSupervisorSummary(parsed.message) }
+                    : {}),
             };
         }
     }
@@ -565,7 +576,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (typeof requestId !== "string" || requestId.length === 0)
                 return;
             options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true });
-            if (options.pauseBlockingSupervisor && pendingSupervisorPause?.kind === "awaiting_supervisor") {
+            if (options.pauseBlockingSupervisor &&
+                pendingSupervisorPause?.kind === "awaiting_supervisor") {
                 pauseForSupervisor(pendingSupervisorPause);
                 return;
             }
@@ -630,7 +642,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             return previous !== "needs_attention";
         };
         const emitActiveLongRunning = (now, reason) => {
-            if (!controlConfig.enabled || activeLongRunningNotified || progress.activityState === "needs_attention")
+            if (!controlConfig.enabled ||
+                activeLongRunningNotified ||
+                progress.activityState === "needs_attention")
                 return false;
             activeLongRunningNotified = true;
             const previous = progress.activityState;
@@ -781,13 +795,16 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     : {};
                 let shouldDetachForBlockingIntercom = false;
                 let supervisorPause;
-                if (options.allowIntercomDetach && (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
+                if (options.allowIntercomDetach &&
+                    (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
                     intercomStarted = true;
                     shouldDetachForBlockingIntercom =
                         (evt.toolName === "intercom" && toolArgs.action === "ask") ||
                             (evt.toolName === "contact_supervisor" &&
                                 (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
-                    if (options.pauseBlockingSupervisor && shouldDetachForBlockingIntercom && typeof evt.toolName === "string") {
+                    if (options.pauseBlockingSupervisor &&
+                        shouldDetachForBlockingIntercom &&
+                        typeof evt.toolName === "string") {
                         supervisorPause = resolveSupervisorPauseMetadata({
                             runId: options.runId,
                             agent: agent.name,
@@ -809,7 +826,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 progress.currentPath = resolveCurrentPath(evt.toolName, toolArgs);
                 const mutates = isMutatingTool(evt.toolName, toolArgs);
                 observedMutationAttempt = observedMutationAttempt || mutates;
-                pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
+                pendingToolResult = {
+                    tool: evt.toolName ?? "tool",
+                    path: progress.currentPath,
+                    mutates,
+                    startedAt: now,
+                };
                 fireUpdate();
                 if (options.pauseBlockingSupervisor &&
                     supervisorPause?.kind === "awaiting_supervisor" &&
@@ -893,7 +915,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (evt.type === "tool_result_end" && evt.message) {
                 (result.messages ??= []).push(evt.message);
                 const resultText = extractTextFromContent(evt.message.content);
-                if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
+                if (options.toolBudget &&
+                    pendingToolResult &&
+                    resultText.includes("Tool budget hard limit reached")) {
                     result.toolBudgetBlocked = true;
                     result.toolBudget = toolBudgetState(options.toolBudget, progress.toolCount, pendingToolResult.tool);
                 }
@@ -917,7 +941,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                             reason: "tool_failures",
                             currentTool: toolSnapshot.tool,
                             currentPath: toolSnapshot.path,
-                            currentToolDurationMs: toolSnapshot.startedAt ? Math.max(0, now - toolSnapshot.startedAt) : undefined,
+                            currentToolDurationMs: toolSnapshot.startedAt
+                                ? Math.max(0, now - toolSnapshot.startedAt)
+                                : undefined,
                             recentFailureSummary: summarizeRecentMutatingFailures(mutatingFailures),
                         });
                     }
@@ -1090,7 +1116,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     };
                     const finalOutput = getFinalOutput(result.messages ?? []);
                     result.finalOutput =
-                        finalOutput.trim() || result.error || result.finalOutput || "Detached child exited without final output.";
+                        finalOutput.trim() ||
+                            result.error ||
+                            result.finalOutput ||
+                            "Detached child exited without final output.";
                     if (result.artifactPaths &&
                         options.artifactConfig?.enabled !== false &&
                         options.artifactConfig?.includeOutput !== false) {
@@ -1127,7 +1156,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             const kill = () => {
                 if (processClosed || detached)
                     return;
-                if (options.pauseBlockingSupervisor && pendingSupervisorPause?.kind === "awaiting_supervisor") {
+                if (options.pauseBlockingSupervisor &&
+                    pendingSupervisorPause?.kind === "awaiting_supervisor") {
                     pauseForSupervisor(pendingSupervisorPause);
                     return;
                 }
@@ -1261,8 +1291,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     });
     if (result.exitCode === 0 && !result.error) {
         const finalText = getFinalOutput(result.messages ?? []);
-        const missingStructuredOutput = options.structuredOutput ? !existsSync(options.structuredOutput.outputPath) : false;
-        if (!contextExhaustedSignature && !finalText?.trim() && (!options.structuredOutput || missingStructuredOutput)) {
+        const missingStructuredOutput = options.structuredOutput
+            ? !existsSync(options.structuredOutput.outputPath)
+            : false;
+        if (!contextExhaustedSignature &&
+            !finalText?.trim() &&
+            (!options.structuredOutput || missingStructuredOutput)) {
             result.exitCode = 1;
             result.error = "Subagent produced no output (possible model cold-start or empty response).";
         }
@@ -1431,7 +1465,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     const skillNames = options.skills ?? agent.skills ?? [];
     const skillCwd = options.cwd ?? runtimeCwd;
     const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, skillCwd, runtimeCwd);
-    if (skillNames.some((skill) => skill.trim() === "pi-subagents") && missingSkills.includes("pi-subagents")) {
+    if (skillNames.some((skill) => skill.trim() === "pi-subagents") &&
+        missingSkills.includes("pi-subagents")) {
         return {
             agent: agentName,
             task,
@@ -1644,7 +1679,10 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
                     signal: options.interruptSignal,
                     abortMessage: "Interrupted. Waiting for explicit next action.",
                 });
-    if (!result.timedOut && !result.turnBudgetExceeded && !result.interrupted && options.interruptSignal?.aborted) {
+    if (!result.timedOut &&
+        !result.turnBudgetExceeded &&
+        !result.interrupted &&
+        options.interruptSignal?.aborted) {
         result.interrupted = true;
         result.exitCode = 0;
         result.error = undefined;

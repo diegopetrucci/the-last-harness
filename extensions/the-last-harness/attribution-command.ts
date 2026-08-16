@@ -4,92 +4,96 @@ import { formatHomePath, isRecord } from "./common.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 import { resolveTlhCommitAttribution } from "./attribution.js";
 import type {
-	TlhAttributionConfig,
-	TlhAttributionWriteResult,
-	TlhCommitAttributionState,
-	TlhSettings,
+  TlhAttributionConfig,
+  TlhAttributionWriteResult,
+  TlhCommitAttributionState,
+  TlhSettings,
 } from "./types.js";
 
 const TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP = "Usage: /toggle-tlh-git-attribution";
 
 function validateTlhAttributionSettings(settings: unknown): asserts settings is TlhSettings {
-	if (!isRecord(settings)) {
-		throw new Error("settings.json must contain a JSON object");
-	}
-	const tlh = settings.tlh;
-	if (tlh !== undefined && !isRecord(tlh)) {
-		throw new Error("settings field 'tlh' must be an object if present");
-	}
-	const attribution = isRecord(tlh) ? tlh.attribution : undefined;
-	if (attribution !== undefined && !isRecord(attribution)) {
-		throw new Error("settings field 'tlh.attribution' must be an object if present");
-	}
-	const commit = isRecord(attribution) ? attribution.commit : undefined;
-	if (commit !== undefined && typeof commit !== "boolean") {
-		throw new Error("settings field 'tlh.attribution.commit' must be a boolean if present");
-	}
+  if (!isRecord(settings)) {
+    throw new Error("settings.json must contain a JSON object");
+  }
+  const tlh = settings.tlh;
+  if (tlh !== undefined && !isRecord(tlh)) {
+    throw new Error("settings field 'tlh' must be an object if present");
+  }
+  const attribution = isRecord(tlh) ? tlh.attribution : undefined;
+  if (attribution !== undefined && !isRecord(attribution)) {
+    throw new Error("settings field 'tlh.attribution' must be an object if present");
+  }
+  const commit = isRecord(attribution) ? attribution.commit : undefined;
+  if (commit !== undefined && typeof commit !== "boolean") {
+    throw new Error("settings field 'tlh.attribution.commit' must be a boolean if present");
+  }
 }
 
 function parseTlhSettingsContent(content: string | undefined): TlhSettings {
-	if (!content) {
-		return {};
-	}
-	const parsed = JSON.parse(content) as unknown;
-	validateTlhAttributionSettings(parsed);
-	return parsed;
+  if (!content) {
+    return {};
+  }
+  const parsed = JSON.parse(content) as unknown;
+  validateTlhAttributionSettings(parsed);
+  return parsed;
 }
 
-function ensureMutableAttributionSettings(settings: TlhSettings): asserts settings is TlhSettings & {
-	tlh: { attribution: TlhAttributionConfig };
+function ensureMutableAttributionSettings(
+  settings: TlhSettings,
+): asserts settings is TlhSettings & {
+  tlh: { attribution: TlhAttributionConfig };
 } {
-	validateTlhAttributionSettings(settings);
-	settings.tlh ??= {};
-	settings.tlh.attribution ??= {};
+  validateTlhAttributionSettings(settings);
+  settings.tlh ??= {};
+  settings.tlh.attribution ??= {};
 }
 
 function toggleTlhCommitAttribution(cwd: string): TlhAttributionWriteResult {
-	return withLockedTlhSettingsWrite(
-		cwd,
-		"Refusing to write attribution settings outside the isolated TLH profile.",
-		(current) => {
-			const settings = parseTlhSettingsContent(current);
-			const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
-			const nextEnabled = !currentState.enabled;
+  return withLockedTlhSettingsWrite(
+    cwd,
+    "Refusing to write attribution settings outside the isolated TLH profile.",
+    (current) => {
+      const settings = parseTlhSettingsContent(current);
+      const currentState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+      const nextEnabled = !currentState.enabled;
 
-			ensureMutableAttributionSettings(settings);
-			settings.tlh.attribution = { commit: nextEnabled };
-			return {
-				changed: true,
-				state: resolveTlhCommitAttribution(settings.tlh.attribution),
-				nextContent: `${JSON.stringify(settings, null, 2)}\n`,
-			};
-		},
-	);
+      ensureMutableAttributionSettings(settings);
+      settings.tlh.attribution = { commit: nextEnabled };
+      return {
+        changed: true,
+        state: resolveTlhCommitAttribution(settings.tlh.attribution),
+        nextContent: `${JSON.stringify(settings, null, 2)}\n`,
+      };
+    },
+  );
 }
 
 function formatCommitAttributionStatus(state: TlhCommitAttributionState): string {
-	return state.enabled ? "TLH commit attribution is enabled." : "TLH commit attribution is disabled.";
+  return state.enabled
+    ? "TLH commit attribution is enabled."
+    : "TLH commit attribution is disabled.";
 }
 
 export async function handleToggleTlhGitAttributionCommand(
-	_pi: ExtensionAPI,
-	args: string,
-	ctx: ExtensionCommandContext,
+  _pi: ExtensionAPI,
+  args: string,
+  ctx: ExtensionCommandContext,
 ): Promise<void> {
-	if (args.trim()) {
-		ctx.ui.notify(TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP, "error");
-		return;
-	}
+  if (args.trim()) {
+    ctx.ui.notify(TOGGLE_TLH_GIT_ATTRIBUTION_COMMAND_HELP, "error");
+    return;
+  }
 
-	try {
-		const result = toggleTlhCommitAttribution(ctx.cwd);
-		const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-		ctx.ui.notify(
-			`Updated TLH commit attribution at ${formatHomePath(result.settingsPath)}. ${formatCommitAttributionStatus(result.state)}${backupLabel}`,
-			"info",
-		);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		ctx.ui.notify(`Could not update TLH commit attribution: ${message}`, "error");
-	}
+  try {
+    const result = toggleTlhCommitAttribution(ctx.cwd);
+    const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+    ctx.ui.notify(
+      `Updated TLH commit attribution at ${formatHomePath(result.settingsPath)}. ${formatCommitAttributionStatus(result.state)}${backupLabel}`,
+      "info",
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`Could not update TLH commit attribution: ${message}`, "error");
+  }
 }

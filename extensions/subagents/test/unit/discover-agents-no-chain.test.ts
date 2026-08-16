@@ -9,55 +9,55 @@ let tempDir = "";
 let oldAgentDir: string | undefined;
 
 function writeFile(filePath: string, content: string): void {
-	fs.mkdirSync(path.dirname(filePath), { recursive: true });
-	fs.writeFileSync(filePath, content, "utf-8");
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf-8");
 }
 
 describe("discoverAgentsAll saved-chain exclusion", () => {
-	beforeEach(() => {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-no-chain-discovery-"));
-		oldAgentDir = process.env.PI_CODING_AGENT_DIR;
-		process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "agent-home");
-	});
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-no-chain-discovery-"));
+    oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "agent-home");
+  });
 
-	afterEach(() => {
-		if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
-		fs.rmSync(tempDir, { recursive: true, force: true });
-	});
+  afterEach(() => {
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
 
-	it("keeps saved chain paths stable but does not discover user or project chains", () => {
-		writeFile(
-			path.join(tempDir, "agent-home", "agents", "user-agent.md"),
-			`---\nname: user-agent\ndescription: User agent\n---\n\nUse user agent.\n`,
-		);
-		writeFile(
-			path.join(tempDir, "agent-home", "chains", "user-flow.chain.md"),
-			`---\nname: user-flow\ndescription: User flow\n---\n\n## user-agent\n\nInspect.\n`,
-		);
-		writeFile(
-			path.join(tempDir, ".pi", "agents", "project-agent.md"),
-			`---\nname: project-agent\ndescription: Project agent\n---\n\nUse project agent.\n`,
-		);
-		writeFile(
-			path.join(tempDir, ".pi", "chains", "project-flow.chain.json"),
-			JSON.stringify(
-				{
-					name: "project-flow",
-					description: "Project flow",
-					chain: [{ agent: "project-agent", task: "Inspect" }],
-				},
-				null,
-				2,
-			),
-		);
-		const discovered = discoverAgentsAll(tempDir);
+  it("keeps saved chain paths stable but does not discover user or project chains", () => {
+    writeFile(
+      path.join(tempDir, "agent-home", "agents", "user-agent.md"),
+      `---\nname: user-agent\ndescription: User agent\n---\n\nUse user agent.\n`,
+    );
+    writeFile(
+      path.join(tempDir, "agent-home", "chains", "user-flow.chain.md"),
+      `---\nname: user-flow\ndescription: User flow\n---\n\n## user-agent\n\nInspect.\n`,
+    );
+    writeFile(
+      path.join(tempDir, ".pi", "agents", "project-agent.md"),
+      `---\nname: project-agent\ndescription: Project agent\n---\n\nUse project agent.\n`,
+    );
+    writeFile(
+      path.join(tempDir, ".pi", "chains", "project-flow.chain.json"),
+      JSON.stringify(
+        {
+          name: "project-flow",
+          description: "Project flow",
+          chain: [{ agent: "project-agent", task: "Inspect" }],
+        },
+        null,
+        2,
+      ),
+    );
+    const discovered = discoverAgentsAll(tempDir);
 
-		assert.ok(discovered.user.some((agent) => agent.name === "user-agent"));
-		assert.ok(discovered.project.some((agent) => agent.name === "project-agent"));
-		assert.deepEqual(discovered.chains, []);
-		assert.deepEqual(discovered.chainDiagnostics, []);
-		assert.equal(discovered.userChainDir, path.join(tempDir, "agent-home", "chains"));
-		assert.equal(discovered.projectChainDir, path.join(tempDir, ".pi", "chains"));
-	});
+    assert.ok(discovered.user.some((agent) => agent.name === "user-agent"));
+    assert.ok(discovered.project.some((agent) => agent.name === "project-agent"));
+    assert.deepEqual(discovered.chains, []);
+    assert.deepEqual(discovered.chainDiagnostics, []);
+    assert.equal(discovered.userChainDir, path.join(tempDir, "agent-home", "chains"));
+    assert.equal(discovered.projectChainDir, path.join(tempDir, ".pi", "chains"));
+  });
 });

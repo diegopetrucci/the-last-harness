@@ -35,7 +35,9 @@ export function buildReviewEnvelope(parsed, ctx) {
     }
     const hasBody = ctx?.body !== undefined;
     const fenceKind = hasBody ? (ctx?.bodyKind ?? "diff") : "(pending)";
-    const bodyText = hasBody ? escapeEnvelopeFenceLines(ctx?.body, fenceKind) : "(no body gathered)";
+    const bodyText = hasBody
+        ? escapeEnvelopeFenceLines(ctx?.body, fenceKind)
+        : "(no body gathered)";
     lines.push(`--- begin ${fenceKind} ---`);
     lines.push(bodyText);
     lines.push(`--- end ${fenceKind} ---`);
@@ -67,7 +69,7 @@ export function escapeEnvelopeFenceLines(body, fenceKind) {
     const endFence = `--- end ${fenceKind} ---`;
     return body
         .split("\n")
-        .map((line) => (line === beginFence || line === endFence ? escapeDelimitedContentLine(line) : line))
+        .map((line) => line === beginFence || line === endFence ? escapeDelimitedContentLine(line) : line)
         .join("\n");
 }
 export function renderDelimitedPath(relPath) {
@@ -145,6 +147,10 @@ export function appendUntrackedSnapshot(diffBody, untrackedParts) {
     if (untrackedParts.length === 0) {
         return diffBody;
     }
-    const untrackedBody = [REVIEW_UNTRACKED_BEGIN_DELIMITER, ...untrackedParts, REVIEW_UNTRACKED_END_DELIMITER].join("\n");
+    const untrackedBody = [
+        REVIEW_UNTRACKED_BEGIN_DELIMITER,
+        ...untrackedParts,
+        REVIEW_UNTRACKED_END_DELIMITER,
+    ].join("\n");
     return diffBody.trim().length > 0 ? `${diffBody}\n\n${untrackedBody}` : untrackedBody;
 }

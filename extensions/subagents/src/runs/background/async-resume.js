@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
-import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim } from "../shared/lifecycle-state.js";
+import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
 import { deliverInterruptRequest } from "./control-channel.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
@@ -60,7 +60,10 @@ function resolvePausedContinuationAcceptance(runId, acceptance) {
 export function interruptLiveAsyncResumeTarget(input) {
     const asyncId = input.target.runId;
     if (!input.target.asyncDir) {
-        return { ok: false, message: `Async run ${asyncId} is live but does not have an async directory to interrupt.` };
+        return {
+            ok: false,
+            message: `Async run ${asyncId} is live but does not have an async directory to interrupt.`,
+        };
     }
     const status = reconcileAsyncRun(input.target.asyncDir, {
         resultsDir: input.resultsDir,
@@ -68,7 +71,10 @@ export function interruptLiveAsyncResumeTarget(input) {
         now: input.now,
     }).status;
     if (!status || status.state !== "running" || typeof status.pid !== "number") {
-        return { ok: false, message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.` };
+        return {
+            ok: false,
+            message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.`,
+        };
     }
     try {
         deliverInterruptRequest({
@@ -170,10 +176,14 @@ function validateResultFile(value, resultPath) {
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].interrupted must be a boolean.`);
             const activeRuntimeMs = child.activeRuntimeMs;
             if (activeRuntimeMs !== undefined &&
-                (typeof activeRuntimeMs !== "number" || !Number.isFinite(activeRuntimeMs) || activeRuntimeMs < 0)) {
+                (typeof activeRuntimeMs !== "number" ||
+                    !Number.isFinite(activeRuntimeMs) ||
+                    activeRuntimeMs < 0)) {
                 throw new Error(`Invalid async result file '${resultPath}': results[${index}].activeRuntimeMs must be a non-negative finite number.`);
             }
-            const acceptance = child.acceptance !== undefined && typeof child.acceptance === "object" && !Array.isArray(child.acceptance)
+            const acceptance = child.acceptance !== undefined &&
+                typeof child.acceptance === "object" &&
+                !Array.isArray(child.acceptance)
                 ? child.acceptance
                 : undefined;
             return {
@@ -286,7 +296,10 @@ export function findAsyncRunPrefixMatches(prefix, asyncDirRoot, resultsDir) {
     const asyncRoot = path.resolve(asyncDirRoot);
     const resultRoot = path.resolve(resultsDir);
     const matchingIds = [
-        ...new Set([...prefixedRunIds(asyncRoot, requestedId), ...prefixedRunIds(resultRoot, requestedId, ".json")]),
+        ...new Set([
+            ...prefixedRunIds(asyncRoot, requestedId),
+            ...prefixedRunIds(resultRoot, requestedId, ".json"),
+        ]),
     ].sort();
     return matchingIds.map((id) => {
         const asyncDir = path.join(asyncRoot, id);
@@ -380,12 +393,14 @@ function validateStatusForResume(status, source) {
             validateModelResolution(step.modelResolution, source, `steps[${index}].modelResolution`);
             if (step.contextUsage !== undefined && !parseContextUsageDiagnostics(step.contextUsage))
                 throw new Error(`Invalid async status '${source}': steps[${index}].contextUsage is invalid.`);
-            if (step.contextPressure !== undefined && !parseContextPressureProjection(step.contextPressure))
+            if (step.contextPressure !== undefined &&
+                !parseContextPressureProjection(step.contextPressure))
                 throw new Error(`Invalid async status '${source}': steps[${index}].contextPressure is invalid.`);
             if (step.contextPressureCrossedThresholds !== undefined &&
                 !parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds))
                 throw new Error(`Invalid async status '${source}': steps[${index}].contextPressureCrossedThresholds is invalid.`);
-            if (step.terminationReason !== undefined && !parseSubagentTerminationReason(step.terminationReason))
+            if (step.terminationReason !== undefined &&
+                !parseSubagentTerminationReason(step.terminationReason))
                 throw new Error(`Invalid async status '${source}': steps[${index}].terminationReason is invalid.`);
         });
     }
@@ -412,7 +427,8 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const reconciliation = location.asyncDir && !options.readOnly
         ? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
         : undefined;
-    let status = reconciliation?.status ?? (options.readOnly && location.asyncDir ? readStatus(location.asyncDir) : null);
+    let status = reconciliation?.status ??
+        (options.readOnly && location.asyncDir ? readStatus(location.asyncDir) : null);
     validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
     const result = location.resultPath ? readResultFile(location.resultPath) : undefined;
     const runId = status?.runId ??
@@ -437,13 +453,21 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
     const modelIdentityForStep = (index, step = statusSteps[index]) => {
         const resultStep = resultSteps[index];
-        return (persistedModelIdentity({ identity: step?.modelIdentity, model: step?.model, thinking: step?.thinking }) ??
+        return (persistedModelIdentity({
+            identity: step?.modelIdentity,
+            model: step?.model,
+            thinking: step?.thinking,
+        }) ??
             persistedModelIdentity({
                 identity: resultStep?.modelIdentity,
                 model: resultStep?.model,
                 thinking: resultStep?.thinking,
             }) ??
-            persistedModelIdentity({ identity: result?.modelIdentity, model: result?.model, thinking: result?.thinking }));
+            persistedModelIdentity({
+                identity: result?.modelIdentity,
+                model: result?.model,
+                thinking: result?.thinking,
+            }));
     };
     const modelResolutionForStep = (index, step = statusSteps[index]) => sanitizeSubagentModelResolution(step?.modelResolution) ??
         sanitizeSubagentModelResolution(resultSteps[index]?.modelResolution) ??
@@ -553,7 +577,8 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         typeof selectedContinuation?.claimToken === "string" &&
         selectedContinuation.claimToken.length > 0) {
         const continuationRunId = selectedContinuation.continuationRunId;
-        if ((selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") && continuationRunId) {
+        if ((selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") &&
+            continuationRunId) {
             throw new Error(`Async run '${runId}' child ${index} already launched continuation '${continuationRunId}' and cannot be resumed again.`);
         }
         throw new Error(`Async run '${runId}' child ${index} was already claimed for continuation and cannot be resumed again.`);
@@ -600,7 +625,8 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
             : status?.pause?.kind
                 ? { pauseKind: status.pause.kind }
                 : {}),
-        ...(typeof selectedContinuation?.claimToken === "string" && selectedContinuation.claimToken.length > 0
+        ...(typeof selectedContinuation?.claimToken === "string" &&
+            selectedContinuation.claimToken.length > 0
             ? { claimed: true }
             : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
@@ -611,7 +637,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
             ? { contextPressure: contextPressureForStep(index, selectedStatusStep) }
             : {}),
         ...(crossedPressureThresholdsForStep(index, selectedStatusStep)
-            ? { contextPressureCrossedThresholds: crossedPressureThresholdsForStep(index, selectedStatusStep) }
+            ? {
+                contextPressureCrossedThresholds: crossedPressureThresholdsForStep(index, selectedStatusStep),
+            }
             : {}),
         ...(terminationReasonForStep(index, selectedStatusStep)
             ? { terminationReason: terminationReasonForStep(index, selectedStatusStep) }

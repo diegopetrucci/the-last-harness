@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.js";
-import { TEMP_ROOT_DIR } from "../../shared/types.js";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, } from "./structured-output.js";
+import { TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
 const TASK_ARG_LIMIT = 8000;
@@ -108,21 +108,21 @@ export function buildPiArgs(input) {
     const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
     if (input.extensions !== undefined) {
         args.push("--no-extensions");
-        for (const extPath of [
-            ...new Set([
-                ...runtimeExtensions,
-                ...toolExtensionPaths,
-                ...input.extensions,
-                ...(input.subagentOnlyExtensions ?? []),
-            ]),
-        ]) {
+        for (const extPath of new Set([
+            ...runtimeExtensions,
+            ...toolExtensionPaths,
+            ...input.extensions,
+            ...(input.subagentOnlyExtensions ?? []),
+        ])) {
             args.push("--extension", extPath);
         }
     }
     else {
-        for (const extPath of [
-            ...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])]),
-        ]) {
+        for (const extPath of new Set([
+            ...runtimeExtensions,
+            ...toolExtensionPaths,
+            ...(input.subagentOnlyExtensions ?? []),
+        ])) {
             args.push("--extension", extPath);
         }
     }
@@ -161,7 +161,10 @@ export function buildPiArgs(input) {
     if (input.parentSessionId) {
         env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
     }
-    if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId && input.childAgentName) {
+    if (input.orchestratorIntercomTarget &&
+        input.parentSessionId &&
+        input.runId &&
+        input.childAgentName) {
         const childIndex = input.childIndex ?? 0;
         const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
         fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
@@ -187,7 +190,8 @@ export function buildPiArgs(input) {
     const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
     if (encodedToolBudget)
         env[TOOL_BUDGET_ENV] = encodedToolBudget;
-    env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
+    env[SUBAGENT_PARENT_SESSION_ENV] =
+        input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
     return { args, env, tempDir };
 }
 export function cleanupTempDir(tempDir) {

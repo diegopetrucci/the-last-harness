@@ -91,7 +91,8 @@ function firstConfiguredValue(...values) {
 }
 function defaultTlhAgentDir(env = process.env, options = {}) {
     const homeDir = options.homeDir ?? env.HOME ?? homedir();
-    return expandHomePath(firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) || join(homeDir, ".the-last-harness", "agent"), { homeDir });
+    return expandHomePath(firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) ||
+        join(homeDir, ".the-last-harness", "agent"), { homeDir });
 }
 function defaultTlhBinDir(env = process.env, options = {}) {
     const homeDir = options.homeDir ?? env.HOME ?? homedir();
@@ -232,14 +233,17 @@ function pathWithinOrEqual(root, child) {
     if (normalizedRoot === sep) {
         return normalizedChild.startsWith(sep);
     }
-    return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`));
 }
 function pathIsProtectedPiConfig(pathValue, options = {}) {
     const homeDir = options.homeDir ?? process.env.HOME ?? homedir();
-    const normalizedPath = options.alreadyNormalized ? stripTrailingSlashes(pathValue) : realpathForCompare(pathValue);
+    const normalizedPath = options.alreadyNormalized
+        ? stripTrailingSlashes(pathValue)
+        : realpathForCompare(pathValue);
     const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
     const normalPiAgentRoot = realpathForCompare(join(homeDir, ".pi", "agent"));
-    return pathWithinOrEqual(normalPiRoot, normalizedPath) || pathWithinOrEqual(normalPiAgentRoot, normalizedPath);
+    return (pathWithinOrEqual(normalPiRoot, normalizedPath) ||
+        pathWithinOrEqual(normalPiAgentRoot, normalizedPath));
 }
 function installStatePath(agentDir) {
     return join(agentDir, "tlh", "install-state.json");
@@ -253,7 +257,9 @@ function hasObjectShape(value) {
 }
 function readTrimmedStringProperty(value, key) {
     const propertyValue = Reflect.get(value, key);
-    return typeof propertyValue === "string" && propertyValue.trim() ? propertyValue.trim() : undefined;
+    return typeof propertyValue === "string" && propertyValue.trim()
+        ? propertyValue.trim()
+        : undefined;
 }
 function readBooleanProperty(value, key) {
     const propertyValue = Reflect.get(value, key);
@@ -330,7 +336,9 @@ function resolvePlan(state, args) {
     const track = args.track || state?.track;
     const ref = args.ref || state?.ref;
     const packageSource = args.packageSource || state?.packageSource;
-    const packageSourceIsDefault = args.packageSource ? false : state?.packageSourceIsDefault === true;
+    const packageSourceIsDefault = args.packageSource
+        ? false
+        : state?.packageSourceIsDefault === true;
     const changesStoredCustomTarget = state?.packageSourceIsDefault === false &&
         !args.packageSource &&
         ((args.ref && args.ref !== state.ref) ||

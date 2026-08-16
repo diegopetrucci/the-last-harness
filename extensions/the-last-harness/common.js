@@ -48,7 +48,7 @@ export function pathWithinOrEqual(root, child) {
     if (normalizedRoot === sep) {
         return normalizedChild.startsWith(sep);
     }
-    return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`));
 }
 export function expandHomePath(path) {
     const home = process.env.HOME || process.env.USERPROFILE;

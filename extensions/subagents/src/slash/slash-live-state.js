@@ -40,7 +40,9 @@ function createPlaceholderResult(agent, task, status, index) {
 function buildParallelInitialResult(params) {
     const tasks = params.tasks ?? [];
     return {
-        content: [{ type: "text", text: tasks.map((task) => `${task.agent}: ${task.task}`).join("\n\n") }],
+        content: [
+            { type: "text", text: tasks.map((task) => `${task.agent}: ${task.task}`).join("\n\n") },
+        ],
         details: {
             mode: "parallel",
             ...(params.context ? { context: params.context } : {}),
@@ -85,7 +87,9 @@ function buildSingleInitialResult(params) {
     };
 }
 export function buildSlashInitialResult(requestId, params) {
-    const result = (params.tasks?.length ?? 0) > 0 ? buildParallelInitialResult(params) : buildSingleInitialResult(params);
+    const result = (params.tasks?.length ?? 0) > 0
+        ? buildParallelInitialResult(params)
+        : buildSingleInitialResult(params);
     liveSnapshots.set(requestId, { result, version: nextVersion() });
     finalSnapshots.delete(requestId);
     return { requestId, result };

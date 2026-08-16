@@ -92,7 +92,10 @@ function gitCommitOptionConsumesFollowingValue(commitArguments, index) {
         return false;
     }
     const lowerToken = token.toLowerCase();
-    if (lowerToken === "-m" || lowerToken === "--message" || lowerToken === "-f" || lowerToken === "--file") {
+    if (lowerToken === "-m" ||
+        lowerToken === "--message" ||
+        lowerToken === "-f" ||
+        lowerToken === "--file") {
         return commitArguments[index + 1] !== undefined;
     }
     if (shortGitCommitMessageOptionConsumesFollowingValue(token)) {
@@ -181,7 +184,8 @@ function getInlineGitCommitFileArgumentValue(commitArguments) {
     return value;
 }
 function hasInlineLikeGitCommitMessageOrFileArgument(commitArguments) {
-    return hasInlineGitCommitMessageArgument(commitArguments) || hasInlineGitCommitFileArgument(commitArguments);
+    return (hasInlineGitCommitMessageArgument(commitArguments) ||
+        hasInlineGitCommitFileArgument(commitArguments));
 }
 function getInlineGitCommitFileArgument(commitArguments) {
     const value = getInlineGitCommitFileArgumentValue(commitArguments);
@@ -214,16 +218,22 @@ function areInlineGitCommitArgumentsAttributed(commitArguments, footer, segment)
             return false;
         }
         const hereDocBody = extractHereDocBodies(segment).at(-1);
-        return hereDocBody !== undefined && commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer);
+        return (hereDocBody !== undefined &&
+            commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer));
     }
     if (fileArgument === "process-substitution") {
         const fileValue = getInlineGitCommitFileArgumentValue(commitArguments);
-        return fileValue !== undefined && processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer);
+        return (fileValue !== undefined &&
+            processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer));
     }
     return false;
 }
 function buildTlhGitCommitAttributionBlockReason(footer) {
-    return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", footer].join("\n\n");
+    return [
+        TLH_GIT_COMMIT_BLOCK_REASON,
+        "Retry with this exact footer at the end of the commit message:",
+        footer,
+    ].join("\n\n");
 }
 function hasObviousGitCommitInTokens(tokens, depth = 0) {
     if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
@@ -398,7 +408,8 @@ function createRetryableLazyImport(loader) {
     };
 }
 export function registerToggleTlhGitAttributionCommand(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./attribution-command.js")));
+    const loadModule = createRetryableLazyImport(options.loadModule ??
+        (() => import("./attribution-command.js")));
     pi.registerCommand("toggle-tlh-git-attribution", {
         description: "Toggle TLH git commit attribution",
         handler: async (args, ctx) => {

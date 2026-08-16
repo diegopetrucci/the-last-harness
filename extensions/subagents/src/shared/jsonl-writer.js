@@ -10,7 +10,8 @@ export function createJsonlWriter(filePath, source, deps = {}) {
             },
         };
     }
-    const createWriteStream = deps.createWriteStream ?? ((targetPath) => fs.createWriteStream(targetPath, { flags: "a" }));
+    const createWriteStream = deps.createWriteStream ??
+        ((targetPath) => fs.createWriteStream(targetPath, { flags: "a" }));
     let stream;
     try {
         stream = createWriteStream(filePath);

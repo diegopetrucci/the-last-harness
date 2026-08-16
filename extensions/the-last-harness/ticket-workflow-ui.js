@@ -27,7 +27,8 @@ function firstOutputLine(result) {
 }
 function isNoRepoMessage(message) {
     return (typeof message === "string" &&
-        (/no \.tickets directory found/i.test(message) || /tickets directory ['"].+['"] does not exist/i.test(message)));
+        (/no \.tickets directory found/i.test(message) ||
+            /tickets directory ['"].+['"] does not exist/i.test(message)));
 }
 function runTkCommand(command, cwd, args, timeoutMs) {
     return spawnSync(command, args, {
@@ -87,7 +88,9 @@ function resolveInProgressTickets(command, cwd, ticketIds, runner, now) {
     const deadlineMs = now() + TK_TITLE_RESOLUTION_BUDGET_MS;
     return ticketIds.map((ticketId) => {
         const timeoutMs = Math.floor(deadlineMs - now());
-        const title = timeoutMs > 0 ? getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner) : undefined;
+        const title = timeoutMs > 0
+            ? getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner)
+            : undefined;
         return { id: ticketId, title };
     });
 }

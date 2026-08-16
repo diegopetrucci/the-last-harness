@@ -268,7 +268,9 @@ function formatStatusForAgent(agent, override, ctx) {
         overrideResolution.warning,
     ].filter((warning) => Boolean(warning));
     const effectiveModel = overrideResolution.unavailableModel ?? overrideResolution.model;
-    const effectiveThinking = overrideResolution.unavailableModel ? undefined : overrideResolution.thinking;
+    const effectiveThinking = overrideResolution.unavailableModel
+        ? undefined
+        : overrideResolution.thinking;
     const lines = [
         `- ${agent.name}: default ${formatEffectiveModelAndThinking(baseResolution.model, baseResolution.thinking)}; override model=${overrideModel}, effort=${overrideThinking}; effective ${formatEffectiveModelAndThinking(effectiveModel, effectiveThinking)}.`,
         ...warnings.map((warning) => `  ${warning}`),
@@ -277,10 +279,15 @@ function formatStatusForAgent(agent, override, ctx) {
 }
 function formatStatusMessage(ctx, subagents, selectedAgentName) {
     const overrides = getStoredOverrides(ctx.cwd);
-    const selectedAgents = selectedAgentName ? subagents.filter((agent) => agent.name === selectedAgentName) : subagents;
+    const selectedAgents = selectedAgentName
+        ? subagents.filter((agent) => agent.name === selectedAgentName)
+        : subagents;
     const currentModel = currentModelReference(ctx);
     const header = `TLH minor-agent settings for ${currentModel ? formatProviderModelReference(currentModel) : "this session"}:`;
-    return [header, ...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx))].join("\n");
+    return [
+        header,
+        ...selectedAgents.map((agent) => formatStatusForAgent(agent, overrides.get(agent.name), ctx)),
+    ].join("\n");
 }
 function validateAgentName(agentName, subagents) {
     const agent = subagents.get(agentName);
@@ -383,7 +390,9 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
     while (true) {
         const overrides = getStoredOverrides(ctx.cwd);
         const optionToAgent = new Map(subagents.map((agent) => [subagentPickerOption(agent, overrides.get(agent.name), ctx), agent.name]));
-        const selectedOption = await ctx.ui.select("TLH minor-agent settings", [...optionToAgent.keys()]);
+        const selectedOption = await ctx.ui.select("TLH minor-agent settings", [
+            ...optionToAgent.keys(),
+        ]);
         if (!selectedOption) {
             return;
         }
@@ -428,7 +437,9 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
                 modelPickerOption(model, typeof override?.model === "string" ? override.model : undefined, bundledDefault ? formatProviderModelReference(bundledDefault) : undefined),
                 formatProviderModelReference(model),
             ]));
-            const selectedModelOption = await ctx.ui.select(`Pick model for ${agentName}`, [...optionToModel.keys()]);
+            const selectedModelOption = await ctx.ui.select(`Pick model for ${agentName}`, [
+                ...optionToModel.keys(),
+            ]);
             if (!selectedModelOption) {
                 continue;
             }
@@ -461,9 +472,15 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
         }
         const model = effectiveModelForEffort(agent, override, models, ctx);
         const supportedLevels = availableThinkingLevels(model);
-        const currentThinkingOverride = override?.thinking === false ? "off" : typeof override?.thinking === "string" ? override.thinking : undefined;
+        const currentThinkingOverride = override?.thinking === false
+            ? "off"
+            : typeof override?.thinking === "string"
+                ? override.thinking
+                : undefined;
         const optionToThinking = new Map(supportedLevels.map((level) => [thinkingPickerOption(level, currentThinkingOverride), level]));
-        const selectedThinkingOption = await ctx.ui.select(`Pick effort for ${agentName}`, [...optionToThinking.keys()]);
+        const selectedThinkingOption = await ctx.ui.select(`Pick effort for ${agentName}`, [
+            ...optionToThinking.keys(),
+        ]);
         if (!selectedThinkingOption) {
             continue;
         }
@@ -483,7 +500,9 @@ async function runInteractivePicker(ctx, subagents, subagentMap) {
 function commandCompletions(prefix) {
     const values = ["status", "set", "reset", "reset-all"];
     const normalized = prefix.trim().toLowerCase();
-    const completions = values.filter((value) => value.startsWith(normalized)).map((value) => ({ value, label: value }));
+    const completions = values
+        .filter((value) => value.startsWith(normalized))
+        .map((value) => ({ value, label: value }));
     return completions.length > 0 ? completions : null;
 }
 export function registerSubagentSettingsCommand(pi) {

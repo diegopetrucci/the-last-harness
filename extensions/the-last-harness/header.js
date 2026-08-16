@@ -2,7 +2,10 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works
 import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 function formatLaunchContextPercent(tokens, contextWindow) {
-    if (!Number.isFinite(tokens) || tokens <= 0 || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+    if (!Number.isFinite(tokens) ||
+        tokens <= 0 ||
+        !Number.isFinite(contextWindow) ||
+        contextWindow <= 0) {
         return "0%";
     }
     const percent = (tokens / contextWindow) * 100;

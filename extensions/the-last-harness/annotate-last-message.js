@@ -1,5 +1,5 @@
 import { openQuietGlimpse } from "../shared/quiet-glimpse.js";
-import { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback } from "./annotate-last-message/prompt.js";
+import { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback, } from "./annotate-last-message/prompt.js";
 import { findLastAssistantMessage } from "./annotate-last-message/session.js";
 import { buildAnnotateLastMessageHtml } from "./annotate-last-message/ui.js";
 function isInlineComment(value) {

@@ -38,7 +38,10 @@ export function createTokensCommandHandler(pi, dependencies = {}) {
             }
             catch {
             }
-            const html = buildTokensReportHtml(analysis, { generatedAt: now().toISOString(), primaryAgentLabel });
+            const html = buildTokensReportHtml(analysis, {
+                generatedAt: now().toISOString(),
+                primaryAgentLabel,
+            });
             const report = writeLocalTokensReport(ctx.sessionManager, html);
             try {
                 await openReport(report.path);
@@ -169,7 +172,10 @@ export function renderMetricCard(title, value, detail) {
 export function renderKeyValueGrid(items) {
     return [
         '<dl class="kv-grid">',
-        ...items.flatMap(([label, value]) => [`<dt>${escapeHtml(label)}</dt>`, `<dd>${escapeHtml(value)}</dd>`]),
+        ...items.flatMap(([label, value]) => [
+            `<dt>${escapeHtml(label)}</dt>`,
+            `<dd>${escapeHtml(value)}</dd>`,
+        ]),
         "</dl>",
     ].join("");
 }
@@ -193,7 +199,17 @@ function renderUsageTotalsTable(analysis, primaryLabel = "Primary assistant") {
         usageRow("Subagents (all)", em, analysis.totals.subagents),
         usageRow("Combined", em, analysis.totals.combined),
     ];
-    return renderTable(["Bucket", "Provider", "Input", "Output", "Cache read", "Cache write", "Total", "Cost", "Turns"], rows, "No usage totals recorded.");
+    return renderTable([
+        "Bucket",
+        "Provider",
+        "Input",
+        "Output",
+        "Cache read",
+        "Cache write",
+        "Total",
+        "Cost",
+        "Turns",
+    ], rows, "No usage totals recorded.");
 }
 function renderTimelineTable(timeline) {
     return renderTable(["Turn", "Timestamp", "Branch", "Model", "Tokens", "Cache", "Tools", "Results", "Discoveries"], timeline.map((turn) => [
@@ -261,7 +277,16 @@ function renderToolTable(tools) {
     return [
         "<h3>Tools</h3>",
         `<p class="section-note">${escapeHtml("Obs. wall-clock latency is the elapsed time between the tool-call event and its result event in the session log — not tool execution time. It includes idle periods, supervisor pauses, and human hold time. Values exceeding several minutes usually indicate the run was paused awaiting input, not that the tool itself was slow. \u2018Med.\u2019 is the median across matched call/result pairs; \u2018\u2014\u2019 means no matched pairs (e.g. session still active or IDs unmatched).")}</p>`,
-        renderTable(["Tool", "Source", "Calls", "Results", "Errors", "MCP", "Est. tokens", "Med. obs. wall-clock latency"], tools.map((tool) => [
+        renderTable([
+            "Tool",
+            "Source",
+            "Calls",
+            "Results",
+            "Errors",
+            "MCP",
+            "Est. tokens",
+            "Med. obs. wall-clock latency",
+        ], tools.map((tool) => [
             tool.toolName,
             tool.source.label,
             formatInteger(tool.callCount),
@@ -310,7 +335,10 @@ function renderCacheMissesSection(analysis) {
     const { cacheMisses } = analysis;
     const explanatoryNote = `<p class="section-note">${escapeHtml("A cache miss is prompt content that was sent on an earlier turn but had to be re-sent and re-billed at full price instead of being served from the provider's prompt cache. Misses commonly happen after an idle gap longer than the cache TTL (~5 min), when the model is switched mid-session, or after a context reset (compaction). Only misses above a small noise floor are counted.")}</p>`;
     if (cacheMisses.missCount === 0) {
-        return renderSection("Cache misses", [explanatoryNote, `<p class="section-note">${escapeHtml("No significant cache misses detected.")}</p>`].join(""));
+        return renderSection("Cache misses", [
+            explanatoryNote,
+            `<p class="section-note">${escapeHtml("No significant cache misses detected.")}</p>`,
+        ].join(""));
     }
     return renderSection("Cache misses", [
         explanatoryNote,
@@ -394,7 +422,9 @@ function createPrivateReportDirectory(preferredParent) {
             lastError = error;
         }
     }
-    throw lastError instanceof Error ? lastError : new Error("Could not create a private local report directory.");
+    throw lastError instanceof Error
+        ? lastError
+        : new Error("Could not create a private local report directory.");
 }
 export async function openLocalReport(path) {
     let lastError;
@@ -417,7 +447,12 @@ function buildOpenReportCommands(path, platform = process.platform) {
         case "darwin":
             return [{ command: "open", args: [path] }];
         case "win32":
-            return [{ command: "cmd.exe", args: ["/d", "/s", "/c", `start "" "${path.replaceAll('"', '""')}"`] }];
+            return [
+                {
+                    command: "cmd.exe",
+                    args: ["/d", "/s", "/c", `start "" "${path.replaceAll('"', '""')}"`],
+                },
+            ];
         default:
             return [
                 { command: "xdg-open", args: [path] },
@@ -442,7 +477,9 @@ function setPrivateMode(path, mode) {
     }
 }
 function dedupeParents(values) {
-    return [...new Set(values.filter((value) => typeof value === "string" && value.length > 0))];
+    return [
+        ...new Set(values.filter((value) => typeof value === "string" && value.length > 0)),
+    ];
 }
 function formatInteger(value) {
     return INTEGER_FORMATTER.format(value);

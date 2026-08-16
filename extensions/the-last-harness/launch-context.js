@@ -137,7 +137,9 @@ export function estimateTlhLaunchContextAllocation(options) {
             tlh: baseInstructionChars + appendedTlhChars,
             agentsClaude: agentsClaudeChars,
             skills: skillsChars,
-            tools: guidelineChars.nonMcp + toolDefinitionChars(activeTools) - toolDefinitionChars(mcpActiveTools),
+            tools: guidelineChars.nonMcp +
+                toolDefinitionChars(activeTools) -
+                toolDefinitionChars(mcpActiveTools),
             mcp: guidelineChars.mcp + toolDefinitionChars(mcpActiveTools),
             other: 0,
         }),

@@ -77,7 +77,9 @@ function compactNestedRun(run, depth = 0) {
         ...(run.activityState ? { activityState: run.activityState } : {}),
         ...(run.lastActivityAt !== undefined ? { lastActivityAt: run.lastActivityAt } : {}),
         ...(run.currentTool ? { currentTool: run.currentTool } : {}),
-        ...(run.currentToolStartedAt !== undefined ? { currentToolStartedAt: run.currentToolStartedAt } : {}),
+        ...(run.currentToolStartedAt !== undefined
+            ? { currentToolStartedAt: run.currentToolStartedAt }
+            : {}),
         ...(run.currentPath ? { currentPath: run.currentPath } : {}),
         ...(run.turnCount !== undefined ? { turnCount: run.turnCount } : {}),
         ...(run.toolCount !== undefined ? { toolCount: run.toolCount } : {}),
@@ -95,7 +97,9 @@ function compactNestedRun(run, depth = 0) {
                     ...(step.activityState ? { activityState: step.activityState } : {}),
                     ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
                     ...(step.currentTool ? { currentTool: step.currentTool } : {}),
-                    ...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+                    ...(step.currentToolStartedAt !== undefined
+                        ? { currentToolStartedAt: step.currentToolStartedAt }
+                        : {}),
                     ...(step.currentPath ? { currentPath: step.currentPath } : {}),
                     ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
                     ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
@@ -103,7 +107,11 @@ function compactNestedRun(run, depth = 0) {
                     ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
                     ...(step.error ? { error: step.error } : {}),
                     ...(depth < 2 && step.children?.length
-                        ? { children: step.children.slice(0, 8).map((child) => compactNestedRun(child, depth + 1)) }
+                        ? {
+                            children: step.children
+                                .slice(0, 8)
+                                .map((child) => compactNestedRun(child, depth + 1)),
+                        }
                         : {}),
                 })),
             }
@@ -121,17 +129,26 @@ export function compactNestedResultChildren(children) {
 export function attachNestedChildrenToResultChildren(runId, children, nestedChildren) {
     const compact = compactNestedResultChildren(nestedChildren);
     if (!compact?.length)
-        return children.map((child) => ({ ...child, children: compactNestedResultChildren(child.children) }));
+        return children.map((child) => ({
+            ...child,
+            children: compactNestedResultChildren(child.children),
+        }));
     return children.map((child, index) => {
         const childIndex = child.index ?? index;
         const alreadyAttachedIds = new Set(child.children?.map((nested) => nested.id) ?? []);
-        const attached = compact.filter((nested) => nested.parentRunId === runId && nested.parentStepIndex === childIndex && !alreadyAttachedIds.has(nested.id));
+        const attached = compact.filter((nested) => nested.parentRunId === runId &&
+            nested.parentStepIndex === childIndex &&
+            !alreadyAttachedIds.has(nested.id));
         const fallbackAttached = children.length === 1
             ? compact.filter((nested) => nested.parentRunId === runId &&
                 nested.parentStepIndex === undefined &&
                 !alreadyAttachedIds.has(nested.id))
             : [];
-        const merged = compactNestedResultChildren([...(child.children ?? []), ...attached, ...fallbackAttached]);
+        const merged = compactNestedResultChildren([
+            ...(child.children ?? []),
+            ...attached,
+            ...fallbackAttached,
+        ]);
         return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
     });
 }
@@ -258,10 +275,13 @@ function formatForegroundNativeSubagentText(input) {
         const fixedCost = joinedLineCost(["", labelLine, "Summary:", ...refLines, ...nestedLines]);
         return { child, originalIndex, labelLine, refLines, nestedLines, fixedCost };
     });
-    const outerCost = joinedLineCost(outerLines) + (priorityOmissionLine ? joinedLineCost(["", priorityOmissionLine]) : 0);
+    const outerCost = joinedLineCost(outerLines) +
+        (priorityOmissionLine ? joinedLineCost(["", priorityOmissionLine]) : 0);
     let effectiveCount = displayedChildren.length;
     while (effectiveCount > 0) {
-        const partialFixedCost = childFixedData.slice(0, effectiveCount).reduce((s, c) => s + c.fixedCost, 0);
+        const partialFixedCost = childFixedData
+            .slice(0, effectiveCount)
+            .reduce((s, c) => s + c.fixedCost, 0);
         const budgetOmittedHere = displayedChildren.length - effectiveCount;
         const budgetOmissionCostHere = budgetOmittedHere > 0
             ? joinedLineCost([

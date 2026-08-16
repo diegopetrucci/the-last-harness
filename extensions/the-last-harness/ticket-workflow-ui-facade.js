@@ -12,7 +12,8 @@ function createRetryableLazyImport(loader) {
     };
 }
 export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./ticket-workflow-ui.js")));
+    const loadModule = createRetryableLazyImport(options.loadModule ??
+        (() => import("./ticket-workflow-ui.js")));
     let runtime;
     let runtimePromise;
     const getRuntime = async () => {
@@ -64,7 +65,9 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
             runtime.handleSessionShutdown();
             return;
         }
-        void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
+        void runtimePromise
+            ?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown())
+            .catch(() => undefined);
     });
     pi.on("user_bash", (event, ctx) => {
         if (runtime) {

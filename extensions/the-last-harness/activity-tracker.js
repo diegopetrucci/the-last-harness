@@ -84,12 +84,17 @@ function looksLikeRetryableAgentEnd(messages) {
 function readRunningAsyncJob(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
     const raw = JSON.parse(fs.readFileSync(statusPath, "utf-8"));
-    if (!isRecord(raw) || raw.state !== "running" || typeof raw.runId !== "string" || raw.runId.length === 0) {
+    if (!isRecord(raw) ||
+        raw.state !== "running" ||
+        typeof raw.runId !== "string" ||
+        raw.runId.length === 0) {
         return undefined;
     }
     return {
         runId: raw.runId,
-        ...(typeof raw.sessionId === "string" && raw.sessionId.length > 0 ? { sessionId: raw.sessionId } : {}),
+        ...(typeof raw.sessionId === "string" && raw.sessionId.length > 0
+            ? { sessionId: raw.sessionId }
+            : {}),
         ...(typeof raw.cwd === "string" && raw.cwd.length > 0 ? { cwd: raw.cwd } : {}),
     };
 }
@@ -184,7 +189,11 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         primaryReasons: [...primaryReasons.keys()].sort(),
         activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
     });
-    const snapshotKey = (snapshot) => [snapshot.inProgress ? "1" : "0", snapshot.primaryReasons.join(","), snapshot.activeAsyncJobIds.join(",")].join("::");
+    const snapshotKey = (snapshot) => [
+        snapshot.inProgress ? "1" : "0",
+        snapshot.primaryReasons.join(","),
+        snapshot.activeAsyncJobIds.join(","),
+    ].join("::");
     const notifyIfChanged = () => {
         const snapshot = buildSnapshot();
         const nextKey = snapshotKey(snapshot);
@@ -341,7 +350,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
                 return;
             }
             setAsyncJobActive(data.event.runId, {
-                asyncDir: readNonEmptyStringField(data, "asyncDir") ?? readNonEmptyStringField(data.event, "asyncDir"),
+                asyncDir: readNonEmptyStringField(data, "asyncDir") ??
+                    readNonEmptyStringField(data.event, "asyncDir"),
                 source: "control",
             });
             notifyIfChanged();

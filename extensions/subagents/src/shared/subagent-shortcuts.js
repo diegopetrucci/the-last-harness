@@ -108,7 +108,9 @@ export function formatShortcutDisplay(key) {
         .split("/")
         .map((binding) => binding
         .split("+")
-        .map((part) => (part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
+        .map((part) => part.length === 1
+        ? part.toUpperCase()
+        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
         .join("+"))
         .join("/");
 }

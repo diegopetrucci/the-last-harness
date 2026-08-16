@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.js";
 import { isAsyncAvailable } from "../runs/background/async-execution.js";
-import { diagnoseIntercomBridge } from "../intercom/intercom-bridge.js";
+import { diagnoseIntercomBridge, } from "../intercom/intercom-bridge.js";
 import { discoverAvailableSkills } from "../agents/skills.js";
 import { ASYNC_DIR, CHAIN_RUNS_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
 import { inspectRuntimeDirs } from "./runtime-cleanup.js";
@@ -61,7 +61,9 @@ function formatSkillSourceCounts(skills) {
         "builtin",
         "unknown",
     ];
-    const parts = ordered.map((source) => `${source} ${counts.get(source) ?? 0}`).filter((part) => !part.endsWith(" 0"));
+    const parts = ordered
+        .map((source) => `${source} ${counts.get(source) ?? 0}`)
+        .filter((part) => !part.endsWith(" 0"));
     return parts.length > 0 ? parts.join(", ") : "none";
 }
 function formatConfiguredSessionDir(input) {

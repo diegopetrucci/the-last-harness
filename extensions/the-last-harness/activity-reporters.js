@@ -118,14 +118,18 @@ function readSessionRef(ctx) {
     let agentSessionId;
     try {
         const candidatePath = ctx.sessionManager.getSessionFile();
-        agentSessionPath = typeof candidatePath === "string" && candidatePath.startsWith("/") ? candidatePath : undefined;
+        agentSessionPath =
+            typeof candidatePath === "string" && candidatePath.startsWith("/")
+                ? candidatePath
+                : undefined;
     }
     catch {
         agentSessionPath = undefined;
     }
     try {
         const candidateId = ctx.sessionManager.getSessionId();
-        agentSessionId = typeof candidateId === "string" && candidateId.length > 0 ? candidateId : undefined;
+        agentSessionId =
+            typeof candidateId === "string" && candidateId.length > 0 ? candidateId : undefined;
     }
     catch {
         agentSessionId = undefined;
@@ -310,7 +314,8 @@ export function createHerdrActivityReporter(options = {}) {
         });
     };
     const queuedReporter = createQueuedStateReporter(sendState, {
-        idleDebounceMs: options.idleDebounceMs ?? parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
+        idleDebounceMs: options.idleDebounceMs ??
+            parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
         timers: options.timers,
     }, (state) => {
         desiredState = state;
@@ -392,7 +397,9 @@ function sanitizeCmuxStatusKeySegment(value) {
     return sanitized.length > 0 ? sanitized : undefined;
 }
 function getCmuxStatusKey(env, ctx) {
-    const surfaceSegment = typeof env.CMUX_SURFACE_ID === "string" ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID) : undefined;
+    const surfaceSegment = typeof env.CMUX_SURFACE_ID === "string"
+        ? sanitizeCmuxStatusKeySegment(env.CMUX_SURFACE_ID)
+        : undefined;
     if (surfaceSegment) {
         return `${CMUX_STATUS_KEY}-${surfaceSegment}`;
     }
@@ -452,7 +459,10 @@ export function createCmuxActivityReporter(options = {}) {
     };
 }
 export function registerTlhActivityReporters(pi, tracker, options = {}) {
-    const reporters = [createHerdrActivityReporter(options.herdr), createCmuxActivityReporter(options.cmux)];
+    const reporters = [
+        createHerdrActivityReporter(options.herdr),
+        createCmuxActivityReporter(options.cmux),
+    ];
     const unsubscribe = tracker.subscribe((snapshot) => {
         for (const reporter of reporters) {
             reporter.handleSnapshot(snapshot);
