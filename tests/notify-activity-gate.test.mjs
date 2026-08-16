@@ -11,8 +11,41 @@
  * - Regression (ts-hehb): primary-only activity never suppresses notifications
  */
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after } from "node:test";
 import test from "node:test";
 import { createJiti } from "jiti";
+
+// ---------------------------------------------------------------------------
+// Hermetic agent-dir isolation
+//
+// loadConfig reads <getAgentDir()>/extensions/notify.json unconditionally;
+// getAgentDir() resolves from PI_CODING_AGENT_DIR. Without isolation the suite
+// reads the contributor's real global notify config, so a contributor who has
+// set {"enabled": false} (which our CHANGELOG migration instructs) causes every
+// assertion expecting a notification to fail.
+//
+// We point PI_CODING_AGENT_DIR at a fresh temp dir for the entire test run and
+// restore the previous value afterward — including on test failure — so we
+// never leave the process env in a mutated state.
+// ---------------------------------------------------------------------------
+const _previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const _testAgentDir = mkdtempSync(join(tmpdir(), "tlh-notify-test-agent-"));
+mkdirSync(join(_testAgentDir, "extensions"), { recursive: true });
+process.env.PI_CODING_AGENT_DIR = _testAgentDir;
+
+after(() => {
+  // Restore: delete the key entirely if it was previously unset, rather than
+  // setting it to "", which would make getAgentDir() resolve differently.
+  if (_previousAgentDir === undefined) {
+    delete process.env.PI_CODING_AGENT_DIR;
+  } else {
+    process.env.PI_CODING_AGENT_DIR = _previousAgentDir;
+  }
+  rmSync(_testAgentDir, { recursive: true, force: true });
+});
 
 const jiti = createJiti(import.meta.url);
 const { createNotifyExtension } = await jiti.import("../extensions/notify/index.ts");

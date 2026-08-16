@@ -10,6 +10,7 @@
  *
  * Attribution: This started from the original `notify.ts` example in
  * earendil-works/pi, then evolved in @diegopetrucci/pi-notify (MIT).
+ * Portions (c) Mario Zechner (earendil-works/pi), MIT.
  * See README.md for full attribution details.
  *
  * Config is resolved at runtime (project overrides global):

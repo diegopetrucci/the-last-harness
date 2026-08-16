@@ -6,7 +6,7 @@ Sends notifications when the agent has fully settled and is waiting for input.
 
 ## Attribution
 
-This is vendored from [`@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) (MIT, © Diego Petrucci), which itself started from the original `notify.ts` example in [`earendil-works/pi`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/notify.ts) (MIT). See [`./LICENSE`](./LICENSE) for the full license text and upstream attribution.
+This is vendored from [`@diegopetrucci/pi-notify`](https://github.com/diegopetrucci/pi-extensions/tree/main/extensions/notify) (MIT, © Diego Petrucci), which itself started from the original `notify.ts` example in [`earendil-works/pi`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/notify.ts) (MIT). Both are MIT-licensed; see the [repository LICENSE](../../LICENSE) for the full license text.
 
 ## Supported notification channels
 
@@ -49,6 +49,7 @@ Example:
 {
   "enabled": true,
   "onlyWhenInteractive": true,
+  "suppressWhileActive": true,
   "title": "tlh",
   "body": "Ready for input",
   "channels": {
