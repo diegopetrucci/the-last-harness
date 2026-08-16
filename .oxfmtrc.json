@@ -6,6 +6,7 @@
     "extensions/the-last-harness/annotate-last-message/*.js",
     "extensions/annotate-git-diff/*.js",
     "extensions/shared/*.js",
+    "extensions/notify/*.js",
     "extensions/subagents/src/**/*.js",
     "scripts/lib/default-extensions.mjs",
     "scripts/lib/session-analysis.mjs",
