@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { createChildTranscriptWriter } from "../../shared/child-transcript.js";
+import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { acceptChildMessageRequest, consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepChildMessage, stepSteerInboxDir, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest, } from "./control-channel.js";
 import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.js";
 import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot, } from "../shared/pi-spawn.js";
@@ -21,7 +21,7 @@ import { DEFAULT_CONTROL_CONFIG, buildControlEvent, deriveActivityState, claimCo
 import { isParallelGroup, flattenSteps, mapConcurrent, aggregateParallelOutputs, MAX_PARALLEL_CONCURRENCY, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
 import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.js";
-import { createStructuredOutputRuntime, readStructuredOutput } from "../shared/structured-output.js";
+import { createStructuredOutputRuntime, readStructuredOutput, } from "../shared/structured-output.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, resolveRuntimeModelContext, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.js";
@@ -151,7 +151,9 @@ function costSummaryFromAttempts(attempts) {
         outputTokens += attempt.usage?.output ?? 0;
         costUsd += attempt.usage?.cost ?? 0;
     }
-    return inputTokens > 0 || outputTokens > 0 || costUsd > 0 ? { inputTokens, outputTokens, costUsd } : undefined;
+    return inputTokens > 0 || outputTokens > 0 || costUsd > 0
+        ? { inputTokens, outputTokens, costUsd }
+        : undefined;
 }
 function appendRecentStepOutput(step, lines) {
     const nonEmpty = lines.filter((line) => line.trim());
@@ -165,7 +167,8 @@ function appendRecentStepOutput(step, lines) {
 }
 function isTerminalAssistantStop(message) {
     const stopReason = message.stopReason;
-    const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
+    const hasToolCall = Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "toolCall");
     return stopReason === "stop" && !hasToolCall;
 }
 function resetStepLiveDetail(step) {
@@ -309,7 +312,8 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
             transcriptWriter?.writeChildEvent(event);
             onChildEvent?.(event);
             if (event.type === "tool_execution_start" && event.toolName) {
-                observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args);
+                observedMutationAttempt =
+                    observedMutationAttempt || isMutatingTool(event.toolName, event.args);
                 const toolArgs = extractToolArgsPreview(event.args ?? {});
                 writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
                 return;
@@ -422,7 +426,9 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
             cleanupPromise = (async () => {
                 processCleanup = processGroupId
                     ? await cleanupOwnedProcessGroup(processGroupId)
-                    : skipOwnedProcessGroupCleanup(supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform", processGroupId);
+                    : skipOwnedProcessGroupCleanup(supportsOwnedProcessGroupCleanup()
+                        ? "process_group_unavailable"
+                        : "unsupported_platform", processGroupId);
                 return processCleanup;
             })();
             return cleanupPromise;
@@ -440,7 +446,11 @@ function runPiStreaming(args, cwd, outputFile, env, piPackageRoot, piArgv1, maxS
             if (stderrBuf.trim())
                 appendChildLine("subagent.child.stderr", stderrBuf);
             const finalOutput = getFinalOutput(messages) || rawStdoutLines.join("\n").trim();
-            const resolvedExitCode = interrupted ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode;
+            const resolvedExitCode = interrupted
+                ? 0
+                : forcedTerminationSignal || signal
+                    ? (exitCode ?? 1)
+                    : exitCode;
             const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !(error ?? assistantError);
             const finalError = error ??
                 assistantError ??
@@ -706,8 +716,7 @@ async function exportSessionHtml(sessionFile, outputDir, piPackageRoot) {
     const exportModulePath = path.join(pkgRoot, "dist", "core", "export-html", "index.js");
     const moduleUrl = pathToFileURL(exportModulePath).href;
     const mod = await import(__rewriteRelativeImportExtension(moduleUrl));
-    const exportFromFile = mod
-        .exportFromFile;
+    const exportFromFile = mod.exportFromFile;
     if (typeof exportFromFile !== "function") {
         throw new Error("exportFromFile not available");
     }
@@ -775,7 +784,9 @@ function writeRunLog(logPath, input) {
         const duration = step.durationMs !== undefined ? formatDuration(step.durationMs) : "-";
         lines.push(`| ${i + 1} | ${step.agent} | ${step.status} | ${duration} |`);
     });
-    const cleanupSteps = input.steps.map((step, index) => ({ step, index })).filter(({ step }) => step.processCleanup);
+    const cleanupSteps = input.steps
+        .map((step, index) => ({ step, index }))
+        .filter(({ step }) => step.processCleanup);
     if (cleanupSteps.length > 0) {
         lines.push("");
         lines.push("## Process cleanup");
@@ -816,7 +827,8 @@ async function runSingleStep(step, ctx) {
         relayInheritedTimeout();
     else
         inheritedTimeoutSignal?.addEventListener("abort", relayInheritedTimeout, { once: true });
-    const childDeadlineAt = ctx.deadlineAt ?? (step.timeoutMs !== undefined ? segmentStartedAt + step.timeoutMs : undefined);
+    const childDeadlineAt = ctx.deadlineAt ??
+        (step.timeoutMs !== undefined ? segmentStartedAt + step.timeoutMs : undefined);
     const stepTimeoutTimer = step.timeoutMs !== undefined
         ? scheduleDeadline(childDeadlineAt ?? segmentStartedAt, () => {
             stepTimeoutController.abort();
@@ -827,7 +839,9 @@ async function runSingleStep(step, ctx) {
     ctx = {
         ...ctx,
         timeoutSignal: stepTimeoutController.signal,
-        timeoutMessage: step.timeoutMs !== undefined ? `Subagent timed out after ${step.timeoutMs}ms.` : ctx.timeoutMessage,
+        timeoutMessage: step.timeoutMs !== undefined
+            ? `Subagent timed out after ${step.timeoutMs}ms.`
+            : ctx.timeoutMessage,
         registerTimeout: (interrupt) => {
             activeTimeoutInterrupt = interrupt;
             parentRegisterTimeout?.(interrupt);
@@ -892,7 +906,8 @@ async function runSingleStep(step, ctx) {
     let aggregateContextUsage = persistedContextUsage
         ? {
             ...persistedContextUsage,
-            ...(persistedContextUsage.restoredTokens === undefined && persistedContextUsage.contextTokens !== undefined
+            ...(persistedContextUsage.restoredTokens === undefined &&
+                persistedContextUsage.contextTokens !== undefined
                 ? { restoredTokens: persistedContextUsage.contextTokens }
                 : {}),
         }
@@ -997,7 +1012,8 @@ async function runSingleStep(step, ctx) {
             error: run.error,
             terminationReason: runTerminationReason,
         });
-        contextExhaustedDetected = run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
+        contextExhaustedDetected =
+            run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
         const missingStructuredOutput = effectiveStructuredOutput
             ? !fs.existsSync(effectiveStructuredOutput.outputPath)
             : false;
@@ -1011,7 +1027,11 @@ async function runSingleStep(step, ctx) {
             : undefined;
         let structuredOutput;
         let structuredError;
-        if (effectiveStructuredOutput && run.exitCode === 0 && !run.error && !hiddenError?.hasError && !emptyOutputError) {
+        if (effectiveStructuredOutput &&
+            run.exitCode === 0 &&
+            !run.error &&
+            !hiddenError?.hasError &&
+            !emptyOutputError) {
             const structured = readStructuredOutput({
                 schema: effectiveStructuredOutput.schema,
                 schemaPath: effectiveStructuredOutput.schemaPath,
@@ -1022,7 +1042,11 @@ async function runSingleStep(step, ctx) {
             else
                 structuredOutput = structured.value;
         }
-        const completionGuard = run.exitCode === 0 && !run.error && !hiddenError?.hasError && !emptyOutputError && step.completionGuard !== false
+        const completionGuard = run.exitCode === 0 &&
+            !run.error &&
+            !hiddenError?.hasError &&
+            !emptyOutputError &&
+            step.completionGuard !== false
             ? evaluateCompletionMutationGuard({
                 agent: step.agent,
                 task: taskForCompletionGuard,
@@ -1052,7 +1076,8 @@ async function runSingleStep(step, ctx) {
                     ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
                     : `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
                 : (emptyOutputError ??
-                    (run.error || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined))));
+                    (run.error ||
+                        (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined))));
         const attempt = {
             model: candidate ?? run.model ?? step.model ?? "default",
             success: effectiveExitCode === 0 && !error,
@@ -1191,7 +1216,9 @@ async function runSingleStep(step, ctx) {
         removeAbortListener();
     const effectiveInterrupted = finalResult?.interrupted === true ||
         interruptedDuringAcceptance ||
-        (ctx.interruptSignal?.aborted === true && !ctx.timeoutSignal?.aborted && !ctx.skipAcceptance?.());
+        (ctx.interruptSignal?.aborted === true &&
+            !ctx.timeoutSignal?.aborted &&
+            !ctx.skipAcceptance?.());
     const interruptedAcceptance = effectiveInterrupted && step.effectiveAcceptance
         ? buildSkippedAcceptanceLedger({
             acceptance: step.effectiveAcceptance,
@@ -1201,10 +1228,16 @@ async function runSingleStep(step, ctx) {
             message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
         })
         : undefined;
-    const timedOutAfterAcceptance = finalResult?.timedOut === true || ctx.timeoutSignal?.aborted === true || ctx.skipAcceptance?.() === true;
+    const timedOutAfterAcceptance = finalResult?.timedOut === true ||
+        ctx.timeoutSignal?.aborted === true ||
+        ctx.skipAcceptance?.() === true;
     const turnBudgetExceeded = finalResult?.turnBudgetExceeded === true;
-    const effectiveAcceptance = timedOutAfterAcceptance || turnBudgetExceeded ? undefined : (interruptedAcceptance ?? acceptance);
-    const acceptanceFailure = effectiveAcceptance ? acceptanceFailureMessage(effectiveAcceptance) : undefined;
+    const effectiveAcceptance = timedOutAfterAcceptance || turnBudgetExceeded
+        ? undefined
+        : (interruptedAcceptance ?? acceptance);
+    const acceptanceFailure = effectiveAcceptance
+        ? acceptanceFailureMessage(effectiveAcceptance)
+        : undefined;
     const acceptanceCanFailRun = acceptanceFailure &&
         effectiveAcceptance?.explicit &&
         (finalResult?.exitCode ?? 1) === 0 &&
@@ -1232,7 +1265,9 @@ async function runSingleStep(step, ctx) {
         ? (ctx.timeoutMessage ?? "Subagent timed out.")
         : turnBudgetExceeded
             ? (finalResult?.error ??
-                (turnBudget ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount) : "Subagent exceeded turn budget."))
+                (turnBudget
+                    ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount)
+                    : "Subagent exceeded turn budget."))
             : effectiveInterrupted
                 ? undefined
                 : acceptanceCanFailRun
@@ -1329,15 +1364,23 @@ async function runSingleStep(step, ctx) {
         timedOut: timedOutAfterAcceptance ? true : finalResult?.timedOut,
         turnBudget,
         turnBudgetExceeded: turnBudgetExceeded || undefined,
-        wrapUpRequested: finalResult?.wrapUpRequested || turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
+        wrapUpRequested: finalResult?.wrapUpRequested ||
+            turnBudget?.outcome === "wrap-up-requested" ||
+            turnBudgetExceeded ||
+            undefined,
         toolBudget,
         toolBudgetBlocked: toolBudgetBlocked || undefined,
         completionGuardTriggered: completionGuardTriggeredFinal,
         structuredOutput: timedOutAfterAcceptance || turnBudgetExceeded
             ? undefined
-            : finalResult?.structuredOutput,
-        structuredOutputPath: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.outputPath,
-        structuredOutputSchemaPath: timedOutAfterAcceptance || turnBudgetExceeded ? undefined : effectiveStructuredOutput?.schemaPath,
+            : finalResult
+                ?.structuredOutput,
+        structuredOutputPath: timedOutAfterAcceptance || turnBudgetExceeded
+            ? undefined
+            : effectiveStructuredOutput?.outputPath,
+        structuredOutputSchemaPath: timedOutAfterAcceptance || turnBudgetExceeded
+            ? undefined
+            : effectiveStructuredOutput?.schemaPath,
         acceptance: effectiveAcceptance,
         activeRuntimeMs: priorActiveRuntimeMs + (Date.now() - segmentStartedAt),
     };
@@ -1379,7 +1422,7 @@ function isPausedStepStatus(status) {
     return status === "paused";
 }
 async function runSubagent(config) {
-    const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
+    const { id, steps, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig, } = config;
     const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
     let previousOutput = "";
     const outputs = {};
@@ -1509,7 +1552,9 @@ async function runSubagent(config) {
             flatStepCount++;
         }
     }
-    const sessionEnabled = Boolean(config.sessionDir) || shareEnabled || flatSteps.some((step) => Boolean(step.sessionFile));
+    const sessionEnabled = Boolean(config.sessionDir) ||
+        shareEnabled ||
+        flatSteps.some((step) => Boolean(step.sessionFile));
     const statusPayload = {
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
         runId: id,
@@ -1620,7 +1665,10 @@ async function runSubagent(config) {
         const normalize = (status) => {
             if (status === "complete" || status === "completed")
                 return "completed";
-            if (status === "running" || status === "failed" || status === "paused" || status === "pending")
+            if (status === "running" ||
+                status === "failed" ||
+                status === "paused" ||
+                status === "pending")
                 return status;
             return "pending";
         };
@@ -1698,7 +1746,9 @@ async function runSubagent(config) {
             latestSessionFile = tracked.discoveredSessionFile;
         if (!statusPayload.sessionFile) {
             statusPayload.sessionFile =
-                statusPayload.steps.length === 1 ? (step.sessionFile ?? latestSessionFile) : latestSessionFile;
+                statusPayload.steps.length === 1
+                    ? (step.sessionFile ?? latestSessionFile)
+                    : latestSessionFile;
         }
         return step.sessionFile ?? tracked.discoveredSessionFile;
     };
@@ -1760,11 +1810,11 @@ async function runSubagent(config) {
         activeChildTurnBudgetAborts.set(flatIndex, abort);
     };
     const interruptActiveChildren = () => {
-        for (const interrupt of [...activeChildInterrupts.values()])
+        for (const interrupt of Array.from(activeChildInterrupts.values()))
             interrupt();
     };
     const timeoutActiveChildren = () => {
-        for (const interrupt of [...activeChildTimeouts.values()])
+        for (const interrupt of Array.from(activeChildTimeouts.values()))
             interrupt();
     };
     const nestedRuns = function* (children) {
@@ -1797,7 +1847,11 @@ async function runSubagent(config) {
             if (!nestedAsyncDir)
                 continue;
             try {
-                deliverInterruptRequest({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-interrupt" });
+                deliverInterruptRequest({
+                    asyncDir: nestedAsyncDir,
+                    pid: run.pid,
+                    source: "ancestor-interrupt",
+                });
             }
             catch (error) {
                 appendJsonl(eventsPath, JSON.stringify({
@@ -1833,7 +1887,11 @@ async function runSubagent(config) {
             if (!nestedAsyncDir)
                 continue;
             try {
-                deliverTimeoutRequest({ asyncDir: nestedAsyncDir, pid: run.pid, source: "ancestor-timeout" });
+                deliverTimeoutRequest({
+                    asyncDir: nestedAsyncDir,
+                    pid: run.pid,
+                    source: "ancestor-timeout",
+                });
             }
             catch (error) {
                 appendJsonl(eventsPath, JSON.stringify({
@@ -1910,7 +1968,11 @@ async function runSubagent(config) {
         return persisted;
     };
     const requestSupervisorPause = (requesterIndex, pause) => {
-        if (supervisorPauseRequest || interrupted || timedOut || turnBudgetExceeded || statusPayload.state !== "running")
+        if (supervisorPauseRequest ||
+            interrupted ||
+            timedOut ||
+            turnBudgetExceeded ||
+            statusPayload.state !== "running")
             return;
         supervisorPauseRequest = {
             requesterIndex,
@@ -1939,7 +2001,8 @@ async function runSubagent(config) {
                         if (step.status !== "running")
                             return step;
                         const stepSessionFile = refreshTrackedSessionFile(index);
-                        const activeRuntimeMs = (step.activeRuntimeMs ?? 0) + (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0);
+                        const activeRuntimeMs = (step.activeRuntimeMs ?? 0) +
+                            (step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0);
                         return {
                             ...step,
                             status: "pausing",
@@ -2090,7 +2153,9 @@ async function runSubagent(config) {
     };
     const syncTopLevelCurrentTool = () => {
         const activeStep = statusPayload.steps
-            .filter((step) => step.status === "running" && typeof step.currentTool === "string" && step.currentTool.length > 0)
+            .filter((step) => step.status === "running" &&
+            typeof step.currentTool === "string" &&
+            step.currentTool.length > 0)
             .sort((left, right) => (right.currentToolStartedAt ?? 0) - (left.currentToolStartedAt ?? 0))[0];
         statusPayload.currentTool = activeStep?.currentTool;
         statusPayload.currentToolStartedAt = activeStep?.currentToolStartedAt;
@@ -2129,7 +2194,9 @@ async function runSubagent(config) {
             tokens: step.tokens?.total,
             toolCount: step.toolCount,
             currentTool: step.currentTool,
-            currentToolDurationMs: step.currentToolStartedAt ? Math.max(0, now - step.currentToolStartedAt) : undefined,
+            currentToolDurationMs: step.currentToolStartedAt
+                ? Math.max(0, now - step.currentToolStartedAt)
+                : undefined,
             currentPath: step.currentPath,
             elapsedMs: now - (step.startedAt ?? overallStartTime),
         });
@@ -2173,7 +2240,9 @@ async function runSubagent(config) {
             ts: now,
             acceptedIndexes: accepted,
             ...(rejected.length ? { rejected } : {}),
-            ...(accepted.length === 0 ? { reason: rejected[0]?.reason ?? "no running child accepted the request" } : {}),
+            ...(accepted.length === 0
+                ? { reason: rejected[0]?.reason ?? "no running child accepted the request" }
+                : {}),
         });
         appendJsonl(eventsPath, JSON.stringify({
             type: request.type === "resume" ? "subagent.resume.requested" : "subagent.steer.requested",
@@ -2207,7 +2276,8 @@ async function runSubagent(config) {
         activeConfiguredModels[flatIndex] = attempt.model;
         step.model = attempt.model;
         step.thinking = attempt.modelIdentity ? attempt.modelIdentity.thinking : attempt.thinking;
-        step.modelIdentity = attempt.modelIdentity ?? canonicalSubagentModelIdentity(attempt.model, attempt.thinking);
+        step.modelIdentity =
+            attempt.modelIdentity ?? canonicalSubagentModelIdentity(attempt.model, attempt.thinking);
         if (attempt.modelResolution)
             step.modelResolution = attempt.modelResolution;
         if (attempt.attemptedModels && attempt.attemptedModels.length > 0)
@@ -2290,7 +2360,12 @@ async function runSubagent(config) {
             step.currentToolArgs = extractToolArgsPreview(event.args ?? {});
             step.currentToolStartedAt = now;
             step.currentPath = currentPath;
-            pendingToolResults[flatIndex] = { tool: event.toolName, path: currentPath, mutates, startedAt: now };
+            pendingToolResults[flatIndex] = {
+                tool: event.toolName,
+                path: currentPath,
+                mutates,
+                startedAt: now,
+            };
             statusPayload.toolCount = (statusPayload.toolCount ?? 0) + 1;
             syncTopLevelCurrentTool();
         }
@@ -2355,7 +2430,9 @@ async function runSubagent(config) {
                         tokens: step.tokens?.total,
                         toolCount: step.toolCount,
                         currentTool: toolSnapshot.tool,
-                        currentToolDurationMs: toolSnapshot.startedAt ? Math.max(0, now - toolSnapshot.startedAt) : undefined,
+                        currentToolDurationMs: toolSnapshot.startedAt
+                            ? Math.max(0, now - toolSnapshot.startedAt)
+                            : undefined,
                         currentPath: toolSnapshot.path,
                         recentFailureSummary: summarizeRecentMutatingFailures(state),
                     }));
@@ -2385,7 +2462,8 @@ async function runSubagent(config) {
                 contextWindow: configuredContextWindow ?? runtimeModelContext?.contextWindow,
             });
             statusPayload.steps[flatIndex].contextUsage = step.contextUsage;
-            statusPayload.steps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;
+            statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
+                step.contextPressureCrossedThresholds;
             while (true) {
                 const pressure = detectContextPressureCrossing(step.contextUsage, step.contextPressureCrossedThresholds ?? [], now);
                 if (!pressure)
@@ -2394,9 +2472,11 @@ async function runSubagent(config) {
                     ...(step.contextPressureCrossedThresholds ?? []),
                     pressure.crossedThreshold,
                 ];
-                flatSteps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;
+                flatSteps[flatIndex].contextPressureCrossedThresholds =
+                    step.contextPressureCrossedThresholds;
                 flatSteps[flatIndex].contextPressure = pressure;
-                statusPayload.steps[flatIndex].contextPressureCrossedThresholds = step.contextPressureCrossedThresholds;
+                statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
+                    step.contextPressureCrossedThresholds;
                 statusPayload.steps[flatIndex].contextPressure = pressure;
                 statusPayload.lastUpdate = now;
                 writeStatusPayload();
@@ -2601,7 +2681,8 @@ async function runSubagent(config) {
             const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
             if (targetStep?.status === "pending")
                 pendingStepSteers.push(request);
-            else if (request.targetIndex !== undefined || statusPayload.steps.some((step) => step.status === "running"))
+            else if (request.targetIndex !== undefined ||
+                statusPayload.steps.some((step) => step.status === "running"))
                 deliverChildMessageRequest(request);
             else
                 pendingStepSteers.push(request);
@@ -2610,7 +2691,8 @@ async function runSubagent(config) {
             const targetStep = request.targetIndex !== undefined ? statusPayload.steps[request.targetIndex] : undefined;
             if (targetStep?.status === "pending")
                 pendingStepSteers.push(request);
-            else if (request.targetIndex !== undefined || statusPayload.steps.some((step) => step.status === "running"))
+            else if (request.targetIndex !== undefined ||
+                statusPayload.steps.some((step) => step.status === "running"))
                 deliverChildMessageRequest(request);
             else
                 pendingStepSteers.push(request);
@@ -2693,7 +2775,9 @@ async function runSubagent(config) {
                         modelResolution: task.modelResolution,
                     };
                 }
-                const taskSessionDir = config.sessionDir ? path.join(config.sessionDir, `parallel-${taskIdx}`) : undefined;
+                const taskSessionDir = config.sessionDir
+                    ? path.join(config.sessionDir, `parallel-${taskIdx}`)
+                    : undefined;
                 const taskStartTime = Date.now();
                 const taskDeadlineAt = task.timeoutMs !== undefined ? taskStartTime + task.timeoutMs : config.deadlineAt;
                 beginTrackedSessionStep(fi, task.sessionFile ? path.dirname(task.sessionFile) : taskSessionDir, task.sessionFile);
@@ -2775,7 +2859,11 @@ async function runSubagent(config) {
                 statusPayload.steps[fi].endedAt = taskEndTime;
                 statusPayload.steps[fi].durationMs = taskDuration;
                 statusPayload.steps[fi].activeRuntimeMs = singleResult.activeRuntimeMs;
-                statusPayload.steps[fi].exitCode = timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+                statusPayload.steps[fi].exitCode = timedOut
+                    ? 1
+                    : childInterrupted
+                        ? 0
+                        : singleResult.exitCode;
                 statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
                 statusPayload.steps[fi].timedOut = timedOut || singleResult.timedOut ? true : undefined;
                 statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
@@ -2786,7 +2874,8 @@ async function runSubagent(config) {
                 statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;
                 statusPayload.steps[fi].contextUsage = singleResult.contextUsage;
                 statusPayload.steps[fi].contextPressure = singleResult.contextPressure;
-                statusPayload.steps[fi].contextPressureCrossedThresholds = singleResult.contextPressureCrossedThresholds;
+                statusPayload.steps[fi].contextPressureCrossedThresholds =
+                    singleResult.contextPressureCrossedThresholds;
                 statusPayload.steps[fi].terminationReason = singleResult.terminationReason;
                 if (singleResult.toolBudget)
                     statusPayload.toolBudget = singleResult.toolBudget;
@@ -2808,13 +2897,16 @@ async function runSubagent(config) {
                 statusPayload.steps[fi].attemptedModels = singleResult.attemptedModels;
                 statusPayload.steps[fi].modelAttempts = singleResult.modelAttempts;
                 statusPayload.steps[fi].totalCost = singleResult.totalCost;
-                statusPayload.steps[fi].error = timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
+                statusPayload.steps[fi].error = timedOut
+                    ? (timeoutMessage ?? "Subagent timed out.")
+                    : singleResult.error;
                 statusPayload.steps[fi].transcriptPath =
                     singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
                 statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
                 statusPayload.steps[fi].structuredOutput = singleResult.structuredOutput;
                 statusPayload.steps[fi].structuredOutputPath = singleResult.structuredOutputPath;
-                statusPayload.steps[fi].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
+                statusPayload.steps[fi].structuredOutputSchemaPath =
+                    singleResult.structuredOutputSchemaPath;
                 statusPayload.steps[fi].acceptance = singleResult.acceptance;
                 if (pausedStep)
                     applyPausedStepMetadata(fi, taskEndTime);
@@ -2920,7 +3012,9 @@ async function runSubagent(config) {
                     structuredOutputPath: pr.structuredOutputPath,
                     structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
                     acceptance: pr.acceptance,
-                    pause: pr.interrupted ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt) : undefined,
+                    pause: pr.interrupted
+                        ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
+                        : undefined,
                     activeRuntimeMs: pr.activeRuntimeMs,
                 });
             }
@@ -2952,7 +3046,8 @@ async function runSubagent(config) {
                     success: parallelResults.every((r) => r.exitCode === 0 || r.exitCode === -1),
                 }));
             }
-            if (parallelGroupInterrupted || parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
+            if (parallelGroupInterrupted ||
+                parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
                 break;
             }
         }
@@ -3111,9 +3206,14 @@ async function runSubagent(config) {
             statusPayload.steps[flatIndex].endedAt = stepEndTime;
             statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
             statusPayload.steps[flatIndex].activeRuntimeMs = singleResult.activeRuntimeMs;
-            statusPayload.steps[flatIndex].exitCode = timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode;
+            statusPayload.steps[flatIndex].exitCode = timedOut
+                ? 1
+                : childInterrupted
+                    ? 0
+                    : singleResult.exitCode;
             statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
-            statusPayload.steps[flatIndex].timedOut = timedOut || singleResult.timedOut ? true : undefined;
+            statusPayload.steps[flatIndex].timedOut =
+                timedOut || singleResult.timedOut ? true : undefined;
             statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
             statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
             statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
@@ -3122,7 +3222,8 @@ async function runSubagent(config) {
             statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
             statusPayload.steps[flatIndex].contextUsage = singleResult.contextUsage;
             statusPayload.steps[flatIndex].contextPressure = singleResult.contextPressure;
-            statusPayload.steps[flatIndex].contextPressureCrossedThresholds = singleResult.contextPressureCrossedThresholds;
+            statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
+                singleResult.contextPressureCrossedThresholds;
             statusPayload.steps[flatIndex].terminationReason = singleResult.terminationReason;
             if (singleResult.toolBudget)
                 statusPayload.toolBudget = singleResult.toolBudget;
@@ -3144,13 +3245,16 @@ async function runSubagent(config) {
             statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
             statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
             statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
-            statusPayload.steps[flatIndex].error = timedOut ? (timeoutMessage ?? "Subagent timed out.") : singleResult.error;
+            statusPayload.steps[flatIndex].error = timedOut
+                ? (timeoutMessage ?? "Subagent timed out.")
+                : singleResult.error;
             statusPayload.steps[flatIndex].transcriptPath =
                 singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
             statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
             statusPayload.steps[flatIndex].structuredOutput = singleResult.structuredOutput;
             statusPayload.steps[flatIndex].structuredOutputPath = singleResult.structuredOutputPath;
-            statusPayload.steps[flatIndex].structuredOutputSchemaPath = singleResult.structuredOutputSchemaPath;
+            statusPayload.steps[flatIndex].structuredOutputSchemaPath =
+                singleResult.structuredOutputSchemaPath;
             statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
             if (pausedStep)
                 applyPausedStepMetadata(flatIndex, stepEndTime);
@@ -3217,7 +3321,9 @@ async function runSubagent(config) {
         outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? 0),
         costUsd: sum.costUsd + (result.totalCost?.costUsd ?? 0),
     }), { inputTokens: 0, outputTokens: 0, costUsd: 0 });
-    const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0 ? totalCost : undefined;
+    const finalTotalCost = totalCost.inputTokens > 0 || totalCost.outputTokens > 0 || totalCost.costUsd > 0
+        ? totalCost
+        : undefined;
     const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
     const agentName = finalFlatAgents.length === 1
         ? finalFlatAgents[0]
@@ -3229,7 +3335,9 @@ async function runSubagent(config) {
     let gistUrl;
     let shareError;
     if (shareEnabled) {
-        sessionFile = config.sessionDir ? (findLatestSessionFile(config.sessionDir) ?? undefined) : undefined;
+        sessionFile = config.sessionDir
+            ? (findLatestSessionFile(config.sessionDir) ?? undefined)
+            : undefined;
         if (!sessionFile && latestSessionFile) {
             sessionFile = latestSessionFile;
         }
@@ -3277,7 +3385,8 @@ async function runSubagent(config) {
         }
         else if (statusPayload.state === "pausing") {
             if (nestedDescendantsStoppedBeforeFinalization && ownedProcessesStoppedBeforeFinalization) {
-                const pausedSessionFile = effectiveSessionFile ?? statusPayload.steps[supervisorPauseRequest.requesterIndex]?.sessionFile;
+                const pausedSessionFile = effectiveSessionFile ??
+                    statusPayload.steps[supervisorPauseRequest.requesterIndex]?.sessionFile;
                 try {
                     const transition = transitionLifecycleStatus({
                         asyncDir,
@@ -3305,14 +3414,18 @@ async function runSubagent(config) {
                             steps: status.steps?.map((step, index) => step.status === "pausing" || step.status === "paused"
                                 ? {
                                     ...step,
-                                    ...(refreshTrackedSessionFile(index) ? { sessionFile: refreshTrackedSessionFile(index) } : {}),
+                                    ...(refreshTrackedSessionFile(index)
+                                        ? { sessionFile: refreshTrackedSessionFile(index) }
+                                        : {}),
                                     status: "paused",
                                     exitCode: 0,
                                     terminationReason: "paused",
                                     exitSignal: undefined,
                                     activityState: undefined,
                                     endedAt: step.endedAt ?? runEndedAt,
-                                    durationMs: step.startedAt ? (step.endedAt ?? runEndedAt) - step.startedAt : step.durationMs,
+                                    durationMs: step.startedAt
+                                        ? (step.endedAt ?? runEndedAt) - step.startedAt
+                                        : step.durationMs,
                                     pause: pauseMetadataForIndex(index, runEndedAt),
                                     acceptance: step.acceptance ?? pausedAcceptanceLedger(flatStepAcceptances[index]),
                                 }
@@ -3352,7 +3465,9 @@ async function runSubagent(config) {
         else if (!adoptConcurrentTerminalStatus()) {
             supervisorPauseTransitionFailed = true;
         }
-        if (!pausedAwaitingSupervisor && supervisorPauseTransitionFailed && !concurrentTerminalStatusAdopted) {
+        if (!pausedAwaitingSupervisor &&
+            supervisorPauseTransitionFailed &&
+            !concurrentTerminalStatusAdopted) {
             skipFinalStatusWrite = false;
             statusPayload.state = "failed";
             statusPayload.pid = undefined;
@@ -3464,7 +3579,9 @@ async function runSubagent(config) {
         shareError,
     });
     const resultPausedAwaitingSupervisor = pausedAwaitingSupervisor ??
-        (safePausedResultAfterReap && !supervisorPauseTransitionFailed && !concurrentTerminalStatusAdopted
+        (safePausedResultAfterReap &&
+            !supervisorPauseTransitionFailed &&
+            !concurrentTerminalStatusAdopted
             ? safePausedResultAfterReap
             : undefined);
     const resultState = concurrentTerminalStatusAdopted
@@ -3494,7 +3611,9 @@ async function runSubagent(config) {
                 ? pausedOutputForIndex(supervisorPauseRequest?.requesterIndex ?? 0, statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName)
                 : resultState === "failed"
                     ? (statusPayload.error ??
-                        (supervisorPauseTransitionFailed ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE : summary))
+                        (supervisorPauseTransitionFailed
+                            ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
+                            : summary))
                     : resultState === "paused"
                         ? "Paused after interrupt. Waiting for explicit next action."
                         : summary;

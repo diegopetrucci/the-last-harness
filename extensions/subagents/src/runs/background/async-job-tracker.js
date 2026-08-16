@@ -6,9 +6,9 @@ import { POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL
 import { readStatus } from "../../shared/utils.js";
 import { normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
-import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.js";
+import { hasLiveNestedDescendants, updateAsyncJobNestedProjection, } from "../shared/nested-events.js";
 import { scanAsyncRunsForRestore } from "./async-status.js";
-import { quarantineCorruptAsyncRun } from "./async-status-quarantine.js";
+import { quarantineCorruptAsyncRun, } from "./async-status-quarantine.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
@@ -187,7 +187,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
                     return;
                 }
-                if (!parsed || typeof parsed !== "object" || parsed.type !== "subagent.control")
+                if (!parsed ||
+                    typeof parsed !== "object" ||
+                    parsed.type !== "subagent.control")
                     return;
                 const record = parsed;
                 const event = parseControlEvent(record.event);
@@ -218,7 +220,9 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             let lastCompleteCursor = cursor;
             let lineParts = [];
             let lineBytes = 0;
-            let skippingOversizedLine = cursorInvalid ? false : (job.controlEventSkippingOversizedLine ?? startedFromTail);
+            let skippingOversizedLine = cursorInvalid
+                ? false
+                : (job.controlEventSkippingOversizedLine ?? startedFromTail);
             const appendLineSegment = (segment) => {
                 if (segment.length === 0 || skippingOversizedLine)
                     return;
@@ -307,7 +311,11 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                 const reconcileNestedDescendants = () => {
                     try {
                         if (job.nestedRoute)
-                            reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
+                            reconcileNestedAsyncDescendants(job.nestedRoute, {
+                                resultsDir,
+                                kill: options.kill,
+                                now: options.now,
+                            });
                     }
                     catch (error) {
                         nestedRefreshFailed = true;
@@ -359,7 +367,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                             job.parallelGroups = groups.length ? groups : job.parallelGroups;
                             job.hasParallelGroups = groups.length > 0 || job.hasParallelGroups;
                             const activeGroup = status.currentStep !== undefined
-                                ? groups.find((group) => status.currentStep >= group.start && status.currentStep < group.start + group.count)
+                                ? groups.find((group) => status.currentStep >= group.start &&
+                                    status.currentStep < group.start + group.count)
                                 : undefined;
                             const visibleSteps = activeGroup
                                 ? status.steps
@@ -409,7 +418,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.status = "failed";
                         job.updatedAt = Date.now();
                     }
-                    if (!hasLiveNestedDescendants(job.nestedChildren) && !state.cleanupTimers.has(job.asyncId)) {
+                    if (!hasLiveNestedDescendants(job.nestedChildren) &&
+                        !state.cleanupTimers.has(job.asyncId)) {
                         scheduleCleanup(job.asyncId);
                     }
                 }
@@ -568,7 +578,8 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
         for (const run of runs) {
             state.asyncJobs.set(run.id, summaryToJob(run));
         }
-        if (restoreControlEventProbeFailures.size > 0 && !restoreWarningDedupe.has("control-event-probe-failure")) {
+        if (restoreControlEventProbeFailures.size > 0 &&
+            !restoreWarningDedupe.has("control-event-probe-failure")) {
             restoreWarningDedupe.add("control-event-probe-failure");
             const count = restoreControlEventProbeFailures.size;
             warnRestoreIssues(`Async restore could not inspect persisted control events for ${count} active ${count === 1 ? "job" : "jobs"}; continued restoring active jobs.`);

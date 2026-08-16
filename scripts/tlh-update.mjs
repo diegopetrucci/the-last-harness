@@ -5,7 +5,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
-import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath } from "./lib/tlh-install-utils.mjs";
+import { assignOptionValue, defaultTlhAgentDir, defaultTlhBinDir, expandHomePath, } from "./lib/tlh-install-utils.mjs";
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_WRAPPER_NAME = "tlh";
 const VALID_TRACKS = new Set(["latest-release", "pinned-tag", "ref", "custom"]);
@@ -232,7 +232,9 @@ function readJson(path) {
 function packageSourceOf(entry) {
     if (typeof entry === "string")
         return entry;
-    if (entry && typeof entry === "object" && typeof entry.source === "string") {
+    if (entry &&
+        typeof entry === "object" &&
+        typeof entry.source === "string") {
         return entry.source;
     }
     return undefined;
@@ -310,7 +312,9 @@ function normalizeState(raw, fallback = {}) {
         return undefined;
     const record = raw;
     const repo = typeof record.repo === "string" && record.repo.trim() ? record.repo.trim() : fallback.repo;
-    const track = typeof record.track === "string" && record.track.trim() ? record.track.trim() : fallback.track;
+    const track = typeof record.track === "string" && record.track.trim()
+        ? record.track.trim()
+        : fallback.track;
     const ref = typeof record.ref === "string" && record.ref.trim() ? record.ref.trim() : fallback.ref;
     const packageSource = typeof record.packageSource === "string" && record.packageSource.trim()
         ? record.packageSource.trim()
@@ -318,7 +322,9 @@ function normalizeState(raw, fallback = {}) {
     if (!repo || !track || !VALID_TRACKS.has(track))
         return undefined;
     return {
-        schemaVersion: Number.isInteger(record.schemaVersion) ? record.schemaVersion : undefined,
+        schemaVersion: Number.isInteger(record.schemaVersion)
+            ? record.schemaVersion
+            : undefined,
         repo,
         track,
         ref,
@@ -326,7 +332,9 @@ function normalizeState(raw, fallback = {}) {
         packageSourceIsDefault: record.packageSourceIsDefault === true,
         inferred: record.inferred === true,
         // Carry piInstalledByTlh only when it is a boolean; absent in older install-states.
-        ...(typeof record.piInstalledByTlh === "boolean" && { piInstalledByTlh: record.piInstalledByTlh }),
+        ...(typeof record.piInstalledByTlh === "boolean" && {
+            piInstalledByTlh: record.piInstalledByTlh,
+        }),
     };
 }
 function inferStateFromSettings(agentDir, requestedRepo) {
@@ -334,7 +342,9 @@ function inferStateFromSettings(agentDir, requestedRepo) {
     if (!existsSync(path))
         return undefined;
     const settings = readJson(path);
-    if (!settings || typeof settings !== "object" || !Array.isArray(settings.packages)) {
+    if (!settings ||
+        typeof settings !== "object" ||
+        !Array.isArray(settings.packages)) {
         return undefined;
     }
     let fallback;
@@ -392,7 +402,9 @@ function resolvePlan(state, args) {
     const track = args.track || state?.track;
     const ref = args.ref || state?.ref;
     const packageSource = args.packageSource || state?.packageSource;
-    const packageSourceIsDefault = args.packageSource ? false : state?.packageSourceIsDefault === true;
+    const packageSourceIsDefault = args.packageSource
+        ? false
+        : state?.packageSourceIsDefault === true;
     const changesStoredCustomTarget = state?.packageSourceIsDefault === false &&
         !args.packageSource &&
         ((args.ref && args.ref !== state.ref) ||

@@ -1,7 +1,10 @@
 import { parseThinkingLevel, splitKnownThinkingSuffix, } from "../../shared/model-info.js";
-import { checkModelScope } from "./model-scope.js";
+import { checkModelScope, } from "./model-scope.js";
 function sameModelIdentity(left, right) {
-    return Boolean(left && left.provider === right.provider && left.model === right.model && left.thinking === right.thinking);
+    return Boolean(left &&
+        left.provider === right.provider &&
+        left.model === right.model &&
+        left.thinking === right.thinking);
 }
 export function appendRuntimeFallbackResolution(input) {
     const current = input.currentIdentity;
@@ -10,7 +13,9 @@ export function appendRuntimeFallbackResolution(input) {
         return input.previous;
     if (sameModelIdentity(input.previous?.resumed, current))
         return input.previous;
-    const original = input.previous?.original ?? input.originalIdentity ?? canonicalSubagentModelIdentity(source.model);
+    const original = input.previous?.original ??
+        input.originalIdentity ??
+        canonicalSubagentModelIdentity(source.model);
     const currentReference = `${current.provider}/${current.model}${current.thinking ? `:${current.thinking}` : ""}`;
     const transition = `Runtime fallback selected '${currentReference}' after '${source.model}' failed: ${source.error ?? `exit ${source.exitCode ?? 1}`}.`;
     return {
@@ -37,7 +42,9 @@ export function canonicalSubagentModelIdentity(model, thinking) {
     const separator = parsed.baseModel.indexOf("/");
     if (separator <= 0 || separator === parsed.baseModel.length - 1)
         return undefined;
-    const effectiveThinking = parsed.thinkingSuffix ? parsed.thinkingSuffix.slice(1) : parseThinkingLevel(thinking);
+    const effectiveThinking = parsed.thinkingSuffix
+        ? parsed.thinkingSuffix.slice(1)
+        : parseThinkingLevel(thinking);
     return {
         provider: parsed.baseModel.slice(0, separator),
         model: parsed.baseModel.slice(separator + 1),

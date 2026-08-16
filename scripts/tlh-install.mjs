@@ -49,7 +49,12 @@ const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // marker.  Authoritative ownership is carried by the marker file
 // (.tlh-runtime-owned), not by directory shape; this set is used only as an
 // advisory defense-in-depth check that can downgrade a removal to a skip.
-const RUNTIME_OWNED_TOPLEVEL = new Set(["bin", "lib", "node-compile-cache", RUNTIME_MARKER_FILENAME]);
+const RUNTIME_OWNED_TOPLEVEL = new Set([
+    "bin",
+    "lib",
+    "node-compile-cache",
+    RUNTIME_MARKER_FILENAME,
+]);
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 function spawnErrorCode(error) {
     if (typeof error !== "object" || error === null || !("code" in error))
@@ -343,7 +348,8 @@ function buildInstallConfig(parsedArgs, env = process.env) {
         packageHelperRoot,
         packageSource,
         packageSourceIsDefault,
-        rawBase: parsedArgs.rawBaseInput || `https://raw.githubusercontent.com/${parsedArgs.repo}/${parsedArgs.ref}`,
+        rawBase: parsedArgs.rawBaseInput ||
+            `https://raw.githubusercontent.com/${parsedArgs.repo}/${parsedArgs.ref}`,
         updateTrack: updateTrack,
         subagentPrompts: [...TLH_SUBAGENT_PROMPTS],
         supportFiles,
@@ -434,7 +440,9 @@ function runCommand(config, commandArgs, { cwd, env = {}, displayArgs = commandA
     });
     if (result.error || result.status !== 0) {
         const status = result.status ?? result.signal ?? spawnErrorCode(result.error) ?? 1;
-        const output = config.verbose ? (result.error?.message ?? "") : `${result.stdout || ""}${result.stderr || ""}`;
+        const output = config.verbose
+            ? (result.error?.message ?? "")
+            : `${result.stdout || ""}${result.stderr || ""}`;
         printCommandFailure({ status, output, displayArgs, cwd });
         throw new Error(`command failed: ${commandDisplay(displayArgs)}`);
     }
@@ -777,7 +785,15 @@ function installPiIfNeeded(config) {
         verboseLog(config, `Installing TLH private Pi runtime to ${prefix} (per-user, no sudo)...`);
     }
     verboseLog(config, `Installing pinned Pi package spec: ${PI_PACKAGE_SPEC}`);
-    runCommand(config, ["npm", "install", "-g", "--ignore-scripts", "--prefix", prefix, PI_PACKAGE_SPEC]);
+    runCommand(config, [
+        "npm",
+        "install",
+        "-g",
+        "--ignore-scripts",
+        "--prefix",
+        prefix,
+        PI_PACKAGE_SPEC,
+    ]);
     if (config.dryRun) {
         // Log marker intent in dry-run; the prefix may not exist yet.
         writeRuntimeMarker(config, prefix, origin);
@@ -943,7 +959,10 @@ export function cleanupRetiredProfileFiles(config) {
         try {
             const raw = readFileSync(config.settingsPath, "utf8");
             const parsed = JSON.parse(raw);
-            if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray(parsed.packages)) {
+            if (parsed !== null &&
+                typeof parsed === "object" &&
+                !Array.isArray(parsed) &&
+                Array.isArray(parsed.packages)) {
                 postMergePackages = parsed.packages;
             }
         }
@@ -1093,7 +1112,9 @@ function installHarnessPackage(config) {
     backupExistingSettingsBeforePiInstall(config);
     log(config, "Installing package...");
     verboseLog(config, `Package source: ${config.packageSource}`);
-    const piPackageSource = packageSourcePiSource(config.packageSource, { agentDir: config.agentDir });
+    const piPackageSource = packageSourcePiSource(config.packageSource, {
+        agentDir: config.agentDir,
+    });
     assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo());
     runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
     refreshHarnessPackageCheckout(config);
@@ -1137,7 +1158,8 @@ async function mergeSettings(config) {
     log(config, "Applying isolated settings...");
     verboseLog(config, `Settings path: ${config.settingsPath}`);
     runNodeScript(config, args[0], args.slice(1));
-    if (!config.supportFilePaths.KEYBINDINGS_MERGE_SCRIPT || !config.supportFilePaths.KEYBINDINGS_DEFAULTS_FILE)
+    if (!config.supportFilePaths.KEYBINDINGS_MERGE_SCRIPT ||
+        !config.supportFilePaths.KEYBINDINGS_DEFAULTS_FILE)
         return;
     const keybindingArgs = [
         config.supportFilePaths.KEYBINDINGS_MERGE_SCRIPT,
@@ -1210,12 +1232,18 @@ async function installSupportFilesToProfile(config) {
     if (!subagentsSrc) {
         throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
     }
-    const missingPrompts = missingTlhSubagentPrompts(subagentsSrc, { prompts: config.subagentPrompts });
+    const missingPrompts = missingTlhSubagentPrompts(subagentsSrc, {
+        prompts: config.subagentPrompts,
+    });
     if (missingPrompts.length > 0) {
         throw new Error(`TLH subagent prompts are incomplete (${missingPrompts.join(" ")}); re-run installer from a complete checkout or package.`);
     }
-    const installedSubagentsDir = copyTlhSubagentPrompts(config, subagentsSrc, { prompts: config.subagentPrompts });
-    const installedMissing = missingTlhSubagentPrompts(installedSubagentsDir, { prompts: config.subagentPrompts });
+    const installedSubagentsDir = copyTlhSubagentPrompts(config, subagentsSrc, {
+        prompts: config.subagentPrompts,
+    });
+    const installedMissing = missingTlhSubagentPrompts(installedSubagentsDir, {
+        prompts: config.subagentPrompts,
+    });
     if (installedMissing.length > 0) {
         throw new Error(`failed to install TLH subagent prompts (${installedMissing.join(" ")}); re-run installer from a complete checkout or package.`);
     }
@@ -1262,11 +1290,15 @@ async function writeInstallState(config) {
         config.wrapperName,
     ];
     const existingPiInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
-    const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true ? true : config.piInstalledByTlh;
+    const piInstalledByTlhForWrite = config.piInstalledByTlh === true || existingPiInstalledByTlhPreference === true
+        ? true
+        : config.piInstalledByTlh;
     // Write piInstalledByTlh when: (a) this run installed Pi, (b) TLH ownership is already
     // known to be true and must survive the full install-state rewrite, (c) an explicit override
     // was provided, or (d) the state file does not yet exist (genuine fresh install).
-    const writePiInstalledByTlh = piInstalledByTlhForWrite === true || config.piInstalledByTlhOverride !== undefined || !existsSync(config.statePath);
+    const writePiInstalledByTlh = piInstalledByTlhForWrite === true ||
+        config.piInstalledByTlhOverride !== undefined ||
+        !existsSync(config.statePath);
     if (writePiInstalledByTlh && piInstalledByTlhForWrite !== undefined) {
         args.push("--pi-installed-by-tlh", String(piInstalledByTlhForWrite));
     }
@@ -1383,7 +1415,8 @@ function installDefaultExtensions(config) {
         log(config, "Skipping bundled default extensions (--no-settings).");
         return;
     }
-    if (!config.supportFilePaths.TLH_DEFAULTS_SCRIPT || !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) {
+    if (!config.supportFilePaths.TLH_DEFAULTS_SCRIPT ||
+        !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE) {
         if (config.dryRun)
             log(config, "Would install bundled default extension packages after settings merge.");
         return;
@@ -1391,11 +1424,19 @@ function installDefaultExtensions(config) {
     let sourcesOutput;
     let criticalSourcesOutput;
     try {
-        sourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, ["--settings", config.settingsPath, "--defaults", config.supportFilePaths.DEFAULT_EXTENSIONS_FILE, "sources"], { captureStdout: true });
+        sourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, [
+            "--settings",
+            config.settingsPath,
+            "--defaults",
+            config.supportFilePaths.DEFAULT_EXTENSIONS_FILE,
+            "sources",
+        ], { captureStdout: true });
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`failed to read bundled default extension sources: ${message}`, { cause: error });
+        throw new Error(`failed to read bundled default extension sources: ${message}`, {
+            cause: error,
+        });
     }
     try {
         criticalSourcesOutput = runNodeScript(config, config.supportFilePaths.TLH_DEFAULTS_SCRIPT, [
@@ -1411,7 +1452,9 @@ function installDefaultExtensions(config) {
             noSettings: config.noSettings,
         })) {
             const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`failed to read critical bundled default extension sources: ${message}`, { cause: error });
+            throw new Error(`failed to read critical bundled default extension sources: ${message}`, {
+                cause: error,
+            });
         }
         warn("installed default-extension helper does not support critical source queries; treating this ref as having no critical defaults.");
         criticalSourcesOutput = "";
@@ -1441,7 +1484,8 @@ function configureGnosis(config) {
         log(config, "Skipping Gnosis integration (TLH_SKIP_GNOSIS_INSTALL is set).");
         return;
     }
-    if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT || !existsSync(config.supportFilePaths.TLH_GNOSIS_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_GNOSIS_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_GNOSIS_SCRIPT)) {
         throw new Error(`required Gnosis support script not found for ref ${config.ref}: scripts/tlh-gnosis.mjs`);
     }
     const args = [
@@ -1531,7 +1575,8 @@ async function writeWrapper(config) {
         log(config, `Installing wrapper command: ${config.wrapperPath}`);
     else
         log(config, "Creating wrapper command...");
-    if (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_WRAPPER_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)) {
         if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
             if (config.dryRun) {
                 writeWrapperDryRunWithoutHelper(config);
@@ -1540,7 +1585,8 @@ async function writeWrapper(config) {
             throw new Error(`wrapper support files are unavailable for ref ${config.ref}`);
         }
     }
-    if (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)) {
+    if (!config.supportFilePaths.TLH_WRAPPER_SCRIPT ||
+        !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)) {
         if (config.dryRun) {
             writeWrapperDryRunWithoutHelper(config);
             return;
@@ -1731,8 +1777,12 @@ async function runInstallFlow(config) {
     config.piCmd = piCmd;
     installHarnessPackage(config);
     await installSupportFilesToProfile(config);
-    const retiredSubagentPackages = config.noSettings ? [] : captureManagedRetiredSubagentPackages(config.settingsPath);
-    const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0 ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined;
+    const retiredSubagentPackages = config.noSettings
+        ? []
+        : captureManagedRetiredSubagentPackages(config.settingsPath);
+    const retiredSubagentNpmCommand = retiredSubagentPackages.length > 0
+        ? captureRetiredSubagentNpmCommand(config.settingsPath)
+        : undefined;
     if (!config.noSettings) {
         cleanupManagedRetiredSubagentPackages({ ...config, npmCommand: retiredSubagentNpmCommand }, retiredSubagentPackages);
     }

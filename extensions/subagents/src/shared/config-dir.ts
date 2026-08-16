@@ -13,108 +13,116 @@ export const PI_CODING_AGENT_PACKAGE_ROOT_ENV = "PI_SUBAGENTS_PI_CODING_AGENT_PA
 let cachedRuntimeConfigDirName: string | null | undefined;
 
 export interface RuntimeConfigDirDeps {
-	readFileSync?: (filePath: string, encoding: "utf-8") => string;
-	resolveRuntimePackageRoot?: () => string | undefined;
-	resolveInstalledPackageRoot?: () => string | undefined;
-	env?: NodeJS.ProcessEnv;
-	useCache?: boolean;
+  readFileSync?: (filePath: string, encoding: "utf-8") => string;
+  resolveRuntimePackageRoot?: () => string | undefined;
+  resolveInstalledPackageRoot?: () => string | undefined;
+  env?: NodeJS.ProcessEnv;
+  useCache?: boolean;
 }
 
 function normalizeConfigDirName(value: unknown): string | undefined {
-	if (typeof value !== "string") return undefined;
-	const trimmed = value.trim();
-	return trimmed ? trimmed : undefined;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function resolveConfigDirNameFromSource(source: unknown): string | undefined {
-	if (!source || typeof source !== "object") return undefined;
+  if (!source || typeof source !== "object") return undefined;
 
-	const direct = source as {
-		CONFIG_DIR_NAME?: unknown;
-		configDir?: unknown;
-		piConfig?: { configDir?: unknown } | null;
-	};
-	return (
-		normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
-		normalizeConfigDirName(direct.configDir) ??
-		normalizeConfigDirName(direct.piConfig?.configDir)
-	);
+  const direct = source as {
+    CONFIG_DIR_NAME?: unknown;
+    configDir?: unknown;
+    piConfig?: { configDir?: unknown } | null;
+  };
+  return (
+    normalizeConfigDirName(direct.CONFIG_DIR_NAME) ??
+    normalizeConfigDirName(direct.configDir) ??
+    normalizeConfigDirName(direct.piConfig?.configDir)
+  );
 }
 
 function readConfigDirNameFromPackageRoot(
-	packageRoot: string | undefined,
-	deps: RuntimeConfigDirDeps,
+  packageRoot: string | undefined,
+  deps: RuntimeConfigDirDeps,
 ): string | undefined {
-	if (!packageRoot) return undefined;
+  if (!packageRoot) return undefined;
 
-	try {
-		const readFileSync = deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
-		const packageJsonPath = path.join(packageRoot, "package.json");
-		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-			piConfig?: { configDir?: unknown } | null;
-		};
-		return resolveConfigDirNameFromSource(packageJson);
-	} catch {
-		return undefined;
-	}
+  try {
+    const readFileSync =
+      deps.readFileSync ?? ((filePath, encoding) => fs.readFileSync(filePath, encoding));
+    const packageJsonPath = path.join(packageRoot, "package.json");
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+      piConfig?: { configDir?: unknown } | null;
+    };
+    return resolveConfigDirNameFromSource(packageJson);
+  } catch {
+    return undefined;
+  }
 }
 
 function safeResolvePackageRoot(resolvePackageRoot: () => string | undefined): string | undefined {
-	try {
-		return resolvePackageRoot();
-	} catch {
-		return undefined;
-	}
+  try {
+    return resolvePackageRoot();
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveConfigDirNameFromEntryPoint(
-	entryPoint: string | undefined,
-	packageRoot: string | undefined,
-	deps: RuntimeConfigDirDeps,
+  entryPoint: string | undefined,
+  packageRoot: string | undefined,
+  deps: RuntimeConfigDirDeps,
 ): string | undefined {
-	const explicitRootValue = readConfigDirNameFromPackageRoot(packageRoot, deps);
-	if (explicitRootValue !== undefined) return explicitRootValue;
-	if (!entryPoint) return undefined;
+  const explicitRootValue = readConfigDirNameFromPackageRoot(packageRoot, deps);
+  if (explicitRootValue !== undefined) return explicitRootValue;
+  if (!entryPoint) return undefined;
 
-	try {
-		let dir = path.dirname(fs.realpathSync(entryPoint));
-		while (dir !== path.dirname(dir)) {
-			const value = readConfigDirNameFromPackageRoot(dir, deps);
-			if (value !== undefined) return value;
-			dir = path.dirname(dir);
-		}
-	} catch {
-		// Package metadata lookup is best-effort; detached runners must not fail here.
-	}
-	return undefined;
+  try {
+    let dir = path.dirname(fs.realpathSync(entryPoint));
+    while (dir !== path.dirname(dir)) {
+      const value = readConfigDirNameFromPackageRoot(dir, deps);
+      if (value !== undefined) return value;
+      dir = path.dirname(dir);
+    }
+  } catch {
+    // Package metadata lookup is best-effort; detached runners must not fail here.
+  }
+  return undefined;
 }
 
 export function resolveRuntimeConfigDirName(deps: RuntimeConfigDirDeps = {}): string | undefined {
-	const useCache =
-		deps.useCache ??
-		(deps.readFileSync === undefined &&
-			deps.resolveRuntimePackageRoot === undefined &&
-			deps.resolveInstalledPackageRoot === undefined &&
-			deps.env === undefined);
-	if (useCache && cachedRuntimeConfigDirName !== undefined) {
-		return cachedRuntimeConfigDirName ?? undefined;
-	}
+  const useCache =
+    deps.useCache ??
+    (deps.readFileSync === undefined &&
+      deps.resolveRuntimePackageRoot === undefined &&
+      deps.resolveInstalledPackageRoot === undefined &&
+      deps.env === undefined);
+  if (useCache && cachedRuntimeConfigDirName !== undefined) {
+    return cachedRuntimeConfigDirName ?? undefined;
+  }
 
-	const env = deps.env ?? process.env;
-	const resolveRuntimePackageRoot = deps.resolveRuntimePackageRoot ?? resolvePiPackageRoot;
-	const resolveInstalledPackageRoot = deps.resolveInstalledPackageRoot ?? resolveInstalledPiPackageRoot;
+  const env = deps.env ?? process.env;
+  const resolveRuntimePackageRoot = deps.resolveRuntimePackageRoot ?? resolvePiPackageRoot;
+  const resolveInstalledPackageRoot =
+    deps.resolveInstalledPackageRoot ?? resolveInstalledPiPackageRoot;
 
-	const forwardedRoot = env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim();
-	let value = forwardedRoot ? readConfigDirNameFromPackageRoot(forwardedRoot, deps) : undefined;
-	if (value === undefined) {
-		value = readConfigDirNameFromPackageRoot(safeResolvePackageRoot(resolveRuntimePackageRoot), deps);
-	}
-	if (value === undefined) {
-		value = readConfigDirNameFromPackageRoot(safeResolvePackageRoot(resolveInstalledPackageRoot), deps);
-	}
+  const forwardedRoot = env[PI_CODING_AGENT_PACKAGE_ROOT_ENV]?.trim();
+  let value = forwardedRoot ? readConfigDirNameFromPackageRoot(forwardedRoot, deps) : undefined;
+  if (value === undefined) {
+    value = readConfigDirNameFromPackageRoot(
+      safeResolvePackageRoot(resolveRuntimePackageRoot),
+      deps,
+    );
+  }
+  if (value === undefined) {
+    value = readConfigDirNameFromPackageRoot(
+      safeResolvePackageRoot(resolveInstalledPackageRoot),
+      deps,
+    );
+  }
 
-	if (useCache) cachedRuntimeConfigDirName = value ?? null;
-	return value;
+  if (useCache) cachedRuntimeConfigDirName = value ?? null;
+  return value;
 }
 
 /**
@@ -130,27 +138,31 @@ export function resolveRuntimeConfigDirName(deps: RuntimeConfigDirDeps = {}): st
  *    `RuntimeConfigDirDeps` object to override how the runtime package root is resolved.
  */
 export function resolveConfigDirName(
-	codingAgentModule: unknown = RUNTIME_CONFIG_DIR,
-	entryPointOrDeps?: string | RuntimeConfigDirDeps,
-	packageRoot?: string,
+  codingAgentModule: unknown = RUNTIME_CONFIG_DIR,
+  entryPointOrDeps?: string | RuntimeConfigDirDeps,
+  packageRoot?: string,
 ): string {
-	if (codingAgentModule !== RUNTIME_CONFIG_DIR) {
-		return resolveConfigDirNameFromSource(codingAgentModule) ?? DEFAULT_CONFIG_DIR_NAME;
-	}
+  if (codingAgentModule !== RUNTIME_CONFIG_DIR) {
+    return resolveConfigDirNameFromSource(codingAgentModule) ?? DEFAULT_CONFIG_DIR_NAME;
+  }
 
-	if (typeof entryPointOrDeps === "string" || packageRoot !== undefined) {
-		const value = resolveConfigDirNameFromEntryPoint(entryPointOrDeps as string | undefined, packageRoot, {});
-		return value ?? DEFAULT_CONFIG_DIR_NAME;
-	}
+  if (typeof entryPointOrDeps === "string" || packageRoot !== undefined) {
+    const value = resolveConfigDirNameFromEntryPoint(
+      entryPointOrDeps as string | undefined,
+      packageRoot,
+      {},
+    );
+    return value ?? DEFAULT_CONFIG_DIR_NAME;
+  }
 
-	const deps = (entryPointOrDeps as RuntimeConfigDirDeps | undefined) ?? {};
-	return resolveRuntimeConfigDirName(deps) ?? DEFAULT_CONFIG_DIR_NAME;
+  const deps = (entryPointOrDeps as RuntimeConfigDirDeps | undefined) ?? {};
+  return resolveRuntimeConfigDirName(deps) ?? DEFAULT_CONFIG_DIR_NAME;
 }
 
 export function getConfigDirName(): string {
-	return resolveConfigDirName();
+  return resolveConfigDirName();
 }
 
 export function getProjectConfigDir(projectRoot: string): string {
-	return path.join(projectRoot, getConfigDirName());
+  return path.join(projectRoot, getConfigDirName());
 }

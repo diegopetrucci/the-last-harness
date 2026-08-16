@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 function usage() {
-	return `Usage: node scripts/release-notes.mjs [options]
+  return `Usage: node scripts/release-notes.mjs [options]
 
 Extract the current release notes from CHANGELOG.md.
 
@@ -18,154 +18,156 @@ Options:
 }
 
 function parseArgs(argv) {
-	const args = {
-		tag: process.env.GITHUB_REF_NAME,
-		changelogPath: "CHANGELOG.md",
-		outputPath: undefined,
-		repository: process.env.GITHUB_REPOSITORY,
-		ref: undefined,
-		help: false,
-	};
+  const args = {
+    tag: process.env.GITHUB_REF_NAME,
+    changelogPath: "CHANGELOG.md",
+    outputPath: undefined,
+    repository: process.env.GITHUB_REPOSITORY,
+    ref: undefined,
+    help: false,
+  };
 
-	for (let i = 0; i < argv.length; i += 1) {
-		const arg = argv[i];
-		if (arg === "-h" || arg === "--help") {
-			args.help = true;
-			continue;
-		}
-		if (arg === "--tag") {
-			args.tag = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg === "--changelog") {
-			args.changelogPath = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg === "--output") {
-			args.outputPath = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg === "--repository") {
-			args.repository = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg === "--ref") {
-			args.ref = requiredValue(argv, ++i, arg);
-			continue;
-		}
-		if (arg.startsWith("--tag=")) {
-			args.tag = requireOptionValue(arg.slice("--tag=".length), "--tag");
-			continue;
-		}
-		if (arg.startsWith("--changelog=")) {
-			args.changelogPath = requireOptionValue(arg.slice("--changelog=".length), "--changelog");
-			continue;
-		}
-		if (arg.startsWith("--output=")) {
-			args.outputPath = requireOptionValue(arg.slice("--output=".length), "--output");
-			continue;
-		}
-		if (arg.startsWith("--repository=")) {
-			args.repository = requireOptionValue(arg.slice("--repository=".length), "--repository");
-			continue;
-		}
-		if (arg.startsWith("--ref=")) {
-			args.ref = requireOptionValue(arg.slice("--ref=".length), "--ref");
-			continue;
-		}
-		throw new Error(`Unknown argument: ${arg}`);
-	}
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "-h" || arg === "--help") {
+      args.help = true;
+      continue;
+    }
+    if (arg === "--tag") {
+      args.tag = requiredValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg === "--changelog") {
+      args.changelogPath = requiredValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg === "--output") {
+      args.outputPath = requiredValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg === "--repository") {
+      args.repository = requiredValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg === "--ref") {
+      args.ref = requiredValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith("--tag=")) {
+      args.tag = requireOptionValue(arg.slice("--tag=".length), "--tag");
+      continue;
+    }
+    if (arg.startsWith("--changelog=")) {
+      args.changelogPath = requireOptionValue(arg.slice("--changelog=".length), "--changelog");
+      continue;
+    }
+    if (arg.startsWith("--output=")) {
+      args.outputPath = requireOptionValue(arg.slice("--output=".length), "--output");
+      continue;
+    }
+    if (arg.startsWith("--repository=")) {
+      args.repository = requireOptionValue(arg.slice("--repository=".length), "--repository");
+      continue;
+    }
+    if (arg.startsWith("--ref=")) {
+      args.ref = requireOptionValue(arg.slice("--ref=".length), "--ref");
+      continue;
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
 
-	return args;
+  return args;
 }
 
 function requiredValue(argv, index, flag) {
-	const value = argv[index];
-	if (!value || value.startsWith("--")) {
-		throw new Error(`${flag} requires a value.`);
-	}
-	return value;
+  const value = argv[index];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
 }
 
 function escapeRegExp(value) {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function requireOptionValue(value, flag) {
-	if (value === "") {
-		throw new Error(`${flag} requires a value.`);
-	}
-	return value;
+  if (value === "") {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
 }
 
 function versionFromTag(tag) {
-	const rawTag = String(tag ?? "");
-	if (rawTag.trim() === "") {
-		throw new Error("Missing release tag. Pass --tag or set GITHUB_REF_NAME.");
-	}
-	const version = rawTag.startsWith("v") ? rawTag.slice(1) : rawTag;
-	if (version.trim() === "") {
-		throw new Error("Release tag must include a version after any leading v.");
-	}
-	return version;
+  const rawTag = String(tag ?? "");
+  if (rawTag.trim() === "") {
+    throw new Error("Missing release tag. Pass --tag or set GITHUB_REF_NAME.");
+  }
+  const version = rawTag.startsWith("v") ? rawTag.slice(1) : rawTag;
+  if (version.trim() === "") {
+    throw new Error("Release tag must include a version after any leading v.");
+  }
+  return version;
 }
 
 function extractChangelogSection(changelog, version) {
-	const normalized = changelog.replace(/\r\n/g, "\n");
-	const escapedVersion = escapeRegExp(version);
-	const headingPattern = new RegExp(
-		`^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`,
-		"m",
-	);
-	const match = headingPattern.exec(normalized);
-	if (!match) {
-		throw new Error(
-			`CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`,
-		);
-	}
+  const normalized = changelog.replace(/\r\n/g, "\n");
+  const escapedVersion = escapeRegExp(version);
+  const headingPattern = new RegExp(
+    `^##[ \\t]+(?:\\[${escapedVersion}\\]|${escapedVersion})(?:[ \\t]+-[ \\t]+[^\\n]+)?[ \\t]*$`,
+    "m",
+  );
+  const match = headingPattern.exec(normalized);
+  if (!match) {
+    throw new Error(
+      `CHANGELOG.md is missing a section for ${version}. Expected a heading like "## [${version}] - YYYY-MM-DD".`,
+    );
+  }
 
-	const sectionStart = match.index + match[0].length;
-	const remaining = normalized.slice(sectionStart);
-	const nextSectionOffset = remaining.search(/^##(?:[ \t]+|$)/m);
-	const section = (nextSectionOffset === -1 ? remaining : remaining.slice(0, nextSectionOffset)).trim();
-	if (!section) {
-		throw new Error(`CHANGELOG.md section for ${version} is empty.`);
-	}
-	return section;
+  const sectionStart = match.index + match[0].length;
+  const remaining = normalized.slice(sectionStart);
+  const nextSectionOffset = remaining.search(/^##(?:[ \t]+|$)/m);
+  const section = (
+    nextSectionOffset === -1 ? remaining : remaining.slice(0, nextSectionOffset)
+  ).trim();
+  if (!section) {
+    throw new Error(`CHANGELOG.md section for ${version} is empty.`);
+  }
+  return section;
 }
 
 function buildNotes(args) {
-	const tag = args.tag;
-	const version = versionFromTag(tag);
-	const changelog = readFileSync(args.changelogPath, "utf8");
-	const section = extractChangelogSection(changelog, version);
-	const ref = args.ref ?? tag;
-	const suffix =
-		args.repository && ref
-			? `\n\n---\n\nFull changelog: https://github.com/${args.repository}/blob/${ref}/CHANGELOG.md\n`
-			: "\n";
-	return `${section}${suffix}`;
+  const tag = args.tag;
+  const version = versionFromTag(tag);
+  const changelog = readFileSync(args.changelogPath, "utf8");
+  const section = extractChangelogSection(changelog, version);
+  const ref = args.ref ?? tag;
+  const suffix =
+    args.repository && ref
+      ? `\n\n---\n\nFull changelog: https://github.com/${args.repository}/blob/${ref}/CHANGELOG.md\n`
+      : "\n";
+  return `${section}${suffix}`;
 }
 
 function main() {
-	const args = parseArgs(process.argv.slice(2));
-	if (args.help) {
-		process.stdout.write(usage());
-		return;
-	}
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    process.stdout.write(usage());
+    return;
+  }
 
-	const notes = buildNotes(args);
-	if (args.outputPath) {
-		writeFileSync(args.outputPath, notes, "utf8");
-		return;
-	}
-	process.stdout.write(notes);
+  const notes = buildNotes(args);
+  if (args.outputPath) {
+    writeFileSync(args.outputPath, notes, "utf8");
+    return;
+  }
+  process.stdout.write(notes);
 }
 
 try {
-	main();
+  main();
 } catch (error) {
-	const message = error instanceof Error ? error.message : String(error);
-	process.stderr.write(`release-notes: ${message}\n`);
-	process.exitCode = 1;
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`release-notes: ${message}\n`);
+  process.exitCode = 1;
 }

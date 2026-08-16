@@ -32,11 +32,11 @@ export type ScaledMs = number & { readonly __scaledMs: unique symbol };
 
 /** Apply the `TLH_TEST_TIMEOUT_SCALE` factor and return a branded `ScaledMs`. */
 export function scaleTestTimeout(ms: number): ScaledMs {
-	const raw = process.env.TLH_TEST_TIMEOUT_SCALE;
-	if (!raw) return ms as ScaledMs;
-	const factor = Number(raw);
-	if (!Number.isFinite(factor) || factor <= 0) return ms as ScaledMs;
-	return Math.round(ms * factor) as ScaledMs;
+  const raw = process.env.TLH_TEST_TIMEOUT_SCALE;
+  if (!raw) return ms as ScaledMs;
+  const factor = Number(raw);
+  if (!Number.isFinite(factor) || factor <= 0) return ms as ScaledMs;
+  return Math.round(ms * factor) as ScaledMs;
 }
 
 /**
@@ -47,5 +47,5 @@ export function scaleTestTimeout(ms: number): ScaledMs {
  * function name documents the intent at the call site.
  */
 export function unscaledMs(ms: number): ScaledMs {
-	return ms as ScaledMs;
+  return ms as ScaledMs;
 }

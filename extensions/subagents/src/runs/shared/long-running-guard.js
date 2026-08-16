@@ -154,7 +154,13 @@ const GH_MUTATING_PR_SUBCOMMANDS = new Set([
     "reopen",
     "review",
 ]);
-const GH_MUTATING_RELEASE_SUBCOMMANDS = new Set(["create", "delete", "delete-asset", "edit", "upload"]);
+const GH_MUTATING_RELEASE_SUBCOMMANDS = new Set([
+    "create",
+    "delete",
+    "delete-asset",
+    "edit",
+    "upload",
+]);
 const GH_API_WRITE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 const GH_API_FIELD_FLAGS = new Set(["-F", "-f", "--field", "--raw-field"]);
 const MUTATING_FAILURE_HINTS = [
@@ -320,7 +326,11 @@ function extractExecutableHereDocBodies(command) {
                 current.lines.push(line);
             continue;
         }
-        pending.push(...collectHereDocDescriptors(line).map(({ delimiter, scanBody }) => ({ delimiter, scanBody, lines: [] })));
+        pending.push(...collectHereDocDescriptors(line).map(({ delimiter, scanBody }) => ({
+            delimiter,
+            scanBody,
+            lines: [],
+        })));
     }
     return bodies;
 }
@@ -525,7 +535,9 @@ function parseGhApiInvocation(args) {
 }
 function isMutatingGhApiInvocation(args) {
     const { explicitMethod, hasFieldParameters } = parseGhApiInvocation(args);
-    return explicitMethod !== undefined ? GH_API_WRITE_METHODS.has(explicitMethod) : hasFieldParameters;
+    return explicitMethod !== undefined
+        ? GH_API_WRITE_METHODS.has(explicitMethod)
+        : hasFieldParameters;
 }
 function classifyStructuredShellSegment(segment) {
     const tokens = tokenizeShellSegment(segment);
@@ -544,7 +556,8 @@ function classifyStructuredShellSegment(segment) {
             return "mutating";
         if (subcommand === "branch" && isMutatingGitBranchInvocation(subcommandArgs))
             return "mutating";
-        if (subcommand === "checkout" && (subcommandArgs.includes("-b") || subcommandArgs.includes("-B")))
+        if (subcommand === "checkout" &&
+            (subcommandArgs.includes("-b") || subcommandArgs.includes("-B")))
             return "mutating";
         if (subcommand === "switch" && (subcommandArgs.includes("-c") || subcommandArgs.includes("-C")))
             return "mutating";
@@ -620,7 +633,8 @@ export function nextLongRunningTrigger(config, metrics) {
         return "time_threshold";
     if (config.activeNoticeAfterTurns !== undefined && metrics.turns >= config.activeNoticeAfterTurns)
         return "turn_threshold";
-    if (config.activeNoticeAfterTokens !== undefined && metrics.tokens >= config.activeNoticeAfterTokens)
+    if (config.activeNoticeAfterTokens !== undefined &&
+        metrics.tokens >= config.activeNoticeAfterTokens)
         return "token_threshold";
     return undefined;
 }

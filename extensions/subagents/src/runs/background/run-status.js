@@ -26,7 +26,9 @@ function formatResumeGuidance(runId, children, fallbackSessionFile) {
     if (!runId || knownChildren.length === 0)
         return "Resume: unavailable; no child session file was persisted.";
     const singleSessionFile = knownChildren[0]?.child.sessionFile ?? fallbackSessionFile;
-    if (children.length === 1 && knownChildren.length === 1 && hasExistingSessionFile(singleSessionFile)) {
+    if (children.length === 1 &&
+        knownChildren.length === 1 &&
+        hasExistingSessionFile(singleSessionFile)) {
         return `Revive: subagent({ action: "resume", id: "${runId}", message: "..." })`;
     }
     const childWithSession = knownChildren.find(({ child }) => hasExistingSessionFile(child.sessionFile));
@@ -39,10 +41,12 @@ function isPausedAwaitingSupervisorStatus(status) {
     return status.state === "paused" && status.pause?.kind === "awaiting_supervisor";
 }
 function isPausedAwaitingSupervisorStep(status, step) {
-    return status.state === "paused" && step.status === "paused" && step.pause?.kind === "awaiting_supervisor";
+    return (status.state === "paused" &&
+        step.status === "paused" &&
+        step.pause?.kind === "awaiting_supervisor");
 }
 function isPausedCohortStep(status, step) {
-    return status.state === "paused" && step.status === "paused" && step.pause?.kind === "cohort_pause";
+    return (status.state === "paused" && step.status === "paused" && step.pause?.kind === "cohort_pause");
 }
 function isPausingLifecycleStep(status, step) {
     return Boolean(step.pause?.kind) && (status.state === "pausing" || step.status === "pausing");
@@ -106,7 +110,9 @@ function formatRememberedForegroundStatus(run) {
             `${child.index + 1}. ${child.agent} ${statusLabel}`,
             child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
             child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
-            child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt ? "awaiting supervisor" : undefined,
+            child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt
+                ? "awaiting supervisor"
+                : undefined,
             output ? `output: ${output.slice(0, 160)}` : undefined,
         ].filter(Boolean);
         lines.push(parts.join(", "));
@@ -135,7 +141,9 @@ function formatRememberedForegroundStatus(run) {
         lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`);
     else
         lines.push(`Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`);
-    const resumable = run.children.find((child) => child.status !== "detached" && !child.cancel?.cancelledAt && hasExistingSessionFile(child.sessionFile));
+    const resumable = run.children.find((child) => child.status !== "detached" &&
+        !child.cancel?.cancelledAt &&
+        hasExistingSessionFile(child.sessionFile));
     const awaitingSupervisor = run.children.some((child) => child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt);
     if (resumable && !awaitingSupervisor) {
         lines.push(run.children.length === 1
@@ -174,7 +182,9 @@ function formatRememberedForegroundTranscript(run, options) {
         `State: ${child.cancel?.cancelledAt ? "cancelled" : child.status}`,
         `Child: ${index} (${child.agent})`,
         child.transcriptPath ? `Transcript: ${shortenPath(child.transcriptPath)}` : undefined,
-        child.artifactPaths?.outputPath ? `Output: ${shortenPath(child.artifactPaths.outputPath)}` : undefined,
+        child.artifactPaths?.outputPath
+            ? `Output: ${shortenPath(child.artifactPaths.outputPath)}`
+            : undefined,
     ].filter((line) => Boolean(line));
     lines.push("Result transcript tail:");
     if (outputLines.length === 0)
@@ -211,7 +221,9 @@ function formatNestedExactStatus(rootRunId, run) {
     if (run.steps?.length) {
         lines.push("Steps:");
         for (const [index, step] of run.steps.entries()) {
-            const activity = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
+            const activity = step.status === "running"
+                ? formatActivityLabel(step.lastActivityAt, step.activityState)
+                : undefined;
             const budget = step.turnBudget
                 ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
                 : "";
@@ -229,7 +241,9 @@ export function inspectSubagentStatus(params, deps = {}) {
     const currentSessionId = deps.state?.currentSessionId ?? undefined;
     if (params.view && params.view !== "fleet" && params.view !== "transcript") {
         return {
-            content: [{ type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` }],
+            content: [
+                { type: "text", text: `Unknown status view: ${params.view}. Valid: fleet, transcript.` },
+            ],
             isError: true,
             details: { mode: "single", results: [] },
         };
@@ -248,7 +262,10 @@ export function inspectSubagentStatus(params, deps = {}) {
         if (deps.nested) {
             return {
                 content: [
-                    { type: "text", text: "Child-safe subagent status requires an id when no foreground run is active." },
+                    {
+                        type: "text",
+                        text: "Child-safe subagent status requires an id when no foreground run is active.",
+                    },
                 ],
                 isError: true,
                 details: { mode: "single", results: [] },
@@ -311,7 +328,10 @@ export function inspectSubagentStatus(params, deps = {}) {
                                 {
                                     type: "text",
                                     text: params.view === "transcript"
-                                        ? formatRememberedForegroundTranscript(run, { index: params.index, lines: params.lines })
+                                        ? formatRememberedForegroundTranscript(run, {
+                                            index: params.index,
+                                            lines: params.lines,
+                                        })
                                         : formatRememberedForegroundStatus(run),
                                 },
                             ],
@@ -329,7 +349,11 @@ export function inspectSubagentStatus(params, deps = {}) {
                 }
             }
             if (resolved?.kind === "nested") {
-                reconcileNestedAsyncDescendants(resolved.match.route, { resultsDir, kill: deps.kill, now: deps.now });
+                reconcileNestedAsyncDescendants(resolved.match.route, {
+                    resultsDir,
+                    kill: deps.kill,
+                    now: deps.now,
+                });
                 const refreshed = resolveSubagentRunId(requestedId, {
                     asyncDirRoot,
                     resultsDir,
@@ -363,7 +387,12 @@ export function inspectSubagentStatus(params, deps = {}) {
                     }
                 }
                 return {
-                    content: [{ type: "text", text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run) }],
+                    content: [
+                        {
+                            type: "text",
+                            text: formatNestedExactStatus(nested.match.rootRunId, nested.match.run),
+                        },
+                    ],
                     details: { mode: "single", results: [] },
                 };
             }
@@ -414,7 +443,10 @@ export function inspectSubagentStatus(params, deps = {}) {
                 if (currentSessionId && status.sessionId !== currentSessionId) {
                     return {
                         content: [
-                            { type: "text", text: "Transcript view is only available for async runs owned by the current session." },
+                            {
+                                type: "text",
+                                text: "Transcript view is only available for async runs owned by the current session.",
+                            },
                         ],
                         isError: true,
                         details: { mode: "single", results: [] },
@@ -449,7 +481,11 @@ export function inspectSubagentStatus(params, deps = {}) {
             try {
                 const nestedRoute = findNestedRouteForRootId(status.runId);
                 if (nestedRoute)
-                    reconcileNestedAsyncDescendants(nestedRoute, { resultsDir, kill: deps.kill, now: deps.now });
+                    reconcileNestedAsyncDescendants(nestedRoute, {
+                        resultsDir,
+                        kill: deps.kill,
+                        now: deps.now,
+                    });
                 nestedChildren = projectNestedRegistryForRoot(status.runId)?.children ?? [];
                 attachRootChildrenToSteps(status.runId, status.steps, nestedChildren);
             }
@@ -463,11 +499,17 @@ export function inspectSubagentStatus(params, deps = {}) {
                 currentStep: status.currentStep,
                 chainStepCount: status.chainStepCount,
                 parallelGroups: status.parallelGroups,
-                steps: (status.steps ?? []).map((step, index) => ({ index, agent: step.agent, status: step.status })),
+                steps: (status.steps ?? []).map((step, index) => ({
+                    index,
+                    agent: step.agent,
+                    status: step.status,
+                })),
             });
             const started = new Date(status.startedAt).toISOString();
             const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
-            const statusActivityText = status.state === "running" ? formatActivityLabel(status.lastActivityAt, status.activityState) : undefined;
+            const statusActivityText = status.state === "running"
+                ? formatActivityLabel(status.lastActivityAt, status.activityState)
+                : undefined;
             const steeringText = formatSteeringSummary(status);
             const pausedAwaitingSupervisor = isPausedAwaitingSupervisorStatus(status);
             const privacySafeAwaitingSupervisorLifecycle = isProtectedPausedLifecycle(status);
@@ -480,7 +522,9 @@ export function inspectSubagentStatus(params, deps = {}) {
                 statusActivityText ? `Activity: ${statusActivityText}` : undefined,
                 steeringText ? `Steering: ${steeringText}` : undefined,
                 `Mode: ${status.mode}`,
-                !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number" ? `PID: ${status.pid}` : undefined,
+                !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
+                    ? `PID: ${status.pid}`
+                    : undefined,
                 !privacySafeAwaitingSupervisorLifecycle && status.cwd ? `Cwd: ${status.cwd}` : undefined,
                 `Progress: ${progressLabel}`,
                 status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
@@ -494,12 +538,16 @@ export function inspectSubagentStatus(params, deps = {}) {
                 reconciliation.message
                     ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}`
                     : undefined,
-                !privacySafeAwaitingSupervisorLifecycle && reconciliation.resultPath && fs.existsSync(reconciliation.resultPath)
+                !privacySafeAwaitingSupervisorLifecycle &&
+                    reconciliation.resultPath &&
+                    fs.existsSync(reconciliation.resultPath)
                     ? `Result: ${reconciliation.resultPath}`
                     : undefined,
             ].filter((line) => Boolean(line));
             for (const [index, step] of (status.steps ?? []).entries()) {
-                const stepActivityText = step.status === "running" ? formatActivityLabel(step.lastActivityAt, step.activityState) : undefined;
+                const stepActivityText = step.status === "running"
+                    ? formatActivityLabel(step.lastActivityAt, step.activityState)
+                    : undefined;
                 const modelThinking = formatModelThinking(step.model, step.thinking);
                 const modelText = modelThinking ? ` (${modelThinking})` : "";
                 const steeringText = formatSteeringSummary(step);
@@ -507,7 +555,9 @@ export function inspectSubagentStatus(params, deps = {}) {
                 const errorText = step.error
                     ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}`
                     : "";
-                const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+                const acceptanceText = step.acceptance?.status
+                    ? `, acceptance: ${step.acceptance.status}`
+                    : "";
                 const budgetText = step.turnBudget
                     ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
                     : "";
@@ -515,7 +565,8 @@ export function inspectSubagentStatus(params, deps = {}) {
                 const phase = step.phase ? `[${step.phase}] ` : "";
                 lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
                 const stepContinuation = lifecycleContinuationForIndex(status, index);
-                const stepClaimed = typeof stepContinuation?.claimToken === "string" && stepContinuation.claimToken.length > 0;
+                const stepClaimed = typeof stepContinuation?.claimToken === "string" &&
+                    stepContinuation.claimToken.length > 0;
                 if (isPausedAwaitingSupervisorStep(status, step)) {
                     lines.push(`  Pause: awaiting supervisor${step.pause?.summary ? ` (${step.pause.summary})` : ""}`);
                     lines.push("  No child process is running.");
@@ -559,7 +610,9 @@ export function inspectSubagentStatus(params, deps = {}) {
                     redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
                 }));
                 const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
-                if (!privacySafeAwaitingSupervisorLifecycle && stepOutputPath !== outputPath && fs.existsSync(stepOutputPath))
+                if (!privacySafeAwaitingSupervisorLifecycle &&
+                    stepOutputPath !== outputPath &&
+                    fs.existsSync(stepOutputPath))
                     lines.push(`  Output: ${stepOutputPath}`);
                 if (step.status === "running") {
                     lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
@@ -605,7 +658,10 @@ export function inspectSubagentStatus(params, deps = {}) {
                 lines.push(`Log: ${logPath}`);
             if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(eventsPath))
                 lines.push(`Events: ${eventsPath}`);
-            return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
+            return {
+                content: [{ type: "text", text: lines.join("\n") }],
+                details: { mode: "single", results: [] },
+            };
         }
     }
     if (resultPath) {
@@ -618,7 +674,10 @@ export function inspectSubagentStatus(params, deps = {}) {
                         content: [
                             {
                                 type: "text",
-                                text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }),
+                                text: formatAsyncResultTranscript(data, resultPath, {
+                                    index: params.index,
+                                    lines: params.lines,
+                                }),
                             },
                         ],
                         details: { mode: "single", results: [] },
@@ -641,8 +700,15 @@ export function inspectSubagentStatus(params, deps = {}) {
                         ? "paused"
                         : "failed";
             const runId = data.runId ?? data.id ?? resolvedId;
-            const privacySafeResult = isProtectedPausedLifecycle({ state: data.state, pause: data.pause });
-            const lines = [`Run: ${runId}`, `State: ${status}`, ...(privacySafeResult ? [] : [`Result: ${resultPath}`])];
+            const privacySafeResult = isProtectedPausedLifecycle({
+                state: data.state,
+                pause: data.pause,
+            });
+            const lines = [
+                `Run: ${runId}`,
+                `State: ${status}`,
+                ...(privacySafeResult ? [] : [`Result: ${resultPath}`]),
+            ];
             const children = Array.isArray(data.results)
                 ? data.results
                 : data.agent
@@ -651,7 +717,10 @@ export function inspectSubagentStatus(params, deps = {}) {
             lines.push(formatResumeGuidance(runId, children, data.sessionFile));
             if (data.summary)
                 lines.push("", privacySafeResult ? "Paused awaiting supervisor." : data.summary);
-            return { content: [{ type: "text", text: lines.join("\n") }], details: { mode: "single", results: [] } };
+            return {
+                content: [{ type: "text", text: lines.join("\n") }],
+                details: { mode: "single", results: [] },
+            };
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);

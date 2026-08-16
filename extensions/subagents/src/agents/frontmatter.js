@@ -38,7 +38,8 @@ export function parseFrontmatter(content) {
         const match = line.match(/^([\w-]+):\s*(.*)$/);
         if (match) {
             let value = match[2].trim();
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            if ((value.startsWith('"') && value.endsWith('"')) ||
+                (value.startsWith("'") && value.endsWith("'"))) {
                 value = value.slice(1, -1);
             }
             if (value === "") {

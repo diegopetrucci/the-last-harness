@@ -20,7 +20,11 @@ export function hasPersistedDirectMcpResultDetails(toolName, details) {
     }
     const serverPrefix = candidate.server.replaceAll("-", "_");
     const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-    return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(toolName);
+    return new Set([
+        candidate.tool,
+        `${serverPrefix}_${candidate.tool}`,
+        `${shortPrefix}_${candidate.tool}`,
+    ]).has(toolName);
 }
 export function getMcpToolKind(toolName, toolInfo) {
     if (toolName === "mcp") {

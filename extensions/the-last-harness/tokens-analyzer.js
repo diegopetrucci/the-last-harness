@@ -140,7 +140,13 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                     const missedCost = missedTokens * Math.max(0, paidPerToken - readPerToken);
                     const idleMs = Math.max(0, cmTimestamp - cacheMissPrev.timestamp);
                     const modelChanged = cmModelKey !== cacheMissPrev.modelKey;
-                    cacheMissEvents.push({ turnIndex: assistantTurnIndex, idleMs, modelChanged, missedTokens, missedCost });
+                    cacheMissEvents.push({
+                        turnIndex: assistantTurnIndex,
+                        idleMs,
+                        modelChanged,
+                        missedTokens,
+                        missedCost,
+                    });
                     totalMissedTokens += missedTokens;
                     totalMissedCost += missedCost;
                 }
@@ -167,7 +173,12 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 usage: turnUsage,
                 toolCalls: { total: 0, mcp: 0, byTool: [] },
                 toolResults: { total: 0, errors: 0 },
-                discoveries: { subagentRuns: 0, artifactReferences: 0, sessionReferences: 0, intercomTargets: 0 },
+                discoveries: {
+                    subagentRuns: 0,
+                    artifactReferences: 0,
+                    sessionReferences: 0,
+                    intercomTargets: 0,
+                },
                 toolCallCounts: new Map(),
             };
             timeline.push(turn);
@@ -341,7 +352,9 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
         const maxMs = latencies[latencies.length - 1] ?? 0;
         toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
     }
-    const worstMisses = [...cacheMissEvents].sort((a, b) => b.missedTokens - a.missedTokens).slice(0, 10);
+    const worstMisses = [...cacheMissEvents]
+        .sort((a, b) => b.missedTokens - a.missedTokens)
+        .slice(0, 10);
     return {
         cacheMisses: {
             missedTokens: totalMissedTokens,
@@ -449,8 +462,14 @@ function normalizeUsage(value) {
     }
     const inputTokens = numberFromUnknown(value.input ?? value.inputTokens) ?? 0;
     const outputTokens = numberFromUnknown(value.output ?? value.outputTokens) ?? 0;
-    const cacheReadTokens = numberFromUnknown(value.cacheRead ?? value.cacheReadTokens ?? value.cache_read_input_tokens ?? value.cacheReadInputTokens) ?? 0;
-    const cacheWriteTokens = numberFromUnknown(value.cacheWrite ?? value.cacheWriteTokens ?? value.cache_creation_input_tokens ?? value.cacheWriteInputTokens) ?? 0;
+    const cacheReadTokens = numberFromUnknown(value.cacheRead ??
+        value.cacheReadTokens ??
+        value.cache_read_input_tokens ??
+        value.cacheReadInputTokens) ?? 0;
+    const cacheWriteTokens = numberFromUnknown(value.cacheWrite ??
+        value.cacheWriteTokens ??
+        value.cache_creation_input_tokens ??
+        value.cacheWriteInputTokens) ?? 0;
     const explicitTotal = numberFromUnknown(value.total ?? value.totalTokens);
     const costUsd = costFromUnknown(value.cost) ?? numberFromUnknown(value.costUsd) ?? 0;
     const turns = numberFromUnknown(value.turns) ?? 0;
@@ -550,8 +569,12 @@ function estimateToolSource(toolName, catalogEntry) {
     const mcpKind = getMcpToolKind(toolName, catalogEntry);
     if (mcpKind === "proxy") {
         return {
-            key: catalogEntry?.sourceInfo?.source ? `mcp-proxy:${catalogEntry.sourceInfo.source}` : "mcp-proxy",
-            label: catalogEntry?.sourceInfo?.source ? `MCP proxy (${catalogEntry.sourceInfo.source})` : "MCP proxy",
+            key: catalogEntry?.sourceInfo?.source
+                ? `mcp-proxy:${catalogEntry.sourceInfo.source}`
+                : "mcp-proxy",
+            label: catalogEntry?.sourceInfo?.source
+                ? `MCP proxy (${catalogEntry.sourceInfo.source})`
+                : "MCP proxy",
             kind: "mcp-proxy",
             source: catalogEntry?.sourceInfo?.source,
             scope: catalogEntry?.sourceInfo?.scope,
@@ -561,7 +584,9 @@ function estimateToolSource(toolName, catalogEntry) {
     }
     if (mcpKind === "direct") {
         return {
-            key: catalogEntry?.sourceInfo?.source ? `mcp-direct:${catalogEntry.sourceInfo.source}` : `mcp-direct:${toolName}`,
+            key: catalogEntry?.sourceInfo?.source
+                ? `mcp-direct:${catalogEntry.sourceInfo.source}`
+                : `mcp-direct:${toolName}`,
             label: catalogEntry?.sourceInfo?.source
                 ? `MCP direct (${catalogEntry.sourceInfo.source})`
                 : `MCP direct (${toolName})`,
@@ -664,7 +689,9 @@ function collectStructuredDiscoveries(value, context) {
         for (const nestedRun of nestedRuns) {
             registerRun(nestedRun);
         }
-        const run = !skipNestedRuns && nestedRuns.length === 0 ? sanitizeSubagentRun(current, context) : undefined;
+        const run = !skipNestedRuns && nestedRuns.length === 0
+            ? sanitizeSubagentRun(current, context)
+            : undefined;
         if (run) {
             registerRun(run);
         }
@@ -807,7 +834,13 @@ function sanitizeSubagentRun(value, context, inherited = {}) {
 }
 function collectArtifactReferences(value) {
     const refs = new Map();
-    for (const candidate of [value.inputPath, value.outputPath, value.metadataPath, value.htmlPath, value.artifactPath]) {
+    for (const candidate of [
+        value.inputPath,
+        value.outputPath,
+        value.metadataPath,
+        value.htmlPath,
+        value.artifactPath,
+    ]) {
         const ref = sanitizePathReference(candidate, "artifact");
         if (ref) {
             refs.set(referenceKey(ref), ref);

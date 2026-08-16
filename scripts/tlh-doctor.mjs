@@ -438,7 +438,9 @@ function readWebSearchSettings(agentDir) {
     }
 }
 function addMcpAndWebSearchCheck(results, packageRoot, agentDir, settings) {
-    const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), { allowMissing: false });
+    const defaultExtensions = readDefaultExtensions(defaultExtensionsPath(packageRoot), {
+        allowMissing: false,
+    });
     const mcporter = extensionById(defaultExtensions, "mcporter");
     const webAccess = extensionById(defaultExtensions, "pi-web-access");
     const mcpEnabled = extensionEnabled(settings, defaultExtensions, "mcporter");
@@ -590,7 +592,10 @@ function repairBundledSubagentPrompts(packageRoot, agentDir) {
     return repairAction("OK", "bundled subagent resources", `restored ${restoreNeeded.length} prompt(s) from packaged defaults`);
 }
 function repairManagedHelper(label, scriptPath, commandArgs, env) {
-    const result = runCommand(process.execPath, [scriptPath, ...commandArgs], { env, timeout: REPAIR_HELPER_TIMEOUT_MS });
+    const result = runCommand(process.execPath, [scriptPath, ...commandArgs], {
+        env,
+        timeout: REPAIR_HELPER_TIMEOUT_MS,
+    });
     if (result.status !== 0) {
         return repairAction("FAIL", label, `${commandArgs[0]} failed (${commandFailureSummary(result)})`);
     }
@@ -663,7 +668,10 @@ function runRepairMode(agentDir, packageRoot, settingsPath, env) {
     console.log("");
     const results = collectHealthResults(agentDir, packageRoot, settingsPath, env);
     printResults(results);
-    return actions.some((action) => action.level === "FAIL") || results.some((result) => result.level === "FAIL") ? 1 : 0;
+    return actions.some((action) => action.level === "FAIL") ||
+        results.some((result) => result.level === "FAIL")
+        ? 1
+        : 0;
 }
 function main() {
     const args = parseArgs(process.argv.slice(2));
@@ -673,7 +681,8 @@ function main() {
     }
     const agentDir = resolve(resolveTlhAgentDir(args.agentDir));
     const packageRoot = resolve(expandHomePath(args.packageRoot || DEFAULT_PACKAGE_ROOT) || DEFAULT_PACKAGE_ROOT);
-    const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath({ agentDir })) || defaultTlhSettingsPath({ agentDir }));
+    const settingsPath = resolve(expandHomePath(args.settingsPath || defaultTlhSettingsPath({ agentDir })) ||
+        defaultTlhSettingsPath({ agentDir }));
     const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
     if (args.repair) {
         return runRepairMode(agentDir, packageRoot, settingsPath, env);

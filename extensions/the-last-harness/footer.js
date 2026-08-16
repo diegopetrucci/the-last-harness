@@ -133,12 +133,16 @@ function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
             continue;
         }
         if (message.role === "toolResult" && typeof message.toolName === "string") {
-            const pendingCall = typeof message.toolCallId === "string" ? pendingToolCallsById.get(message.toolCallId) : undefined;
+            const pendingCall = typeof message.toolCallId === "string"
+                ? pendingToolCallsById.get(message.toolCallId)
+                : undefined;
             const hasPairedDirectResultProvenance = message.toolName !== "mcp" &&
                 pendingCall?.toolName === message.toolName &&
                 hasPersistedDirectMcpResultDetails(message.toolName, message.details);
             const kind = getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName)) ??
-                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance ? "direct" : undefined);
+                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance
+                    ? "direct"
+                    : undefined);
             if (!kind) {
                 continue;
             }
@@ -187,11 +191,14 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
             const dimSep = theme.fg("dim", " • ");
-            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT ? theme.fg("dim", primaryName) : theme.fg("accent", primaryName);
+            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT
+                ? theme.fg("dim", primaryName)
+                : theme.fg("accent", primaryName);
             let agentLine2Str = theme.fg("dim", "agent: ") + nameSegment + dimSep + theme.fg("dim", modelPart);
             if (model?.reasoning) {
                 const thinkingLevel = getCurrentThinkingLevel(pi);
-                agentLine2Str += dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
+                agentLine2Str +=
+                    dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
             }
             const contextPercentDisplay = contextPercent === "?"
                 ? `?/${formatCompactTokenCount(contextWindow)}`
@@ -212,7 +219,9 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             }
             const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
             const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
-            const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost ? formatCost(totals.cost) : undefined;
+            const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost
+                ? formatCost(totals.cost)
+                : undefined;
             const line3Parts = [];
             if (costStr)
                 line3Parts.push(costStr);

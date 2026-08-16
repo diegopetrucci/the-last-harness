@@ -25,7 +25,9 @@ export function resolveIntercomSessionTarget(sessionName, sessionId) {
     const trimmedName = sessionName?.trim();
     if (trimmedName)
         return trimmedName;
-    const normalizedSessionId = sessionId.startsWith("session-") ? sessionId.slice("session-".length) : sessionId;
+    const normalizedSessionId = sessionId.startsWith("session-")
+        ? sessionId.slice("session-".length)
+        : sessionId;
     return `${DEFAULT_INTERCOM_TARGET_PREFIX}-${normalizedSessionId.slice(0, 8)}`;
 }
 function sanitizeIntercomTargetPart(value) {
@@ -60,7 +62,9 @@ function resolveInstructionTemplate(instructionFile, settingsDir) {
     if (!instructionFile)
         return DEFAULT_INTERCOM_BRIDGE_TEMPLATE;
     const expandedPath = expandTilde(instructionFile);
-    const resolvedPath = path.isAbsolute(expandedPath) ? expandedPath : path.resolve(settingsDir, expandedPath);
+    const resolvedPath = path.isAbsolute(expandedPath)
+        ? expandedPath
+        : path.resolve(settingsDir, expandedPath);
     try {
         return fs.readFileSync(resolvedPath, "utf-8");
     }
@@ -109,7 +113,12 @@ export function resolveIntercomBridge(input) {
     const defaultInstruction = buildIntercomBridgeInstruction(orchestratorTarget || "{orchestratorTarget}", DEFAULT_INTERCOM_BRIDGE_TEMPLATE);
     const reason = inactiveReason(mode, input.context, orchestratorTarget);
     if (reason || !orchestratorTarget) {
-        return { active: false, mode, extensionDir: NATIVE_INTERCOM_EXTENSION_DIR, instruction: defaultInstruction };
+        return {
+            active: false,
+            mode,
+            extensionDir: NATIVE_INTERCOM_EXTENSION_DIR,
+            instruction: defaultInstruction,
+        };
     }
     return {
         active: true,

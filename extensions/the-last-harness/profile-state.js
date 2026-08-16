@@ -1,9 +1,9 @@
-import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync, } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { formatHomePath, isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
+import { formatHomePath, isRecord, pathWithinOrEqual, readText, realpathForCompare, } from "./common.js";
 export function isDefaultPiAgentDir(agentDir) {
     const home = process.env.HOME || process.env.USERPROFILE;
     if (!home)
@@ -32,7 +32,8 @@ export function safeTlhProfileFilePath(relativePath) {
     try {
         const resolvedAgentDir = realpathForCompare(agentDir);
         const resolvedTargetPath = realpathForCompare(targetPath);
-        if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath) || isNormalPiConfigPath(resolvedTargetPath)) {
+        if (!pathWithinOrEqual(resolvedAgentDir, resolvedTargetPath) ||
+            isNormalPiConfigPath(resolvedTargetPath)) {
             return undefined;
         }
         return targetPath;
@@ -218,7 +219,9 @@ function settingsBackupTimestamp() {
 function writeCollisionSafeSettingsBackup(settingsPath, current) {
     const timestamp = settingsBackupTimestamp();
     for (let suffix = 0; suffix <= SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT; suffix += 1) {
-        const backupPath = suffix === 0 ? `${settingsPath}.bak-${timestamp}` : `${settingsPath}.bak-${timestamp}-${suffix}`;
+        const backupPath = suffix === 0
+            ? `${settingsPath}.bak-${timestamp}`
+            : `${settingsPath}.bak-${timestamp}-${suffix}`;
         try {
             writeFileSync(backupPath, current, { encoding: "utf8", flag: "wx", mode: 0o600 });
             return backupPath;
@@ -298,7 +301,8 @@ export function assertSafeTlhSettingsPath(settingsPath) {
 export function assertNotNormalPiSettings(settingsPath) {
     const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
     const resolvedSettingsPath = realpathForCompare(settingsPath);
-    if (resolvedSettingsPath === normalPiRoot || resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
+    if (resolvedSettingsPath === normalPiRoot ||
+        resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)) {
         throw new Error(`Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`);
     }
 }

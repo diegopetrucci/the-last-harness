@@ -24,9 +24,9 @@ import type { ToolInfo } from "@earendil-works/pi-coding-agent";
  * Used as the primary allowlist for direct-MCP tool detection.
  */
 export const KNOWN_PI_MCP_ADAPTER_SOURCES = [
-	"npm:pi-mcp-adapter",
-	"npm:@diegopetrucci/pi-mcp-adapter",
-	"git:github.com/diegopetrucci/pi-mcp-adapter",
+  "npm:pi-mcp-adapter",
+  "npm:@diegopetrucci/pi-mcp-adapter",
+  "git:github.com/diegopetrucci/pi-mcp-adapter",
 ] as const;
 
 /**
@@ -34,10 +34,12 @@ export const KNOWN_PI_MCP_ADAPTER_SOURCES = [
  * including versioned variants such as "npm:pi-mcp-adapter@2.10.1".
  */
 export function hasKnownPiMcpAdapterSource(source: unknown): source is string {
-	return (
-		typeof source === "string" &&
-		KNOWN_PI_MCP_ADAPTER_SOURCES.some((knownSource) => source === knownSource || source.startsWith(`${knownSource}@`))
-	);
+  return (
+    typeof source === "string" &&
+    KNOWN_PI_MCP_ADAPTER_SOURCES.some(
+      (knownSource) => source === knownSource || source.startsWith(`${knownSource}@`),
+    )
+  );
 }
 
 /**
@@ -49,23 +51,25 @@ export function hasKnownPiMcpAdapterSource(source: unknown): source is string {
  * that were not in the live catalog at scan time.
  */
 export function hasPersistedDirectMcpResultDetails(toolName: string, details: unknown): boolean {
-	if (!details || typeof details !== "object") {
-		return false;
-	}
-	const candidate = details as { server?: unknown; tool?: unknown };
-	if (
-		typeof candidate.server !== "string" ||
-		candidate.server.length === 0 ||
-		typeof candidate.tool !== "string" ||
-		candidate.tool.length === 0
-	) {
-		return false;
-	}
-	const serverPrefix = candidate.server.replaceAll("-", "_");
-	const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-	return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(
-		toolName,
-	);
+  if (!details || typeof details !== "object") {
+    return false;
+  }
+  const candidate = details as { server?: unknown; tool?: unknown };
+  if (
+    typeof candidate.server !== "string" ||
+    candidate.server.length === 0 ||
+    typeof candidate.tool !== "string" ||
+    candidate.tool.length === 0
+  ) {
+    return false;
+  }
+  const serverPrefix = candidate.server.replaceAll("-", "_");
+  const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
+  return new Set([
+    candidate.tool,
+    `${serverPrefix}_${candidate.tool}`,
+    `${shortPrefix}_${candidate.tool}`,
+  ]).has(toolName);
 }
 
 /**
@@ -77,18 +81,18 @@ export function hasPersistedDirectMcpResultDetails(toolName: string, details: un
  *  - undefined when the tool is not MCP
  */
 export function getMcpToolKind(
-	toolName: string,
-	toolInfo?: Pick<ToolInfo, "sourceInfo">,
+  toolName: string,
+  toolInfo?: Pick<ToolInfo, "sourceInfo">,
 ): "proxy" | "direct" | undefined {
-	if (toolName === "mcp") {
-		return "proxy";
-	}
-	const source = toolInfo?.sourceInfo?.source;
-	if (hasKnownPiMcpAdapterSource(source)) {
-		return "direct";
-	}
-	if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
-		return "direct";
-	}
-	return undefined;
+  if (toolName === "mcp") {
+    return "proxy";
+  }
+  const source = toolInfo?.sourceInfo?.source;
+  if (hasKnownPiMcpAdapterSource(source)) {
+    return "direct";
+  }
+  if (typeof source === "string" && /^(npm|git):/.test(source) && /mcp/i.test(source)) {
+    return "direct";
+  }
+  return undefined;
 }

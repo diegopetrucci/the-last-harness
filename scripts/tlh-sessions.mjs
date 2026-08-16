@@ -122,7 +122,9 @@ function findSessionFiles(dir) {
             files.push(...sub.files);
             unreadableDirectories += sub.unreadableDirectories;
         }
-        else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name !== RUN_HISTORY_FILENAME) {
+        else if (entry.isFile() &&
+            entry.name.endsWith(".jsonl") &&
+            entry.name !== RUN_HISTORY_FILENAME) {
             files.push(fullPath);
         }
     }

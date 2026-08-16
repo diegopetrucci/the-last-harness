@@ -9,296 +9,350 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const { registerUsageCommand, shouldShowTlhUsageWeekly } = await jiti.import(
-	"../extensions/the-last-harness/usage-limits.ts",
+  "../extensions/the-last-harness/usage-limits.ts",
 );
 const {
-	getCachedTlhUsageWeeklyVisibility,
-	getPersistedTlhUsageWeeklyVisibility,
-	refreshCachedTlhUsageWeeklyVisibility,
-	setCachedTlhUsageWeeklyVisibility,
+  getCachedTlhUsageWeeklyVisibility,
+  getPersistedTlhUsageWeeklyVisibility,
+  refreshCachedTlhUsageWeeklyVisibility,
+  setCachedTlhUsageWeeklyVisibility,
 } = await import("../extensions/the-last-harness/usage-limits.js");
 
 function createPiHarness() {
-	const commands = new Map();
-	return {
-		commands,
-		registerCommand(name, options) {
-			commands.set(name, options);
-		},
-	};
+  const commands = new Map();
+  return {
+    commands,
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
+  };
 }
 
 function createCommandContext(cwd) {
-	const notifications = [];
-	return {
-		notifications,
-		ctx: {
-			cwd,
-			ui: {
-				notify(message, type = "info") {
-					notifications.push({ message, type });
-				},
-			},
-		},
-	};
+  const notifications = [];
+  return {
+    notifications,
+    ctx: {
+      cwd,
+      ui: {
+        notify(message, type = "info") {
+          notifications.push({ message, type });
+        },
+      },
+    },
+  };
 }
 
 function registeredUsageCommand() {
-	const pi = createPiHarness();
-	registerUsageCommand(pi);
-	const command = pi.commands.get("usage");
-	assert.ok(command, "registers /usage");
-	return command;
+  const pi = createPiHarness();
+  registerUsageCommand(pi);
+  const command = pi.commands.get("usage");
+  assert.ok(command, "registers /usage");
+  return command;
 }
 
 test("usage command registers completions and reports weekly auto mode by default", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		assert.deepEqual(
-			(await command.getArgumentCompletions("weekly ")).map((completion) => completion.value),
-			["weekly on", "weekly off", "weekly toggle"],
-		);
-		assert.deepEqual(
-			(await command.getArgumentCompletions("status")).map((completion) => completion.value),
-			["status"],
-		);
-		assert.equal(await command.getArgumentCompletions("unknown"), null);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    assert.deepEqual(
+      (await command.getArgumentCompletions("weekly ")).map((completion) => completion.value),
+      ["weekly on", "weekly off", "weekly toggle"],
+    );
+    assert.deepEqual(
+      (await command.getArgumentCompletions("status")).map((completion) => completion.value),
+      ["status"],
+    );
+    assert.equal(await command.getArgumentCompletions("unknown"), null);
 
-		const { ctx, notifications } = createCommandContext(fixture.dir);
-		await command.handler("", ctx);
-		assert.equal(notifications.at(-1)?.type, "info");
-		assert.match(notifications.at(-1)?.message ?? "", /default auto mode/);
-		assert.match(notifications.at(-1)?.message ?? "", /below 25%/);
-		assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly on/);
-		assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly off/);
-	});
+    const { ctx, notifications } = createCommandContext(fixture.dir);
+    await command.handler("", ctx);
+    assert.equal(notifications.at(-1)?.type, "info");
+    assert.match(notifications.at(-1)?.message ?? "", /default auto mode/);
+    assert.match(notifications.at(-1)?.message ?? "", /below 25%/);
+    assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly on/);
+    assert.match(notifications.at(-1)?.message ?? "", /\/usage weekly off/);
+  });
 });
 
 test("usage weekly preference writes isolated settings and backs up existing settings", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	const initialSettings = `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`;
-	writeFileSync(settingsPath, initialSettings);
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  const initialSettings = `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`;
+  writeFileSync(settingsPath, initialSettings);
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		await command.handler("weekly on", ctx);
+    await command.handler("weekly on", ctx);
 
-		const written = JSON.parse(readFileSync(settingsPath, "utf8"));
-		assert.equal(written.tlh.gnosis.enabled, true);
-		assert.equal(written.tlh.usageLimits.showWeekly, true);
-		assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), true);
+    const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+    assert.equal(written.tlh.gnosis.enabled, true);
+    assert.equal(written.tlh.usageLimits.showWeekly, true);
+    assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), true);
 
-		const backups = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
-		assert.equal(backups.length, 1);
-		assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
+    const backups = readdirSync(fixture.agent).filter((entry) =>
+      entry.startsWith("settings.json.bak-"),
+    );
+    assert.equal(backups.length, 1);
+    assert.equal(readFileSync(join(fixture.agent, backups[0]), "utf8"), initialSettings);
 
-		const notice = notifications.at(-1);
-		assert.equal(notice?.type, "info");
-		assert.match(notice?.message ?? "", /shown/);
-		assert.match(notice?.message ?? "", /\/usage weekly off/);
-		assert.match(notice?.message ?? "", /Backup:/);
-	});
+    const notice = notifications.at(-1);
+    assert.equal(notice?.type, "info");
+    assert.match(notice?.message ?? "", /shown/);
+    assert.match(notice?.message ?? "", /\/usage weekly off/);
+    assert.match(notice?.message ?? "", /Backup:/);
+  });
 });
 
 test("usage weekly on is idempotent across repeated invocations", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`);
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(
+    settingsPath,
+    `${JSON.stringify({ tlh: { gnosis: { enabled: true } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		await command.handler("weekly on", ctx);
+    await command.handler("weekly on", ctx);
 
-		const afterFirst = readFileSync(settingsPath);
-		const writtenAfterFirst = JSON.parse(afterFirst.toString("utf8"));
-		assert.equal(writtenAfterFirst.tlh.usageLimits.showWeekly, true);
+    const afterFirst = readFileSync(settingsPath);
+    const writtenAfterFirst = JSON.parse(afterFirst.toString("utf8"));
+    assert.equal(writtenAfterFirst.tlh.usageLimits.showWeekly, true);
 
-		const backupsAfterFirst = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
-		assert.equal(backupsAfterFirst.length, 1, "first call must create exactly one backup");
+    const backupsAfterFirst = readdirSync(fixture.agent).filter((entry) =>
+      entry.startsWith("settings.json.bak-"),
+    );
+    assert.equal(backupsAfterFirst.length, 1, "first call must create exactly one backup");
 
-		const firstNotice = notifications.at(-1);
-		assert.equal(firstNotice?.type, "info");
-		assert.match(firstNotice?.message ?? "", /^Updated TLH usage weekly-window preference at /);
+    const firstNotice = notifications.at(-1);
+    assert.equal(firstNotice?.type, "info");
+    assert.match(firstNotice?.message ?? "", /^Updated TLH usage weekly-window preference at /);
 
-		await command.handler("weekly on", ctx);
+    await command.handler("weekly on", ctx);
 
-		const afterSecond = readFileSync(settingsPath);
-		assert.ok(afterSecond.equals(afterFirst), "settings file must be byte-identical after the second call");
+    const afterSecond = readFileSync(settingsPath);
+    assert.ok(
+      afterSecond.equals(afterFirst),
+      "settings file must be byte-identical after the second call",
+    );
 
-		const backupsAfterSecond = readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-"));
-		assert.deepEqual(
-			backupsAfterSecond,
-			backupsAfterFirst,
-			"no additional backup should be produced on the second call",
-		);
+    const backupsAfterSecond = readdirSync(fixture.agent).filter((entry) =>
+      entry.startsWith("settings.json.bak-"),
+    );
+    assert.deepEqual(
+      backupsAfterSecond,
+      backupsAfterFirst,
+      "no additional backup should be produced on the second call",
+    );
 
-		const secondNotice = notifications.at(-1);
-		assert.equal(secondNotice?.type, "info");
-		assert.match(secondNotice?.message ?? "", /^No change to TLH usage weekly-window preference at /);
-		assert.doesNotMatch(secondNotice?.message ?? "", /Backup:/);
-	});
+    const secondNotice = notifications.at(-1);
+    assert.equal(secondNotice?.type, "info");
+    assert.match(
+      secondNotice?.message ?? "",
+      /^No change to TLH usage weekly-window preference at /,
+    );
+    assert.doesNotMatch(secondNotice?.message ?? "", /Backup:/);
+  });
 });
 
 test("usage weekly on skips backups for empty existing settings files", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, "");
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(settingsPath, "");
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		await command.handler("weekly on", ctx);
+    await command.handler("weekly on", ctx);
 
-		const written = JSON.parse(readFileSync(settingsPath, "utf8"));
-		assert.equal(written.tlh.usageLimits.showWeekly, true);
-		assert.deepEqual(
-			readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
-			[],
-			"empty-string settings content must not produce a backup",
-		);
-		assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
-	});
+    const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+    assert.equal(written.tlh.usageLimits.showWeekly, true);
+    assert.deepEqual(
+      readdirSync(fixture.agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+      [],
+      "empty-string settings content must not produce a backup",
+    );
+    assert.doesNotMatch(notifications.at(-1)?.message ?? "", /Backup:/);
+  });
 });
 
 test("usage status refreshes the cached weekly preference so manual edits become visible", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(
+    settingsPath,
+    `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		setCachedTlhUsageWeeklyVisibility(undefined);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), undefined);
+    setCachedTlhUsageWeeklyVisibility(undefined);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), undefined);
 
-		await command.handler("status", ctx);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
-		assert.match(notifications.at(-1)?.message ?? "", /shown/);
+    await command.handler("status", ctx);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+    assert.match(notifications.at(-1)?.message ?? "", /shown/);
 
-		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
-		await command.handler("status", ctx);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
-		assert.match(notifications.at(-1)?.message ?? "", /hidden/);
-	});
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`,
+    );
+    await command.handler("status", ctx);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+    assert.match(notifications.at(-1)?.message ?? "", /hidden/);
+  });
 });
 
 test("usage weekly off and toggle persist explicit preferences", async (t) => {
-	const offFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const offSettingsPath = join(offFixture.agent, "settings.json");
-	writeFileSync(offSettingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
+  const offFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const offSettingsPath = join(offFixture.agent, "settings.json");
+  writeFileSync(
+    offSettingsPath,
+    `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: offFixture.home, PI_CODING_AGENT_DIR: offFixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(offFixture.dir);
+  await withEnv({ HOME: offFixture.home, PI_CODING_AGENT_DIR: offFixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(offFixture.dir);
 
-		await command.handler("status", ctx);
-		assert.match(notifications.at(-1)?.message ?? "", /shown/);
+    await command.handler("status", ctx);
+    assert.match(notifications.at(-1)?.message ?? "", /shown/);
 
-		await command.handler("weekly off", ctx);
+    await command.handler("weekly off", ctx);
 
-		const written = JSON.parse(readFileSync(offSettingsPath, "utf8"));
-		assert.equal(written.tlh.usageLimits.showWeekly, false);
-		assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), false);
+    const written = JSON.parse(readFileSync(offSettingsPath, "utf8"));
+    assert.equal(written.tlh.usageLimits.showWeekly, false);
+    assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), false);
 
-		const notice = notifications.at(-1);
-		assert.equal(notice?.type, "info");
-		assert.match(notice?.message ?? "", /hidden/);
-		assert.doesNotMatch(notice?.message ?? "", /default auto mode|default when unset/);
-		assert.match(notice?.message ?? "", /\/usage weekly on/);
-	});
+    const notice = notifications.at(-1);
+    assert.equal(notice?.type, "info");
+    assert.match(notice?.message ?? "", /hidden/);
+    assert.doesNotMatch(notice?.message ?? "", /default auto mode|default when unset/);
+    assert.match(notice?.message ?? "", /\/usage weekly on/);
+  });
 
-	const toggleFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const toggleSettingsPath = join(toggleFixture.agent, "settings.json");
-	writeFileSync(toggleSettingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+  const toggleFixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const toggleSettingsPath = join(toggleFixture.agent, "settings.json");
+  writeFileSync(
+    toggleSettingsPath,
+    `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: toggleFixture.home, PI_CODING_AGENT_DIR: toggleFixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(toggleFixture.dir);
+  await withEnv(
+    { HOME: toggleFixture.home, PI_CODING_AGENT_DIR: toggleFixture.agent },
+    async () => {
+      const command = registeredUsageCommand();
+      const { ctx, notifications } = createCommandContext(toggleFixture.dir);
 
-		setCachedTlhUsageWeeklyVisibility(true);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
-		assert.equal(getPersistedTlhUsageWeeklyVisibility(toggleFixture.dir), false);
+      setCachedTlhUsageWeeklyVisibility(true);
+      assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+      assert.equal(getPersistedTlhUsageWeeklyVisibility(toggleFixture.dir), false);
 
-		await command.handler("weekly toggle", ctx);
+      await command.handler("weekly toggle", ctx);
 
-		const written = JSON.parse(readFileSync(toggleSettingsPath, "utf8"));
-		assert.equal(written.tlh.usageLimits.showWeekly, true);
-		assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), true);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+      const written = JSON.parse(readFileSync(toggleSettingsPath, "utf8"));
+      assert.equal(written.tlh.usageLimits.showWeekly, true);
+      assert.equal(shouldShowTlhUsageWeekly(written.tlh.usageLimits), true);
+      assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
 
-		const notice = notifications.at(-1);
-		assert.equal(notice?.type, "info");
-		assert.match(notice?.message ?? "", /shown/);
-		assert.match(notice?.message ?? "", /\/usage weekly off/);
-	});
+      const notice = notifications.at(-1);
+      assert.equal(notice?.type, "info");
+      assert.match(notice?.message ?? "", /shown/);
+      assert.match(notice?.message ?? "", /\/usage weekly off/);
+    },
+  );
 });
 
 test("usage weekly toggle honors external persisted changes without refreshing footer cache", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`);
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(
+    settingsPath,
+    `${JSON.stringify({ tlh: { usageLimits: { showWeekly: true } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx } = createCommandContext(fixture.dir);
 
-		refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
+    refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), true);
 
-		writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true, "manual change should not pre-refresh the cache");
-		assert.equal(getPersistedTlhUsageWeeklyVisibility(fixture.dir), false);
+    writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`,
+    );
+    assert.equal(
+      getCachedTlhUsageWeeklyVisibility(),
+      true,
+      "manual change should not pre-refresh the cache",
+    );
+    assert.equal(getPersistedTlhUsageWeeklyVisibility(fixture.dir), false);
 
-		await command.handler("weekly toggle", ctx);
-		const written = JSON.parse(readFileSync(settingsPath, "utf8"));
-		assert.equal(written.tlh.usageLimits.showWeekly, true, "toggle should invert the persisted false value");
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), true, "cache updates only after the write succeeds");
-	});
+    await command.handler("weekly toggle", ctx);
+    const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+    assert.equal(
+      written.tlh.usageLimits.showWeekly,
+      true,
+      "toggle should invert the persisted false value",
+    );
+    assert.equal(
+      getCachedTlhUsageWeeklyVisibility(),
+      true,
+      "cache updates only after the write succeeds",
+    );
+  });
 });
 
 test("usage weekly toggle leaves the cached preference unchanged when persistence fails", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const settingsPath = join(fixture.agent, "settings.json");
-	writeFileSync(settingsPath, `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`);
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const settingsPath = join(fixture.agent, "settings.json");
+  writeFileSync(
+    settingsPath,
+    `${JSON.stringify({ tlh: { usageLimits: { showWeekly: false } } }, null, 2)}\n`,
+  );
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+    refreshCachedTlhUsageWeeklyVisibility(fixture.dir);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
 
-		writeFileSync(settingsPath, "{\n", "utf8");
-		await command.handler("weekly toggle", ctx);
-		assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
-		assert.equal(notifications.at(-1)?.type, "error");
-		assert.match(notifications.at(-1)?.message ?? "", /Could not update TLH usage weekly-window preference/);
-	});
+    writeFileSync(settingsPath, "{\n", "utf8");
+    await command.handler("weekly toggle", ctx);
+    assert.equal(getCachedTlhUsageWeeklyVisibility(), false);
+    assert.equal(notifications.at(-1)?.type, "error");
+    assert.match(
+      notifications.at(-1)?.message ?? "",
+      /Could not update TLH usage weekly-window preference/,
+    );
+  });
 });
 
 test("usage weekly writes refuse normal Pi settings", async (t) => {
-	const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
-	const normalAgent = join(fixture.home, ".pi", "agent");
-	mkdirSync(normalAgent, { recursive: true });
+  const fixture = createIsolatedProfileFixture("tlh-usage-limits-test-", { test: t });
+  const normalAgent = join(fixture.home, ".pi", "agent");
+  mkdirSync(normalAgent, { recursive: true });
 
-	await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: normalAgent }, async () => {
-		const command = registeredUsageCommand();
-		const { ctx, notifications } = createCommandContext(fixture.dir);
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: normalAgent }, async () => {
+    const command = registeredUsageCommand();
+    const { ctx, notifications } = createCommandContext(fixture.dir);
 
-		await command.handler("weekly on", ctx);
+    await command.handler("weekly on", ctx);
 
-		assert.equal(existsSync(join(normalAgent, "settings.json")), false);
-		const notice = notifications.at(-1);
-		assert.equal(notice?.type, "error");
-		assert.match(notice?.message ?? "", /isolated TLH profile|normal Pi config/);
-	});
+    assert.equal(existsSync(join(normalAgent, "settings.json")), false);
+    const notice = notifications.at(-1);
+    assert.equal(notice?.type, "error");
+    assert.match(notice?.message ?? "", /isolated TLH profile|normal Pi config/);
+  });
 });

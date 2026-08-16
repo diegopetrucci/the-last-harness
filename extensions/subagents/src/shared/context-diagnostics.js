@@ -60,7 +60,10 @@ const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
 function isUsableSessionHeader(line) {
     try {
         const header = JSON.parse(line);
-        return (isRecord(header) && header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0);
+        return (isRecord(header) &&
+            header.type === "session" &&
+            typeof header.id === "string" &&
+            header.id.trim().length > 0);
     }
     catch {
         return false;
@@ -143,7 +146,15 @@ export function parseContextPressureProjection(value) {
         remainingTokens === undefined ||
         warnedAt === undefined)
         return undefined;
-    return { severity, crossedThreshold, contextTokens, contextWindow, contextPercent, remainingTokens, warnedAt };
+    return {
+        severity,
+        crossedThreshold,
+        contextTokens,
+        contextWindow,
+        contextPercent,
+        remainingTokens,
+        warnedAt,
+    };
 }
 export function parseContextUsageDiagnostics(value) {
     if (value === undefined)
@@ -151,7 +162,13 @@ export function parseContextUsageDiagnostics(value) {
     if (!isRecord(value))
         return undefined;
     const parsed = {};
-    for (const field of ["restoredTokens", "contextTokens", "peakTokens", "contextWindow", "contextPercent"]) {
+    for (const field of [
+        "restoredTokens",
+        "contextTokens",
+        "peakTokens",
+        "contextWindow",
+        "contextPercent",
+    ]) {
         const fieldValue = finiteNonNegativeNumber(value[field]);
         if (value[field] !== undefined && fieldValue === undefined)
             return undefined;
@@ -191,7 +208,8 @@ function formatMeasurement(value) {
     return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 export function parseSubagentTerminationReason(value) {
-    return typeof value === "string" && KNOWN_TERMINATION_REASONS.has(value)
+    return typeof value === "string" &&
+        KNOWN_TERMINATION_REASONS.has(value)
         ? value
         : undefined;
 }
@@ -218,7 +236,10 @@ export function assistantContextTokens(message) {
         const output = finiteNonNegativeNumber(message.usage.output);
         const cacheRead = finiteNonNegativeNumber(message.usage.cacheRead);
         const cacheWrite = finiteNonNegativeNumber(message.usage.cacheWrite);
-        if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined)
+        if (input === undefined ||
+            output === undefined ||
+            cacheRead === undefined ||
+            cacheWrite === undefined)
             return undefined;
         total = input + output + cacheRead + cacheWrite;
     }
@@ -285,7 +306,10 @@ function canonicalToolCallIds(message) {
 function isGenuinelyEmptyAssistant(message) {
     if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content))
         return false;
-    return message.content.every((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.trim() === "");
+    return message.content.every((part) => isRecord(part) &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        part.text.trim() === "");
 }
 export function classifyContextExhaustedTermination(input) {
     if (input.exitCode !== 0 ||
@@ -306,7 +330,9 @@ export function classifyContextExhaustedTermination(input) {
         return undefined;
     const unresolvedIds = new Set(callIds);
     for (const message of messages.slice(callIndex + 1, finalIndex)) {
-        if (!isRecord(message) || message.role !== "toolResult" || !isNonEmptyIdentifier(message.toolCallId))
+        if (!isRecord(message) ||
+            message.role !== "toolResult" ||
+            !isNonEmptyIdentifier(message.toolCallId))
             return undefined;
         unresolvedIds.delete(message.toolCallId);
     }
