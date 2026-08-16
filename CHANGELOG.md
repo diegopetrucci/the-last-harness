@@ -11,7 +11,6 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- `/clone` is now visible in TLH autocomplete.
 - `/fast` now supports both OpenAI and Anthropic models.
 - Bumped the pinned Pi runtime to `0.84.2`.
 - Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
