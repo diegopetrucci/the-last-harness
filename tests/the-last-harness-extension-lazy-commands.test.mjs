@@ -76,7 +76,7 @@ function restoreEnv(previousEnv) {
 	}
 }
 
-test("Jiti lazy command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
+test("Jiti command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
 	const tempDir = mkdtempSync(join(tmpdir(), "tlh-lazy-commands-"));
 	const agentDir = join(tempDir, "agent");
 	const cwd = join(tempDir, "workspace");

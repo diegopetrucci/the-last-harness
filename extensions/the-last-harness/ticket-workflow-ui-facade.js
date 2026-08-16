@@ -1,18 +1,7 @@
+import { createTlhTicketWorkflowUiRuntime } from "./ticket-workflow-ui.js";
 import { activateTlhTicketSessionScope } from "./tickets.js";
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
 export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./ticket-workflow-ui.js")));
+    const runtimeFactory = options.createRuntime ?? ((api) => createTlhTicketWorkflowUiRuntime(api));
     let runtime;
     let runtimePromise;
     const getRuntime = async () => {
@@ -20,8 +9,8 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
             return runtime;
         }
         if (!runtimePromise) {
-            runtimePromise = loadModule()
-                .then((module) => module.createTlhTicketWorkflowUiRuntime(pi))
+            runtimePromise = Promise.resolve()
+                .then(() => runtimeFactory(pi))
                 .then((loadedRuntime) => {
                 runtime = loadedRuntime;
                 return loadedRuntime;

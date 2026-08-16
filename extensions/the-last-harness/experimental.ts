@@ -1,9 +1,4 @@
-import {
-	SettingsManager,
-	getAgentDir,
-	type ExtensionAPI,
-	type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
 	normalizeEnabledExperimentalFeatures,
@@ -226,31 +221,9 @@ export function buildChildExperimentalPrompt(
 	return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
 }
 
-type ExperimentalCommandModule = {
-	handleExperimentalCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void>;
-};
+import { handleExperimentalCommand } from "./experimental-command.js";
 
-type TlhExperimentalCommandFacadeOptions = {
-	loadModule?: () => Promise<ExperimentalCommandModule>;
-};
-
-function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () => Promise<TModule> {
-	let modulePromise: Promise<TModule> | undefined;
-	return () => {
-		if (!modulePromise) {
-			modulePromise = loader().catch((error) => {
-				modulePromise = undefined;
-				throw error;
-			});
-		}
-		return modulePromise;
-	};
-}
-
-export function registerExperimentalCommand(pi: ExtensionAPI, options: TlhExperimentalCommandFacadeOptions = {}): void {
-	const loadModule = createRetryableLazyImport(
-		options.loadModule ?? (() => import("./experimental-command.js") as Promise<ExperimentalCommandModule>),
-	);
+export function registerExperimentalCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("experimental", {
 		description: "List or change TLH experimental features",
 		getArgumentCompletions: (prefix) => {
@@ -260,9 +233,6 @@ export function registerExperimentalCommand(pi: ExtensionAPI, options: TlhExperi
 			).map((option) => ({ value: option.value, label: option.value, description: option.description }));
 			return completions.length > 0 ? completions : null;
 		},
-		handler: async (args, ctx) => {
-			const module = await loadModule();
-			await module.handleExperimentalCommand(pi, args, ctx);
-		},
+		handler: (args, ctx) => handleExperimentalCommand(pi, args, ctx),
 	});
 }

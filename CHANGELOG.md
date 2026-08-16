@@ -21,6 +21,9 @@ All notable changes to The Last Harness will be documented in this file.
 ### Fixed
 
 - Fixed async subagent runs that could hang after being paused and resumed.
+- Fixed `/effort`, `/attribution`, `/experimental`, `/usage`, `/review`, `/changelog`, and the ticket-workflow UI failing at invocation time with `Cannot find package '@earendil-works/pi-coding-agent'`. These all used lazy `import()` calls that crossed into native ESM outside Pi's jiti alias scope; they now use eager imports resolved within the jiti graph.
+- Fixed the new model/effort session-scope prompt never appearing for `/effort` — it was blocked by the same lazy-import failure above.
+- Fixed TLH launch telemetry silently failing: the fire-and-forget `void import(...)` that sends the anonymous launch event swallowed the same `ERR_MODULE_NOT_FOUND` error, so no telemetry was ever sent.
 
 ## [0.37.0] - 2026-08-11
 

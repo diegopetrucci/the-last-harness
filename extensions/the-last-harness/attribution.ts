@@ -1,9 +1,4 @@
-import {
-	SettingsManager,
-	getAgentDir,
-	type ExtensionAPI,
-	type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { isRecord } from "./common.js";
 import {
@@ -535,39 +530,11 @@ export function getTlhGitCommitAttributionBlockReason(
 	return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
 
-type AttributionCommandModule = {
-	handleToggleTlhGitAttributionCommand(pi: ExtensionAPI, args: string, ctx: ExtensionCommandContext): Promise<void>;
-};
+import { handleToggleTlhGitAttributionCommand } from "./attribution-command.js";
 
-type TlhAttributionCommandFacadeOptions = {
-	loadModule?: () => Promise<AttributionCommandModule>;
-};
-
-function createRetryableLazyImport<TModule>(loader: () => Promise<TModule>): () => Promise<TModule> {
-	let modulePromise: Promise<TModule> | undefined;
-	return () => {
-		if (!modulePromise) {
-			modulePromise = loader().catch((error) => {
-				modulePromise = undefined;
-				throw error;
-			});
-		}
-		return modulePromise;
-	};
-}
-
-export function registerToggleTlhGitAttributionCommand(
-	pi: ExtensionAPI,
-	options: TlhAttributionCommandFacadeOptions = {},
-): void {
-	const loadModule = createRetryableLazyImport(
-		options.loadModule ?? (() => import("./attribution-command.js") as Promise<AttributionCommandModule>),
-	);
+export function registerToggleTlhGitAttributionCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("toggle-tlh-git-attribution", {
 		description: "Toggle TLH git commit attribution",
-		handler: async (args, ctx) => {
-			const module = await loadModule();
-			await module.handleToggleTlhGitAttributionCommand(pi, args, ctx);
-		},
+		handler: (args, ctx) => handleToggleTlhGitAttributionCommand(pi, args, ctx),
 	});
 }

@@ -24,124 +24,55 @@ function createPiHarness() {
 	};
 }
 
-function createCtx() {
-	const notifications = [];
-	return {
-		notifications,
-		ctx: {
-			cwd: "/tmp/tlh-facade-test",
-			hasUI: false,
-			ui: {
-				notify(message, type) {
-					notifications.push({ message, type });
-				},
-			},
-			model: { provider: "anthropic", id: "claude-sonnet-4-20250514", contextWindow: 200000 },
-		},
-	};
-}
-
-test("attribution facade lazy-loads on demand and retries after a failed import", async () => {
+test("attribution facade registers the toggle-tlh-git-attribution command", () => {
 	const pi = createPiHarness();
-	let attempt = 0;
-	registerToggleTlhGitAttributionCommand(pi, {
-		loadModule: async () => {
-			attempt += 1;
-			if (attempt === 1) {
-				throw new Error("boom");
-			}
-			return {
-				handleToggleTlhGitAttributionCommand: async (_pi, _args, ctx) => {
-					ctx.ui.notify("recovered", "info");
-				},
-			};
-		},
-	});
+	registerToggleTlhGitAttributionCommand(pi);
 	const command = pi.commands.get("toggle-tlh-git-attribution");
-	assert.equal(attempt, 0);
-	await assert.rejects(() => command.handler("", createCtx().ctx), /boom/);
-	const secondRun = createCtx();
-	await command.handler("", secondRun.ctx);
-	assert.equal(attempt, 2);
-	assert.deepEqual(secondRun.notifications, [{ message: "recovered", type: "info" }]);
+	assert.equal(typeof command?.handler, "function");
+	assert.equal(command?.description, "Toggle TLH git commit attribution");
 });
 
-test("effort facade keeps completions eager-light and shares one lazy handler across aliases", async () => {
+test("effort facade registers effort and thinking commands with correct completions", () => {
 	const pi = createPiHarness();
-	let loadCount = 0;
 	const runtime = { activePrimaryAgentPrompt: () => ({ name: "architect", minThinking: "medium" }) };
-	registerEffortCommand(pi, runtime, {
-		loadModule: async () => {
-			loadCount += 1;
-			return {
-				handleThinkingLevelCommand: async (_pi, _args, ctx) => {
-					ctx.ui.notify("handled", "info");
-				},
-			};
-		},
-	});
-	assert.deepEqual(
-		pi.commands
-			.get("effort")
-			.getArgumentCompletions("")
-			.map((item) => item.value),
-		["medium", "high", "xhigh", "max"],
+	registerEffortCommand(pi, runtime);
+
+	assert.ok(pi.commands.has("effort"), "effort command must be registered");
+	assert.ok(pi.commands.has("thinking"), "thinking command must be registered");
+
+	const completions = pi.commands.get("effort").getArgumentCompletions("");
+	assert.ok(Array.isArray(completions), "completions must be an array");
+	assert.ok(
+		completions.some((item) => item.value === "medium"),
+		"completions must include medium",
 	);
-	assert.equal(loadCount, 0);
-	const effortRun = createCtx();
-	await pi.commands.get("effort").handler("medium", effortRun.ctx);
-	const thinkingRun = createCtx();
-	await pi.commands.get("thinking").handler("high", thinkingRun.ctx);
-	assert.equal(loadCount, 1);
-	assert.deepEqual(effortRun.notifications, [{ message: "handled", type: "info" }]);
-	assert.deepEqual(thinkingRun.notifications, [{ message: "handled", type: "info" }]);
+	assert.deepEqual(
+		completions.map((item) => item.value),
+		["medium", "high", "xhigh", "max"],
+		"completions must respect minThinking filter",
+	);
 });
 
-test("experimental facade keeps command completions without loading the heavy command implementation", async () => {
+test("experimental facade registers experimental command with correct completions", () => {
 	const pi = createPiHarness();
-	let loadCount = 0;
-	registerExperimentalCommand(pi, {
-		loadModule: async () => {
-			loadCount += 1;
-			return {
-				handleExperimentalCommand: async (_pi, _args, ctx) => {
-					ctx.ui.notify("experimental handled", "info");
-				},
-			};
-		},
-	});
+	registerExperimentalCommand(pi);
 	const command = pi.commands.get("experimental");
-	assert.equal(loadCount, 0);
+	assert.equal(typeof command?.handler, "function");
 	assert.ok(
 		command
 			.getArgumentCompletions(`toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`)
 			?.some((item) => item.value === `toggle ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`),
+		"completions must include toggle for the delta-follow-up-reviews feature",
 	);
-	assert.equal(loadCount, 0);
-	const run = createCtx();
-	await command.handler(`status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, run.ctx);
-	assert.equal(loadCount, 1);
-	assert.deepEqual(run.notifications, [{ message: "experimental handled", type: "info" }]);
 });
 
-test("usage facade keeps weekly completions without loading the write path until execution", async () => {
+test("usage facade registers usage command with correct completions", () => {
 	const pi = createPiHarness();
-	let loadCount = 0;
-	registerUsageCommand(pi, {
-		loadModule: async () => {
-			loadCount += 1;
-			return {
-				handleUsageCommand: async (_args, ctx) => {
-					ctx.ui.notify("usage handled", "info");
-				},
-			};
-		},
-	});
+	registerUsageCommand(pi);
 	const command = pi.commands.get("usage");
-	assert.ok(command.getArgumentCompletions("weekly")?.some((item) => item.value === "weekly toggle"));
-	assert.equal(loadCount, 0);
-	const run = createCtx();
-	await command.handler("status", run.ctx);
-	assert.equal(loadCount, 1);
-	assert.deepEqual(run.notifications, [{ message: "usage handled", type: "info" }]);
+	assert.equal(typeof command?.handler, "function");
+	assert.ok(
+		command.getArgumentCompletions("weekly")?.some((item) => item.value === "weekly toggle"),
+		"completions must include weekly toggle",
+	);
 });
