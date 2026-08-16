@@ -62,11 +62,9 @@ export function resolveCompletionBatchConfig(
   };
 }
 
-type TimerHandle = unknown;
-
 interface TimerApi {
-  setTimeout(handler: () => void, delayMs: number): TimerHandle;
-  clearTimeout(handle: TimerHandle): void;
+  setTimeout(handler: () => void, delayMs: number): unknown;
+  clearTimeout(handle: unknown): void;
 }
 
 const defaultTimers: TimerApi = {
@@ -74,7 +72,7 @@ const defaultTimers: TimerApi = {
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
-function unrefHandle(handle: TimerHandle): void {
+function unrefHandle(handle: unknown): void {
   if (
     handle &&
     typeof handle === "object" &&
@@ -124,8 +122,8 @@ export function createCompletionBatcher<T>(
   }
 
   let pending: T[] = [];
-  let debounceTimer: TimerHandle | null = null;
-  let maxWaitTimer: TimerHandle | null = null;
+  let debounceTimer: unknown = null;
+  let maxWaitTimer: unknown = null;
   let straggler = false;
   let lastEmitAt: number | null = null;
 

@@ -108,6 +108,7 @@
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
+    "@oxlint/plugins": "1.78.0",
     "@types/node": "26.2.0",
     "jiti": "2.7.0",
     "oxfmt": "0.63.0",
