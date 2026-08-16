@@ -1,8 +1,11 @@
 [
   {
-    "id": "openai-fast",
-    "source": "npm:@diegopetrucci/pi-openai-fast@0.1.15",
-    "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4/GPT-5.5 sessions."
+    "id": "fast",
+    "aliases": ["openai-fast"],
+    "replaces": ["npm:@diegopetrucci/pi-openai-fast"],
+    "migrateReplacements": true,
+    "source": "npm:@diegopetrucci/pi-fast@0.1.0",
+    "description": "Enable optional OpenAI Codex Fast mode commands for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions."
   },
   {
     "id": "anthropic-auth",
