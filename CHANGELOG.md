@@ -12,7 +12,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Changed
 
 - `/clone` is now visible in TLH autocomplete.
-- The bundled `/fast` extension has been updated from `pi-openai-fast` to the new unified `pi-fast` package (`npm:@diegopetrucci/pi-fast@0.1.0`). The `/fast` command and its OpenAI model set (GPT-5.4, GPT-5.5, GPT-5.6-sol, GPT-5.6-terra, GPT-5.6-luna) are unchanged. **Migration:** the new extension does not read the old `openai-fast.json` config file. If you wrote custom settings to `openai-fast.json`, rename or copy it to `fast.json` in `~/.the-last-harness/agent/extensions/` (default path; use your custom `--agent-dir` path if you installed to a non-default location), or to `<project>/.pi/fast.json` for per-project config. If you previously ran `tlh defaults disable openai-fast`, your opt-out is preserved automatically via the alias — no action required.
+- `/fast` now supports both OpenAI and Anthropic models.
 - Bumped the pinned Pi runtime to `0.84.2`.
 - Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
 - Refreshed bundled npm default-extension pins: `pi-openai-fast` `0.1.13`→`0.1.15`, `pi-anthropic-auth` `2.0.1`→`2.0.3`, `pi-inline-bash` `0.1.8`→`0.1.9`, `pi-context-inspector` `0.1.10`→`0.1.11`, `pi-quiet-tools` `0.1.9`→`0.1.10`, and `pi-dirty-repo-guard` `0.1.8`→`0.1.9`; `mcporter` `2.11.0` and `pi-web-access` `0.10.10` were already current and remain unchanged. (`pi-notify` is no longer managed here; see below.)
