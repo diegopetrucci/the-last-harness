@@ -359,8 +359,35 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable notify)
+tlh defaults disable <id>  # disable a separately managed default extension (e.g. tlh defaults disable context-inspector)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+
+### Configuring the notify extension
+
+The `notify` extension is first-party and ships bundled with TLH. It cannot be managed with `tlh defaults disable`; instead, disable it by setting `"enabled": false` in its config file.
+
+Config files are merged at runtime — project config overrides global config:
+
+- `~/.the-last-harness/agent/extensions/notify.json` (default path; may differ if you used `--agent-dir` during install)
+- `<project>/.pi/notify.json` (only when the project is trusted)
+
+Example to disable notifications entirely:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Key config fields (see [`extensions/notify/README.md`](../extensions/notify/README.md) for the full list):
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Master on/off switch |
+| `onlyWhenInteractive` | `true` | Skip notifications in non-UI (print) mode |
+| `suppressWhileActive` | `true` | Hold all notification channels while background subagent work is still running; a notification fires only once the session is genuinely waiting on you, not merely between turns. Set to `false` to notify on every turn completion regardless. Has no effect when the TLH activity tracker is absent. |
+| `title` | `"tlh"` | Notification title |
+| `body` | `"Ready for input"` | Notification body |

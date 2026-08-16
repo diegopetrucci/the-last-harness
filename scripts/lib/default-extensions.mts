@@ -137,6 +137,9 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
   "npm:pi-intercom",
   "git:github.com/nicobailon/pi-intercom",
   "git:github.com/diegopetrucci/pi-intercom",
+  // notify is now bundled first-party; the npm package must be removed to prevent
+  // two notify extensions running in parallel and every notification firing twice.
+  "npm:@diegopetrucci/pi-notify",
 ]);
 
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [] as const;

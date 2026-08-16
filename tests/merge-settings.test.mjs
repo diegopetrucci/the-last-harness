@@ -502,17 +502,17 @@ test("merge reruns preserve user-owned settings and stay idempotent", () => {
 test("merge records provenance for managed default-extension package identities", () => {
   const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] }, [
     {
-      id: "notify",
-      source: "npm:@diegopetrucci/pi-notify",
+      id: "inline-bash",
+      source: "npm:@diegopetrucci/pi-inline-bash",
     },
   ]);
 
   runMerge(fixture);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-inline-bash"]);
   assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
-    "npm:@diegopetrucci/pi-notify",
+    "npm:@diegopetrucci/pi-inline-bash",
   ]);
 });
 
@@ -575,12 +575,12 @@ test("merge migrates existing unpinned managed npm default package sources to bu
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage, "npm:@diegopetrucci/pi-notify"],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-inline-bash"],
     },
     [
       {
-        id: "notify",
-        source: "npm:@diegopetrucci/pi-notify@0.1.5",
+        id: "inline-bash",
+        source: "npm:@diegopetrucci/pi-inline-bash@0.1.5",
       },
     ],
   );
@@ -588,9 +588,9 @@ test("merge migrates existing unpinned managed npm default package sources to bu
   runMerge(fixture);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
+  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-inline-bash@0.1.5"]);
   assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
-    "npm:@diegopetrucci/pi-notify",
+    "npm:@diegopetrucci/pi-inline-bash",
   ]);
 });
 
@@ -598,17 +598,17 @@ test("merge updates managed pinned npm default package sources when the bundled 
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-inline-bash@0.1.5"],
       tlh: {
         defaultExtensionProvenance: {
-          managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+          managedPackageIdentities: ["npm:@diegopetrucci/pi-inline-bash"],
         },
       },
     },
     [
       {
-        id: "notify",
-        source: "npm:@diegopetrucci/pi-notify@0.1.6",
+        id: "inline-bash",
+        source: "npm:@diegopetrucci/pi-inline-bash@0.1.6",
       },
     ],
   );
@@ -616,9 +616,9 @@ test("merge updates managed pinned npm default package sources when the bundled 
   runMerge(fixture);
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.6"]);
+  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-inline-bash@0.1.6"]);
   assert.deepEqual(settings.tlh?.defaultExtensionProvenance?.managedPackageIdentities, [
-    "npm:@diegopetrucci/pi-notify",
+    "npm:@diegopetrucci/pi-inline-bash",
   ]);
 });
 
@@ -626,12 +626,12 @@ test("merge preserves older pinned npm package sources without managed default p
   const fixture = tempFixture(
     { packages: [] },
     {
-      packages: [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"],
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-inline-bash@0.1.5"],
     },
     [
       {
-        id: "notify",
-        source: "npm:@diegopetrucci/pi-notify@0.1.6",
+        id: "inline-bash",
+        source: "npm:@diegopetrucci/pi-inline-bash@0.1.6",
       },
     ],
   );
@@ -641,7 +641,10 @@ test("merge preserves older pinned npm package sources without managed default p
   const afterFirstRaw = readFileSync(fixture.settings, "utf8");
 
   assert.doesNotMatch(firstOutput, /update default extension package source/);
-  assert.deepEqual(afterFirst.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
+  assert.deepEqual(afterFirst.packages, [
+    harnessPackage,
+    "npm:@diegopetrucci/pi-inline-bash@0.1.5",
+  ]);
   assert.deepEqual(afterFirst.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 
   const secondOutput = runMerge(fixture, { quiet: false });
@@ -650,7 +653,10 @@ test("merge preserves older pinned npm package sources without managed default p
   assert.match(secondOutput, /No settings changes needed\./);
   assert.doesNotMatch(secondOutput, /update default extension package source/);
   assert.equal(readFileSync(fixture.settings, "utf8"), afterFirstRaw);
-  assert.deepEqual(afterSecond.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"]);
+  assert.deepEqual(afterSecond.packages, [
+    harnessPackage,
+    "npm:@diegopetrucci/pi-inline-bash@0.1.5",
+  ]);
   assert.deepEqual(afterSecond.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], []);
 });
 
@@ -810,7 +816,7 @@ test("merge force-removes retired confirmation packages by identity while preser
         harnessPackage,
         `${retiredPermissionGatePackage}@1.2.3`,
         { source: `${retiredConfirmDestructivePackage}@0.4.0`, extensions: ["legacy-filter"] },
-        "npm:@diegopetrucci/pi-notify",
+        "npm:@diegopetrucci/pi-inline-bash",
       ],
     },
   );
@@ -818,7 +824,7 @@ test("merge force-removes retired confirmation packages by identity while preser
   const output = runMerge(fixture, { quiet: false });
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-inline-bash"]);
   assert.match(
     output,
     /force-remove retired default extension package: npm:@diegopetrucci\/pi-permission-gate/,
@@ -836,7 +842,7 @@ test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a change
       packages: [
         harnessPackage,
         "npm:@diegopetrucci/pi-context-cap",
-        "npm:@diegopetrucci/pi-notify",
+        "npm:@diegopetrucci/pi-inline-bash",
       ],
     },
   );
@@ -849,7 +855,7 @@ test("merge removes npm:@diegopetrucci/pi-context-cap package and emits a change
     "pi-context-cap should be removed",
   );
   assert.ok(
-    settings.packages.includes("npm:@diegopetrucci/pi-notify"),
+    settings.packages.includes("npm:@diegopetrucci/pi-inline-bash"),
     "unrelated packages should be preserved",
   );
   assert.match(
@@ -951,7 +957,7 @@ test("merge force-removes pi-oracle package while preserving unrelated packages"
         harnessPackage,
         `${retiredOraclePackage}@2.1.0`,
         { source: `${retiredOraclePackage}@1.0.0`, extensions: ["legacy-filter"] },
-        "npm:@diegopetrucci/pi-notify",
+        "npm:@diegopetrucci/pi-inline-bash",
       ],
     },
   );
@@ -959,7 +965,7 @@ test("merge force-removes pi-oracle package while preserving unrelated packages"
   const output = runMerge(fixture, { quiet: false });
 
   const settings = readJson(fixture.settings);
-  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+  assert.deepEqual(settings.packages, [harnessPackage, "npm:@diegopetrucci/pi-inline-bash"]);
   assert.match(
     output,
     /force-remove retired default extension package: npm:@diegopetrucci\/pi-oracle/,
@@ -1027,6 +1033,70 @@ test("merge cleanup of pi-oracle is idempotent after first run", () => {
     firstSettings.tlh.disabledDefaultExtensions,
     ["notify"],
     "oracle opt-out pruned on first run",
+  );
+
+  const secondOutput = runMerge(fixture, { quiet: false });
+  assert.match(secondOutput, /No settings changes needed\./);
+  assert.equal(
+    readFileSync(fixture.settings, "utf8"),
+    afterFirst,
+    "settings unchanged on second run",
+  );
+});
+
+test("merge force-removes pi-notify package previously installed from npm source", () => {
+  // pi-notify was retired as an npm default when notify was bundled as a first-party extension.
+  // If both ran simultaneously, every notification would fire twice. This test asserts the
+  // force-removal guarantee: any previously-installed npm:@diegopetrucci/pi-notify entry must
+  // be stripped from isolated settings on merge, even when paired with unrelated active packages.
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [
+        harnessPackage,
+        "npm:@diegopetrucci/pi-notify",
+        "npm:@diegopetrucci/pi-notify@0.1.5",
+        "npm:@diegopetrucci/pi-inline-bash",
+      ],
+    },
+  );
+
+  const output = runMerge(fixture, { quiet: false });
+
+  const settings = readJson(fixture.settings);
+  assert.ok(
+    !settings.packages.some((p) =>
+      (typeof p === "string" ? p : p.source).startsWith("npm:@diegopetrucci/pi-notify"),
+    ),
+    "all pi-notify entries must be stripped",
+  );
+  assert.ok(
+    settings.packages.includes("npm:@diegopetrucci/pi-inline-bash"),
+    "unrelated packages must be preserved",
+  );
+  assert.match(
+    output,
+    /force-remove retired default extension package: npm:@diegopetrucci\/pi-notify/,
+  );
+});
+
+test("merge force-removal of pi-notify is idempotent after first run", () => {
+  const fixture = tempFixture(
+    { packages: [] },
+    {
+      packages: [harnessPackage, "npm:@diegopetrucci/pi-notify@0.1.5"],
+    },
+  );
+
+  runMerge(fixture);
+
+  const afterFirst = readFileSync(fixture.settings, "utf8");
+  const firstSettings = readJson(fixture.settings);
+  assert.ok(
+    !firstSettings.packages.some((p) =>
+      (typeof p === "string" ? p : p.source).startsWith("npm:@diegopetrucci/pi-notify"),
+    ),
+    "pi-notify removed on first run",
   );
 
   const secondOutput = runMerge(fixture, { quiet: false });
