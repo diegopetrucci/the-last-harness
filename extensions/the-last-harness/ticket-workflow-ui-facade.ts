@@ -1,39 +1,20 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { TlhTicketWorkflowUiRuntime } from "./ticket-workflow-ui.js";
+import {
+  createTlhTicketWorkflowUiRuntime,
+  type TlhTicketWorkflowUiRuntime,
+} from "./ticket-workflow-ui.js";
 import { activateTlhTicketSessionScope } from "./tickets.js";
 
-type TicketWorkflowUiModule = {
-  createTlhTicketWorkflowUiRuntime(pi: ExtensionAPI): TlhTicketWorkflowUiRuntime;
-};
-
 type TlhTicketWorkflowUiFacadeOptions = {
-  loadModule?: () => Promise<TicketWorkflowUiModule>;
+  createRuntime?: (pi: ExtensionAPI) => TlhTicketWorkflowUiRuntime;
 };
-
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
-}
-
 export function registerLazyTlhTicketWorkflowUi(
   pi: ExtensionAPI,
   options: TlhTicketWorkflowUiFacadeOptions = {},
 ): void {
-  const loadModule = createRetryableLazyImport(
-    options.loadModule ??
-      (() => import("./ticket-workflow-ui.js") as Promise<TicketWorkflowUiModule>),
-  );
+  const runtimeFactory =
+    options.createRuntime ?? ((api: ExtensionAPI) => createTlhTicketWorkflowUiRuntime(api));
   let runtime: TlhTicketWorkflowUiRuntime | undefined;
   let runtimePromise: Promise<TlhTicketWorkflowUiRuntime> | undefined;
 
@@ -42,8 +23,8 @@ export function registerLazyTlhTicketWorkflowUi(
       return runtime;
     }
     if (!runtimePromise) {
-      runtimePromise = loadModule()
-        .then((module) => module.createTlhTicketWorkflowUiRuntime(pi))
+      runtimePromise = Promise.resolve()
+        .then(() => runtimeFactory(pi))
         .then((loadedRuntime) => {
           runtime = loadedRuntime;
           return loadedRuntime;
@@ -55,7 +36,6 @@ export function registerLazyTlhTicketWorkflowUi(
     }
     return runtimePromise;
   };
-
   const applyCurrentSettings = (ctx: ExtensionContext) => {
     if (!ctx.hasUI) {
       return;

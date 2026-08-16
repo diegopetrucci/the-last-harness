@@ -76,7 +76,7 @@ function restoreEnv(previousEnv) {
   }
 }
 
-test("Jiti lazy command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
+test("Jiti command facades resolve review, tokens, annotate-last-message, and tlh-changelog at runtime without extra shutdown listeners", async () => {
   const tempDir = mkdtempSync(join(tmpdir(), "tlh-lazy-commands-"));
   const agentDir = join(tempDir, "agent");
   const cwd = join(tempDir, "workspace");
@@ -86,7 +86,6 @@ test("Jiti lazy command facades resolve review, tokens, annotate-last-message, a
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
     TLH_SKIP_UPDATE_CHECK: process.env.TLH_SKIP_UPDATE_CHECK,
   };
-
   try {
     delete process.env.PI_SUBAGENT_CHILD;
     delete process.env.PI_SUBAGENT_CHILD_AGENT;

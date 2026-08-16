@@ -810,21 +810,18 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
   assert.doesNotMatch(footerGitCacheSource, /from "\.\/footer-git\.mjs"/);
   assert.deepEqual(
     staticImportSpecifiers(extensionSource).filter((specifier) =>
-      [
-        "./the-last-harness/review.js",
-        "./the-last-harness/tokens.js",
-        "./the-last-harness/annotate-last-message.js",
-        "./the-last-harness/changelog.js",
-        "./the-last-harness/launch-telemetry.js",
-      ].includes(specifier),
+      ["./the-last-harness/tokens.js", "./the-last-harness/annotate-last-message.js"].includes(
+        specifier,
+      ),
     ),
     [],
-    "review, tokens, annotate-last-message, tlh-changelog, and launch telemetry must not be top-level static imports",
+    "tokens and annotate-last-message must not be top-level static imports",
   );
-  assert.match(extensionSource, /import\("\.\/the-last-harness\/review\.js"\)/);
+  assert.match(extensionSource, /from "\.\/the-last-harness\/review\.js"/);
+  assert.match(extensionSource, /from "\.\/the-last-harness\/changelog\.js"/);
+  assert.match(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
   assert.match(extensionSource, /import\("\.\/the-last-harness\/tokens\.js"\)/);
   assert.match(extensionSource, /import\("\.\/the-last-harness\/annotate-last-message\.js"\)/);
-  assert.match(extensionSource, /import\("\.\/the-last-harness\/changelog\.js"\)/);
   assert.match(extensionSource, /from "\.\/the-last-harness\/usage-limits\.js"/);
   assert.match(primaryRuntimeSource, /from "\.\/constants\.js"/);
   assert.match(primaryRuntimeSource, /from "\.\/gnosis\.js"/);
@@ -844,7 +841,7 @@ test("extension imports extracted shared helpers from nested TypeScript modules"
   assert.doesNotMatch(extensionSource, /async function applyPrimaryModel/);
 });
 
-test("extension lazy-loads review, tokens, annotate-last-message, and tlh-changelog with retryable facades", () => {
+test("extension lazy-loads tokens and annotate-last-message with retryable facades; review and changelog are static", () => {
   assert.match(
     extensionSource,
     /const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";/,
@@ -855,15 +852,15 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
   );
   assert.match(
     extensionSource,
-    /const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION\s*=\s*"Open a native annotation window for the latest assistant message";/,
+    /const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =\s*"Open a native annotation window for the latest assistant message";/,
   );
   assert.match(
     extensionSource,
-    /const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";/,
+    /const TLH_CHANGELOG_COMMAND_DESCRIPTION =\s*"Show TLH release notes from the packaged changelog";/,
   );
   assert.match(
     extensionSource,
-    /function createRetryableLazyImport<TModule>\(\s*loader: \(\) => Promise<TModule>,?\s*\): \(\) => Promise<TModule> \{/,
+    /function createRetryableLazyImport<TModule>[\s\S]*?loader: \(\) => Promise<TModule>[\s\S]*?\(\) => Promise<TModule> \{/,
   );
   assert.match(
     extensionSource,
@@ -871,7 +868,7 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
   );
   assert.match(
     extensionSource,
-    /pi\.registerCommand\("review", \{[\s\S]*getArgumentCompletions: \(\) => null,[\s\S]*const handler = await getReviewCommandHandler\(\);/,
+    /pi\.registerCommand\("review", \{[\s\S]*getArgumentCompletions: \(\) => null,[\s\S]*handler: reviewCommandHandler,/,
   );
   assert.match(
     extensionSource,
@@ -883,16 +880,13 @@ test("extension lazy-loads review, tokens, annotate-last-message, and tlh-change
   );
   assert.match(
     extensionSource,
-    /pi\.registerCommand\("tlh-changelog", \{[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);[\s\S]*await handler\(pi, args, ctx\);/,
+    /pi\.registerCommand\("tlh-changelog", \{[\s\S]*handler: \(args, ctx\) => handleTlhChangelogCommand\(pi, args, ctx\),/,
   );
   assert.match(
     extensionSource,
     /annotateLastMessageCommandPromise = loadAnnotateLastMessageModule\(\)[\s\S]*?buildAnnotateLastMessageCommand\(\{/,
   );
-  assert.match(
-    extensionSource,
-    /tlhChangelogCommandHandlerPromise = loadTlhChangelogModule\(\)[\s\S]*handleTlhChangelogCommand/,
-  );
+
   assert.match(
     extensionSource,
     /pi\.on\("session_shutdown", async \(\) => \{[\s\S]*if \(!annotateLastMessageCommandPromise\) \{[\s\S]*return;[\s\S]*const command = await annotateLastMessageCommandPromise;[\s\S]*command\.handleSessionShutdown\(\);/,
@@ -976,7 +970,7 @@ test("package version lookup caches the manifest result in-process", () => {
 test("thinking alias shares the effort command thinking-level behavior", () => {
   assert.match(effortSource, /\["effort", "thinking"\] as const/);
   assert.match(effortSource, /description: "Pick the model thinking level"/);
-  assert.match(effortSource, /import\("\.\/effort-command\.js"\)/);
+  assert.match(effortSource, /from "\.\/effort-command\.js"/);
   assert.match(effortCommandSource, /Unknown thinking level/);
   assert.match(effortCommandSource, /Thinking level set to/);
   assert.match(effortCommandSource, /Available thinking levels/);
@@ -986,12 +980,12 @@ test("thinking alias shares the effort command thinking-level behavior", () => {
 test("extension delegates launch update and telemetry services to feature modules", () => {
   const sessionStart = sourceSection(extensionSource, 'pi.on("session_start"', "\n  });\n}");
 
-  assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
+  assert.match(extensionSource, /from "\.\/the-last-harness\/launch-telemetry\.js"/);
   assert.match(extensionSource, /from "\.\/the-last-harness\/model-visibility\.js"/);
   assert.match(extensionSource, /from "\.\/the-last-harness\/update-check\.js"/);
   assert.match(
     sessionStart,
-    /if \(event\.reason === "startup"\) \{[\s\S]*void import\("\.\/the-last-harness\/launch-telemetry\.js"\)[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\)[\s\S]*\.catch\(\(\) => undefined\);[\s\S]*\}/,
+    /if \(event\.reason === "startup"\) \{[\s\S]*try \{[\s\S]*scheduleTlhLaunchTelemetry\(ctx, primaryAgentRuntime\.activePrimaryAgentPrompt\(\)\?\.name\);[\s\S]*\} catch \{/,
   );
   assert.match(
     sessionStart,
@@ -1251,14 +1245,14 @@ test("extension wires subscription usage to lifecycle refreshes and footer", () 
   assert.match(subscriptionUsageFacadeSource, /createTlhSubscriptionUsageService\(\)/);
 });
 
-test("extension wires TLH changelog lazy facade and release-notes rendering", () => {
+test("extension wires TLH changelog static import and release-notes rendering", () => {
   assert.match(
     extensionSource,
-    /pi\.registerCommand\("tlh-changelog", \{[\s\S]*description: TLH_CHANGELOG_COMMAND_DESCRIPTION,[\s\S]*const handler = await getTlhChangelogCommandHandler\(\);/,
+    /pi\.registerCommand\("tlh-changelog", \{[\s\S]*description: TLH_CHANGELOG_COMMAND_DESCRIPTION,[\s\S]*handler: \(args, ctx\) => handleTlhChangelogCommand\(pi, args, ctx\),/,
   );
   assert.match(
     changelogSource,
-    /export const TLH_CHANGELOG_COMMAND_DESCRIPTION\s*=\s*"Show TLH release notes from the packaged changelog";/,
+    /export const TLH_CHANGELOG_COMMAND_DESCRIPTION =\s*"Show TLH release notes from the packaged changelog";/,
   );
   assert.match(
     changelogSource,
@@ -1287,10 +1281,10 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
   assert.match(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui-facade\.js"/);
   assert.match(extensionSource, /registerLazyTlhTicketWorkflowUi\(pi\)/);
   assert.doesNotMatch(extensionSource, /from "\.\/the-last-harness\/ticket-workflow-ui\.js"/);
-  assert.match(ticketWorkflowUiFacadeSource, /import\("\.\/ticket-workflow-ui\.js"\)/);
-  assert.match(ticketWorkflowUiFacadeSource, /createRetryableLazyImport/);
+  assert.match(ticketWorkflowUiFacadeSource, /from "\.\/ticket-workflow-ui\.js"/);
+
   assert.match(experimentalSource, /pi\.registerCommand\("experimental"/);
-  assert.match(experimentalSource, /import\("\.\/experimental-command\.js"\)/);
+  assert.match(experimentalSource, /from "\.\/experimental-command\.js"/);
   assert.match(experimentalSource, /delta-follow-up-reviews/);
   assert.match(experimentalSource, /ci-failure-investigation/);
   assert.doesNotMatch(experimentalSource, /ticket-workflow-ui/);
@@ -1320,7 +1314,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
   );
   assert.doesNotMatch(extensionSource, /registerTlhCommitAttributionRuntime\(pi\)/);
   assert.match(extensionSource, /registerToggleTlhGitAttributionCommand\(pi\)/);
-  assert.match(attributionSource, /import\("\.\/attribution-command\.js"\)/);
+  assert.match(attributionSource, /from "\.\/attribution-command\.js"/);
   assert.doesNotMatch(attributionSource, /pi\.on\("before_agent_start"/);
   assert.doesNotMatch(attributionSource, /pi\.on\("tool_call"/);
   assert.doesNotMatch(attributionSource, /user_bash/);
@@ -1343,7 +1337,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
   assert.match(tokensSource, /pi\.registerCommand\("tokens"/);
   assert.match(tokensSource, /Usage: \/tokens/);
   assert.match(extensionSource, /registerUsageCommand\(pi\)/);
-  assert.match(usageLimitsSource, /import\("\.\/usage-limits-command\.js"\)/);
+  assert.match(usageLimitsSource, /from "\.\/usage-limits-command\.js"/);
   assert.match(usageLimitsSource, /pi\.registerCommand\("usage"/);
   assert.match(usageLimitsSource, /value: "weekly on"/);
   assert.match(usageLimitsSource, /value: "weekly off"/);
@@ -1364,7 +1358,7 @@ test("extension keeps TLH experimental command wiring with registered ticket, ci
   assert.match(backupWriteHelper, /const timestamp = settingsBackupTimestamp\(\);/);
   assert.match(
     backupWriteHelper,
-    /suffix === 0\s*\?\s*`\$\{settingsPath\}\.bak-\$\{timestamp\}`\s*:\s*`\$\{settingsPath\}\.bak-\$\{timestamp\}-\$\{suffix\}`/,
+    /suffix === 0[\s\S]*?`\$\{settingsPath\}\.bak-\$\{timestamp\}`[\s\S]*?`\$\{settingsPath\}\.bak-\$\{timestamp\}-\$\{suffix\}`/,
   );
   assert.match(
     backupWriteHelper,
