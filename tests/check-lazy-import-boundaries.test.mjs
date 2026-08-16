@@ -34,29 +34,29 @@ const tempDirs = [];
  * Returns the absolute path to the root directory.
  */
 function makeTempDir(files, rootOverride) {
-	const base = rootOverride ?? tmpdir();
-	const dir = mkdtempSync(join(base, "tlh-lazy-boundary-test-"));
-	tempDirs.push(dir);
-	for (const [relPath, content] of Object.entries(files)) {
-		const abs = join(dir, relPath);
-		mkdirSync(resolve(abs, ".."), { recursive: true });
-		writeFileSync(abs, content, "utf8");
-	}
-	return dir;
+  const base = rootOverride ?? tmpdir();
+  const dir = mkdtempSync(join(base, "tlh-lazy-boundary-test-"));
+  tempDirs.push(dir);
+  for (const [relPath, content] of Object.entries(files)) {
+    const abs = join(dir, relPath);
+    mkdirSync(resolve(abs, ".."), { recursive: true });
+    writeFileSync(abs, content, "utf8");
+  }
+  return dir;
 }
 
 /**
  * Run the checker against `extensionsDir` and return { status, stdout, stderr }.
  */
 function runChecker(extensionsDir) {
-	const result = spawnSync(process.execPath, [checkerScript, "--extensions-dir", extensionsDir], {
-		encoding: "utf8",
-	});
-	return {
-		status: result.status,
-		stdout: result.stdout ?? "",
-		stderr: result.stderr ?? "",
-	};
+  const result = spawnSync(process.execPath, [checkerScript, "--extensions-dir", extensionsDir], {
+    encoding: "utf8",
+  });
+  return {
+    status: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -65,31 +65,31 @@ function runChecker(extensionsDir) {
 // ---------------------------------------------------------------------------
 
 before(() => {
-	// Clean up any stray directories from previous test runs.
-	const TMPDIR = tmpdir();
-	let strays;
-	try {
-		strays = readdirSync(TMPDIR).filter((name) => name.startsWith("tlh-lazy-boundary-test-"));
-	} catch {
-		strays = [];
-	}
-	for (const name of strays) {
-		try {
-			rmSync(join(TMPDIR, name), { recursive: true, force: true });
-		} catch {
-			// best-effort
-		}
-	}
+  // Clean up any stray directories from previous test runs.
+  const TMPDIR = tmpdir();
+  let strays;
+  try {
+    strays = readdirSync(TMPDIR).filter((name) => name.startsWith("tlh-lazy-boundary-test-"));
+  } catch {
+    strays = [];
+  }
+  for (const name of strays) {
+    try {
+      rmSync(join(TMPDIR, name), { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
 });
 
 after(() => {
-	for (const dir of tempDirs) {
-		try {
-			rmSync(dir, { recursive: true, force: true });
-		} catch {
-			// best-effort
-		}
-	}
+  for (const dir of tempDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -97,24 +97,24 @@ after(() => {
 // ---------------------------------------------------------------------------
 
 test("clean fixture: no violations, exits 0", () => {
-	const dir = makeTempDir({
-		"entry.js": `
+  const dir = makeTempDir({
+    "entry.js": `
 import "./helper.js";
 const lazyA = () => import("./sub/lazyClean.js");
 `,
-		"helper.js": `
+    "helper.js": `
 import { readFileSync } from "node:fs";
 export function readFile(p) { return readFileSync(p, "utf8"); }
 `,
-		"sub/lazyClean.js": `
+    "sub/lazyClean.js": `
 import { readFileSync } from "node:fs";
 export function run() { return readFileSync("/tmp/x", "utf8"); }
 `,
-	});
+  });
 
-	const { status, stdout } = runChecker(dir);
-	assert.equal(status, 0, `expected exit 0, got ${status}`);
-	assert.match(stdout, /OK/, "expected OK in stdout");
+  const { status, stdout } = runChecker(dir);
+  assert.equal(status, 0, `expected exit 0, got ${status}`);
+  assert.match(stdout, /OK/, "expected OK in stdout");
 });
 
 // ---------------------------------------------------------------------------
@@ -122,28 +122,28 @@ export function run() { return readFileSync("/tmp/x", "utf8"); }
 // ---------------------------------------------------------------------------
 
 test("multiline dynamic import with bare specifier in lazy target: exits 1", () => {
-	const dir = makeTempDir({
-		// Entry uses a multiline dynamic import (spread across lines)
-		"entry.js": `
+  const dir = makeTempDir({
+    // Entry uses a multiline dynamic import (spread across lines)
+    "entry.js": `
 const lazyA = () => import(
     "./sub/lazyMultiline.js"
 );
 `,
-		// The lazy target statically imports a bare specifier
-		"sub/lazyMultiline.js": `
+    // The lazy target statically imports a bare specifier
+    "sub/lazyMultiline.js": `
 import "@earendil-works/pi-coding-agent";
 export function run() {}
 `,
-	});
+  });
 
-	const { status, stderr } = runChecker(dir);
-	assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
-	assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
-	assert.match(
-		stderr,
-		/@earendil-works\/pi-coding-agent/,
-		`expected the bare specifier name in stderr; got: ${stderr}`,
-	);
+  const { status, stderr } = runChecker(dir);
+  assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
+  assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
+  assert.match(
+    stderr,
+    /@earendil-works\/pi-coding-agent/,
+    `expected the bare specifier name in stderr; got: ${stderr}`,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -161,32 +161,32 @@ export function run() {}
 // ---------------------------------------------------------------------------
 
 test("nested lazy boundary with bare specifier in inner lazy target: exits 1", () => {
-	const dir = makeTempDir({
-		// Top-level entry — the only file discovered as an entry.
-		"entry.js": `
+  const dir = makeTempDir({
+    // Top-level entry — the only file discovered as an entry.
+    "entry.js": `
 const lazyOuter = () => import("./sub/outer.js");
 `,
-		// sub/outer.js — lazy target; itself has a nested lazy boundary.
-		"sub/outer.js": `
+    // sub/outer.js — lazy target; itself has a nested lazy boundary.
+    "sub/outer.js": `
 export function loadInner() {
   return import("./inner.js");
 }
 `,
-		// sub/inner.js — nested lazy target with a bare specifier.
-		"sub/inner.js": `
+    // sub/inner.js — nested lazy target with a bare specifier.
+    "sub/inner.js": `
 import "@earendil-works/pi-coding-agent";
 export function run() {}
 `,
-	});
+  });
 
-	const { status, stderr } = runChecker(dir);
-	assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
-	assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
-	assert.match(
-		stderr,
-		/@earendil-works\/pi-coding-agent/,
-		`expected the bare specifier name in stderr; got: ${stderr}`,
-	);
+  const { status, stderr } = runChecker(dir);
+  assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
+  assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
+  assert.match(
+    stderr,
+    /@earendil-works\/pi-coding-agent/,
+    `expected the bare specifier name in stderr; got: ${stderr}`,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -194,17 +194,17 @@ export function run() {}
 // ---------------------------------------------------------------------------
 
 test("import-looking text inside a comment: exits 0, no false positive", () => {
-	const dir = makeTempDir({
-		"entry.js": `
+  const dir = makeTempDir({
+    "entry.js": `
 // This is just a comment: import("./imaginary.js")
 /* Another comment: import("./also-imaginary.js") */
 export function noop() {}
 `,
-	});
+  });
 
-	const { status, stdout } = runChecker(dir);
-	assert.equal(status, 0, `expected exit 0, got ${status}`);
-	assert.match(stdout, /OK/, "expected OK in stdout");
+  const { status, stdout } = runChecker(dir);
+  assert.equal(status, 0, `expected exit 0, got ${status}`);
+  assert.match(stdout, /OK/, "expected OK in stdout");
 });
 
 // ---------------------------------------------------------------------------
@@ -212,16 +212,16 @@ export function noop() {}
 // ---------------------------------------------------------------------------
 
 test("import-looking text inside a template string: exits 0, no false positive", () => {
-	const dir = makeTempDir({
-		"entry.js": `
+  const dir = makeTempDir({
+    "entry.js": `
 const msg = \`The syntax is import("./something.js") but we are not actually importing\`;
 export { msg };
 `,
-	});
+  });
 
-	const { status, stdout } = runChecker(dir);
-	assert.equal(status, 0, `expected exit 0, got ${status}`);
-	assert.match(stdout, /OK/, "expected OK in stdout");
+  const { status, stdout } = runChecker(dir);
+  assert.equal(status, 0, `expected exit 0, got ${status}`);
+  assert.match(stdout, /OK/, "expected OK in stdout");
 });
 
 // ---------------------------------------------------------------------------
@@ -240,30 +240,30 @@ export { msg };
 // ---------------------------------------------------------------------------
 
 test("in-repo fixture is analysed as itself, not replaced by the repo tree", () => {
-	// Place the fixture INSIDE the repo so the repo's package.json is above it.
-	const dir = makeTempDir(
-		{
-			"entry.js": `const l = () => import("./bad.js");`,
-			"bad.js": `import "@earendil-works/pi-coding-agent";\nexport function run() {}\n`,
-		},
-		repoRoot,
-	);
+  // Place the fixture INSIDE the repo so the repo's package.json is above it.
+  const dir = makeTempDir(
+    {
+      "entry.js": `const l = () => import("./bad.js");`,
+      "bad.js": `import "@earendil-works/pi-coding-agent";\nexport function run() {}\n`,
+    },
+    repoRoot,
+  );
 
-	const { status, stderr } = runChecker(dir);
+  const { status, stderr } = runChecker(dir);
 
-	// Should detect the violation in our fixture file.
-	assert.equal(status, 1, `expected exit 1 (fixture violation), got ${status}; stderr: ${stderr}`);
-	assert.match(stderr, /bad\.js/, `expected "bad.js" in stderr (fixture file); got: ${stderr}`);
-	assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
+  // Should detect the violation in our fixture file.
+  assert.equal(status, 1, `expected exit 1 (fixture violation), got ${status}; stderr: ${stderr}`);
+  assert.match(stderr, /bad\.js/, `expected "bad.js" in stderr (fixture file); got: ${stderr}`);
+  assert.match(stderr, /bare specifier/i, `expected "bare specifier" in stderr; got: ${stderr}`);
 
-	// Must NOT report the repo's own extension files.
-	assert.doesNotMatch(stderr, /the-last-harness\.js/, `must not analyse repo tree; got: ${stderr}`);
+  // Must NOT report the repo's own extension files.
+  assert.doesNotMatch(stderr, /the-last-harness\.js/, `must not analyse repo tree; got: ${stderr}`);
 
-	// common.js must NOT be spuriously reported as a shared-module violation.
-	// Before the fix the allowlist relative path was wrong and common.js was flagged.
-	assert.doesNotMatch(
-		stderr,
-		/common\.js.*shared module|shared module.*common\.js/i,
-		`common.js must not be a spurious violation; got: ${stderr}`,
-	);
+  // common.js must NOT be spuriously reported as a shared-module violation.
+  // Before the fix the allowlist relative path was wrong and common.js was flagged.
+  assert.doesNotMatch(
+    stderr,
+    /common\.js.*shared module|shared module.*common\.js/i,
+    `common.js must not be a spurious violation; got: ${stderr}`,
+  );
 });

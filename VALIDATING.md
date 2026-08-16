@@ -10,9 +10,9 @@ Before considering changes ready, run:
 npm run validate
 ```
 
-This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint and formatting checks via Biome and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
+This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
-The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
+The validation scripts keep Oxlint's default rule selection while enforcing zero findings: `npm run lint` runs `oxlint --deny-warnings scripts tests extensions`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check`, which only selects Oxfmt check mode. The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.
 
 ## Test suites and output modes
 
@@ -73,6 +73,13 @@ bash -n install.sh
 node --check scripts/tlh-gnosis.mjs
 bash install.sh --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)"
 bash -s -- --dry-run --agent-dir "$(mktemp -d)/agent" --bin-dir "$(mktemp -d)" < install.sh
+```
+
+To run the focused Oxlint and Oxfmt checks:
+
+```sh
+npm run lint
+npm run format:check
 ```
 
 To lint all tracked shell scripts for ShellCheck findings:

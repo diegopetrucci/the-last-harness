@@ -54,7 +54,10 @@ export function normalizeTlhModelVisibilityConfig(config) {
     return {
         disabled: config.disabled === true,
         hidden: normalizePatternList(config.hidden),
-        visible: uniqueSorted([...normalizePatternList(config.visible), ...normalizePatternList(config.unhide)]),
+        visible: uniqueSorted([
+            ...normalizePatternList(config.visible),
+            ...normalizePatternList(config.unhide),
+        ]),
     };
 }
 function readTlhSettings() {
@@ -121,7 +124,8 @@ function findExactModelReferenceMatch(modelReference, availableModels) {
         const provider = trimmedReference.substring(0, slashIndex).trim();
         const modelId = trimmedReference.substring(slashIndex + 1).trim();
         if (provider && modelId) {
-            const providerMatches = availableModels.filter((model) => model.provider.toLowerCase() === provider.toLowerCase() && model.id.toLowerCase() === modelId.toLowerCase());
+            const providerMatches = availableModels.filter((model) => model.provider.toLowerCase() === provider.toLowerCase() &&
+                model.id.toLowerCase() === modelId.toLowerCase());
             if (providerMatches.length === 1) {
                 return providerMatches[0];
             }
@@ -145,7 +149,7 @@ export function isTlhModelHidden(model, config = getTlhModelVisibilityConfig()) 
     if (matchesAnyPattern(model, config.visible)) {
         return false;
     }
-    return matchesAnyPattern(model, TLH_HIDDEN_MODEL_DEFAULTS) || matchesAnyPattern(model, config.hidden);
+    return (matchesAnyPattern(model, TLH_HIDDEN_MODEL_DEFAULTS) || matchesAnyPattern(model, config.hidden));
 }
 export function filterTlhVisibleModels(models, config = getTlhModelVisibilityConfig()) {
     if (config.disabled) {
@@ -158,14 +162,17 @@ export function installTlhModelVisibilityFilter() {
     if (!modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED]) {
         const originalGetAvailable = modelRuntimePrototype.getAvailable;
         const originalGetAvailableSnapshot = modelRuntimePrototype.getAvailableSnapshot;
-        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] = originalGetAvailable;
-        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] = originalGetAvailableSnapshot;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] =
+            originalGetAvailable;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] =
+            originalGetAvailableSnapshot;
         modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(providerId, options) {
             return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId, options));
         };
-        modelRuntimePrototype.getAvailableSnapshot = function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
-            return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
-        };
+        modelRuntimePrototype.getAvailableSnapshot =
+            function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
+                return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
+            };
         modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED] = true;
     }
     const modelRegistryPrototype = ModelRegistry.prototype;
@@ -183,12 +190,15 @@ export function installTlhModelVisibilityFilter() {
         return;
     }
     const originalFindExactModelMatch = interactiveModePrototype.findExactModelMatch;
-    interactiveModePrototype[TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL] = originalFindExactModelMatch;
+    interactiveModePrototype[TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL] =
+        originalFindExactModelMatch;
     interactiveModePrototype.findExactModelMatch = async function tlhFindExactModelMatch(searchTerm) {
         const isUnscopedCanonicalReference = isCanonicalModelReference(searchTerm) && (this.session?.scopedModels?.length ?? 0) === 0;
         if (isUnscopedCanonicalReference) {
             try {
-                const filteredCachedMatch = findExactModelReferenceMatch(searchTerm, this.session?.modelRuntime?.getAvailableSnapshot() ?? this.session?.modelRegistry?.getAvailable() ?? []);
+                const filteredCachedMatch = findExactModelReferenceMatch(searchTerm, this.session?.modelRuntime?.getAvailableSnapshot() ??
+                    this.session?.modelRegistry?.getAvailable() ??
+                    []);
                 if (filteredCachedMatch) {
                     return filteredCachedMatch;
                 }
@@ -226,7 +236,8 @@ export function getUnfilteredAvailableModels(modelSource) {
     if (!modelSource) {
         return [];
     }
-    if ("getAvailableSnapshot" in modelSource && typeof modelSource.getAvailableSnapshot === "function") {
+    if ("getAvailableSnapshot" in modelSource &&
+        typeof modelSource.getAvailableSnapshot === "function") {
         return getUnfilteredRuntimeAvailableSnapshot(modelSource);
     }
     if ("modelRuntime" in modelSource && modelSource.modelRuntime) {
@@ -235,8 +246,7 @@ export function getUnfilteredAvailableModels(modelSource) {
     if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
         return getUnfilteredAvailableModels(modelSource.modelRegistry);
     }
-    const compatibilityRuntime = modelSource
-        .runtime;
+    const compatibilityRuntime = modelSource.runtime;
     if (compatibilityRuntime) {
         return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
     }

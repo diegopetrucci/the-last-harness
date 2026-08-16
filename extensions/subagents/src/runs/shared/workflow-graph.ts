@@ -1,160 +1,171 @@
 import { isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type {
-	SingleResult,
-	SubagentRunMode,
-	WorkflowGraphNode,
-	WorkflowGraphSnapshot,
-	WorkflowNodeStatus,
+  SingleResult,
+  SubagentRunMode,
+  WorkflowGraphNode,
+  WorkflowGraphSnapshot,
+  WorkflowNodeStatus,
 } from "../../shared/types.ts";
 
 export interface WorkflowGraphBuildInput {
-	runId: string;
-	mode?: SubagentRunMode;
-	steps: ChainStep[];
-	results?: Array<Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "error" | "acceptance">>;
-	currentFlatIndex?: number;
-	currentStepIndex?: number;
-	stepStatuses?: Array<{ status?: string; error?: string }>;
+  runId: string;
+  mode?: SubagentRunMode;
+  steps: ChainStep[];
+  results?: Array<
+    Pick<SingleResult, "exitCode" | "detached" | "interrupted" | "error" | "acceptance">
+  >;
+  currentFlatIndex?: number;
+  currentStepIndex?: number;
+  stepStatuses?: Array<{ status?: string; error?: string }>;
 }
 
 function normalizeStatus(status: string | undefined): WorkflowNodeStatus | undefined {
-	switch (status) {
-		case "complete":
-		case "completed":
-			return "completed";
-		case "running":
-			return "running";
-		case "failed":
-			return "failed";
-		case "paused":
-			return "paused";
-		case "detached":
-			return "detached";
-		case "pending":
-			return "pending";
-		default:
-			return undefined;
-	}
+  switch (status) {
+    case "complete":
+    case "completed":
+      return "completed";
+    case "running":
+      return "running";
+    case "failed":
+      return "failed";
+    case "paused":
+      return "paused";
+    case "detached":
+      return "detached";
+    case "pending":
+      return "pending";
+    default:
+      return undefined;
+  }
 }
 
 function resultStatus(
-	result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined,
+  result: Pick<SingleResult, "exitCode" | "detached" | "interrupted"> | undefined,
 ): WorkflowNodeStatus | undefined {
-	if (!result) return undefined;
-	if (result.detached) return "detached";
-	if (result.interrupted) return "paused";
-	return result.exitCode === 0 ? "completed" : "failed";
+  if (!result) return undefined;
+  if (result.detached) return "detached";
+  if (result.interrupted) return "paused";
+  return result.exitCode === 0 ? "completed" : "failed";
 }
 
 function nodeStatus(input: WorkflowGraphBuildInput, flatIndex: number): WorkflowNodeStatus {
-	return (
-		normalizeStatus(input.stepStatuses?.[flatIndex]?.status) ??
-		resultStatus(input.results?.[flatIndex]) ??
-		(input.currentFlatIndex === flatIndex ? "running" : "pending")
-	);
+  return (
+    normalizeStatus(input.stepStatuses?.[flatIndex]?.status) ??
+    resultStatus(input.results?.[flatIndex]) ??
+    (input.currentFlatIndex === flatIndex ? "running" : "pending")
+  );
 }
 
-function pushPhase(phases: WorkflowGraphSnapshot["phases"], phase: string | undefined, nodeId: string): void {
-	if (!phase) return;
-	let group = phases.find((candidate) => candidate.title === phase);
-	if (!group) {
-		group = { title: phase, nodeIds: [] };
-		phases.push(group);
-	}
-	group.nodeIds.push(nodeId);
+function pushPhase(
+  phases: WorkflowGraphSnapshot["phases"],
+  phase: string | undefined,
+  nodeId: string,
+): void {
+  if (!phase) return;
+  let group = phases.find((candidate) => candidate.title === phase);
+  if (!group) {
+    group = { title: phase, nodeIds: [] };
+    phases.push(group);
+  }
+  group.nodeIds.push(nodeId);
 }
 
 function seqLabel(step: SequentialStep, stepIndex: number): string {
-	return step.label?.trim() || step.agent || `Step ${stepIndex + 1}`;
+  return step.label?.trim() || step.agent || `Step ${stepIndex + 1}`;
 }
 
 function summarizeParallelStatuses(statuses: WorkflowNodeStatus[]): WorkflowNodeStatus {
-	if (statuses.some((status) => status === "running")) return "running";
-	if (statuses.some((status) => status === "failed")) return "failed";
-	if (statuses.some((status) => status === "paused")) return "paused";
-	if (statuses.some((status) => status === "detached")) return "detached";
-	if (statuses.length > 0 && statuses.every((status) => status === "completed")) return "completed";
-	if (statuses.some((status) => status === "completed")) return "running";
-	return "pending";
+  if (statuses.some((status) => status === "running")) return "running";
+  if (statuses.some((status) => status === "failed")) return "failed";
+  if (statuses.some((status) => status === "paused")) return "paused";
+  if (statuses.some((status) => status === "detached")) return "detached";
+  if (statuses.length > 0 && statuses.every((status) => status === "completed")) return "completed";
+  if (statuses.some((status) => status === "completed")) return "running";
+  return "pending";
 }
 
 export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): WorkflowGraphSnapshot {
-	const nodes: WorkflowGraphNode[] = [];
-	const phases: WorkflowGraphSnapshot["phases"] = [];
-	let flatIndex = 0;
-	let currentNodeId: string | undefined;
+  const nodes: WorkflowGraphNode[] = [];
+  const phases: WorkflowGraphSnapshot["phases"] = [];
+  let flatIndex = 0;
+  let currentNodeId: string | undefined;
 
-	for (let stepIndex = 0; stepIndex < input.steps.length; stepIndex++) {
-		const step = input.steps[stepIndex]!;
-		if (isParallelStep(step)) {
-			const groupId = `step-${stepIndex}`;
-			const children: WorkflowGraphNode[] = [];
-			const childStatuses: WorkflowNodeStatus[] = [];
-			for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
-				const task = step.parallel[taskIndex]!;
-				const status = nodeStatus(input, flatIndex);
-				childStatuses.push(status);
-				const childId = `step-${stepIndex}-agent-${taskIndex}`;
-				const child: WorkflowGraphNode = {
-					id: childId,
-					kind: "agent",
-					agent: task.agent,
-					phase: task.phase,
-					label: task.label?.trim() || task.agent || `Agent ${taskIndex + 1}`,
-					status,
-					flatIndex,
-					stepIndex,
-					outputName: task.as,
-					structured: Boolean(task.outputSchema),
-					acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
-					error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
-				};
-				children.push(child);
-				pushPhase(phases, task.phase, childId);
-				if (status === "running" || input.currentFlatIndex === flatIndex) currentNodeId = childId;
-				flatIndex++;
-			}
-			const groupStatus = summarizeParallelStatuses(childStatuses);
-			if (input.currentStepIndex === stepIndex && !currentNodeId) currentNodeId = groupId;
-			nodes.push({
-				id: groupId,
-				kind: "parallel-group",
-				label: step.parallel.length === 1 ? "Parallel task" : `Parallel group (${step.parallel.length})`,
-				status: groupStatus,
-				stepIndex,
-				children,
-			});
-			continue;
-		}
+  for (let stepIndex = 0; stepIndex < input.steps.length; stepIndex++) {
+    const step = input.steps[stepIndex]!;
+    if (isParallelStep(step)) {
+      const groupId = `step-${stepIndex}`;
+      const children: WorkflowGraphNode[] = [];
+      const childStatuses: WorkflowNodeStatus[] = [];
+      for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
+        const task = step.parallel[taskIndex]!;
+        const status = nodeStatus(input, flatIndex);
+        childStatuses.push(status);
+        const childId = `step-${stepIndex}-agent-${taskIndex}`;
+        const child: WorkflowGraphNode = {
+          id: childId,
+          kind: "agent",
+          agent: task.agent,
+          phase: task.phase,
+          label: task.label?.trim() || task.agent || `Agent ${taskIndex + 1}`,
+          status,
+          flatIndex,
+          stepIndex,
+          outputName: task.as,
+          structured: Boolean(task.outputSchema),
+          acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
+          error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
+        };
+        children.push(child);
+        pushPhase(phases, task.phase, childId);
+        if (status === "running" || input.currentFlatIndex === flatIndex) currentNodeId = childId;
+        flatIndex++;
+      }
+      const groupStatus = summarizeParallelStatuses(childStatuses);
+      if (input.currentStepIndex === stepIndex && !currentNodeId) currentNodeId = groupId;
+      nodes.push({
+        id: groupId,
+        kind: "parallel-group",
+        label:
+          step.parallel.length === 1 ? "Parallel task" : `Parallel group (${step.parallel.length})`,
+        status: groupStatus,
+        stepIndex,
+        children,
+      });
+      continue;
+    }
 
-		const seq = step as SequentialStep;
-		const status = nodeStatus(input, flatIndex);
-		const id = `step-${stepIndex}`;
-		nodes.push({
-			id,
-			kind: "step",
-			agent: seq.agent,
-			phase: seq.phase,
-			label: seqLabel(seq, stepIndex),
-			status,
-			flatIndex,
-			stepIndex,
-			outputName: seq.as,
-			structured: Boolean(seq.outputSchema),
-			acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
-			error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
-		});
-		pushPhase(phases, seq.phase, id);
-		if (status === "running" || input.currentFlatIndex === flatIndex || input.currentStepIndex === stepIndex)
-			currentNodeId = id;
-		flatIndex++;
-	}
+    const seq = step as SequentialStep;
+    const status = nodeStatus(input, flatIndex);
+    const id = `step-${stepIndex}`;
+    nodes.push({
+      id,
+      kind: "step",
+      agent: seq.agent,
+      phase: seq.phase,
+      label: seqLabel(seq, stepIndex),
+      status,
+      flatIndex,
+      stepIndex,
+      outputName: seq.as,
+      structured: Boolean(seq.outputSchema),
+      acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
+      error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
+    });
+    pushPhase(phases, seq.phase, id);
+    if (
+      status === "running" ||
+      input.currentFlatIndex === flatIndex ||
+      input.currentStepIndex === stepIndex
+    )
+      currentNodeId = id;
+    flatIndex++;
+  }
 
-	return {
-		runId: input.runId,
-		mode: input.mode ?? "chain",
-		phases,
-		nodes,
-		currentNodeId,
-	};
+  return {
+    runId: input.runId,
+    mode: input.mode ?? "chain",
+    phases,
+    nodes,
+    currentNodeId,
+  };
 }

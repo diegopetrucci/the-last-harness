@@ -8,7 +8,9 @@ export const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
 export const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 export const MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH = 4;
 export function readHereDocSpec(command, startIndex) {
-    if (command[startIndex] !== "<" || command[startIndex + 1] !== "<" || command[startIndex + 2] === "<") {
+    if (command[startIndex] !== "<" ||
+        command[startIndex + 1] !== "<" ||
+        command[startIndex + 2] === "<") {
         return undefined;
     }
     let index = startIndex + 2;
@@ -255,7 +257,9 @@ export function readShellCommandSegment(command, startIndex) {
             return { segment: command.slice(startIndex, nextIndex), nextIndex };
         }
         const next = command[index + 1];
-        const separatorLength = (character === "&" && next === "&") || (character === "|" && (next === "|" || next === "&")) ? 2 : 1;
+        const separatorLength = (character === "&" && next === "&") || (character === "|" && (next === "|" || next === "&"))
+            ? 2
+            : 1;
         return {
             segment: command.slice(startIndex, index),
             nextIndex: index + separatorLength,
@@ -385,11 +389,12 @@ export function normalizeCaseInsensitiveLongOptionToken(token) {
 }
 export function isSupportedEnvOptionWithoutValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) || ENV_LONG_OPTIONS_WITHOUT_VALUES.has(normalizedToken);
+    return (ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) ||
+        ENV_LONG_OPTIONS_WITHOUT_VALUES.has(normalizedToken));
 }
 export function isSupportedEnvOptionWithValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken);
+    return (ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken));
 }
 export function isSupportedEnvOptionWithAttachedValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
@@ -399,7 +404,7 @@ export function isSupportedEnvOptionWithAttachedValue(token) {
 }
 export function isEnvSplitStringOption(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken);
+    return (ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken));
 }
 export function getAttachedEnvSplitStringCommand(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
@@ -423,7 +428,9 @@ export function getEnvSplitStringEffectiveTokens(tokens, splitStringIndex) {
     if (payload === undefined) {
         return undefined;
     }
-    const remainingTokens = attachedPayload !== undefined ? tokens.slice(splitStringIndex + 1) : tokens.slice(splitStringIndex + 2);
+    const remainingTokens = attachedPayload !== undefined
+        ? tokens.slice(splitStringIndex + 1)
+        : tokens.slice(splitStringIndex + 2);
     return buildEnvSplitStringEffectiveTokens(payload, remainingTokens);
 }
 export function getShortEnvLeadingOptionParseResult(tokens, index) {
@@ -442,7 +449,9 @@ export function getShortEnvLeadingOptionParseResult(tokens, index) {
             if (attachedValue) {
                 return { kind: "continue", nextIndex: index + 1 };
             }
-            return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+            return tokens[index + 1] === undefined
+                ? { kind: "missing-value" }
+                : { kind: "continue", nextIndex: index + 2 };
         }
         if (ENV_SHORT_SPLIT_STRING_OPTIONS.has(option)) {
             const attachedPayload = shortOptions.slice(optionIndex + 1);
@@ -451,7 +460,10 @@ export function getShortEnvLeadingOptionParseResult(tokens, index) {
                 return { kind: "split-string", effectiveTokens: undefined };
             }
             const remainingTokens = attachedPayload ? tokens.slice(index + 1) : tokens.slice(index + 2);
-            return { kind: "split-string", effectiveTokens: buildEnvSplitStringEffectiveTokens(payload, remainingTokens) };
+            return {
+                kind: "split-string",
+                effectiveTokens: buildEnvSplitStringEffectiveTokens(payload, remainingTokens),
+            };
         }
         return { kind: "unknown-option" };
     }
@@ -463,13 +475,18 @@ export function getEnvLeadingOptionParseResult(tokens, index) {
         return { kind: "continue", nextIndex: index + 1 };
     }
     if (isSupportedEnvOptionWithValue(token)) {
-        return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+        return tokens[index + 1] === undefined
+            ? { kind: "missing-value" }
+            : { kind: "continue", nextIndex: index + 2 };
     }
     if (isSupportedEnvOptionWithAttachedValue(token)) {
         return { kind: "continue", nextIndex: index + 1 };
     }
     if (isEnvSplitStringOption(token) || getAttachedEnvSplitStringCommand(token) !== undefined) {
-        return { kind: "split-string", effectiveTokens: getEnvSplitStringEffectiveTokens(tokens, index) };
+        return {
+            kind: "split-string",
+            effectiveTokens: getEnvSplitStringEffectiveTokens(tokens, index),
+        };
     }
     const shortOptionParseResult = getShortEnvLeadingOptionParseResult(tokens, index);
     if (shortOptionParseResult) {

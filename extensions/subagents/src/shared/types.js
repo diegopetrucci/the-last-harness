@@ -85,7 +85,15 @@ export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;
-export const SUBAGENT_ACTIONS = ["list", "get", "status", "interrupt", "resume", "steer", "doctor"];
+export const SUBAGENT_ACTIONS = [
+    "list",
+    "get",
+    "status",
+    "interrupt",
+    "resume",
+    "steer",
+    "doctor",
+];
 export const DEFAULT_FORK_PREAMBLE = "You are a delegated subagent running from a fork of the parent session. " +
     "Treat the inherited conversation as reference-only context, not a live thread to continue. " +
     "Do not continue or answer prior messages as if they are waiting for a reply. " +
@@ -100,7 +108,9 @@ export function resolveTopLevelParallelMaxTasks(value) {
     return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
 }
 export function resolveTopLevelParallelConcurrency(override, configValue) {
-    return normalizeTopLevelParallelValue(override) ?? normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
+    return (normalizeTopLevelParallelValue(override) ??
+        normalizeTopLevelParallelValue(configValue) ??
+        MAX_CONCURRENCY);
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);
@@ -131,7 +141,9 @@ export function resolveCurrentMaxSubagentDepth(configMaxDepth) {
 export function resolveChildMaxSubagentDepth(parentMaxDepth, agentMaxDepth) {
     const normalizedParent = normalizeMaxSubagentDepth(parentMaxDepth) ?? DEFAULT_SUBAGENT_MAX_DEPTH;
     const normalizedAgent = normalizeMaxSubagentDepth(agentMaxDepth);
-    return normalizedAgent === undefined ? normalizedParent : Math.min(normalizedParent, normalizedAgent);
+    return normalizedAgent === undefined
+        ? normalizedParent
+        : Math.min(normalizedParent, normalizedAgent);
 }
 export function checkSubagentDepth(configMaxDepth) {
     const depth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");

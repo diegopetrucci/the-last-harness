@@ -54,7 +54,7 @@ function sourceInstallPath(agentDir, source) {
 function pathWithin(root, target) {
     const normalizedRoot = resolve(root);
     const normalizedTarget = resolve(target);
-    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`));
 }
 function hasSymlinkedParent(root, target) {
     let current = dirname(target);
@@ -77,7 +77,8 @@ function gitInstallationIsOwned(path) {
 function configuredNpmCommand(settings) {
     if (!isPlainObject(settings) || settings.npmCommand === undefined)
         return undefined;
-    if (!Array.isArray(settings.npmCommand) || settings.npmCommand.some((value) => typeof value !== "string")) {
+    if (!Array.isArray(settings.npmCommand) ||
+        settings.npmCommand.some((value) => typeof value !== "string")) {
         throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
     }
     if (settings.npmCommand.length === 0)
@@ -101,14 +102,17 @@ export function captureRetiredSubagentNpmCommand(settingsPath) {
     }
 }
 function packageManagerCommand(config) {
-    const configured = config.npmCommand ?? (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
+    const configured = config.npmCommand ??
+        (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
     const values = configured && configured.length > 0 ? [...configured] : ["npm"];
     const [command, ...args] = values;
     if (!command)
         throw new Error("invalid npmCommand: first entry must be a non-empty command");
     const separatorIndex = values.lastIndexOf("--");
     const packageManagerExecutable = separatorIndex >= 0 ? values[separatorIndex + 1] : command;
-    const name = packageManagerExecutable ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "") : "";
+    const name = packageManagerExecutable
+        ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "")
+        : "";
     return { command, args, name };
 }
 function packageManagerUninstallArgs(packageName, installRoot, packageManagerName) {
@@ -342,7 +346,8 @@ export function defaultExtensionsRequireCriticalInstall(defaultExtensionsFile, {
         return false;
     try {
         const defaults = readJsonFile(defaultExtensionsFile);
-        return (Array.isArray(defaults) && defaults.some((extension) => isPlainObject(extension) && extension.critical === true));
+        return (Array.isArray(defaults) &&
+            defaults.some((extension) => isPlainObject(extension) && extension.critical === true));
     }
     catch {
         return false;
@@ -369,24 +374,32 @@ export function restoreNeededTlhSubagentPrompts(sourceDir, targetDir, { prompts 
 function tlhSubagentPromptsComplete(dir, options = {}) {
     return existsSync(dir) && missingTlhSubagentPrompts(dir, options).length === 0;
 }
-export function findTlhSubagentsDir(config, { localRepoDir = "", prompts = TLH_SUBAGENT_PROMPTS } = {}) {
+export function findTlhSubagentsDir(config, { localRepoDir = "", prompts = TLH_SUBAGENT_PROMPTS, } = {}) {
     const options = { prompts };
     if (!config.packageSourceIsDefault) {
-        const packageRoot = packageSourceInstallDir(config.packageSource, { agentDir: config.agentDir });
-        if (packageRoot && tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
+        const packageRoot = packageSourceInstallDir(config.packageSource, {
+            agentDir: config.agentDir,
+        });
+        if (packageRoot &&
+            tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
             return join(packageRoot, "agents", "subagents");
         }
     }
-    if (localRepoDir && tlhSubagentPromptsComplete(join(localRepoDir, "agents", "subagents"), options)) {
+    if (localRepoDir &&
+        tlhSubagentPromptsComplete(join(localRepoDir, "agents", "subagents"), options)) {
         return join(localRepoDir, "agents", "subagents");
     }
     if (config.packageSourceIsDefault) {
-        const packageRoot = packageSourceInstallDir(config.packageSource, { agentDir: config.agentDir });
-        if (packageRoot && tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
+        const packageRoot = packageSourceInstallDir(config.packageSource, {
+            agentDir: config.agentDir,
+        });
+        if (packageRoot &&
+            tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
             return join(packageRoot, "agents", "subagents");
         }
     }
-    if (config.tmpDir && tlhSubagentPromptsComplete(join(config.tmpDir, "agents", "subagents"), options)) {
+    if (config.tmpDir &&
+        tlhSubagentPromptsComplete(join(config.tmpDir, "agents", "subagents"), options)) {
         return join(config.tmpDir, "agents", "subagents");
     }
     const fallbackPackageRoot = join(config.agentDir, "git", "github.com", config.repo);

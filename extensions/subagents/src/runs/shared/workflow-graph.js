@@ -127,7 +127,9 @@ export function buildWorkflowGraphSnapshot(input) {
             error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
         });
         pushPhase(phases, seq.phase, id);
-        if (status === "running" || input.currentFlatIndex === flatIndex || input.currentStepIndex === stepIndex)
+        if (status === "running" ||
+            input.currentFlatIndex === flatIndex ||
+            input.currentStepIndex === stepIndex)
             currentNodeId = id;
         flatIndex++;
     }

@@ -2,7 +2,9 @@ export const DEFAULT_TURN_BUDGET_GRACE_TURNS = 1;
 export function appendTurnBudgetSystemPrompt(systemPrompt, budget) {
     if (!budget)
         return systemPrompt;
-    const grace = budget.graceTurns === 1 ? "1 additional assistant turn" : `${budget.graceTurns} additional assistant turns`;
+    const grace = budget.graceTurns === 1
+        ? "1 additional assistant turn"
+        : `${budget.graceTurns} additional assistant turns`;
     const block = [
         "## Turn budget",
         `This child run has a soft budget of ${budget.maxTurns} assistant turn${budget.maxTurns === 1 ? "" : "s"}.`,
@@ -20,7 +22,9 @@ export function turnBudgetExceededMessage(budget, turnCount) {
     return `Subagent exceeded turn budget after ${turnCount} assistant turn${turnCount === 1 ? "" : "s"} (soft limit ${budget.maxTurns} + grace ${budget.graceTurns}).`;
 }
 export function formatTurnBudgetOutput(message, output) {
-    return output.trim() ? `${message}\n\nPartial output before turn-budget abort:\n${output}` : message;
+    return output.trim()
+        ? `${message}\n\nPartial output before turn-budget abort:\n${output}`
+        : message;
 }
 export function initialTurnBudgetState(budget) {
     return { ...budget, outcome: "within-budget", turnCount: 0 };

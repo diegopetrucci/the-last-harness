@@ -50,14 +50,21 @@ export function createSessionLimitReportCommandHandler(_pi, dependencies = {}) {
                 try {
                     const parsed = await parseSessionJsonl(filePath);
                     const slimmedEntries = slimEntries(parsed.entries);
-                    parsedFiles.push({ filePath, entries: slimmedEntries, malformedLineCount: parsed.malformedLineCount });
+                    parsedFiles.push({
+                        filePath,
+                        entries: slimmedEntries,
+                        malformedLineCount: parsed.malformedLineCount,
+                    });
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     parseFailureCaveats.push(`Could not read session file ${basename(filePath)}: ${message}`);
                 }
             }
-            const result = aggregateSessionUsage(window, sessionsRoot, parsedFiles, [...scanCaveats, ...parseFailureCaveats]);
+            const result = aggregateSessionUsage(window, sessionsRoot, parsedFiles, [
+                ...scanCaveats,
+                ...parseFailureCaveats,
+            ]);
             const html = buildSessionLimitReportHtml(window, result, snapshot, nowMs, {
                 generatedAt: now().toISOString(),
             });
@@ -81,7 +88,9 @@ export function createSessionLimitReportCommandHandler(_pi, dependencies = {}) {
 function slimEntries(entries) {
     const result = [];
     for (const entry of entries) {
-        if (entry.type === "session" || entry.type === "session_info" || entry.type === "model_change") {
+        if (entry.type === "session" ||
+            entry.type === "session_info" ||
+            entry.type === "model_change") {
             result.push(entry);
             continue;
         }
@@ -164,7 +173,11 @@ export function buildSessionLimitReportHtml(window, result, snapshot, nowMs, opt
             `<p class="section-note">${escapeHtml("Totals summed across all sessions in the window, broken down by provider.")}</p>`,
             renderProviderTotalsTable(result),
         ].join("")),
-        renderSection("Caveats", ['<ul class="caveats">', ...allCaveats.map((item) => `<li>${escapeHtml(item)}</li>`), "</ul>"].join("")),
+        renderSection("Caveats", [
+            '<ul class="caveats">',
+            ...allCaveats.map((item) => `<li>${escapeHtml(item)}</li>`),
+            "</ul>",
+        ].join("")),
         "</main>",
         "</body>",
         "</html>",
@@ -173,7 +186,10 @@ export function buildSessionLimitReportHtml(window, result, snapshot, nowMs, opt
 function renderKeyValueCard(items) {
     return [
         '<dl class="kv-grid">',
-        ...items.flatMap(([label, value]) => [`<dt>${escapeHtml(label)}</dt>`, `<dd>${escapeHtml(value)}</dd>`]),
+        ...items.flatMap(([label, value]) => [
+            `<dt>${escapeHtml(label)}</dt>`,
+            `<dd>${escapeHtml(value)}</dd>`,
+        ]),
         "</dl>",
     ].join("");
 }

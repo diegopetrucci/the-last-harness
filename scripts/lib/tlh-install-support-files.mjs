@@ -176,7 +176,8 @@ export async function preflightRuntimeSupportFiles(config, io = {}) {
         missing.push("scripts/tlh-install-state.mjs");
     }
     if (!config.noWrapper &&
-        (!config.supportFilePaths.TLH_WRAPPER_SCRIPT || !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))) {
+        (!config.supportFilePaths.TLH_WRAPPER_SCRIPT ||
+            !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT))) {
         missing.push("scripts/tlh-wrapper.mjs");
     }
     if (missing.length > 0) {

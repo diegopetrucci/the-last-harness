@@ -51,7 +51,7 @@ const ROOT = resolve(__dirname, "..");
 // ---------------------------------------------------------------------------
 
 function usage() {
-	return `Usage: node scripts/check-lazy-import-boundaries.mjs [options]
+  return `Usage: node scripts/check-lazy-import-boundaries.mjs [options]
 
 Check that dynamically import()-ed extension modules satisfy the lazy-import invariant.
 
@@ -62,28 +62,28 @@ Options:
 }
 
 function parseArgs(argv) {
-	const args = {
-		extensionsDir: join(ROOT, "extensions"),
-		help: false,
-	};
-	for (let i = 0; i < argv.length; i += 1) {
-		const arg = argv[i];
-		if (arg === "-h" || arg === "--help") {
-			args.help = true;
-		} else if (arg === "--extensions-dir") {
-			const next = argv[i + 1];
-			if (!next || next.startsWith("-")) {
-				process.stderr.write(`error: --extensions-dir requires a value\n`);
-				process.exit(1);
-			}
-			args.extensionsDir = resolve(next);
-			i += 1;
-		} else {
-			process.stderr.write(`error: unknown argument: ${arg}\n`);
-			process.exit(1);
-		}
-	}
-	return args;
+  const args = {
+    extensionsDir: join(ROOT, "extensions"),
+    help: false,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "-h" || arg === "--help") {
+      args.help = true;
+    } else if (arg === "--extensions-dir") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("-")) {
+        process.stderr.write(`error: --extensions-dir requires a value\n`);
+        process.exit(1);
+      }
+      args.extensionsDir = resolve(next);
+      i += 1;
+    } else {
+      process.stderr.write(`error: unknown argument: ${arg}\n`);
+      process.exit(1);
+    }
+  }
+  return args;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +108,21 @@ function parseArgs(argv) {
 //     Verified 2026-08-15: shared between the eager graph of the-last-harness.js
 //     and the lazy static graphs of tokens.js and session-limit-report.js.
 //
+//   the-last-harness/mcp-tools.js
+//     3 pure exported functions (getMcpToolKind, hasKnownPiMcpAdapterSource,
+//     hasPersistedDirectMcpResultDetails) + 1 readonly const array
+//     (KNOWN_PI_MCP_ADAPTER_SOURCES). Imports only a type from pi-coding-agent
+//     (erased at runtime). No module-level mutable state.
+//     Verified 2026-08-16: eagerly reachable via launch-context.js / footer.js
+//     in the-last-harness.js, and also transitively reachable via the lazy
+//     import of tokens.js → tokens-analyzer.js → mcp-tools.js.
+//     Added in origin/main commit #518 (Add MCP segment to launch context header).
+//
 /** @type {ReadonlySet<string>} Paths relative to extensionsDir, using '/' separators. */
-const SHARED_MODULE_ALLOWLIST = new Set(["the-last-harness/common.js"]);
+const SHARED_MODULE_ALLOWLIST = new Set([
+  "the-last-harness/common.js",
+  "the-last-harness/mcp-tools.js",
+]);
 
 // ---------------------------------------------------------------------------
 // Import specifier classification
@@ -121,7 +134,12 @@ const SHARED_MODULE_ALLOWLIST = new Set(["the-last-harness/common.js"]);
  * not a file URL (file:*).
  */
 function isBareSpecifier(spec) {
-	return !spec.startsWith("./") && !spec.startsWith("../") && !spec.startsWith("node:") && !spec.startsWith("file:");
+  return (
+    !spec.startsWith("./") &&
+    !spec.startsWith("../") &&
+    !spec.startsWith("node:") &&
+    !spec.startsWith("file:")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -142,49 +160,49 @@ function isBareSpecifier(spec) {
  *   - Non-literal dynamic import(variable) calls are skipped intentionally.
  */
 function parseImports(filePath) {
-	let src;
-	try {
-		src = readFileSync(filePath, "utf8");
-	} catch {
-		return { static: [], dynamic: [] };
-	}
+  let src;
+  try {
+    src = readFileSync(filePath, "utf8");
+  } catch {
+    return { static: [], dynamic: [] };
+  }
 
-	const sf = ts.createSourceFile(filePath, src, ts.ScriptTarget.ESNext, /* setParentNodes */ true);
+  const sf = ts.createSourceFile(filePath, src, ts.ScriptTarget.ESNext, /* setParentNodes */ true);
 
-	const staticSpecs = new Set();
-	const dynamicSpecs = [];
+  const staticSpecs = new Set();
+  const dynamicSpecs = [];
 
-	function visit(node) {
-		// import ... from "specifier"
-		// import "side-effect"
-		if (ts.isImportDeclaration(node)) {
-			if (ts.isStringLiteral(node.moduleSpecifier)) {
-				staticSpecs.add(node.moduleSpecifier.text);
-			}
-		}
-		// export * from "specifier"
-		// export { x } from "specifier"
-		else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-			if (ts.isStringLiteral(node.moduleSpecifier)) {
-				staticSpecs.add(node.moduleSpecifier.text);
-			}
-		}
-		// import("string-literal")
-		else if (
-			ts.isCallExpression(node) &&
-			node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-			node.arguments.length > 0 &&
-			ts.isStringLiteral(node.arguments[0])
-		) {
-			dynamicSpecs.push(node.arguments[0].text);
-		}
+  function visit(node) {
+    // import ... from "specifier"
+    // import "side-effect"
+    if (ts.isImportDeclaration(node)) {
+      if (ts.isStringLiteral(node.moduleSpecifier)) {
+        staticSpecs.add(node.moduleSpecifier.text);
+      }
+    }
+    // export * from "specifier"
+    // export { x } from "specifier"
+    else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
+      if (ts.isStringLiteral(node.moduleSpecifier)) {
+        staticSpecs.add(node.moduleSpecifier.text);
+      }
+    }
+    // import("string-literal")
+    else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length > 0 &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      dynamicSpecs.push(node.arguments[0].text);
+    }
 
-		ts.forEachChild(node, visit);
-	}
+    ts.forEachChild(node, visit);
+  }
 
-	visit(sf);
+  visit(sf);
 
-	return { static: [...staticSpecs], dynamic: dynamicSpecs };
+  return { static: [...staticSpecs], dynamic: dynamicSpecs };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,25 +216,25 @@ function parseImports(filePath) {
  * Returns absolute path or null if unresolvable.
  */
 function resolveRelativeSpecifier(sourceFile, spec) {
-	const base = dirname(sourceFile);
-	const candidate = resolve(base, spec);
+  const base = dirname(sourceFile);
+  const candidate = resolve(base, spec);
 
-	if (existsSync(candidate) && statSync(candidate).isFile()) {
-		return candidate;
-	}
-	// Try as directory index
-	const indexCandidate = join(candidate, "index.js");
-	if (existsSync(indexCandidate)) {
-		return indexCandidate;
-	}
-	// Try appending .js if no extension
-	if (!spec.endsWith(".js") && !spec.endsWith(".mjs")) {
-		const withExt = `${candidate}.js`;
-		if (existsSync(withExt)) {
-			return withExt;
-		}
-	}
-	return null;
+  if (existsSync(candidate) && statSync(candidate).isFile()) {
+    return candidate;
+  }
+  // Try as directory index
+  const indexCandidate = join(candidate, "index.js");
+  if (existsSync(indexCandidate)) {
+    return indexCandidate;
+  }
+  // Try appending .js if no extension
+  if (!spec.endsWith(".js") && !spec.endsWith(".mjs")) {
+    const withExt = `${candidate}.js`;
+    if (existsSync(withExt)) {
+      return withExt;
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,27 +250,27 @@ function resolveRelativeSpecifier(sourceFile, spec) {
  * Only resolves relative specifiers; bare and node: specifiers are not walked.
  */
 function buildStaticGraph(entryFile) {
-	const visited = new Set();
-	const queue = [entryFile];
+  const visited = new Set();
+  const queue = [entryFile];
 
-	while (queue.length > 0) {
-		const file = queue.shift();
-		if (visited.has(file)) continue;
-		visited.add(file);
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (visited.has(file)) continue;
+    visited.add(file);
 
-		const { static: specifiers } = parseImports(file);
-		for (const spec of specifiers) {
-			if (spec.startsWith("./") || spec.startsWith("../")) {
-				const resolved = resolveRelativeSpecifier(file, spec);
-				if (resolved && !visited.has(resolved)) {
-					queue.push(resolved);
-				}
-			}
-			// node: and bare specifiers are external — don't walk them
-		}
-	}
+    const { static: specifiers } = parseImports(file);
+    for (const spec of specifiers) {
+      if (spec.startsWith("./") || spec.startsWith("../")) {
+        const resolved = resolveRelativeSpecifier(file, spec);
+        if (resolved && !visited.has(resolved)) {
+          queue.push(resolved);
+        }
+      }
+      // node: and bare specifiers are external — don't walk them
+    }
+  }
 
-	return visited;
+  return visited;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,69 +289,69 @@ function buildStaticGraph(entryFile) {
  * Returns an array of absolute file paths.
  */
 function discoverEntryFiles(extensionsDir) {
-	// Try to find a package.json with `pi.extensions` up the directory tree,
-	// starting from extensionsDir's parent.
-	const manifestEntries = tryReadPiExtensions(extensionsDir);
-	if (manifestEntries !== null) {
-		return manifestEntries;
-	}
+  // Try to find a package.json with `pi.extensions` up the directory tree,
+  // starting from extensionsDir's parent.
+  const manifestEntries = tryReadPiExtensions(extensionsDir);
+  if (manifestEntries !== null) {
+    return manifestEntries;
+  }
 
-	// Fallback: filename-heuristic discovery (used by fixture directories
-	// that have no package.json manifest).
-	const entries = new Set();
+  // Fallback: filename-heuristic discovery (used by fixture directories
+  // that have no package.json manifest).
+  const entries = new Set();
 
-	// Depth-1 .js and .mjs files
-	let topLevel;
-	try {
-		topLevel = readdirSync(extensionsDir);
-	} catch {
-		return [...entries];
-	}
-	for (const name of topLevel) {
-		if (name.endsWith(".js") || name.endsWith(".mjs")) {
-			const full = join(extensionsDir, name);
-			if (statSync(full).isFile()) {
-				entries.add(full);
-			}
-		}
-	}
+  // Depth-1 .js and .mjs files
+  let topLevel;
+  try {
+    topLevel = readdirSync(extensionsDir);
+  } catch {
+    return [...entries];
+  }
+  for (const name of topLevel) {
+    if (name.endsWith(".js") || name.endsWith(".mjs")) {
+      const full = join(extensionsDir, name);
+      if (statSync(full).isFile()) {
+        entries.add(full);
+      }
+    }
+  }
 
-	// Recursive index.js discovery
-	function walkForIndex(dir) {
-		let items;
-		try {
-			items = readdirSync(dir);
-		} catch {
-			return;
-		}
-		for (const name of items) {
-			const full = join(dir, name);
-			let stat;
-			try {
-				stat = statSync(full);
-			} catch {
-				continue;
-			}
-			if (stat.isDirectory()) {
-				walkForIndex(full);
-			} else if (stat.isFile() && name === "index.js") {
-				entries.add(full);
-			}
-		}
-	}
+  // Recursive index.js discovery
+  function walkForIndex(dir) {
+    let items;
+    try {
+      items = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of items) {
+      const full = join(dir, name);
+      let stat;
+      try {
+        stat = statSync(full);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        walkForIndex(full);
+      } else if (stat.isFile() && name === "index.js") {
+        entries.add(full);
+      }
+    }
+  }
 
-	for (const name of topLevel) {
-		const full = join(extensionsDir, name);
-		try {
-			if (statSync(full).isDirectory()) {
-				walkForIndex(full);
-			}
-		} catch {
-			// ignore
-		}
-	}
+  for (const name of topLevel) {
+    const full = join(extensionsDir, name);
+    try {
+      if (statSync(full).isDirectory()) {
+        walkForIndex(full);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
-	return [...entries];
+  return [...entries];
 }
 
 /**
@@ -349,48 +367,50 @@ function discoverEntryFiles(extensionsDir) {
  * the fixture directory, so we fall through to heuristic discovery instead.
  */
 function tryReadPiExtensions(extensionsDir) {
-	// Normalise extensionsDir for prefix matching.
-	const extDirNorm = extensionsDir.endsWith("/") ? extensionsDir : extensionsDir + "/";
+  // Normalise extensionsDir for prefix matching.
+  const extDirNorm = extensionsDir.endsWith("/") ? extensionsDir : extensionsDir + "/";
 
-	let dir = dirname(extensionsDir);
-	const root = resolve("/");
-	while (true) {
-		const pkgPath = join(dir, "package.json");
-		if (existsSync(pkgPath)) {
-			let pkg;
-			try {
-				pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-			} catch {
-				return null;
-			}
-			const extensions = pkg?.pi?.extensions;
-			if (Array.isArray(extensions) && extensions.length > 0) {
-				const resolved = extensions
-					.map((spec) => {
-						const abs = resolve(dir, spec);
-						return existsSync(abs) ? abs : null;
-					})
-					.filter(Boolean);
-				// Only use manifest entries that are children of extensionsDir.
-				// If the resolved entries all live somewhere else (e.g. the repo
-				// root's package.json was found while analysing an in-repo fixture
-				// directory), fall through to heuristic discovery.
-				const underExtDir = resolved.filter((abs) => abs.startsWith(extDirNorm) || abs === extensionsDir);
-				if (underExtDir.length > 0) {
-					return underExtDir;
-				}
-				// Manifest exists but entries don't govern extensionsDir — stop
-				// searching upward and fall through to heuristic discovery.
-				return null;
-			}
-			// Found a package.json but no pi.extensions — stop searching upward
-			return null;
-		}
-		const parent = resolve(dir, "..");
-		if (parent === dir || dir === root) break;
-		dir = parent;
-	}
-	return null;
+  let dir = dirname(extensionsDir);
+  const root = resolve("/");
+  while (true) {
+    const pkgPath = join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      let pkg;
+      try {
+        pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+      } catch {
+        return null;
+      }
+      const extensions = pkg?.pi?.extensions;
+      if (Array.isArray(extensions) && extensions.length > 0) {
+        const resolved = extensions
+          .map((spec) => {
+            const abs = resolve(dir, spec);
+            return existsSync(abs) ? abs : null;
+          })
+          .filter(Boolean);
+        // Only use manifest entries that are children of extensionsDir.
+        // If the resolved entries all live somewhere else (e.g. the repo
+        // root's package.json was found while analysing an in-repo fixture
+        // directory), fall through to heuristic discovery.
+        const underExtDir = resolved.filter(
+          (abs) => abs.startsWith(extDirNorm) || abs === extensionsDir,
+        );
+        if (underExtDir.length > 0) {
+          return underExtDir;
+        }
+        // Manifest exists but entries don't govern extensionsDir — stop
+        // searching upward and fall through to heuristic discovery.
+        return null;
+      }
+      // Found a package.json but no pi.extensions — stop searching upward
+      return null;
+    }
+    const parent = resolve(dir, "..");
+    if (parent === dir || dir === root) break;
+    dir = parent;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -398,150 +418,150 @@ function tryReadPiExtensions(extensionsDir) {
 // ---------------------------------------------------------------------------
 
 function runCheck(extensionsDir) {
-	const violations = [];
+  const violations = [];
 
-	// Step 1: Discover extension entry files.
-	const entryFiles = discoverEntryFiles(extensionsDir);
-	if (entryFiles.length === 0) {
-		process.stderr.write(`warning: no extension entry files found in ${extensionsDir}\n`);
-		return violations;
-	}
+  // Step 1: Discover extension entry files.
+  const entryFiles = discoverEntryFiles(extensionsDir);
+  if (entryFiles.length === 0) {
+    process.stderr.write(`warning: no extension entry files found in ${extensionsDir}\n`);
+    return violations;
+  }
 
-	// Step 2: Build eager static dep graph per entry file.
-	// Map from entry file path → Set<absolute path> of eagerly reachable files.
-	/** @type {Map<string, Set<string>>} */
-	const eagerGraphs = new Map();
-	for (const entry of entryFiles) {
-		eagerGraphs.set(entry, buildStaticGraph(entry));
-	}
+  // Step 2: Build eager static dep graph per entry file.
+  // Map from entry file path → Set<absolute path> of eagerly reachable files.
+  /** @type {Map<string, Set<string>>} */
+  const eagerGraphs = new Map();
+  for (const entry of entryFiles) {
+    eagerGraphs.set(entry, buildStaticGraph(entry));
+  }
 
-	// Step 3: Walk all dynamic import() boundaries — both from eager graph files
-	// AND transitively from lazy graph files (nested lazy boundaries). For each
-	// dynamic import found, check the static graph of the lazy target for
-	// conditions (a) and (b).
-	//
-	// We use a worklist of (sourceFile, ownerEntry) pairs and guard against
-	// cycles with a per-entry visited set.
+  // Step 3: Walk all dynamic import() boundaries — both from eager graph files
+  // AND transitively from lazy graph files (nested lazy boundaries). For each
+  // dynamic import found, check the static graph of the lazy target for
+  // conditions (a) and (b).
+  //
+  // We use a worklist of (sourceFile, ownerEntry) pairs and guard against
+  // cycles with a per-entry visited set.
 
-	// Seed the worklist with dynamic imports found in each entry's eager graph.
-	/** @type {Array<{ sourceFile: string, ownerEntry: string }>} */
-	const dynWorklist = [];
+  // Seed the worklist with dynamic imports found in each entry's eager graph.
+  /** @type {Array<{ sourceFile: string, ownerEntry: string }>} */
+  const dynWorklist = [];
 
-	// visitedDynTargets: per ownerEntry, the set of lazy target absolute paths
-	// already enqueued (cycle guard for nested lazy boundaries).
-	/** @type {Map<string, Set<string>>} */
-	const visitedDynTargets = new Map();
+  // visitedDynTargets: per ownerEntry, the set of lazy target absolute paths
+  // already enqueued (cycle guard for nested lazy boundaries).
+  /** @type {Map<string, Set<string>>} */
+  const visitedDynTargets = new Map();
 
-	for (const entry of entryFiles) {
-		visitedDynTargets.set(entry, new Set());
-		const eagerGraph = eagerGraphs.get(entry);
-		for (const file of eagerGraph) {
-			dynWorklist.push({ sourceFile: file, ownerEntry: entry });
-		}
-	}
+  for (const entry of entryFiles) {
+    visitedDynTargets.set(entry, new Set());
+    const eagerGraph = eagerGraphs.get(entry);
+    for (const file of eagerGraph) {
+      dynWorklist.push({ sourceFile: file, ownerEntry: entry });
+    }
+  }
 
-	while (dynWorklist.length > 0) {
-		const { sourceFile, ownerEntry } = dynWorklist.shift();
+  while (dynWorklist.length > 0) {
+    const { sourceFile, ownerEntry } = dynWorklist.shift();
 
-		const { dynamic: dynSpecs } = parseImports(sourceFile);
-		if (dynSpecs.length === 0) continue;
+    const { dynamic: dynSpecs } = parseImports(sourceFile);
+    if (dynSpecs.length === 0) continue;
 
-		const eagerGraph = eagerGraphs.get(ownerEntry);
-		const visitedTargets = visitedDynTargets.get(ownerEntry);
+    const eagerGraph = eagerGraphs.get(ownerEntry);
+    const visitedTargets = visitedDynTargets.get(ownerEntry);
 
-		for (const dynSpec of dynSpecs) {
-			// Only check relative specifiers (our invariant is about extension-local lazy boundaries).
-			if (!dynSpec.startsWith("./") && !dynSpec.startsWith("../")) continue;
+    for (const dynSpec of dynSpecs) {
+      // Only check relative specifiers (our invariant is about extension-local lazy boundaries).
+      if (!dynSpec.startsWith("./") && !dynSpec.startsWith("../")) continue;
 
-			const lazyTarget = resolveRelativeSpecifier(sourceFile, dynSpec);
-			if (!lazyTarget) {
-				// Target file not found — reported as a violation (causes exit 1).
-				// Dynamic import targets that cannot be resolved to a real file are
-				// unconditionally flagged; callers should remove the import() or
-				// ensure the referenced file exists before committing.
-				violations.push({
-					kind: "unresolved-target",
-					sourceFile,
-					dynSpec,
-					message: `Dynamic import target not found: import("${dynSpec}") in ${relative(extensionsDir, sourceFile)}`,
-				});
-				continue;
-			}
+      const lazyTarget = resolveRelativeSpecifier(sourceFile, dynSpec);
+      if (!lazyTarget) {
+        // Target file not found — reported as a violation (causes exit 1).
+        // Dynamic import targets that cannot be resolved to a real file are
+        // unconditionally flagged; callers should remove the import() or
+        // ensure the referenced file exists before committing.
+        violations.push({
+          kind: "unresolved-target",
+          sourceFile,
+          dynSpec,
+          message: `Dynamic import target not found: import("${dynSpec}") in ${relative(extensionsDir, sourceFile)}`,
+        });
+        continue;
+      }
 
-			// Cycle guard: if we've already analysed this lazy target for this
-			// ownerEntry, skip to avoid infinite loops.
-			if (visitedTargets.has(lazyTarget)) continue;
-			visitedTargets.add(lazyTarget);
+      // Cycle guard: if we've already analysed this lazy target for this
+      // ownerEntry, skip to avoid infinite loops.
+      if (visitedTargets.has(lazyTarget)) continue;
+      visitedTargets.add(lazyTarget);
 
-			// Build the STATIC dep graph of the lazy target.
-			const lazyGraph = buildStaticGraph(lazyTarget);
+      // Build the STATIC dep graph of the lazy target.
+      const lazyGraph = buildStaticGraph(lazyTarget);
 
-			// Collect all static import specifiers within the lazy graph (for condition a).
-			const allLazyStaticSpecifiers = new Map(); // specifier → file where it appears
-			for (const lazyFile of lazyGraph) {
-				const { static: specs } = parseImports(lazyFile);
-				for (const spec of specs) {
-					if (!allLazyStaticSpecifiers.has(spec)) {
-						allLazyStaticSpecifiers.set(spec, lazyFile);
-					}
-				}
-			}
+      // Collect all static import specifiers within the lazy graph (for condition a).
+      const allLazyStaticSpecifiers = new Map(); // specifier → file where it appears
+      for (const lazyFile of lazyGraph) {
+        const { static: specs } = parseImports(lazyFile);
+        for (const spec of specs) {
+          if (!allLazyStaticSpecifiers.has(spec)) {
+            allLazyStaticSpecifiers.set(spec, lazyFile);
+          }
+        }
+      }
 
-			// Condition (a): no bare specifiers in the lazy static graph.
-			for (const [spec, inFile] of allLazyStaticSpecifiers) {
-				if (isBareSpecifier(spec)) {
-					violations.push({
-						kind: "bare-specifier",
-						sourceFile,
-						dynSpec,
-						lazyFile: inFile,
-						bareSpec: spec,
-						message:
-							`Bare specifier in lazy graph: ` +
-							`import("${dynSpec}") at ${relative(extensionsDir, sourceFile)} ` +
-							`→ ${relative(extensionsDir, inFile)} imports bare specifier "${spec}"`,
-					});
-				}
-			}
+      // Condition (a): no bare specifiers in the lazy static graph.
+      for (const [spec, inFile] of allLazyStaticSpecifiers) {
+        if (isBareSpecifier(spec)) {
+          violations.push({
+            kind: "bare-specifier",
+            sourceFile,
+            dynSpec,
+            lazyFile: inFile,
+            bareSpec: spec,
+            message:
+              `Bare specifier in lazy graph: ` +
+              `import("${dynSpec}") at ${relative(extensionsDir, sourceFile)} ` +
+              `→ ${relative(extensionsDir, inFile)} imports bare specifier "${spec}"`,
+          });
+        }
+      }
 
-			// Condition (b): no module in the lazy static graph is also in the eager
-			// graph of the owning entry (fully transitive check). Violations indicate a
-			// module that will be instantiated twice — once by jiti and once by native
-			// ESM — duplicating any module-level singleton state or prototype patches.
-			//
-			// Modules in SHARED_MODULE_ALLOWLIST are exempted because they have been
-			// individually verified to contain no module-level mutable state. Do not
-			// add entries without that verification.
-			for (const lazyFile of lazyGraph) {
-				const relPath = relative(extensionsDir, lazyFile).replace(/\\/gu, "/");
-				if (SHARED_MODULE_ALLOWLIST.has(relPath)) continue;
-				if (eagerGraph.has(lazyFile)) {
-					violations.push({
-						kind: "shared-module",
-						sourceFile,
-						dynSpec,
-						sharedModule: lazyFile,
-						ownerEntry,
-						message:
-							`Shared module between eager and lazy graphs: ` +
-							`import("${dynSpec}") at ${relative(extensionsDir, sourceFile)} ` +
-							`→ ${relative(extensionsDir, lazyFile)} is also eagerly reachable ` +
-							`from ${relative(extensionsDir, ownerEntry)} ` +
-							`(add to SHARED_MODULE_ALLOWLIST only if verified stateless)`,
-					});
-				}
-			}
+      // Condition (b): no module in the lazy static graph is also in the eager
+      // graph of the owning entry (fully transitive check). Violations indicate a
+      // module that will be instantiated twice — once by jiti and once by native
+      // ESM — duplicating any module-level singleton state or prototype patches.
+      //
+      // Modules in SHARED_MODULE_ALLOWLIST are exempted because they have been
+      // individually verified to contain no module-level mutable state. Do not
+      // add entries without that verification.
+      for (const lazyFile of lazyGraph) {
+        const relPath = relative(extensionsDir, lazyFile).replace(/\\/gu, "/");
+        if (SHARED_MODULE_ALLOWLIST.has(relPath)) continue;
+        if (eagerGraph.has(lazyFile)) {
+          violations.push({
+            kind: "shared-module",
+            sourceFile,
+            dynSpec,
+            sharedModule: lazyFile,
+            ownerEntry,
+            message:
+              `Shared module between eager and lazy graphs: ` +
+              `import("${dynSpec}") at ${relative(extensionsDir, sourceFile)} ` +
+              `→ ${relative(extensionsDir, lazyFile)} is also eagerly reachable ` +
+              `from ${relative(extensionsDir, ownerEntry)} ` +
+              `(add to SHARED_MODULE_ALLOWLIST only if verified stateless)`,
+          });
+        }
+      }
 
-			// Nested lazy boundaries: enqueue all files in the lazy static graph
-			// for further dynamic-import scanning under the same ownerEntry.
-			// This ensures outer lazy → inner lazy → bare specifier is detected.
-			for (const lazyFile of lazyGraph) {
-				dynWorklist.push({ sourceFile: lazyFile, ownerEntry });
-			}
-		}
-	}
+      // Nested lazy boundaries: enqueue all files in the lazy static graph
+      // for further dynamic-import scanning under the same ownerEntry.
+      // This ensures outer lazy → inner lazy → bare specifier is detected.
+      for (const lazyFile of lazyGraph) {
+        dynWorklist.push({ sourceFile: lazyFile, ownerEntry });
+      }
+    }
+  }
 
-	return violations;
+  return violations;
 }
 
 // ---------------------------------------------------------------------------
@@ -551,20 +571,22 @@ function runCheck(extensionsDir) {
 const args = parseArgs(process.argv.slice(2));
 
 if (args.help) {
-	process.stdout.write(usage());
-	process.exit(0);
+  process.stdout.write(usage());
+  process.exit(0);
 }
 
 const violations = runCheck(args.extensionsDir);
 
 if (violations.length === 0) {
-	process.stdout.write("check:lazy-import-boundaries: OK\n");
-	process.exit(0);
+  process.stdout.write("check:lazy-import-boundaries: OK\n");
+  process.exit(0);
 } else {
-	process.stderr.write(`check:lazy-import-boundaries: FAILED — ${violations.length} violation(s)\n\n`);
-	for (const v of violations) {
-		process.stderr.write(`  ${v.message}\n`);
-	}
-	process.stderr.write("\n");
-	process.exit(1);
+  process.stderr.write(
+    `check:lazy-import-boundaries: FAILED — ${violations.length} violation(s)\n\n`,
+  );
+  for (const v of violations) {
+    process.stderr.write(`  ${v.message}\n`);
+  }
+  process.stderr.write("\n");
+  process.exit(1);
 }

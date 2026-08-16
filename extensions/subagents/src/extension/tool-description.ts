@@ -69,35 +69,38 @@ ASYNC / SAFETY
 • Async status/artifacts live under asyncId/asyncDir with status.json, events.jsonl, output logs, and { action:"status", id:"..." }.`;
 
 function isToolDescriptionMode(value: unknown): value is ToolDescriptionMode {
-	return value === "full" || value === "compact";
+  return value === "full" || value === "compact";
 }
 
 function warn(options: ToolDescriptionOptions | undefined, message: string): void {
-	(options?.warn ?? console.warn)(`[pi-subagents] ${message}`);
+  (options?.warn ?? console.warn)(`[pi-subagents] ${message}`);
 }
 
 export interface ToolDescriptionOptions {
-	cwd?: string;
-	agentDir?: string;
-	warn?: (message: string) => void;
+  cwd?: string;
+  agentDir?: string;
+  warn?: (message: string) => void;
 }
 
 export function resolveToolDescriptionMode(
-	config: Pick<ExtensionConfig, "toolDescriptionMode">,
-	options?: ToolDescriptionOptions,
+  config: Pick<ExtensionConfig, "toolDescriptionMode">,
+  options?: ToolDescriptionOptions,
 ): ToolDescriptionMode {
-	const mode = config.toolDescriptionMode;
-	if (mode === undefined) return "full";
-	if (isToolDescriptionMode(mode)) return mode;
-	warn(options, `Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full" or "compact".`);
-	return "full";
+  const mode = config.toolDescriptionMode;
+  if (mode === undefined) return "full";
+  if (isToolDescriptionMode(mode)) return mode;
+  warn(
+    options,
+    `Ignoring invalid toolDescriptionMode ${JSON.stringify(mode)}; expected "full" or "compact".`,
+  );
+  return "full";
 }
 
 export function buildSubagentToolDescription(
-	config: Pick<ExtensionConfig, "toolDescriptionMode"> = {},
-	options?: ToolDescriptionOptions,
+  config: Pick<ExtensionConfig, "toolDescriptionMode"> = {},
+  options?: ToolDescriptionOptions,
 ): string {
-	const mode = resolveToolDescriptionMode(config, options);
-	if (mode === "compact") return COMPACT_SUBAGENT_TOOL_DESCRIPTION;
-	return FULL_SUBAGENT_TOOL_DESCRIPTION;
+  const mode = resolveToolDescriptionMode(config, options);
+  if (mode === "compact") return COMPACT_SUBAGENT_TOOL_DESCRIPTION;
+  return FULL_SUBAGENT_TOOL_DESCRIPTION;
 }

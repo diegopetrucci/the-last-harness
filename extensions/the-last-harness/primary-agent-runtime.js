@@ -1,14 +1,14 @@
 import { join } from "node:path";
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
-import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
+import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
-import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
+import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
@@ -219,7 +219,12 @@ function subagentCallTargetsMatching(input, predicate) {
     return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
-const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
+const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set([
+    "librarian",
+    "web-scout",
+    "repo-scout",
+    "diff-summarizer",
+]);
 function isOpaqueSubagentManagementActionInput(input) {
     return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
@@ -231,7 +236,9 @@ function capScoutSubagentTimeout(input) {
         return;
     }
     const { timeoutMs } = input;
-    if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
+    if (typeof timeoutMs === "number" &&
+        Number.isFinite(timeoutMs) &&
+        timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
         return;
     }
     input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
@@ -307,7 +314,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             return selection;
         }
         warnOnce(ctx, `missing-primary-agent-${source}-${selection}`, `TLH primary agent "${selection}" is not available; falling back to ${DEFAULT_PRIMARY_AGENT}.`);
-        return primaryAgents.has(DEFAULT_PRIMARY_AGENT) ? DEFAULT_PRIMARY_AGENT : DISABLED_PRIMARY_AGENT;
+        return primaryAgents.has(DEFAULT_PRIMARY_AGENT)
+            ? DEFAULT_PRIMARY_AGENT
+            : DISABLED_PRIMARY_AGENT;
     }
     function syncPrimaryAgentState(ctx) {
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
@@ -358,7 +367,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         const override = sessionPrimaryAgentOverride;
         const effective = currentPrimaryAgentSelection();
         const settingsPath = tlhSettingsPathForWrite();
-        const settingsLabel = settingsPath ? formatHomePath(settingsPath) : "unavailable outside isolated TLH profile";
+        const settingsLabel = settingsPath
+            ? formatHomePath(settingsPath)
+            : "unavailable outside isolated TLH profile";
         const activePrimary = effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
         const rawModelOverrides = primaryConfig?.modelOverrides;
         const modelOverride = activePrimary &&
@@ -422,7 +433,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     }
     async function applyPrimaryModel(ctx, primary, model) {
         if (!model) {
-            const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
+            const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])]
+                .filter(Boolean)
+                .join(", ");
             warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
             return undefined;
         }
@@ -454,7 +467,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             return;
         }
         const currentThinking = pi.getThinkingLevel();
-        if (currentThinking === thinking || currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
+        if (currentThinking === thinking ||
+            currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
             return;
         }
         setExtensionThinkingLevel(pi, thinking);
@@ -471,7 +485,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             if (restored) {
                 setImmediate(() => {
                     try {
-                        if (ctx.model?.provider === previousModel.provider && ctx.model.id === previousModel.id) {
+                        if (ctx.model?.provider === previousModel.provider &&
+                            ctx.model.id === previousModel.id) {
                             ctx.ui.notify(`Kept ${previousModel.provider}/${previousModel.id} after cancelling model selection.`, "info");
                         }
                     }
@@ -530,7 +545,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         if (sessionOnlyModel && !preservesSessionOnlyModel) {
             updateSessionOnlyModel(undefined);
         }
-        const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
+        const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel
+            ? await applyPrimaryModel(ctx, primary, resolvedModel)
+            : undefined;
         if (shouldApplyThinking) {
             applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
         }
@@ -576,17 +593,30 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             { value: "disabled", description: "Disable TLH primary agents for this session" },
             { value: "reset", description: "Clear the session primary-agent override" },
             { value: "model reset", description: "Clear the active primary's persisted model override" },
-            { value: "default architect", description: "Persistently select architect for future sessions" },
+            {
+                value: "default architect",
+                description: "Persistently select architect for future sessions",
+            },
             { value: "default rush", description: "Persistently select Rush for future sessions" },
             { value: "default product", description: "Persistently select product for future sessions" },
-            { value: "default bug-hunter", description: "Persistently select bug-hunter for future sessions" },
-            { value: "default disabled", description: "Persistently disable TLH primaries for future sessions" },
+            {
+                value: "default bug-hunter",
+                description: "Persistently select bug-hunter for future sessions",
+            },
+            {
+                value: "default disabled",
+                description: "Persistently disable TLH primaries for future sessions",
+            },
             { value: "default reset", description: "Remove the persistent primary-agent setting" },
         ];
         const normalizedPrefix = prefix.trim().toLowerCase();
         const completions = options
             .filter((option) => option.value.startsWith(normalizedPrefix))
-            .map((option) => ({ value: option.value, label: option.value, description: option.description }));
+            .map((option) => ({
+            value: option.value,
+            label: option.value,
+            description: option.description,
+        }));
         return completions.length > 0 ? completions : null;
     }
     function registerCommands() {
@@ -632,7 +662,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                     try {
                         const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, undefined);
                         await applyPrimaryModeChange(ctx);
-                        const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                        const backupLabel = result.backupPath
+                            ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                            : "";
                         const message = primary && shouldForceApplyForLock(primary)
                             ? `Cleared stale ignored model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()} uses fixed model defaults.${backupLabel}`
                             : `${result.changed ? "Cleared" : "No override to clear for"} model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`;
@@ -670,7 +702,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                         syncPrimaryAgentState(ctx);
                         await applyPrimaryModeChange(ctx);
                         const changedLabel = result.changed ? "Updated" : "No change to";
-                        const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                        const backupLabel = result.backupPath
+                            ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                            : "";
                         ctx.ui.notify(`${changedLabel} TLH primary-agent persistent default at ${formatHomePath(result.settingsPath)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`, "info");
                     }
                     catch (error) {
@@ -793,7 +827,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             syncPrimaryAgentState(ctx);
             activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
             await applyPrimaryDefaults(ctx);
-            return { systemPrompt: buildActivePrimarySystemPrompt(event.systemPrompt, ctx.cwd, settings) };
+            return {
+                systemPrompt: buildActivePrimarySystemPrompt(event.systemPrompt, ctx.cwd, settings),
+            };
         });
         pi.on("tool_call", async (event, ctx) => {
             if (event.toolName === "bash") {
@@ -840,7 +876,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 }
             }
             const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
-            const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets });
+            const reason = validateSubagentToolInput(event.input, {
+                allowedSubagents,
+                allowEmbeddedTargets,
+            });
             if (reason) {
                 return { block: true, reason };
             }

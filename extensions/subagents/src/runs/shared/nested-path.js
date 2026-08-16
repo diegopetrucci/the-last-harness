@@ -28,7 +28,9 @@ export function sanitizeNestedPath(value) {
             return undefined;
         return {
             runId: record.runId,
-            ...(finiteNumber(record.stepIndex) !== undefined ? { stepIndex: finiteNumber(record.stepIndex) } : {}),
+            ...(finiteNumber(record.stepIndex) !== undefined
+                ? { stepIndex: finiteNumber(record.stepIndex) }
+                : {}),
             ...(nonEmptyString(record.agent, 128) ? { agent: nonEmptyString(record.agent, 128) } : {}),
         };
     })

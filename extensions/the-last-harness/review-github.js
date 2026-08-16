@@ -69,7 +69,10 @@ export async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
         .map((name) => name.trim())
         .filter(Boolean);
     if (remoteNames.length === 0) {
-        return { ok: false, message: "could not resolve GitHub repository because this repo has no git remotes" };
+        return {
+            ok: false,
+            message: "could not resolve GitHub repository because this repo has no git remotes",
+        };
     }
     const orderedRemoteNames = Array.from(new Set(["origin", ...remoteNames]));
     const remoteFailures = [];
@@ -129,7 +132,8 @@ export async function fetchPrMetadataViaRest(pi, cwd, prRef) {
                 number,
                 headRefName,
                 baseRefName,
-                isCrossRepository: typeof payload.head?.repo?.full_name === "string" && typeof payload.base?.repo?.full_name === "string"
+                isCrossRepository: typeof payload.head?.repo?.full_name === "string" &&
+                    typeof payload.base?.repo?.full_name === "string"
                     ? payload.head.repo.full_name !== payload.base.repo.full_name
                     : false,
             },
@@ -140,7 +144,12 @@ export async function fetchPrMetadataViaRest(pi, cwd, prRef) {
     }
 }
 export async function fetchPrDiffViaRest(pi, cwd, prRef) {
-    const result = await pi.exec("gh", ["api", "-H", "Accept: application/vnd.github.v3.diff", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`], { cwd });
+    const result = await pi.exec("gh", [
+        "api",
+        "-H",
+        "Accept: application/vnd.github.v3.diff",
+        `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`,
+    ], { cwd });
     if (result.code !== 0) {
         const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
         return { ok: false, message: firstLine };

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
-import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath } from "./nested-path.js";
+import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
@@ -29,7 +29,7 @@ function assertSafeId(label, value) {
 function containedPath(base, candidate) {
     const resolvedBase = path.resolve(base);
     const resolvedCandidate = path.resolve(candidate);
-    return resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`);
+    return (resolvedCandidate === resolvedBase || resolvedCandidate.startsWith(`${resolvedBase}${path.sep}`));
 }
 function commonRouteRoot(route) {
     return path.dirname(path.resolve(route.eventSink));
@@ -90,8 +90,18 @@ export function resolveNestedParentAddressFromEnv(env = process.env) {
     const parsedPath = parseNestedPathEnv(env[SUBAGENT_PARENT_PATH_ENV]);
     const nestedPath = parsedPath.length
         ? parsedPath
-        : [{ runId: parentRunId, ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}) }];
-    return { parentRunId, ...(parentStepIndex !== undefined ? { parentStepIndex } : {}), depth, path: nestedPath };
+        : [
+            {
+                runId: parentRunId,
+                ...(parentStepIndex !== undefined ? { stepIndex: parentStepIndex } : {}),
+            },
+        ];
+    return {
+        parentRunId,
+        ...(parentStepIndex !== undefined ? { parentStepIndex } : {}),
+        depth,
+        path: nestedPath,
+    };
 }
 export function resolveNestedAsyncDir(rootRunId, run) {
     if (!run.asyncDir)
@@ -99,7 +109,9 @@ export function resolveNestedAsyncDir(rootRunId, run) {
     const resolved = path.resolve(run.asyncDir);
     const nestedRoot = path.resolve(TEMP_ROOT_DIR, "nested-subagent-runs", rootRunId, run.id);
     const relative = path.relative(nestedRoot, resolved);
-    return resolved === nestedRoot || (!relative.startsWith("..") && !path.isAbsolute(relative)) ? resolved : undefined;
+    return resolved === nestedRoot || (!relative.startsWith("..") && !path.isAbsolute(relative))
+        ? resolved
+        : undefined;
 }
 function clampNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -132,7 +144,9 @@ function sanitizeTokenUsage(value) {
     const input = clampNumber(raw.input);
     const output = clampNumber(raw.output);
     const total = clampNumber(raw.total);
-    return input !== undefined && output !== undefined && total !== undefined ? { input, output, total } : undefined;
+    return input !== undefined && output !== undefined && total !== undefined
+        ? { input, output, total }
+        : undefined;
 }
 function sanitizeCost(value) {
     if (!value || typeof value !== "object")
@@ -152,7 +166,9 @@ function sanitizeTurnBudget(value) {
     const maxTurns = clampNumber(raw.maxTurns);
     const graceTurns = clampNumber(raw.graceTurns);
     const turnCount = clampNumber(raw.turnCount);
-    const outcome = raw.outcome === "within-budget" || raw.outcome === "wrap-up-requested" || raw.outcome === "exceeded"
+    const outcome = raw.outcome === "within-budget" ||
+        raw.outcome === "wrap-up-requested" ||
+        raw.outcome === "exceeded"
         ? raw.outcome
         : undefined;
     if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome)
@@ -165,11 +181,17 @@ function sanitizeTurnBudget(value) {
         ...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined
             ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) }
             : {}),
-        ...(clampNumber(raw.exceededAtTurn) !== undefined ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) } : {}),
+        ...(clampNumber(raw.exceededAtTurn) !== undefined
+            ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) }
+            : {}),
     };
 }
 function sanitizeState(value, fallback) {
-    return value === "queued" || value === "running" || value === "complete" || value === "failed" || value === "paused"
+    return value === "queued" ||
+        value === "running" ||
+        value === "complete" ||
+        value === "failed" ||
+        value === "paused"
         ? value
         : fallback;
 }
@@ -192,31 +214,43 @@ function sanitizeStep(input, depth) {
     return {
         agent,
         status,
-        ...(terminationReason ? { terminationReason: terminationReason } : {}),
+        ...(terminationReason
+            ? { terminationReason: terminationReason }
+            : {}),
         ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
         ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
             ? { activityState: raw.activityState }
             : {}),
-        ...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
-        ...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
+        ...(clampNumber(raw.lastActivityAt) !== undefined
+            ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
+            : {}),
+        ...(stringValue(raw.currentTool, 128)
+            ? { currentTool: stringValue(raw.currentTool, 128) }
+            : {}),
         ...(clampNumber(raw.currentToolStartedAt) !== undefined
             ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
             : {}),
-        ...(displayStringValue(raw.currentPath, 2048) ? { currentPath: displayStringValue(raw.currentPath, 2048) } : {}),
+        ...(displayStringValue(raw.currentPath, 2048)
+            ? { currentPath: displayStringValue(raw.currentPath, 2048) }
+            : {}),
         ...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+        ...(sanitizeTurnBudget(raw.turnBudget)
+            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
+            : {}),
         ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
         ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(parseContextUsageDiagnostics(raw.contextUsage)
             ? { contextUsage: parseContextUsageDiagnostics(raw.contextUsage) }
             : {}),
         ...(parseContextPressureProjection(raw.contextPressure)
-            ? { contextPressure: parseContextPressureProjection(raw.contextPressure) }
+            ? {
+                contextPressure: parseContextPressureProjection(raw.contextPressure),
+            }
             : {}),
         ...(parseContextPressureCrossedThresholds(raw.contextPressureCrossedThresholds)
             ? {
@@ -251,18 +285,26 @@ export function sanitizeSummary(input, depth = 0) {
     return {
         id: raw.id,
         parentRunId: raw.parentRunId,
-        ...(clampNumber(raw.parentStepIndex) !== undefined ? { parentStepIndex: clampNumber(raw.parentStepIndex) } : {}),
-        ...(stringValue(raw.parentAgent, 128) ? { parentAgent: stringValue(raw.parentAgent, 128) } : {}),
+        ...(clampNumber(raw.parentStepIndex) !== undefined
+            ? { parentStepIndex: clampNumber(raw.parentStepIndex) }
+            : {}),
+        ...(stringValue(raw.parentAgent, 128)
+            ? { parentAgent: stringValue(raw.parentAgent, 128) }
+            : {}),
         depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
         path: pathParts,
         state: sanitizeState(raw.state, "running"),
         ...(pathValue(raw.asyncDir, 2048) ? { asyncDir: pathValue(raw.asyncDir, 2048) } : {}),
-        ...(clampNumber(raw.pid) !== undefined && clampNumber(raw.pid) > 0 && Number.isInteger(clampNumber(raw.pid))
+        ...(clampNumber(raw.pid) !== undefined &&
+            clampNumber(raw.pid) > 0 &&
+            Number.isInteger(clampNumber(raw.pid))
             ? { pid: clampNumber(raw.pid) }
             : {}),
         ...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
         ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-        ...(stringValue(raw.intercomTarget, 256) ? { intercomTarget: stringValue(raw.intercomTarget, 256) } : {}),
+        ...(stringValue(raw.intercomTarget, 256)
+            ? { intercomTarget: stringValue(raw.intercomTarget, 256) }
+            : {}),
         ...(stringValue(raw.ownerIntercomTarget, 256)
             ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
             : {}),
@@ -272,9 +314,15 @@ export function sanitizeSummary(input, depth = 0) {
         ...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
             ? { ownerState: raw.ownerState }
             : {}),
-        ...(displayStringValue(raw.controlInbox, 2048) ? { controlInbox: displayStringValue(raw.controlInbox, 2048) } : {}),
-        ...(stringValue(raw.capabilityToken, 128) ? { capabilityToken: stringValue(raw.capabilityToken, 128) } : {}),
-        ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain" ? { mode: raw.mode } : {}),
+        ...(displayStringValue(raw.controlInbox, 2048)
+            ? { controlInbox: displayStringValue(raw.controlInbox, 2048) }
+            : {}),
+        ...(stringValue(raw.capabilityToken, 128)
+            ? { capabilityToken: stringValue(raw.capabilityToken, 128) }
+            : {}),
+        ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain"
+            ? { mode: raw.mode }
+            : {}),
         ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
         ...(Array.isArray(raw.agents)
             ? {
@@ -284,28 +332,44 @@ export function sanitizeSummary(input, depth = 0) {
                     .slice(0, MAX_STEPS),
             }
             : {}),
-        ...(clampNumber(raw.currentStep) !== undefined ? { currentStep: clampNumber(raw.currentStep) } : {}),
-        ...(clampNumber(raw.chainStepCount) !== undefined ? { chainStepCount: clampNumber(raw.chainStepCount) } : {}),
+        ...(clampNumber(raw.currentStep) !== undefined
+            ? { currentStep: clampNumber(raw.currentStep) }
+            : {}),
+        ...(clampNumber(raw.chainStepCount) !== undefined
+            ? { chainStepCount: clampNumber(raw.chainStepCount) }
+            : {}),
         ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
             ? { activityState: raw.activityState }
             : {}),
-        ...(clampNumber(raw.lastActivityAt) !== undefined ? { lastActivityAt: clampNumber(raw.lastActivityAt) } : {}),
-        ...(stringValue(raw.currentTool, 128) ? { currentTool: stringValue(raw.currentTool, 128) } : {}),
+        ...(clampNumber(raw.lastActivityAt) !== undefined
+            ? { lastActivityAt: clampNumber(raw.lastActivityAt) }
+            : {}),
+        ...(stringValue(raw.currentTool, 128)
+            ? { currentTool: stringValue(raw.currentTool, 128) }
+            : {}),
         ...(clampNumber(raw.currentToolStartedAt) !== undefined
             ? { currentToolStartedAt: clampNumber(raw.currentToolStartedAt) }
             : {}),
-        ...(displayStringValue(raw.currentPath, 2048) ? { currentPath: displayStringValue(raw.currentPath, 2048) } : {}),
+        ...(displayStringValue(raw.currentPath, 2048)
+            ? { currentPath: displayStringValue(raw.currentPath, 2048) }
+            : {}),
         ...(clampNumber(raw.turnCount) !== undefined ? { turnCount: clampNumber(raw.turnCount) } : {}),
         ...(clampNumber(raw.toolCount) !== undefined ? { toolCount: clampNumber(raw.toolCount) } : {}),
         ...(totalTokens ? { totalTokens } : {}),
         ...(totalCost ? { totalCost } : {}),
         ...(clampNumber(raw.startedAt) !== undefined ? { startedAt: clampNumber(raw.startedAt) } : {}),
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
-        ...(clampNumber(raw.lastUpdate) !== undefined ? { lastUpdate: clampNumber(raw.lastUpdate) } : {}),
+        ...(clampNumber(raw.lastUpdate) !== undefined
+            ? { lastUpdate: clampNumber(raw.lastUpdate) }
+            : {}),
         ...(clampNumber(raw.timeoutMs) !== undefined ? { timeoutMs: clampNumber(raw.timeoutMs) } : {}),
-        ...(clampNumber(raw.deadlineAt) !== undefined ? { deadlineAt: clampNumber(raw.deadlineAt) } : {}),
+        ...(clampNumber(raw.deadlineAt) !== undefined
+            ? { deadlineAt: clampNumber(raw.deadlineAt) }
+            : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget) ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) } : {}),
+        ...(sanitizeTurnBudget(raw.turnBudget)
+            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
+            : {}),
         ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
         ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
@@ -358,7 +422,9 @@ function parseRecord(content, route) {
         ts,
         rootRunId: route.rootRunId,
         parentRunId: raw.parentRunId,
-        ...(clampNumber(raw.parentStepIndex) !== undefined ? { parentStepIndex: clampNumber(raw.parentStepIndex) } : {}),
+        ...(clampNumber(raw.parentStepIndex) !== undefined
+            ? { parentStepIndex: clampNumber(raw.parentStepIndex) }
+            : {}),
         capabilityToken: route.capabilityToken,
         child: routedChild,
     };
@@ -414,8 +480,14 @@ function nestedStepStatusFromAsyncStepStatus(status) {
     }
 }
 function mergeSummary(existing, event) {
-    const incomingState = event.type === "subagent.nested.completed" && event.child.state === "running" ? "complete" : event.child.state;
-    const incoming = { ...event.child, state: incomingState, lastUpdate: event.child.lastUpdate ?? event.ts };
+    const incomingState = event.type === "subagent.nested.completed" && event.child.state === "running"
+        ? "complete"
+        : event.child.state;
+    const incoming = {
+        ...event.child,
+        state: incomingState,
+        lastUpdate: event.child.lastUpdate ?? event.ts,
+    };
     if (!existing)
         return incoming;
     const existingUpdate = existing.lastUpdate ?? 0;
@@ -426,7 +498,12 @@ function mergeSummary(existing, event) {
         return existing;
     if (terminal(existing.state) && terminal(incoming.state) && incomingUpdate === existingUpdate)
         return existing;
-    return { ...existing, ...incoming, state: incoming.state, lastUpdate: Math.max(existingUpdate, incomingUpdate) };
+    return {
+        ...existing,
+        ...incoming,
+        state: incoming.state,
+        lastUpdate: Math.max(existingUpdate, incomingUpdate),
+    };
 }
 function attachChild(children, event) {
     let updated = false;
@@ -737,13 +814,17 @@ function parseControlRequest(content, route) {
         return undefined;
     if (raw.rootRunId !== route.rootRunId || raw.capabilityToken !== route.capabilityToken)
         return undefined;
-    if (!isSafeNestedId(raw.requestId) || !isSafeNestedId(raw.targetRunId) || !isSafeNestedId(raw.ownerParentRunId))
+    if (!isSafeNestedId(raw.requestId) ||
+        !isSafeNestedId(raw.targetRunId) ||
+        !isSafeNestedId(raw.ownerParentRunId))
         return undefined;
     if (raw.action !== "interrupt" && raw.action !== "resume")
         return undefined;
     const ownerParentStepIndex = clampNumber(raw.ownerParentStepIndex);
     if (raw.ownerParentStepIndex !== undefined) {
-        if (ownerParentStepIndex === undefined || !Number.isInteger(ownerParentStepIndex) || ownerParentStepIndex < 0)
+        if (ownerParentStepIndex === undefined ||
+            !Number.isInteger(ownerParentStepIndex) ||
+            ownerParentStepIndex < 0)
             return undefined;
     }
     const deliveryDeadlineAt = clampNumber(raw.deliveryDeadlineAt);
@@ -802,7 +883,8 @@ function parseControlResult(content, route) {
         requestId: raw.requestId,
         targetRunId: raw.targetRunId,
         ok: raw.ok,
-        message: stringValue(raw.message, 16_000) ?? (raw.ok ? "Control request completed." : "Control request failed."),
+        message: stringValue(raw.message, 16_000) ??
+            (raw.ok ? "Control request completed." : "Control request failed."),
     };
 }
 export function writeNestedControlRequest(route, request) {
@@ -853,7 +935,8 @@ export function readNestedControlRequests(route) {
     return requests;
 }
 export function nestedControlRequestOwnedBy(request, owner) {
-    return request.ownerParentRunId === owner.parentRunId && request.ownerParentStepIndex === owner.parentStepIndex;
+    return (request.ownerParentRunId === owner.parentRunId &&
+        request.ownerParentStepIndex === owner.parentStepIndex);
 }
 export function claimNestedControlRequest(route, request, claimantId) {
     validateRouteShape(route);
@@ -911,7 +994,9 @@ export function readNestedControlResults(route) {
             if (!stat.isFile() || stat.size > MAX_EVENT_BYTES)
                 continue;
             const content = fs.readFileSync(eventPath, "utf-8");
-            const lines = content.includes("\n") ? content.split("\n").filter((line) => line.trim()) : [content];
+            const lines = content.includes("\n")
+                ? content.split("\n").filter((line) => line.trim())
+                : [content];
             for (const line of lines) {
                 const result = parseControlResult(line, route);
                 if (result)
@@ -980,7 +1065,9 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
     return {
         id: status.runId || fallback.id,
         parentRunId: fallback.parentRunId,
-        ...(fallback.parentStepIndex !== undefined ? { parentStepIndex: fallback.parentStepIndex } : {}),
+        ...(fallback.parentStepIndex !== undefined
+            ? { parentStepIndex: fallback.parentStepIndex }
+            : {}),
         depth: fallback.depth,
         path: fallback.path ?? [
             {
@@ -998,7 +1085,9 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.activityState ? { activityState: status.activityState } : {}),
         ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
         ...(status.currentTool ? { currentTool: status.currentTool } : {}),
-        ...(status.currentToolStartedAt !== undefined ? { currentToolStartedAt: status.currentToolStartedAt } : {}),
+        ...(status.currentToolStartedAt !== undefined
+            ? { currentToolStartedAt: status.currentToolStartedAt }
+            : {}),
         ...(status.currentPath ? { currentPath: status.currentPath } : {}),
         ...(status.turnCount !== undefined ? { turnCount: status.turnCount } : {}),
         ...(status.toolCount !== undefined ? { toolCount: status.toolCount } : {}),
@@ -1007,10 +1096,14 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
         ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-        ...(status.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: status.turnBudgetExceeded } : {}),
+        ...(status.turnBudgetExceeded !== undefined
+            ? { turnBudgetExceeded: status.turnBudgetExceeded }
+            : {}),
         ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
         ...(status.error ? { error: status.error } : {}),
-        ...(status.startedAt !== undefined ? { startedAt: status.startedAt } : { startedAt: fallback.ts }),
+        ...(status.startedAt !== undefined
+            ? { startedAt: status.startedAt }
+            : { startedAt: fallback.ts }),
         ...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
         lastUpdate: status.lastUpdate ?? fallback.ts,
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
@@ -1024,7 +1117,9 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                     ...(step.activityState ? { activityState: step.activityState } : {}),
                     ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
                     ...(step.currentTool ? { currentTool: step.currentTool } : {}),
-                    ...(step.currentToolStartedAt !== undefined ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
+                    ...(step.currentToolStartedAt !== undefined
+                        ? { currentToolStartedAt: step.currentToolStartedAt }
+                        : {}),
                     ...(step.currentPath ? { currentPath: step.currentPath } : {}),
                     ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
                     ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
@@ -1034,8 +1129,12 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                     ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                     ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
                     ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-                    ...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
-                    ...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
+                    ...(step.turnBudgetExceeded !== undefined
+                        ? { turnBudgetExceeded: step.turnBudgetExceeded }
+                        : {}),
+                    ...(step.wrapUpRequested !== undefined
+                        ? { wrapUpRequested: step.wrapUpRequested }
+                        : {}),
                     ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
                     ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
                     ...(step.contextPressureCrossedThresholds
@@ -1055,7 +1154,8 @@ export function nestedArtifactEnv(rootRunId, parentRunId) {
 }
 export function isTopLevelAsyncDir(asyncDir) {
     const resolved = path.resolve(asyncDir);
-    return (containedPath(ASYNC_DIR, resolved) && !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved));
+    return (containedPath(ASYNC_DIR, resolved) &&
+        !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved));
 }
 export function nestedResultsPath(rootRunId, id) {
     assertSafeId("rootRunId", rootRunId);

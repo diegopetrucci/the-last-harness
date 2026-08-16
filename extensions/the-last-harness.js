@@ -49,7 +49,13 @@ function createRetryableLazyImport(loader) {
         return modulePromise;
     };
 }
-const EMPTY_STARTUP_RESOURCES = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
+const EMPTY_STARTUP_RESOURCES = {
+    context: [],
+    skills: [],
+    prompts: [],
+    extensions: [],
+    themes: [],
+};
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
 };
@@ -234,7 +240,9 @@ export default function theLastHarness(pi) {
                 const gitCache = new FooterGitCache({
                     cwd: () => ctx.sessionManager.getCwd(),
                     onChange: () => tui.requestRender(),
-                    onBranchChangeSource: typeof footerData?.onBranchChange === "function" ? (cb) => footerData.onBranchChange(cb) : undefined,
+                    onBranchChangeSource: typeof footerData?.onBranchChange === "function"
+                        ? (cb) => footerData.onBranchChange(cb)
+                        : undefined,
                 });
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
@@ -246,7 +254,8 @@ export default function theLastHarness(pi) {
             ctx.ui.setHeader((tui, theme) => {
                 const componentId = ++tlhHeaderComponentGeneration;
                 const requestRender = () => {
-                    if (activeTlhHeaderSessionToken !== sessionToken || activeTlhHeaderComponentId !== componentId) {
+                    if (activeTlhHeaderSessionToken !== sessionToken ||
+                        activeTlhHeaderComponentId !== componentId) {
                         return;
                     }
                     tui.requestRender();

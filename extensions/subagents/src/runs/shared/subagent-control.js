@@ -51,8 +51,10 @@ export function resolveControlConfig(globalConfig, override) {
     const activeNoticeAfterMs = parsePositiveInt(override?.activeNoticeAfterMs) ??
         parsePositiveInt(globalConfig?.activeNoticeAfterMs) ??
         DEFAULT_CONTROL_CONFIG.activeNoticeAfterMs;
-    const activeNoticeAfterTurns = parsePositiveInt(override?.activeNoticeAfterTurns) ?? parsePositiveInt(globalConfig?.activeNoticeAfterTurns);
-    const activeNoticeAfterTokens = parsePositiveInt(override?.activeNoticeAfterTokens) ?? parsePositiveInt(globalConfig?.activeNoticeAfterTokens);
+    const activeNoticeAfterTurns = parsePositiveInt(override?.activeNoticeAfterTurns) ??
+        parsePositiveInt(globalConfig?.activeNoticeAfterTurns);
+    const activeNoticeAfterTokens = parsePositiveInt(override?.activeNoticeAfterTokens) ??
+        parsePositiveInt(globalConfig?.activeNoticeAfterTokens);
     const failedToolAttemptsBeforeAttention = parsePositiveInt(override?.failedToolAttemptsBeforeAttention) ??
         parsePositiveInt(globalConfig?.failedToolAttemptsBeforeAttention) ??
         DEFAULT_CONTROL_CONFIG.failedToolAttemptsBeforeAttention;
@@ -101,14 +103,20 @@ export function buildControlEvent(input) {
         agent: input.agent,
         ...(input.index !== undefined ? { index: input.index } : {}),
         message,
-        ...(input.contextPressureSeverity ? { contextPressureSeverity: input.contextPressureSeverity } : {}),
-        ...(input.contextPressureThreshold ? { contextPressureThreshold: input.contextPressureThreshold } : {}),
+        ...(input.contextPressureSeverity
+            ? { contextPressureSeverity: input.contextPressureSeverity }
+            : {}),
+        ...(input.contextPressureThreshold
+            ? { contextPressureThreshold: input.contextPressureThreshold }
+            : {}),
         reason: input.reason ?? (type === "active_long_running" ? "active_long_running" : "idle"),
         ...(input.turns !== undefined ? { turns: input.turns } : {}),
         ...(input.tokens !== undefined ? { tokens: input.tokens } : {}),
         ...(input.toolCount !== undefined ? { toolCount: input.toolCount } : {}),
         ...(input.currentTool ? { currentTool: input.currentTool } : {}),
-        ...(input.currentToolDurationMs !== undefined ? { currentToolDurationMs: input.currentToolDurationMs } : {}),
+        ...(input.currentToolDurationMs !== undefined
+            ? { currentToolDurationMs: input.currentToolDurationMs }
+            : {}),
         ...(input.currentPath ? { currentPath: input.currentPath } : {}),
         ...(elapsedMs !== undefined ? { elapsedMs } : {}),
         ...(input.recentFailureSummary ? { recentFailureSummary: input.recentFailureSummary } : {}),
@@ -141,7 +149,9 @@ export function parseControlEvent(value) {
     const elapsedMs = parseFiniteNumber(raw.elapsedMs);
     return {
         type: raw.type,
-        ...(raw.from === "active_long_running" || raw.from === "needs_attention" ? { from: raw.from } : {}),
+        ...(raw.from === "active_long_running" || raw.from === "needs_attention"
+            ? { from: raw.from }
+            : {}),
         to: raw.to,
         ts: raw.ts,
         runId: raw.runId,
@@ -158,11 +168,14 @@ export function parseControlEvent(value) {
         ...(currentToolDurationMs !== undefined ? { currentToolDurationMs } : {}),
         ...(typeof raw.currentPath === "string" ? { currentPath: raw.currentPath } : {}),
         ...(elapsedMs !== undefined ? { elapsedMs } : {}),
-        ...(typeof raw.recentFailureSummary === "string" ? { recentFailureSummary: raw.recentFailureSummary } : {}),
+        ...(typeof raw.recentFailureSummary === "string"
+            ? { recentFailureSummary: raw.recentFailureSummary }
+            : {}),
     };
 }
 export function controlNotificationKey(event, childIntercomTarget) {
-    const childKey = childIntercomTarget ?? (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
+    const childKey = childIntercomTarget ??
+        (event.index !== undefined ? `${event.runId}:${event.index}` : event.runId);
     const pressureKey = event.reason === "context_pressure"
         ? `:${event.contextPressureSeverity ?? ""}:${event.contextPressureThreshold ?? ""}`
         : "";
@@ -201,7 +214,9 @@ export function formatControlNoticeMessage(event, childIntercomTarget) {
             `Run: ${runTarget}${event.index !== undefined ? ` step ${event.index + 1}` : ""}`,
             `Signal: ${event.message}`,
             "Next: read the output artifact or session from the subagent result, then retry with a more explicit implementation prompt or handle the fix directly.",
-            childIntercomTarget ? `Run intercom target (may be inactive): ${childIntercomTarget}` : undefined,
+            childIntercomTarget
+                ? `Run intercom target (may be inactive): ${childIntercomTarget}`
+                : undefined,
         ]
             .filter((line) => Boolean(line))
             .join("\n");

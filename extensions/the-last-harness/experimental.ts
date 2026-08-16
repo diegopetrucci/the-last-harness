@@ -1,20 +1,25 @@
 import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 import {
-	normalizeEnabledExperimentalFeatures,
-	normalizeExperimentalFeatureId,
-	readEnabledExperimentalFeatures,
+  normalizeEnabledExperimentalFeatures,
+  normalizeExperimentalFeatureId,
+  readEnabledExperimentalFeatures,
 } from "../the-last-harness-subagent-safety.mjs";
-import type { AgentPrompt, TlhExperimentalConfig, TlhExperimentalFeatureId, TlhSettings } from "./types.js";
+import type {
+  AgentPrompt,
+  TlhExperimentalConfig,
+  TlhExperimentalFeatureId,
+  TlhSettings,
+} from "./types.js";
 
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
-export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId = "ci-failure-investigation";
+export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
+  "ci-failure-investigation";
 export const EMBEDDED_SUBAGENTS_FEATURE: TlhExperimentalFeatureId = "embedded-subagents";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
-	"Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
-	"With no argument, /experimental opens the TLH experimental feature picker when UI is available, otherwise it lists feature status.",
+  "Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
+  "With no argument, /experimental opens the TLH experimental feature picker when UI is available, otherwise it lists feature status.",
 ].join(" ");
 
 const DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT = `
@@ -58,181 +63,203 @@ After TLH opens a PR and CI/status checks fail:
 `;
 
 type TlhExperimentalFeature = {
-	id: TlhExperimentalFeatureId;
-	description: string;
-	primaryAgentPrompt?: string;
-	primaryAgentPrompts?: Partial<Record<string, string>>;
-	codeReviewerPrompt?: string;
+  id: TlhExperimentalFeatureId;
+  description: string;
+  primaryAgentPrompt?: string;
+  primaryAgentPrompts?: Partial<Record<string, string>>;
+  codeReviewerPrompt?: string;
 };
 
 type TlhExperimentalSlashAction =
-	| { type: "picker" }
-	| { type: "list" }
-	| { type: "status"; featureId?: string }
-	| { type: "enable" | "disable" | "toggle"; featureId: string };
+  | { type: "picker" }
+  | { type: "list" }
+  | { type: "status"; featureId?: string }
+  | { type: "enable" | "disable" | "toggle"; featureId: string };
 
 export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
-	{
-		id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
-		description: "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
-		primaryAgentPrompts: {
-			architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
-		},
-		codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
-	},
-	{
-		id: CI_FAILURE_INVESTIGATION_FEATURE,
-		description:
-			"Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
-		primaryAgentPrompts: {
-			architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
-		},
-	},
-	{
-		id: EMBEDDED_SUBAGENTS_FEATURE,
-		description: "Gates architect-only delegation to trusted user-owned embedded.<slug> subagents.",
-	},
+  {
+    id: DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+    description:
+      "Architect and code-reviewer guidance to scope follow-up reviews to a requested delta after fixes.",
+    primaryAgentPrompts: {
+      architect: DELTA_FOLLOW_UP_REVIEWS_ARCHITECT_PROMPT.trim(),
+    },
+    codeReviewerPrompt: DELTA_FOLLOW_UP_REVIEWS_CODE_REVIEWER_PROMPT.trim(),
+  },
+  {
+    id: CI_FAILURE_INVESTIGATION_FEATURE,
+    description:
+      "Architect-only guidance to perform read-only PR CI/status-check investigation before asking whether to proceed.",
+    primaryAgentPrompts: {
+      architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
+    },
+  },
+  {
+    id: EMBEDDED_SUBAGENTS_FEATURE,
+    description: "Gates architect-only delegation to trusted user-owned embedded.<slug> subagents.",
+  },
 ];
 
-const TLH_EXPERIMENTAL_FEATURES_BY_ID = new Map(TLH_EXPERIMENTAL_FEATURES.map((feature) => [feature.id, feature]));
+const TLH_EXPERIMENTAL_FEATURES_BY_ID = new Map(
+  TLH_EXPERIMENTAL_FEATURES.map((feature) => [feature.id, feature]),
+);
 
 export function hasRegisteredExperimentalFeatures(): boolean {
-	return TLH_EXPERIMENTAL_FEATURES.length > 0;
+  return TLH_EXPERIMENTAL_FEATURES.length > 0;
 }
 
 export function availableExperimentalFeatureList(): string {
-	return hasRegisteredExperimentalFeatures()
-		? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ")
-		: "none currently registered";
+  return hasRegisteredExperimentalFeatures()
+    ? TLH_EXPERIMENTAL_FEATURES.map((feature) => feature.id).join(", ")
+    : "none currently registered";
 }
 
 export function noExperimentalFeaturesMessage(): string {
-	return "TLH experimental features: none currently registered. Future TLH feature flags will appear here when available.";
+  return "TLH experimental features: none currently registered. Future TLH feature flags will appear here when available.";
 }
 
 export function unknownExperimentalFeatureMessage(featureId: string): string {
-	const base = `Unknown TLH experimental feature "${featureId}".`;
-	return hasRegisteredExperimentalFeatures()
-		? `${base} Available: ${availableExperimentalFeatureList()}.`
-		: `${base} ${noExperimentalFeaturesMessage()}`;
+  const base = `Unknown TLH experimental feature "${featureId}".`;
+  return hasRegisteredExperimentalFeatures()
+    ? `${base} Available: ${availableExperimentalFeatureList()}.`
+    : `${base} ${noExperimentalFeaturesMessage()}`;
 }
 
 export function normalizeEnabledFeatures(enabledFeatures: string[] | undefined): string[] {
-	return normalizeEnabledExperimentalFeatures(enabledFeatures) as string[];
+  return normalizeEnabledExperimentalFeatures(enabledFeatures) as string[];
 }
 
 function readEnabledFeatures(config: unknown): string[] {
-	return readEnabledExperimentalFeatures(config) as string[];
+  return readEnabledExperimentalFeatures(config) as string[];
 }
 
 function telemetryExperimentalFeatureKey(featureId: TlhExperimentalFeatureId): string {
-	return `Tlh.Experimental.${featureId}`;
+  return `Tlh.Experimental.${featureId}`;
 }
 
-export function buildExperimentalFeatureTelemetryPayload(config: unknown): Record<string, "on" | "off"> {
-	const enabledFeatures = new Set(readEnabledFeatures(config));
-	return Object.fromEntries(
-		TLH_EXPERIMENTAL_FEATURES.map((feature) => [
-			telemetryExperimentalFeatureKey(feature.id),
-			enabledFeatures.has(feature.id) ? "on" : "off",
-		]),
-	) as Record<string, "on" | "off">;
+export function buildExperimentalFeatureTelemetryPayload(
+  config: unknown,
+): Record<string, "on" | "off"> {
+  const enabledFeatures = new Set(readEnabledFeatures(config));
+  return Object.fromEntries(
+    TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+      telemetryExperimentalFeatureKey(feature.id),
+      enabledFeatures.has(feature.id) ? "on" : "off",
+    ]),
+  ) as Record<string, "on" | "off">;
 }
 
 export function getExperimentalFeature(featureId: string): TlhExperimentalFeature | undefined {
-	const normalized = normalizeExperimentalFeatureId(featureId) as string | undefined;
-	return normalized ? TLH_EXPERIMENTAL_FEATURES_BY_ID.get(normalized) : undefined;
+  const normalized = normalizeExperimentalFeatureId(featureId) as string | undefined;
+  return normalized ? TLH_EXPERIMENTAL_FEATURES_BY_ID.get(normalized) : undefined;
 }
 
 function enabledExperimentalPrompts(
-	config: TlhExperimentalConfig | undefined,
-	promptKey: "primaryAgentPrompt" | "codeReviewerPrompt",
+  config: TlhExperimentalConfig | undefined,
+  promptKey: "primaryAgentPrompt" | "codeReviewerPrompt",
 ): string[] {
-	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
-		.map((feature) => feature[promptKey])
-		.filter((prompt): prompt is string => Boolean(prompt));
+  return TLH_EXPERIMENTAL_FEATURES.filter((feature) =>
+    isTlhExperimentalFeatureEnabled(config, feature.id),
+  )
+    .map((feature) => feature[promptKey])
+    .filter((prompt): prompt is string => Boolean(prompt));
 }
 
-function enabledPrimaryExperimentalPrompts(primary: AgentPrompt, config: TlhExperimentalConfig | undefined): string[] {
-	return TLH_EXPERIMENTAL_FEATURES.filter((feature) => isTlhExperimentalFeatureEnabled(config, feature.id))
-		.map((feature) => feature.primaryAgentPrompts?.[primary.name] ?? feature.primaryAgentPrompt)
-		.filter((prompt): prompt is string => Boolean(prompt));
+function enabledPrimaryExperimentalPrompts(
+  primary: AgentPrompt,
+  config: TlhExperimentalConfig | undefined,
+): string[] {
+  return TLH_EXPERIMENTAL_FEATURES.filter((feature) =>
+    isTlhExperimentalFeatureEnabled(config, feature.id),
+  )
+    .map((feature) => feature.primaryAgentPrompts?.[primary.name] ?? feature.primaryAgentPrompt)
+    .filter((prompt): prompt is string => Boolean(prompt));
 }
 
 export function getTlhExperimentalConfig(cwd: string): TlhExperimentalConfig | undefined {
-	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
-		return settings.tlh?.experimental;
-	} catch {
-		return undefined;
-	}
+  try {
+    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
+    return settings.tlh?.experimental;
+  } catch {
+    return undefined;
+  }
 }
 
-export function isTlhExperimentalFeatureEnabled(config: unknown, featureId: TlhExperimentalFeatureId): boolean {
-	const feature = getExperimentalFeature(featureId);
-	return feature ? readEnabledFeatures(config).includes(feature.id) : false;
+export function isTlhExperimentalFeatureEnabled(
+  config: unknown,
+  featureId: TlhExperimentalFeatureId,
+): boolean {
+  const feature = getExperimentalFeature(featureId);
+  return feature ? readEnabledFeatures(config).includes(feature.id) : false;
 }
 
 export function parseExperimentalSlashAction(args: string): TlhExperimentalSlashAction | undefined {
-	const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	if (parts.length === 0) {
-		return { type: "picker" };
-	}
-	if (parts[0] === "list") {
-		return parts.length === 1 ? { type: "list" } : undefined;
-	}
-	if (parts[0] === "status") {
-		return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
-	}
-	if (parts.length === 2 && (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")) {
-		return { type: parts[0], featureId: parts[1] };
-	}
-	return undefined;
+  const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return { type: "picker" };
+  }
+  if (parts[0] === "list") {
+    return parts.length === 1 ? { type: "list" } : undefined;
+  }
+  if (parts[0] === "status") {
+    return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
+  }
+  if (
+    parts.length === 2 &&
+    (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")
+  ) {
+    return { type: parts[0], featureId: parts[1] };
+  }
+  return undefined;
 }
 
 export const EXPERIMENTAL_COMMAND_COMPLETIONS = [
-	{ value: "list", description: "List TLH experimental features" },
-	{ value: "status", description: "Show TLH experimental feature status" },
-	...TLH_EXPERIMENTAL_FEATURES.flatMap((feature) => [
-		{ value: `status ${feature.id}`, description: `Show status for ${feature.id}` },
-		{ value: `enable ${feature.id}`, description: `Enable ${feature.id}` },
-		{ value: `disable ${feature.id}`, description: `Disable ${feature.id}` },
-		{ value: `toggle ${feature.id}`, description: `Toggle ${feature.id}` },
-	]),
+  { value: "list", description: "List TLH experimental features" },
+  { value: "status", description: "Show TLH experimental feature status" },
+  ...TLH_EXPERIMENTAL_FEATURES.flatMap((feature) => [
+    { value: `status ${feature.id}`, description: `Show status for ${feature.id}` },
+    { value: `enable ${feature.id}`, description: `Enable ${feature.id}` },
+    { value: `disable ${feature.id}`, description: `Disable ${feature.id}` },
+    { value: `toggle ${feature.id}`, description: `Toggle ${feature.id}` },
+  ]),
 ] as const;
 
 export function buildPrimaryExperimentalPrompt(
-	primary: AgentPrompt | undefined,
-	config: TlhExperimentalConfig | undefined,
+  primary: AgentPrompt | undefined,
+  config: TlhExperimentalConfig | undefined,
 ): string | undefined {
-	if (!primary) {
-		return undefined;
-	}
-	return enabledPrimaryExperimentalPrompts(primary, config).join("\n\n") || undefined;
+  if (!primary) {
+    return undefined;
+  }
+  return enabledPrimaryExperimentalPrompts(primary, config).join("\n\n") || undefined;
 }
 
 export function buildChildExperimentalPrompt(
-	childAgentName: string | undefined,
-	config: TlhExperimentalConfig | undefined,
+  childAgentName: string | undefined,
+  config: TlhExperimentalConfig | undefined,
 ): string | undefined {
-	if (childAgentName?.trim().toLowerCase() !== "code-reviewer") {
-		return undefined;
-	}
-	return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
+  if (childAgentName?.trim().toLowerCase() !== "code-reviewer") {
+    return undefined;
+  }
+  return enabledExperimentalPrompts(config, "codeReviewerPrompt").join("\n\n") || undefined;
 }
 
 import { handleExperimentalCommand } from "./experimental-command.js";
 
 export function registerExperimentalCommand(pi: ExtensionAPI): void {
-	pi.registerCommand("experimental", {
-		description: "List or change TLH experimental features",
-		getArgumentCompletions: (prefix) => {
-			const normalizedPrefix = prefix.trim().toLowerCase();
-			const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) =>
-				option.value.startsWith(normalizedPrefix),
-			).map((option) => ({ value: option.value, label: option.value, description: option.description }));
-			return completions.length > 0 ? completions : null;
-		},
-		handler: (args, ctx) => handleExperimentalCommand(pi, args, ctx),
-	});
+  pi.registerCommand("experimental", {
+    description: "List or change TLH experimental features",
+    getArgumentCompletions: (prefix) => {
+      const normalizedPrefix = prefix.trim().toLowerCase();
+      const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) =>
+        option.value.startsWith(normalizedPrefix),
+      ).map((option) => ({
+        value: option.value,
+        label: option.value,
+        description: option.description,
+      }));
+      return completions.length > 0 ? completions : null;
+    },
+    handler: (args, ctx) => handleExperimentalCommand(pi, args, ctx),
+  });
 }

@@ -17,7 +17,8 @@ function validateTlhExperimentalSettings(settings) {
     if (enabledFeatures !== undefined && !Array.isArray(enabledFeatures)) {
         throw new Error("settings field 'tlh.experimental.enabledFeatures' must be an array if present");
     }
-    if (Array.isArray(enabledFeatures) && enabledFeatures.some((feature) => typeof feature !== "string")) {
+    if (Array.isArray(enabledFeatures) &&
+        enabledFeatures.some((feature) => typeof feature !== "string")) {
         throw new Error("settings field 'tlh.experimental.enabledFeatures' must contain only strings");
     }
 }
@@ -84,7 +85,10 @@ function notifyExperimentalWriteResult(pi, ctx, featureId, result) {
     ctx.ui.notify(`${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`, "info");
 }
 async function showExperimentalFeaturePicker(pi, ctx) {
-    if (ctx.mode !== "tui" || !ctx.hasUI || !hasRegisteredExperimentalFeatures() || typeof ctx.ui.select !== "function") {
+    if (ctx.mode !== "tui" ||
+        !ctx.hasUI ||
+        !hasRegisteredExperimentalFeatures() ||
+        typeof ctx.ui.select !== "function") {
         ctx.ui.notify(formatExperimentalStatusMessage(getTlhExperimentalConfig(ctx.cwd)), "info");
         return;
     }
@@ -148,7 +152,11 @@ function writeExperimentalFeaturePreference(cwd, featureId, action) {
 }
 export function getExperimentalCommandCompletions(prefix) {
     const normalizedPrefix = prefix.trim().toLowerCase();
-    const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({ value: option.value, label: option.value, description: option.description }));
+    const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({
+        value: option.value,
+        label: option.value,
+        description: option.description,
+    }));
     return completions.length > 0 ? completions : null;
 }
 export async function handleExperimentalCommand(pi, args, ctx) {

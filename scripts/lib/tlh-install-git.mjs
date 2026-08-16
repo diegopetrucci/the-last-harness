@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { criticalGitSourceSpec } from "./tlh-install-package-source.mjs";
-import { assertProfilePathWithinAgent, isSymlink, realpathForCompare } from "./tlh-install-paths.mjs";
+import { assertProfilePathWithinAgent, isSymlink, realpathForCompare, } from "./tlh-install-paths.mjs";
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
 function commandDisplay(commandArgs) {
     return commandArgs.map(String).join(" ");
@@ -95,7 +95,9 @@ export function assertGitSourceTargetSafe(config, source, label = "git package c
     }
     if (isSymlink(gitMetadata))
         throw new Error(`refusing to use ${label} with symlinked git metadata: ${gitMetadata}`);
-    if (existsSync(gitMetadata) && !lstatSync(gitMetadata).isDirectory() && !lstatSync(gitMetadata).isFile()) {
+    if (existsSync(gitMetadata) &&
+        !lstatSync(gitMetadata).isDirectory() &&
+        !lstatSync(gitMetadata).isFile()) {
         throw new Error(`refusing to use ${label} with unsupported git metadata: ${gitMetadata}`);
     }
     if (existsSync(gitMetadata)) {
@@ -159,7 +161,14 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
         if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
             parent = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
         }
-        const commitTreeArgs = ["-c", "user.name=tlh-backup", "-c", "user.email=tlh-backup@local", "commit-tree", tree];
+        const commitTreeArgs = [
+            "-c",
+            "user.name=tlh-backup",
+            "-c",
+            "user.email=tlh-backup@local",
+            "commit-tree",
+            tree,
+        ];
         if (parent)
             commitTreeArgs.push("-p", parent);
         commitTreeArgs.push("-m", `tlh backup ${timestamp}`);

@@ -26,7 +26,9 @@ function readStringArrayField(entry, key, label) {
     if (!Array.isArray(entry[key])) {
         throw new Error(`Default extension ${label} field '${key}' must be an array`);
     }
-    return entry[key].map((value) => (typeof value === "string" ? value.trim() : "")).filter((value) => value.length > 0);
+    return entry[key]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0);
 }
 function readBooleanField(entry, key, label) {
     if (entry[key] === undefined)
@@ -114,7 +116,9 @@ export function packageIdentity(entry) {
     const trimmed = source.trim();
     if (trimmed.startsWith("npm:"))
         return npmIdentity(trimmed);
-    if (trimmed.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(trimmed) || trimmed.startsWith("git@")) {
+    if (trimmed.startsWith("git:") ||
+        /^(https?|ssh|git):\/\//i.test(trimmed) ||
+        trimmed.startsWith("git@")) {
         return gitIdentity(trimmed);
     }
     return `local:${trimmed}`;

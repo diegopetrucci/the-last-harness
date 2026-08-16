@@ -1,7 +1,12 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-const DEFAULT_VALID_UPDATE_TRACKS = Object.freeze(["latest-release", "pinned-tag", "ref", "custom"]);
+const DEFAULT_VALID_UPDATE_TRACKS = Object.freeze([
+    "latest-release",
+    "pinned-tag",
+    "ref",
+    "custom",
+]);
 function isErrnoException(error) {
     return typeof error === "object" && error !== null && "code" in error;
 }
@@ -27,15 +32,16 @@ export function pathWithinOrEqual(root, child) {
     const normalizedChild = stripTrailingSlashes(child);
     if (normalizedRoot === sep)
         return normalizedChild.startsWith(sep);
-    return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`));
 }
 export function pathIsProtectedPiConfig(path, { homeDir = homedir(), alreadyNormalized = false } = {}) {
     const normalizedPath = alreadyNormalized ? stripTrailingSlashes(path) : realpathForCompare(path);
     const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
     const normalPiAgentRoot = realpathForCompare(join(homeDir, ".pi", "agent"));
-    return pathWithinOrEqual(normalPiRoot, normalizedPath) || pathWithinOrEqual(normalPiAgentRoot, normalizedPath);
+    return (pathWithinOrEqual(normalPiRoot, normalizedPath) ||
+        pathWithinOrEqual(normalPiAgentRoot, normalizedPath));
 }
-export function validateInstallerTargets(config, { homeDir = homedir(), validUpdateTracks = DEFAULT_VALID_UPDATE_TRACKS } = {}) {
+export function validateInstallerTargets(config, { homeDir = homedir(), validUpdateTracks = DEFAULT_VALID_UPDATE_TRACKS, } = {}) {
     if (!config.wrapperName || !/^[A-Za-z0-9._-]+$/.test(config.wrapperName)) {
         throw new Error("--wrapper-name must be a simple command name containing only letters, numbers, dot, underscore, or dash");
     }

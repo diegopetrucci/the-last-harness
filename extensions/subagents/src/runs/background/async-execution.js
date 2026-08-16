@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.js";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
-import { isParallelGroup } from "../shared/parallel-utils.js";
+import { isParallelGroup, } from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
@@ -13,7 +13,7 @@ import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/
 import { buildFallbackModelList, buildModelCandidates, canonicalSubagentModelIdentity, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.js";
-import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.js";
+import { ChainOutputValidationError, validateChainOutputBindings, } from "../shared/chain-outputs.js";
 import { createStructuredOutputRuntime } from "../shared/structured-output.js";
 import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
@@ -36,7 +36,10 @@ export function isAsyncAvailable() {
 }
 function isNodeExecutableName(execPath) {
     const basename = path.basename(execPath).toLowerCase();
-    return basename === "node" || basename === "node.exe" || basename === "nodejs" || basename === "nodejs.exe";
+    return (basename === "node" ||
+        basename === "node.exe" ||
+        basename === "nodejs" ||
+        basename === "nodejs.exe");
 }
 function canUseCurrentNodeExecutable(execPath) {
     try {
@@ -54,7 +57,9 @@ function resolveAsyncRunnerNodeCommand() {
     return process.platform === "win32" ? "node.exe" : "node";
 }
 export function resolveAsyncRunnerLogPaths(cfg) {
-    const asyncDir = typeof cfg.asyncDir === "string" ? cfg.asyncDir : undefined;
+    const asyncDir = typeof cfg.asyncDir === "string"
+        ? cfg.asyncDir
+        : undefined;
     if (!asyncDir)
         return undefined;
     return {
@@ -89,7 +94,9 @@ function spawnRunner(cfg, suffix, cwd) {
     const cfgPath = getAsyncConfigPath(suffix);
     fs.writeFileSync(cfgPath, JSON.stringify(cfg));
     const nodeCommand = resolveAsyncRunnerNodeCommand();
-    const runnerArgs = runner.endsWith(".ts") ? ["--experimental-strip-types", runner, cfgPath] : [runner, cfgPath];
+    const runnerArgs = runner.endsWith(".ts")
+        ? ["--experimental-strip-types", runner, cfgPath]
+        : [runner, cfgPath];
     const logPaths = resolveAsyncRunnerLogPaths(cfg);
     let stdoutFd;
     let stderrFd;
@@ -165,7 +172,9 @@ function dedupeRunnerAttemptNotes(steps) {
             emitted.add(note);
             return true;
         });
-        return attemptNotes.length > 0 ? { ...step, attemptNotes } : { ...step, attemptNotes: undefined };
+        return attemptNotes.length > 0
+            ? { ...step, attemptNotes }
+            : { ...step, attemptNotes: undefined };
     };
     return steps.map((step) => {
         if (isParallelGroup(step))
@@ -193,7 +202,7 @@ function validateAsyncExecutionAcceptance(params) {
     return errors;
 }
 export function buildAsyncRunnerSteps(id, params) {
-    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir } = params;
+    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir, } = params;
     const outputBaseDir = params.outputBaseDir;
     const resultMode = params.resultMode ?? "chain";
     const availableModels = params.availableModels;
@@ -221,9 +230,15 @@ export function buildAsyncRunnerSteps(id, params) {
             return { error: error.message };
         throw error;
     }
-    const workflowGraph = buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, steps: graphChain });
+    const workflowGraph = buildWorkflowGraphSnapshot({
+        runId: id,
+        mode: resultMode,
+        steps: graphChain,
+    });
     for (const s of chain) {
-        const stepAgents = isParallelStep(s) ? s.parallel.map((t) => t.agent) : [s.agent];
+        const stepAgents = isParallelStep(s)
+            ? s.parallel.map((t) => t.agent)
+            : [s.agent];
         for (const agentName of stepAgents) {
             if (!agents.find((x) => x.name === agentName)) {
                 return { error: `Unknown agent: ${agentName}` };
@@ -283,7 +298,8 @@ export function buildAsyncRunnerSteps(id, params) {
         const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
         const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions));
         const modelIdentity = canonicalSubagentModelIdentity(model, primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-        const modelThinking = modelIdentity?.thinking ?? (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+        const modelThinking = modelIdentity?.thinking ??
+            (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
         const modelCandidates = buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
             .map((candidate) => {
             appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
@@ -334,7 +350,9 @@ export function buildAsyncRunnerSteps(id, params) {
             acceptanceRole: a.acceptanceRole,
             ...(s.outputSchema ? { structuredOutputSchema: s.outputSchema } : {}),
             ...(s.outputSchema
-                ? { structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")) }
+                ? {
+                    structuredOutput: createStructuredOutputRuntime(s.outputSchema, path.join(asyncDir, "structured-output")),
+                }
                 : {}),
             ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
             ...(a.maxExecutionTimeMs !== undefined &&
@@ -388,7 +406,8 @@ export function buildAsyncRunnerSteps(id, params) {
         };
     }
     catch (error) {
-        if (error instanceof UnavailableSubagentSkillError || error instanceof AsyncStartValidationError)
+        if (error instanceof UnavailableSubagentSkillError ||
+            error instanceof AsyncStartValidationError)
             return { error: error.message };
         throw error;
     }
@@ -410,7 +429,9 @@ export function executeAsyncChain(id, params) {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
-            content: [{ type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` }],
+            content: [
+                { type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` },
+            ],
             isError: true,
             details: { mode: resultMode, results: [] },
         };
@@ -451,12 +472,18 @@ export function executeAsyncChain(id, params) {
             return step.parallel;
         return [step];
     });
-    const tkTicketContext = resolveTkTicketTaskContext({ topLevelTask: params.task, runnerCwd, tasks: ticketTasks });
+    const tkTicketContext = resolveTkTicketTaskContext({
+        topLevelTask: params.task,
+        runnerCwd,
+        tasks: ticketTasks,
+    });
     const tkTicket = tkTicketContext
         ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
         : undefined;
     const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
-    const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
+    const initialTurnBudget = params.turnBudget
+        ? initialTurnBudgetState(params.turnBudget)
+        : undefined;
     let childTargetIndex = 0;
     const childIntercomTargets = childIntercomTarget
         ? steps.flatMap((step) => {
@@ -585,7 +612,9 @@ export function executeAsyncChain(id, params) {
             task: isParallelStep(eventFirstStep)
                 ? eventFirstStep.parallel[0]?.task?.slice(0, 50)
                 : eventFirstStep.task?.slice(0, 50),
-            chain: eventChain.map((s) => isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent),
+            chain: eventChain.map((s) => isParallelStep(s)
+                ? `[${s.parallel.map((t) => t.agent).join("+")}]`
+                : s.agent),
             chainStepCount: eventChain.length,
             parallelGroups,
             workflowGraph,
@@ -598,10 +627,17 @@ export function executeAsyncChain(id, params) {
         });
     }
     const chainDesc = chain
-        .map((s) => (isParallelStep(s) ? `[${s.parallel.map((t) => t.agent).join("+")}]` : s.agent))
+        .map((s) => isParallelStep(s)
+        ? `[${s.parallel.map((t) => t.agent).join("+")}]`
+        : s.agent)
         .join(" -> ");
     return {
-        content: [{ type: "text", text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`) }],
+        content: [
+            {
+                type: "text",
+                text: formatAsyncStartedMessage(`Async ${resultMode}: ${chainDesc} [${id}]`),
+            },
+        ],
         details: {
             mode: resultMode,
             runId: id,
@@ -647,7 +683,9 @@ export function executeAsyncSingle(id, params) {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
-            content: [{ type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` }],
+            content: [
+                { type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` },
+            ],
             isError: true,
             details: { mode: "single", results: [] },
         };
@@ -703,7 +741,8 @@ export function executeAsyncSingle(id, params) {
         return applyThinkingSuffix(candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
     })
         .filter((candidate) => candidate !== undefined);
-    const modelThinking = modelIdentity?.thinking ?? (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+    const modelThinking = modelIdentity?.thinking ??
+        (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
     const modelResolution = params.modelResolution
         ? {
             ...params.modelResolution,
@@ -725,7 +764,9 @@ export function executeAsyncSingle(id, params) {
     const tkTicket = detectTkTicketId(task)
         ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
         : normalizeTkTicketMetadata(params.inheritedTkTicket);
-    const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
+    const initialTurnBudget = params.turnBudget
+        ? initialTurnBudgetState(params.turnBudget)
+        : undefined;
     let spawnResult;
     try {
         spawnResult = spawnRunner({
@@ -854,7 +895,9 @@ export function executeAsyncSingle(id, params) {
                         agent,
                         agents: [agent],
                         chainStepCount: 1,
-                        ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
+                        ...(effectiveTimeoutMs !== undefined
+                            ? { timeoutMs: effectiveTimeoutMs, deadlineAt }
+                            : {}),
                         ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
                         startedAt: now,
                         lastUpdate: now,

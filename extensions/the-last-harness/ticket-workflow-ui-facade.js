@@ -1,4 +1,4 @@
-import { createTlhTicketWorkflowUiRuntime } from "./ticket-workflow-ui.js";
+import { createTlhTicketWorkflowUiRuntime, } from "./ticket-workflow-ui.js";
 import { activateTlhTicketSessionScope } from "./tickets.js";
 export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
     const runtimeFactory = options.createRuntime ?? ((api) => createTlhTicketWorkflowUiRuntime(api));
@@ -53,7 +53,9 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
             runtime.handleSessionShutdown();
             return;
         }
-        void runtimePromise?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown()).catch(() => undefined);
+        void runtimePromise
+            ?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown())
+            .catch(() => undefined);
     });
     pi.on("user_bash", (event, ctx) => {
         if (runtime) {

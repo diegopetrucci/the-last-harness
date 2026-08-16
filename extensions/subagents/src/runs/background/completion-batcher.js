@@ -17,9 +17,12 @@ export function resolveCompletionBatchConfig(config) {
         enabled,
         debounceMs: parsePositiveInt(config?.debounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.debounceMs,
         maxWaitMs: parsePositiveInt(config?.maxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.maxWaitMs,
-        stragglerDebounceMs: parsePositiveInt(config?.stragglerDebounceMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
-        stragglerMaxWaitMs: parsePositiveInt(config?.stragglerMaxWaitMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
-        stragglerWindowMs: parsePositiveInt(config?.stragglerWindowMs) ?? DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
+        stragglerDebounceMs: parsePositiveInt(config?.stragglerDebounceMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerDebounceMs,
+        stragglerMaxWaitMs: parsePositiveInt(config?.stragglerMaxWaitMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerMaxWaitMs,
+        stragglerWindowMs: parsePositiveInt(config?.stragglerWindowMs) ??
+            DEFAULT_COMPLETION_BATCH_CONFIG.stragglerWindowMs,
     };
 }
 const defaultTimers = {

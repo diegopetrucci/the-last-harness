@@ -68,12 +68,12 @@ const KILL_GRACE_MS = 500;
  * @param {NodeJS.Signals} signal
  */
 function _killTree(child, signal) {
-	if (child.pid == null) return;
-	try {
-		process.kill(-child.pid, signal);
-	} catch {
-		// ESRCH: process already gone; EPERM: race with exit — both are safe to ignore.
-	}
+  if (child.pid == null) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    // ESRCH: process already gone; EPERM: race with exit — both are safe to ignore.
+  }
 }
 
 /**
@@ -82,41 +82,41 @@ function _killTree(child, signal) {
  * to process.stdout, then exit.
  */
 function _installSignalHandlers() {
-	if (_signalHandlersInstalled) return;
-	_signalHandlersInstalled = true;
+  if (_signalHandlersInstalled) return;
+  _signalHandlersInstalled = true;
 
-	async function flushAndExit(sig) {
-		// Step 1: SIGTERM to every active child process group.
-		for (const ctx of _activeSpawns) {
-			if (ctx.child !== null) _killTree(ctx.child, "SIGTERM");
-		}
+  async function flushAndExit(sig) {
+    // Step 1: SIGTERM to every active child process group.
+    for (const ctx of _activeSpawns) {
+      if (ctx.child !== null) _killTree(ctx.child, "SIGTERM");
+    }
 
-		// Step 2: Brief grace period, then SIGKILL any survivors.
-		await new Promise((r) => setTimeout(r, KILL_GRACE_MS));
-		for (const ctx of _activeSpawns) {
-			if (ctx.child !== null) _killTree(ctx.child, "SIGKILL");
-		}
+    // Step 2: Brief grace period, then SIGKILL any survivors.
+    await new Promise((r) => setTimeout(r, KILL_GRACE_MS));
+    for (const ctx of _activeSpawns) {
+      if (ctx.child !== null) _killTree(ctx.child, "SIGKILL");
+    }
 
-		// Step 3: Serialize all in-flight buffers into one framed block on stdout.
-		const parts = [];
-		for (const ctx of _activeSpawns) {
-			if (ctx.label) {
-				parts.push(Buffer.from(`=== ${ctx.label} (interrupted by ${sig}) ===\n`));
-			}
-			parts.push(...ctx.outChunks);
-			parts.push(...ctx.errChunks);
-		}
+    // Step 3: Serialize all in-flight buffers into one framed block on stdout.
+    const parts = [];
+    for (const ctx of _activeSpawns) {
+      if (ctx.label) {
+        parts.push(Buffer.from(`=== ${ctx.label} (interrupted by ${sig}) ===\n`));
+      }
+      parts.push(...ctx.outChunks);
+      parts.push(...ctx.errChunks);
+    }
 
-		const buf = parts.length > 0 ? Buffer.concat(parts) : null;
-		if (buf !== null) {
-			process.stdout.write(buf, () => process.exit(1));
-		} else {
-			process.exit(1);
-		}
-	}
+    const buf = parts.length > 0 ? Buffer.concat(parts) : null;
+    if (buf !== null) {
+      process.stdout.write(buf, () => process.exit(1));
+    } else {
+      process.exit(1);
+    }
+  }
 
-	process.on("SIGINT", () => flushAndExit("SIGINT"));
-	process.on("SIGTERM", () => flushAndExit("SIGTERM"));
+  process.on("SIGINT", () => flushAndExit("SIGINT"));
+  process.on("SIGTERM", () => flushAndExit("SIGTERM"));
 }
 
 // ---------------------------------------------------------------------------
@@ -131,8 +131,8 @@ function _installSignalHandlers() {
  * @returns {string}
  */
 function _displayArg(arg) {
-	if (/^\/.+\.(mjs|js|cjs)$/.test(arg)) return basename(arg);
-	return arg;
+  if (/^\/.+\.(mjs|js|cjs)$/.test(arg)) return basename(arg);
+  return arg;
 }
 
 /**
@@ -157,80 +157,86 @@ function _displayArg(arg) {
  * @returns {Promise<{ ok: boolean }>}
  */
 export function spawnBuffered(
-	argv,
-	env,
-	{ cwd, stdout = process.stdout, stderr: _stderr = process.stderr, label, maxBufferBytes = MAX_BUFFER_BYTES } = {},
+  argv,
+  env,
+  {
+    cwd,
+    stdout = process.stdout,
+    stderr: _stderr = process.stderr,
+    label,
+    maxBufferBytes = MAX_BUFFER_BYTES,
+  } = {},
 ) {
-	_installSignalHandlers();
-	const [cmd, ...args] = argv;
+  _installSignalHandlers();
+  const [cmd, ...args] = argv;
 
-	return new Promise((resolve) => {
-		/** @type {Buffer[]} */
-		const outChunks = [];
-		/** @type {Buffer[]} */
-		const errChunks = [];
-		let outLen = 0;
-		let errLen = 0;
-		let outTruncated = false;
-		let errTruncated = false;
+  return new Promise((resolve) => {
+    /** @type {Buffer[]} */
+    const outChunks = [];
+    /** @type {Buffer[]} */
+    const errChunks = [];
+    let outLen = 0;
+    let errLen = 0;
+    let outTruncated = false;
+    let errTruncated = false;
 
-		/** @type {SpawnContext} */
-		const ctx = { outChunks, errChunks, label, child: null };
-		_activeSpawns.add(ctx);
+    /** @type {SpawnContext} */
+    const ctx = { outChunks, errChunks, label, child: null };
+    _activeSpawns.add(ctx);
 
-		const child = spawn(cmd, args, {
-			env,
-			cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			// detached: own process group so _killTree(-pid) reaches the full tree.
-			detached: true,
-		});
-		ctx.child = child;
+    const child = spawn(cmd, args, {
+      env,
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      // detached: own process group so _killTree(-pid) reaches the full tree.
+      detached: true,
+    });
+    ctx.child = child;
 
-		child.stdout.on("data", (chunk) => {
-			outLen += chunk.length;
-			if (outLen <= maxBufferBytes) {
-				outChunks.push(chunk);
-			} else if (!outTruncated) {
-				outTruncated = true;
-				outChunks.push(Buffer.from(`\n[TLH] stdout truncated at ${maxBufferBytes} bytes\n`));
-			}
-		});
+    child.stdout.on("data", (chunk) => {
+      outLen += chunk.length;
+      if (outLen <= maxBufferBytes) {
+        outChunks.push(chunk);
+      } else if (!outTruncated) {
+        outTruncated = true;
+        outChunks.push(Buffer.from(`\n[TLH] stdout truncated at ${maxBufferBytes} bytes\n`));
+      }
+    });
 
-		child.stderr.on("data", (chunk) => {
-			errLen += chunk.length;
-			if (errLen <= maxBufferBytes) {
-				errChunks.push(chunk);
-			} else if (!errTruncated) {
-				errTruncated = true;
-				errChunks.push(Buffer.from(`\n[TLH] stderr truncated at ${maxBufferBytes} bytes\n`));
-			}
-		});
+    child.stderr.on("data", (chunk) => {
+      errLen += chunk.length;
+      if (errLen <= maxBufferBytes) {
+        errChunks.push(chunk);
+      } else if (!errTruncated) {
+        errTruncated = true;
+        errChunks.push(Buffer.from(`\n[TLH] stderr truncated at ${maxBufferBytes} bytes\n`));
+      }
+    });
 
-		child.on("error", (error) => {
-			_activeSpawns.delete(ctx);
-			// Frame the spawn error on stdout alongside any buffered output so the
-			// label stays attached to the diagnostics.
-			const parts = [];
-			if (label) parts.push(Buffer.from(`=== ${label} (spawn error) ===\n`));
-			parts.push(...errChunks);
-			parts.push(Buffer.from(`spawn error for ${cmd}: ${error.message}\n`));
-			stdout.write(Buffer.concat(parts));
-			resolve({ ok: false });
-		});
+    child.on("error", (error) => {
+      _activeSpawns.delete(ctx);
+      // Frame the spawn error on stdout alongside any buffered output so the
+      // label stays attached to the diagnostics.
+      const parts = [];
+      if (label) parts.push(Buffer.from(`=== ${label} (spawn error) ===\n`));
+      parts.push(...errChunks);
+      parts.push(Buffer.from(`spawn error for ${cmd}: ${error.message}\n`));
+      stdout.write(Buffer.concat(parts));
+      resolve({ ok: false });
+    });
 
-		child.on("close", (code, signal) => {
-			_activeSpawns.delete(ctx);
-			// Serialize header + stdout + stderr into one atomic write to stdout so
-			// no concurrent lane's stderr can appear between this label and its payload.
-			const parts = [];
-			if (label) parts.push(Buffer.from(`=== ${label} ===\n`));
-			parts.push(...outChunks);
-			parts.push(...errChunks);
-			if (parts.length > 0) stdout.write(Buffer.concat(parts));
-			resolve({ ok: code === 0 && signal == null });
-		});
-	});
+    child.on("close", (code, signal) => {
+      _activeSpawns.delete(ctx);
+      // Serialize header + stdout + stderr into one atomic write to stdout so
+      // no concurrent lane's stderr can appear between this label and its payload.
+      const parts = [];
+      if (label) parts.push(Buffer.from(`=== ${label} ===\n`));
+      parts.push(...outChunks);
+      parts.push(...errChunks);
+      if (parts.length > 0) stdout.write(Buffer.concat(parts));
+      resolve({ ok: code === 0 && signal == null });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -251,18 +257,18 @@ export function spawnBuffered(
  * @returns {Promise<boolean>} true if all commands passed
  */
 export async function runLane(lane, laneHomeDir, opts = {}) {
-	mkdirSync(laneHomeDir, { recursive: true });
+  mkdirSync(laneHomeDir, { recursive: true });
 
-	const laneEnv = { ...process.env, ...lane.env, HOME: laneHomeDir };
+  const laneEnv = { ...process.env, ...lane.env, HOME: laneHomeDir };
 
-	for (const argv of lane.commands) {
-		const parts = [basename(argv[0]), ...argv.slice(1).map(_displayArg)].join(" ");
-		const raw = `lane ${lane.name}: ${parts}`;
-		const label = raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
-		const { ok } = await spawnBuffered(argv, laneEnv, { ...opts, label });
-		if (!ok) return false;
-	}
-	return true;
+  for (const argv of lane.commands) {
+    const parts = [basename(argv[0]), ...argv.slice(1).map(_displayArg)].join(" ");
+    const raw = `lane ${lane.name}: ${parts}`;
+    const label = raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
+    const { ok } = await spawnBuffered(argv, laneEnv, { ...opts, label });
+    if (!ok) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,11 +291,11 @@ export async function runLane(lane, laneHomeDir, opts = {}) {
  * @returns {Promise<number>} 0 if all passed, 1 if any failed
  */
 export async function runLanes(lanes, { baseHomeDir, cwd }, opts = {}) {
-	const results = await Promise.allSettled(
-		lanes.map((lane) => {
-			const laneHomeDir = join(baseHomeDir, `lane-${lane.name}`);
-			return runLane(lane, laneHomeDir, { cwd, ...opts });
-		}),
-	);
-	return results.every((r) => r.status === "fulfilled" && r.value === true) ? 0 : 1;
+  const results = await Promise.allSettled(
+    lanes.map((lane) => {
+      const laneHomeDir = join(baseHomeDir, `lane-${lane.name}`);
+      return runLane(lane, laneHomeDir, { cwd, ...opts });
+    }),
+  );
+  return results.every((r) => r.status === "fulfilled" && r.value === true) ? 0 : 1;
 }

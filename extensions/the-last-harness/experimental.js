@@ -138,7 +138,8 @@ export function parseExperimentalSlashAction(args) {
     if (parts[0] === "status") {
         return parts.length <= 2 ? { type: "status", featureId: parts[1] } : undefined;
     }
-    if (parts.length === 2 && (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")) {
+    if (parts.length === 2 &&
+        (parts[0] === "enable" || parts[0] === "disable" || parts[0] === "toggle")) {
         return { type: parts[0], featureId: parts[1] };
     }
     return undefined;
@@ -171,7 +172,11 @@ export function registerExperimentalCommand(pi) {
         description: "List or change TLH experimental features",
         getArgumentCompletions: (prefix) => {
             const normalizedPrefix = prefix.trim().toLowerCase();
-            const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({ value: option.value, label: option.value, description: option.description }));
+            const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({
+                value: option.value,
+                label: option.value,
+                description: option.description,
+            }));
             return completions.length > 0 ? completions : null;
         },
         handler: (args, ctx) => handleExperimentalCommand(pi, args, ctx),

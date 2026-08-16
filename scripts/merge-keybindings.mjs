@@ -73,11 +73,14 @@ function isPlainObject(value) {
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
-const legacyKeybindingOwners = new Map([["app.thinking.cycle", ["cycleThinkingLevel"]]]);
+const legacyKeybindingOwners = new Map([
+    ["app.thinking.cycle", ["cycleThinkingLevel"]],
+]);
 function hasExistingKeybindingOwner(keybindings, key) {
     if (Object.hasOwn(keybindings, key))
         return true;
-    return legacyKeybindingOwners.get(key)?.some((legacyKey) => Object.hasOwn(keybindings, legacyKey)) ?? false;
+    return (legacyKeybindingOwners.get(key)?.some((legacyKey) => Object.hasOwn(keybindings, legacyKey)) ??
+        false);
 }
 function mergeKeybindings(existing, defaults) {
     if (!isPlainObject(existing)) {
@@ -134,7 +137,8 @@ function main() {
         return;
     }
     const defaultsPath = resolve(expandHomePath(args.defaultsPath || defaultDefaultsPath()) || defaultDefaultsPath());
-    const keybindingsPath = resolve(expandHomePath(args.keybindingsPath || defaultTlhKeybindingsPath()) || defaultTlhKeybindingsPath());
+    const keybindingsPath = resolve(expandHomePath(args.keybindingsPath || defaultTlhKeybindingsPath()) ||
+        defaultTlhKeybindingsPath());
     assertKeybindingsTarget(keybindingsPath);
     const existed = existsSync(keybindingsPath);
     const existing = readJsonFile(keybindingsPath, { missingValue: {} });

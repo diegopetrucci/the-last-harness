@@ -74,7 +74,8 @@ function formatUsageWindowLabel(provider, window, windowType) {
     }
     const key = normalizedUsageLabel(window.key);
     const label = normalizedUsageLabel(window.label);
-    if (provider === "anthropic" && [key, label].some((value) => ["five-hour", "five-hours", "5h"].includes(value))) {
+    if (provider === "anthropic" &&
+        [key, label].some((value) => ["five-hour", "five-hours", "5h"].includes(value))) {
         return "5h session";
     }
     return "session";
@@ -126,7 +127,9 @@ export function formatTlhSubscriptionUsageFooterSegment(snapshot, options = {}) 
     return segments.join(" · ");
 }
 function isSubscriptionUsageEligible(ctx, provider, usageProvider) {
-    if (!provider || !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(provider) || typeof usageProvider?.isEligible !== "function") {
+    if (!provider ||
+        !TLH_SUBSCRIPTION_USAGE_PROVIDERS.has(provider) ||
+        typeof usageProvider?.isEligible !== "function") {
         return false;
     }
     try {

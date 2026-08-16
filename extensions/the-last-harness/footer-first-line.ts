@@ -5,11 +5,11 @@ import { formatTlhGitFooterSegments } from "./footer-git.js";
 export const FOOTER_FIRST_LINE_SEPARATOR = " • ";
 
 export type TlhFooterFirstLineInput = {
-	cwd: string;
-	sessionName?: string | null;
-	status?: GitStatusSnapshot | undefined;
-	pullRequest?: PullRequestSnapshot | undefined;
-	fallbackBranch?: string | null;
+  cwd: string;
+  sessionName?: string | null;
+  status?: GitStatusSnapshot | undefined;
+  pullRequest?: PullRequestSnapshot | undefined;
+  fallbackBranch?: string | null;
 };
 
 /**
@@ -24,16 +24,16 @@ export type TlhFooterFirstLineInput = {
  * the new canonical look.
  */
 export function composeTlhFooterFirstLine(input: TlhFooterFirstLineInput): string {
-	const segments: string[] = [input.cwd];
-	if (input.status !== undefined) {
-		for (const segment of formatTlhGitFooterSegments(input.status, input.pullRequest)) {
-			segments.push(segment);
-		}
-	} else if (input.fallbackBranch) {
-		segments.push(input.fallbackBranch);
-	}
-	if (input.sessionName) {
-		segments.push(input.sessionName);
-	}
-	return segments.join(FOOTER_FIRST_LINE_SEPARATOR);
+  const segments: string[] = [input.cwd];
+  if (input.status !== undefined) {
+    for (const segment of formatTlhGitFooterSegments(input.status, input.pullRequest)) {
+      segments.push(segment);
+    }
+  } else if (input.fallbackBranch) {
+    segments.push(input.fallbackBranch);
+  }
+  if (input.sessionName) {
+    segments.push(input.sessionName);
+  }
+  return segments.join(FOOTER_FIRST_LINE_SEPARATOR);
 }

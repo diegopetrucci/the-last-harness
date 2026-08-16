@@ -111,7 +111,8 @@ function escapeForInlineScript(value) {
     return value.replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 }
 function hasReviewFeedback(payload) {
-    return payload.overallComment.trim().length > 0 || payload.comments.some((comment) => comment.body.trim().length > 0);
+    return (payload.overallComment.trim().length > 0 ||
+        payload.comments.some((comment) => comment.body.trim().length > 0));
 }
 function appendReviewPrompt(ctx, prompt) {
     const prefix = ctx.ui.getEditorText().trim().length > 0 ? "\n\n" : "";
@@ -195,7 +196,9 @@ export function createAnnotateGitDiffController(pi, dependencies = {}) {
                 const version = ++reviewSnapshotVersion;
                 const allFiles = new Map(nextReviewData.files.map((file) => [file.id, file]));
                 const branchFiles = new Map(nextReviewData.files.filter((file) => file.inGitDiff).map((file) => [file.id, file]));
-                const immutableCommitShas = new Set(nextReviewData.commits.filter((commit) => commit.kind !== "working-tree").map((commit) => commit.sha));
+                const immutableCommitShas = new Set(nextReviewData.commits
+                    .filter((commit) => commit.kind !== "working-tree")
+                    .map((commit) => commit.sha));
                 const commitFilesBySha = new Map();
                 const commitFileCache = new Map();
                 const contentCache = new Map();
@@ -367,11 +370,14 @@ export function createAnnotateGitDiffController(pi, dependencies = {}) {
                             return false;
                         if (isCurrentSnapshot(snapshotVersion))
                             return true;
-                        if (message.scope !== "commits" || requestCommitSha == null || !isImmutableCommitSha(requestCommitSha)) {
+                        if (message.scope !== "commits" ||
+                            requestCommitSha == null ||
+                            !isImmutableCommitSha(requestCommitSha)) {
                             return false;
                         }
                         return (snapshot.contentCache.get(cacheKey) === pendingContents ||
-                            (allowRetainedRejection && retainedImmutablePromiseVersions.get(pendingContents) === snapshot.version));
+                            (allowRetainedRejection &&
+                                retainedImmutablePromiseVersions.get(pendingContents) === snapshot.version));
                     };
                     try {
                         const contents = await pendingContents;
