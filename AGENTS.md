@@ -75,10 +75,15 @@ git diff --cached
 - Every GitHub issue should carry a type label (`bug`/`enhancement`/`documentation`) plus an `area/*` label, and be tracked in the TLH Roadmap project.
 - If a Github issue is picked up, move it to `In Progress` in the [TLH Roadmap](https://github.com/users/diegopetrucci/projects/1/views/1?layout=board). Once work is merged, move it to `Ready for release`. If released, tag it with the release it went out with, and move it to `Done`.
 
-## Miscellaneous
+## Memory
 
 - At the start of any task, run `gn help plan` and follow its instructions.
 - After finishing a task, run `gn help review`.
+- Always commit gnosis entries with the relevant work.
+- Always merge gnosis conflicts as a union, keeping both sides.
+
+## Miscellaneous
+
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
 - For TypeScript boundary parsing or open-object decisions, load `.pi/skills/tlh-typescript-boundaries/SKILL.md`.
