@@ -653,13 +653,13 @@ function widgetTkTicketText(job: AsyncJobState): string | undefined {
   return normalizedTkTicket ? `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}` : undefined;
 }
 
-function widgetTkTicketLine(job: AsyncJobState, theme: Theme): string | undefined {
+function widgetTkTicketLine(job: AsyncJobState, theme: Theme, indent = "  "): string | undefined {
   const ticket = widgetTkTicketText(job);
-  return ticket ? `  ${theme.fg("dim", ticket)}` : undefined;
+  return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 
-function widgetTkTicketLines(job: AsyncJobState, theme: Theme): string[] {
-  const line = widgetTkTicketLine(job, theme);
+function widgetTkTicketLines(job: AsyncJobState, theme: Theme, indent = "  "): string[] {
+  const line = widgetTkTicketLine(job, theme, indent);
   return line ? [line] : [];
 }
 
@@ -1571,20 +1571,19 @@ function singleWidgetAgentDetails(
 ): string[] {
   const step = job.steps?.[0];
   if (step) {
-    const lines = [
-      ...widgetTkTicketLines(job, theme),
-      ...foregroundStyleWidgetStepLines(
-        job,
-        theme,
-        step,
-        undefined,
-        1,
-        1,
-        expanded,
-        width,
-        singleWidgetStepDisplayStatus(job, step),
-      ),
-    ];
+    const stepLines = foregroundStyleWidgetStepLines(
+      job,
+      theme,
+      step,
+      undefined,
+      1,
+      1,
+      expanded,
+      width,
+      singleWidgetStepDisplayStatus(job, step),
+    );
+    const ticketLines = widgetTkTicketLines(job, theme, "    ");
+    const lines = [stepLines[0], ...ticketLines, ...stepLines.slice(1)];
     const attached = new Set(step.children?.map((child) => child.id) ?? []);
     const unattached = job.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
     for (const nestedLine of formatNestedWidgetLines(
