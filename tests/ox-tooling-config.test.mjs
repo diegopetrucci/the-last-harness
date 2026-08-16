@@ -17,7 +17,10 @@ const extensionHtmlIgnores = [
   "extensions/annotate-git-diff/web/index.html",
   "extensions/the-last-harness/annotate-last-message/web/index.html",
 ];
-const activeAntiSlopRuleName = "anti-slop/no-unknown-type-aliases";
+const activeAntiSlopRuleNames = [
+  "anti-slop/no-module-mocking",
+  "anti-slop/no-unknown-type-aliases",
+];
 const antiSlopRuleNames = [
   "anti-slop/no-chained-type-assertions",
   "anti-slop/no-conditional-empty-object-spread",
@@ -219,7 +222,7 @@ test("copied anti-slop plugin contains the complete bundled inventory", () => {
   assert.match(readText(resolve(antiSlopRoot, "index.ts")), /from "@oxlint\/plugins"/);
 });
 
-test("Oxlint config loads the plugin, protects tooling, and activates only the first anti-slop rule", async () => {
+test("Oxlint config loads the plugin, protects tooling, and activates exactly the two approved anti-slop rules", async () => {
   const source = readText(oxlintConfigPath);
   const config = readCommentCapableJson(oxlintConfigPath);
   assert.equal(config.$schema, "./node_modules/oxlint/configuration_schema.json");
@@ -232,10 +235,20 @@ test("Oxlint config loads the plugin, protects tooling, and activates only the f
   for (const pattern of requiredOxlintIgnores) {
     assert.ok(config.ignorePatterns.includes(pattern), `missing required Oxlint ignore ${pattern}`);
   }
+  assert.equal(
+    Object.keys(config.rules).length,
+    activeAntiSlopRuleNames.length,
+    "exactly two anti-slop rules must be active",
+  );
+  assert.equal(
+    antiSlopRuleNames.length - activeAntiSlopRuleNames.length,
+    13,
+    "exactly 13 anti-slop rules must remain commented out",
+  );
   assert.deepEqual(
     config.rules,
-    { [activeAntiSlopRuleName]: "error" },
-    "only the first anti-slop rule is active at error severity",
+    Object.fromEntries(activeAntiSlopRuleNames.map((ruleName) => [ruleName, "error"])),
+    "only the two approved anti-slop rules are active at error severity",
   );
 
   const plugin = await import(pathToFileURL(resolve(repoRoot, config.jsPlugins[0].specifier)).href);
@@ -249,7 +262,7 @@ test("Oxlint config loads the plugin, protects tooling, and activates only the f
     const occurrences = source.match(new RegExp(escapeRegExp(ruleName), "g")) ?? [];
     assert.equal(occurrences.length, 1, `${ruleName} must appear exactly once in .oxlintrc.json`);
     const line = source.split(/\r?\n/).find((candidate) => candidate.includes(ruleName));
-    if (ruleName === activeAntiSlopRuleName) {
+    if (activeAntiSlopRuleNames.includes(ruleName)) {
       assert.match(line, /^\s*"/, `${ruleName} must remain active`);
     } else {
       assert.match(line, /^\s*\/\/\s*"/, `${ruleName} must remain visibly commented out`);
