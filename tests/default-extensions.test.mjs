@@ -36,7 +36,7 @@ const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1"
 const previousBundledDirtyRepoGuardSource = "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 const expectedBundledNpmPackageIdentities = new Map([
-  ["openai-fast", "npm:@diegopetrucci/pi-openai-fast"],
+  ["fast", "npm:@diegopetrucci/pi-fast"],
   ["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
   ["inline-bash", "npm:@diegopetrucci/pi-inline-bash"],
   ["context-inspector", "npm:@diegopetrucci/pi-context-inspector"],
@@ -1899,6 +1899,54 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 
   const disabledSettings = readJson(disableFixture.settings);
   assert.deepEqual(disabledSettings.tlh.disabledDefaultExtensions, ["mcporter"]);
+  assert.deepEqual(disabledSettings.packages, []);
+});
+
+test("bundled manifest contains fast entry with migration metadata", () => {
+  const bundled = bundledExtensions;
+  const fast = bundled.find(({ id }) => id === "fast");
+
+  assert.ok(fast, "bundled fast entry should exist");
+  assert.equal(fast.critical, false, "fast must not be critical");
+  assert.deepEqual(
+    fast.aliases,
+    ["openai-fast"],
+    "fast should carry openai-fast alias to migrate users who disabled by the old id",
+  );
+  assert.deepEqual(
+    fast.replaces,
+    ["npm:@diegopetrucci/pi-openai-fast"],
+    "fast should replace the previous openai-fast npm package",
+  );
+  assert.equal(
+    fast.migrateReplacements,
+    true,
+    "fast replacements must stay enabled so the old package is removed on update",
+  );
+
+  // opt-out migration: a user who ran 'tlh defaults disable openai-fast' should
+  // have the disabled entry normalised to the canonical 'fast' id.
+  const disableFixture = tempFixture();
+  writeFileSync(
+    disableFixture.settings,
+    JSON.stringify({ packages: ["npm:@diegopetrucci/pi-openai-fast"] }, null, 2),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    disableFixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "disable",
+    "openai-fast",
+  ]);
+
+  const disabledSettings = readJson(disableFixture.settings);
+  assert.deepEqual(
+    disabledSettings.tlh.disabledDefaultExtensions,
+    ["fast"],
+    "disabling by alias should normalise to the canonical fast id",
+  );
   assert.deepEqual(disabledSettings.packages, []);
 });
 
