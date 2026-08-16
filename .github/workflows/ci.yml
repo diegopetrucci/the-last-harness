@@ -14,6 +14,39 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  lint:
+    name: Linting and formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+          cache: 'npm'
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-22.19.0-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Run linting and formatting checks
+        env:
+          HOME: ${{ runner.temp }}/tlh-home
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${HOME}"
+          node scripts/run-ci-validation.mjs --lanes=lint
+
   validation:
     name: Non-test validation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -51,7 +84,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "${HOME}"
-          node scripts/run-ci-validation.mjs
+          node scripts/run-ci-validation.mjs --exclude=lint
 
   tests:
     name: Tests (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
