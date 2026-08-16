@@ -16,12 +16,12 @@ function buildThemeCssBlock(vars) {
         .join("\n");
     return `:root {\n${declarations}\n}`;
 }
-export function buildAnnotateLastMessageHtml(data) {
+export function buildAnnotateLastMessageHtml(data, getters) {
     const templateHtml = readFileSync(join(webDir, "index.html"), "utf8");
     const mdRendererJs = escapeInlineScriptSource(readFileSync(join(webDir, "md-renderer.js"), "utf8"));
     const appJs = escapeInlineScriptSource(readFileSync(join(webDir, "app.js"), "utf8"));
     const payload = escapeForInlineScript(JSON.stringify(data));
-    const themeBlock = buildThemeCssBlock(getThemeCssVars());
+    const themeBlock = buildThemeCssBlock(getThemeCssVars(getters));
     return templateHtml
         .replace('"__INLINE_DATA__"', () => payload)
         .replace("__INLINE_MD_RENDERER_JS__", () => mdRendererJs)

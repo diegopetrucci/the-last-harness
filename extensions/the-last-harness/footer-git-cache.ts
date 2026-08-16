@@ -42,13 +42,13 @@ export type CommandRunner = (
   options: { cwd: string; signal: AbortSignal },
 ) => Promise<CommandResult>;
 
-/** Opaque handle returned by an injectable interval clock. */
-export type TimerHandle = unknown;
-
-/** Injectable interval clock. Defaults to `setInterval`/`clearInterval`. */
+/**
+ * Injectable interval clock. Timer handles stay explicit `unknown` so callers
+ * can provide Node, browser, or fake-clock implementations structurally.
+ */
 export type Clock = {
-  setInterval(callback: () => void, ms: number): TimerHandle;
-  clearInterval(handle: TimerHandle): void;
+  setInterval(callback: () => void, ms: number): unknown;
+  clearInterval(handle: unknown): void;
 };
 
 export type FooterGitCacheOptions = {
@@ -247,7 +247,7 @@ export class FooterGitCache {
   private readonly ghTimeoutMs: number;
   private readonly onChange: (() => void) | undefined;
 
-  private intervalHandle: TimerHandle | undefined;
+  private intervalHandle: unknown;
   private readonly inflightControllers = new Set<AbortController>();
   private disposed = false;
   private refreshInFlight: Promise<void> | undefined;

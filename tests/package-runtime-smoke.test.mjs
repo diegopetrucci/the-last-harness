@@ -19,6 +19,7 @@ const testsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(testsDir, "..");
 const runnerPath = join(testsDir, "package-runtime-smoke-runner.mjs");
 const expectedEntrypoints = [
+  "./extensions/notify/index.js",
   "./extensions/annotate-git-diff/index.js",
   "./extensions/the-last-harness.js",
   "./extensions/subagents/src/extension/index.js",
@@ -105,7 +106,7 @@ Return the deterministic faux child marker exactly.
   ]
     .map((path) => path.replace(/\.ts$/, ".js"))
     .sort();
-  assert.equal(generatedExtensionPaths.length, 171);
+  assert.equal(generatedExtensionPaths.length, 173);
   for (const generatedPath of generatedExtensionPaths) {
     assert.ok(
       packedPaths.has(generatedPath),
@@ -164,7 +165,7 @@ Return the deterministic faux child marker exactly.
   assert.deepEqual(runtimeEvidence.packageResolution, {
     configuredPackage: packageRoot,
     resolvedPackageRoots: [packageRoot],
-    entrypointCount: 3,
+    entrypointCount: 4,
     scope: "user",
     origin: "package",
   });

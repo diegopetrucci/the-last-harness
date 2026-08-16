@@ -262,7 +262,8 @@ test("runtime TypeScript helper tracks generated extension runtime modules", () 
   const extensionSources = globSync("extensions/**/*.ts", { cwd: repoRoot }).filter(
     (path) => !path.endsWith(".d.ts") && !path.startsWith("extensions/subagents/"),
   );
-  assert.equal(extensionSources.length, 77);
+  assert.equal(extensionSources.length, 79);
+
   for (const sourcePath of extensionSources) {
     const outputPath = sourcePath.replace(/\.ts$/, ".js");
     assert.equal(existsSync(join(repoRoot, outputPath)), true, `${outputPath} should exist`);
@@ -531,6 +532,7 @@ test("generated extension outputs omit empty Pi runtime imports for type-only en
 test("package manifest lists only the ordered generated JS extension entrypoints to avoid duplicate TS and JS discovery", () => {
   const pkg = readPackageJson();
   assert.deepEqual(pkg.pi.extensions, [
+    "./extensions/notify/index.js",
     "./extensions/annotate-git-diff/index.js",
     "./extensions/the-last-harness.js",
     "./extensions/subagents/src/extension/index.js",

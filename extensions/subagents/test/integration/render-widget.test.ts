@@ -297,9 +297,24 @@ describe("subagent async widget rendering", () => {
 
     const text = lines.join("\n");
     assert.match(text, /working on tk: Show active tk title/);
+    // Ticket line must appear after the step identity row and before the activity/hint.
+    assert.ok(
+      text.indexOf("worker") < text.indexOf("working on tk: Show active tk title"),
+      "ticket line should appear after the agent identity row",
+    );
     assert.ok(
       text.indexOf("working on tk: Show active tk title") <
         text.indexOf("Press Ctrl+Shift+D for live detail"),
+      "ticket line should appear before the live-detail hint",
+    );
+    assert.ok(
+      text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  read"),
+      "ticket line should appear before the activity line",
+    );
+    assert.equal(
+      text.match(/working on tk: Show active tk title/g)?.length,
+      1,
+      "ticket line should appear exactly once",
     );
   });
 

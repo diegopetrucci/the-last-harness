@@ -1,4 +1,3 @@
-import { getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 const FALLBACK = {
     "--mdHeading": "#f4c95d",
     "--mdLink": "#7dd3fc",
@@ -142,24 +141,30 @@ export function buildCssVarsFromThemes(mdTheme, slTheme, ssTheme) {
     }
     return vars;
 }
-export function getThemeCssVars() {
+export function getThemeCssVars(getters) {
     let mdTheme = null;
     let slTheme = null;
     let ssTheme = null;
-    try {
-        mdTheme = getMarkdownTheme();
+    if (getters?.getMarkdownTheme) {
+        try {
+            mdTheme = getters.getMarkdownTheme();
+        }
+        catch {
+        }
     }
-    catch {
+    if (getters?.getSelectListTheme) {
+        try {
+            slTheme = getters.getSelectListTheme();
+        }
+        catch {
+        }
     }
-    try {
-        slTheme = getSelectListTheme();
-    }
-    catch {
-    }
-    try {
-        ssTheme = getSettingsListTheme();
-    }
-    catch {
+    if (getters?.getSettingsListTheme) {
+        try {
+            ssTheme = getters.getSettingsListTheme();
+        }
+        catch {
+        }
     }
     return buildCssVarsFromThemes(mdTheme, slTheme, ssTheme);
 }

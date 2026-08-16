@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { LastAssistantMessageData } from "./types.js";
-import { getThemeCssVars } from "./theme.js";
+import { type ThemeGetters, getThemeCssVars } from "./theme.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const webDir = join(__dirname, "web");
@@ -29,14 +29,17 @@ function buildThemeCssBlock(vars: Record<string, string>): string {
   return `:root {\n${declarations}\n}`;
 }
 
-export function buildAnnotateLastMessageHtml(data: LastAssistantMessageData): string {
+export function buildAnnotateLastMessageHtml(
+  data: LastAssistantMessageData,
+  getters?: ThemeGetters,
+): string {
   const templateHtml = readFileSync(join(webDir, "index.html"), "utf8");
   const mdRendererJs = escapeInlineScriptSource(
     readFileSync(join(webDir, "md-renderer.js"), "utf8"),
   );
   const appJs = escapeInlineScriptSource(readFileSync(join(webDir, "app.js"), "utf8"));
   const payload = escapeForInlineScript(JSON.stringify(data));
-  const themeBlock = buildThemeCssBlock(getThemeCssVars());
+  const themeBlock = buildThemeCssBlock(getThemeCssVars(getters));
   return templateHtml
     .replace('"__INLINE_DATA__"', () => payload)
     .replace("__INLINE_MD_RENDERER_JS__", () => mdRendererJs)

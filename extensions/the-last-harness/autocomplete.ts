@@ -7,7 +7,6 @@ import { AUTOCOMPLETE_SOURCE_TAG_PATTERN } from "./constants.js";
 
 const HIDDEN_SLASH_COMMANDS = new Set([
   "changelog",
-  "clone",
   "import",
   "scoped-models",
   "subagent-cost",

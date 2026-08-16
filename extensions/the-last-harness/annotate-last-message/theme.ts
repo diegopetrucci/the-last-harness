@@ -11,12 +11,19 @@
  *   and the no-op/empty case.
  */
 
-import {
-  getMarkdownTheme,
-  getSelectListTheme,
-  getSettingsListTheme,
-} from "@earendil-works/pi-coding-agent";
 import type { MarkdownTheme, SelectListTheme, SettingsListTheme } from "@earendil-works/pi-tui";
+
+/**
+ * Optionally-injected live theme getter functions.  Callers in the eager jiti
+ * graph (e.g. the-last-harness.ts) supply these so that the lazy-loaded module
+ * graph (annotate-last-message → ui → theme) never imports bare specifiers.
+ * When omitted every var falls back to the static TLH palette.
+ */
+export type ThemeGetters = {
+  getMarkdownTheme?: () => MarkdownTheme;
+  getSelectListTheme?: () => SelectListTheme;
+  getSettingsListTheme?: () => SettingsListTheme;
+};
 
 // ---------------------------------------------------------------------------
 // Static fallback palette (mirrors themes/the-last-harness.json)
@@ -239,25 +246,31 @@ export function buildCssVarsFromThemes(
  *
  * @returns Map of CSS var name → colour value, e.g. `{ "--mdHeading": "#f4c95d" }`.
  */
-export function getThemeCssVars(): Record<string, string> {
+export function getThemeCssVars(getters?: ThemeGetters): Record<string, string> {
   let mdTheme: MarkdownTheme | null = null;
   let slTheme: SelectListTheme | null = null;
   let ssTheme: SettingsListTheme | null = null;
 
-  try {
-    mdTheme = getMarkdownTheme();
-  } catch {
-    // Theme not initialized; all md vars will use fallbacks.
+  if (getters?.getMarkdownTheme) {
+    try {
+      mdTheme = getters.getMarkdownTheme();
+    } catch {
+      // Theme not initialized; all md vars will use fallbacks.
+    }
   }
-  try {
-    slTheme = getSelectListTheme();
-  } catch {
-    // Fallback for accent/muted.
+  if (getters?.getSelectListTheme) {
+    try {
+      slTheme = getters.getSelectListTheme();
+    } catch {
+      // Fallback for accent/muted.
+    }
   }
-  try {
-    ssTheme = getSettingsListTheme();
-  } catch {
-    // Fallback for dim.
+  if (getters?.getSettingsListTheme) {
+    try {
+      ssTheme = getters.getSettingsListTheme();
+    } catch {
+      // Fallback for dim.
+    }
   }
 
   return buildCssVarsFromThemes(mdTheme, slTheme, ssTheme);

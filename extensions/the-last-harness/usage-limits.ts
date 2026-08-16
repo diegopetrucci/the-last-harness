@@ -1,10 +1,4 @@
-import {
-  SettingsManager,
-  getAgentDir,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
-
+import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TlhSettings, TlhUsageLimitsConfig } from "./types.js";
 
 export const USAGE_COMMAND_HELP =
@@ -17,31 +11,9 @@ const USAGE_COMMAND_COMPLETIONS = [
   { value: "weekly toggle", description: "Toggle the weekly usage-limit window in the footer" },
 ] as const;
 
-type UsageLimitsCommandModule = {
-  handleUsageCommand(args: string, ctx: ExtensionCommandContext): Promise<void>;
-};
-
-type TlhUsageCommandFacadeOptions = {
-  loadModule?: () => Promise<UsageLimitsCommandModule>;
-};
+import { handleUsageCommand } from "./usage-limits-command.js";
 
 let cachedTlhUsageWeeklyVisibility: boolean | undefined;
-
-function createRetryableLazyImport<TModule>(
-  loader: () => Promise<TModule>,
-): () => Promise<TModule> {
-  let modulePromise: Promise<TModule> | undefined;
-  return () => {
-    if (!modulePromise) {
-      modulePromise = loader().catch((error) => {
-        modulePromise = undefined;
-        throw error;
-      });
-    }
-    return modulePromise;
-  };
-}
-
 export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | undefined {
   try {
     const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
@@ -86,20 +58,10 @@ function usageCommandCompletions(prefix: string) {
   return completions.length > 0 ? completions : null;
 }
 
-export function registerUsageCommand(
-  pi: ExtensionAPI,
-  options: TlhUsageCommandFacadeOptions = {},
-): void {
-  const loadModule = createRetryableLazyImport(
-    options.loadModule ??
-      (() => import("./usage-limits-command.js") as Promise<UsageLimitsCommandModule>),
-  );
+export function registerUsageCommand(pi: ExtensionAPI): void {
   pi.registerCommand("usage", {
     description: "Show or change TLH usage-limit footer preferences",
     getArgumentCompletions: usageCommandCompletions,
-    handler: async (args, ctx) => {
-      const module = await loadModule();
-      await module.handleUsageCommand(args, ctx);
-    },
+    handler: (args, ctx) => handleUsageCommand(args, ctx),
   });
 }
