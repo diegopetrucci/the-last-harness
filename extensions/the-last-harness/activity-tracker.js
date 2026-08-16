@@ -1,12 +1,33 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
+export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 const RETRY_GRACE_REASON = "primary:retry-grace";
 const DEFAULT_RETRY_GRACE_MS = 1500;
 const COMPLETED_ASYNC_TOMBSTONE_MS = 60_000;
+const ASYNC_TERMINAL_STATES = new Set(["complete", "failed", "cancelled", "continued"]);
+const LIVENESS_DRAIN_INTERVAL_MS = 5_000;
+const QUEUED_GRACE_MS = 30_000;
+function localCheckPidLiveness(pid) {
+    try {
+        process.kill(pid, 0);
+        return "alive";
+    }
+    catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error
+            ? error.code
+            : undefined;
+        if (code === "ESRCH")
+            return "dead";
+        if (code === "EPERM")
+            return "unknown";
+        return "unknown";
+    }
+}
 function sanitizeTempScopeSegment(value) {
     const sanitized = value
         .trim()
@@ -56,6 +77,9 @@ function readNonEmptyStringField(record, key) {
     const value = record[key];
     return typeof value === "string" && value.length > 0 ? value : undefined;
 }
+function toValidPid(value) {
+    return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
 function isAsyncControlContext(data, event) {
     const asyncDir = readNonEmptyStringField(data, "asyncDir") ?? readNonEmptyStringField(event, "asyncDir");
     if (asyncDir) {
@@ -100,6 +124,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const clearTimeoutImpl = options.clearTimeout ?? clearTimeout;
     const retryGraceMs = options.retryGraceMs ?? DEFAULT_RETRY_GRACE_MS;
     const completedAsyncTombstoneMs = options.completedAsyncTombstoneMs ?? COMPLETED_ASYNC_TOMBSTONE_MS;
+    const checkPidLivenessImpl = options.checkPidLiveness ?? localCheckPidLiveness;
+    const livenessIntervalMs = options.livenessIntervalMs ?? LIVENESS_DRAIN_INTERVAL_MS;
     const primaryReasons = new Map();
     const activeAsyncJobs = new Map();
     const recentlyCompletedAsyncJobs = new Map();
@@ -107,6 +133,28 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const listeners = new Set();
     let disposed = false;
     let lastSnapshotKey = "0::::";
+    let livenessTimer;
+    const stopLivenessTimer = () => {
+        if (livenessTimer !== undefined) {
+            clearTimeoutImpl(livenessTimer);
+            livenessTimer = undefined;
+        }
+    };
+    const scheduleLivenessCheck = () => {
+        if (disposed || livenessTimer !== undefined || activeAsyncJobs.size === 0)
+            return;
+        const handle = setTimeoutImpl(() => {
+            livenessTimer = undefined;
+            if (!disposed) {
+                notifyIfChanged();
+                scheduleLivenessCheck();
+            }
+        }, livenessIntervalMs);
+        if (handle !== null && typeof handle.unref === "function") {
+            handle.unref();
+        }
+        livenessTimer = handle;
+    };
     const cleanupCompletedAsyncJobTombstones = () => {
         const cutoff = now() - completedAsyncTombstoneMs;
         for (const [runId, completedAt] of recentlyCompletedAsyncJobs) {
@@ -167,6 +215,64 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         }
         const existing = activeAsyncJobs.get(runId);
         activeAsyncJobs.set(runId, existing ? { ...existing, ...record } : record);
+        scheduleLivenessCheck();
+    };
+    const drainDeadAsyncJobs = () => {
+        if (activeAsyncJobs.size === 0)
+            return;
+        const toDelete = [];
+        for (const [runId, record] of activeAsyncJobs) {
+            if (!record.asyncDir) {
+                toDelete.push(runId);
+                continue;
+            }
+            let raw;
+            try {
+                raw = JSON.parse(fs.readFileSync(path.join(record.asyncDir, "status.json"), "utf-8"));
+            }
+            catch {
+                if (record.pid !== undefined) {
+                    const liveness = checkPidLivenessImpl(record.pid);
+                    if (liveness !== "dead") {
+                        continue;
+                    }
+                }
+                toDelete.push(runId);
+                continue;
+            }
+            if (!isRecord(raw)) {
+                toDelete.push(runId);
+                continue;
+            }
+            const state = readNonEmptyStringField(raw, "state");
+            if (!state || ASYNC_TERMINAL_STATES.has(state)) {
+                toDelete.push(runId);
+                continue;
+            }
+            if (state === "queued") {
+                const startedAt = raw["startedAt"];
+                if (typeof startedAt === "number" &&
+                    Number.isFinite(startedAt) &&
+                    startedAt <= now() &&
+                    now() - startedAt <= QUEUED_GRACE_MS) {
+                    continue;
+                }
+                toDelete.push(runId);
+                continue;
+            }
+            const pid = toValidPid(raw["pid"]);
+            if (pid === undefined) {
+                toDelete.push(runId);
+                continue;
+            }
+            const liveness = checkPidLivenessImpl(pid);
+            if (liveness === "dead") {
+                toDelete.push(runId);
+            }
+        }
+        for (const runId of toDelete) {
+            activeAsyncJobs.delete(runId);
+        }
     };
     const markAsyncJobComplete = (runId) => {
         if (disposed || !runId)
@@ -174,6 +280,9 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         activeAsyncJobs.delete(runId);
         recentlyCompletedAsyncJobs.set(runId, now());
         cleanupCompletedAsyncJobTombstones();
+        if (activeAsyncJobs.size === 0) {
+            stopLivenessTimer();
+        }
     };
     const currentSessionId = (sessionManager) => {
         const sessionId = sessionManager?.getSessionId?.();
@@ -186,6 +295,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     });
     const snapshotKey = (snapshot) => [snapshot.inProgress ? "1" : "0", snapshot.primaryReasons.join(","), snapshot.activeAsyncJobIds.join(",")].join("::");
     const notifyIfChanged = () => {
+        drainDeadAsyncJobs();
         const snapshot = buildSnapshot();
         const nextKey = snapshotKey(snapshot);
         if (nextKey === lastSnapshotKey) {
@@ -203,6 +313,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     return {
         getSnapshot() {
             cleanupCompletedAsyncJobTombstones();
+            drainDeadAsyncJobs();
             return buildSnapshot();
         },
         isInProgress() {
@@ -253,6 +364,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         },
         dispose() {
             disposed = true;
+            stopLivenessTimer();
             clearRetryGrace();
             primaryReasons.clear();
             activeAsyncJobs.clear();
@@ -311,8 +423,10 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
                 return;
             }
+            const pid = toValidPid(data.pid);
             setAsyncJobActive(data.id, {
                 asyncDir: typeof data.asyncDir === "string" && data.asyncDir.length > 0 ? data.asyncDir : undefined,
+                pid,
                 source: "started",
             });
             notifyIfChanged();
@@ -357,6 +471,18 @@ export function registerTlhEffectiveActivityTracker(pi) {
             pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
         ]
         : [];
+    if (pi.events) {
+        tracker.subscribe((snapshot) => {
+            try {
+                pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
+                    inProgress: snapshot.inProgress,
+                    activeAsyncJobIds: snapshot.activeAsyncJobIds,
+                });
+            }
+            catch {
+            }
+        });
+    }
     pi.on("session_start", (_event, ctx) => {
         tracker.rehydrateFromArtifacts(ctx);
     });

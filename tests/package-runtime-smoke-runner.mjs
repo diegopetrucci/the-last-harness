@@ -16,6 +16,7 @@ const piPackage = JSON.parse(readFileSync(join(dirname(piEntryPath), "..", "pack
 assert.equal(piPackage.version, "0.84.2");
 
 const expectedEntrypoints = [
+	"extensions/notify/index.js",
 	"extensions/annotate-git-diff/index.js",
 	"extensions/the-last-harness.js",
 	"extensions/subagents/src/extension/index.js",
@@ -163,7 +164,8 @@ function inspectLoad() {
 	});
 	assert.deepEqual([...new Set(resolvedPackageRoots)], [realPackageRoot]);
 
-	const [annotateExtension, tlhExtension, subagentExtension] = result.extensions;
+	const [notifyExtension, annotateExtension, tlhExtension, subagentExtension] = result.extensions;
+	assert.ok(notifyExtension !== undefined, "notify extension must be loaded");
 	assert.deepEqual([...annotateExtension.commands.keys()], ["annotate-git-diff"]);
 	assert.deepEqual([...tlhExtension.commands.keys()].sort(), expectedTlhCommands);
 	assert.deepEqual([...subagentExtension.tools.keys()].sort(), ["subagent"]);
@@ -250,23 +252,25 @@ async function runSessionStart(tlhExtension, subagentExtension) {
 
 await resourceLoader.reload();
 const defaultOff = inspectLoad();
-await runSessionStart(defaultOff.tlhExtension, defaultOff.result.extensions[2]);
+await runSessionStart(defaultOff.tlhExtension, defaultOff.result.extensions[3]);
 
 await resourceLoader.reload();
 const first = inspectLoad();
-await runSessionStart(first.tlhExtension, first.result.extensions[2]);
-assert.equal(first.result.extensions[2].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
+await runSessionStart(first.tlhExtension, first.result.extensions[3]);
+assert.equal(first.result.extensions[3].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 await resourceLoader.reload();
 const second = inspectLoad();
 assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
 assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
 assert.notEqual(second.result.extensions[2], first.result.extensions[2]);
+assert.notEqual(second.result.extensions[3], first.result.extensions[3]);
 assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
 assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
-assert.notEqual(second.result.extensions[2].tools, first.result.extensions[2].tools);
-const secondSession = await runSessionStart(second.tlhExtension, second.result.extensions[2]);
-const subagentExtension = second.result.extensions[2];
+assert.notEqual(second.result.extensions[2].commands, first.result.extensions[2].commands);
+assert.notEqual(second.result.extensions[3].tools, first.result.extensions[3].tools);
+const secondSession = await runSessionStart(second.tlhExtension, second.result.extensions[3]);
+const subagentExtension = second.result.extensions[3];
 assert.equal(subagentExtension.resolvedPath.endsWith("extensions/subagents/src/extension/index.js"), true);
 
 second.result.runtime.getSessionName = () => undefined;

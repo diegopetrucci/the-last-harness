@@ -2,6 +2,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { TLH_EFFECTIVE_ACTIVITY_EVENT } from "../shared/tlh-effective-activity.js";
+// Re-export so existing importers of activity-tracker.ts continue to work.
+export { TLH_EFFECTIVE_ACTIVITY_EVENT };
 
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
@@ -9,6 +12,21 @@ const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
 const RETRY_GRACE_REASON = "primary:retry-grace";
 const DEFAULT_RETRY_GRACE_MS = 1500;
 const COMPLETED_ASYNC_TOMBSTONE_MS = 60_000;
+
+// Terminal async-run states: the run has ended, so the job must not count as active.
+const ASYNC_TERMINAL_STATES = new Set(["complete", "failed", "cancelled", "continued"]);
+
+/**
+ * How often the periodic read-only liveness drain fires while async jobs are tracked.
+ * Modest enough to catch a dead child quickly; coarse enough to avoid busy-polling.
+ * The timer is unref'd so it cannot hold the process open.
+ */
+const LIVENESS_DRAIN_INTERVAL_MS = 5_000;
+
+// Maximum time a run may remain in the "queued" state before it is dropped.
+// A healthy long-running run is in state "running" with a live pid — this bound
+// never touches that path. It only catches a run that never manages to spawn.
+const QUEUED_GRACE_MS = 30_000;
 
 export type TlhEffectiveActivitySnapshot = {
 	inProgress: boolean;
@@ -39,6 +57,32 @@ export type TlhEffectiveActivityTracker = {
 
 type TimeoutHandle = ReturnType<typeof setTimeout>;
 
+// Read-only pid liveness result, matching the upstream lifecycle-state.ts definition.
+type PidLiveness = "alive" | "dead" | "unknown";
+
+/**
+ * Local read-only check for whether a pid is still alive.
+ * Uses process.kill(pid, 0) — sending signal 0 is a no-op but throws ESRCH when the
+ * process does not exist, or EPERM when it exists but we lack permission.
+ * This is the same logic used by checkPidLiveness in the subagents runtime; it is
+ * reimplemented here to avoid a cross-extension import and to keep activity-tracker
+ * consistent with its existing pattern of reaching async state by path convention only.
+ */
+function localCheckPidLiveness(pid: number): PidLiveness {
+	try {
+		process.kill(pid, 0);
+		return "alive";
+	} catch (error) {
+		const code =
+			typeof error === "object" && error !== null && "code" in error
+				? (error as NodeJS.ErrnoException).code
+				: undefined;
+		if (code === "ESRCH") return "dead";
+		if (code === "EPERM") return "unknown";
+		return "unknown";
+	}
+}
+
 type TlhEffectiveActivityTrackerOptions = {
 	asyncDir?: string;
 	now?: () => number;
@@ -46,10 +90,19 @@ type TlhEffectiveActivityTrackerOptions = {
 	clearTimeout?: typeof clearTimeout;
 	retryGraceMs?: number;
 	completedAsyncTombstoneMs?: number;
+	/** Injectable pid-liveness checker; defaults to localCheckPidLiveness. */
+	checkPidLiveness?: (pid: number) => PidLiveness;
+	/**
+	 * Override the periodic liveness-drain interval (ms). Defaults to LIVENESS_DRAIN_INTERVAL_MS.
+	 * Inject a short value in tests to avoid real sleeps.
+	 */
+	livenessIntervalMs?: number;
 };
 
 type AsyncJobRecord = {
 	asyncDir?: string;
+	/** Pid recorded from the subagent:async-started payload; used as liveness anchor before status.json is written. */
+	pid?: number;
 	source: "started" | "control" | "rehydrated";
 };
 
@@ -104,6 +157,15 @@ function readNonEmptyStringField(record: Record<string, unknown>, key: string): 
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * Returns `value` only when it is a positive integer safe to pass to `process.kill`.
+ * Rejects 0 (targets the current process group on POSIX → always reports alive),
+ * negative values, non-integers, NaN, and Infinity.
+ */
+function toValidPid(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function isAsyncControlContext(data: Record<string, unknown>, event: Record<string, unknown>): boolean {
 	const asyncDir = readNonEmptyStringField(data, "asyncDir") ?? readNonEmptyStringField(event, "asyncDir");
 	if (asyncDir) {
@@ -153,6 +215,8 @@ export function createTlhEffectiveActivityTracker(
 	const clearTimeoutImpl = options.clearTimeout ?? clearTimeout;
 	const retryGraceMs = options.retryGraceMs ?? DEFAULT_RETRY_GRACE_MS;
 	const completedAsyncTombstoneMs = options.completedAsyncTombstoneMs ?? COMPLETED_ASYNC_TOMBSTONE_MS;
+	const checkPidLivenessImpl = options.checkPidLiveness ?? localCheckPidLiveness;
+	const livenessIntervalMs = options.livenessIntervalMs ?? LIVENESS_DRAIN_INTERVAL_MS;
 	const primaryReasons = new Map<string, number>();
 	const activeAsyncJobs = new Map<string, AsyncJobRecord>();
 	const recentlyCompletedAsyncJobs = new Map<string, number>();
@@ -160,6 +224,43 @@ export function createTlhEffectiveActivityTracker(
 	const listeners = new Set<TlhEffectiveActivityListener>();
 	let disposed = false;
 	let lastSnapshotKey = "0::::";
+	/** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
+	let livenessTimer: TimeoutHandle | undefined;
+
+	const stopLivenessTimer = (): void => {
+		if (livenessTimer !== undefined) {
+			clearTimeoutImpl(livenessTimer);
+			livenessTimer = undefined;
+		}
+	};
+
+	/**
+	 * Schedule one periodic liveness-drain tick if none is already pending and there
+	 * are tracked jobs. The callback re-runs the drain, emits if the snapshot changed,
+	 * and reschedules itself only when jobs remain — so the timer stops automatically
+	 * when the last job is gone.
+	 *
+	 * The timer is unref'd so it can never hold the Node process open.
+	 */
+	const scheduleLivenessCheck = (): void => {
+		if (disposed || livenessTimer !== undefined || activeAsyncJobs.size === 0) return;
+		const handle = setTimeoutImpl((): void => {
+			livenessTimer = undefined;
+			if (!disposed) {
+				// notifyIfChanged calls drainDeadAsyncJobs internally; the drain may
+				// remove dead jobs and emit a snapshot change to all subscribers.
+				notifyIfChanged();
+				// Reschedule only when jobs remain; stop otherwise.
+				scheduleLivenessCheck();
+			}
+		}, livenessIntervalMs);
+		// unref so the timer never keeps the process alive when it is the only
+		// remaining thing on the event loop.
+		if (handle !== null && typeof (handle as { unref?: () => void }).unref === "function") {
+			(handle as { unref: () => void }).unref();
+		}
+		livenessTimer = handle;
+	};
 
 	const cleanupCompletedAsyncJobTombstones = (): void => {
 		const cutoff = now() - completedAsyncTombstoneMs;
@@ -226,6 +327,107 @@ export function createTlhEffectiveActivityTracker(
 		}
 		const existing = activeAsyncJobs.get(runId);
 		activeAsyncJobs.set(runId, existing ? { ...existing, ...record } : record);
+		// Start the periodic liveness drain if it isn't already running.
+		scheduleLivenessCheck();
+	};
+
+	/**
+	 * Read-only liveness drain: remove any tracked async job that cannot be positively
+	 * verified as still running.
+	 *
+	 * Rules (in order):
+	 *   - No asyncDir recorded for the job → unverifiable → drop.
+	 *   - asyncDir/status.json missing or unreadable → run is gone → drop.
+	 *   - State is terminal (complete/failed/cancelled/continued) → drop.
+	 *   - State is "queued" (no pid yet) → grace period; keep.
+	 *   - State is non-terminal with a pid → check liveness:
+	 *       alive or unknown → keep (fail-open: do not suppress on uncertainty).
+	 *       dead           → drop.
+	 *   - State is non-terminal without a pid → unverifiable → drop.
+	 *
+	 * This is strictly read-only: it never calls reconcileAsyncRun and never
+	 * writes status files. It never applies elapsed-time heuristics.
+	 */
+	const drainDeadAsyncJobs = (): void => {
+		if (activeAsyncJobs.size === 0) return;
+		const toDelete: string[] = [];
+		for (const [runId, record] of activeAsyncJobs) {
+			if (!record.asyncDir) {
+				// No asyncDir: there is no filesystem evidence for this job and no
+				// recovery path — a single event that omits asyncDir would silence
+				// notifications for the rest of the session. Drop it so the failure
+				// mode is a spurious notification rather than permanent silence.
+				toDelete.push(runId);
+				continue;
+			}
+			let raw: unknown;
+			try {
+				raw = JSON.parse(fs.readFileSync(path.join(record.asyncDir, "status.json"), "utf-8"));
+			} catch {
+				// Missing or unreadable status.json — the child may still be starting up
+				// and has not yet written status.json. If a recorded live pid is available,
+				// use it as positive evidence that the run is alive and keep the job.
+				// Only drop when there is no usable pid to anchor liveness on.
+				if (record.pid !== undefined) {
+					const liveness = checkPidLivenessImpl(record.pid);
+					if (liveness !== "dead") {
+						// alive or unknown → keep (fail-open: do not suppress on uncertainty).
+						continue;
+					}
+				}
+				toDelete.push(runId);
+				continue;
+			}
+			if (!isRecord(raw)) {
+				toDelete.push(runId);
+				continue;
+			}
+			const state = readNonEmptyStringField(raw, "state");
+			if (!state || ASYNC_TERMINAL_STATES.has(state)) {
+				// Terminal or unrecognised state → the run has ended.
+				toDelete.push(runId);
+				continue;
+			}
+			if (state === "queued") {
+				// Queued: no pid yet. Grant a short grace period bounded by startedAt
+				// so the check stays stateless. This does not penalise long-running
+				// work — healthy long runs are in state "running" with a live pid.
+				const startedAt = raw["startedAt"];
+				if (
+					typeof startedAt === "number" &&
+					Number.isFinite(startedAt) &&
+					startedAt <= now() && // reject future timestamps — grace cannot be unbounded
+					now() - startedAt <= QUEUED_GRACE_MS
+				) {
+					continue; // Still within grace; keep.
+				}
+				// Grace expired or startedAt absent/invalid → unverifiable → drop.
+				toDelete.push(runId);
+				continue;
+			}
+			// Non-terminal state (running/pausing/paused): require a verifiably alive pid.
+			const pid = toValidPid(raw["pid"]);
+			if (pid === undefined) {
+				// No pid, or invalid (0, negative, fractional) → unverifiable → drop.
+				// process.kill(0, 0) targets the current process group on POSIX and would
+				// always report alive; we must never let such a pid reach liveness checks.
+				toDelete.push(runId);
+				continue;
+			}
+			const liveness = checkPidLivenessImpl(pid);
+			if (liveness === "dead") {
+				toDelete.push(runId);
+			}
+			// alive: keep.
+			// unknown (EPERM): a process exists at that pid but we lack permission to
+			// signal it — we cannot confirm it is our run. Keeping here matches the
+			// upstream reconciler, which only acts on a definitively dead pid. Residual
+			// risk: a recycled pid now owned by another user could hold suppression
+			// open until the job record is otherwise cleaned up.
+		}
+		for (const runId of toDelete) {
+			activeAsyncJobs.delete(runId);
+		}
 	};
 
 	const markAsyncJobComplete = (runId: string): void => {
@@ -233,6 +435,10 @@ export function createTlhEffectiveActivityTracker(
 		activeAsyncJobs.delete(runId);
 		recentlyCompletedAsyncJobs.set(runId, now());
 		cleanupCompletedAsyncJobTombstones();
+		// Stop the liveness timer eagerly when no jobs remain.
+		if (activeAsyncJobs.size === 0) {
+			stopLivenessTimer();
+		}
 	};
 
 	const currentSessionId = (
@@ -254,6 +460,7 @@ export function createTlhEffectiveActivityTracker(
 		);
 
 	const notifyIfChanged = (): void => {
+		drainDeadAsyncJobs();
 		const snapshot = buildSnapshot();
 		const nextKey = snapshotKey(snapshot);
 		if (nextKey === lastSnapshotKey) {
@@ -272,6 +479,7 @@ export function createTlhEffectiveActivityTracker(
 	return {
 		getSnapshot() {
 			cleanupCompletedAsyncJobTombstones();
+			drainDeadAsyncJobs();
 			return buildSnapshot();
 		},
 		isInProgress() {
@@ -318,6 +526,7 @@ export function createTlhEffectiveActivityTracker(
 		},
 		dispose() {
 			disposed = true;
+			stopLivenessTimer();
 			clearRetryGrace();
 			primaryReasons.clear();
 			activeAsyncJobs.clear();
@@ -374,8 +583,12 @@ export function createTlhEffectiveActivityTracker(
 			if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
 				return;
 			}
+			// Validate pid: must be a positive integer. Reject 0 (targets the current process
+			// group on POSIX and would report "alive" forever) and any non-integer value.
+			const pid = toValidPid(data.pid);
 			setAsyncJobActive(data.id, {
 				asyncDir: typeof data.asyncDir === "string" && data.asyncDir.length > 0 ? data.asyncDir : undefined,
+				pid,
 				source: "started",
 			});
 			notifyIfChanged();
@@ -414,7 +627,7 @@ export function createTlhEffectiveActivityTracker(
 }
 
 export function registerTlhEffectiveActivityTracker(
-	pi: Pick<ExtensionAPI, "on"> & { events?: Pick<ExtensionAPI["events"], "on"> | undefined },
+	pi: Pick<ExtensionAPI, "on"> & { events?: Pick<ExtensionAPI["events"], "on" | "emit"> | undefined },
 ): TlhEffectiveActivityTracker {
 	const tracker = createTlhEffectiveActivityTracker();
 	const unsubscribes = pi.events
@@ -424,6 +637,21 @@ export function registerTlhEffectiveActivityTracker(
 				pi.events.on(SUBAGENT_CONTROL_EVENT, (data) => tracker.handleAsyncControl(data)),
 			]
 		: [];
+
+	// Publish snapshot changes on pi.events so other extensions (e.g. notify-gating)
+	// can react without coupling directly to this tracker instance.
+	if (pi.events) {
+		tracker.subscribe((snapshot) => {
+			try {
+				pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
+					inProgress: snapshot.inProgress,
+					activeAsyncJobIds: snapshot.activeAsyncJobIds,
+				});
+			} catch {
+				// Best-effort: never let an emit failure crash the tracker.
+			}
+		});
+	}
 
 	pi.on("session_start", (_event, ctx) => {
 		tracker.rehydrateFromArtifacts(ctx);

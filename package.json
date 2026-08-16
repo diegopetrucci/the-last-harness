@@ -75,6 +75,7 @@
   ],
   "pi": {
     "extensions": [
+      "./extensions/notify/index.js",
       "./extensions/annotate-git-diff/index.js",
       "./extensions/the-last-harness.js",
       "./extensions/subagents/src/extension/index.js"

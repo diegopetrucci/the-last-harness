@@ -252,6 +252,7 @@ function parseInlineJsonStringAssignment(source, assignmentName) {
 
 test("package manifest selects only the ordered generated JS entrypoints", () => {
 	assert.deepEqual(packageJson.pi?.extensions, [
+		"./extensions/notify/index.js",
 		"./extensions/annotate-git-diff/index.js",
 		"./extensions/the-last-harness.js",
 		"./extensions/subagents/src/extension/index.js",
@@ -261,9 +262,12 @@ test("package manifest selects only the ordered generated JS entrypoints", () =>
 		"annotate-git-diff/index.ts",
 		"annotate-git-diff/index.js",
 	]);
+	assert.deepEqual(existingNestedExtensionEntrypoints("notify"), ["notify/index.ts", "notify/index.js"]);
 	assert.deepEqual(discoverPiExtensionEntrypoints(extensionsDir), [
 		"annotate-git-diff/index.js",
 		"annotate-git-diff/index.ts",
+		"notify/index.js",
+		"notify/index.ts",
 		"the-last-harness.js",
 		"the-last-harness.ts",
 	]);

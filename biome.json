@@ -11,6 +11,7 @@
 			"!extensions/the-last-harness.js",
 			"!extensions/the-last-harness/*.js",
 			"!extensions/the-last-harness/annotate-last-message/*.js",
+			"!extensions/notify/*.js",
 			"!extensions/annotate-git-diff/*.js",
 			"!extensions/shared/*.js",
 			"!extensions/subagents/src/**/*.js",

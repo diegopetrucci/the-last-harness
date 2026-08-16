@@ -31,13 +31,12 @@ const bundledExtensions = readDefaultExtensions(bundledExtensionsPath);
 const bundledExtensionsById = new Map(bundledExtensions.map((extension) => [extension.id, extension]));
 const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-v2.10.0-1";
 const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
-const previousBundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.7";
+const previousBundledDirtyRepoGuardSource = "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
 const expectedBundledNpmPackageIdentities = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
 	["inline-bash", "npm:@diegopetrucci/pi-inline-bash"],
-	["notify", "npm:@diegopetrucci/pi-notify"],
 	["context-inspector", "npm:@diegopetrucci/pi-context-inspector"],
 	["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools"],
 	["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard"],
@@ -1250,21 +1249,21 @@ for (const scenario of [
 	{
 		command: "disable",
 		initialSettings: {
-			packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
+			packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-dirty-repo-guard"],
 		},
 		expectedPackages: [harnessPackage],
-		expectedDisabledDefaultExtensions: ["notify"],
+		expectedDisabledDefaultExtensions: ["dirty-repo-guard"],
 		expectedManagedPackageIdentities: [],
 	},
 	{
 		command: "enable",
 		initialSettings: {
 			packages: [harnessPackage, retiredPlannotatorPackage],
-			tlh: { disabledDefaultExtensions: ["notify"] },
+			tlh: { disabledDefaultExtensions: ["dirty-repo-guard"] },
 		},
-		expectedPackages: [harnessPackage, "npm:@diegopetrucci/pi-notify"],
+		expectedPackages: [harnessPackage, bundledSource("dirty-repo-guard")],
 		expectedDisabledDefaultExtensions: [],
-		expectedManagedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+		expectedManagedPackageIdentities: ["npm:@diegopetrucci/pi-dirty-repo-guard"],
 	},
 ]) {
 	test(`tlh-defaults ${scenario.command} preserves legacy retired default cleanup for merge`, () => {
@@ -1274,8 +1273,8 @@ for (const scenario of [
 			JSON.stringify(
 				[
 					{
-						id: "notify",
-						source: "npm:@diegopetrucci/pi-notify",
+						id: "dirty-repo-guard",
+						source: bundledSource("dirty-repo-guard"),
 					},
 				],
 				null,
@@ -1290,7 +1289,7 @@ for (const scenario of [
 			"--defaults",
 			fixture.extensions,
 			scenario.command,
-			"notify",
+			"dirty-repo-guard",
 		]);
 
 		const afterDefaults = readJson(fixture.settings);
@@ -1339,8 +1338,8 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
 		JSON.stringify(
 			[
 				{
-					id: "notify",
-					source: "npm:@diegopetrucci/pi-notify",
+					id: "dirty-repo-guard",
+					source: bundledSource("dirty-repo-guard"),
 				},
 			],
 			null,
@@ -1351,21 +1350,39 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
 		fixture.settings,
 		JSON.stringify(
 			{
-				packages: [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"],
+				packages: [harnessPackage, retiredPlannotatorPackage, bundledSource("dirty-repo-guard")],
 			},
 			null,
 			2,
 		),
 	);
 
-	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "disable", "notify"]);
-	runNode(defaultsScript, ["--settings", fixture.settings, "--defaults", fixture.extensions, "enable", "notify"]);
+	runNode(defaultsScript, [
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"disable",
+		"dirty-repo-guard",
+	]);
+	runNode(defaultsScript, [
+		"--settings",
+		fixture.settings,
+		"--defaults",
+		fixture.extensions,
+		"enable",
+		"dirty-repo-guard",
+	]);
 
 	const afterDefaults = readJson(fixture.settings);
-	assert.deepEqual(afterDefaults.packages, [harnessPackage, retiredPlannotatorPackage, "npm:@diegopetrucci/pi-notify"]);
+	assert.deepEqual(afterDefaults.packages, [
+		harnessPackage,
+		retiredPlannotatorPackage,
+		bundledSource("dirty-repo-guard"),
+	]);
 	assert.deepEqual(afterDefaults.tlh?.disabledDefaultExtensions ?? [], []);
 	assert.deepEqual(afterDefaults.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], [
-		"npm:@diegopetrucci/pi-notify",
+		"npm:@diegopetrucci/pi-dirty-repo-guard",
 		"npm:@plannotator/pi-extension",
 	]);
 
@@ -1379,9 +1396,9 @@ test("tlh-defaults preserves pending retired default provenance across multiple 
 	assert.match(firstMergeOutput, /Will remove retired TLH default package: npm:@plannotator\/pi-extension/);
 
 	const afterMerge = readJson(fixture.settings);
-	assert.deepEqual(afterMerge.packages, [harnessPackage, "npm:@diegopetrucci/pi-notify"]);
+	assert.deepEqual(afterMerge.packages, [harnessPackage, bundledSource("dirty-repo-guard")]);
 	assert.deepEqual(afterMerge.tlh?.defaultExtensionProvenance?.managedPackageIdentities ?? [], [
-		"npm:@diegopetrucci/pi-notify",
+		"npm:@diegopetrucci/pi-dirty-repo-guard",
 	]);
 });
 
@@ -1675,8 +1692,8 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
 	const fixtureExtension = {
-		id: "notify",
-		source: bundledSource("notify"),
+		id: "dirty-repo-guard",
+		source: bundledSource("dirty-repo-guard"),
 	};
 
 	const managedPinnedFixture = tempFixture();
@@ -1685,10 +1702,10 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 		managedPinnedFixture.settings,
 		JSON.stringify(
 			{
-				packages: [previousBundledNotifySource],
+				packages: [previousBundledDirtyRepoGuardSource],
 				tlh: {
 					defaultExtensionProvenance: {
-						managedPackageIdentities: ["npm:@diegopetrucci/pi-notify"],
+						managedPackageIdentities: ["npm:@diegopetrucci/pi-dirty-repo-guard"],
 					},
 				},
 			},
@@ -1707,10 +1724,10 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 	]);
 
 	const managedPinnedSettings = readJson(managedPinnedFixture.settings);
-	assert.equal(managedPinnedSettings.packages.includes(bundledSource("notify")), true);
-	assert.equal(managedPinnedSettings.packages.includes(previousBundledNotifySource), false);
+	assert.equal(managedPinnedSettings.packages.includes(bundledSource("dirty-repo-guard")), true);
+	assert.equal(managedPinnedSettings.packages.includes(previousBundledDirtyRepoGuardSource), false);
 	assert.deepEqual(managedPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
-		"npm:@diegopetrucci/pi-notify",
+		"npm:@diegopetrucci/pi-dirty-repo-guard",
 	]);
 
 	const manualPinnedFixture = tempFixture();
@@ -1719,7 +1736,7 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 		manualPinnedFixture.settings,
 		JSON.stringify(
 			{
-				packages: [previousBundledNotifySource],
+				packages: [previousBundledDirtyRepoGuardSource],
 			},
 			null,
 			2,
@@ -1736,18 +1753,20 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
 	]);
 
 	const manualPinnedSettings = readJson(manualPinnedFixture.settings);
-	assert.equal(manualPinnedSettings.packages.includes(previousBundledNotifySource), true);
-	assert.equal(manualPinnedSettings.packages.includes(bundledSource("notify")), false);
+	assert.equal(manualPinnedSettings.packages.includes(previousBundledDirtyRepoGuardSource), true);
+	assert.equal(manualPinnedSettings.packages.includes(bundledSource("dirty-repo-guard")), false);
 	assert.deepEqual(manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 });
 
-test("bundled manifest has no subagents or intercom entry after retirement", () => {
+test("bundled manifest has no subagents, intercom, or notify entry after retirement", () => {
 	const bundled = bundledExtensions;
 	const subagents = bundled.find(({ id }) => id === "subagents");
 	const intercom = bundled.find(({ id }) => id === "intercom");
+	const notify = bundled.find(({ id }) => id === "notify");
 
 	assert.equal(subagents, undefined, "bundled subagents entry should be absent after retirement");
 	assert.equal(intercom, undefined, "bundled intercom entry should be absent after retirement");
+	assert.equal(notify, undefined, "bundled notify entry should be absent after retirement");
 });
 
 test("bundled merge removes legacy upstream and TLH subagents git installs via retirement list", () => {
@@ -1926,6 +1945,48 @@ test("bundled merge force-removes legacy TLH intercom git installs via the retir
 	);
 });
 
+// ── notify retirement tests ──────────────────────────────────────────────────
+
+test("bundled merge force-removes the notify npm install (now bundled first-party)", () => {
+	// notify is now a bundled first-party extension; the npm package must be removed so
+	// that two notify extensions do not run in parallel and fire every notification twice.
+	const fixture = tempFixture();
+	const bundledPath = bundledExtensionsPath;
+	writeFileSync(
+		fixture.settings,
+		JSON.stringify(
+			{
+				packages: ["npm:@diegopetrucci/pi-notify@0.1.15", harnessPackage],
+				tlh: { disabledDefaultExtensions: ["notify"] },
+			},
+			null,
+			2,
+		),
+	);
+
+	runNode(mergeScript, [
+		fixture.defaults,
+		"--settings",
+		fixture.settings,
+		"--default-extensions",
+		bundledPath,
+		"--quiet",
+	]);
+
+	const settings = readJson(fixture.settings);
+	// The npm notify package must be force-removed.
+	assert.equal(
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-notify"),
+		false,
+		"npm pi-notify install must be force-removed after bundling",
+	);
+	// The stale opt-out is preserved (harmless unknown id; no pruner is intentionally registered).
+	assert.ok(
+		(settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
+		"stale notify opt-out must be preserved as a harmless unknown id",
+	);
+});
+
 // ── fff retirement tests ─────────────────────────────────────────────────────
 
 test("bundled manifest has no fff entry after retirement", () => {
@@ -1942,7 +2003,7 @@ test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy 
 		fixture.settings,
 		JSON.stringify(
 			{
-				packages: [harnessPackage, "npm:@ff-labs/pi-fff@0.10.1", "npm:@diegopetrucci/pi-notify@0.1.14"],
+				packages: [harnessPackage, "npm:@ff-labs/pi-fff@0.10.1", "npm:@diegopetrucci/pi-inline-bash@0.1.5"],
 			},
 			null,
 			2,
@@ -1965,7 +2026,7 @@ test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy 
 		"TLH-managed fff package must be removed",
 	);
 	assert.equal(
-		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-notify"),
+		settings.packages.some((entry) => packageIdentity(entry) === "npm:@diegopetrucci/pi-inline-bash"),
 		true,
 		"unrelated managed package must be preserved",
 	);
