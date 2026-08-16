@@ -329,3 +329,74 @@ test("getThemeCssVars: does not throw regardless of theme state", () => {
     getThemeCssVars();
   });
 });
+
+// ---------------------------------------------------------------------------
+// getThemeCssVars — injected getter path
+// ---------------------------------------------------------------------------
+
+/**
+ * Distinctive colour guaranteed not to appear in the static TLH palette.
+ * SGR 38;2;18;171;52 → #12ab34. The static palette uses #f4c95d, #7dd3fc,
+ * #8a8a8a, #9b7bff, #6f42c1, and #585858 — none of which is #12ab34.
+ */
+const INJECTED_COLOR = "#12ab34";
+const INJECTED_COLOR_SGR = "\u001b[38;2;18;171;52mX\u001b[39m";
+
+/** Minimal MarkdownTheme-shaped fake that colours every key with INJECTED_COLOR. */
+const FAKE_MD_THEME_ALL_INJECTED = {
+  heading: (_s) => INJECTED_COLOR_SGR,
+  link: (_s) => INJECTED_COLOR_SGR,
+  linkUrl: (_s) => INJECTED_COLOR_SGR,
+  code: (_s) => INJECTED_COLOR_SGR,
+  codeBlock: (_s) => INJECTED_COLOR_SGR,
+  codeBlockBorder: (_s) => INJECTED_COLOR_SGR,
+  quote: (_s) => INJECTED_COLOR_SGR,
+  quoteBorder: (_s) => INJECTED_COLOR_SGR,
+  hr: (_s) => INJECTED_COLOR_SGR,
+  listBullet: (_s) => INJECTED_COLOR_SGR,
+  bold: (_s) => INJECTED_COLOR_SGR,
+  italic: (_s) => INJECTED_COLOR_SGR,
+  strikethrough: (_s) => INJECTED_COLOR_SGR,
+  underline: (_s) => INJECTED_COLOR_SGR,
+};
+
+test("getThemeCssVars: injected markdown getter colours replace static fallback", () => {
+  const vars = getThemeCssVars({ getMarkdownTheme: () => FAKE_MD_THEME_ALL_INJECTED });
+
+  // Injected path must be used — NOT the static fallback gold (#f4c95d).
+  assert.equal(vars["--mdHeading"], INJECTED_COLOR);
+  assert.equal(vars["--mdCode"], INJECTED_COLOR);
+  assert.equal(vars["--mdLink"], INJECTED_COLOR);
+  assert.notEqual(vars["--mdHeading"], "#f4c95d");
+  assert.notEqual(vars["--mdCode"], "#9b7bff");
+});
+
+test("getThemeCssVars: a getter that throws falls back for its own vars while other getters' vars still apply", () => {
+  // getMarkdownTheme throws → md vars fall back to static palette.
+  // getSelectListTheme succeeds → --accent receives the injected colour.
+  const throwingMdGetter = () => {
+    throw new Error("markdown theme not initialised");
+  };
+  const fakeSLGetter = () => ({
+    selectedText: (_s) => INJECTED_COLOR_SGR,
+    description: (_s) => "X", // no ANSI → --muted keeps static fallback
+    scrollInfo: (_s) => "X",
+    noMatch: (_s) => "X",
+    selectedPrefix: (_s) => "X",
+  });
+
+  const vars = getThemeCssVars({
+    getMarkdownTheme: throwingMdGetter,
+    getSelectListTheme: fakeSLGetter,
+  });
+
+  // MD vars fall back to static palette because getMarkdownTheme threw.
+  assert.equal(vars["--mdHeading"], "#f4c95d");
+  assert.equal(vars["--mdCode"], "#9b7bff");
+
+  // Accent comes from the working selectList getter.
+  assert.equal(vars["--accent"], INJECTED_COLOR);
+
+  // Muted falls back because description returned no ANSI.
+  assert.equal(vars["--muted"], "#8a8a8a");
+});

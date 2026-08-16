@@ -657,6 +657,109 @@ test("buildAnnotateLastMessageHtml: renderer definition appears exactly once in 
   assert.equal(occurrences, 1, "applyFenceState must be defined exactly once in the built HTML");
 });
 
+// ---------------------------------------------------------------------------
+// buildAnnotateLastMessageHtml — injected getter path
+// ---------------------------------------------------------------------------
+
+/**
+ * Distinctive colour that cannot collide with the static TLH palette.
+ * SGR 38;2;18;171;52 → #12ab34. Static palette: #f4c95d, #7dd3fc, #8a8a8a,
+ * #9b7bff, #6f42c1, #585858.
+ */
+const INJECTED_COLOR = "#12ab34";
+const INJECTED_COLOR_SGR = "\u001b[38;2;18;171;52mX\u001b[39m";
+
+/** Minimal MarkdownTheme-shaped fake that injects INJECTED_COLOR for heading only. */
+const FAKE_GETTERS_MD_HEADING = {
+  getMarkdownTheme: () => ({
+    heading: (_s) => INJECTED_COLOR_SGR,
+    link: (_s) => "X",
+    linkUrl: (_s) => "X",
+    code: (_s) => "X",
+    codeBlock: (_s) => "X",
+    codeBlockBorder: (_s) => "X",
+    quote: (_s) => "X",
+    quoteBorder: (_s) => "X",
+    hr: (_s) => "X",
+    listBullet: (_s) => "X",
+    bold: (_s) => "X",
+    italic: (_s) => "X",
+    strikethrough: (_s) => "X",
+    underline: (_s) => "X",
+  }),
+};
+
+test("buildAnnotateLastMessageHtml: injected fake getters place distinctive colour in tlh-theme-vars style block", () => {
+  const html = buildAnnotateLastMessageHtml(MINIMAL_DATA, FAKE_GETTERS_MD_HEADING);
+
+  const match = html.match(/<style[^>]+id="tlh-theme-vars"[^>]*>([\s\S]*?)<\/style>/);
+  assert.ok(match, '<style id="tlh-theme-vars"> must be present in the built HTML');
+  const styleContent = match[1];
+
+  // The injected distinctive colour must appear in the block.
+  assert.match(
+    styleContent,
+    new RegExp(INJECTED_COLOR),
+    `injected colour ${INJECTED_COLOR} must be present in tlh-theme-vars`,
+  );
+
+  // And specifically as the value of --mdHeading, not the static fallback.
+  assert.match(
+    styleContent,
+    new RegExp(`--mdHeading:\\s*${INJECTED_COLOR}`),
+    "--mdHeading must carry the injected colour, not the static gold fallback",
+  );
+  assert.doesNotMatch(
+    // Isolate only the --mdHeading declaration to avoid matching other vars.
+    styleContent.match(/--mdHeading[^;\n]*/)?.[0] ?? "",
+    /#f4c95d/,
+    "--mdHeading must not retain the static gold fallback when a getter is injected",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Wiring test: dependencies.getTheme threads through buildAnnotateLastMessageCommand
+// ---------------------------------------------------------------------------
+
+test("wiring: buildAnnotateLastMessageCommand passes dependencies.getTheme to the built HTML", async () => {
+  // This test fails if annotate-last-message.ts stops forwarding
+  // dependencies.getTheme to buildAnnotateLastMessageHtml.
+  let capturedHtml = "";
+  const command = buildAnnotateLastMessageCommand({
+    sendUserMessage: () => {},
+    openAnnotationWindow: async (html) => {
+      capturedHtml = html;
+      const win = new FakeWindow();
+      // Resolve the terminal-message promise with a cancel so the handler exits cleanly.
+      setImmediate(() => win.emit("message", { type: "cancel" }));
+      return win;
+    },
+    getTheme: FAKE_GETTERS_MD_HEADING,
+  });
+
+  const context = createContext({
+    branch: [messageEntry("assistant", [{ type: "text", text: "Latest reply" }])],
+  });
+
+  await command.handler("", context.ctx);
+  await flushAsyncWork();
+
+  assert.ok(capturedHtml.length > 0, "openAnnotationWindow must have received HTML");
+
+  const match = capturedHtml.match(/<style[^>]+id="tlh-theme-vars"[^>]*>([\s\S]*?)<\/style>/);
+  assert.ok(
+    match,
+    '<style id="tlh-theme-vars"> must be present in the HTML passed to openAnnotationWindow',
+  );
+  assert.match(
+    match[1],
+    new RegExp(INJECTED_COLOR),
+    `distinctive injected colour ${INJECTED_COLOR} must reach the HTML through dependencies.getTheme wiring`,
+  );
+
+  command.handleSessionShutdown();
+});
+
 test("buildAnnotateLastMessageHtml: app.js does not contain the parsing function definitions", async () => {
   // Verify the single-source guarantee: the shipped app.js must not define
   // the parsing functions that md-renderer.js owns.
