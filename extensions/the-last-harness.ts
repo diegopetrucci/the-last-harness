@@ -23,6 +23,9 @@ import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-not
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
+import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
+import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
+import { createReviewCommandHandler } from "./the-last-harness/review.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import {
   getCachedTlhUsageWeeklyVisibility,
@@ -130,7 +133,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
   installTlhPackageUpdateNotificationOverride();
   installTlhNewVersionNotificationOverride();
   registerToggleTlhGitAttributionCommand(pi);
-  const loadReviewModule = createRetryableLazyImport(() => import("./the-last-harness/review.js"));
+  const reviewCommandHandler = createReviewCommandHandler(pi);
   const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
   const loadSessionLimitReportModule = createRetryableLazyImport(
     () => import("./the-last-harness/session-limit-report.js"),
@@ -138,14 +141,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
   const loadAnnotateLastMessageModule = createRetryableLazyImport(
     () => import("./the-last-harness/annotate-last-message.js"),
   );
-  const loadTlhChangelogModule = createRetryableLazyImport(
-    () => import("./the-last-harness/changelog.js"),
-  );
-  let reviewCommandHandlerPromise:
-    | Promise<
-        ReturnType<(typeof import("./the-last-harness/review.js"))["createReviewCommandHandler"]>
-      >
-    | undefined;
   let tokensCommandHandlerPromise:
     | Promise<
         ReturnType<(typeof import("./the-last-harness/tokens.js"))["createTokensCommandHandler"]>
@@ -165,20 +160,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
         >
       >
     | undefined;
-  let tlhChangelogCommandHandlerPromise:
-    | Promise<(typeof import("./the-last-harness/changelog.js"))["handleTlhChangelogCommand"]>
-    | undefined;
-  const getReviewCommandHandler = () => {
-    if (!reviewCommandHandlerPromise) {
-      reviewCommandHandlerPromise = loadReviewModule()
-        .then((module) => module.createReviewCommandHandler(pi))
-        .catch((error) => {
-          reviewCommandHandlerPromise = undefined;
-          throw error;
-        });
-    }
-    return reviewCommandHandlerPromise;
-  };
   const getTokensCommandHandler = () => {
     if (!tokensCommandHandlerPromise) {
       tokensCommandHandlerPromise = loadTokensModule()
@@ -224,17 +205,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
     }
     return annotateLastMessageCommandPromise;
   };
-  const getTlhChangelogCommandHandler = () => {
-    if (!tlhChangelogCommandHandlerPromise) {
-      tlhChangelogCommandHandlerPromise = loadTlhChangelogModule()
-        .then((module) => module.handleTlhChangelogCommand)
-        .catch((error) => {
-          tlhChangelogCommandHandlerPromise = undefined;
-          throw error;
-        });
-    }
-    return tlhChangelogCommandHandlerPromise;
-  };
   pi.registerCommand("annotate-last-message", {
     description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
     handler: async (args, ctx) => {
@@ -261,17 +231,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
   pi.registerCommand("review", {
     description: REVIEW_COMMAND_DESCRIPTION,
     getArgumentCompletions: () => null,
-    handler: async (args, ctx) => {
-      const handler = await getReviewCommandHandler();
-      await handler(args, ctx);
-    },
+    handler: reviewCommandHandler,
   });
   pi.registerCommand("tlh-changelog", {
     description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
-    handler: async (args, ctx) => {
-      const handler = await getTlhChangelogCommandHandler();
-      await handler(pi, args, ctx);
-    },
+    handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
   });
   pi.registerCommand("tokens", {
     description: TOKENS_COMMAND_DESCRIPTION,
@@ -298,7 +262,6 @@ export default function theLastHarness(pi: ExtensionAPI) {
       activeTlhHeader?.toggleExpanded();
     },
   });
-
   const subscriptionUsageService = createLazyTlhSubscriptionUsageService();
   const refreshSubscriptionUsage = (
     ctx: ExtensionContext,
@@ -328,13 +291,12 @@ export default function theLastHarness(pi: ExtensionAPI) {
     }
 
     if (event.reason === "startup") {
-      void import("./the-last-harness/launch-telemetry.js")
-        .then(({ scheduleTlhLaunchTelemetry }) => {
-          scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
-        })
-        .catch(() => undefined);
+      try {
+        scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
+      } catch {
+        // Telemetry failures are non-fatal.
+      }
     }
-
     ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
 
     const sessionState: {
