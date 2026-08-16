@@ -109,7 +109,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/<bra
 
 The `Install this branch` command above applies to pin PRs too. Subagents are first-party TLH code under `extensions/subagents/`, so do not open standalone subagent pin, publish, release, or fork-sync PRs; develop and validate that runtime as part of the root package per [docs/local-development.md](docs/local-development.md).
 
-CI runs on `pull_request` and on `push` to `main`. The CI job/status name is `Repository validation`, and current GitHub repository rulesets protect the default branch/main and require that status check before merge. Required-merge enforcement is controlled by repository rules and settings, not by this file.
+CI runs on `pull_request` and on `push` to `main`. The CI workflow has three jobs: `Linting and formatting` (ubuntu-only, runs lint/format/shellcheck), `Non-test validation` (ubuntu + macOS, runs all other non-test checks), and `Tests` (ubuntu + macOS, two shards). Which status checks are required for merge is configured in GitHub repository rulesets — that is the source of truth, not this file.
 
 ## Releases
 
