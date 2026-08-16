@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import { basename } from "node:path";
+import { readFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
-import { LANES } from "../scripts/run-ci-validation.mjs";
+import { fileURLToPath } from "node:url";
+import { LANES, selectLanes } from "../scripts/run-ci-validation.mjs";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -280,5 +284,449 @@ test("LANES: lane names are unique", () => {
     unique.size,
     names.length,
     `Duplicate lane names found: ${names.filter((n, i) => names.indexOf(n) !== i).join(", ")}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// selectLanes: happy paths
+// ---------------------------------------------------------------------------
+
+test("selectLanes: no args returns all lanes", () => {
+  const result = selectLanes(LANES, []);
+  assert.deepStrictEqual(result, LANES);
+});
+
+test("selectLanes: --lanes= form selects named lanes", () => {
+  const result = selectLanes(LANES, ["--lanes=lint"]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "lint");
+});
+
+test("selectLanes: --lanes space form selects named lanes", () => {
+  const result = selectLanes(LANES, ["--lanes", "lint"]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "lint");
+});
+
+test("selectLanes: --lanes= with multiple lanes selects all named", () => {
+  const result = selectLanes(LANES, ["--lanes=lint,pkg"]);
+  assert.equal(result.length, 2);
+  assert.deepStrictEqual(
+    result.map((l) => l.name),
+    ["lint", "pkg"],
+  );
+});
+
+test("selectLanes: --exclude= form excludes named lane and returns the rest", () => {
+  const result = selectLanes(LANES, ["--exclude=lint"]);
+  assert.equal(result.length, LANES.length - 1);
+  assert.ok(!result.some((l) => l.name === "lint"));
+});
+
+test("selectLanes: --exclude space form excludes named lane", () => {
+  const result = selectLanes(LANES, ["--exclude", "lint"]);
+  assert.equal(result.length, LANES.length - 1);
+  assert.ok(!result.some((l) => l.name === "lint"));
+});
+
+test("selectLanes: --exclude= with multiple lanes excludes all named", () => {
+  const result = selectLanes(LANES, ["--exclude=lint,pkg"]);
+  assert.equal(result.length, LANES.length - 2);
+  assert.ok(!result.some((l) => l.name === "lint" || l.name === "pkg"));
+});
+
+// ---------------------------------------------------------------------------
+// selectLanes: error cases
+// ---------------------------------------------------------------------------
+
+test("selectLanes: unknown lane name in --lanes throws with actionable message", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--lanes=nonexistent"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("nonexistent"),
+        `message should name the unknown lane: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes("Valid lanes"),
+        `message should list valid lanes: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: unknown lane name in --exclude throws with actionable message", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--exclude=nonexistent"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("nonexistent"),
+        `message should name the unknown lane: ${err.message}`,
+      );
+      assert.ok(
+        err.message.includes("Valid lanes"),
+        `message should list valid lanes: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: --lanes and --exclude together throws", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--lanes=lint", "--exclude=pkg"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("mutually exclusive"),
+        `message should say mutually exclusive: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: --exclude all lanes throws for empty selection", () => {
+  const allNames = LANES.map((l) => l.name).join(",");
+  assert.throws(
+    () => selectLanes(LANES, [`--exclude=${allNames}`]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("zero lanes"),
+        `message should mention zero lanes: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: unknown flag throws with actionable message", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--unknown-flag"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("--unknown-flag"),
+        `message should name the unknown flag: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: --lanes with no value throws", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--lanes"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("requires a value"),
+        `message should say requires a value: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: --exclude with no value throws", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--exclude"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("requires a value"),
+        `message should say requires a value: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: repeated --lanes flag throws with actionable message", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--lanes=lint", "--lanes=pkg"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(err.message.includes("--lanes"), `message should mention --lanes: ${err.message}`);
+      assert.ok(
+        err.message.toLowerCase().includes("more than once"),
+        `message should say 'more than once': ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("selectLanes: repeated --exclude flag throws with actionable message", () => {
+  assert.throws(
+    () => selectLanes(LANES, ["--exclude=lint", "--exclude=pkg"]),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("--exclude"),
+        `message should mention --exclude: ${err.message}`,
+      );
+      assert.ok(
+        err.message.toLowerCase().includes("more than once"),
+        `message should say 'more than once': ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// CI coverage: every lane in LANES is covered by exactly one ci.yml job
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse all run-ci-validation.mjs invocations from the CI workflow YAML text
+ * (no YAML parser — we scan lines for the script name and extract lane flags).
+ *
+ * Fail-closed rules:
+ *   - Lines whose trimmed form starts with '#' are YAML comments; skip them.
+ *   - A line that contains the script name more than once is ambiguous; throw.
+ *   - Unknown '--' flags (not '--lanes' or '--exclude') are rejected; throw.
+ *   - '--lanes' or '--exclude' present but value cannot be parsed; throw.
+ *   - Both '--lanes' and '--exclude' on the same line; throw.
+ *
+ * Returns an array of objects { line, claimed } where `claimed` is the array
+ * of LANES lane names that invocation covers:
+ *   --lanes=a,b   → ["a", "b"]   (= form)
+ *   --lanes a,b   → ["a", "b"]   (space form)
+ *   --exclude=a,b → all lane names except ["a", "b"]
+ *   (no flag)     → all lane names
+ *
+ * @param {string} workflowText
+ * @param {string[]} allLaneNames
+ * @returns {{ line: string; claimed: string[] }[]}
+ */
+function parseWorkflowInvocations(workflowText, allLaneNames) {
+  const results = [];
+  for (const rawLine of workflowText.split("\n")) {
+    if (!rawLine.includes("run-ci-validation.mjs")) continue;
+    const line = rawLine.trim();
+    // Fail closed: skip YAML comment lines.
+    if (line.startsWith("#")) continue;
+    // Fail closed: reject a line with the script name more than once (ambiguous).
+    const occurrences = (line.match(/run-ci-validation\.mjs/g) ?? []).length;
+    if (occurrences > 1) {
+      throw new Error(
+        `parseWorkflowInvocations: line contains 'run-ci-validation.mjs' more than once ` +
+          `(ambiguous — cannot safely determine coverage): ${line}`,
+      );
+    }
+    // Detect unknown '--' flags. Split on whitespace, strip any '=value' suffix.
+    const unknownFlags = line
+      .split(/\s+/)
+      .filter((t) => t.startsWith("--"))
+      .map((t) => (t.includes("=") ? t.split("=")[0] : t))
+      .filter((t) => t !== "--lanes" && t !== "--exclude");
+    if (unknownFlags.length > 0) {
+      throw new Error(
+        `parseWorkflowInvocations: unrecognized flag(s) on run-ci-validation.mjs line ` +
+          `(fail closed — cannot safely determine coverage): ${unknownFlags.join(", ")} in: ${line}`,
+      );
+    }
+    // Parse flags — support both '=' form (--lanes=x) and space form (--lanes x).
+    // Value must not start with '-' to avoid capturing the next flag as the value.
+    const lanesMatch = /--lanes(?:=|\s+)([^-\s][^\s]*)/.exec(line);
+    const excludeMatch = /--exclude(?:=|\s+)([^-\s][^\s]*)/.exec(line);
+    // Fail closed: if the flag keyword appears but its value could not be parsed, reject.
+    if (line.includes("--lanes") && !lanesMatch) {
+      throw new Error(
+        `parseWorkflowInvocations: '--lanes' flag found but its value could not be parsed ` +
+          `(fail closed): ${line}`,
+      );
+    }
+    if (line.includes("--exclude") && !excludeMatch) {
+      throw new Error(
+        `parseWorkflowInvocations: '--exclude' flag found but its value could not be parsed ` +
+          `(fail closed): ${line}`,
+      );
+    }
+    let claimed;
+    if (lanesMatch && excludeMatch) {
+      throw new Error(
+        `parseWorkflowInvocations: line has both '--lanes' and '--exclude' flags (ambiguous): ${line}`,
+      );
+    } else if (lanesMatch) {
+      claimed = lanesMatch[1]
+        .split(",")
+        .map((n) => n.trim())
+        .filter(Boolean);
+    } else if (excludeMatch) {
+      const excluded = excludeMatch[1]
+        .split(",")
+        .map((n) => n.trim())
+        .filter(Boolean);
+      claimed = allLaneNames.filter((n) => !excluded.includes(n));
+    } else {
+      // No flags: the script runs all lanes.
+      claimed = [...allLaneNames];
+    }
+    results.push({ line, claimed });
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// parseWorkflowInvocations: unit tests using synthetic workflow text
+// ---------------------------------------------------------------------------
+
+test("parseWorkflowInvocations: commented-out invocation does not contribute coverage (guard fails for missing lint)", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  // Simulate: lint job's run line is commented out; validation job uses --exclude=lint.
+  const syntheticText = [
+    "          # node scripts/run-ci-validation.mjs --lanes=lint",
+    "          node scripts/run-ci-validation.mjs --exclude=lint",
+  ].join("\n");
+  const invocations = parseWorkflowInvocations(syntheticText, allLaneNames);
+  // Only the --exclude=lint invocation is parsed (comment skipped).
+  assert.equal(invocations.length, 1, "comment line must be skipped");
+  // Reproduce the coverage-check logic to prove lint is reported missing.
+  const seen = new Map();
+  for (const { line, claimed } of invocations) {
+    for (const name of claimed) seen.set(name, line);
+  }
+  const missing = allLaneNames.filter((n) => !seen.has(n));
+  assert.deepStrictEqual(
+    missing,
+    ["lint"],
+    "lint lane must be reported missing when its invocation is commented out — the guard would fail",
+  );
+});
+
+test("parseWorkflowInvocations: line with two run-ci-validation.mjs occurrences throws", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  const ambiguousLine =
+    "node scripts/run-ci-validation.mjs --lanes=lint && node scripts/run-ci-validation.mjs --lanes=pkg";
+  assert.throws(
+    () => parseWorkflowInvocations(ambiguousLine, allLaneNames),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("more than once"),
+        `message should mention 'more than once': ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("parseWorkflowInvocations: space-form '--lanes lint' is parsed equivalently to '--lanes=lint'", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  const eqForm = "node scripts/run-ci-validation.mjs --lanes=lint";
+  const spaceForm = "node scripts/run-ci-validation.mjs --lanes lint";
+  const eqResult = parseWorkflowInvocations(eqForm, allLaneNames);
+  const spaceResult = parseWorkflowInvocations(spaceForm, allLaneNames);
+  assert.equal(eqResult.length, 1);
+  assert.equal(spaceResult.length, 1);
+  assert.deepStrictEqual(
+    spaceResult[0].claimed,
+    eqResult[0].claimed,
+    "space-form and =-form must produce the same claimed lanes",
+  );
+  assert.deepStrictEqual(eqResult[0].claimed, ["lint"]);
+});
+
+test("parseWorkflowInvocations: space-form '--exclude lint' is parsed equivalently to '--exclude=lint'", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  const eqForm = "node scripts/run-ci-validation.mjs --exclude=lint";
+  const spaceForm = "node scripts/run-ci-validation.mjs --exclude lint";
+  const eqResult = parseWorkflowInvocations(eqForm, allLaneNames);
+  const spaceResult = parseWorkflowInvocations(spaceForm, allLaneNames);
+  assert.equal(eqResult.length, 1);
+  assert.equal(spaceResult.length, 1);
+  assert.deepStrictEqual(
+    spaceResult[0].claimed,
+    eqResult[0].claimed,
+    "space-form and =-form must produce the same claimed lanes",
+  );
+  assert.ok(!eqResult[0].claimed.includes("lint"), "lint must be excluded");
+});
+
+test("parseWorkflowInvocations: unknown flag causes throw (fail closed)", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  const lineWithUnknownFlag = "node scripts/run-ci-validation.mjs --unknown-flag=foo";
+  assert.throws(
+    () => parseWorkflowInvocations(lineWithUnknownFlag, allLaneNames),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(
+        err.message.includes("--unknown-flag"),
+        `message should name the unknown flag: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+test("parseWorkflowInvocations: --lanes without a parseable value throws (fail closed)", () => {
+  const allLaneNames = LANES.map((l) => l.name);
+  // --lanes at end of line with no value.
+  const incompleteFlag = "node scripts/run-ci-validation.mjs --lanes";
+  assert.throws(
+    () => parseWorkflowInvocations(incompleteFlag, allLaneNames),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.ok(err.message.includes("--lanes"), `message should mention --lanes: ${err.message}`);
+      return true;
+    },
+  );
+});
+
+test("CI workflow: every lane in LANES is covered by exactly one ci.yml job (no lane silently dropped or duplicated)", () => {
+  const workflowPath = join(repoRoot, ".github", "workflows", "ci.yml");
+  const workflowText = readFileSync(workflowPath, "utf8");
+
+  const allLaneNames = LANES.map((l) => l.name);
+  const invocations = parseWorkflowInvocations(workflowText, allLaneNames);
+
+  assert.ok(
+    invocations.length > 0,
+    "No run-ci-validation.mjs invocations found in ci.yml — workflow may be misconfigured",
+  );
+
+  // Check for duplicates: each lane must appear in exactly one invocation.
+  /** @type {Map<string, string>} lane name → first invocation line */
+  const seen = new Map();
+  /** @type {string[]} */
+  const duplicates = [];
+
+  for (const { line, claimed } of invocations) {
+    for (const name of claimed) {
+      if (seen.has(name)) {
+        duplicates.push(`"${name}" is claimed by both "${seen.get(name)}" and "${line}"`);
+      } else {
+        seen.set(name, line);
+      }
+    }
+  }
+
+  const missing = allLaneNames.filter((n) => !seen.has(n));
+
+  assert.deepStrictEqual(
+    duplicates,
+    [],
+    [
+      "Some lanes are claimed by more than one ci.yml job:",
+      ...duplicates.map((d) => `  ${d}`),
+    ].join("\n"),
+  );
+
+  assert.deepStrictEqual(
+    missing,
+    [],
+    [
+      "Some lanes in LANES are not covered by any ci.yml job:",
+      ...missing.map((n) => `  ${n}`),
+      "Invocations found:",
+      ...invocations.map((i) => `  ${i.line} → [${i.claimed.join(", ")}]`),
+    ].join("\n"),
   );
 });

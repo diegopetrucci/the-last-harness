@@ -1,4 +1,4 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord } from "./common.js";
 import { commandBasename, extractHereDocBodies, getEnvLeadingOptionParseResult, getProcessSubstitutionOutput, getWrappedShellCommand, getWrappedShellCommandFromTokens, isSupportedEnvCommand, MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH, normalizeShellCommandTokens, normalizeShellCommandTokensFromTokens, normalizeTrailingLineEnding, splitShellCommandSegments, stripLeadingOptionTerminator, stripLeadingShellCommandPrefixes, tokenizeShellWords, } from "./shell-parser.js";
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
@@ -395,26 +395,10 @@ export function getTlhGitCommitAttributionBlockReason(command, state) {
     }
     return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
-export function registerToggleTlhGitAttributionCommand(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ??
-        (() => import("./attribution-command.js")));
+import { handleToggleTlhGitAttributionCommand } from "./attribution-command.js";
+export function registerToggleTlhGitAttributionCommand(pi) {
     pi.registerCommand("toggle-tlh-git-attribution", {
         description: "Toggle TLH git commit attribution",
-        handler: async (args, ctx) => {
-            const module = await loadModule();
-            await module.handleToggleTlhGitAttributionCommand(pi, args, ctx);
-        },
+        handler: (args, ctx) => handleToggleTlhGitAttributionCommand(pi, args, ctx),
     });
 }

@@ -60,7 +60,7 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
     test: t,
   });
 
-  const loadCalls = [];
+  const createCalls = [];
   const runtimeCalls = [];
   const runtime = {
     applyCurrentSettings(ctx) {
@@ -82,31 +82,26 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
     async () => {
       const pi = createPiHarness();
       registerLazyTlhTicketWorkflowUi(pi, {
-        loadModule: async () => {
-          loadCalls.push("load");
-          return {
-            createTlhTicketWorkflowUiRuntime() {
-              return runtime;
-            },
-          };
+        createRuntime: () => {
+          createCalls.push("create");
+          return runtime;
         },
       });
       const ctx = createCtx(fixture.cwd);
 
       await fireAll(pi, "session_start", { reason: "restore" }, ctx);
       await flushAsyncWork();
-      assert.deepEqual(loadCalls, ["load"]);
+      assert.deepEqual(createCalls, ["create"]);
       assert.deepEqual(runtimeCalls, [
         ["applyCurrentSettings", fixture.cwd, join(fixture.cwd, ".tickets")],
       ]);
 
       await fireAll(pi, "session_start", { reason: "restore" }, ctx);
       await flushAsyncWork();
-      assert.deepEqual(loadCalls, ["load"]);
+      assert.deepEqual(createCalls, ["create"]);
       assert.deepEqual(runtimeCalls.slice(-1), [
         ["applyCurrentSettings", fixture.cwd, join(fixture.cwd, ".tickets")],
       ]);
-
       await fireAll(pi, "user_bash", { command: "tk ready" }, ctx);
       await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk ready" } }, ctx);
       await fireAll(pi, "session_shutdown", {}, ctx);
@@ -119,36 +114,32 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
   );
 });
 
-test("lazy ticket workflow facade skips runtime import for non-UI sessions", async (t) => {
+test("lazy ticket workflow facade skips runtime creation for non-UI sessions", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-facade-", {
     cwd: true,
     test: t,
   });
-  const loadCalls = [];
+  const createCalls = [];
 
   await withEnv(
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
       registerLazyTlhTicketWorkflowUi(pi, {
-        loadModule: async () => {
-          loadCalls.push("load");
-          return {
-            createTlhTicketWorkflowUiRuntime() {
-              throw new Error("should not load");
-            },
-          };
+        createRuntime: () => {
+          createCalls.push("create");
+          throw new Error("should not be called for non-UI sessions");
         },
       });
 
       await fireAll(pi, "session_start", { reason: "restore" }, createCtx(fixture.cwd, false));
       await flushAsyncWork();
-      assert.deepEqual(loadCalls, []);
+      assert.deepEqual(createCalls, []);
     },
   );
 });
 
-test("lazy ticket workflow facade retries runtime import after an initial session-start failure", async (t) => {
+test("lazy ticket workflow facade retries runtime creation after an initial session-start failure", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-facade-", {
     cwd: true,
     test: t,
@@ -161,27 +152,22 @@ test("lazy ticket workflow facade retries runtime import after an initial sessio
     async () => {
       const pi = createPiHarness();
       registerLazyTlhTicketWorkflowUi(pi, {
-        loadModule: async () => {
+        createRuntime: () => {
           attempts += 1;
           if (attempts === 1) {
             throw new Error("boom");
           }
           return {
-            createTlhTicketWorkflowUiRuntime() {
-              return {
-                applyCurrentSettings(ctx) {
-                  runtimeCalls.push(["applyCurrentSettings", ctx.cwd]);
-                },
-                handleSessionShutdown() {},
-                handleUserBash() {},
-                handleToolResult() {},
-              };
+            applyCurrentSettings(ctx) {
+              runtimeCalls.push(["applyCurrentSettings", ctx.cwd]);
             },
+            handleSessionShutdown() {},
+            handleUserBash() {},
+            handleToolResult() {},
           };
         },
       });
       const ctx = createCtx(fixture.cwd);
-
       await fireAll(pi, "session_start", { reason: "restore" }, ctx);
       await flushAsyncWork();
       assert.equal(attempts, 1);
@@ -208,20 +194,15 @@ test("lazy ticket workflow facade rescopes each session before reapplying the lo
     async () => {
       const pi = createPiHarness();
       registerLazyTlhTicketWorkflowUi(pi, {
-        loadModule: async () => ({
-          createTlhTicketWorkflowUiRuntime() {
-            return {
-              applyCurrentSettings(ctx) {
-                runtimeCalls.push([ctx.cwd, process.env.TICKETS_DIR]);
-              },
-              handleSessionShutdown() {},
-              handleUserBash() {},
-              handleToolResult() {},
-            };
+        createRuntime: () => ({
+          applyCurrentSettings(ctx) {
+            runtimeCalls.push([ctx.cwd, process.env.TICKETS_DIR]);
           },
+          handleSessionShutdown() {},
+          handleUserBash() {},
+          handleToolResult() {},
         }),
       });
-
       await fireAll(pi, "session_start", { reason: "restore" }, createCtx(repoA));
       await flushAsyncWork();
       await fireAll(pi, "session_start", { reason: "restore" }, createCtx(repoB));
