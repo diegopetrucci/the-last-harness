@@ -1561,14 +1561,13 @@ test("reauth warning: transient-unavailable renders nothing", async () => {
   assert.doesNotMatch(lines.join("\n"), /reauth/);
 });
 
-test("reauth warning: unknown status renders nothing", () => {
+test("reauth warning: unknown status renders nothing", async () => {
   const store = createProviderAuthHealthStore();
-  // probeProvider on registry without getProviderAuth → 'unknown'
-  store
-    .probeProvider({}, "anthropic")
-    .then(() => {})
-    .catch(() => {});
-  // unknown status (no entry yet): no warning
+  // probeProvider on a registry without getProviderAuth resolves to 'unknown'
+  // without recording any entry — await it so the store is settled before render.
+  const status = await store.probeProvider({}, "anthropic");
+  assert.equal(status, "unknown", "probe on registry without getProviderAuth must return unknown");
+  // unknown status leaves no entry → footer must not show any reauth warning
   const footer = createFooterWithAuthHealth(store);
   const lines = footer.render(WIDTH);
   assert.doesNotMatch(lines.join("\n"), /reauth/);

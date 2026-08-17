@@ -399,12 +399,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     function emitReauthNotificationIfNew(provider, ctx, message) {
         if (notifiedForReauth.has(provider))
-            return;
+            return true;
         try {
             ctx.ui.notify(message, "warning");
             notifiedForReauth.add(provider);
+            return true;
         }
         catch {
+            return false;
         }
     }
     function scheduleProviderPreflight(provider, store, modelRegistry, currentNow, ctx) {
@@ -957,10 +959,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (!authStore)
                 return;
             for (const provider of pendingReauthNotifications) {
-                pendingReauthNotifications.delete(provider);
-                emitReauthNotificationIfNew(provider, ctx, `A subagent run was rejected by ${provider} for credentials. ` +
+                const notified = emitReauthNotificationIfNew(provider, ctx, `A subagent run was rejected by ${provider} for credentials. ` +
                     `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
                     `was affected for that run. Run /login if this recurs.`);
+                if (notified) {
+                    pendingReauthNotifications.delete(provider);
+                }
             }
             const currentNow = nowFn();
             for (const provider of authStore.getNonHealthyProviders()) {

@@ -505,7 +505,12 @@ export function createProviderAuthHealthStore(
       // will be discarded rather than overwriting the cleared state.
       const startGeneration = generation(provider);
 
-      const probe = (async (): Promise<ProviderAuthHealthStatus> => {
+      // Use let so the identity check in the finally block (probe === inFlight.get(provider))
+      // can reference probe after it is assigned. TypeScript cannot infer that finally
+      // only runs after the assignment, so the definite-assignment assertion (!) is needed.
+      // eslint-disable-next-line prefer-const
+      let probe!: Promise<ProviderAuthHealthStatus>;
+      probe = (async (): Promise<ProviderAuthHealthStatus> => {
         try {
           const result = await adapterGetProviderAuth(modelRegistry, provider);
           if (result.ok) {
@@ -530,7 +535,13 @@ export function createProviderAuthHealthStore(
           }
           return status;
         } finally {
-          inFlight.delete(provider);
+          // Only remove this probe's entry. If clearProvider was called mid-flight
+          // and a new probe was installed for the same provider, do not evict the
+          // newer probe — coalescing would be lost and a duplicate getProviderAuth
+          // call could run (which rotates credentials and holds the auth-file lock).
+          if (inFlight.get(provider) === probe) {
+            inFlight.delete(provider);
+          }
         }
       })();
 

@@ -906,6 +906,84 @@ test("provider can be notified on retry when ctx.ui.notify threw on a previous c
 });
 
 // ---------------------------------------------------------------------------
+// Finding 1 — turn_end flush: intent kept for retry when notify throws
+// ---------------------------------------------------------------------------
+
+test("turn_end flush: pending intent is kept when ctx.ui.notify throws, and retried on the next turn_end", async (t) => {
+  // When the async-complete path records a pending intent and turn_end fires but
+  // ctx.ui.notify throws, the intent must NOT be discarded. A subsequent turn_end
+  // with a working ctx must still emit the notification.
+  const fixture = createIsolatedProfileFixture("tlh-notify-test-", { cwd: true, test: t });
+  const clock = createClock(1_000_000);
+
+  const store = createProviderAuthHealthStore({ now: clock.now });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerTlhPrimaryAgentRuntime(pi, {
+      env: {},
+      subagentMetadata: [],
+      getProviderAuthHealthStore: () => store,
+      now: clock.now,
+    });
+
+    const turnEnd = pi.events.find((e) => e.name === "turn_end")?.handler;
+    assert.ok(turnEnd, "turn_end handler must be registered");
+
+    // Record a pending intent via async-complete (no ctx, cannot notify immediately).
+    pi.events.emit("subagent:async-complete", {
+      runId: "async-run-throw-001",
+      results: [
+        {
+          agent: "contrarian",
+          status: "completed",
+          modelAttempts: [
+            {
+              model: "anthropic/claude-opus-4",
+              success: false,
+              error: "OAuth refresh failed: invalid_grant",
+            },
+            { model: "openai-codex/gpt-5.6-luna", success: true },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(store.getEntry("anthropic")?.status, "reauth-required");
+
+    // First turn_end: ctx.ui.notify throws — intent must survive.
+    let throwCount = 0;
+    const ctxWithThrowingUi = {
+      cwd: process.cwd(),
+      sessionManager: { getBranch: () => ARCHITECT_BRANCH },
+      ui: {
+        notify() {
+          throwCount += 1;
+          throw new Error("ui unavailable");
+        },
+      },
+      modelRegistry: { getAvailable: () => [] },
+      model: { provider: "anthropic", id: "claude-opus-4" },
+    };
+    turnEnd({}, ctxWithThrowingUi);
+    assert.equal(throwCount, 1, "notify must have been attempted");
+
+    // Second turn_end: ctx.ui.notify works — intent must now be consumed.
+    const { ctx: workingCtx, notifyCalls } = createNotifyCtx({});
+    turnEnd({}, workingCtx);
+
+    assert.equal(
+      countReauthWarnings(notifyCalls),
+      1,
+      "turn_end must emit the pending notification on retry after notify threw — " +
+        "the intent must not have been discarded on the first (failing) attempt",
+    );
+  });
+
+  cleanupTempDir(fixture);
+});
+
+// ---------------------------------------------------------------------------
 // Session state cleared on session_shutdown — P2 finding
 // ---------------------------------------------------------------------------
 

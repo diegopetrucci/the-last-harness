@@ -726,17 +726,19 @@ function createTlhPrimaryAgentRuntime(
     provider: string,
     ctx: ExtensionContext,
     message: string,
-  ): void {
-    if (notifiedForReauth.has(provider)) return;
+  ): boolean {
+    if (notifiedForReauth.has(provider)) return true;
     try {
       ctx.ui.notify(message, "warning");
       // Mark only after notify returns without throwing, so a UI exception on one
       // call does not permanently suppress the notification for this provider.
       notifiedForReauth.add(provider);
+      return true;
     } catch {
       // Best-effort: ctx.ui may be unavailable or non-interactive.
       // Deliberately not marking the provider as notified so the next available
       // context can retry.
+      return false;
     }
   }
 
@@ -1576,14 +1578,19 @@ function createTlhPrimaryAgentRuntime(
       // message) because the local credential state may differ from what the remote
       // server observed at run time.
       for (const provider of pendingReauthNotifications) {
-        pendingReauthNotifications.delete(provider);
-        emitReauthNotificationIfNew(
+        // Delete the intent only when the notification succeeds (or was already
+        // sent via another path). If notify throws, keep the intent so the next
+        // turn_end can retry rather than silently discarding the evidence.
+        const notified = emitReauthNotificationIfNew(
           provider,
           ctx,
           `A subagent run was rejected by ${provider} for credentials. ` +
             `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
             `was affected for that run. Run /login if this recurs.`,
         );
+        if (notified) {
+          pendingReauthNotifications.delete(provider);
+        }
       }
 
       // Clearing pass: re-probe any provider currently flagged non-healthy so

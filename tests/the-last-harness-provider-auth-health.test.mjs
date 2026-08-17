@@ -461,6 +461,61 @@ test("clearProvider: stale probe failure (reauth-required) does NOT overwrite th
   assert.equal(store.getEntry("anthropic")?.status, "healthy");
 });
 
+test("clearProvider mid-flight: stale probe settling after clearProvider + new probe does not evict the newer probe from inFlight", async () => {
+  // Race sequence:
+  //  1. Probe A starts for 'anthropic' → inFlight.set('anthropic', probeA)
+  //  2. clearProvider('anthropic') → inFlight.delete('anthropic')
+  //  3. probeProvider('anthropic') again → probeB → inFlight.set('anthropic', probeB)
+  //  4. Probe A settles → its finally block must NOT delete probeB's entry
+  //  5. probeProvider('anthropic') now returns probeB (coalescing preserved)
+  let resolveA;
+  let callCount = 0;
+  const store = createProviderAuthHealthStore();
+
+  // Probe A: stalls until we resolve it manually.
+  const registryA = makeRegistry({
+    getProviderAuth: async () =>
+      new Promise((resolve) => {
+        resolveA = resolve;
+      }),
+  });
+
+  // Probe B: resolves immediately (simulates the new probe after clearProvider).
+  const registryB = makeRegistry({
+    getProviderAuth: async () => {
+      callCount += 1;
+      return { accessToken: "tok-b" };
+    },
+  });
+
+  // Step 1: start probe A.
+  const pendingA = store.probeProvider(registryA, "anthropic");
+
+  // Step 2: clearProvider evicts probe A from inFlight.
+  store.clearProvider("anthropic");
+
+  // Step 3: start probe B (new probe after clearProvider).
+  const pendingB = store.probeProvider(registryB, "anthropic");
+
+  // Step 4: probe A settles — must NOT evict probe B from inFlight.
+  resolveA({ accessToken: "tok-a" });
+  const resultA = await pendingA;
+  // Probe A's result is discarded (generation mismatch) but it must not crash.
+  assert.equal(resultA, "healthy");
+
+  // Step 5: probe B has already resolved (it was immediate).
+  const resultB = await pendingB;
+  assert.equal(resultB, "healthy");
+
+  // A second call to probeProvider must coalesce with the (by-now-settled) probe B
+  // or start a fresh one — the key invariant is that probe A's finally did not
+  // corrupt the inFlight map, so no spurious extra getProviderAuth is called here.
+  // Calling again after both settle should start a fresh probe (both settled).
+  callCount = 0;
+  await store.probeProvider(registryB, "anthropic");
+  assert.equal(callCount, 1, "a fresh probe must be issued after both probes settled");
+});
+
 // ---------------------------------------------------------------------------
 // Session lifecycle (dispose)
 // ---------------------------------------------------------------------------

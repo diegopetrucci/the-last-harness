@@ -116,11 +116,13 @@ Outside the TUI, `/reconcile` prints a read-only drift summary. See [`docs/comma
 
 When TLH dispatches a subagent and the provider's credential fails, a sticky footer warning appears:
 
-```
+```text
 ⚠ reauth: anthropic
 ```
 
-The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and is **sticky until the credential is refreshed** — it does not disappear automatically with the run. Once you re-authenticate, TLH picks it up at the next dispatch or turn boundary and clears the warning without a restart.
+The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and is **sticky across sessions**. It clears automatically once the credential works again — TLH re-probes at each dispatch and turn boundary, so no restart is needed. A toast notification pointing at `/login` appears the first time a provider is flagged.
+
+Credential failures are detected at dispatch time and also from completed runs, including async ones — so a silently degraded `code-reviewer`, `oracle`, or `contrarian` is surfaced even when the failure happened after the tool call returned.
 
 Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
 

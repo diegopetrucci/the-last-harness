@@ -238,7 +238,8 @@ export function createProviderAuthHealthStore(options = {}) {
             if (existing)
                 return existing;
             const startGeneration = generation(provider);
-            const probe = (async () => {
+            let probe;
+            probe = (async () => {
                 try {
                     const result = await adapterGetProviderAuth(modelRegistry, provider);
                     if (result.ok) {
@@ -257,7 +258,9 @@ export function createProviderAuthHealthStore(options = {}) {
                     return status;
                 }
                 finally {
-                    inFlight.delete(provider);
+                    if (inFlight.get(provider) === probe) {
+                        inFlight.delete(provider);
+                    }
                 }
             })();
             inFlight.set(provider, probe);
