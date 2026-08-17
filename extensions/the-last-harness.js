@@ -8,6 +8,7 @@ import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
+import { createProviderAuthHealthStore, } from "./the-last-harness/provider-auth-health.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
 import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
@@ -82,14 +83,23 @@ export default function theLastHarness(pi) {
         activeTlhHeaderComponentId = 0;
         return activeTlhHeaderSessionToken;
     };
+    let activeProviderAuthHealthStore;
+    let activeProviderAuthHealthUnsubscribe;
     pi.on("session_shutdown", () => {
         invalidateActiveTlhHeaderSession();
+        activeProviderAuthHealthUnsubscribe?.();
+        activeProviderAuthHealthUnsubscribe = undefined;
+        activeProviderAuthHealthStore?.dispose();
+        activeProviderAuthHealthStore = undefined;
     });
     installTlhModelVisibilityFilter();
     registerContextCap(pi);
     const activityTracker = registerTlhEffectiveActivityTracker(pi);
     registerTlhActivityReporters(pi, activityTracker);
-    const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
+    const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, {
+        env: process.env,
+        getProviderAuthHealthStore: () => activeProviderAuthHealthStore,
+    });
     if (!primaryAgentRuntime) {
         return;
     }
@@ -262,6 +272,8 @@ export default function theLastHarness(pi) {
         const headerUpdate = getTlhHeaderUpdate();
         const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
         const installNotice = readTlhInstallNotice();
+        const providerAuthHealthStore = createProviderAuthHealthStore();
+        activeProviderAuthHealthStore = providerAuthHealthStore;
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
                 subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
@@ -272,10 +284,11 @@ export default function theLastHarness(pi) {
                         ? (cb) => footerData.onBranchChange(cb)
                         : undefined,
                 });
+                activeProviderAuthHealthUnsubscribe = providerAuthHealthStore.subscribe(() => tui.requestRender());
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
                     shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
-                }, gitCache, installNotice);
+                }, gitCache, installNotice, providerAuthHealthStore);
             });
         }
         if (typeof ctx.ui.setHeader === "function") {

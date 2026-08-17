@@ -112,6 +112,18 @@ The reported value is the canonical packaged default for the active provider, re
 
 Outside the TUI, `/reconcile` prints a read-only drift summary. See [`docs/commands.md`](docs/commands.md) for full details.
 
+### Provider auth-health warning
+
+When TLH dispatches a subagent and the provider's credential fails, a sticky footer warning appears:
+
+```
+⚠ reauth: anthropic
+```
+
+The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and is **sticky until the credential is refreshed** — it does not disappear automatically with the run. Once you re-authenticate, TLH picks it up at the next dispatch or turn boundary and clears the warning without a restart.
+
+Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
+
 ### Customisation
 
 You can add your own skills, prompts, extensions, and packages to TLH.

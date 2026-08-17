@@ -1,4 +1,4 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
@@ -169,7 +169,22 @@ function appendMcpContextEstimate(statusText, suffix) {
     }
     return `${statusText}${suffix}`;
 }
-export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice) {
+export function formatReauthWarningLine(providers, width, theme) {
+    if (providers.length === 0)
+        return undefined;
+    const fullText = `\u26a0 reauth: ${providers.join(", ")}`;
+    const fullStyled = theme.fg("warning", fullText);
+    if (visibleWidth(fullStyled) <= width)
+        return fullStyled;
+    const shortLabels = providers.map((p) => p.split("-").at(-1) ?? p);
+    const shortText = `\u26a0 reauth: ${shortLabels.join(", ")}`;
+    const shortStyled = theme.fg("warning", shortText);
+    if (visibleWidth(shortStyled) <= width)
+        return shortStyled;
+    const countText = `\u26a0 reauth \u00d7${providers.length}`;
+    return theme.fg("warning", countText);
+}
+export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth) {
     let mcpContextEstimateCache;
     return {
         render(width) {
@@ -229,6 +244,12 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 line3Parts.push(subscriptionUsageState.segment);
             const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
             const lines = [pwdLine, agentLine2];
+            if (providerAuthHealth) {
+                const reauthProviders = providerAuthHealth.getReauthProviders();
+                const warningLine = formatReauthWarningLine(reauthProviders, width, theme);
+                if (warningLine !== undefined)
+                    lines.push(warningLine);
+            }
             const extensionStatuses = footerData?.getExtensionStatuses?.();
             const hasMcpStatus = extensionStatuses
                 ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))

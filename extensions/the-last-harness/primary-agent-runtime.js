@@ -8,7 +8,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, parseProviderModelReference, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
@@ -292,13 +292,151 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         return reason ? { block: true, reason } : undefined;
     });
 }
-function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
+const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export function isHighConfidenceAuthSignatureInAttemptError(error) {
+    const lower = error.toLowerCase();
+    return (lower.includes("invalid_grant") ||
+        lower.includes("token-refresh unauthorized") ||
+        lower.includes("token refresh unauthorized") ||
+        lower.includes("status 401") ||
+        lower.includes("status 403") ||
+        lower.includes("(status 401)") ||
+        lower.includes("(status 403)") ||
+        lower.includes("http 401") ||
+        lower.includes("http 403"));
+}
+export function processSubagentRunDetails(details, authStore) {
+    if (!isRecord(details))
+        return;
+    const { results } = details;
+    if (!Array.isArray(results))
+        return;
+    for (const result of results) {
+        if (!isRecord(result))
+            continue;
+        const { modelAttempts } = result;
+        if (!Array.isArray(modelAttempts)) {
+            continue;
+        }
+        for (const attempt of modelAttempts) {
+            if (!isRecord(attempt))
+                continue;
+            const { model, success, error } = attempt;
+            if (typeof model !== "string" || typeof success !== "boolean")
+                continue;
+            if (success === true)
+                continue;
+            if (typeof error !== "string" || error.length === 0)
+                continue;
+            const parsed = parseProviderModelReference(model);
+            if (!parsed?.provider)
+                continue;
+            if (isHighConfidenceAuthSignatureInAttemptError(error)) {
+                authStore.recordRunLevelAuthObservation(parsed.provider);
+            }
+        }
+    }
+}
+function dispatchPreflightBackoffMs(failures) {
+    if (failures <= 1)
+        return 60_000;
+    if (failures === 2)
+        return 120_000;
+    return 300_000;
+}
+export function extractDispatchProviders(input) {
+    if (typeof input !== "object" || input === null)
+        return [];
+    const obj = input;
+    const seen = new Set();
+    function addModel(model) {
+        if (typeof model !== "string")
+            return;
+        const parsed = parseProviderModelReference(model);
+        if (parsed?.provider)
+            seen.add(parsed.provider);
+    }
+    addModel(obj["model"]);
+    if (Array.isArray(obj["tasks"])) {
+        for (const task of obj["tasks"]) {
+            if (typeof task === "object" && task !== null) {
+                addModel(task["model"]);
+            }
+        }
+    }
+    return [...seen];
+}
+function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runtimeOptions = {}) {
+    const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
     const warned = new Set();
     const primaryToolState = createPrimaryToolState();
     const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
     let sessionExperimentalSnapshot;
+    const preflightThrottle = new Map();
+    const notifiedForReauth = new Set();
+    const pendingReauthNotifications = new Set();
+    function shouldPreflightAtDispatch(provider, store, now) {
+        const entry = store.getEntry(provider);
+        if (!entry)
+            return true;
+        if (entry.status === "healthy")
+            return false;
+        const throttle = preflightThrottle.get(provider);
+        if (!throttle)
+            return true;
+        return now >= throttle.nextAllowedAt;
+    }
+    function shouldPreflightForClearing(provider, store, now) {
+        const entry = store.getEntry(provider);
+        if (!entry || entry.status === "healthy")
+            return false;
+        const throttle = preflightThrottle.get(provider);
+        if (!throttle)
+            return true;
+        return now >= throttle.nextAllowedAt;
+    }
+    function emitReauthNotificationIfNew(provider, ctx, message) {
+        if (notifiedForReauth.has(provider))
+            return;
+        try {
+            ctx.ui.notify(message, "warning");
+            notifiedForReauth.add(provider);
+        }
+        catch {
+        }
+    }
+    function scheduleProviderPreflight(provider, store, modelRegistry, currentNow, ctx) {
+        const existing = preflightThrottle.get(provider);
+        preflightThrottle.set(provider, {
+            failures: existing?.failures ?? 0,
+            nextAllowedAt: currentNow + 300_000,
+        });
+        void store
+            .probeProvider(modelRegistry, provider)
+            .then((status) => {
+            const t = nowFn();
+            if (status === "healthy") {
+                preflightThrottle.delete(provider);
+                notifiedForReauth.delete(provider);
+            }
+            else {
+                const prev = preflightThrottle.get(provider);
+                const newFailures = (prev?.failures ?? 0) + 1;
+                preflightThrottle.set(provider, {
+                    failures: newFailures,
+                    nextAllowedAt: t + dispatchPreflightBackoffMs(newFailures),
+                });
+                if (status === "reauth-required" && ctx !== undefined) {
+                    emitReauthNotificationIfNew(provider, ctx, `Provider ${provider} requires re-authentication. Run /login to reconfigure. ` +
+                        `Opposite-provider independence for code-reviewer, oracle, and contrarian is affected.`);
+                }
+            }
+        })
+            .catch(() => {
+        });
+    }
     function warnOnce(ctx, key, message) {
         if (warned.has(key)) {
             return;
@@ -814,6 +952,23 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             syncPrimaryAgentState(ctx);
             await applyPrimaryDefaults(ctx);
         });
+        pi.on("turn_end", (_event, ctx) => {
+            const authStore = getProviderAuthHealthStore?.();
+            if (!authStore)
+                return;
+            for (const provider of pendingReauthNotifications) {
+                pendingReauthNotifications.delete(provider);
+                emitReauthNotificationIfNew(provider, ctx, `A subagent run was rejected by ${provider} for credentials. ` +
+                    `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+                    `was affected for that run. Run /login if this recurs.`);
+            }
+            const currentNow = nowFn();
+            for (const provider of authStore.getNonHealthyProviders()) {
+                if (shouldPreflightForClearing(provider, authStore, currentNow)) {
+                    scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+                }
+            }
+        });
         pi.on("session_shutdown", async (_event, _ctx) => {
             replayAllTlhUnclaimedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(undefined);
@@ -896,8 +1051,50 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                     }
                 }
             }
+            const authStore = getProviderAuthHealthStore?.();
+            if (authStore) {
+                const currentNow = nowFn();
+                const providers = extractDispatchProviders(event.input);
+                for (const provider of providers) {
+                    if (shouldPreflightAtDispatch(provider, authStore, currentNow)) {
+                        scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+                    }
+                }
+            }
             return undefined;
         });
+        pi.on("tool_result", (_event, _ctx) => {
+            const event = _event;
+            if (event.toolName !== "subagent")
+                return;
+            const authStore = getProviderAuthHealthStore?.();
+            if (!authStore)
+                return;
+            const prevReauthProviders = new Set(authStore.getReauthProviders());
+            processSubagentRunDetails(event.details, authStore);
+            for (const provider of authStore.getReauthProviders()) {
+                if (!prevReauthProviders.has(provider)) {
+                    emitReauthNotificationIfNew(provider, _ctx, `A subagent run was rejected by ${provider} for credentials. ` +
+                        `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+                        `was affected for that run. Run /login if this recurs.`);
+                }
+            }
+        });
+        const piEventsRecord = pi.events;
+        if (typeof piEventsRecord?.on === "function") {
+            pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => {
+                const authStore = getProviderAuthHealthStore?.();
+                if (!authStore)
+                    return;
+                const prevReauthProviders = new Set(authStore.getReauthProviders());
+                processSubagentRunDetails(data, authStore);
+                for (const provider of authStore.getReauthProviders()) {
+                    if (!prevReauthProviders.has(provider)) {
+                        pendingReauthNotifications.add(provider);
+                    }
+                }
+            });
+        }
     }
     return {
         applySessionStart,
@@ -922,7 +1119,10 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
         return undefined;
     }
     installTlhModelSelectionPersistenceOverride();
-    const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata());
+    const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata(), {
+        getProviderAuthHealthStore: options.getProviderAuthHealthStore,
+        now: options.now,
+    });
     runtime.registerCommands();
     runtime.registerLifecycleHooks();
     return runtime;

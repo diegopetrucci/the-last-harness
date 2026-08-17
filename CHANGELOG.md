@@ -8,6 +8,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or 
 - At launch, TLH now shows what’s eating up your context.
+- If a provider rejects your credentials, the footer now warns you which one needs re-authenticating, so a silently degraded `code-reviewer`, `oracle`, or `contrarian` no longer goes unnoticed. The warning stays until you log back in.
 
 ### Changed
 
