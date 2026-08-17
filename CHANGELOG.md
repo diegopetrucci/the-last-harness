@@ -14,7 +14,7 @@ All notable changes to The Last Harness will be documented in this file.
 - `/fast` now supports both OpenAI and Anthropic models.
 - Bumped the pinned Pi runtime to `0.84.2`.
 - Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
-- Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
+- Various improvements to how subagents look in the TUI, and how they report issues to the primary agents. The active-ticket line now reads "ticket:" instead of "working on tk:", and for single-agent jobs, long-running notices now appear under the relevant agent row rather than at the top of the widget. Multi-agent and parallel jobs continue to show the notice at the top.
 - The installer's default output is now more concise.
 
 ### Fixed
