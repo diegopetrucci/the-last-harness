@@ -8,10 +8,10 @@ import test from "node:test";
 const repoRoot = resolve(import.meta.dirname, "..");
 const oxlintPath = join(repoRoot, "node_modules/.bin/oxlint");
 const oxlintConfigPath = join(repoRoot, ".oxlintrc.json");
-const ruleCode = "anti-slop(no-reflect-apply)";
+const ruleCode = "anti-slop(no-reflect-get)";
 
 function lintFixtures(t, fixtures) {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-no-reflect-apply-"));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-no-reflect-get-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixturePaths = Object.entries(fixtures).map(([name, source]) => {
     const fixturePath = join(fixtureRoot, name);
@@ -41,11 +41,11 @@ function lintFixtures(t, fixtures) {
     );
 }
 
-test("no-reflect-apply reports global direct and computed calls", (t) => {
+test("no-reflect-get reports global direct and computed calls", (t) => {
   const diagnostics = lintFixtures(t, {
-    "global.js": `Reflect.apply(fn, receiver, args);
-Reflect["apply"](fn, receiver, args);
-Reflect['apply'](fn, receiver, args);
+    "global.js": `Reflect.get(target, key);
+Reflect["get"](target, key);
+Reflect['get'](target, key);
 `,
   });
 
@@ -56,23 +56,25 @@ Reflect['apply'](fn, receiver, args);
   assert.ok(diagnostics.every(({ code, severity }) => code === ruleCode && severity === "error"));
 });
 
-test("no-reflect-apply ignores shadowed Reflect and unrelated calls", (t) => {
+test("no-reflect-get ignores shadowed Reflect and unrelated calls", (t) => {
   const diagnostics = lintFixtures(t, {
     "allowed.ts": `
-function shadowedParameter(Reflect: { apply(): void }) {
-  Reflect.apply();
-  Reflect["apply"]();
+function shadowedParameter(Reflect: { get(): unknown }) {
+  Reflect.get();
+  Reflect["get"]();
 }
 
 function shadowedBinding() {
-  const Reflect = { apply() {} };
-  Reflect.apply();
-  Reflect["apply"]();
+  const Reflect = { get() {} };
+  Reflect.get();
+  Reflect["get"]();
 }
 
-const localReflect = { apply() {} };
-localReflect.apply();
+const localReflect = { get() {} };
+localReflect.get();
 Reflect.construct(Constructor, args);
+Reflect["construct"](Constructor, args);
+Reflect.set(target, key, value);
 `,
   });
 

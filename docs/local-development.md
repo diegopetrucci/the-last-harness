@@ -16,7 +16,7 @@ Run the aggregate validation script, which covers the main TypeScript `tsc --noE
 npm run validate
 ```
 
-Oxlint retains its built-in default rule selection and registers the vendored anti-slop plugin through `.oxlintrc.json`. Anti-slop adoption is deliberately per-rule: `anti-slop/no-module-mocking`, `anti-slop/no-reflect-apply`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity, while the other 11 rule entries remain visibly commented out. Oxlint still runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
+Oxlint retains its built-in default rule selection and registers the vendored anti-slop plugin through `.oxlintrc.json`. Anti-slop adoption is deliberately per-rule: `anti-slop/no-module-mocking`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity, while the other 10 rule entries remain visibly commented out. Oxlint still runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
 
 When you need the full Node test reporter for diagnostics, rerun:
 
