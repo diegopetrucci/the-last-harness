@@ -132,7 +132,7 @@ function commonRouteRoot(route: Pick<NestedRoute, "eventSink" | "controlInbox">)
   return path.dirname(path.resolve(route.eventSink));
 }
 
-function validateRouteShape(route: NestedRoute): void {
+function validateNestedRoute(route: NestedRoute): void {
   assertSafeId("rootRunId", route.rootRunId);
   assertSafeId("capabilityToken", route.capabilityToken);
   if (!containedPath(NESTED_EVENTS_DIR, route.eventSink))
@@ -168,7 +168,7 @@ export function resolveNestedRouteFromEnv(
   const capabilityToken = env[SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV];
   if (!rootRunId || !eventSink || !controlInbox || !capabilityToken) return undefined;
   const route = { rootRunId, eventSink, controlInbox, capabilityToken };
-  validateRouteShape(route);
+  validateNestedRoute(route);
   const routeFile = path.join(commonRouteRoot(route), ROUTE_FILE);
   const metadata = JSON.parse(fs.readFileSync(routeFile, "utf-8")) as {
     rootRunId?: unknown;
@@ -721,7 +721,7 @@ export function findNestedRouteForRootId(rootRunId: string): NestedRoute | undef
         controlInbox: path.join(routeRoot, "controls"),
         capabilityToken: metadata.capabilityToken,
       };
-      validateRouteShape(route);
+      validateNestedRoute(route);
       return route;
     } catch {
       continue;
@@ -761,7 +761,7 @@ export function buildNestedRouteIndex(): Map<string, NestedRoute> {
         controlInbox: path.join(routeRoot, "controls"),
         capabilityToken: metadata.capabilityToken,
       };
-      validateRouteShape(route);
+      validateNestedRoute(route);
       index.set(metadata.rootRunId, route);
     } catch {
       continue;
@@ -867,7 +867,7 @@ function listNestedRoutes(): NestedRoute[] {
         controlInbox: path.join(routeRoot, "controls"),
         capabilityToken: metadata.capabilityToken,
       };
-      validateRouteShape(route);
+      validateNestedRoute(route);
       routes.push(route);
     } catch {
       continue;
@@ -904,7 +904,7 @@ export function findNestedRunById(
 }
 
 export function readNestedRegistry(route: NestedRoute): NestedRegistry {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   try {
     const parsed = JSON.parse(fs.readFileSync(registryPath(route), "utf-8")) as NestedRegistry;
     return {
@@ -926,7 +926,7 @@ export function readNestedRegistry(route: NestedRoute): NestedRegistry {
 }
 
 export function projectNestedEvents(route: NestedRoute): NestedRegistry {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   let registry = readNestedRegistry(route);
   const seen = new Set(registry.processedEvents);
   let changed = false;
@@ -984,7 +984,7 @@ export function writeNestedEvent(
   route: NestedRoute,
   event: Omit<NestedEventRecord, "rootRunId" | "capabilityToken">,
 ): void {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   const record: NestedEventRecord = {
     ...event,
     rootRunId: route.rootRunId,
@@ -1089,7 +1089,7 @@ export function writeNestedControlRequest(
   route: NestedRoute,
   request: Omit<NestedControlRequestRecord, "type" | "rootRunId" | "capabilityToken">,
 ): string {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   assertSafeId("requestId", request.requestId);
   assertSafeId("targetRunId", request.targetRunId);
   const record: NestedControlRequestRecord = {
@@ -1106,7 +1106,7 @@ export function writeNestedControlRequest(
 export function readNestedControlRequests(
   route: NestedRoute,
 ): Array<NestedControlRequestRecord & { filePath: string }> {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   let entries: string[] = [];
   try {
     entries = fs
@@ -1147,7 +1147,7 @@ export function claimNestedControlRequest(
   request: NestedControlRequestRecord & { filePath: string },
   claimantId: string,
 ): string | undefined {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   assertSafeId("claimantId", claimantId);
   if (!containedPath(route.controlInbox, request.filePath)) return undefined;
   const claimDir = path.join(route.controlInbox, ".claims", claimantId);
@@ -1166,7 +1166,7 @@ export function writeNestedControlResult(
   route: NestedRoute,
   result: Omit<NestedControlResultRecord, "type" | "rootRunId" | "capabilityToken">,
 ): void {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   assertSafeId("requestId", result.requestId);
   assertSafeId("targetRunId", result.targetRunId);
   const record: NestedControlResultRecord = {
@@ -1181,7 +1181,7 @@ export function writeNestedControlResult(
 }
 
 export function readNestedControlResults(route: NestedRoute): NestedControlResultRecord[] {
-  validateRouteShape(route);
+  validateNestedRoute(route);
   let entries: string[] = [];
   try {
     entries = fs

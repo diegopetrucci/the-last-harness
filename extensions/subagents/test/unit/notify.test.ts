@@ -2628,7 +2628,7 @@ describe("completion formatting helpers", () => {
   it("no mangled truncation-marker fragments at any ceiling", () => {
     const CEILINGS = [32_000, 10_000, 5_000, 2_000, 1_000, 500, 200, 100];
     const MANGLED_RE = /… \[s(?!ummary truncated\])/; // "… [s" not followed by "ummary truncated]"
-    const shapes = [
+    const completionFixtures = [
       // Single child with outer failure.
       {
         id: "mangle-1ch-outer",
@@ -2657,13 +2657,15 @@ describe("completion formatting helpers", () => {
         })),
       },
     ];
-    for (const shape of shapes) {
-      const details = buildCompletionDetails(shape as Parameters<typeof buildCompletionDetails>[0]);
+    for (const completionFixture of completionFixtures) {
+      const details = buildCompletionDetails(
+        completionFixture as Parameters<typeof buildCompletionDetails>[0],
+      );
       for (const ceiling of CEILINGS) {
         const preview = details._reformatPreview!(ceiling);
         assert.ok(
           !MANGLED_RE.test(preview),
-          `[${shape.id}] ceiling=${ceiling}: mangled marker found in preview: ${JSON.stringify(preview.slice(0, 80))}`,
+          `[${completionFixture.id}] ceiling=${ceiling}: mangled marker found in preview: ${JSON.stringify(preview.slice(0, 80))}`,
         );
       }
     }

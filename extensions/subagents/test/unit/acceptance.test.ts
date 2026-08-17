@@ -362,13 +362,13 @@ describe("acceptance gates", () => {
     );
     assert.equal(stripAcceptanceReport(partialWrapperJson), partialWrapperJson);
 
-    const reportShapedJson = `done\n\
+    const reportPayloadJson = `done\n\
 \
 \`\`\`json\n{"changedFiles":["src/file.ts"]}\n\`\`\``;
-    const genericReportShapedJson = parseAcceptanceReport(reportShapedJson);
-    assert.equal(genericReportShapedJson.report, undefined);
-    assert.match(genericReportShapedJson.error ?? "", /Structured acceptance report not found/);
-    assert.equal(stripAcceptanceReport(reportShapedJson), reportShapedJson);
+    const genericReportPayloadJson = parseAcceptanceReport(reportPayloadJson);
+    assert.equal(genericReportPayloadJson.report, undefined);
+    assert.match(genericReportPayloadJson.error ?? "", /Structured acceptance report not found/);
+    assert.equal(stripAcceptanceReport(reportPayloadJson), reportPayloadJson);
 
     const malformed = parseAcceptanceReport("```acceptance-report\n{bad-json\n```");
     assert.equal(malformed.report, undefined);

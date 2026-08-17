@@ -368,10 +368,6 @@ function readJson(pathValue: string): unknown {
   return JSON.parse(content);
 }
 
-function hasObjectShape(value: unknown): value is object {
-  return typeof value === "object" && value !== null;
-}
-
 interface InstallStatePayload {
   schemaVersion?: unknown;
   repo?: unknown;
@@ -382,8 +378,8 @@ interface InstallStatePayload {
   piInstalledByTlh?: unknown;
 }
 
-function hasInstallStatePayloadShape(value: unknown): value is InstallStatePayload {
-  return hasObjectShape(value);
+function isInstallStatePayload(value: unknown): value is InstallStatePayload {
+  return typeof value === "object" && value !== null;
 }
 
 function readTrimmedString(value: unknown): string | undefined {
@@ -411,7 +407,7 @@ function isValidTrack(value: string | undefined): value is ValidTrack {
 }
 
 function normalizeState(raw: unknown): NormalizedInstallState | undefined {
-  if (!hasInstallStatePayloadShape(raw)) {
+  if (!isInstallStatePayload(raw)) {
     return undefined;
   }
   const repo = readTrimmedString(raw.repo);

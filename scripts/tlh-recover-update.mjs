@@ -252,11 +252,8 @@ function readJson(pathValue) {
     const content = readFileSync(pathValue, "utf8").replace(/^\uFEFF/, "");
     return JSON.parse(content);
 }
-function hasObjectShape(value) {
+function isInstallStatePayload(value) {
     return typeof value === "object" && value !== null;
-}
-function hasInstallStatePayloadShape(value) {
-    return hasObjectShape(value);
 }
 function readTrimmedString(value) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -279,7 +276,7 @@ function isValidTrack(value) {
     }
 }
 function normalizeState(raw) {
-    if (!hasInstallStatePayloadShape(raw)) {
+    if (!isInstallStatePayload(raw)) {
         return undefined;
     }
     const repo = readTrimmedString(raw.repo);
