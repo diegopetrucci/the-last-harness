@@ -1076,7 +1076,11 @@ test("extension wires switch-primary-agent and active-primary safety", () => {
     "pi.registerShortcut(PRIMARY_AGENT_CYCLE_SHORTCUT",
     "async function applySessionStart",
   );
-  const toolCall = sourceSection(lifecycleHooks, 'pi.on("tool_call"', "\n    });\n  }");
+  const toolCall = sourceSection(
+    lifecycleHooks,
+    'pi.on("tool_call"',
+    "\n\n    // Result-time auth-health observation",
+  );
 
   assert.match(
     promptsSource,

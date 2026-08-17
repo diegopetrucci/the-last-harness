@@ -79,7 +79,7 @@ export function buildAnnotateLastMessageCommand(dependencies) {
         const generation = lifecycleGeneration;
         openingGeneration = generation;
         try {
-            const html = buildAnnotateLastMessageHtml(messageData);
+            const html = buildAnnotateLastMessageHtml(messageData, dependencies.getTheme);
             const window = await openAnnotationWindow(html, {
                 width: 1440,
                 height: 980,
