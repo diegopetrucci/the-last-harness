@@ -19,8 +19,55 @@ export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
 export function createPiHarness() {
   const commands = new Map();
   const shortcuts = new Map();
+  // pi.events serves two roles in the harness:
+  //   - Lifecycle registry (pi.on calls push here; test assertions use .find/.filter)
+  //   - EventBus (pi.events.on / pi.events.emit for intercom channels like subagent:async-complete)
+  // Making it a single object with both interfaces avoids breaking the many existing tests
+  // that use pi.events.find(...) while allowing new tests to emit intercom events.
+  const lifecycleHandlers = [];
+  const eventBusSubscribers = new Map();
+  const events = {
+    // Array-like interface used by existing tests
+    push(item) {
+      lifecycleHandlers.push(item);
+    },
+    find(pred) {
+      return lifecycleHandlers.find(pred);
+    },
+    filter(pred) {
+      return lifecycleHandlers.filter(pred);
+    },
+    map(fn) {
+      return lifecycleHandlers.map(fn);
+    },
+    some(pred) {
+      return lifecycleHandlers.some(pred);
+    },
+    forEach(fn) {
+      lifecycleHandlers.forEach(fn);
+    },
+    get length() {
+      return lifecycleHandlers.length;
+    },
+    [Symbol.iterator]() {
+      return lifecycleHandlers[Symbol.iterator]();
+    },
+    // EventBus interface used by subagent:async-complete subscriptions
+    on(channel, handler) {
+      if (!eventBusSubscribers.has(channel)) eventBusSubscribers.set(channel, []);
+      eventBusSubscribers.get(channel).push(handler);
+      return () => {
+        const list = eventBusSubscribers.get(channel) ?? [];
+        const idx = list.indexOf(handler);
+        if (idx >= 0) list.splice(idx, 1);
+      };
+    },
+    emit(channel, data) {
+      for (const h of eventBusSubscribers.get(channel) ?? []) h(data);
+    },
+  };
   return {
-    events: [],
+    events,
     commands,
     shortcuts,
     activeTools: [],

@@ -1,4 +1,4 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   keyText,
   type ExtensionAPI,
@@ -20,6 +20,7 @@ import {
 } from "./footer-subscription-usage.js";
 import type { TlhInstallNotice } from "./types.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
+import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 
 const CHARS_PER_TOKEN = 4;
@@ -219,6 +220,42 @@ function appendMcpContextEstimate(statusText: string, suffix: string | undefined
 
 export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
 
+/**
+ * Choose the widest reauth warning text that fits within `width` visible columns.
+ * Progressive degradation avoids truncating provider names into unreadable fragments:
+ *   1. "\u26a0 reauth: anthropic, openai-codex" — full names
+ *   2. "\u26a0 reauth: anthropic, codex"        — last hyphen-segment of each name
+ *   3. "\u26a0 reauth \u00d7N"                       — count only (always renders)
+ *
+ * Exported for testing only; use createTlhFooter in production.
+ */
+export function formatReauthWarningLine(
+  providers: readonly string[],
+  width: number,
+  theme: Theme,
+): string | undefined {
+  if (providers.length === 0) return undefined;
+
+  // Variant 1: full provider names
+  const fullText = `\u26a0 reauth: ${providers.join(", ")}`;
+  const fullStyled = theme.fg("warning", fullText);
+  if (visibleWidth(fullStyled) <= width) return fullStyled;
+
+  // Variant 2: last hyphen-segment of each name (e.g. openai-codex → codex)
+  const shortLabels = providers.map((p) => p.split("-").at(-1) ?? p);
+  const shortText = `\u26a0 reauth: ${shortLabels.join(", ")}`;
+  const shortStyled = theme.fg("warning", shortText);
+  if (visibleWidth(shortStyled) <= width) return shortStyled;
+
+  // Variant 3: count only — truncated to width for layout consistency.
+  // The count property (how many providers need attention) yields at extreme
+  // widths (below ~11 columns); nothing is legible there anyway, and silently
+  // overflowing the render width would corrupt the whole footer layout.
+  const countText = `\u26a0 reauth \u00d7${providers.length}`;
+  const countStyled = theme.fg("warning", countText);
+  return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
+}
+
 export function createTlhFooter(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -228,6 +265,7 @@ export function createTlhFooter(
   usageOptions: TlhFooterUsageOptions = {},
   gitCache?: FooterGitCache | null,
   installNotice?: TlhInstallNotice,
+  providerAuthHealth?: ProviderAuthHealthStore,
 ) {
   let mcpContextEstimateCache: McpFooterContextEstimateCache | undefined;
   return {
@@ -305,6 +343,19 @@ export function createTlhFooter(
 
       const lines: string[] = [pwdLine, agentLine2];
 
+      // Reauth warning line: rendered before cost/status lines so it is not the first
+      // segment lost to truncation at narrow widths.
+      // Only 'reauth-required' providers render; transient-unavailable and unknown are silent.
+      // Progressive degradation ensures both provider names are always distinguishable:
+      //   1. full names    "⚠ reauth: anthropic, openai-codex"
+      //   2. short labels  "⚠ reauth: anthropic, codex"  (last hyphen-segment)
+      //   3. count only    "⚠ reauth ×2"                 (always fits)
+      if (providerAuthHealth) {
+        const reauthProviders = providerAuthHealth.getReauthProviders();
+        const warningLine = formatReauthWarningLine(reauthProviders, width, theme);
+        if (warningLine !== undefined) lines.push(warningLine);
+      }
+
       const extensionStatuses = footerData?.getExtensionStatuses?.();
       const hasMcpStatus = extensionStatuses
         ? Array.from(extensionStatuses.values()).some((status) =>
@@ -379,6 +430,8 @@ export function createTlhFooter(
     invalidate() {},
     dispose() {
       gitCache?.dispose();
+      // providerAuthHealth is session-owned; its lifecycle is managed by the session,
+      // not the footer. Do not dispose here.
     },
   };
 }
