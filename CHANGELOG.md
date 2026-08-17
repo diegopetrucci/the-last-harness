@@ -10,6 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 - TLH now warns you if a provider you've logged in with needs you to re-authenticate.
 - The `/annotate-last-message` window window is not prettier, as it renders markdown, and other niceties.
 - Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
+- TLH now bundles skills for using Herdr, Cmux, and Tmux.
 
 ### Changed
 

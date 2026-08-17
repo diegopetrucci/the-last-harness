@@ -7,6 +7,7 @@
 `tlh` (The Last Harness) is an opinionated harness built on top of [Pi](https://github.com/earendil-works/pi).
 
 Two core ideas drive it:
+
 - _"you can outsource your thinking, but not your understanding"_: LLMs can, and should, provide options, help out with discovery and exploration, filling the gaps in your understanding and technical knowledge — they should not, however, be used as a replacement for understanding. [Beware of cognitive debt](https://simonwillison.net/2026/Feb/15/cognitive-debt/).
 - _you should not be babysitting your agents_: if you need to manually call tools, run commands, and so on, the harness has failed you.
 
@@ -131,11 +132,13 @@ Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 du
 You can add your own skills, prompts, extensions, and packages to TLH.
 
 User-level:
+
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
 - `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo`)
 
 Repo settings:
+
 - `.pi/skills/`
 - `.pi/prompts/`
 - `.pi/extensions/`
@@ -161,3 +164,13 @@ After adding files, installing a package, or saving project trust, run `/reload`
 ## Third-party attribution
 
 The compact live-progress display shows whimsical thinking phrases while a subagent is reasoning. The phrase pool is adapted from [`mitsuhiko/agent-stuff`](https://github.com/mitsuhiko/agent-stuff) under the Apache-2.0 license. The full license text is at [`licenses/agent-stuff-Apache-2.0.txt`](licenses/agent-stuff-Apache-2.0.txt).
+
+### Bundled terminal skills
+
+TLH packages three upstream terminal-integration skills from reproducible commit pins. Their consolidated license texts and attribution notices are in [`licenses/terminal-skills.txt`](licenses/terminal-skills.txt).
+
+- **Herdr** — [`herdrdev/herdr`](https://github.com/herdrdev/herdr/tree/346411fa21afd297f5ed3b3fa56f9e3fbf7654b7/skills/herdr), pinned to commit `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` (`v0.8.0`, Apache-2.0). Runtime prerequisite: the `herdr` binary must be on `PATH`, and the agent must be inside a Herdr-managed pane with `HERDR_ENV=1`.
+- **cmux CLI** — [`manaflow-ai/cmux-skills`](https://github.com/manaflow-ai/cmux-skills/tree/c669666f8607529a39a1f74ac0e8462e922dd13f/skills/cmux-cli), pinned to commit `c669666f8607529a39a1f74ac0e8462e922dd13f` (MIT). Runtime prerequisite: the `cmux` binary must be on `PATH` and able to reach the cmux app/socket for the requested workflow. Its `scripts/cmux-debug-cli.sh` reference is only for a tagged cmux source checkout and is intentionally not part of the packaged runtime closure.
+- **tmux** — [`openclaw/openclaw`](https://github.com/openclaw/openclaw/tree/793669c8f6ddfad07b40009068f532832685b7d6/skills/tmux), pinned to commit `793669c8f6ddfad07b40009068f532832685b7d6` (MIT). Runtime prerequisite: `tmux` must be on `PATH`; the upstream skill targets Darwin and Linux, and its helper scripts require Bash and standard `grep`, `date`, and `sleep` utilities.
+
+Only the runtime files directly referenced by these skills are bundled; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded. The optional related cmux skills named by the upstream guide are source-repository references, not runtime dependencies, and are not bundled.
