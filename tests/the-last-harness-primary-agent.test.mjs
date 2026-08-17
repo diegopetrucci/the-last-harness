@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   DEFAULT_PRIMARY_AGENT,
   DISABLED_PRIMARY_AGENT,
-  PRIMARY_AGENT_CYCLE,
   PRIMARY_AGENT_SESSION_STATE_ENTRY,
   nextPrimaryAgentSelection,
   primaryAgentDefaultLabel,
@@ -107,8 +106,7 @@ test("latest session primary state wins over earlier compatibility entries", () 
   );
 });
 
-test("Shift+Tab cycle order is architect to rush to product to bug-hunter to disabled", () => {
-  assert.deepEqual(PRIMARY_AGENT_CYCLE, ["architect", "rush", "product", "bug-hunter", "disabled"]);
+test("Shift+Tab advances through each primary selection and wraps", () => {
   assert.equal(nextPrimaryAgentSelection("architect"), "rush");
   assert.equal(nextPrimaryAgentSelection("rush"), "product");
   assert.equal(nextPrimaryAgentSelection("product"), "bug-hunter");

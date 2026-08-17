@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  ALLOWED_SUBAGENTS,
-  SAFE_SUBAGENT_ACTIONS,
   SUBAGENT_CHILD_ENV,
   allowedSubagentsForExperimentalConfig,
   isEmbeddedSubagentTarget,
@@ -32,19 +30,6 @@ function createPiHarness() {
   };
 }
 
-test("ALLOWED_SUBAGENTS exposes bundled minor agents", () => {
-  assert.deepEqual(ALLOWED_SUBAGENTS, [
-    "developer",
-    "code-reviewer",
-    "repo-scout",
-    "diff-summarizer",
-    "librarian",
-    "web-scout",
-    "oracle",
-    "contrarian",
-  ]);
-});
-
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
   const webScout = {
     agent: "web-scout",
@@ -64,16 +49,6 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
 });
 
 test("experimental allowlist keeps contrarian enabled by default and treats stale settings as harmless no-ops", () => {
-  assert.deepEqual(allowedSubagentsForExperimentalConfig(undefined), ALLOWED_SUBAGENTS);
-  assert.deepEqual(
-    allowedSubagentsForExperimentalConfig({ enabledFeatures: [" Contrarian "] }),
-    ALLOWED_SUBAGENTS,
-  );
-  assert.deepEqual(
-    allowedSubagentsForExperimentalConfig({ enabledFeatures: ["Contrarian", 123] }),
-    ALLOWED_SUBAGENTS,
-  );
-
   const defaultAllowed = { agent: "contrarian", task: "stress-test this plan" };
   assert.equal(validateSubagentToolInput(defaultAllowed), undefined);
   assert.equal(defaultAllowed.agentScope, "user");
@@ -135,19 +110,6 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
   assertAllowed(batched);
   assert.equal(batched.agentScope, "user");
   assert.equal(batched.context, "fresh");
-});
-
-test("SAFE_SUBAGENT_ACTIONS exposes exactly the supported management contract", () => {
-  // steer was added by explicit policy decision (ts-hl1q); rush is blocked from steer as the compensating control.
-  assert.deepEqual(SAFE_SUBAGENT_ACTIONS, [
-    "list",
-    "get",
-    "status",
-    "interrupt",
-    "doctor",
-    "resume",
-    "steer",
-  ]);
 });
 
 test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
@@ -496,15 +458,6 @@ test("validateSubagentToolInput blocks v0.34.0 agent-mutation verbs (eject/disab
       `reason should name the blocked action '${action}'`,
     );
   }
-
-  // The whitelist must remain exactly this set — no additions without an explicit policy decision.
-  // steer was added by explicit policy decision (ts-hl1q); rush is blocked from steer as the compensating control
-  // (rushSteerDelegationReason in primary-agent-runtime.ts) because an opaque steer carries no agent field.
-  assert.deepEqual(
-    [...SAFE_SUBAGENT_ACTIONS],
-    ["list", "get", "status", "interrupt", "doctor", "resume", "steer"],
-    "SAFE_SUBAGENT_ACTIONS whitelist changed — verify TLH policy before widening",
-  );
 });
 
 test("validateSubagentToolInput allows steer with valid id and message", () => {

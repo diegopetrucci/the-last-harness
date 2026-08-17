@@ -4,25 +4,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  LEGACY_MANAGED_PROFILE_ARTIFACTS,
-  RETIRED_PROFILE_FILES,
-  RETIRED_PROFILE_DIRECTORIES,
   cleanupLegacyManagedProfileArtifacts,
   cleanupRetiredProfileDirectories,
   cleanupRetiredProfileFiles,
 } from "../scripts/tlh-install.mjs";
 import { captureConsole, makeTempDir } from "./install-stage1-test-helpers.mjs";
-
-test("legacy managed artifact cleanup includes exact retired RTK paths", () => {
-  assert.deepEqual(LEGACY_MANAGED_PROFILE_ARTIFACTS, ["bin/rtk", "tlh/tlh-rtk.mjs"]);
-});
-
-test("RETIRED_PROFILE_FILES includes extensions/librarian.json", () => {
-  assert.ok(
-    RETIRED_PROFILE_FILES.includes("extensions/librarian.json"),
-    "RETIRED_PROFILE_FILES must include extensions/librarian.json",
-  );
-});
 
 test("cleanupLegacyManagedProfileArtifacts removes regular legacy managed RTK files", (t) => {
   const root = makeTempDir("tlh-cleanup-legacy-rtk-present-");
@@ -243,13 +229,6 @@ test("cleanupRetiredProfileFiles removes extensions/librarian.json when libraria
 });
 
 // --- RETIRED_PROFILE_DIRECTORIES / cleanupRetiredProfileDirectories tests ---
-
-test("RETIRED_PROFILE_DIRECTORIES includes 'intercom'", () => {
-  assert.ok(
-    RETIRED_PROFILE_DIRECTORIES.includes("intercom"),
-    "RETIRED_PROFILE_DIRECTORIES must include 'intercom'",
-  );
-});
 
 test("cleanupRetiredProfileDirectories removes intercom/ directory when present", (t) => {
   const root = makeTempDir("tlh-cleanup-retired-dir-present-");

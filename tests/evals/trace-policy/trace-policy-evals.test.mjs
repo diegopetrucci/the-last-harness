@@ -373,8 +373,7 @@ test("developer final-validation no-edit flow stays allowed after tk show", () =
       {
         type: "tool",
         tool: "bash",
-        command:
-          "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs",
+        command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs",
       },
       { type: "assistant", text: "Validation passed with no edits required." },
     ],

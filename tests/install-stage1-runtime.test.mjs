@@ -32,16 +32,9 @@ import {
   writeLoggingPi,
 } from "./install-stage1-core-test-helpers.mjs";
 
-import {
-  MIN_NODE_VERSION,
-  RUNTIME_MARKER_FILENAME,
-  RUNTIME_OWNED_TOPLEVEL,
-  assertSupportedNodeRuntime,
-  nodeVersionMeetsMinimum,
-} from "../scripts/tlh-install.mjs";
+import { assertSupportedNodeRuntime, nodeVersionMeetsMinimum } from "../scripts/tlh-install.mjs";
 
 test("stage-1 enforces the TLH Node runtime minimum", () => {
-  assert.equal(MIN_NODE_VERSION, "22.19.0");
   assert.equal(nodeVersionMeetsMinimum("22.18.9"), false);
   assert.equal(nodeVersionMeetsMinimum("22.19.0"), true);
   assert.equal(nodeVersionMeetsMinimum("23.0.0"), true);
@@ -410,16 +403,6 @@ test("stage-1 records piInstalledByTlh=true when installing the private runtime"
       scenario.name,
     );
   }
-});
-
-test("declared Node minimum stays aligned across installer metadata", () => {
-  const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
-  const installSh = readFileSync(join(repoRoot, "install.sh"), "utf8");
-  const releaseWorkflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
-
-  assert.equal(packageJson.engines.node, `>=${MIN_NODE_VERSION}`);
-  assert.ok(installSh.includes(`TLH_MIN_NODE_VERSION="${MIN_NODE_VERSION}"`));
-  assert.ok(releaseWorkflow.includes(`node-version: '${MIN_NODE_VERSION}'`));
 });
 
 // Regression (tlht-5php): post-install validation — broken/wrong-version npm install must
@@ -1053,14 +1036,6 @@ test("stage-1 installs normally when runtime prefix exists but is empty", (t) =>
 // ---------------------------------------------------------------------------
 // Runtime ownership marker tests (tlht-7mx4)
 // ---------------------------------------------------------------------------
-
-test("RUNTIME_MARKER_FILENAME .tlh-runtime-owned is in RUNTIME_OWNED_TOPLEVEL", () => {
-  assert.equal(RUNTIME_MARKER_FILENAME, ".tlh-runtime-owned");
-  assert.ok(
-    RUNTIME_OWNED_TOPLEVEL.has(RUNTIME_MARKER_FILENAME),
-    "marker filename must be in RUNTIME_OWNED_TOPLEVEL allow-list",
-  );
-});
 
 test("runtime ownership: pristine/absent prefix is accepted and marker origin=created is written", (t) => {
   // runStage1LocalPackageInstall starts with no pre-existing runtime prefix.

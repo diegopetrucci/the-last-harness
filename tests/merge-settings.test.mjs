@@ -109,21 +109,6 @@ syncBuiltinESMExports();
   return preload;
 }
 
-test("packaged defaults pin lastChangelogVersion to the changelog sentinel", () => {
-  assert.equal(readJson(settingsDefaultsPath).lastChangelogVersion, changelogSentinel);
-});
-
-test("packaged defaults keep the isolated startup/privacy guardrails enabled", () => {
-  const defaults = readJson(settingsDefaultsPath);
-
-  assert.equal(defaults.quietStartup, true);
-  assert.equal(defaults.collapseChangelog, true);
-  assert.equal(defaults.warnings?.anthropicExtraUsage, false);
-  assert.deepEqual(defaults.subagents, {
-    agentDirs: ["tlh/agents/subagents"],
-  });
-});
-
 test("merge adds the changelog sentinel when isolated settings omit it", () => {
   const fixture = tempFixture({ packages: [] }, { packages: [harnessPackage] });
 

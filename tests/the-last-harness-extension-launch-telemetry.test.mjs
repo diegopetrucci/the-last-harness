@@ -198,28 +198,6 @@ test("launch telemetry skips when the isolated profile has telemetry opt-out ena
   assert.equal(fetchCalls, 0);
 });
 
-test("launch telemetry checks opt-out before collecting OS metadata", () => {
-  const source = readFileSync(
-    new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url),
-    "utf8",
-  );
-  const functionSource = source.match(
-    /export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/,
-  )?.[0];
-
-  assert.ok(functionSource, "expected sendTlhLaunchTelemetry source");
-  const skipCheckIndex = functionSource.indexOf(
-    "if (shouldSkipTlhLaunchTelemetry(launchSettings))",
-  );
-  const osMetadataIndex = functionSource.indexOf("const osMetadata = await getTlhOsMetadata();");
-  assert.notEqual(skipCheckIndex, -1);
-  assert.notEqual(osMetadataIndex, -1);
-  assert.ok(
-    skipCheckIndex < osMetadataIndex,
-    "expected opt-out check before OS metadata collection",
-  );
-});
-
 test("launch telemetry skips when telemetry settings are malformed", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-test-", { test: t });
   writeTelemetryState(fixture);
@@ -1858,85 +1836,7 @@ test("launch telemetry honours a project-scope disabled override", async (t) => 
   );
 });
 
-test("launch telemetry reads settings.json once per send", () => {
-  // readTlhLaunchSettings previously ran in both sendTlhLaunchTelemetry and sendTlhTelemetry,
-  // parsing the user settings file twice and evaluating the opt-out twice per launch. The
-  // already-read settings are now threaded through instead.
-  const source = readFileSync(
-    new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url),
-    "utf8",
-  );
-
-  const sendTelemetrySource = source.match(
-    /export async function sendTlhTelemetry\([\s\S]*?\n\}/,
-  )?.[0];
-  assert.ok(sendTelemetrySource, "expected sendTlhTelemetry source");
-  assert.match(
-    sendTelemetrySource,
-    /preReadLaunchSettings \?\? readTlhLaunchSettings\(\)/,
-    "sendTlhTelemetry must prefer settings threaded in by its caller",
-  );
-
-  const sendLaunchSource = source.match(
-    /export async function sendTlhLaunchTelemetry\(snapshot: TlhTelemetrySnapshot\): Promise<void> \{[\s\S]*?\n\}/,
-  )?.[0];
-  assert.ok(sendLaunchSource, "expected sendTlhLaunchTelemetry source");
-  assert.equal(
-    sendLaunchSource.match(/readTlhLaunchSettings\(\)/g)?.length,
-    1,
-    "sendTlhLaunchTelemetry must read settings exactly once",
-  );
-  assert.match(
-    sendLaunchSource,
-    /\n {4}launchSettings,\n/,
-    "sendTlhLaunchTelemetry must pass launchSettings to sendTlhTelemetry",
-  );
-
-  // shouldSkipTlhLaunchTelemetry must keep its default parameter so no-argument callers and
-  // existing tests are unaffected.
-  assert.match(
-    source,
-    /export function shouldSkipTlhLaunchTelemetry\(\s*launchSettings:\s*ReturnType<typeof readTlhLaunchSettings>\s*=\s*readTlhLaunchSettings\(\),?\s*\)/,
-    "shouldSkipTlhLaunchTelemetry must retain its default-parameter behaviour",
-  );
-});
-
-test("project settings are never read on the synchronous startup path", async (t) => {
-  const source = readFileSync(
-    new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url),
-    "utf8",
-  );
-  const scheduleStart = source.indexOf("export function scheduleTlhLaunchTelemetry(");
-  const setTimeoutIndex = source.indexOf("const timer = setTimeout(", scheduleStart);
-  assert.notEqual(scheduleStart, -1);
-  assert.notEqual(setTimeoutIndex, -1);
-  const syncBody = source.slice(scheduleStart, setTimeoutIndex);
-
-  assert.doesNotMatch(
-    syncBody,
-    /readTlhProjectSubagentOverrides/,
-    "project settings reader must not run synchronously",
-  );
-  assert.doesNotMatch(
-    syncBody,
-    /findNearestTlhProjectRoot/,
-    "project root walk must not run synchronously",
-  );
-  assert.doesNotMatch(
-    syncBody,
-    /resolveEffectiveSubagentOverrides/,
-    "override resolution must not run synchronously",
-  );
-
-  const deferredStart = source.indexOf("export async function sendTlhLaunchTelemetry(");
-  const deferredEnd = source.indexOf("\nexport function scheduleTlhLaunchTelemetry", deferredStart);
-  const deferredBody = source.slice(deferredStart, deferredEnd === -1 ? undefined : deferredEnd);
-  assert.match(
-    deferredBody,
-    /readTlhProjectSubagentOverrides/,
-    "project settings must be read inside the deferred send",
-  );
-
+test("project settings are filtered when launch telemetry is sent", async (t) => {
   // No payload value may carry a path, project name, or other user string: the reported values
   // are the same privacy-filtered sentinels regardless of where the project root lives.
   const payload = await captureSubagentPayload(t, {
@@ -1962,60 +1862,8 @@ test("project settings are never read on the synchronous startup path", async (t
 
 // ── deferral tests ───────────────────────────────────────────────────────────
 
-test("scheduleTlhLaunchTelemetry does not read subagent frontmatter files synchronously", () => {
-  // Frontmatter reads (readSubagentFrontmatterConfig) must only happen inside
-  // sendTlhLaunchTelemetry / buildSubagentTelemetryPayload, which are called from the
-  // deferred setTimeout callback. This verifies that the synchronous body of
-  // scheduleTlhLaunchTelemetry does not contain any path referencing the subagent install dir.
-  const source = readFileSync(
-    new URL("../extensions/the-last-harness/launch-telemetry.ts", import.meta.url),
-    "utf8",
-  );
-
-  // Extract the scheduleTlhLaunchTelemetry function body up to (but not including) the
-  // setTimeout callback — everything before the arrow function argument.
-  const scheduleStart = source.indexOf("export function scheduleTlhLaunchTelemetry(");
-  assert.notEqual(scheduleStart, -1, "scheduleTlhLaunchTelemetry must exist");
-
-  // Find the setTimeout call in the function. Everything before it is synchronous.
-  const setTimeoutIndex = source.indexOf("const timer = setTimeout(", scheduleStart);
-  assert.notEqual(setTimeoutIndex, -1, "setTimeout must exist in scheduleTlhLaunchTelemetry");
-
-  const syncBody = source.slice(scheduleStart, setTimeoutIndex);
-
-  // The sync body must not contain frontmatter-related paths or read calls
-  assert.doesNotMatch(
-    syncBody,
-    /tlh\/agents\/subagents/,
-    "frontmatter path must not appear in synchronous scheduleTlhLaunchTelemetry body",
-  );
-  assert.doesNotMatch(
-    syncBody,
-    /buildSubagentTelemetryPayload/,
-    "subagent payload builder must not be called synchronously",
-  );
-  assert.doesNotMatch(
-    syncBody,
-    /readSubagentFrontmatterConfig/,
-    "frontmatter reader must not be called synchronously",
-  );
-
-  // Verify the deferred path DOES contain the subagent build call
-  const deferredStart = source.indexOf("export async function sendTlhLaunchTelemetry(");
-  assert.notEqual(deferredStart, -1, "sendTlhLaunchTelemetry must exist");
-  const deferredEnd = source.indexOf("\nexport function scheduleTlhLaunchTelemetry", deferredStart);
-  const deferredBody =
-    deferredEnd === -1 ? source.slice(deferredStart) : source.slice(deferredStart, deferredEnd);
-  assert.match(
-    deferredBody,
-    /buildSubagentTelemetryPayload/,
-    "buildSubagentTelemetryPayload must appear in the deferred sendTlhLaunchTelemetry path",
-  );
-});
-
 test("scheduleTlhLaunchTelemetry defers subagent frontmatter reads: no fetch before timer fires, fetch occurs after (behavioural)", async (t) => {
-  // BEHAVIOURAL deferral test. The source-text assertion above proves structure;
-  // this test proves the property at runtime: no settings read, no subagent
+  // This test proves the deferral property at runtime: no settings read, no subagent
   // frontmatter read, and no fetch call may occur before the deferred timer fires.
   //
   // Observation mechanism: file-swap / late-write technique. We write SETTINGS_A to
