@@ -645,7 +645,7 @@ function widgetStepStatus(
   return theme.fg("dim", status);
 }
 
-const TK_TICKET_WIDGET_PREFIX = "working on tk: ";
+const TK_TICKET_WIDGET_PREFIX = "ticket: ";
 
 function widgetTkTicketText(job: AsyncJobState): string | undefined {
   if (!job.tkTicket || (job.status !== "running" && job.status !== "queued")) return undefined;
@@ -672,10 +672,11 @@ function foregroundTkTicketLine(
   result: Details["results"][number],
   theme: Theme,
   active: boolean,
+  indent = "  ",
 ): string | undefined {
   if (!active) return undefined;
   const ticket = foregroundTkTicketText(result);
-  return ticket ? `  ${theme.fg("dim", ticket)}` : undefined;
+  return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 
 function widgetStepActivity(
@@ -1661,12 +1662,25 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 // entirely. The no-steps branches already surface it via widgetActivityDetailLines,
 // and multi-job rows surface it per job, so only the with-steps case needs this.
 //
-// The warning is emitted unconditionally (subject only to the pausing guard below)
-// because the only truncation-safe region is directly under the header. A step that
-// carries the same health state may be scrolled off by fitWidgetLineBudget, making
-// a step-level dedup unsound: the job-level signal would already be suppressed while
-// the step row is cut from the output. Duplication is a cosmetic cost; a missing
-// health signal is the bug.
+// fitWidgetLineBudget is a prefix-keep truncator: it keeps a prefix of the
+// already-wrapped physical lines and appends a "N lines hidden" hint. The
+// collapsed budget floor is 10 physical rows and the expanded floor is 12, but
+// these are physical rows after wrapping, so no fixed logical line position is
+// unconditionally safe at every terminal width.
+//
+// For multi-agent and parallel jobs the warning is emitted unconditionally
+// (subject only to the pausing guard below) and placed directly under the
+// header. These jobs may enter the progressive tier or accumulate many step rows
+// that fitWidgetLineBudget truncates; a step carrying the same health state may
+// be scrolled off, making a step-level dedup unsound for those modes.
+//
+// For single-agent jobs (job.mode === 'single') the health line is the 3rd
+// logical line in the render — only the header and the agent row precede it.
+// At normal terminal widths it is far inside the kept prefix. buildSingleWidgetLines
+// splices it immediately after the agent row, and singleModeHealthWarningLines
+// handles placement (nested under the agent row at 4-space indent) with
+// step-level dedup: when the step's widgetStepActivityLines already surfaces the
+// same health text, the job-level line is suppressed to avoid a duplicate.
 function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
   if (!isHealthActivityState(job.activityState)) return [];
   if (!job.steps?.length) return [];
@@ -1680,16 +1694,75 @@ function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
   return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
 }
 
+// Health warning for single-agent (job.mode === 'single') jobs with steps. Emits
+// the line at 4-space indent (one level deeper than the agent row at 2-space indent)
+// so it visually belongs to the agent rather than the header. buildSingleWidgetLines
+// splices this output immediately after details[0] (the agent row): the health line
+// is the 3rd logical line of the render (after the header and the agent row), so at
+// normal terminal widths it is well inside the kept prefix. Deduplicates against
+// the step's own widgetStepActivityLines: if the step already surfaces the same
+// health text, the job-level line is suppressed to avoid a duplicate.
+//
+// Known limitation: in the dedup case the retained health text is the step's own
+// activity line, which sits after the ticket line. At very narrow widths, wrapping
+// of the preceding agent row and ticket line can push the step-level health line out
+// of the kept prefix; the dedup does not protect against that. This risk is accepted
+// because it requires an unusually narrow terminal, and the pre-existing multi-agent
+// path carries the same class of exposure.
+function singleModeHealthWarningLines(
+  job: AsyncJobState,
+  theme: Theme,
+  contentWidth: number,
+  expanded: boolean,
+): string[] {
+  if (!isHealthActivityState(job.activityState)) return [];
+  if (!job.steps?.length) return [];
+  if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job)) return [];
+  const warning = buildLiveStatusLine(
+    { activityState: job.activityState, lastActivityAt: job.lastActivityAt },
+    job.updatedAt,
+  );
+  if (!warning) return [];
+  // Dedup: if the step is already rendering the same health text via
+  // widgetStepActivityLines, do not emit a second identical line.
+  const step = job.steps[0]!;
+  const displayStatus = singleWidgetStepDisplayStatus(job, step);
+  if (displayStatus === step.status) {
+    const stepActivityLines = widgetStepActivityLines(step, contentWidth, expanded, job.updatedAt);
+    if (stepActivityLines.includes(warning)) return [];
+  }
+  return [`    ${theme.fg("dim", `⎿  ${warning}`)}`];
+}
+
 function buildSingleWidgetLines(
   job: AsyncJobState,
   theme: Theme,
   contentWidth: number,
   expanded: boolean,
 ): string[] {
-  const details =
-    job.mode === "single"
-      ? singleWidgetAgentDetails(job, theme, expanded, contentWidth)
-      : foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
+  // Single-agent jobs route the health warning under the agent row (via
+  // singleModeHealthWarningLines) rather than under the header. Multi-agent and
+  // parallel jobs keep the header-level placement via jobHealthWarningLines.
+  if (job.mode === "single") {
+    const details = singleWidgetAgentDetails(job, theme, expanded, contentWidth);
+    const healthLines = singleModeHealthWarningLines(job, theme, contentWidth, expanded);
+    // Splice the health line immediately after the agent row (details[0]) so it lands
+    // as the 3rd logical line of the render – before the ticket line, step activity
+    // lines, nested child lines, and the live-detail hint (which stays last).
+    // singleWidgetAgentDetails always returns at least the agent row, and
+    // singleModeHealthWarningLines returns [] when job.steps is empty, so both the
+    // no-steps and the no-health-state paths are safe.
+    return wrapDisplayLines(
+      [
+        ...singleWidgetHeaderLines(job, theme, expanded),
+        details[0]!,
+        ...healthLines,
+        ...details.slice(1),
+      ],
+      contentWidth,
+    );
+  }
+  const details = foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
   return wrapDisplayLines(
     [
       ...singleWidgetHeaderLines(job, theme, expanded),
@@ -2467,7 +2540,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
     const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
     const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${pendingLabel}`;
     lines.push(`  ${line}`);
-    const ticketLine = foregroundTkTicketLine(r, theme, rRunning);
+    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) lines.push(ticketLine);
     if (rRunning && liveProgress) {
       for (const [activityIndex, activity] of compactProgressActivityLines(
@@ -2813,7 +2886,7 @@ export function renderSubagentResult(
       : `${statusIcon} ${stepLabel}: ${theme.bold(r.agent)}${modelDisplay}${stats}`;
     const toolCallLines = getToolCallLines(r, expanded);
     c.addChild(new Text(stepHeader, 0, 0));
-    const ticketLine = foregroundTkTicketLine(r, theme, rRunning);
+    const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) c.addChild(new Text(ticketLine, 0, 0));
 
     c.addChild(new Text(theme.fg("dim", `    task: ${r.task}`), 0, 0));

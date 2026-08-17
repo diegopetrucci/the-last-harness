@@ -462,7 +462,7 @@ function widgetStepStatus(status, theme, interruptRequestedAt) {
         return theme.fg("warning", "paused");
     return theme.fg("dim", status);
 }
-const TK_TICKET_WIDGET_PREFIX = "working on tk: ";
+const TK_TICKET_WIDGET_PREFIX = "ticket: ";
 function widgetTkTicketText(job) {
     if (!job.tkTicket || (job.status !== "running" && job.status !== "queued"))
         return undefined;
@@ -481,11 +481,11 @@ function foregroundTkTicketText(result) {
     const normalizedTkTicket = normalizeTkTicketMetadata(result.tkTicket);
     return normalizedTkTicket ? `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}` : undefined;
 }
-function foregroundTkTicketLine(result, theme, active) {
+function foregroundTkTicketLine(result, theme, active, indent = "  ") {
     if (!active)
         return undefined;
     const ticket = foregroundTkTicketText(result);
-    return ticket ? `  ${theme.fg("dim", ticket)}` : undefined;
+    return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 function widgetStepActivity(step, snapshotNow, expanded = false) {
     const privacySafe = isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt);
@@ -1205,10 +1205,37 @@ function jobHealthWarningLines(job, theme) {
     const warning = buildLiveStatusLine({ activityState: job.activityState, lastActivityAt: job.lastActivityAt }, job.updatedAt);
     return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
 }
+function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
+    if (!isHealthActivityState(job.activityState))
+        return [];
+    if (!job.steps?.length)
+        return [];
+    if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job))
+        return [];
+    const warning = buildLiveStatusLine({ activityState: job.activityState, lastActivityAt: job.lastActivityAt }, job.updatedAt);
+    if (!warning)
+        return [];
+    const step = job.steps[0];
+    const displayStatus = singleWidgetStepDisplayStatus(job, step);
+    if (displayStatus === step.status) {
+        const stepActivityLines = widgetStepActivityLines(step, contentWidth, expanded, job.updatedAt);
+        if (stepActivityLines.includes(warning))
+            return [];
+    }
+    return [`    ${theme.fg("dim", `⎿  ${warning}`)}`];
+}
 function buildSingleWidgetLines(job, theme, contentWidth, expanded) {
-    const details = job.mode === "single"
-        ? singleWidgetAgentDetails(job, theme, expanded, contentWidth)
-        : foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
+    if (job.mode === "single") {
+        const details = singleWidgetAgentDetails(job, theme, expanded, contentWidth);
+        const healthLines = singleModeHealthWarningLines(job, theme, contentWidth, expanded);
+        return wrapDisplayLines([
+            ...singleWidgetHeaderLines(job, theme, expanded),
+            details[0],
+            ...healthLines,
+            ...details.slice(1),
+        ], contentWidth);
+    }
+    const details = foregroundStyleWidgetDetails(job, theme, expanded, contentWidth);
     return wrapDisplayLines([
         ...singleWidgetHeaderLines(job, theme, expanded),
         ...jobHealthWarningLines(job, theme),
@@ -1813,7 +1840,7 @@ function renderMultiCompact(d, theme, frame) {
         const stepLabel = resultRowLabel(d, multiLabel, i, stepNumber);
         const line = `${glyph} ${stepLabel}: ${themeBold(theme, agentName)}${pendingLabel}`;
         lines.push(`  ${line}`);
-        const ticketLine = foregroundTkTicketLine(r, theme, rRunning);
+        const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
         if (ticketLine)
             lines.push(ticketLine);
         if (rRunning && liveProgress) {
@@ -2080,7 +2107,7 @@ export function renderSubagentResult(result, options, theme, frame) {
             : `${statusIcon} ${stepLabel}: ${theme.bold(r.agent)}${modelDisplay}${stats}`;
         const toolCallLines = getToolCallLines(r, expanded);
         c.addChild(new Text(stepHeader, 0, 0));
-        const ticketLine = foregroundTkTicketLine(r, theme, rRunning);
+        const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
         if (ticketLine)
             c.addChild(new Text(ticketLine, 0, 0));
         c.addChild(new Text(theme.fg("dim", `    task: ${r.task}`), 0, 0));
