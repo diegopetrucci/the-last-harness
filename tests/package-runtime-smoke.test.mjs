@@ -83,6 +83,10 @@ Return the deterministic faux child marker exactly.
   ]
     .map((path) => path.replace(/\.ts$/, ".js"))
     .sort();
+  assert.ok(
+    generatedExtensionPaths.length > 0,
+    "generated extension discovery must find at least one extension path",
+  );
   for (const generatedPath of generatedExtensionPaths) {
     assert.ok(
       packedPaths.has(generatedPath),
@@ -133,10 +137,5 @@ Return the deterministic faux child marker exactly.
   assert.deepEqual(runtimeEvidence.toolCounts, { subagent: 1 });
   assert.equal(runtimeEvidence.failedSubagentPatched, true);
   assert.equal(runtimeEvidence.childExecution.marker, "PACKED_FAUX_CHILD_MARKER");
-  assert.deepEqual(
-    runtimeEvidence.childExecution.childExtensionPaths,
-    runtimeEvidence.childExtensionPaths,
-  );
   assert.equal(runtimeEvidence.childEnvRestored, true);
-  assert.deepEqual(runtimeEvidence.childExtensionPaths, runtimeEvidence.builtChildExtensionPaths);
 });

@@ -9,12 +9,12 @@ function violationCodes(transcript) {
 }
 
 for (const fixture of TRACE_POLICY_FIXTURES) {
-  test(`trace policy fixture: ${fixture.name}`, () => {
+  test(`trace policy fixture ${fixture.id}: ${fixture.name}`, () => {
     const result = evaluateTracePolicy(fixture.transcript);
 
     assert.equal(result.agent, fixture.transcript.agent);
-    assert.equal(result.ok, fixture.valid);
-    if (fixture.valid) {
+    assert.equal(result.ok, fixture.expectedResult === "allow");
+    if (fixture.expectedResult === "allow") {
       assert.deepEqual(result.violations, []);
       return;
     }
