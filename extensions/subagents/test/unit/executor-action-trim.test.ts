@@ -15,6 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
+import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import { consumeSteerRequests } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
@@ -91,11 +92,6 @@ function ctx() {
 
 function text(result: Awaited<ReturnType<ReturnType<typeof makeExecutor>["execute"]>>): string {
   return result.content[0]?.type === "text" ? result.content[0].text : "";
-}
-
-function writeJson(filePath: string, value: object): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

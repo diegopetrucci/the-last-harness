@@ -3,17 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
   ASYNC_RESUME_INTERRUPT_SIGNAL,
   interruptLiveAsyncResumeTarget,
   resolveAsyncResumeTarget,
   type AsyncResumeTarget,
 } from "../../src/runs/background/async-resume.ts";
-
-function writeJson(filePath: string, value: object): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
-}
 
 describe("live async resume interrupt", () => {
   it("interrupts a resolved live async child before the caller sends a follow-up", () => {

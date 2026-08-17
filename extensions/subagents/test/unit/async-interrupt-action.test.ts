@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
   consumeChildMessageRequests,
   consumeSteerRequests,
@@ -38,11 +39,6 @@ function createState(): SubagentState {
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
   };
-}
-
-function writeJson(filePath: string, value: object): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
 }
 
 function createRunningAsync(

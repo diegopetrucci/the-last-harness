@@ -71,6 +71,15 @@ interface ReconcileAsyncRunResult {
   message?: string;
 }
 
+interface StaleRunRepairEvent {
+  type: "subagent.run.repaired_stale";
+  ts: number;
+  runId: string;
+  pid?: number;
+  resultPath: string;
+  message: string;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -109,7 +118,7 @@ function isNotFoundError(error: unknown): boolean {
   );
 }
 
-function appendJsonlBestEffort(filePath: string, payload: object): void {
+function appendJsonlBestEffort(filePath: string, payload: StaleRunRepairEvent): void {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf-8");

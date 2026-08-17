@@ -8,7 +8,7 @@ export interface SubagentLiveDetailController {
   toggle(): boolean;
   setExpanded(expanded: boolean): boolean;
   /** Claim or refresh a confirmed renderer state, deferring one liveness probe for unknown states. */
-  registerToolRow(toolCallId: string, rendererState: object, invalidate: () => void): boolean;
+  registerToolRow(toolCallId: string, rendererState: WeakKey, invalidate: () => void): boolean;
   clearToolRows(): void;
 }
 
@@ -22,16 +22,16 @@ export function createSubagentLiveDetailController(
 ): SubagentLiveDetailController {
   let expanded = initialExpanded;
   let generation = 0;
-  const toolRows = new Map<string, { rendererState: object; invalidate: () => void }>();
+  const toolRows = new Map<string, { rendererState: WeakKey; invalidate: () => void }>();
   type Probe = {
     toolCallId: string;
-    rendererState: object;
+    rendererState: WeakKey;
     invalidate: () => void;
     generation: number;
     reclaimed: boolean;
   };
-  let probedRendererStates = new WeakSet<object>();
-  let pendingProbes = new WeakMap<object, Probe>();
+  let probedRendererStates = new WeakSet<WeakKey>();
+  let pendingProbes = new WeakMap<WeakKey, Probe>();
   let activeProbe: Probe | null = null;
 
   const runProbe = (probe: Probe): void => {
@@ -63,7 +63,7 @@ export function createSubagentLiveDetailController(
 
   const scheduleProbe = (
     toolCallId: string,
-    rendererState: object,
+    rendererState: WeakKey,
     invalidate: () => void,
   ): void => {
     const pending = pendingProbes.get(rendererState);
@@ -110,7 +110,7 @@ export function createSubagentLiveDetailController(
       invalidateToolRows();
       return expanded;
     },
-    registerToolRow: (toolCallId: string, rendererState: object, invalidate: () => void) => {
+    registerToolRow: (toolCallId: string, rendererState: WeakKey, invalidate: () => void) => {
       if (
         activeProbe?.generation === generation &&
         activeProbe.toolCallId === toolCallId &&
@@ -137,8 +137,8 @@ export function createSubagentLiveDetailController(
     clearToolRows: () => {
       generation++;
       toolRows.clear();
-      probedRendererStates = new WeakSet<object>();
-      pendingProbes = new WeakMap<object, Probe>();
+      probedRendererStates = new WeakSet<WeakKey>();
+      pendingProbes = new WeakMap<WeakKey, Probe>();
       activeProbe = null;
     },
   };

@@ -61,9 +61,13 @@ function renameWithRetry(
   }
 }
 
+/**
+ * Callers own and validate concrete persisted payload schemas. This shared writer
+ * stays object-only instead of centralizing unrelated artifact unions.
+ */
 export function createAtomicJsonWriter(
   options: AtomicJsonWriterOptions = {},
-): (filePath: string, payload: object) => void {
+): <TPayload extends object>(filePath: string, payload: TPayload) => void {
   const fsImpl = options.fs ?? fs;
   const now = options.now ?? Date.now;
   const pid = options.pid ?? process.pid;
@@ -73,7 +77,7 @@ export function createAtomicJsonWriter(
     ? (options.retryDelaysMs ?? DEFAULT_RENAME_RETRY_DELAYS_MS)
     : [];
   const wait = options.wait ?? waitSync;
-  return (filePath: string, payload: object): void => {
+  return <TPayload extends object>(filePath: string, payload: TPayload): void => {
     fsImpl.mkdirSync(path.dirname(filePath), { recursive: true });
     const tempPath = path.join(
       path.dirname(filePath),

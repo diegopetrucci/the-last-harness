@@ -4,15 +4,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
+  writeAsyncArtifactJson as writeJson,
+  type AcceptanceConfigFixture,
+  type AcceptanceLedgerFixture,
+} from "../support/async-artifact-fixtures.ts";
+import {
   buildRevivedAsyncTask,
   resolveAsyncResumeTarget,
 } from "../../src/runs/background/async-resume.ts";
-import type { ResolvedAcceptanceConfig } from "../../src/shared/types.ts";
-
-function writeJson(filePath: string, value: object): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2), "utf-8");
-}
+import type {
+  ContextPressureProjection,
+  ResolvedAcceptanceConfig,
+  SubagentModelIdentity,
+  SubagentModelResolution,
+} from "../../src/shared/types.ts";
 
 const pausedCheckedAcceptance: ResolvedAcceptanceConfig = {
   level: "checked",
@@ -41,7 +46,9 @@ const pausedNoneAcceptance: ResolvedAcceptanceConfig = {
   stopRules: [],
 };
 
-function skippedPausedAcceptanceLedger(effectiveAcceptance = pausedCheckedAcceptance) {
+function skippedPausedAcceptanceLedger(
+  effectiveAcceptance = pausedCheckedAcceptance,
+): AcceptanceLedgerFixture {
   return {
     status: "skipped",
     effectiveAcceptance,
@@ -59,7 +66,9 @@ function skippedPausedAcceptanceLedger(effectiveAcceptance = pausedCheckedAccept
   };
 }
 
-function notRequiredPausedAcceptanceLedger(effectiveAcceptance = pausedNoneAcceptance) {
+function notRequiredPausedAcceptanceLedger(
+  effectiveAcceptance = pausedNoneAcceptance,
+): AcceptanceLedgerFixture {
   return {
     status: "not-required",
     effectiveAcceptance,
@@ -128,8 +137,12 @@ describe("async resume lookup", () => {
       const resultSession = path.join(root, "result.jsonl");
       fs.writeFileSync(statusSession, "", "utf-8");
       fs.writeFileSync(resultSession, "", "utf-8");
-      const identity = { provider: "anthropic", model: "claude-sonnet-4", thinking: "high" };
-      const resolution = {
+      const identity: SubagentModelIdentity = {
+        provider: "anthropic",
+        model: "claude-sonnet-4",
+        thinking: "high",
+      };
+      const resolution: SubagentModelResolution = {
         kind: "restored",
         original: identity,
         resumed: identity,
@@ -829,19 +842,28 @@ describe("async resume lookup", () => {
         },
         {
           label: "reviewed-terminal-status",
-          acceptance: { ...skippedPausedAcceptanceLedger(), status: "reviewed" },
+          acceptance: {
+            ...skippedPausedAcceptanceLedger(),
+            status: "reviewed",
+          } satisfies AcceptanceLedgerFixture,
           message:
             /status 'reviewed' is incompatible with continuation resume; expected 'skipped' or 'not-required'/,
         },
         {
           label: "accepted-terminal-status",
-          acceptance: { ...skippedPausedAcceptanceLedger(), status: "accepted" },
+          acceptance: {
+            ...skippedPausedAcceptanceLedger(),
+            status: "accepted",
+          } satisfies AcceptanceLedgerFixture,
           message:
             /status 'accepted' is incompatible with continuation resume; expected 'skipped' or 'not-required'/,
         },
         {
           label: "rejected-terminal-status",
-          acceptance: { ...skippedPausedAcceptanceLedger(), status: "rejected" },
+          acceptance: {
+            ...skippedPausedAcceptanceLedger(),
+            status: "rejected",
+          } satisfies AcceptanceLedgerFixture,
           message:
             /status 'rejected' is incompatible with continuation resume; expected 'skipped' or 'not-required'/,
         },
@@ -1395,7 +1417,7 @@ describe("async resume lookup", () => {
       const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "result-only-pressure.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      const contextPressure = {
+      const contextPressure: ContextPressureProjection = {
         severity: "warning",
         crossedThreshold: "warning",
         contextTokens: 800,
@@ -1433,7 +1455,7 @@ describe("async resume lookup", () => {
       const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "result-only.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      const effectiveAcceptance = {
+      const effectiveAcceptance: ResolvedAcceptanceConfig = {
         level: "checked",
         explicit: true,
         inferredReason: [],
@@ -1597,7 +1619,7 @@ describe("async resume lookup", () => {
       const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "result-only-monotonic.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      const strictAcceptance = {
+      const strictAcceptance: ResolvedAcceptanceConfig = {
         level: "checked",
         explicit: true,
         inferredReason: [],
@@ -1756,7 +1778,7 @@ describe("async resume lookup", () => {
           evidence: ["changed-files"],
           verify: [],
           stopRules: ["Do not widen scope"],
-        },
+        } satisfies AcceptanceConfigFixture,
       },
       {
         label: "verify-missing-command",
@@ -1770,7 +1792,7 @@ describe("async resume lookup", () => {
           evidence: ["changed-files"],
           verify: [{}],
           stopRules: [],
-        },
+        } satisfies AcceptanceConfigFixture,
       },
     ]) {
       const root = fs.mkdtempSync(
@@ -1842,7 +1864,7 @@ describe("async resume lookup", () => {
       const resultsDir = path.join(root, "results");
       const sessionFile = path.join(root, "result-only-wellformed.jsonl");
       fs.writeFileSync(sessionFile, "", "utf-8");
-      const effectiveAcceptance = {
+      const effectiveAcceptance: ResolvedAcceptanceConfig = {
         level: "checked",
         explicit: true,
         inferredReason: [],
