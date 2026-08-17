@@ -33,6 +33,7 @@
     "build:runtime": "node scripts/runtime-typescript.mjs build",
     "check:package-versions": "node scripts/check-package-versions.mjs",
     "check:package-contents": "node scripts/check-package-contents.mjs",
+    "check:lazy-import-boundaries": "node scripts/check-lazy-import-boundaries.mjs",
     "check:runtime": "node scripts/runtime-typescript.mjs check",
     "check:startup-performance": "node scripts/check-startup-performance.mjs",
     "lint": "oxlint --deny-warnings scripts tests extensions",
@@ -48,7 +49,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:subagents-test": "tsc --noEmit --project tsconfig.subagents-test.json",
     "typecheck:runtime": "node scripts/runtime-typescript.mjs typecheck",
-    "validate": "npm run check:package-versions && npm run check:package-contents && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run format:check && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
+    "validate": "npm run check:package-versions && npm run check:package-contents && npm run check:lazy-import-boundaries && npm run typecheck && npm run typecheck:runtime && npm run check:runtime && bash scripts/check-installer-smoke.sh && npm test && npm run lint && npm run format:check && npm run lint:sh && node scripts/merge-settings.mjs --dry-run && npm pack --dry-run"
   },
   "files": [
     "agents",
@@ -77,6 +78,7 @@
   ],
   "pi": {
     "extensions": [
+      "./extensions/notify/index.js",
       "./extensions/annotate-git-diff/index.js",
       "./extensions/the-last-harness.js",
       "./extensions/subagents/src/extension/index.js"
@@ -106,6 +108,7 @@
     "@earendil-works/pi-ai": "0.84.2",
     "@earendil-works/pi-coding-agent": "0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
+    "@oxlint/plugins": "1.78.0",
     "@types/node": "26.2.0",
     "jiti": "2.7.0",
     "oxfmt": "0.63.0",

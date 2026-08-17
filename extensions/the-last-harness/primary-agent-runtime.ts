@@ -1602,6 +1602,18 @@ function createTlhPrimaryAgentRuntime(
       setTlhModelSelectionActiveModelResolver(undefined);
       updateSessionOnlyModel(undefined);
       restorePrimaryToolsIfAppropriate();
+      // Clear session-scoped auth-notification state so that a new session
+      // (which reuses this closure, because registerTlhPrimaryAgentRuntime runs
+      // once per process) starts clean:
+      //  • notifiedForReauth: a provider notified in the old session must be
+      //    able to notify again in the new one.
+      //  • pendingReauthNotifications: a stale intent from the old session must
+      //    not fire a notification in the next session's turn_end.
+      //  • preflightThrottle: inherited backoff can delay the new session's
+      //    first probe by up to 300 s — the same class of bug as the above two.
+      notifiedForReauth.clear();
+      pendingReauthNotifications.clear();
+      preflightThrottle.clear();
     });
 
     pi.on("before_agent_start", async (event, ctx) => {

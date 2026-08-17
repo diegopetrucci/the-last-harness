@@ -247,10 +247,13 @@ export function formatReauthWarningLine(
   const shortStyled = theme.fg("warning", shortText);
   if (visibleWidth(shortStyled) <= width) return shortStyled;
 
-  // Variant 3: count only — always renders regardless of width so the user
-  // always knows how many providers need attention.
+  // Variant 3: count only — truncated to width for layout consistency.
+  // The count property (how many providers need attention) yields at extreme
+  // widths (below ~11 columns); nothing is legible there anyway, and silently
+  // overflowing the render width would corrupt the whole footer layout.
   const countText = `\u26a0 reauth \u00d7${providers.length}`;
-  return theme.fg("warning", countText);
+  const countStyled = theme.fg("warning", countText);
+  return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
 }
 
 export function createTlhFooter(

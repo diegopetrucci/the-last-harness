@@ -4,7 +4,7 @@ Run these commands from the repository root with Node.js >=22.19.0. Prefer tempo
 
 ## Direct dependency pin decisions
 
-Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.84.2`, Oxlint `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current.
+Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.84.2`, Oxlint `1.78.0`, `@oxlint/plugins` `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current.
 
 Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.84.2` declares that exact transitive pin, and `typescript` stays at `6.0.3` because registry latest `7.0.2` does not export `typescript/bin/tsc`, which TLH's runtime TypeScript freshness check resolves, and also removes the `ts.ScriptTarget.Latest` API used by the extension static tests. Both holds are therefore compatibility requirements, not stale version metadata.
 
@@ -16,7 +16,7 @@ Run the aggregate validation script, which covers the main TypeScript `tsc --noE
 npm run validate
 ```
 
-Oxlint keeps its default rule selection but runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This default validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
+Oxlint retains its built-in default rule selection and registers the vendored anti-slop plugin through `.oxlintrc.json`. Anti-slop adoption is deliberately per-rule: `anti-slop/no-module-mocking` and `anti-slop/no-unknown-type-aliases` are active at error severity, while the other 13 rule entries remain visibly commented out. Oxlint still runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
 
 When you need the full Node test reporter for diagnostics, rerun:
 
@@ -141,7 +141,7 @@ node scripts/merge-settings.mjs config/settings.defaults.json \
 node scripts/tlh-defaults.mjs \
   --settings "$tmp/settings.json" \
   --defaults config/default-extensions.json \
-  disable notify
+  disable context-inspector
 ```
 
 ## Test the Gnosis manager

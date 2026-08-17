@@ -43,7 +43,7 @@ test("autocomplete hides configured slash commands only in slash-command-name co
 
   assert.deepEqual(
     result?.items.map((item) => item.value),
-    ["investigate-revalidate-current", "tlh-changelog", "agent"],
+    ["clone", "investigate-revalidate-current", "tlh-changelog", "agent"],
   );
 });
 
@@ -78,7 +78,6 @@ test("autocomplete returns null when filtering removes every slash-command sugge
     createProvider({
       items: [
         { value: "changelog", label: "/changelog" },
-        { value: "clone", label: "/clone" },
         { value: "import", label: "/import" },
         { value: "scoped-models", label: "/scoped-models" },
         { value: "subagent-cost", label: "/subagent-cost" },

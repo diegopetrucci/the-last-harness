@@ -1693,6 +1693,24 @@ test('formatReauthWarningLine: "×2" count variant tells user both providers nee
   );
 });
 
+test("formatReauthWarningLine: count-only variant never exceeds requested width — width contract at extreme narrowness", () => {
+  // The count-only variant (e.g. '⚠ reauth ×2') is itself ~11-12 columns wide.
+  // At a width below that, the prior code returned it unconditionally and violated
+  // the invariant that every footer line fits within `width`. This test asserts
+  // visibleWidth(result) <= width at a width of 5 — well below the count text.
+  // It must FAIL against the un-patched code and PASS after the truncateToWidth fix.
+  const narrowWidth = 5;
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], narrowWidth, theme);
+  assert.ok(
+    result !== undefined,
+    "result must not be undefined — count variant should always return something",
+  );
+  assert.ok(
+    visibleWidth(result) <= narrowWidth,
+    `visibleWidth(${JSON.stringify(result)}) must be <= ${narrowWidth}, got ${visibleWidth(result)}`,
+  );
+});
+
 test('formatReauthWarningLine: short-label variant for openai-codex uses last hyphen-segment "codex"', () => {
   // Confirm the shortening rule: last segment after splitting on '-'.
   const fullText = "⚠ reauth: anthropic, openai-codex";

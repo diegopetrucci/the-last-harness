@@ -904,3 +904,78 @@ test("provider can be notified on retry when ctx.ui.notify threw on a previous c
 
   cleanupTempDir(fixture);
 });
+
+// ---------------------------------------------------------------------------
+// Session state cleared on session_shutdown — P2 finding
+// ---------------------------------------------------------------------------
+
+test("new session can notify for a provider that was notified in a previous session", async (t) => {
+  // registerTlhPrimaryAgentRuntime runs once per process, so notifiedForReauth,
+  // pendingReauthNotifications, and preflightThrottle are all closure-level and
+  // survive session switches. The session_shutdown handler must clear them so
+  // the next session starts clean.
+  const fixture = createIsolatedProfileFixture("tlh-notify-session-test-", { cwd: true, test: t });
+  const clock = createClock(1_000_000);
+
+  const store = createProviderAuthHealthStore({ now: clock.now });
+  const getProviderAuth = async () => {
+    throw Object.assign(new Error("OAuth refresh failed for anthropic"), {
+      name: "ModelsError",
+      code: "oauth",
+      cause: new Error("invalid_grant"),
+    });
+  };
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerTlhPrimaryAgentRuntime(pi, {
+      env: {},
+      subagentMetadata: [],
+      getProviderAuthHealthStore: () => store,
+      now: clock.now,
+    });
+
+    const toolCall = pi.events.find((e) => e.name === "tool_call")?.handler;
+    const sessionShutdown = pi.events.find((e) => e.name === "session_shutdown")?.handler;
+    assert.ok(toolCall, "tool_call handler must be registered");
+    assert.ok(sessionShutdown, "session_shutdown handler must be registered");
+
+    // ---- Session 1 ----
+    const { ctx: ctx1, notifyCalls: notifyCalls1 } = createNotifyCtx({ getProviderAuth });
+
+    // First dispatch: probe fails → reauth-required → notification emitted.
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx1);
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(store.getEntry("anthropic")?.status, "reauth-required");
+    assert.equal(
+      countReauthWarnings(notifyCalls1),
+      1,
+      "session 1 must emit one reauth warning",
+    );
+
+    // Simulate session 1 ending.
+    await sessionShutdown({}, ctx1);
+
+    // ---- Session 2 ----
+    // The health store from the previous session carries over (the extension
+    // receives a fresh store on session_start in production, but in this test
+    // we want to confirm that even if the store still shows reauth-required,
+    // the notification state was cleared so the user can be told again).
+    // Advance past the backoff window so a new probe fires.
+    clock.advance(300_001);
+
+    const { ctx: ctx2, notifyCalls: notifyCalls2 } = createNotifyCtx({ getProviderAuth });
+
+    await toolCall(subagentEvent("anthropic/claude-opus-4"), ctx2);
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(
+      countReauthWarnings(notifyCalls2),
+      1,
+      "session 2 must emit its own reauth warning — notifiedForReauth must have been cleared by session_shutdown",
+    );
+  });
+
+  cleanupTempDir(fixture);
+});

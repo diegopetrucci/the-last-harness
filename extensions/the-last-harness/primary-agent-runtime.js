@@ -974,6 +974,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             setTlhModelSelectionActiveModelResolver(undefined);
             updateSessionOnlyModel(undefined);
             restorePrimaryToolsIfAppropriate();
+            notifiedForReauth.clear();
+            pendingReauthNotifications.clear();
+            preflightThrottle.clear();
         });
         pi.on("before_agent_start", async (event, ctx) => {
             replayTlhUnmatchedModelSelectionDefaults();

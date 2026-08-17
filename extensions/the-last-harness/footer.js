@@ -182,7 +182,8 @@ export function formatReauthWarningLine(providers, width, theme) {
     if (visibleWidth(shortStyled) <= width)
         return shortStyled;
     const countText = `\u26a0 reauth \u00d7${providers.length}`;
-    return theme.fg("warning", countText);
+    const countStyled = theme.fg("warning", countText);
+    return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
 }
 export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth) {
     let mcpContextEstimateCache;
