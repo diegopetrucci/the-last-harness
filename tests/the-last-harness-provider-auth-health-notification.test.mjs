@@ -948,11 +948,7 @@ test("new session can notify for a provider that was notified in a previous sess
     await new Promise((r) => setImmediate(r));
 
     assert.equal(store.getEntry("anthropic")?.status, "reauth-required");
-    assert.equal(
-      countReauthWarnings(notifyCalls1),
-      1,
-      "session 1 must emit one reauth warning",
-    );
+    assert.equal(countReauthWarnings(notifyCalls1), 1, "session 1 must emit one reauth warning");
 
     // Simulate session 1 ending.
     await sessionShutdown({}, ctx1);
