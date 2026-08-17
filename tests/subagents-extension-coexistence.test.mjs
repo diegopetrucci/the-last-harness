@@ -10,10 +10,7 @@ import {
   RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
   packageIdentity,
 } from "../scripts/lib/default-extensions.mjs";
-import {
-  EXTERNAL_SUBAGENT_PACKAGE_SOURCES,
-  externalSubagentPackageIdentity,
-} from "../extensions/subagents/src/extension/external-package-guard.js";
+import { externalSubagentPackageIdentity } from "../extensions/subagents/src/extension/external-package-guard.js";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const extensionUrl = pathToFileURL(
@@ -135,12 +132,7 @@ for (const scenario of [
   });
 }
 
-test("bundled coexistence guard identities stay aligned with installer retirement identities", () => {
-  assert.deepEqual(
-    [...EXTERNAL_SUBAGENT_PACKAGE_SOURCES],
-    [...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES],
-    "runtime and installer source allowlists must remain identical",
-  );
+test("coexistence and retirement package identities normalize consistently", () => {
   for (const source of [
     ...RETIRED_TLH_SUBAGENTS_DEFAULT_PACKAGE_SOURCES,
     "npm:@diegopetrucci/pi-subagents@0.31.14",

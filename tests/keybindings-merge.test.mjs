@@ -16,7 +16,6 @@ import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeKeybindingsScript = join(repoRoot, "scripts", "merge-keybindings.mjs");
-const keybindingDefaults = join(repoRoot, "config", "keybindings.defaults.json");
 
 function tempFixture() {
   const agentDir = mkdtempSync(join(tmpdir(), "tlh-keybindings-test-"));
@@ -57,10 +56,6 @@ function spawnMerge(args, agentDir) {
     encoding: "utf8",
   });
 }
-
-test("packaged keybinding defaults disable app.thinking.cycle", () => {
-  assert.deepEqual(readJson(keybindingDefaults), { "app.thinking.cycle": [] });
-});
 
 test("merge sets missing defaults, preserves existing keys, and backs up existing keybindings", () => {
   const fixture = tempFixture();

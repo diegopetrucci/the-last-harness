@@ -255,19 +255,17 @@ function readJson(pathValue) {
 function hasObjectShape(value) {
     return typeof value === "object" && value !== null;
 }
-function readTrimmedStringProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return typeof propertyValue === "string" && propertyValue.trim()
-        ? propertyValue.trim()
-        : undefined;
+function hasInstallStatePayloadShape(value) {
+    return hasObjectShape(value);
 }
-function readBooleanProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return typeof propertyValue === "boolean" ? propertyValue : undefined;
+function readTrimmedString(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
-function readIntegerProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return Number.isInteger(propertyValue) ? propertyValue : undefined;
+function readBoolean(value) {
+    return typeof value === "boolean" ? value : undefined;
+}
+function readInteger(value) {
+    return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 function isValidTrack(value) {
     switch (value) {
@@ -281,26 +279,26 @@ function isValidTrack(value) {
     }
 }
 function normalizeState(raw) {
-    if (!hasObjectShape(raw)) {
+    if (!hasInstallStatePayloadShape(raw)) {
         return undefined;
     }
-    const repo = readTrimmedStringProperty(raw, "repo");
-    const track = readTrimmedStringProperty(raw, "track");
-    const ref = readTrimmedStringProperty(raw, "ref");
-    const packageSource = readTrimmedStringProperty(raw, "packageSource");
+    const repo = readTrimmedString(raw.repo);
+    const track = readTrimmedString(raw.track);
+    const ref = readTrimmedString(raw.ref);
+    const packageSource = readTrimmedString(raw.packageSource);
+    const packageSourceIsDefault = readBoolean(raw.packageSourceIsDefault);
+    const piInstalledByTlh = readBoolean(raw.piInstalledByTlh);
     if (!repo || !track || !isValidTrack(track)) {
         return undefined;
     }
     return {
-        schemaVersion: readIntegerProperty(raw, "schemaVersion"),
+        schemaVersion: readInteger(raw.schemaVersion),
         repo,
         track,
         ref,
         packageSource,
-        packageSourceIsDefault: readBooleanProperty(raw, "packageSourceIsDefault") === true,
-        ...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean"
-            ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") }
-            : {}),
+        packageSourceIsDefault: packageSourceIsDefault === true,
+        ...(piInstalledByTlh !== undefined ? { piInstalledByTlh } : {}),
     };
 }
 function loadState(args) {

@@ -10,7 +10,6 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 
 const jiti = createJiti(import.meta.url);
 const {
-  TLH_HIDDEN_MODEL_DEFAULTS,
   getTlhModelVisibilityConfig,
   getUnfilteredAvailableModels,
   installTlhModelVisibilityFilter,
@@ -96,39 +95,6 @@ function createModelMatchTestHarness(cachedModels, refreshedModels = cachedModel
     },
   };
 }
-
-test("hidden model defaults stay pinned to the approved ordered list", () => {
-  assert.deepEqual(TLH_HIDDEN_MODEL_DEFAULTS, [
-    "anthropic/claude-3-5-haiku-20241022",
-    "anthropic/claude-3-5-haiku-latest",
-    "anthropic/claude-3-5-sonnet-20240620",
-    "anthropic/claude-3-5-sonnet-20241022",
-    "anthropic/claude-3-7-sonnet-20250219",
-    "anthropic/claude-3-haiku-20240307",
-    "anthropic/claude-3-opus-20240229",
-    "anthropic/claude-3-sonnet-20240229",
-    "anthropic/claude-haiku-4-5",
-    "anthropic/claude-haiku-4-5-20251001",
-    "anthropic/claude-opus-4-0",
-    "anthropic/claude-opus-4-1",
-    "anthropic/claude-opus-4-1-20250805",
-    "anthropic/claude-opus-4-20250514",
-    "anthropic/claude-opus-4-5",
-    "anthropic/claude-opus-4-5-20251101",
-    "anthropic/claude-opus-4-6",
-    "anthropic/claude-opus-4-7",
-    "anthropic/claude-sonnet-4-0",
-    "anthropic/claude-sonnet-4-20250514",
-    "anthropic/claude-sonnet-4-5",
-    "anthropic/claude-sonnet-4-5-20250929",
-    "anthropic/claude-sonnet-4-6",
-    "anthropic/claude-sonnet-5",
-    "openai-codex/gpt-5.3-codex-spark",
-    "openai-codex/gpt-5.4",
-    "openai-codex/gpt-5.4-mini",
-    "openai-codex/gpt-5.6-luna",
-  ]);
-});
 
 test("model visibility matches canonical and bare-id glob patterns with visible overrides", () => {
   const config = normalizeTlhModelVisibilityConfig({

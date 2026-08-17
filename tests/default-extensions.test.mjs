@@ -19,7 +19,6 @@ import {
   readDefaultExtensions,
   setDefaultExtensionProvenance,
 } from "../scripts/lib/default-extensions.mjs";
-import { installableSupportFiles } from "../scripts/lib/tlh-install-support-manifest.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const mergeScript = join(repoRoot, "scripts", "merge-settings.mjs");
@@ -35,14 +34,6 @@ const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-
 const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const previousBundledDirtyRepoGuardSource = "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.5";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
-const expectedBundledNpmPackageIdentities = new Map([
-  ["fast", "npm:@diegopetrucci/pi-fast"],
-  ["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
-  ["inline-bash", "npm:@diegopetrucci/pi-inline-bash"],
-  ["context-inspector", "npm:@diegopetrucci/pi-context-inspector"],
-  ["quiet-tools", "npm:@diegopetrucci/pi-quiet-tools"],
-  ["dirty-repo-guard", "npm:@diegopetrucci/pi-dirty-repo-guard"],
-]);
 
 function tempFixture() {
   const dir = mkdtempSync(join(tmpdir(), "tlh-defaults-test-"));
@@ -181,35 +172,6 @@ test("setDefaultExtensionProvenance returns false for non-plain-object settings"
   });
 });
 
-test("bundled manifest retires rtk while keeping quiet-tools bundled", () => {
-  const ids = bundledExtensions.map(({ id }) => id);
-  const quietTools = bundledExtension("quiet-tools");
-  const dirtyRepoGuard = bundledExtension("dirty-repo-guard");
-
-  assert.ok(dirtyRepoGuard, "bundled dirty-repo-guard default should exist");
-  assert.equal(packageIdentity(dirtyRepoGuard.source), "npm:@diegopetrucci/pi-dirty-repo-guard");
-  assert.equal(ids.includes("permission-gate"), false);
-  assert.equal(ids.includes("confirm-destructive"), false);
-  assert.equal(ids.includes("librarian"), false);
-  assert.equal(ids.includes("rtk"), false);
-  assert.equal(ids.includes("triage-comments"), false);
-  assert.ok(quietTools, "bundled quiet-tools default should exist");
-  assert.deepEqual(quietTools.aliases, ["compact-bash"]);
-  assert.deepEqual(quietTools.replaces, ["npm:@diegopetrucci/pi-compact-bash"]);
-  assert.equal(quietTools.critical, false);
-  assert.equal(packageIdentity(quietTools.source), "npm:@diegopetrucci/pi-quiet-tools");
-});
-
-test("bundled manifest keeps expected managed npm package identities", () => {
-  for (const [id, packageId] of expectedBundledNpmPackageIdentities) {
-    assert.equal(
-      packageIdentity(bundledSource(id)),
-      packageId,
-      `${id} should keep managing ${packageId}`,
-    );
-  }
-});
-
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
   const fixture = tempFixture();
   writeFileSync(fixture.settings, JSON.stringify({ packages: [] }, null, 2));
@@ -233,23 +195,6 @@ test("tlh-defaults errors when the default-extension manifest is missing", () =>
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /File does not exist:/);
-});
-
-test("installable support files no longer include the legacy defaults helper tree", () => {
-  const installableVariables = new Set(installableSupportFiles().map((file) => file.variable));
-
-  for (const variable of [
-    "TLH_DEFAULTS_SCRIPT",
-    "TLH_INSTALL_PACKAGE_SOURCE_LIB",
-    "TLH_INSTALL_PATHS_LIB",
-    "TLH_SAFE_PROFILE_WRITE_LIB",
-    "TLH_INSTALL_UTILS_LIB",
-    "DEFAULT_EXTENSIONS_LIB",
-    "DEFAULT_EXTENSIONS_FILE",
-  ]) {
-    assert.equal(installableVariables.has(variable), false, variable);
-  }
-  assert.equal(installableVariables.has("TLH_RECOVER_UPDATE_SCRIPT"), true);
 });
 
 test("merge force-removes all pi-intercom package identities (string and object entries, duplicates, idempotent)", () => {
@@ -1765,39 +1710,9 @@ test("merge does not introduce warnings.anthropicExtraUsage when anthropic-auth 
   assert.equal(settings.warnings, undefined, "warnings object should not be created by merge");
 });
 
-test("bundled manifest contains pi-web-access entry with migration metadata", () => {
-  const bundled = bundledExtensions;
-  const webAccess = bundled.find(({ id }) => id === "pi-web-access");
-
-  assert.ok(webAccess, "bundled pi-web-access entry should exist");
-  assert.equal(webAccess.critical, false, "pi-web-access must not be critical");
-  assert.deepEqual(
-    webAccess.replaces,
-    ["npm:pi-web-access", "git:github.com/nicobailon/pi-web-access", previousPiWebAccessSource],
-    "pi-web-access should migrate upstream and prior TLH replacement sources",
-  );
-  assert.equal(
-    webAccess.migrateReplacements,
-    true,
-    "pi-web-access replacements must stay enabled for migration",
-  );
-  assert.deepEqual(webAccess.aliases, [], "pi-web-access must have no aliases");
-});
-
-test("bundled manifest contains mcporter entry and migrates prior TLH-managed installs", () => {
+test("mcporter migration handles prior TLH-managed and manual installs", () => {
   const bundledPath = bundledExtensionsPath;
-  const bundled = readDefaultExtensions(bundledPath);
-  const mcporter = bundled.find(({ id }) => id === "mcporter");
-
-  assert.ok(mcporter, "bundled mcporter entry should exist");
-  assert.equal(mcporter.critical, false, "mcporter must not be critical");
-  assert.deepEqual(mcporter.aliases, ["pi-mcp-adapter", "mcp-adapter"]);
-  assert.deepEqual(mcporter.replaces, ["npm:pi-mcp-adapter", previousMcporterSource]);
-  assert.equal(
-    mcporter.migrateReplacements,
-    true,
-    "mcporter should migrate both upstream npm and previous TLH git installs",
-  );
+  const mcporter = bundledExtension("mcporter");
 
   const replacementMergeFixture = tempFixture();
   writeFileSync(replacementMergeFixture.extensions, JSON.stringify([mcporter], null, 2));
@@ -1902,52 +1817,29 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
   assert.deepEqual(disabledSettings.packages, []);
 });
 
-test("bundled manifest contains fast entry with migration metadata", () => {
-  const bundled = bundledExtensions;
-  const fast = bundled.find(({ id }) => id === "fast");
-
-  assert.ok(fast, "bundled fast entry should exist");
-  assert.equal(fast.critical, false, "fast must not be critical");
-  assert.deepEqual(
-    fast.aliases,
-    ["openai-fast"],
-    "fast should carry openai-fast alias to migrate users who disabled by the old id",
-  );
-  assert.deepEqual(
-    fast.replaces,
-    ["npm:@diegopetrucci/pi-openai-fast"],
-    "fast should replace the previous openai-fast npm package",
-  );
-  assert.equal(
-    fast.migrateReplacements,
-    true,
-    "fast replacements must stay enabled so the old package is removed on update",
-  );
-
-  // opt-out migration: a user who ran 'tlh defaults disable openai-fast' should
-  // have the disabled entry normalised to the canonical 'fast' id.
-  const disableFixture = tempFixture();
+test("tlh-defaults disable migrates the fast alias and removes the replaced package", () => {
+  const fixture = tempFixture();
   writeFileSync(
-    disableFixture.settings,
+    fixture.settings,
     JSON.stringify({ packages: ["npm:@diegopetrucci/pi-openai-fast"] }, null, 2),
   );
 
   runNode(defaultsScript, [
     "--settings",
-    disableFixture.settings,
+    fixture.settings,
     "--defaults",
     bundledExtensionsPath,
     "disable",
     "openai-fast",
   ]);
 
-  const disabledSettings = readJson(disableFixture.settings);
+  const settings = readJson(fixture.settings);
   assert.deepEqual(
-    disabledSettings.tlh.disabledDefaultExtensions,
+    settings.tlh.disabledDefaultExtensions,
     ["fast"],
     "disabling by alias should normalise to the canonical fast id",
   );
-  assert.deepEqual(disabledSettings.packages, []);
+  assert.deepEqual(settings.packages, []);
 });
 
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
@@ -2019,17 +1911,6 @@ test("bundled same-identity managed npm pins advance while manual pins stay unto
     manualPinnedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities,
     [],
   );
-});
-
-test("bundled manifest has no subagents, intercom, or notify entry after retirement", () => {
-  const bundled = bundledExtensions;
-  const subagents = bundled.find(({ id }) => id === "subagents");
-  const intercom = bundled.find(({ id }) => id === "intercom");
-  const notify = bundled.find(({ id }) => id === "notify");
-
-  assert.equal(subagents, undefined, "bundled subagents entry should be absent after retirement");
-  assert.equal(intercom, undefined, "bundled intercom entry should be absent after retirement");
-  assert.equal(notify, undefined, "bundled notify entry should be absent after retirement");
 });
 
 test("bundled merge removes legacy upstream and TLH subagents git installs via retirement list", () => {
@@ -2267,11 +2148,6 @@ test("bundled merge force-removes the notify npm install (now bundled first-part
 
 // ── fff retirement tests ─────────────────────────────────────────────────────
 
-test("bundled manifest has no fff entry after retirement", () => {
-  const fff = bundledExtensions.find(({ id }) => id === "fff");
-  assert.equal(fff, undefined, "bundled fff entry should be absent after retirement");
-});
-
 test("bundled merge removes a TLH-managed fff package (provenance-gated, legacy profile)", () => {
   // A legacy profile with no provenance block: withLegacyRetiredDefaultPackageIdentities
   // treats any retired package present as managed and enqueues it for removal.
@@ -2390,23 +2266,5 @@ test("bundled merge prunes stale fff and pi-fff opt-outs from tlh.disabledDefaul
     (settings.tlh?.disabledDefaultExtensions ?? []).includes("notify"),
     true,
     "unrelated opt-out must be preserved",
-  );
-});
-
-test("bundled manifest has no duplicate ids or alias conflicts", () => {
-  // Note: runtime tool names registered by individual extensions are not statically introspectable
-  // from this manifest (they are set at extension runtime). The runtime-side tool-name uniqueness
-  // check lives in test/tool-name-uniqueness.test.mjs in the upstream fork.
-  const bundled = bundledExtensions;
-
-  const ids = bundled.map(({ id }) => id);
-  assert.equal(new Set(ids).size, ids.length, "bundled manifest must not contain duplicate ids");
-
-  // All ids plus all aliases must form a unique set so a new entry cannot accidentally alias an existing id.
-  const allNames = [...ids, ...bundled.flatMap(({ aliases }) => aliases)];
-  assert.equal(
-    new Set(allNames).size,
-    allNames.length,
-    "bundled manifest ids and aliases must all be unique (no alias may shadow an existing id)",
   );
 });

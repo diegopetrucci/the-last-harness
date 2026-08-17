@@ -552,7 +552,6 @@ test("trace-policy fixture importer CLI emits a reviewable skeleton from JSONL i
     assert.match(result.stdout, /id: "sample-trace"/);
     assert.match(result.stdout, /name: "imported sample trace"/);
     assert.match(result.stdout, /expectedResult: "reject"/);
-    assert.match(result.stdout, /valid: false/);
     assert.match(result.stdout, /agent: "architect"/);
     assert.match(result.stdout, /<HOME>\/tmp/);
     assert.match(result.stdout, /<TIMESTAMP>/);

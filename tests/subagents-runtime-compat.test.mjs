@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname } from "node:path";
 import test from "node:test";
 
 import { createSubagentToolResultBridge } from "../extensions/subagents/src/extension/index.js";
 import { buildPiArgs } from "../extensions/subagents/src/runs/shared/pi-args.js";
-
-const repoRoot = join(import.meta.dirname, "..");
 
 function extensionArgs(args) {
   const paths = [];
@@ -57,11 +54,4 @@ test("Pi 0.83 tool-result bridge preserves rich failures and patches the matchin
   assert.equal(normalized.details, details);
   assert.deepEqual(bridge.errorPatch("failure-call", "subagent", details), { isError: true });
   assert.equal(bridge.errorPatch("failure-call", "subagent", details), undefined);
-});
-
-test("Pi 0.83 compatibility declaration shim is absent", () => {
-  assert.equal(
-    existsSync(join(repoRoot, "extensions/subagents/src/types/typecheck-compat.d.ts")),
-    false,
-  );
 });

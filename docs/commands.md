@@ -309,6 +309,18 @@ These commands are provided by bundled default extensions and are visible in TLH
 
 ---
 
+## Bundled skill commands
+
+These terminal-integration skills ship with TLH and remain visible in TLH autocomplete.
+
+| Command | Description |
+|---------|-------------|
+| `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows |
+| `/skill:herdr` | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control |
+| `/skill:tmux` | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring |
+
+---
+
 ## Hidden autocomplete commands
 
 These commands are registered and fully functional, but deliberately excluded from TLH autocomplete suggestions. Type them in full to invoke them.
