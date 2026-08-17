@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
+import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
 import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.ts";
 import {
   injectOutputPathSystemPrompt,
@@ -193,6 +194,11 @@ interface AsyncExecutionResult {
   isError?: boolean;
 }
 
+/** The narrow config portion consumed when resolving detached-runner log paths. */
+interface AsyncRunnerLogPathConfig {
+  asyncDir?: string;
+}
+
 export interface AsyncRunnerStepBuildParams {
   chain: ChainStep[];
   task?: string;
@@ -268,12 +274,9 @@ function resolveAsyncRunnerNodeCommand(): string {
 }
 
 export function resolveAsyncRunnerLogPaths(
-  cfg: object,
+  cfg: AsyncRunnerLogPathConfig,
 ): { stdoutPath: string; stderrPath: string } | undefined {
-  const asyncDir =
-    typeof (cfg as { asyncDir?: unknown }).asyncDir === "string"
-      ? (cfg as { asyncDir: string }).asyncDir
-      : undefined;
+  const asyncDir = typeof cfg.asyncDir === "string" ? cfg.asyncDir : undefined;
   if (!asyncDir) return undefined;
   return {
     stdoutPath: path.join(asyncDir, "runner.stdout.log"),
@@ -293,7 +296,11 @@ function closeFd(fd: number | undefined): void {
 /**
  * Spawn the async runner process
  */
-function spawnRunner(cfg: object, suffix: string, cwd: string): { pid?: number; error?: string } {
+function spawnRunner(
+  cfg: SubagentRunConfig,
+  suffix: string,
+  cwd: string,
+): { pid?: number; error?: string } {
   const runner = resolveAsyncRunnerModulePath();
   if (!fs.existsSync(runner)) {
     return { error: `async runner module could not be found: ${runner}` };

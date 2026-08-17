@@ -1,3 +1,15 @@
+import type {
+  ArtifactConfig,
+  MaxOutputConfig,
+  NestedRouteInfo,
+  ResolvedControlConfig,
+  ResolvedToolBudget,
+  ResolvedTurnBudget,
+  SubagentRunMode,
+  TkTicketMetadata,
+  WorkflowGraphSnapshot,
+} from "../../shared/types.ts";
+
 export interface RunnerSubagentStep {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
@@ -64,6 +76,44 @@ export interface ParallelStepGroup {
 }
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
+
+/** Full persisted configuration consumed by the detached subagent runner. */
+export interface SubagentRunConfig {
+  id: string;
+  steps: RunnerStep[];
+  resultPath: string;
+  cwd: string;
+  placeholder: string;
+  taskIndex?: number;
+  totalTasks?: number;
+  maxOutput?: MaxOutputConfig;
+  artifactsDir?: string;
+  artifactConfig?: Partial<ArtifactConfig>;
+  share?: boolean;
+  sessionDir?: string;
+  asyncDir: string;
+  continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+  sessionId?: string | null;
+  piPackageRoot?: string;
+  piArgv1?: string;
+  controlConfig?: ResolvedControlConfig;
+  controlIntercomTarget?: string;
+  childIntercomTargets?: Array<string | undefined>;
+  resultMode?: SubagentRunMode;
+  workflowGraph?: WorkflowGraphSnapshot;
+  nestedRoute?: NestedRouteInfo;
+  nestedSelf?: {
+    parentRunId: string;
+    parentStepIndex?: number;
+    depth: number;
+    path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
+  };
+  tkTicket?: TkTicketMetadata;
+  timeoutMs?: number;
+  deadlineAt?: number;
+  turnBudget?: ResolvedTurnBudget;
+  toolBudget?: ResolvedToolBudget;
+}
 
 export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
   return "parallel" in step && Array.isArray(step.parallel);

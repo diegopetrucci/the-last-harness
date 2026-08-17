@@ -49,20 +49,15 @@ import {
   type ModelAttempt,
   type NestedRouteInfo,
   type NestedRunSummary,
-  type TkTicketMetadata,
   type SubagentModelIdentity,
   type SubagentModelResolution,
-  type ResolvedControlConfig,
   type ResolvedTurnBudget,
-  type ResolvedToolBudget,
   type SubagentRunMode,
   type SubagentTerminationReason,
   type ToolBudgetState,
   type TurnBudgetState,
   type Usage,
-  type WorkflowGraphSnapshot,
   DEFAULT_MAX_OUTPUT,
-  type MaxOutputConfig,
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
   truncateOutput,
   getSubagentDepthEnv,
@@ -75,6 +70,7 @@ import {
   formatControlIntercomMessage,
   formatControlNoticeMessage,
 } from "../shared/subagent-control.ts";
+import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
 import {
   type RunnerSubagentStep as SubagentStep,
   type RunnerStep,
@@ -187,43 +183,6 @@ import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
 
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
   "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
-
-interface SubagentRunConfig {
-  id: string;
-  steps: RunnerStep[];
-  resultPath: string;
-  cwd: string;
-  placeholder: string;
-  taskIndex?: number;
-  totalTasks?: number;
-  maxOutput?: MaxOutputConfig;
-  artifactsDir?: string;
-  artifactConfig?: Partial<ArtifactConfig>;
-  share?: boolean;
-  sessionDir?: string;
-  asyncDir: string;
-  continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
-  sessionId?: string | null;
-  piPackageRoot?: string;
-  piArgv1?: string;
-  controlConfig?: ResolvedControlConfig;
-  controlIntercomTarget?: string;
-  childIntercomTargets?: Array<string | undefined>;
-  resultMode?: SubagentRunMode;
-  workflowGraph?: WorkflowGraphSnapshot;
-  nestedRoute?: NestedRouteInfo;
-  nestedSelf?: {
-    parentRunId: string;
-    parentStepIndex?: number;
-    depth: number;
-    path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
-  };
-  tkTicket?: TkTicketMetadata;
-  timeoutMs?: number;
-  deadlineAt?: number;
-  turnBudget?: ResolvedTurnBudget;
-  toolBudget?: ResolvedToolBudget;
-}
 
 interface StepResult {
   agent: string;

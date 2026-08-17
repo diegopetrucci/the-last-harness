@@ -118,7 +118,7 @@ function renderWidgetHarnessLines(widget: unknown): string[] {
 }
 
 function restoreDescriptor(
-  target: object,
+  target: NodeJS.WriteStream,
   key: string,
   descriptor: PropertyDescriptor | undefined,
 ): void {

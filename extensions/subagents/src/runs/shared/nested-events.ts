@@ -106,6 +106,8 @@ export interface NestedRegistry {
   processedEvents: string[];
 }
 
+type NestedRouteRecord = NestedEventRecord | NestedControlRequestRecord | NestedControlResultRecord;
+
 export function isSafeNestedId(value: unknown): value is string {
   return isSafeNestedPathId(value);
 }
@@ -965,7 +967,7 @@ export function projectNestedEvents(route: NestedRoute): NestedRegistry {
   return registry;
 }
 
-function writeRouteRecord(dir: string, ts: number, payload: object): string {
+function writeRouteRecord(dir: string, ts: number, payload: NestedRouteRecord): string {
   const content = `${JSON.stringify(payload)}\n`;
   if (Buffer.byteLength(content, "utf-8") > MAX_EVENT_BYTES)
     throw new Error("Nested route record exceeds the maximum size.");

@@ -57,9 +57,7 @@ function resolveAsyncRunnerNodeCommand() {
     return process.platform === "win32" ? "node.exe" : "node";
 }
 export function resolveAsyncRunnerLogPaths(cfg) {
-    const asyncDir = typeof cfg.asyncDir === "string"
-        ? cfg.asyncDir
-        : undefined;
+    const asyncDir = typeof cfg.asyncDir === "string" ? cfg.asyncDir : undefined;
     if (!asyncDir)
         return undefined;
     return {

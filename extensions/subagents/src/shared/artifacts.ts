@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TEMP_ARTIFACTS_DIR, type ArtifactPaths } from "./types.ts";
+import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type SingleResult } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
 const PROJECT_ARTIFACT_ROOT = ".pi-subagents";
@@ -48,7 +48,51 @@ export function writeArtifact(filePath: string, content: string): void {
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
-export function writeMetadata(filePath: string, metadata: object): void {
+/**
+ * Metadata emitted by the foreground writer after a synchronous run.
+ *
+ * The background runner writes a separate process metadata shape directly in
+ * runs/background/subagent-runner.ts; these writers intentionally remain distinct.
+ */
+export interface ForegroundSubagentArtifactMetadata extends Pick<
+  SingleResult,
+  | "agent"
+  | "task"
+  | "exitCode"
+  | "exitSignal"
+  | "timedOut"
+  | "terminationReason"
+  | "contextUsage"
+  | "contextPressure"
+  | "contextPressureCrossedThresholds"
+  | "sessionFile"
+  | "usage"
+  | "model"
+  | "thinking"
+  | "modelIdentity"
+  | "modelResolution"
+  | "attemptedModels"
+  | "modelAttempts"
+  | "modelFallbackNotice"
+  | "error"
+  | "transcriptPath"
+  | "transcriptError"
+  | "skills"
+  | "skillsWarning"
+  | "activeRuntimeMs"
+> {
+  runId: string;
+  durationMs?: number;
+  timeoutMs?: number;
+  deadlineAt?: number;
+  toolCount?: number;
+  timestamp: number;
+}
+
+export function writeMetadata(
+  filePath: string,
+  metadata: ForegroundSubagentArtifactMetadata,
+): void {
   fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2), "utf-8");
 }
 
