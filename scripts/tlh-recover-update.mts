@@ -372,21 +372,30 @@ function hasObjectShape(value: unknown): value is object {
   return typeof value === "object" && value !== null;
 }
 
-function readTrimmedStringProperty(value: object, key: string): string | undefined {
-  const propertyValue = Reflect.get(value, key);
-  return typeof propertyValue === "string" && propertyValue.trim()
-    ? propertyValue.trim()
-    : undefined;
+interface InstallStatePayload {
+  schemaVersion?: unknown;
+  repo?: unknown;
+  track?: unknown;
+  ref?: unknown;
+  packageSource?: unknown;
+  packageSourceIsDefault?: unknown;
+  piInstalledByTlh?: unknown;
 }
 
-function readBooleanProperty(value: object, key: string): boolean | undefined {
-  const propertyValue = Reflect.get(value, key);
-  return typeof propertyValue === "boolean" ? propertyValue : undefined;
+function hasInstallStatePayloadShape(value: unknown): value is InstallStatePayload {
+  return hasObjectShape(value);
 }
 
-function readIntegerProperty(value: object, key: string): number | undefined {
-  const propertyValue = Reflect.get(value, key);
-  return Number.isInteger(propertyValue) ? propertyValue : undefined;
+function readTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 
 function isValidTrack(value: string | undefined): value is ValidTrack {
@@ -402,26 +411,26 @@ function isValidTrack(value: string | undefined): value is ValidTrack {
 }
 
 function normalizeState(raw: unknown): NormalizedInstallState | undefined {
-  if (!hasObjectShape(raw)) {
+  if (!hasInstallStatePayloadShape(raw)) {
     return undefined;
   }
-  const repo = readTrimmedStringProperty(raw, "repo");
-  const track = readTrimmedStringProperty(raw, "track");
-  const ref = readTrimmedStringProperty(raw, "ref");
-  const packageSource = readTrimmedStringProperty(raw, "packageSource");
+  const repo = readTrimmedString(raw.repo);
+  const track = readTrimmedString(raw.track);
+  const ref = readTrimmedString(raw.ref);
+  const packageSource = readTrimmedString(raw.packageSource);
+  const packageSourceIsDefault = readBoolean(raw.packageSourceIsDefault);
+  const piInstalledByTlh = readBoolean(raw.piInstalledByTlh);
   if (!repo || !track || !isValidTrack(track)) {
     return undefined;
   }
   return {
-    schemaVersion: readIntegerProperty(raw, "schemaVersion"),
+    schemaVersion: readInteger(raw.schemaVersion),
     repo,
     track,
     ref,
     packageSource,
-    packageSourceIsDefault: readBooleanProperty(raw, "packageSourceIsDefault") === true,
-    ...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean"
-      ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") }
-      : {}),
+    packageSourceIsDefault: packageSourceIsDefault === true,
+    ...(piInstalledByTlh !== undefined ? { piInstalledByTlh } : {}),
   };
 }
 
