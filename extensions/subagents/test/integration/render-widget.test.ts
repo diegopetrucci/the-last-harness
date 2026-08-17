@@ -296,23 +296,23 @@ describe("subagent async widget rendering", () => {
     );
 
     const text = lines.join("\n");
-    assert.match(text, /working on tk: Show active tk title/);
+    assert.match(text, /ticket: Show active tk title/);
     // Ticket line must appear after the step identity row and before the activity/hint.
     assert.ok(
-      text.indexOf("worker") < text.indexOf("working on tk: Show active tk title"),
+      text.indexOf("worker") < text.indexOf("ticket: Show active tk title"),
       "ticket line should appear after the agent identity row",
     );
     assert.ok(
-      text.indexOf("working on tk: Show active tk title") <
+      text.indexOf("ticket: Show active tk title") <
         text.indexOf("Press Ctrl+Shift+D for live detail"),
       "ticket line should appear before the live-detail hint",
     );
     assert.ok(
-      text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  read"),
+      text.indexOf("ticket: Show active tk title") < text.indexOf("⎿  read"),
       "ticket line should appear before the activity line",
     );
     assert.equal(
-      text.match(/working on tk: Show active tk title/g)?.length,
+      text.match(/ticket: Show active tk title/g)?.length,
       1,
       "ticket line should appear exactly once",
     );
@@ -344,13 +344,13 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
 
-    assert.match(text, /working on tk: Show active tk title/);
+    assert.match(text, /ticket: Show active tk title/);
     assert.match(text, /Step 1\/2: parallel group · 2\/2 done/);
     assert.ok(
-      text.indexOf("working on tk: Show active tk title") <
+      text.indexOf("ticket: Show active tk title") <
         text.indexOf("Press Ctrl+Shift+D for live detail"),
     );
-    assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
+    assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
   });
 
   it("shows tk ticket titles once in active multi-job rows before live detail", () => {
@@ -382,9 +382,9 @@ describe("subagent async widget rendering", () => {
       180,
     ).join("\n");
 
-    assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
-    assert.doesNotMatch(text, /plain[\s\S]*working on tk:/);
-    assert.ok(text.indexOf("working on tk: Show active tk title") < text.indexOf("⎿  read"));
+    assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
+    assert.doesNotMatch(text, /plain[\s\S]*ticket:/);
+    assert.ok(text.indexOf("ticket: Show active tk title") < text.indexOf("⎿  read"));
   });
 
   it("uses spinner and done wording for async jobs with parallel groups", () => {
@@ -2132,13 +2132,11 @@ describe("subagent async widget rendering", () => {
     resetWidgetLayout();
   });
 
-  it("job-level health warning always emits even when a step carries the same state", () => {
-    // tlhmf-ve09: the previous dedupe (suppressing the job-level warning when a running
-    // step already carried a health activityState) was unsound: step rows can be
-    // truncated by fitWidgetLineBudget AFTER jobHealthWarningLines runs, leaving no
-    // health signal at all. The fix is to always emit the job-level warning directly
-    // under the header (the truncation-safe region). Duplication is a cosmetic cost;
-    // a missing health signal is the bug.
+  it("single-agent health warning deduplicates when step already surfaces same text", () => {
+    // In single mode the health warning is placed under the agent row (not
+    // the header) and is deduplicated against widgetStepActivityLines. When the step
+    // and job both carry the same activityState, the step already renders the health
+    // text, so the job-level line is suppressed – the signal appears exactly once.
     const now = 200_000;
     const lastActivityAt = now - 180_000;
     resetWidgetLayout();
@@ -2166,18 +2164,155 @@ describe("subagent async widget rendering", () => {
         },
       ]);
       const lines = renderWidgetLines(ui.widgets.at(-1));
-      // Job-level warning (line 2, in truncation-safe header region) + step-level
-      // warning (in the step row). Both appear; the job-level one is guaranteed
-      // to survive fitWidgetLineBudget truncation.
+      // Step already shows the health text; job-level line is deduped, so appears
+      // exactly once (under the agent row, not the header).
       assert.equal(
         lines.filter((line) => /active but long-running/.test(line)).length,
-        2,
-        "job-level health warning must always emit alongside the step-level one",
+        1,
+        "health text must appear exactly once when step already surfaces the same state",
       );
       assert.equal(
         lines.length,
-        5,
-        "job-level + step-level health signals add one extra line to the render",
+        4,
+        "deduped single-agent health render has 4 lines: header + agent + health + hint",
+      );
+      // The health line must be at 4-space indent (under the agent row), not the
+      // 2-space indent that would place it under the header.
+      const healthLine = lines.find((l) => /active but long-running/.test(l));
+      assert.ok(
+        healthLine?.startsWith("    "),
+        "health line must be at 4-space indent (nested under agent row)",
+      );
+      // Must NOT appear at the 2-space (header-region) indent.
+      assert.ok(
+        !healthLine?.match(/^  [^ ]/),
+        "health line must not be at 2-space (header-level) indent",
+      );
+      // Ordering: agent row is at index 1 (header is 0); health text (from step
+      // activity in details.slice(1)) must follow the agent row.
+      const agentRowIndex = 1;
+      const healthIndex = lines.findIndex((l) => /active but long-running/.test(l));
+      assert.ok(healthIndex > agentRowIndex, "health text must appear after the agent row");
+      // The live-detail hint must be the last line of the agent block.
+      assert.match(
+        lines.at(-1) ?? "",
+        /for live detail/,
+        "live-detail hint must be the last line of the block",
+      );
+    });
+    resetWidgetLayout();
+  });
+
+  it("single-agent health warning nests under agent row when step has no matching health text", () => {
+    // When the step does not carry the same health state (no step-level
+    // activityState), the job-level health warning must appear nested under the agent
+    // row at 4-space indent, not under the header at 2-space indent.
+    const now = 200_000;
+    const lastActivityAt = now - 180_000;
+    resetWidgetLayout();
+    withStdoutSize(30, 120, () => {
+      const ui = createUiContext();
+      renderWidget(ui.ctx as never, [
+        {
+          asyncId: "health-nesting",
+          asyncDir: "/tmp/health-nesting",
+          status: "running",
+          mode: "single",
+          agents: ["developer"],
+          activityState: "active_long_running",
+          lastActivityAt,
+          updatedAt: now,
+          steps: [
+            {
+              // Step carries NO activityState: step row shows a thinking phrase, not
+              // the health text. The job-level warning must appear (not deduped) and
+              // land under the agent row.
+              index: 0,
+              agent: "developer",
+              status: "running" as const,
+            },
+          ],
+        },
+      ]);
+      const lines = renderWidgetLines(ui.widgets.at(-1));
+      const healthLine = lines.find((l) => /active but long-running/.test(l));
+      assert.ok(healthLine !== undefined, "health warning must appear");
+      // Must be at 4-space indent (under the agent row).
+      assert.ok(
+        healthLine?.startsWith("    "),
+        "health line must be at 4-space indent (nested under agent row)",
+      );
+      // Must not be at 2-space indent (header region).
+      assert.ok(
+        !healthLine?.match(/^  [^ ]/),
+        "health line must not be at 2-space (header-level) indent",
+      );
+      // Header line must NOT contain the health text (it stays as 'async subagent').
+      assert.doesNotMatch(
+        lines[0]!,
+        /active but long-running/,
+        "header must not carry health text",
+      );
+      // Ordering: health line must be immediately after the agent row (index 1).
+      const agentRowIndex = 1;
+      const healthIdx = lines.findIndex((l) => /active but long-running/.test(l));
+      assert.equal(
+        healthIdx,
+        agentRowIndex + 1,
+        "health line must be immediately after the agent row (row 3)",
+      );
+      // The live-detail hint must be the last line of the agent block.
+      assert.match(
+        lines.at(-1) ?? "",
+        /for live detail/,
+        "live-detail hint must be the last line of the block",
+      );
+    });
+    resetWidgetLayout();
+  });
+
+  it("multi-agent health warning placement is unchanged: stays under the header", () => {
+    // Scope guardrail: multi-agent and parallel jobs must keep the current
+    // header-level placement. The health warning must appear before the agent rows,
+    // not nested under any individual agent.
+    const now = 200_000;
+    const lastActivityAt = now - 180_000;
+    resetWidgetLayout();
+    withStdoutSize(30, 120, () => {
+      const ui = createUiContext();
+      renderWidget(ui.ctx as never, [
+        {
+          asyncId: "health-multi",
+          asyncDir: "/tmp/health-multi",
+          status: "running",
+          mode: "parallel",
+          agents: ["agent-0", "agent-1"],
+          activityState: "active_long_running",
+          lastActivityAt,
+          updatedAt: now,
+          activeParallelGroup: true,
+          stepsTotal: 2,
+          runningSteps: 2,
+          completedSteps: 0,
+          steps: [
+            { index: 0, agent: "agent-0", status: "running" as const },
+            { index: 1, agent: "agent-1", status: "running" as const },
+          ],
+        },
+      ]);
+      const lines = renderWidgetLines(ui.widgets.at(-1));
+      const healthIndex = lines.findIndex((l) => /active but long-running/.test(l));
+      assert.ok(healthIndex !== -1, "health warning must appear");
+      // For parallel mode the health line is at 2-space indent (header region).
+      assert.ok(
+        lines[healthIndex]!.startsWith("  ") && !lines[healthIndex]!.startsWith("    "),
+        "parallel health line must be at 2-space (header-level) indent",
+      );
+      // The agent rows come after the health warning.
+      const firstAgentIndex = lines.findIndex((l) => /agent-0/.test(l));
+      assert.ok(
+        firstAgentIndex > healthIndex,
+        "health warning must appear before the agent rows in parallel mode",
       );
     });
     resetWidgetLayout();
@@ -2504,9 +2639,9 @@ describe("subagent async widget rendering", () => {
       ]);
 
       const text = renderWidgetLines(ui.widgets.at(-1)).join("\n");
-      assert.match(text, /ticketed · working on tk: Show active tk title/);
-      assert.doesNotMatch(text, /plain · working on tk:/);
-      assert.equal(text.match(/working on tk: Show active tk title/g)?.length, 1);
+      assert.match(text, /ticketed · ticket: Show active tk title/);
+      assert.doesNotMatch(text, /plain · ticket:/);
+      assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
     });
     resetWidgetLayout();
   });
