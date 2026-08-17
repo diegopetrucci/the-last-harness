@@ -1,3 +1,4 @@
+import { getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
@@ -147,6 +148,7 @@ export default function theLastHarness(pi) {
             annotateLastMessageCommandPromise = loadAnnotateLastMessageModule()
                 .then((module) => module.buildAnnotateLastMessageCommand({
                 sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+                getTheme: { getMarkdownTheme, getSelectListTheme, getSettingsListTheme },
             }))
                 .catch((error) => {
                 annotateLastMessageCommandPromise = undefined;

@@ -1,4 +1,10 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  getMarkdownTheme,
+  getSelectListTheme,
+  getSettingsListTheme,
+  type ExtensionAPI,
+  type ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
@@ -213,6 +219,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
         .then((module) =>
           module.buildAnnotateLastMessageCommand({
             sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+            getTheme: { getMarkdownTheme, getSelectListTheme, getSettingsListTheme },
           }),
         )
         .catch((error) => {

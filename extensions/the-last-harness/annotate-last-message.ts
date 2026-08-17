@@ -6,6 +6,7 @@ import {
   hasAnnotateLastMessageFeedback,
 } from "./annotate-last-message/prompt.js";
 import { findLastAssistantMessage } from "./annotate-last-message/session.js";
+import type { ThemeGetters } from "./annotate-last-message/theme.js";
 import type {
   AnnotateLastMessageCancelPayload,
   AnnotateLastMessageInlineComment,
@@ -74,6 +75,7 @@ export type AnnotateLastMessageDependencies = {
   openAnnotationWindow?: typeof openQuietGlimpse;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
+  getTheme?: ThemeGetters;
 };
 
 export function buildAnnotateLastMessageCommand(
@@ -124,7 +126,7 @@ export function buildAnnotateLastMessageCommand(
     openingGeneration = generation;
 
     try {
-      const html = buildAnnotateLastMessageHtml(messageData);
+      const html = buildAnnotateLastMessageHtml(messageData, dependencies.getTheme);
       const window = await openAnnotationWindow(html, {
         width: 1440,
         height: 980,

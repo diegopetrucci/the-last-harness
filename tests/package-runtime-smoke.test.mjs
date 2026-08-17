@@ -33,6 +33,7 @@ const requiredPackedAssets = [
   "extensions/annotate-git-diff/web/review-state.js",
   "extensions/the-last-harness/annotate-last-message/web/app.js",
   "extensions/the-last-harness/annotate-last-message/web/index.html",
+  "extensions/the-last-harness/annotate-last-message/web/md-renderer.js",
   "extensions/the-last-harness-primary-agent.mjs",
   "extensions/the-last-harness-subagent-safety.mjs",
   "package.json",
@@ -115,7 +116,6 @@ Return the deterministic faux child marker exactly.
   for (const assetPath of requiredPackedAssets) {
     assert.ok(packedPaths.has(assetPath), `npm pack omitted runtime asset ${assetPath}`);
   }
-
   const tarballPath = join(packDir, pack.filename);
   const extractResult = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
     encoding: "utf8",
