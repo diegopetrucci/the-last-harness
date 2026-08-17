@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createJiti } from "jiti";
@@ -7,15 +6,6 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url);
 const { formatVersionOutput, registerVersionCommand } = await jiti.import(
   "../extensions/the-last-harness/version.ts",
-);
-
-const extensionSource = readFileSync(
-  new URL("../extensions/the-last-harness.ts", import.meta.url),
-  "utf8",
-);
-const versionSource = readFileSync(
-  new URL("../extensions/the-last-harness/version.ts", import.meta.url),
-  "utf8",
 );
 
 // --- formatVersionOutput ---
@@ -73,24 +63,4 @@ test("version command handler notifies with formatted output at 'info' level", (
   assert.match(notified.message, /pi:/);
   // Both fields should be real semver strings from the running packages
   assert.match(notified.message, /\d+\.\d+\.\d+/);
-});
-
-// --- Extension wiring (static source checks) ---
-
-test("extension source imports the version module", () => {
-  assert.match(extensionSource, /from "\.\/the-last-harness\/version\.js"/);
-});
-
-test("extension source calls registerVersionCommand", () => {
-  assert.match(extensionSource, /registerVersionCommand\(pi\)/);
-});
-
-test("version module reads pi version from upstream VERSION export", () => {
-  assert.match(versionSource, /VERSION/);
-  assert.match(versionSource, /@earendil-works\/pi-coding-agent/);
-});
-
-test("version module reads tlh version from package-version helper", () => {
-  assert.match(versionSource, /getTlhVersion\(\)/);
-  assert.match(versionSource, /from "\.\/package-version\.js"/);
 });

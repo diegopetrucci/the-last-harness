@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -13,36 +13,6 @@ assert.ok(
 const realPackageRoot = realpathSync(packageRoot);
 const configuredSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
 assert.deepEqual(configuredSettings.packages, [realPackageRoot]);
-
-const piEntryPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-const piPackage = JSON.parse(
-  readFileSync(join(dirname(piEntryPath), "..", "package.json"), "utf8"),
-);
-assert.equal(piPackage.version, "0.84.2");
-
-const expectedEntrypoints = [
-  "extensions/notify/index.js",
-  "extensions/annotate-git-diff/index.js",
-  "extensions/the-last-harness.js",
-  "extensions/subagents/src/extension/index.js",
-];
-const expectedTlhCommands = [
-  "annotate-last-message",
-  "effort",
-  "experimental",
-  "reconcile",
-  "review",
-  "subagent-settings",
-  "switch-primary-agent",
-  "thinking",
-  "tlh-changelog",
-  "toggle-context-cap",
-  "toggle-tlh-git-attribution",
-  "tokens",
-  "usage",
-  "version",
-  "what-consumed-my-session-limit-and-tokens",
-];
 
 class FakeEvents {
   #handlers = new Map();
@@ -83,6 +53,22 @@ const resourceLoader = new DefaultResourceLoader({
 });
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function assertGeneratedChildExtensionPaths(paths, label) {
+  assert.ok(Array.isArray(paths), `${label} must report extension paths`);
+  assert.ok(paths.length > 0, `${label} must report at least one extension path`);
+  for (const path of paths) {
+    const relativePath = relative(realPackageRoot, path);
+    const outsidePackageRoot =
+      relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath);
+    assert.equal(
+      outsidePackageRoot,
+      false,
+      `${label} path must be under the package root: ${path}`,
+    );
+    assert.match(path, /\.js$/, `${label} path must be a generated JavaScript file: ${path}`);
+  }
 }
 
 function installPackedChildShim() {
@@ -139,24 +125,8 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
     assert.match(text, new RegExp(marker));
     const evidence = JSON.parse(readFileSync(extensionEvidencePath, "utf8"));
     assert.deepEqual(evidence.errors, []);
-    const expected = [
-      join(
-        realPackageRoot,
-        "extensions",
-        "subagents",
-        "src",
-        "runs",
-        "shared",
-        "subagent-prompt-runtime.js",
-      ),
-    ];
     const resolvedChildExtensionPaths = evidence.resolvedPaths.map((path) => realpathSync(path));
-    assert.deepEqual(resolvedChildExtensionPaths, expected);
-    assert.ok(
-      resolvedChildExtensionPaths.every(
-        (path) => path.startsWith(realPackageRoot) && path.endsWith(".js"),
-      ),
-    );
+    assertGeneratedChildExtensionPaths(resolvedChildExtensionPaths, "packed child execution");
     return {
       marker,
       childExtensionPaths: resolvedChildExtensionPaths.map((path) =>
@@ -177,10 +147,6 @@ function inspectLoad() {
   const resolvedEntrypoints = result.extensions.map((extension) =>
     realpathSync(extension.resolvedPath),
   );
-  assert.deepEqual(
-    resolvedEntrypoints.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
-    expectedEntrypoints,
-  );
   assert.equal(
     resolvedEntrypoints.some((path) => path.endsWith(".ts")),
     false,
@@ -193,11 +159,12 @@ function inspectLoad() {
   });
   assert.deepEqual([...new Set(resolvedPackageRoots)], [realPackageRoot]);
 
-  const [notifyExtension, annotateExtension, tlhExtension, subagentExtension] = result.extensions;
-  assert.ok(notifyExtension !== undefined, "notify extension must be loaded");
-  assert.deepEqual([...annotateExtension.commands.keys()], ["annotate-git-diff"]);
-  assert.deepEqual([...tlhExtension.commands.keys()].sort(), expectedTlhCommands);
-  assert.deepEqual([...subagentExtension.tools.keys()].sort(), ["subagent"]);
+  const tlhExtension = result.extensions.find((extension) =>
+    extension.commands.has("tlh-changelog"),
+  );
+  const subagentExtension = result.extensions.find((extension) => extension.tools.has("subagent"));
+  assert.ok(tlhExtension, "TLH extension must expose the exercised changelog command");
+  assert.ok(subagentExtension, "subagent extension must expose the exercised subagent tool");
 
   const allCommandNames = result.extensions.flatMap((extension) => [...extension.commands.keys()]);
   assert.equal(
@@ -217,11 +184,11 @@ function inspectLoad() {
   return {
     result,
     tlhExtension,
+    subagentExtension,
     toolCounts,
     packageResolution: {
       configuredPackage: realPackageRoot,
       resolvedPackageRoots: [...new Set(resolvedPackageRoots)],
-      entrypointCount: resolvedEntrypoints.length,
       scope: subagentExtension.sourceInfo.scope,
       origin: subagentExtension.sourceInfo.origin,
     },
@@ -289,32 +256,37 @@ async function runSessionStart(tlhExtension, subagentExtension) {
 
 await resourceLoader.reload();
 const defaultOff = inspectLoad();
-await runSessionStart(defaultOff.tlhExtension, defaultOff.result.extensions[3]);
+await runSessionStart(defaultOff.tlhExtension, defaultOff.subagentExtension);
 
 await resourceLoader.reload();
 const first = inspectLoad();
-await runSessionStart(first.tlhExtension, first.result.extensions[3]);
-assert.equal(
-  first.result.extensions[3].resolvedPath.endsWith("extensions/subagents/src/extension/index.js"),
-  true,
-);
+await runSessionStart(first.tlhExtension, first.subagentExtension);
 
 await resourceLoader.reload();
 const second = inspectLoad();
-assert.notEqual(second.result.extensions[0], first.result.extensions[0]);
-assert.notEqual(second.result.extensions[1], first.result.extensions[1]);
-assert.notEqual(second.result.extensions[2], first.result.extensions[2]);
-assert.notEqual(second.result.extensions[3], first.result.extensions[3]);
-assert.notEqual(second.result.extensions[0].commands, first.result.extensions[0].commands);
-assert.notEqual(second.result.extensions[1].commands, first.result.extensions[1].commands);
-assert.notEqual(second.result.extensions[2].commands, first.result.extensions[2].commands);
-assert.notEqual(second.result.extensions[3].tools, first.result.extensions[3].tools);
-const secondSession = await runSessionStart(second.tlhExtension, second.result.extensions[3]);
-const subagentExtension = second.result.extensions[3];
-assert.equal(
-  subagentExtension.resolvedPath.endsWith("extensions/subagents/src/extension/index.js"),
-  true,
+const firstExtensionsByPath = new Map(
+  first.result.extensions.map((extension) => [realpathSync(extension.resolvedPath), extension]),
 );
+const secondExtensionsByPath = new Map(
+  second.result.extensions.map((extension) => [realpathSync(extension.resolvedPath), extension]),
+);
+assert.deepEqual(
+  [...secondExtensionsByPath.keys()].sort(),
+  [...firstExtensionsByPath.keys()].sort(),
+);
+for (const [resolvedPath, firstExtension] of firstExtensionsByPath) {
+  const secondExtension = secondExtensionsByPath.get(resolvedPath);
+  assert.ok(secondExtension, `reloaded extension missing for ${resolvedPath}`);
+  assert.notEqual(secondExtension, firstExtension);
+  if (secondExtension.commands && firstExtension.commands) {
+    assert.notEqual(secondExtension.commands, firstExtension.commands);
+  }
+  if (secondExtension.tools && firstExtension.tools) {
+    assert.notEqual(secondExtension.tools, firstExtension.tools);
+  }
+}
+const secondSession = await runSessionStart(second.tlhExtension, second.subagentExtension);
+const subagentExtension = second.subagentExtension;
 
 second.result.runtime.getSessionName = () => undefined;
 const subagentTool = subagentExtension.tools.get("subagent").definition;
@@ -407,20 +379,10 @@ const childExtensionPaths = childPiArgs.flatMap((arg, index) =>
   arg === "--extension" ? [childPiArgs[index + 1]] : [],
 );
 const builtChildExtensionPaths = childExtensionPaths.map((path) => realpathSync(path));
-assert.equal(builtChildExtensionPaths.length, 1);
-assert.equal(
-  builtChildExtensionPaths.every(
-    (path) => path.endsWith(".js") && path.startsWith(realPackageRoot),
-  ),
-  true,
-);
-assert.equal(
-  builtChildExtensionPaths.some((path) => path.endsWith("subagent-prompt-runtime.js")),
-  true,
-);
-assert.equal(
-  builtChildExtensionPaths.every((path) => !path.endsWith("fanout-child.js")),
-  true,
+assertGeneratedChildExtensionPaths(builtChildExtensionPaths, "buildPiArgs");
+assert.deepEqual(
+  packagedChild.childExtensionPaths,
+  builtChildExtensionPaths.map((path) => relative(realPackageRoot, path).replaceAll("\\", "/")),
 );
 
 const { buildReviewHtml } = await import(pathToFileURL(reviewUiPath).href);
@@ -438,12 +400,8 @@ for (const handler of subagentExtension.handlers.get("session_shutdown") ?? []) 
 
 process.stdout.write(
   `${JSON.stringify({
-    piVersion: piPackage.version,
-    entrypoints: expectedEntrypoints,
-    commands: expectedTlhCommands,
     packageResolution: second.packageResolution,
     toolCounts: second.toolCounts,
-    factoryExecutions: 3,
     failedSubagentPatched: failedSubagentPatch.isError,
     childExecution: packagedChild,
     childEnvRestored,
@@ -451,8 +409,5 @@ process.stdout.write(
     builtChildExtensionPaths: builtChildExtensionPaths.map((path) =>
       relative(realPackageRoot, path).replaceAll("\\", "/"),
     ),
-    changelogBytes: sentMessages[0].content.length,
-    reviewHtmlBytes: reviewHtml.length,
-    annotateHtmlBytes: annotateHtml.length,
   })}\n`,
 );

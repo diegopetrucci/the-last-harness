@@ -446,7 +446,6 @@ export function importTracePolicyFixtureFromText(text, options = {}) {
     id: fixtureId,
     name: normalizeString(options.name || `imported ${titleFromFixtureId(fixtureId)}`),
     expectedResult: options.expectedResult === "reject" ? "reject" : "allow",
-    valid: options.expectedResult === "reject" ? false : true,
     transcript: {
       agent,
       steps,

@@ -52,7 +52,7 @@ For runtime TypeScript changes under `scripts/` or `extensions/`, use `npm run t
 
 ## First-party subagent packaging and provenance
 
-The subagent runtime is part of the root TLH package, not a separately pinned default extension. `npm run check:package-contents` verifies that the declared first-party runtime entrypoint and `extensions/subagents/LICENSE` are present in `npm pack --dry-run`, while contributor-only imported tests remain excluded. Root tests also verify that `config/default-extensions.json` has no active external subagent default, Nico Bailon's notice is exact, and all 17 files in the immutable historical archive still match the import manifest (including the 29-entry archived Gnosis ledger).
+The subagent runtime is part of the root TLH package, not a separately pinned default extension. `npm run check:package-contents` verifies that the declared first-party runtime entrypoint and `extensions/subagents/LICENSE` are present in `npm pack --dry-run`, while contributor-only imported tests remain excluded.
 
 The source-history comparison is intentionally a separate, checkout-dependent verification:
 

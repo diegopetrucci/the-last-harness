@@ -8,12 +8,12 @@ These evals are repository contributor tooling only. They are not part of the pa
 
 Use the lightest tier that answers the question you have:
 
-| Tier | Default path | What it covers | Commands |
-| --- | --- | --- | --- |
-| Deterministic repo-local validation | Yes | Normal contributor and CI validation | `npm run validate` |
-| Deterministic workflow evals | Yes, through targeted `node --test` commands and the normal `npm test` / `npm run validate` path | Hermetic core-workflow integration, trace-policy fixtures, incident coverage, prompt contracts, and live-runner/result contracts | `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs` |
-| Live isolated evals | No; opt-in only | Real model, network, install, and interactive smoke coverage | `node tests/evals/tlh-live-evals.mjs --list`<br>`node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`<br>`TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e` |
-| Release-tier published-asset checks | No; manual only | Tag/release install verification | See [`docs/releasing.md`](./releasing.md#install-checks) |
+| Tier                                | Default path                                                                                     | What it covers                                                                                                               | Commands                                                                                                                                                                                                           |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Deterministic repo-local validation | Yes                                                                                              | Normal contributor and CI validation                                                                                         | `npm run validate`                                                                                                                                                                                                 |
+| Deterministic workflow evals        | Yes, through targeted `node --test` commands and the normal `npm test` / `npm run validate` path | Hermetic core-workflow integration, trace-policy fixtures, live-runner and isolated-workspace behavior, and result contracts | `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`                            |
+| Live isolated evals                 | No; opt-in only                                                                                  | Real model, network, install, and interactive smoke coverage                                                                 | `node tests/evals/tlh-live-evals.mjs --list`<br>`node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`<br>`TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e` |
+| Release-tier published-asset checks | No; manual only                                                                                  | Tag/release install verification                                                                                             | See [`docs/releasing.md`](./releasing.md#install-checks)                                                                                                                                                           |
 
 ## Deterministic workflow evals
 
@@ -24,7 +24,7 @@ The deterministic workflow suite is the main contributor-facing guardrail for wo
 Use the targeted command below when you are working specifically on workflow behavior and want the deterministic workflow subset without the rest of the repository validation:
 
 ```sh
-node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs
+node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs
 ```
 
 Deterministic boundaries for the hermetic integration test:
@@ -52,7 +52,7 @@ Use this contributor workflow when a real TLH workflow run exposes a prompt, pol
 1. Capture or export the failing trace into a temp or other local-only path.
 2. Normalize it with the importer.
 3. Review the redacted skeleton before anything reaches the repo.
-4. Add or update deterministic trace-policy fixtures and incident-matrix coverage.
+4. Add or update deterministic trace-policy fixtures.
 5. Fix the underlying prompt, policy, or runtime issue.
 6. Run the narrow targeted validation for the files you changed. `npm run validate` remains the full-repo check documented in [`VALIDATING.md`](../VALIDATING.md), but do not use it for every incident-loop iteration.
 
@@ -75,8 +75,7 @@ Treat the importer output as a reviewable starting point, not an auto-commit art
 
 Typical targeted validation after an incident-loop change:
 
-- fixture/importer-only changes: `node --test tests/evals/trace-policy/trace-policy-fixture-importer.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs`
-- prompt-contract changes that affect workflow rules: add `tests/agent-prompt-contracts.test.mjs`
+- fixture/importer-only changes: `node --test tests/evals/trace-policy/trace-policy-fixture-importer.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs`
 - live-runner/result-schema changes: run the relevant `tests/evals/tlh-live-evals*.test.mjs` file alongside the trace-policy tests
 
 ### Importer and redaction expectations
@@ -98,23 +97,15 @@ Before committing a new or updated trace-policy fixture:
 - keep only the minimum actor/tool/output sequence needed to reproduce the policy decision;
 - preserve the exact failure signal the deterministic assertion depends on;
 - prefer stable local/temp paths and already-normalized placeholders such as `<HOME>`, `<TMP>`, `<TIMESTAMP>`, `<ID>`, and `<REDACTED>`;
-- add or update `incidentMatrixIds` when the fixture represents a tracked incident boundary;
 - avoid embedding raw exports, score snapshots, or unrelated tool chatter.
 
 A fixture should read like a small deterministic regression, not like a full session dump.
-
-### Incident matrix
-
-`tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs` keeps milestone and incident coverage explicit. It complements the fixture tests by asserting that the tracked workflow incidents remain represented and well-formed.
-
-Use the incident matrix when you need to answer: "do we still cover the concrete regressions that motivated this workflow rule?"
 
 ### Related contract tests
 
 The deterministic workflow tier also includes:
 
-- `tests/agent-prompt-contracts.test.mjs` for required prompt/tool contract anchors.
-- `tests/evals/tlh-live-evals.test.mjs` for live runner behavior, scenario inventory, and repo-only command-surface guardrails.
+- `tests/evals/tlh-live-evals.test.mjs` for live-runner and isolated-workspace behavior coverage.
 - `tests/evals/tlh-live-eval-results.test.mjs` for the structured `results.json` schema and external results-file rules.
 
 ## Live eval runner
@@ -151,13 +142,13 @@ The live runner is intentionally conservative:
 
 Current scenarios are split on purpose:
 
-| Scenario | Mode | What it checks |
-| --- | --- | --- |
-| `architect-e2e` | Manual scaffold | Ticketed architect-to-developer flow and orchestration-only behavior |
-| `rush-product-bug-hunter` | Manual scaffold | Primary boundary checks for Rush, product, and bug-hunter |
+| Scenario                     | Mode            | What it checks                                                           |
+| ---------------------------- | --------------- | ------------------------------------------------------------------------ |
+| `architect-e2e`              | Manual scaffold | Ticketed architect-to-developer flow and orchestration-only behavior     |
+| `rush-product-bug-hunter`    | Manual scaffold | Primary boundary checks for Rush, product, and bug-hunter                |
 | `web-scout-network-research` | Manual scaffold | Real network research flow, citations, and secret-safe artifact handling |
-| `dirty-repo-guard` | Manual scaffold | Startup warning behavior for dirty repos |
-| `install-update-smoke` | Automated | Isolated install, `tlh defaults list`, and `tlh update` smoke coverage |
+| `dirty-repo-guard`           | Manual scaffold | Startup warning behavior for dirty repos                                 |
+| `install-update-smoke`       | Automated       | Isolated install, `tlh defaults list`, and `tlh update` smoke coverage   |
 
 The model/TUI scenarios remain manual because automating live provider behavior and interactive transcripts would be brittle and unsafe for normal CI.
 
@@ -189,7 +180,7 @@ If a live result matters for a release or high-confidence workflow decision, rer
 ## Commands by common intent
 
 - Normal contributor validation: `npm run validate`
-- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
 - Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
 - Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
 - Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
