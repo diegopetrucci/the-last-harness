@@ -120,7 +120,7 @@ When TLH dispatches a subagent and the provider's credential fails, a sticky foo
 ⚠ reauth: anthropic
 ```
 
-The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and is **sticky across sessions**. It clears automatically once the credential works again — TLH re-probes at each dispatch and turn boundary, so no restart is needed. A toast notification pointing at `/login` appears the first time a provider is flagged.
+The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and **outlives the run that revealed it** — it does not disappear when the failing run finishes. It clears automatically once the credential works again, checked at each dispatch and turn boundary, so no restart is needed. A new session starts clean and re-flags on the next failed dispatch. A toast notification pointing at `/login` appears the first time a provider is flagged within a session.
 
 Credential failures are detected at dispatch time and also from completed runs, including async ones — so a silently degraded `code-reviewer`, `oracle`, or `contrarian` is surfaced even when the failure happened after the tool call returned.
 
