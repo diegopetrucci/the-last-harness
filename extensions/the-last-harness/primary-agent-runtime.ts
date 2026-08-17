@@ -50,8 +50,10 @@ import {
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
+  parseProviderModelReference,
   selectProviderAwareAgentDefaults,
 } from "./model-defaults.js";
+import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import {
   beginTlhModelSelectionDefaultSuppression,
@@ -94,6 +96,17 @@ type TlhPrimaryAgentRuntimeOptions = {
   env?: Record<string, string | undefined>;
   primaryAgents?: Map<TlhPrimaryAgentSelection, AgentPrompt>;
   subagentMetadata?: SubagentMetadata[];
+  /**
+   * Returns the current session's provider auth-health store, or undefined when
+   * called outside a session. Injected from the-last-harness.ts so the tool_call
+   * handler can share the same store instance created in session_start.
+   */
+  getProviderAuthHealthStore?: () => ProviderAuthHealthStore | undefined;
+  /**
+   * Injectable clock for testing dispatch-time throttle behaviour.
+   * Defaults to Date.now.
+   */
+  now?: () => number;
 };
 
 type ActiveModel = NonNullable<ExtensionContext["model"]>;
@@ -474,17 +487,320 @@ function registerChildSubagentRuntime(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Result-time auth-health observation (issue #523)
+// ---------------------------------------------------------------------------
+
+// Keep in sync with extensions/subagents/src/shared/types.ts:SUBAGENT_ASYNC_COMPLETE_EVENT.
+// Do NOT import from that package — it carries its own upstream provenance.
+const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+
+/**
+ * Return true when an error string from a failed ModelAttempt carries a
+ * high-confidence runtime auth rejection signature.
+ *
+ * Matches only these three high-confidence auth-rejection patterns:
+ *   - invalid_grant (OAuth token revoked / expired grant)
+ *   - token-refresh unauthorized / token refresh unauthorized
+ *     (pi-ai/dist/auth/oauth/kimi-coding.js:222-224 pattern)
+ *   - provider 401 / 403 embedded in the error message
+ *
+ * Conservative by design: rate-limit (429), server errors (5xx), network, and
+ * credential-store errors must NOT match here — those are transient, not
+ * historical auth facts.
+ */
+export function isHighConfidenceAuthSignatureInAttemptError(error: string): boolean {
+  const lower = error.toLowerCase();
+  return (
+    lower.includes("invalid_grant") ||
+    lower.includes("token-refresh unauthorized") ||
+    lower.includes("token refresh unauthorized") ||
+    lower.includes("status 401") ||
+    lower.includes("status 403") ||
+    lower.includes("(status 401)") ||
+    lower.includes("(status 403)") ||
+    lower.includes("http 401") ||
+    lower.includes("http 403")
+  );
+}
+
+/**
+ * Walk the Details payload from a subagent tool result (or async-complete artifact)
+ * and record run-level auth observations for any failed ModelAttempt that carries
+ * a high-confidence auth rejection signature.
+ *
+ * Parses from `unknown` per the TypeScript boundaries skill — this crosses the
+ * extensions/subagents open-object boundary (types.ts:650-690). Every field access
+ * is guarded; malformed payloads are silently skipped.
+ *
+ * Associates each failed attempt with the provider parsed from THAT attempt's model
+ * id (not the run's final model), so a successful fallback where the run ends on a
+ * different provider is correctly attributed.
+ */
+export function processSubagentRunDetails(
+  details: unknown,
+  authStore: ProviderAuthHealthStore,
+): void {
+  if (!isRecord(details)) return;
+  const { results } = details;
+  if (!Array.isArray(results)) return;
+
+  for (const result of results) {
+    if (!isRecord(result)) continue;
+    const { modelAttempts } = result;
+    if (!Array.isArray(modelAttempts)) {
+      continue;
+    }
+
+    for (const attempt of modelAttempts) {
+      if (!isRecord(attempt)) continue;
+      const { model, success, error } = attempt;
+      // Validate required fields per the TypeScript boundaries skill.
+      if (typeof model !== "string" || typeof success !== "boolean") continue;
+      // Only failed attempts carry auth errors worth recording.
+      if (success === true) continue;
+      if (typeof error !== "string" || error.length === 0) continue;
+
+      // Attribute the failure to the provider from THIS attempt's model id,
+      // not the run's final model. On a successful fallback the final result
+      // carries no auth error, so attributing from the run level would miss it.
+      const parsed = parseProviderModelReference(model);
+      if (!parsed?.provider) continue;
+
+      if (isHighConfidenceAuthSignatureInAttemptError(error)) {
+        authStore.recordRunLevelAuthObservation(parsed.provider);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch-time credential preflight (issue #523)
+// ---------------------------------------------------------------------------
+
+/**
+ * Backoff intervals for per-provider credential preflight throttle.
+ * After the Nth consecutive failure, wait at least this long before re-probing.
+ *
+ * Chosen intervals: 60 s (1st failure), 120 s (2nd), 300 s (3rd+).
+ * Reset to zero on a successful probe.
+ */
+function dispatchPreflightBackoffMs(failures: number): number {
+  if (failures <= 1) return 60_000;
+  if (failures === 2) return 120_000;
+  return 300_000;
+}
+
+/**
+ * Extract the unique provider strings from a subagent tool-call input after
+ * applyProviderAwareSubagentModels has mutated it.
+ *
+ * Reads `input.model` (single dispatch) and `input.tasks[].model` (parallel
+ * dispatch). Non-string and unparseable model values are silently skipped so
+ * a malformed input never prevents the tool call from proceeding.
+ */
+export function extractDispatchProviders(input: unknown): readonly string[] {
+  if (typeof input !== "object" || input === null) return [];
+  const obj = input as Record<string, unknown>;
+  const seen = new Set<string>();
+
+  function addModel(model: unknown): void {
+    if (typeof model !== "string") return;
+    const parsed = parseProviderModelReference(model);
+    if (parsed?.provider) seen.add(parsed.provider);
+  }
+
+  addModel(obj["model"]);
+
+  if (Array.isArray(obj["tasks"])) {
+    for (const task of obj["tasks"]) {
+      if (typeof task === "object" && task !== null) {
+        addModel((task as Record<string, unknown>)["model"]);
+      }
+    }
+  }
+
+  return [...seen];
+}
+
 function createTlhPrimaryAgentRuntime(
   pi: ExtensionAPI,
   primaryAgents: Map<TlhPrimaryAgentSelection, AgentPrompt>,
   subagentMetadata: SubagentMetadata[],
+  runtimeOptions: {
+    getProviderAuthHealthStore?: () => ProviderAuthHealthStore | undefined;
+    now?: () => number;
+  } = {},
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
+  const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
   const warned = new Set<string>();
   const primaryToolState = createPrimaryToolState();
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
   let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
+
+  // Per-provider throttle for credential preflights.
+  // Key: provider string. Value: { failures, nextAllowedAt (ms timestamp) }.
+  // Reset on success; failures increment on reauth-required / transient-unavailable.
+  // In-flight coalescing is handled by the store itself; this throttle prevents
+  // re-scheduling more often than the chosen backoff window.
+  const preflightThrottle = new Map<string, { failures: number; nextAllowedAt: number }>();
+
+  // Session-scoped per-provider notification state for reauth warnings.
+  // Tracks which providers have already received a one-time actionable notification
+  // (e.g. "run /login"). Deleted (re-armed) when the provider returns to healthy so
+  // a later genuine failure can notify again.
+  const notifiedForReauth = new Set<string>();
+
+  // Notification intents recorded by the async-complete handler, which has no ctx.
+  // Flushed on the next turn_end BEFORE the clearing probe loop, so the probe
+  // cannot erase the evidence before the user is told.
+  const pendingReauthNotifications = new Set<string>();
+
+  /**
+   * Returns true when a credential preflight should be scheduled for `provider`
+   * at dispatch time.
+   *
+   * Rules:
+   *  - No prior store entry → probe (first time this provider is seen).
+   *  - Healthy → skip (never probe a provider already confirmed healthy).
+   *  - All other statuses (reauth-required, transient-unavailable, unknown) are
+   *    "not yet confirmed good" — probe when outside the backoff window.
+   *
+   * Rationale: transient-unavailable and unknown are not "no problem here",
+   * they mean "we don't know yet". Skipping them permanently would let a
+   * network blip on the first dispatch hide a dead refresh token for the
+   * entire session — the exact silent-degradation failure issue #523 exists
+   * to prevent. adapterGetProviderAuth short-circuits on a missing-method
+   * check with no I/O, so unknown from an unsupported runtime is cheap to
+   * retry and needs no special casing.
+   */
+  function shouldPreflightAtDispatch(
+    provider: string,
+    store: ProviderAuthHealthStore,
+    now: number,
+  ): boolean {
+    const entry = store.getEntry(provider);
+    if (!entry) return true;
+    if (entry.status === "healthy") return false;
+    // All non-healthy statuses: probe when outside the backoff window.
+    const throttle = preflightThrottle.get(provider);
+    if (!throttle) return true;
+    return now >= throttle.nextAllowedAt;
+  }
+
+  /**
+   * Returns true when a credential preflight should be re-scheduled for a
+   * provider during the turn_end clearing pass.
+   *
+   * Covers all non-healthy statuses, not just reauth-required: a provider
+   * that recorded transient-unavailable or unknown may have recovered or may
+   * have a dead credential that was masked by the transient error. Retrying
+   * ensures no provider stays permanently invisible in this session.
+   */
+  function shouldPreflightForClearing(
+    provider: string,
+    store: ProviderAuthHealthStore,
+    now: number,
+  ): boolean {
+    const entry = store.getEntry(provider);
+    if (!entry || entry.status === "healthy") return false;
+    // All non-healthy statuses: probe when outside the backoff window.
+    const throttle = preflightThrottle.get(provider);
+    if (!throttle) return true;
+    return now >= throttle.nextAllowedAt;
+  }
+
+  /**
+   * Emit a one-time notification when a provider is newly flagged as needing
+   * attention. Safe to call when ctx.ui is unavailable — never throws. Idempotent
+   * per provider: subsequent calls are no-ops until re-armed by a healthy probe.
+   *
+   * Two message variants exist:
+   *  - Probe-confirmed: imperative ("requires re-authentication — run /login now").
+   *  - Run-level observation: descriptive ("a run was rejected — run /login if this
+   *    recurs"), because the local probe cannot confirm the current state.
+   */
+  function emitReauthNotificationIfNew(
+    provider: string,
+    ctx: ExtensionContext,
+    message: string,
+  ): boolean {
+    if (notifiedForReauth.has(provider)) return true;
+    try {
+      ctx.ui.notify(message, "warning");
+      // Mark only after notify returns without throwing, so a UI exception on one
+      // call does not permanently suppress the notification for this provider.
+      notifiedForReauth.add(provider);
+      return true;
+    } catch {
+      // Best-effort: ctx.ui may be unavailable or non-interactive.
+      // Deliberately not marking the provider as notified so the next available
+      // context can retry.
+      return false;
+    }
+  }
+
+  /**
+   * Fire-and-forget credential preflight.
+   *
+   * IMPORTANT: getProviderAuth in the pinned runtime can mutate auth.json and
+   * hold the auth-file lock while rotating a near-expiry OAuth credential
+   * (pi-ai/dist/auth/resolve.js:56-90). This call is intentionally async and
+   * non-blocking with respect to the tool_call handler return value.
+   *
+   * Must never throw into the caller. Uses the store's in-flight coalescing to
+   * avoid issuing duplicate auth calls for the same provider.
+   */
+  function scheduleProviderPreflight(
+    provider: string,
+    store: ProviderAuthHealthStore,
+    modelRegistry: unknown,
+    currentNow: number,
+    ctx?: ExtensionContext,
+  ): void {
+    // Tentatively block re-scheduling while the probe is in flight by setting
+    // nextAllowedAt to the maximum backoff. The callback will update it to the
+    // actual value once the result is known.
+    const existing = preflightThrottle.get(provider);
+    preflightThrottle.set(provider, {
+      failures: existing?.failures ?? 0,
+      nextAllowedAt: currentNow + 300_000,
+    });
+
+    void store
+      .probeProvider(modelRegistry, provider)
+      .then((status) => {
+        const t = nowFn();
+        if (status === "healthy") {
+          preflightThrottle.delete(provider);
+          notifiedForReauth.delete(provider); // re-arm for a future genuine failure
+          // Do NOT clear pendingReauthNotifications here. A pending intent is
+          // evidence from a real rejected request — a local healthy probe returning
+          // OK does not disprove it (revoked-but-unexpired case). The intent will
+          // be flushed at the next turn_end with the run-level message.
+        } else {
+          const prev = preflightThrottle.get(provider);
+          const newFailures = (prev?.failures ?? 0) + 1;
+          preflightThrottle.set(provider, {
+            failures: newFailures,
+            nextAllowedAt: t + dispatchPreflightBackoffMs(newFailures),
+          });
+          if (status === "reauth-required" && ctx !== undefined) {
+            emitReauthNotificationIfNew(
+              provider,
+              ctx,
+              `Provider ${provider} requires re-authentication. Run /login to reconfigure. ` +
+                `Opposite-provider independence for code-reviewer, oracle, and contrarian is affected.`,
+            );
+          }
+        }
+      })
+      .catch(() => {
+        // probeProvider captures errors internally; this branch is a safety net only.
+      });
+  }
 
   function warnOnce(ctx: ExtensionContext, key: string, message: string): void {
     if (warned.has(key)) {
@@ -1242,11 +1558,69 @@ function createTlhPrimaryAgentRuntime(
       await applyPrimaryDefaults(ctx);
     });
 
+    pi.on("turn_end", (_event, ctx) => {
+      const authStore = getProviderAuthHealthStore?.();
+      if (!authStore) return;
+
+      // Flush notification intents recorded by the async-complete handler.
+      //
+      // Flushed unconditionally and BEFORE the clearing probe loop:
+      //  - Unconditional: a pending intent is evidence from a real rejected run.
+      //    A local probe that returned healthy does not disprove the rejection
+      //    (revoked-but-unexpired). Letting the probe's weaker signal suppress
+      //    the stronger run-level evidence would silently lose the one case this
+      //    feature exists to catch.
+      //  - Before clearing probes: the clearing probe is fire-and-forget (async)
+      //    and cannot update the store during this synchronous section; no race
+      //    exists between the flush and the probes scheduled below.
+      //
+      // Uses the run-level descriptive message (not the imperative probe-confirmed
+      // message) because the local credential state may differ from what the remote
+      // server observed at run time.
+      for (const provider of pendingReauthNotifications) {
+        // Delete the intent only when the notification succeeds (or was already
+        // sent via another path). If notify throws, keep the intent so the next
+        // turn_end can retry rather than silently discarding the evidence.
+        const notified = emitReauthNotificationIfNew(
+          provider,
+          ctx,
+          `A subagent run was rejected by ${provider} for credentials. ` +
+            `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+            `was affected for that run. Run /login if this recurs.`,
+        );
+        if (notified) {
+          pendingReauthNotifications.delete(provider);
+        }
+      }
+
+      // Clearing pass: re-probe any provider currently flagged non-healthy so
+      // the footer warning clears automatically once the user re-authenticates.
+      // Subject to the same per-provider backoff as dispatch-time preflights.
+      const currentNow = nowFn();
+      for (const provider of authStore.getNonHealthyProviders()) {
+        if (shouldPreflightForClearing(provider, authStore, currentNow)) {
+          scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+        }
+      }
+    });
+
     pi.on("session_shutdown", async (_event, _ctx) => {
       replayAllTlhUnclaimedModelSelectionDefaults();
       setTlhModelSelectionActiveModelResolver(undefined);
       updateSessionOnlyModel(undefined);
       restorePrimaryToolsIfAppropriate();
+      // Clear session-scoped auth-notification state so that a new session
+      // (which reuses this closure, because registerTlhPrimaryAgentRuntime runs
+      // once per process) starts clean:
+      //  • notifiedForReauth: a provider notified in the old session must be
+      //    able to notify again in the new one.
+      //  • pendingReauthNotifications: a stale intent from the old session must
+      //    not fire a notification in the next session's turn_end.
+      //  • preflightThrottle: inherited backoff can delay the new session's
+      //    first probe by up to 300 s — the same class of bug as the above two.
+      notifiedForReauth.clear();
+      pendingReauthNotifications.clear();
+      preflightThrottle.clear();
     });
 
     pi.on("before_agent_start", async (event, ctx) => {
@@ -1353,8 +1727,87 @@ function createTlhPrimaryAgentRuntime(
           }
         }
       }
+
+      // Credential preflight — fire-and-forget, never blocks or delays dispatch.
+      //
+      // Called AFTER all block/authorization checks so we only preflight calls
+      // that will actually run. On a confirmed hard failure the model selection
+      // is deliberately left unchanged (warn, do not reroute — v1 deliberate decision).
+      //
+      // getProviderAuth in the pinned runtime can mutate auth.json and hold the
+      // auth-file lock while rotating a near-expiry OAuth credential; this is
+      // intentional and documented in the store (see provider-auth-health.ts).
+      const authStore = getProviderAuthHealthStore?.();
+      if (authStore) {
+        const currentNow = nowFn();
+        const providers = extractDispatchProviders(event.input);
+        for (const provider of providers) {
+          if (shouldPreflightAtDispatch(provider, authStore, currentNow)) {
+            scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+          }
+        }
+      }
+
       return undefined;
     });
+
+    // Result-time auth-health observation — foreground path.
+    //
+    // Read modelAttempts from the completed result, NOT the top-level error.
+    // On a successful fallback the final result carries no auth error at all;
+    // the failing attempt's error lives in details.results[*].modelAttempts[*].error.
+    // Parsing is from unknown per the TypeScript boundaries skill.
+    pi.on("tool_result", (_event, _ctx) => {
+      const event = _event as { toolName?: string; details?: unknown };
+      if (event.toolName !== "subagent") return;
+      const authStore = getProviderAuthHealthStore?.();
+      if (!authStore) return;
+      const prevReauthProviders = new Set(authStore.getReauthProviders());
+      processSubagentRunDetails(event.details, authStore);
+      // Notify for any provider that newly entered reauth-required via run-level observation.
+      // Uses the descriptive message: the local probe cannot confirm the current state,
+      // so the imperative "requires re-authentication now" would be misleading.
+      for (const provider of authStore.getReauthProviders()) {
+        if (!prevReauthProviders.has(provider)) {
+          emitReauthNotificationIfNew(
+            provider,
+            _ctx,
+            `A subagent run was rejected by ${provider} for credentials. ` +
+              `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+              `was affected for that run. Run /login if this recurs.`,
+          );
+        }
+      }
+    });
+
+    // Result-time auth-health observation — async path.
+    //
+    // An async launch's immediate tool_result deliberately carries results: [] so
+    // tool_result alone can never observe an async run's fallback. Subscribe
+    // read-only to subagent:async-complete (result-watcher.ts:299-319), whose
+    // artifact carries the full attempt history.
+    //
+    // Uses pi.events as an EventBus (duck-typed for test compatibility).
+    const piEventsRecord = pi.events as unknown as Record<string, unknown>;
+    if (typeof piEventsRecord?.on === "function") {
+      (pi.events as { on(channel: string, handler: (data: unknown) => void): unknown }).on(
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        (data: unknown) => {
+          const authStore = getProviderAuthHealthStore?.();
+          if (!authStore) return;
+          const prevReauthProviders = new Set(authStore.getReauthProviders());
+          processSubagentRunDetails(data, authStore);
+          // We have no ctx here, so we cannot notify immediately. Record intent
+          // for any provider that newly entered reauth-required; the next
+          // turn_end will flush it before any clearing probe can reset the status.
+          for (const provider of authStore.getReauthProviders()) {
+            if (!prevReauthProviders.has(provider)) {
+              pendingReauthNotifications.add(provider);
+            }
+          }
+        },
+      );
+    }
   }
 
   return {
@@ -1391,6 +1844,10 @@ export function registerTlhPrimaryAgentRuntime(
     pi,
     options.primaryAgents ?? loadPrimaryAgents(),
     options.subagentMetadata ?? loadSubagentMetadata(),
+    {
+      getProviderAuthHealthStore: options.getProviderAuthHealthStore,
+      now: options.now,
+    },
   );
   runtime.registerCommands();
   runtime.registerLifecycleHooks();

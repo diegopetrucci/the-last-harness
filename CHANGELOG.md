@@ -6,23 +6,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
 - At launch, TLH now shows what’s eating up your context.
+- TLH now warns you if a provider you've logged in with needs you to re-authenticate.
+- The `/annotate-last-message` window window is not prettier, as it renders markdown, and other niceties.
+- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
+- TLH now bundles skills for using Herdr, Cmux, and Tmux.
 
 ### Changed
 
 - `/fast` now supports both OpenAI and Anthropic models.
 - Bumped the pinned Pi runtime to `0.84.2`.
-- Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
 - The installer's default output is now more concise.
-
-### Fixed
-
-- Fixed async subagent runs that could hang after being paused and resumed.
-- Fixed `/effort`, `/attribution`, `/experimental`, `/usage`, `/review`, `/changelog`, and the ticket-workflow UI failing at invocation time with `Cannot find package '@earendil-works/pi-coding-agent'`. These all used lazy `import()` calls that crossed into native ESM outside Pi's jiti alias scope; they now use eager imports resolved within the jiti graph.
-- Fixed the new model/effort session-scope prompt never appearing for `/effort` — it was blocked by the same lazy-import failure above.
-- Fixed TLH launch telemetry silently failing: the fire-and-forget `void import(...)` that sends the anonymous launch event swallowed the same `ERR_MODULE_NOT_FOUND` error, so no telemetry was ever sent.
 
 ## [0.37.0] - 2026-08-11
 

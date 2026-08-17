@@ -73,6 +73,28 @@ if (missingDocs.length > 0) {
   process.exit(1);
 }
 
+// Keep the shipped terminal-skill closure explicit so upstream metadata or
+// unrelated source-checkout skills cannot enter the public package silently.
+const TERMINAL_SKILL_FILES = [
+  "skills/herdr/SKILL.md",
+  "skills/cmux-cli/SKILL.md",
+  "skills/cmux-cli/references/commands.md",
+  "skills/tmux/SKILL.md",
+  "skills/tmux/scripts/find-sessions.sh",
+  "skills/tmux/scripts/wait-for-text.sh",
+];
+const packagedSkillFiles = [...files].filter((file) => file.startsWith("skills/"));
+const missingSkillFiles = TERMINAL_SKILL_FILES.filter((file) => !files.has(file));
+const unexpectedSkillFiles = packagedSkillFiles.filter(
+  (file) => !TERMINAL_SKILL_FILES.includes(file),
+);
+if (missingSkillFiles.length > 0 || unexpectedSkillFiles.length > 0) {
+  console.error("Published package contains an incomplete or unexpected terminal skill closure:");
+  for (const file of missingSkillFiles) console.error(`  - missing: ${file}`);
+  for (const file of unexpectedSkillFiles.sort()) console.error(`  - unexpected: ${file}`);
+  process.exit(1);
+}
+
 const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
 const forbiddenExactPaths = [
   "scripts/check-package-contents.mjs",
@@ -106,6 +128,8 @@ const requiredFiles = [
   "extensions/the-last-harness/model-effort-notice.js",
   "extensions/the-last-harness/reconcile-command.js",
   "extensions/subagents/LICENSE",
+  "licenses/terminal-skills.txt",
+  ...TERMINAL_SKILL_FILES,
   "agents/primary/architect.md",
   "agents/subagents/developer.md",
   "config/APPEND_SYSTEM.md",
