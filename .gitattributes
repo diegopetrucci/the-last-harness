@@ -71,6 +71,7 @@ extensions/the-last-harness/package-version.js linguist-generated=true
 extensions/the-last-harness/primary-agent-runtime.js linguist-generated=true
 extensions/the-last-harness/profile-state.js linguist-generated=true
 extensions/the-last-harness/prompts.js linguist-generated=true
+extensions/the-last-harness/provider-auth-health.js linguist-generated=true
 extensions/the-last-harness/reconcile-command.js linguist-generated=true
 extensions/the-last-harness/resources.js linguist-generated=true
 extensions/the-last-harness/review-args.js linguist-generated=true

@@ -105,7 +105,7 @@ Return the deterministic faux child marker exactly.
   ]
     .map((path) => path.replace(/\.ts$/, ".js"))
     .sort();
-  assert.equal(generatedExtensionPaths.length, 172);
+  assert.equal(generatedExtensionPaths.length, 173);
   for (const generatedPath of generatedExtensionPaths) {
     assert.ok(
       packedPaths.has(generatedPath),

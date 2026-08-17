@@ -6,11 +6,11 @@ import { createJiti } from "jiti";
 
 import { createTlhSubscriptionUsageService } from "../extensions/the-last-harness/subscription-usage.ts";
 import { DEFAULT_PRIMARY_AGENT } from "../extensions/the-last-harness-primary-agent.mjs";
+import { createProviderAuthHealthStore } from "../extensions/the-last-harness/provider-auth-health.ts";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment } = await jiti.import(
-  "../extensions/the-last-harness/footer.ts",
-);
+const { createTlhFooter, formatTlhSubscriptionUsageFooterSegment, formatReauthWarningLine } =
+  await jiti.import("../extensions/the-last-harness/footer.ts");
 
 const NOW_MS = Date.parse("2026-05-19T19:00:00Z");
 const WIDTH = 100;
@@ -1446,4 +1446,329 @@ test("footer keeps the MCP status estimate within narrow widths", () => {
   const lines = createTlhFooter(mcpPi, ctx, theme, () => "architect", footerData, {}).render(24);
   assert.ok(lines.every((line) => visibleWidth(line) <= 24));
   assert.match(lines.at(-1) ?? "", /\.\.\./);
+});
+
+// ---------------------------------------------------------------------------
+// NEW: provider auth-health reauth warning line
+// ---------------------------------------------------------------------------
+
+// Helper: record a status directly into a fresh store by exploiting clearProvider
+// (which writes 'healthy') then probing with a stub that returns the desired status.
+// For reauth-required, we use clearProvider to set healthy then manually override
+// via probeProvider with a failing registry. For simplicity, use probeProvider with
+// a registry whose getProviderAuth throws the right error shape.
+
+function makeReauthRegistry(provider) {
+  return {
+    getProviderAuth: async (p) => {
+      if (p === provider) {
+        // Throws a plain error that classifyProviderAuthError maps to reauth-required
+        // via the 401 / revoke path.
+        throw Object.assign(new Error("token has been revoked"), { status: 401 });
+      }
+    },
+  };
+}
+
+function makeTransientRegistry(provider) {
+  return {
+    getProviderAuth: async (p) => {
+      if (p === provider) {
+        throw Object.assign(new Error("network timeout"), { code: "ETIMEDOUT" });
+      }
+    },
+  };
+}
+
+async function storeWithReauth(...providers) {
+  const store = createProviderAuthHealthStore();
+  for (const provider of providers) {
+    await store.probeProvider(makeReauthRegistry(provider), provider);
+  }
+  return store;
+}
+
+function createFooterWithAuthHealth(store) {
+  const ctx = createCtx({ entries: [] });
+  return createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    undefined,
+    store,
+  );
+}
+
+function createFooterWithAuthHealthColorTheme(store) {
+  const ctx = createCtx({ entries: [] });
+  return createTlhFooter(
+    pi,
+    ctx,
+    colorTheme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    undefined,
+    store,
+  );
+}
+
+test("reauth warning: no warning line when no providers are flagged", () => {
+  const store = createProviderAuthHealthStore();
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  assert.doesNotMatch(lines.join("\n"), /reauth/);
+});
+
+test("reauth warning: renders '⚠ reauth: anthropic' when anthropic is reauth-required", async () => {
+  const store = await storeWithReauth("anthropic");
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  assert.ok(
+    lines.some((line) => line.includes("⚠ reauth: anthropic")),
+    `Expected '⚠ reauth: anthropic' in: ${JSON.stringify(lines)}`,
+  );
+});
+
+test("reauth warning: renders both providers in one comma-separated line when both are reauth-required", async () => {
+  const store = await storeWithReauth("anthropic", "openai-codex");
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  assert.ok(
+    lines.some((line) => line.includes("⚠ reauth: anthropic, openai-codex")),
+    `Expected '⚠ reauth: anthropic, openai-codex' in: ${JSON.stringify(lines)}`,
+  );
+});
+
+test("reauth warning: uses warning color (color-aware theme)", async () => {
+  const store = await storeWithReauth("anthropic");
+  const footer = createFooterWithAuthHealthColorTheme(store);
+  const lines = footer.render(COLOR_WIDTH);
+  const warningLine = lines.find((l) => l.includes("reauth")) ?? "";
+  assert.match(warningLine, /<warning>.*reauth.*<\/warning>/);
+});
+
+test("reauth warning: transient-unavailable renders nothing", async () => {
+  const store = createProviderAuthHealthStore();
+  await store.probeProvider(makeTransientRegistry("anthropic"), "anthropic");
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  assert.doesNotMatch(lines.join("\n"), /reauth/);
+});
+
+test("reauth warning: unknown status renders nothing", async () => {
+  const store = createProviderAuthHealthStore();
+  // probeProvider on a registry without getProviderAuth resolves to 'unknown'
+  // without recording any entry — await it so the store is settled before render.
+  const status = await store.probeProvider({}, "anthropic");
+  assert.equal(status, "unknown", "probe on registry without getProviderAuth must return unknown");
+  // unknown status leaves no entry → footer must not show any reauth warning
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  assert.doesNotMatch(lines.join("\n"), /reauth/);
+});
+
+test("reauth warning: warning is a dedicated line, not merged into extension-status line", async () => {
+  const store = await storeWithReauth("anthropic");
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    ...createFooterData(),
+    getExtensionStatuses: () => new Map([["ext-key", "ext-status-text"]]),
+  };
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    footerData,
+    {},
+    null,
+    undefined,
+    store,
+  );
+  const lines = footer.render(WIDTH);
+  // The reauth warning and the extension status must not be on the same line.
+  const reauthLine = lines.find((l) => l.includes("reauth"));
+  const extStatusLine = lines.find((l) => l.includes("ext-status-text"));
+  assert.ok(reauthLine, "expected a reauth warning line");
+  assert.ok(extStatusLine, "expected an extension-status line");
+  assert.notEqual(
+    reauthLine,
+    extStatusLine,
+    "reauth warning and extension status must not share a line",
+  );
+});
+
+test("reauth warning: warning line appears before cost/subscription lines", async () => {
+  const store = await storeWithReauth("anthropic");
+  // usingOAuth: false ensures suppressCost is false, so the cost line renders.
+  const ctx = createCtx({ entries: [assistantCostEntry(1.0)], usingOAuth: false });
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    undefined,
+    store,
+  );
+  const lines = footer.render(WIDTH);
+  const reauthIdx = lines.findIndex((l) => l.includes("reauth"));
+  const costIdx = lines.findIndex((l) => l.includes("$"));
+  assert.ok(reauthIdx !== -1, "expected a reauth warning line");
+  assert.ok(costIdx !== -1, "expected a cost line");
+  assert.ok(
+    reauthIdx < costIdx,
+    `reauth line (${reauthIdx}) should appear before cost line (${costIdx})`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// formatReauthWarningLine — progressive degradation variant selection
+// ---------------------------------------------------------------------------
+// The identity theme is used throughout; colorTheme is used for color assertions.
+// Widths are derived from visibleWidth() to remain robust if ⚠ has ambiguous width.
+
+test("formatReauthWarningLine: returns undefined for empty provider list", () => {
+  assert.equal(formatReauthWarningLine([], WIDTH, theme), undefined);
+});
+
+test("formatReauthWarningLine: single provider — full variant at generous width", () => {
+  const result = formatReauthWarningLine(["anthropic"], WIDTH, theme);
+  assert.equal(result, "⚠ reauth: anthropic");
+});
+
+test("formatReauthWarningLine: two providers — full variant when it fits", () => {
+  const fullText = "⚠ reauth: anthropic, openai-codex";
+  const fullWidth = visibleWidth(fullText);
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], fullWidth, theme);
+  assert.equal(
+    result,
+    fullText,
+    `full variant must be chosen at its exact visible width (${fullWidth})`,
+  );
+});
+
+test("formatReauthWarningLine: two providers — short-label variant when full does not fit", () => {
+  const fullText = "⚠ reauth: anthropic, openai-codex";
+  const shortText = "⚠ reauth: anthropic, codex";
+  const fullWidth = visibleWidth(fullText);
+  const shortWidth = visibleWidth(shortText);
+  // Use a width that is one less than the full text but still accommodates the short variant.
+  const testWidth = fullWidth - 1;
+  assert.ok(
+    shortWidth <= testWidth,
+    "short variant must fit at testWidth for this test to be meaningful",
+  );
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], testWidth, theme);
+  assert.equal(result, shortText, `short variant must be chosen at width=${testWidth}`);
+});
+
+test("formatReauthWarningLine: two providers — count-only variant when short label does not fit", () => {
+  const shortText = "⚠ reauth: anthropic, codex";
+  const countText = "⚠ reauth ×2";
+  const shortWidth = visibleWidth(shortText);
+  const testWidth = shortWidth - 1; // forces the count variant
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], testWidth, theme);
+  assert.equal(result, countText, `count variant must be chosen at width=${testWidth}`);
+});
+
+test('formatReauthWarningLine: "×2" count variant tells user both providers need attention at narrow width', () => {
+  // At any width below the short label's visible width, the user must still see ×2.
+  const shortText = "⚠ reauth: anthropic, codex";
+  const shortWidth = visibleWidth(shortText);
+  const tinyWidth = shortWidth - 1;
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], tinyWidth, theme);
+  assert.ok(
+    result?.includes("×2"),
+    `count variant must include "×2" at width ${tinyWidth}, got: ${result}`,
+  );
+});
+
+test("formatReauthWarningLine: count-only variant never exceeds requested width — width contract at extreme narrowness", () => {
+  // The count-only variant (e.g. '⚠ reauth ×2') is itself ~11-12 columns wide.
+  // At a width below that, the prior code returned it unconditionally and violated
+  // the invariant that every footer line fits within `width`. This test asserts
+  // visibleWidth(result) <= width at a width of 5 — well below the count text.
+  // It must FAIL against the un-patched code and PASS after the truncateToWidth fix.
+  const narrowWidth = 5;
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], narrowWidth, theme);
+  assert.ok(
+    result !== undefined,
+    "result must not be undefined — count variant should always return something",
+  );
+  assert.ok(
+    visibleWidth(result) <= narrowWidth,
+    `visibleWidth(${JSON.stringify(result)}) must be <= ${narrowWidth}, got ${visibleWidth(result)}`,
+  );
+});
+
+test('formatReauthWarningLine: short-label variant for openai-codex uses last hyphen-segment "codex"', () => {
+  // Confirm the shortening rule: last segment after splitting on '-'.
+  const fullText = "⚠ reauth: anthropic, openai-codex";
+  const fullWidth = visibleWidth(fullText);
+  const result = formatReauthWarningLine(["anthropic", "openai-codex"], fullWidth - 1, theme);
+  assert.ok(
+    result?.includes("codex") && !result.includes("openai"),
+    `short label must use 'codex', got: ${result}`,
+  );
+});
+
+test("formatReauthWarningLine: warning color applied to all variants (color-aware theme)", () => {
+  const fullText = "⚠ reauth: anthropic, openai-codex";
+  const fullWidth = visibleWidth(fullText);
+  // full
+  const r1 = formatReauthWarningLine(["anthropic", "openai-codex"], fullWidth, colorTheme);
+  assert.match(r1 ?? "", /<warning>/, "full variant must use warning color");
+  // short
+  const r2 = formatReauthWarningLine(["anthropic", "openai-codex"], fullWidth - 1, colorTheme);
+  assert.match(r2 ?? "", /<warning>/, "short variant must use warning color");
+  // count
+  const shortText = "⚠ reauth: anthropic, codex";
+  const shortWidth = visibleWidth(shortText);
+  const r3 = formatReauthWarningLine(["anthropic", "openai-codex"], shortWidth - 1, colorTheme);
+  assert.match(r3 ?? "", /<warning>/, "count variant must use warning color");
+});
+
+test("reauth warning: footer integration — full variant renders at generous width", async () => {
+  const store = await storeWithReauth("anthropic", "openai-codex");
+  const footer = createFooterWithAuthHealth(store);
+  const lines = footer.render(WIDTH);
+  const warningLine = lines.find((l) => l.includes("reauth")) ?? "";
+  assert.ok(
+    warningLine.includes("anthropic") && warningLine.includes("openai-codex"),
+    `Both full provider names must be present at width=${WIDTH}: ${warningLine}`,
+  );
+});
+
+test("reauth warning: footer integration — count variant at narrow width keeps both-provider signal", async () => {
+  const shortText = "⚠ reauth: anthropic, codex";
+  const shortWidth = visibleWidth(shortText);
+  const tinyWidth = shortWidth - 1; // forces count variant
+  const store = await storeWithReauth("anthropic", "openai-codex");
+  const ctx = createCtx({ entries: [] });
+  const footer = createTlhFooter(
+    pi,
+    ctx,
+    theme,
+    () => "architect",
+    createFooterData(),
+    {},
+    null,
+    undefined,
+    store,
+  );
+  const lines = footer.render(tinyWidth);
+  const warningLine = lines.find((l) => l.includes("reauth")) ?? "";
+  assert.ok(
+    warningLine.includes("×2"),
+    `count variant (×2) must appear at narrow width=${tinyWidth}, got: ${warningLine}`,
+  );
 });
