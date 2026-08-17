@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
+- Bundled terminal skills `/skill:cmux-cli`, `/skill:herdr`, and `/skill:tmux` now ship with TLH; their required binaries and runtime contexts are prerequisites for use.
 - Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
 - At launch, TLH now shows what’s eating up your context.
 
