@@ -17,7 +17,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position — **hidden from TLH autocomplete** |
+| `/clone` | Duplicate the current session at the current position |
 | `/compact` | Manually compact the session context |
 | `/copy` | Copy the last agent message to the clipboard |
 | `/export` | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format) |
@@ -289,6 +289,8 @@ These slash commands come from prompt templates bundled inside TLH. They insert 
 
 | Command | Description |
 |---------|-------------|
+| `/analyse-tlh-sessions` | Analyse the past week of tlh sessions for notable issues without changing files. |
+| `/investigate-pr-comments` | Check PR comments and verify whether each one is valid. |
 | `/merge-origin-main-into-this-branch` | Merge `origin/main` into this branch. |
 | `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`. |
 
@@ -301,7 +303,7 @@ These commands are provided by bundled default extensions and are visible in TLH
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
+| `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
 
@@ -316,7 +318,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position |
 | `/import` | Import and resume a session from a JSONL file |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling |
 

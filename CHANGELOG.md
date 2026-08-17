@@ -6,19 +6,16 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or 
+- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
 - At launch, TLH now shows what’s eating up your context.
 
 ### Changed
 
+- `/fast` now supports both OpenAI and Anthropic models.
 - Bumped the pinned Pi runtime to `0.84.2`.
 - Durable subagent resume now restores the persisted effective model identity, refuses measured resumes at or above 80% context, preserves 80%/95% pressure-attention guidance, narrowly classifies context-exhaustion false-success cases, and keeps scanning after oversized control events.
-- Refreshed bundled npm default-extension pins: `pi-openai-fast` `0.1.13`→`0.1.15`, `pi-anthropic-auth` `2.0.1`→`2.0.3`, `pi-inline-bash` `0.1.8`→`0.1.9`, `pi-context-inspector` `0.1.10`→`0.1.11`, `pi-quiet-tools` `0.1.9`→`0.1.10`, and `pi-dirty-repo-guard` `0.1.8`→`0.1.9`; `mcporter` `2.11.0` and `pi-web-access` `0.10.10` were already current and remain unchanged. (`pi-notify` is no longer managed here; see below.)
-- `notify` is now a first-party bundled extension — it ships with TLH and updates with each TLH release rather than through the default-extension manager. The notification title changes from `Pi` to `tlh`. Notifications are now held while background subagent work is still running, so a ping means the session is genuinely waiting on you rather than merely having finished a turn (controlled by `suppressWhileActive`, default `true`). The old `npm:@diegopetrucci/pi-notify` package is automatically removed from existing profiles on the next `tlh update` to prevent duplicate notifications.
-
-  **Migration:** `tlh defaults disable notify` no longer works and will fail with `Unknown default extension 'notify'`. To disable notifications, set `{"enabled": false}` in `~/.the-last-harness/agent/extensions/notify.json` (default path; use your custom `--agent-dir` path if you installed to a non-default location), or in `<project>/.pi/notify.json` for per-project control. If you previously ran `tlh defaults disable notify`, your `tlh.disabledDefaultExtensions` entry is now inert and harmless — notifications will resume on the next `tlh update`. A first-class opt-out command for bundled extensions is tracked in [#517](https://github.com/diegopetrucci/the-last-harness/issues/517).
 - Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
-- The installer's default output is now more coincise.
+- The installer's default output is now more concise.
 
 ### Fixed
 

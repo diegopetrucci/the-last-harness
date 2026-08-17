@@ -1817,6 +1817,31 @@ test("mcporter migration handles prior TLH-managed and manual installs", () => {
   assert.deepEqual(disabledSettings.packages, []);
 });
 
+test("tlh-defaults disable migrates the fast alias and removes the replaced package", () => {
+  const fixture = tempFixture();
+  writeFileSync(
+    fixture.settings,
+    JSON.stringify({ packages: ["npm:@diegopetrucci/pi-openai-fast"] }, null, 2),
+  );
+
+  runNode(defaultsScript, [
+    "--settings",
+    fixture.settings,
+    "--defaults",
+    bundledExtensionsPath,
+    "disable",
+    "openai-fast",
+  ]);
+
+  const settings = readJson(fixture.settings);
+  assert.deepEqual(
+    settings.tlh.disabledDefaultExtensions,
+    ["fast"],
+    "disabling by alias should normalise to the canonical fast id",
+  );
+  assert.deepEqual(settings.packages, []);
+});
+
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {
   const fixtureExtension = {
     id: "dirty-repo-guard",
