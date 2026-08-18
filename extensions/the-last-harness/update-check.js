@@ -143,9 +143,7 @@ function maybeNotifyCachedTlhUpdate(ctx, currentVersion, state, options = {}) {
     }
     const updateCheck = getTlhUpdateCheckState(state);
     const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
-    if (updateCheck.lastNotifiedVersion === latestRelease.version ||
-        notifiedTlhUpdateVersions.has(notificationKey) ||
-        !canNotifyTlhUpdate(options)) {
+    if (notifiedTlhUpdateVersions.has(notificationKey) || !canNotifyTlhUpdate(options)) {
         return false;
     }
     notifyTlhUpdate(ctx, latestRelease);
