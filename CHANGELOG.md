@@ -4,6 +4,13 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.38.1] - 2026-08-18
+
+### Fixed
+
+- Fixed async subagent widgets that could show stale activity or health warnings after continuing a run.
+- Update-available warnings now reappear on every interactive launch until the release is installed.
+
 ## [0.38.0] - 2026-08-17
 
 ### Added
