@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
+import { TLH_NAME } from "./constants.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
 import type {
   StartupResources,
@@ -39,7 +39,7 @@ export function formatTlhLaunchContextAllocation(allocation: TlhLaunchContextAll
     `Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`,
     `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`,
   );
-  return segments.join(" • ");
+  return segments.join(" • ") + " (run /context to see a breakdown)";
 }
 
 export function createTlhHeader(
@@ -156,11 +156,6 @@ export function createTlhHeader(
     );
   };
 
-  const collapsedContextHintLines = (width: number): string[] => {
-    const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded context files, skills, prompts, and extensions`;
-    return wrapTextWithAnsi(hint, width).map((line) => color.dim(line));
-  };
-
   const headerDetails = (width: number): string[] => [
     ...installWarningLine(width),
     ...launchContextLines(width),
@@ -168,14 +163,15 @@ export function createTlhHeader(
   ];
 
   const renderCollapsed = (width: number) => {
-    const lines = [
-      logo,
-      "",
-      ...installWarningLine(width),
-      ...launchContextLines(width),
-      ...collapsedContextHintLines(width),
-      ...startupTipLine(width),
-    ];
+    const lines = [logo];
+    const details = [...installWarningLine(width), ...launchContextLines(width)];
+    if (details.length > 0) {
+      lines.push("", ...details);
+    }
+    const startupTip = startupTipLine(width);
+    if (startupTip.length > 0) {
+      lines.push("", ...startupTip);
+    }
     return lines;
   };
 

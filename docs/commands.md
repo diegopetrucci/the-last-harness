@@ -182,7 +182,7 @@ Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-stat
 
 ### `/tickets`
 
-`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. The footer status is on by default and renders one `ticket: <title> (/tickets)` line per in-progress ticket. In both views, TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
+`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
 
 ### `/tokens`
 

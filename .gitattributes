@@ -88,7 +88,6 @@ extensions/the-last-harness/subagent-settings.js linguist-generated=true
 extensions/the-last-harness/subscription-usage-facade.js linguist-generated=true
 extensions/the-last-harness/subscription-usage.js linguist-generated=true
 extensions/the-last-harness/thinking.js linguist-generated=true
-extensions/the-last-harness/ticket-workflow-ui-constants.js linguist-generated=true
 extensions/the-last-harness/ticket-workflow-ui-facade.js linguist-generated=true
 extensions/the-last-harness/ticket-workflow-ui.js linguist-generated=true
 extensions/the-last-harness/tickets.js linguist-generated=true

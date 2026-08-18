@@ -50,11 +50,7 @@ test("startup tips wrap without truncation and stay last in collapsed and expand
 
   assert.deepEqual(collapsedTipBlock, expectedTipBlock);
   assert.deepEqual(expandedTipBlock, expectedTipBlock);
-  const collapsedNonTipLines = collapsedLines.slice(0, -expectedTipBlock.length);
-  assert.ok(
-    collapsedNonTipLines.some((line) => line.startsWith("Press Ctrl+Shift+E")),
-    "collapsed header should contain the standalone Ctrl+Shift+E hint",
-  );
+  assert.equal(collapsedLines.at(-expectedTipBlock.length - 1), "");
   assert.equal(expandedLines.at(-expectedTipBlock.length - 1), "");
   assert.equal(
     collapsedTipBlock.some((line) => line.includes("...")),
@@ -101,6 +97,37 @@ test("header shows warning line when installNotice is a pinned-tag notice", () =
   assert.ok(
     lines.some((line) => /Warning.*running TLH from v0\.28\.0 track/.test(line)),
     "expected warning line with tag detail",
+  );
+});
+
+test("collapsed header emits no trailing blank line when startupTip is absent", () => {
+  // Provide an install notice so there is real content after the structural blank
+  // separator that follows the logo. Without a tip the last rendered line must
+  // be the warning text, not a stray blank.
+  const notice = { kind: "ref", summary: "non-stable ref", detail: "my-branch" };
+  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, notice);
+  const lines = header.render(80);
+  assert.notEqual(
+    lines.at(-1),
+    "",
+    "last collapsed line must not be a blank line when no tip is set",
+  );
+});
+
+test("collapsed header with no notice, no allocation, no tip renders only the logo", () => {
+  // This is the bare case that was broken: renderCollapsed unconditionally seeded
+  // [logo, ""] producing a stray trailing blank when nothing follows the separator.
+  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, undefined);
+  const lines = header.render(80);
+  assert.deepEqual(lines, ["tlh"], "bare collapsed header must be exactly [logo]");
+  assert.notEqual(lines.at(-1), "", "bare collapsed header must not end with a blank line");
+
+  const linesW0 = header.render(0);
+  assert.deepEqual(linesW0, ["tlh"], "bare collapsed header at width 0 must be exactly [logo]");
+  assert.notEqual(
+    linesW0.at(-1),
+    "",
+    "bare collapsed header at width 0 must not end with a blank line",
   );
 });
 
