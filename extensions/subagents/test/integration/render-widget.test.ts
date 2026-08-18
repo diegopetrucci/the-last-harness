@@ -499,6 +499,176 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /\/private\/|54321|cleanup failed/);
   });
 
+  it("projects continued lifecycles as healthy across single, parallel, chain, and compact layouts", () => {
+    const staleStep = {
+      index: 0,
+      agent: "worker",
+      status: "running" as const,
+      interruptRequestedAt: 20_000,
+      currentTool: "stale-tool",
+      currentToolStartedAt: 19_000,
+      currentPath: "/stale/path.ts",
+      activityState: "needs_attention" as const,
+      lastActivityAt: 19_000,
+    };
+    const singleText = buildWidgetLines(
+      [
+        {
+          asyncId: "continued-single",
+          asyncDir: "/tmp/continued-single",
+          status: "continued",
+          mode: "single",
+          agents: ["worker"],
+          interruptRequestedAt: 20_000,
+          currentTool: "stale-job-tool",
+          stepsTotal: 1,
+          steps: [staleStep],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+    assert.match(singleText, /✓ worker · continued/);
+    assert.doesNotMatch(singleText, /✗|pausing|stale-(?:job-)?tool|stale\/path/);
+
+    const parallelText = buildWidgetLines(
+      [
+        {
+          asyncId: "continued-parallel",
+          asyncDir: "/tmp/continued-parallel",
+          status: "continued",
+          mode: "parallel",
+          agents: ["worker", "reviewer"],
+          stepsTotal: 2,
+          activeParallelGroup: true,
+          steps: [
+            staleStep,
+            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
+          ],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+    assert.match(parallelText, /✓ 2\/2 done/);
+    assert.match(parallelText, /Agent 1\/2: worker · continued/);
+    assert.match(parallelText, /Agent 2\/2: reviewer · continued/);
+    assert.doesNotMatch(parallelText, /✗|pausing|stale-tool|stale\/path/);
+
+    const chainText = buildWidgetLines(
+      [
+        {
+          asyncId: "continued-chain",
+          asyncDir: "/tmp/continued-chain",
+          status: "continued",
+          mode: "chain",
+          agents: ["worker", "reviewer", "writer"],
+          currentStep: 2,
+          chainStepCount: 2,
+          parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+          stepsTotal: 3,
+          steps: [
+            { ...staleStep, index: 0 },
+            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
+            { ...staleStep, index: 2, agent: "writer", status: "running" as const },
+          ],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+    assert.match(chainText, /Step 1\/2: parallel group · 2\/2 done/);
+    assert.match(chainText, /Step 2\/2: writer · continued/);
+    assert.doesNotMatch(chainText, /✗|pausing|stale-tool|stale\/path/);
+
+    const pendingParallelText = buildWidgetLines(
+      [
+        {
+          asyncId: "continued-parallel-pending-tail",
+          asyncDir: "/tmp/continued-parallel-pending-tail",
+          status: "continued",
+          mode: "parallel",
+          agents: ["worker", "reviewer", "tail"],
+          stepsTotal: 3,
+          activeParallelGroup: true,
+          steps: [
+            { ...staleStep, agent: "worker", status: "complete" as const },
+            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
+            { ...staleStep, index: 2, agent: "tail", status: "pending" as const },
+          ],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+    assert.match(pendingParallelText, /✓ 2\/3 done/);
+    assert.match(pendingParallelText, /Agent 3\/3: tail · pending/);
+    assert.doesNotMatch(pendingParallelText, /Agent 3\/3: tail · continued/);
+
+    const pendingChainText = buildWidgetLines(
+      [
+        {
+          asyncId: "continued-chain-pending-tail",
+          asyncDir: "/tmp/continued-chain-pending-tail",
+          status: "continued",
+          mode: "chain",
+          agents: ["worker", "reviewer", "tail"],
+          chainStepCount: 3,
+          stepsTotal: 3,
+          currentStep: 2,
+          steps: [
+            { ...staleStep, agent: "worker", status: "complete" as const },
+            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
+            { ...staleStep, index: 2, agent: "tail", status: "pending" as const },
+          ],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+    assert.match(pendingChainText, /Step 3\/3: tail · pending/);
+    assert.doesNotMatch(pendingChainText, /Step 3\/3: tail · continued/);
+
+    const buildCompactParallelJob = (status: "continued" | "running"): AsyncJobState => ({
+      asyncId: `compact-${status}-parallel`,
+      asyncDir: `/tmp/compact-${status}-parallel`,
+      status,
+      mode: "parallel",
+      agents: Array.from({ length: 9 }, (_, index) => `worker-${index + 1}`),
+      activeParallelGroup: true,
+      stepsTotal: 9,
+      interruptRequestedAt: 20_000,
+      currentTool: "stale-job-tool",
+      steps: Array.from({ length: 9 }, (_, index) => ({
+        index,
+        agent: `worker-${index + 1}`,
+        status: "running" as const,
+        interruptRequestedAt: 20_000,
+        currentTool: "stale-tool",
+        currentToolStartedAt: 19_000,
+        currentPath: "/stale/path.ts",
+        activityState: "needs_attention" as const,
+        lastActivityAt: 19_000,
+      })),
+    });
+    resetWidgetLayout();
+    withStdoutSize(40, 160, () => {
+      const continuedUi = createUiContext();
+      renderWidget(continuedUi.ctx as never, [buildCompactParallelJob("continued")]);
+      const continuedText = renderWidgetLines(continuedUi.widgets.at(-1), 160).join("\n");
+      assert.match(continuedText, /✓/);
+      assert.match(continuedText, /continued/);
+      assert.doesNotMatch(continuedText, /✗|pausing|stale-(?:job-)?tool|stale\/path|live detail/);
+
+      const runningUi = createUiContext();
+      renderWidget(runningUi.ctx as never, [buildCompactParallelJob("running")]);
+      const runningText = renderWidgetLines(runningUi.widgets.at(-1), 160).join("\n");
+      assert.match(runningText, /Agent 1\/9: worker-1 · pausing · pausing…/);
+      assert.match(runningText, /live detail/);
+    });
+    resetWidgetLayout();
+  });
+
   it("suppresses whimsical phrases while surfacing async and parallel health warnings", () => {
     const now = 20_000;
     const jobs: AsyncJobState[] = [

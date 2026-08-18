@@ -145,6 +145,107 @@ describe(
       }
     });
 
+    it("honors continued and cancelled completion-event states before polling", async () => {
+      for (const terminalState of ["continued", "cancelled"] as const) {
+        const asyncRoot = createTempDir(`pi-async-job-event-${terminalState}-`);
+        let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+        try {
+          const state = createState();
+          tracker = trackerMod!.createAsyncJobTracker(
+            createEventRecorder().pi,
+            state as never,
+            asyncRoot,
+            { completionRetentionMs: 50 },
+          );
+          tracker.handleStarted({
+            id: `run-${terminalState}`,
+            asyncDir: path.join(asyncRoot, `run-${terminalState}`),
+            agent: "worker",
+          });
+          tracker.handleComplete({
+            id: `run-${terminalState}`,
+            success: false,
+            state: terminalState,
+          });
+
+          assert.equal(state.asyncJobs.get(`run-${terminalState}`)?.status, terminalState);
+          assert.equal(state.cleanupTimers.has(`run-${terminalState}`), true);
+        } finally {
+          tracker?.resetJobs();
+          removeTempDir(asyncRoot);
+        }
+      }
+    });
+
+    it("restores continued steps in the completion projection", async () => {
+      const asyncRoot = createTempDir("pi-async-job-restore-continued-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const runDir = path.join(asyncRoot, "run-restore-continued");
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-restore-continued",
+            mode: "chain",
+            state: "running",
+            sessionId: "session-restore-continued",
+            startedAt: 1000,
+            lastUpdate: 2000,
+            chainStepCount: 3,
+            steps: [
+              { agent: "worker", status: "continued" },
+              { agent: "reviewer", status: "running" },
+              { agent: "tail", status: "pending" },
+            ],
+          }),
+          "utf-8",
+        );
+
+        const state = createState();
+        state.currentSessionId = "session-restore-continued";
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { pollIntervalMs: 10 },
+        );
+        tracker.restoreActiveJobs();
+
+        const job = state.asyncJobs.get("run-restore-continued");
+        assert.ok(job);
+        assert.equal(job.completedSteps, 1);
+        assert.equal(job.runningSteps, 1);
+
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-restore-continued",
+            mode: "chain",
+            state: "continued",
+            sessionId: "session-restore-continued",
+            startedAt: 1000,
+            lastUpdate: 3000,
+            chainStepCount: 3,
+            steps: [
+              { agent: "worker", status: "continued" },
+              { agent: "reviewer", status: "running" },
+              { agent: "tail", status: "pending" },
+            ],
+          }),
+          "utf-8",
+        );
+        await waitForCondition(
+          () => state.asyncJobs.get("run-restore-continued")?.status === "continued",
+          "continued poll projection",
+        );
+        assert.equal(state.asyncJobs.get("run-restore-continued")?.completedSteps, 1);
+      } finally {
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
     it("restores active async runs into the widget after reset", async () => {
       const asyncRoot = createTempDir("pi-async-job-restore-");
       try {
@@ -1020,6 +1121,170 @@ describe(
       }
     });
 
+    it("retains continued and cancelled terminal jobs only for the standard completion window", async () => {
+      for (const terminalState of ["continued", "cancelled"] as const) {
+        const asyncRoot = createTempDir(`pi-async-job-${terminalState}-retention-`);
+        try {
+          const runDir = path.join(asyncRoot, `run-${terminalState}`);
+          fs.mkdirSync(runDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(runDir, "status.json"),
+            JSON.stringify({
+              runId: `run-${terminalState}`,
+              mode: "single",
+              state: terminalState,
+              startedAt: Date.now() - 1000,
+              lastUpdate: Date.now(),
+              steps: [{ agent: "worker", status: terminalState }],
+            }),
+            "utf-8",
+          );
+
+          const state = createState();
+          const ui = createUiContext();
+          const tracker = trackerMod!.createAsyncJobTracker(
+            createEventRecorder().pi,
+            state as never,
+            asyncRoot,
+            { completionRetentionMs: 5, pollIntervalMs: 10 },
+          );
+          tracker.resetJobs(ui.ctx as never);
+          tracker.handleStarted({
+            id: `run-${terminalState}`,
+            asyncDir: runDir,
+            agent: "worker",
+          });
+
+          await waitForCondition(
+            () => !state.asyncJobs.has(`run-${terminalState}`),
+            `${terminalState} job cleanup after retention`,
+          );
+          assert.equal(ui.widgets.at(-1), undefined);
+        } finally {
+          removeTempDir(asyncRoot);
+        }
+      }
+    });
+
+    it("keeps retained terminal jobs while nested descendants are live", async () => {
+      for (const terminalState of ["continued", "cancelled"] as const) {
+        const asyncRoot = createTempDir(`pi-async-job-${terminalState}-nested-retention-`);
+        let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+        try {
+          const runDir = path.join(asyncRoot, `run-${terminalState}`);
+          fs.mkdirSync(runDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(runDir, "status.json"),
+            JSON.stringify({
+              runId: `run-${terminalState}`,
+              mode: "single",
+              state: terminalState,
+              startedAt: Date.now() - 1000,
+              lastUpdate: Date.now(),
+              steps: [{ agent: "worker", status: terminalState }],
+            }),
+            "utf-8",
+          );
+
+          const state = createState();
+          tracker = trackerMod!.createAsyncJobTracker(
+            createEventRecorder().pi,
+            state as never,
+            asyncRoot,
+            { completionRetentionMs: 5, pollIntervalMs: 10 },
+          );
+          tracker.handleStarted({
+            id: `run-${terminalState}`,
+            asyncDir: runDir,
+            agent: "worker",
+          });
+          const job = state.asyncJobs.get(`run-${terminalState}`);
+          assert.ok(job);
+          job.nestedChildren = [
+            {
+              id: `nested-${terminalState}`,
+              parentRunId: `run-${terminalState}`,
+              depth: 1,
+              path: [{ runId: `run-${terminalState}` }],
+              state: "running",
+              agent: "nested-worker",
+            },
+          ];
+
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          assert.equal(state.asyncJobs.has(`run-${terminalState}`), true);
+          assert.equal(state.cleanupTimers.has(`run-${terminalState}`), false);
+
+          job.nestedChildren![0]!.state = "complete";
+          await waitForCondition(
+            () => !state.asyncJobs.has(`run-${terminalState}`),
+            `${terminalState} cleanup after nested descendant completion`,
+          );
+        } finally {
+          tracker?.resetJobs();
+          removeTempDir(asyncRoot);
+        }
+      }
+    });
+
+    it("re-arms terminal cleanup after a missing status outlives a live nested descendant", async () => {
+      const asyncRoot = createTempDir("pi-async-job-missing-status-retention-");
+      const asyncId = "run-missing-status-retention";
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      try {
+        const state = createState();
+        tracker = trackerMod!.createAsyncJobTracker(
+          createEventRecorder().pi,
+          state as never,
+          asyncRoot,
+          { completionRetentionMs: scaleTestTimeout(100), pollIntervalMs: 10 },
+        );
+        tracker.handleStarted({
+          id: asyncId,
+          asyncDir: path.join(asyncRoot, asyncId),
+          agent: "worker",
+        });
+        tracker.handleComplete({ id: asyncId, success: true });
+
+        const job = state.asyncJobs.get(asyncId);
+        assert.ok(job);
+        assert.equal(job.status, "complete");
+        assert.equal(state.cleanupTimers.has(asyncId), true);
+        job.nestedChildren = [
+          {
+            id: "nested-live",
+            parentRunId: asyncId,
+            depth: 1,
+            path: [{ runId: asyncId }],
+            state: "running",
+            agent: "nested-worker",
+          },
+        ];
+
+        await waitForCondition(
+          () => !state.cleanupTimers.has(asyncId),
+          "missing-status live nested descendant cleanup cancellation",
+        );
+        assert.equal(state.asyncJobs.has(asyncId), true);
+        assert.equal(state.asyncJobs.get(asyncId)?.status, "complete");
+
+        job.nestedChildren[0]!.state = "complete";
+        await waitForCondition(
+          () => state.cleanupTimers.has(asyncId),
+          "missing-status terminal nested descendant cleanup re-arm",
+        );
+        assert.equal(state.asyncJobs.has(asyncId), true);
+        assert.equal(state.asyncJobs.get(asyncId)?.status, "complete");
+        await waitForCondition(
+          () => !state.asyncJobs.has(asyncId),
+          "missing-status terminal cleanup after nested descendant completion",
+        );
+      } finally {
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
     it("repairs stale running jobs during polling", async () => {
       const asyncRoot = createTempDir("pi-async-job-stale-");
       try {
@@ -1195,6 +1460,58 @@ describe(
       }
     });
 
+    it("cleans up status-read failures when nested refresh also fails without live descendants", async () => {
+      const asyncRoot = createTempDir("pi-async-job-bad-status-nested-refresh-");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      const originalError = console.error;
+      const errors: string[] = [];
+      console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+      try {
+        const runDir = path.join(asyncRoot, "run-bad-status-nested-refresh");
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(path.join(runDir, "status.json"), "{", "utf-8");
+        const state = createState();
+        const ui = createUiContext();
+        const recorder = createEventRecorder();
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+          completionRetentionMs: 5,
+          pollIntervalMs: 10,
+        });
+        tracker.resetJobs(ui.ctx as never);
+        tracker.handleStarted({
+          id: "run-bad-status-nested-refresh",
+          asyncDir: runDir,
+          agent: "worker",
+          nestedRoute: {
+            rootRunId: "run-bad-status-nested-refresh",
+            eventSink: path.join(asyncRoot, "not-contained-events"),
+            controlInbox: path.join(asyncRoot, "not-contained-controls"),
+            capabilityToken: "bad-token",
+          },
+        });
+
+        await waitForCondition(
+          () => !state.asyncJobs.has("run-bad-status-nested-refresh"),
+          "combined nested refresh and status-read cleanup",
+        );
+
+        assert.equal(state.cleanupTimers.has("run-bad-status-nested-refresh"), false);
+        assert.equal(
+          errors.some((message) => message.includes("Failed to refresh nested async descendants")),
+          true,
+        );
+        assert.equal(
+          errors.some((message) => message.includes("Failed to read async status")),
+          true,
+        );
+        assert.ok(ui.widgets.length > 0, "expected combined failure cleanup to replace the widget");
+      } finally {
+        console.error = originalError;
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
     it("keeps root jobs running when nested refresh fails during polling", async () => {
       const asyncRoot = createTempDir("pi-async-job-nested-refresh-um");
       let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
@@ -1237,6 +1554,72 @@ describe(
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         assert.equal(state.asyncJobs.get("run-nested-refresh")?.status, "running");
+        assert.equal(state.cleanupTimers.has("run-nested-refresh"), false);
+      } finally {
+        console.error = originalError;
+        tracker?.resetJobs();
+        removeTempDir(asyncRoot);
+      }
+    });
+
+    it("preserves an already-armed terminal cleanup timer through persistent nested refresh failure", async () => {
+      const asyncRoot = createTempDir("pi-async-job-nested-refresh-um");
+      let tracker: ReturnType<AsyncJobTrackerModule["createAsyncJobTracker"]> | undefined;
+      const originalError = console.error;
+      const errors: string[] = [];
+      console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+      try {
+        const runDir = path.join(asyncRoot, "run-nested-refresh");
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(runDir, "status.json"),
+          JSON.stringify({
+            runId: "run-nested-refresh",
+            mode: "single",
+            state: "complete",
+            startedAt: Date.now() - 1000,
+            lastUpdate: Date.now(),
+            steps: [{ agent: "worker", status: "complete" }],
+          }),
+          "utf-8",
+        );
+
+        const state = createState();
+        const recorder = createEventRecorder();
+        tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
+          completionRetentionMs: scaleTestTimeout(500),
+          pollIntervalMs: 10,
+        });
+        tracker.handleStarted({
+          id: "run-nested-refresh",
+          asyncDir: runDir,
+          agent: "worker",
+        });
+        tracker.handleComplete({ id: "run-nested-refresh", success: true });
+        const job = state.asyncJobs.get("run-nested-refresh");
+        assert.ok(job);
+        job.nestedRoute = {
+          rootRunId: "run-nested-refresh",
+          eventSink: path.join(asyncRoot, "not-contained-events"),
+          controlInbox: path.join(asyncRoot, "not-contained-controls"),
+          capabilityToken: "bad-token",
+        };
+
+        await new Promise((resolve) => setTimeout(resolve, scaleTestTimeout(150)));
+
+        assert.ok(
+          errors.some((message) => message.includes("Failed to refresh nested async descendants")),
+          "expected persistent nested refresh failure diagnostic",
+        );
+        assert.equal(state.asyncJobs.get("run-nested-refresh")?.status, "complete");
+        assert.equal(state.asyncJobs.has("run-nested-refresh"), true);
+        assert.equal(state.cleanupTimers.has("run-nested-refresh"), true);
+
+        await waitForCondition(
+          () => !state.asyncJobs.has("run-nested-refresh"),
+          "terminal cleanup after persistent nested refresh failure",
+          scaleTestTimeout(2_000),
+        );
         assert.equal(state.cleanupTimers.has("run-nested-refresh"), false);
       } finally {
         console.error = originalError;

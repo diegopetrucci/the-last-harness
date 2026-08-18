@@ -41,6 +41,13 @@ interface AsyncJobTrackerOptions {
 const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
+const COMPLETION_RETENTION_STATES = new Set<string>([
+  "complete",
+  "failed",
+  "paused",
+  "cancelled",
+  "continued",
+]);
 
 export function createAsyncJobTracker(
   pi: Pick<ExtensionAPI, "events">,
@@ -142,7 +149,8 @@ export function createAsyncJobTracker(
       stepsTotal: visibleSteps.length,
       runningSteps: visibleSteps.filter((step) => step.status === "running").length,
       completedSteps: visibleSteps.filter(
-        (step) => step.status === "complete" || step.status === "completed",
+        (step) =>
+          step.status === "complete" || step.status === "completed" || step.status === "continued",
       ).length,
       hasParallelGroups: groups.length > 0,
       activeParallelGroup: Boolean(activeGroup),
@@ -402,8 +410,7 @@ export function createAsyncJobTracker(
           if (status) {
             const previousStatus = job.status;
             job.status = status.state;
-            if (job.status !== "complete" && job.status !== "failed" && job.status !== "paused")
-              cancelCleanup(job.asyncId);
+            if (!COMPLETION_RETENTION_STATES.has(job.status)) cancelCleanup(job.asyncId);
             job.sessionId = status.sessionId ?? job.sessionId;
             job.activityState = status.activityState;
             job.lastActivityAt = status.lastActivityAt ?? job.lastActivityAt;
@@ -445,7 +452,10 @@ export function createAsyncJobTracker(
               job.stepsTotal = visibleSteps.length;
               job.runningSteps = visibleSteps.filter((step) => step.status === "running").length;
               job.completedSteps = visibleSteps.filter(
-                (step) => step.status === "complete" || step.status === "completed",
+                (step) =>
+                  step.status === "complete" ||
+                  step.status === "completed" ||
+                  step.status === "continued",
               ).length;
               if (status.state === "complete") job.completedSteps = visibleSteps.length;
             }
@@ -461,16 +471,27 @@ export function createAsyncJobTracker(
             job.sessionFile = status.sessionFile ?? job.sessionFile;
             if (status.tkTicket !== undefined)
               job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
+            const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
+            if (liveNestedDescendants) cancelCleanup(job.asyncId);
             if (
-              (job.status === "complete" || job.status === "failed" || job.status === "paused") &&
+              COMPLETION_RETENTION_STATES.has(job.status) &&
               !nestedRefreshFailed &&
-              !hasLiveNestedDescendants(job.nestedChildren) &&
+              !liveNestedDescendants &&
               (previousStatus !== job.status || !state.cleanupTimers.has(job.asyncId))
             ) {
               scheduleCleanup(job.asyncId);
             }
             if (widgetRenderKey(job) !== widgetStateBefore) widgetChanged = true;
             continue;
+          }
+          const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
+          if (liveNestedDescendants) {
+            cancelCleanup(job.asyncId);
+          } else if (
+            COMPLETION_RETENTION_STATES.has(job.status) &&
+            !state.cleanupTimers.has(job.asyncId)
+          ) {
+            scheduleCleanup(job.asyncId);
           }
           if (job.status === "queued") {
             job.status = "running";
@@ -482,10 +503,9 @@ export function createAsyncJobTracker(
             job.status = "failed";
             job.updatedAt = Date.now();
           }
-          if (
-            !hasLiveNestedDescendants(job.nestedChildren) &&
-            !state.cleanupTimers.has(job.asyncId)
-          ) {
+          if (hasLiveNestedDescendants(job.nestedChildren)) {
+            cancelCleanup(job.asyncId);
+          } else if (!state.cleanupTimers.has(job.asyncId)) {
             scheduleCleanup(job.asyncId);
           }
         }
@@ -555,6 +575,7 @@ export function createAsyncJobTracker(
       success?: boolean;
       asyncDir?: string;
       sessionId?: string;
+      state?: AsyncJobState["status"];
     };
     if (typeof state.currentSessionId === "string" && result.sessionId !== state.currentSessionId)
       return;
@@ -563,7 +584,12 @@ export function createAsyncJobTracker(
     const job = state.asyncJobs.get(asyncId);
     let nestedRefreshFailed = false;
     if (job) {
-      job.status = result.success ? "complete" : "failed";
+      job.status =
+        result.state === "continued" || result.state === "cancelled"
+          ? result.state
+          : result.success
+            ? "complete"
+            : "failed";
       job.updatedAt = Date.now();
       if (result.asyncDir) job.asyncDir = result.asyncDir;
       try {
@@ -576,8 +602,11 @@ export function createAsyncJobTracker(
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
     }
-    if (!nestedRefreshFailed && !hasLiveNestedDescendants(job?.nestedChildren))
+    if (hasLiveNestedDescendants(job?.nestedChildren)) {
+      cancelCleanup(asyncId);
+    } else if (!nestedRefreshFailed) {
       scheduleCleanup(asyncId);
+    }
   };
 
   const resetJobs = (ctx?: ExtensionContext) => {
