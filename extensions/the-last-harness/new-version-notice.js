@@ -1,6 +1,6 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 const TLH_NEW_VERSION_NOTICE_PATCHED = Symbol.for("tlh.newVersionNoticePatched");
-function noOpShowNewVersionNotification() { }
+const noOpShowNewVersionNotification = () => { };
 export function installTlhNewVersionNotificationOverride() {
     const interactiveModePrototype = InteractiveMode.prototype;
     if (interactiveModePrototype[TLH_NEW_VERSION_NOTICE_PATCHED]) {
@@ -10,7 +10,6 @@ export function installTlhNewVersionNotificationOverride() {
         console.warn("[TLH] installTlhNewVersionNotificationOverride: InteractiveMode.prototype.showNewVersionNotification is not a function; skipping patch.");
         return;
     }
-    interactiveModePrototype.showNewVersionNotification =
-        noOpShowNewVersionNotification;
+    interactiveModePrototype.showNewVersionNotification = noOpShowNewVersionNotification;
     interactiveModePrototype[TLH_NEW_VERSION_NOTICE_PATCHED] = true;
 }

@@ -16,6 +16,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+import type { JsonValue } from "@earendil-works/pi-ai";
+
 import { pathIsProtectedPiConfig } from "./lib/tlh-install-paths.mjs";
 import {
   assignOptionValue,
@@ -41,7 +43,6 @@ const PACKAGE_UPDATE_UNSUPPORTED_OPTIONS = [
 
 type ValidTrack = "latest-release" | "pinned-tag" | "ref" | "custom";
 type EnvMap = NodeJS.ProcessEnv;
-type JsonRecord = Record<string, unknown>;
 
 interface CliArgs extends Record<string, unknown> {
   agentDir: string;
@@ -306,10 +307,25 @@ function resolveCommand(command: string, env: EnvMap): string {
   throw new Error(`required command not found on sanitized PATH: ${command}`);
 }
 
-function readJson(path: string): unknown {
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: unknown): value is Extract<JsonValue, { [key: string]: JsonValue }> {
+  return isJsonValue(value) && typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readJson(path: string): JsonValue | undefined {
   // Keep update metadata/settings parsing strict so existing diagnostics stay unchanged.
   const content = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-  return JSON.parse(content) as unknown;
+  const parsed: unknown = JSON.parse(content);
+  return isJsonValue(parsed) ? parsed : undefined;
 }
 
 function packageSourceOf(entry: unknown): string | undefined {
@@ -392,8 +408,8 @@ function normalizeState(
   raw: unknown,
   fallback: Partial<NormalizedInstallState> = {},
 ): NormalizedInstallState | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const record = raw as JsonRecord;
+  if (!isJsonObject(raw)) return undefined;
+  const record = raw;
   const repo =
     typeof record.repo === "string" && record.repo.trim() ? record.repo.trim() : fallback.repo;
   const track =
@@ -431,16 +447,12 @@ function inferStateFromSettings(
   const path = settingsPath(agentDir);
   if (!existsSync(path)) return undefined;
   const settings = readJson(path);
-  if (
-    !settings ||
-    typeof settings !== "object" ||
-    !Array.isArray((settings as { packages?: unknown }).packages)
-  ) {
+  if (!isJsonObject(settings) || !Array.isArray(settings.packages)) {
     return undefined;
   }
 
   let fallback: NormalizedInstallState | undefined;
-  for (const entry of (settings as { packages: unknown[] }).packages) {
+  for (const entry of settings.packages) {
     const source = packageSourceOf(entry);
     const parsed = parseGitHubPackageSource(source);
     if (!parsed) continue;

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import { Type } from "typebox";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
@@ -59,20 +59,43 @@ interface SupervisorParams {
   action: "pending" | "status";
 }
 
-const ContactSupervisorParamsSchema = Type.Object(
-  {
-    reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
-    message: Type.Optional(Type.String()),
-    interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
-  },
-  { additionalProperties: false },
+interface SupervisorRequestToolDetails {
+  delivered: boolean;
+  requestId: string;
+  reason: SupervisorReason;
+}
+
+interface PublicPendingSupervisorRequest {
+  id: string;
+  runId: string;
+  agent: string;
+  childIndex: number;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+}
+
+type ParentSupervisorToolDetails =
+  | { active: true; pending: number; root: string }
+  | { pending: PublicPendingSupervisorRequest[] };
+
+const ContactSupervisorParamsSchema = Type.Unsafe<ContactSupervisorParams>(
+  Type.Object(
+    {
+      reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
+      message: Type.Optional(Type.String()),
+      interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
+    },
+    { additionalProperties: false },
+  ),
 );
 
-const SupervisorParamsSchema = Type.Object(
-  {
-    action: Type.String({ enum: ["pending", "status"] }),
-  },
-  { additionalProperties: false },
+const SupervisorParamsSchema = Type.Unsafe<SupervisorParams>(
+  Type.Object(
+    {
+      action: Type.String({ enum: ["pending", "status"] }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 function safeSegment(value: string): string {
@@ -227,7 +250,7 @@ async function waitForSupervisorPauseOrTimeout(
 async function sendSupervisorRequest(
   params: ContactSupervisorParams,
   signal?: AbortSignal,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<SupervisorRequestToolDetails>> {
   const metadata = readChildMetadata();
   if (!metadata) throw new Error("Native supervisor channel is not available for this subagent.");
   if (
@@ -295,24 +318,15 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 
 export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
   if (!readChildMetadata()) return;
-  const registerTool = (
-    (pi as unknown as Record<string, unknown>).registerTool as (tool: {
-      name: string;
-      label: string;
-      description: string;
-      parameters: TSchema;
-      execute: (id: string, params: unknown, signal: AbortSignal | undefined) => Promise<unknown>;
-    }) => void
-  ).bind(pi);
   if (!hasTool(pi, "contact_supervisor")) {
-    registerTool({
+    pi.registerTool({
       name: "contact_supervisor",
       label: "Contact Supervisor",
       description:
         "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
       parameters: ContactSupervisorParamsSchema,
       execute(_id, params, signal) {
-        return sendSupervisorRequest(params as ContactSupervisorParams, signal);
+        return sendSupervisorRequest(params, signal);
       },
     });
   }
@@ -618,7 +632,7 @@ function requestVisibleText(request: PendingSupervisorRequest, state: SubagentSt
 
 function publicPendingRequests(
   pending: Map<string, PendingSupervisorRequest>,
-): Array<Record<string, unknown>> {
+): PublicPendingSupervisorRequest[] {
   return [...pending.values()].map((request) => ({
     id: request.id,
     runId: request.runId,
@@ -639,10 +653,12 @@ function buildParentSupervisorTool(
     description:
       "Native pi-subagents supervisor channel. Use pending/status to inspect paused child requests, then resume them with subagent resume or cancel them with interrupt.",
     parameters: SupervisorParamsSchema,
-    async execute(_id: string, params: unknown) {
+    async execute(
+      _id: string,
+      params: SupervisorParams,
+    ): Promise<AgentToolResult<ParentSupervisorToolDetails>> {
       refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
-      const input = params as SupervisorParams;
-      if (input.action === "status") {
+      if (params.action === "status") {
         return {
           content: [
             {
@@ -653,7 +669,7 @@ function buildParentSupervisorTool(
           details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
         };
       }
-      if (input.action === "pending") {
+      if (params.action === "pending") {
         const lines = [...pending.values()]
           .filter((request) => request.expectsReply)
           .map((request) => formatPendingLine(request, state));
@@ -667,7 +683,7 @@ function buildParentSupervisorTool(
           details: { pending: publicPendingRequests(pending) },
         };
       }
-      throw new Error(`Unsupported supervisor action: ${input.action}`);
+      throw new Error(`Unsupported supervisor action: ${params.action}`);
     },
   };
 }
@@ -680,15 +696,9 @@ export function createNativeSupervisorChannel(
   const seenFiles = new Set<string>();
   let poller: ReturnType<typeof setInterval> | undefined;
   let lastStaleCleanupAt = 0;
-  const registerTool = (
-    (pi as unknown as Record<string, unknown>).registerTool as (
-      tool: ReturnType<typeof buildParentSupervisorTool>,
-    ) => void
-  ).bind(pi);
-
   const registerParentTools = (): void => {
     if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
-      registerTool(buildParentSupervisorTool(pending, state));
+      pi.registerTool(buildParentSupervisorTool(pending, state));
   };
 
   const cleanupStaleChannelsIfDue = (): void => {

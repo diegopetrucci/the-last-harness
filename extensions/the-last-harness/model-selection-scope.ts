@@ -57,8 +57,20 @@ type TlhModelSelectionPersistenceState = {
 };
 
 type ModelSelectorRuntimePrototype = {
-  handleSelect(this: unknown, model: unknown): unknown;
+  // The upstream private handleSelect implementation returns void; the model
+  // remains opaque because this shim only wraps the call for async-local scope.
+  handleSelect(this: ModelSelectorComponent, model: unknown): void;
 };
+
+function isModelSelectorRuntimePrototype(value: unknown): value is ModelSelectorRuntimePrototype {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "handleSelect" in value &&
+    typeof value.handleSelect === "function"
+  );
+}
 
 type TlhModelSelectionPersistencePatch = {
   nativeSelectorContext: AsyncLocalStorage<boolean>;
@@ -344,21 +356,13 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     return true;
   }
 
-  const modelSelectorPrototype =
-    ModelSelectorComponent.prototype as unknown as ModelSelectorRuntimePrototype;
-  const originals = {
-    handleModelSelect: modelSelectorPrototype.handleSelect,
-    setDefaultModelAndProvider: prototype.setDefaultModelAndProvider,
-    setDefaultModel: prototype.setDefaultModel,
-    setDefaultProvider: prototype.setDefaultProvider,
-    setDefaultThinkingLevel: prototype.setDefaultThinkingLevel,
-  };
+  const modelSelectorPrototypeCandidate: unknown = ModelSelectorComponent.prototype;
   if (
-    typeof originals.handleModelSelect !== "function" ||
-    typeof originals.setDefaultModelAndProvider !== "function" ||
-    typeof originals.setDefaultModel !== "function" ||
-    typeof originals.setDefaultProvider !== "function" ||
-    typeof originals.setDefaultThinkingLevel !== "function"
+    !isModelSelectorRuntimePrototype(modelSelectorPrototypeCandidate) ||
+    typeof prototype.setDefaultModelAndProvider !== "function" ||
+    typeof prototype.setDefaultModel !== "function" ||
+    typeof prototype.setDefaultProvider !== "function" ||
+    typeof prototype.setDefaultThinkingLevel !== "function"
   ) {
     console.warn(
       "[TLH] installTlhModelSelectionPersistenceOverride: model selector or SettingsManager default " +
@@ -366,6 +370,14 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     );
     return false;
   }
+  const modelSelectorPrototype = modelSelectorPrototypeCandidate;
+  const originals = {
+    handleModelSelect: modelSelectorPrototype.handleSelect,
+    setDefaultModelAndProvider: prototype.setDefaultModelAndProvider,
+    setDefaultModel: prototype.setDefaultModel,
+    setDefaultProvider: prototype.setDefaultProvider,
+    setDefaultThinkingLevel: prototype.setDefaultThinkingLevel,
+  };
 
   const state: TlhModelSelectionPersistenceState = {
     activeModelResolver: undefined,
@@ -383,7 +395,7 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     state,
   };
 
-  modelSelectorPrototype.handleSelect = function (model: unknown): unknown {
+  modelSelectorPrototype.handleSelect = function (model: unknown): void {
     return patch.nativeSelectorContext.run(true, () =>
       originals.handleModelSelect.call(this, model),
     );

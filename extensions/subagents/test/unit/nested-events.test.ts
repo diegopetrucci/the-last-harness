@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import type { AsyncJobState, SubagentState } from "../../src/shared/types.ts";
+import type { AsyncJobState, NestedRunSummary, SubagentState } from "../../src/shared/types.ts";
 import {
   buildNestedRouteIndex,
+  type NestedEventRecord,
   createNestedRoute,
   hasLiveNestedDescendants,
   parseNestedEventRecords,
@@ -61,7 +62,7 @@ function child(
   state: "queued" | "running" | "complete" | "failed" | "paused",
   ts: number,
   parentRunId = "root-run",
-) {
+): NestedRunSummary {
   return {
     id,
     parentRunId,
@@ -384,35 +385,24 @@ describe("nested event parsing and projection", () => {
         ],
       },
     });
-    writeNestedEvent(route, {
+    // Start from the same valid nested owner object used for normal event
+    // fixtures, then corrupt its serialized fields through the runtime object
+    // boundary. This keeps the rejection scenario explicit without pretending
+    // malformed diagnostics satisfy their production interfaces.
+    const invalidPressureChild = child("nested-invalid-pressure", "running", 200);
+    const invalidPressureStep = invalidPressureChild.steps?.[0];
+    assert.ok(invalidPressureStep, "valid owner fixture should contain one step");
+    Reflect.set(invalidPressureStep, "contextUsage", { contextTokens: "bad" });
+    Reflect.set(invalidPressureStep, "contextPressure", { severity: "warning" });
+    Reflect.set(invalidPressureStep, "contextPressureCrossedThresholds", ["warning", "bogus"]);
+    const invalidPressureEvent: Omit<NestedEventRecord, "rootRunId" | "capabilityToken"> = {
       type: "subagent.nested.updated",
       ts: 200,
       parentRunId: "root-run",
       parentStepIndex: 1,
-      child: {
-        ...child("nested-invalid-pressure", "running", 200),
-        steps: [
-          {
-            agent: "leaf",
-            status: "running",
-            // Deliberately invalid data: tests that the validation layer rejects
-            // malformed contextUsage, incomplete ContextPressureProjection, and
-            // an unknown threshold value. Casts are safe because the assertion
-            // below verifies the validated output is undefined.
-            contextUsage: {
-              contextTokens: "bad",
-            } as unknown as import("../../src/shared/types.ts").ContextUsageDiagnostics,
-            contextPressure: {
-              severity: "warning",
-            } as unknown as import("../../src/shared/types.ts").ContextPressureProjection,
-            contextPressureCrossedThresholds: [
-              "warning",
-              "bogus",
-            ] as unknown as import("../../src/shared/types.ts").ContextPressureThreshold[],
-          },
-        ],
-      },
-    });
+      child: invalidPressureChild,
+    };
+    writeNestedEvent(route, invalidPressureEvent);
     const registry = projectNestedEvents(route);
     const valid = registry.children.find((item) => item.id === "nested-valid-pressure");
     assert.deepEqual(valid?.steps?.[0]?.contextUsage, {

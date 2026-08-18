@@ -3,6 +3,12 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { Static, TSchema } from "typebox";
+import { Type } from "typebox";
+import { Compile } from "typebox/compile";
+import type { ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
   writeChildMessageRequestToDir,
   writeSteerRequestToDir,
@@ -34,7 +40,77 @@ import registerSubagentPromptRuntime, {
   stripProjectContext,
   stripSubagentOrchestrationSkill,
 } from "../../src/runs/shared/subagent-prompt-runtime.ts";
-import { makeExtensionAPI } from "../support/helpers.ts";
+import {
+  makeExtensionAPI,
+  makeMinimalCtx,
+  type TestEventHandler,
+  type TestEventName,
+  type TestEventRegistration,
+} from "../support/helpers.ts";
+
+function recordEvents(handlers: Map<TestEventName, TestEventHandler>): TestEventRegistration["on"] {
+  return (event, handler) => handlers.set(event, handler);
+}
+
+function makeToolInfo(name: string): ToolInfo {
+  return {
+    name,
+    description: "test tool",
+    parameters: Type.Object({}),
+    sourceInfo: { path: "", source: "test", scope: "temporary", origin: "top-level" },
+  };
+}
+
+function matchesToolParameters<TParams extends TSchema>(
+  schema: TParams,
+  value: unknown,
+): value is Static<TParams> {
+  return Compile(schema).Check(value);
+}
+
+function hasSystemPrompt(value: unknown): value is { systemPrompt: string } {
+  if (typeof value !== "object" || value === null || !("systemPrompt" in value)) return false;
+  return typeof value.systemPrompt === "string";
+}
+
+function makeUserMessage(content: UserMessage["content"]): UserMessage {
+  return { role: "user", content, timestamp: 1 };
+}
+
+function makeCustomMessage(customType: string, content: string): AgentMessage {
+  return { role: "custom", customType, content, display: true, timestamp: 1 };
+}
+
+function makeToolResultMessage(toolName: string, content: string): ToolResultMessage<undefined> {
+  return {
+    role: "toolResult",
+    toolCallId: `${toolName}-call`,
+    toolName,
+    content: [{ type: "text", text: content }],
+    isError: false,
+    timestamp: 1,
+  };
+}
+
+function makeAssistantMessage(content: AssistantMessage["content"]): AssistantMessage {
+  return {
+    role: "assistant",
+    content,
+    api: "anthropic-messages",
+    provider: "anthropic",
+    model: "test-model",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      totalTokens: 0,
+    },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+}
 
 const envSnapshot = {
   PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
@@ -143,17 +219,33 @@ function clearSupervisorEnv(): void {
 }
 
 describe("subagent prompt runtime", () => {
+  it("gives each ExtensionAPI fixture a fresh event bus", () => {
+    const first = makeExtensionAPI();
+    const second = makeExtensionAPI();
+    let received = false;
+    first.events.on("test", () => {
+      received = true;
+    });
+
+    assert.notEqual(first.events, second.events);
+    second.events.emit("test", undefined);
+    assert.equal(received, false);
+    first.events.emit("test", undefined);
+    assert.equal(received, true);
+  });
+
   it("nudges after the tool budget soft limit and blocks configured tools after hard", () => {
-    const handlers = new Map<string, (payload: { toolName?: string }) => unknown>();
+    const handlers = new Map<TestEventName, TestEventHandler>();
     const sent: string[] = [];
     process.env[TOOL_BUDGET_ENV] = JSON.stringify({ soft: 2, hard: 2, block: ["read"] });
 
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(event: string, handler: (payload: { toolName?: string }) => unknown) {
-          handlers.set(event, handler);
-        },
-        sendUserMessage(content: string) {
+        on: recordEvents(handlers),
+        sendUserMessage(content, options) {
+          if (typeof content !== "string" || options?.deliverAs === undefined) {
+            throw new Error("test sendUserMessage expected string steer input");
+          }
           sent.push(content);
         },
       }),
@@ -178,16 +270,17 @@ describe("subagent prompt runtime", () => {
     try {
       const inbox = path.join(dir, "steer");
       process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
-      const handlers = new Map<string, (payload?: unknown) => unknown>();
+      const handlers = new Map<TestEventName, TestEventHandler>();
       const sent: Array<{ content: string; options: { deliverAs: string } }> = [];
 
       registerSubagentPromptRuntime(
         makeExtensionAPI({
-          on(event: string, handler: (payload?: unknown) => unknown) {
-            handlers.set(event, handler);
-          },
-          sendUserMessage(content: string, options: { deliverAs: string }) {
-            sent.push({ content, options });
+          on: recordEvents(handlers),
+          sendUserMessage(content, options) {
+            if (typeof content !== "string" || options?.deliverAs === undefined) {
+              throw new Error("test sendUserMessage expected string steer input");
+            }
+            sent.push({ content, options: { deliverAs: options.deliverAs } });
           },
         }),
       );
@@ -219,16 +312,17 @@ describe("subagent prompt runtime", () => {
     try {
       const inbox = path.join(dir, "steer");
       process.env[SUBAGENT_STEER_INBOX_ENV] = inbox;
-      const handlers = new Map<string, (payload?: unknown) => unknown>();
+      const handlers = new Map<TestEventName, TestEventHandler>();
       const sent: Array<{ content: string; options: { deliverAs: string } }> = [];
 
       registerSubagentPromptRuntime(
         makeExtensionAPI({
-          on(event: string, handler: (payload?: unknown) => unknown) {
-            handlers.set(event, handler);
-          },
-          sendUserMessage(content: string, options: { deliverAs: string }) {
-            sent.push({ content, options });
+          on: recordEvents(handlers),
+          sendUserMessage(content, options) {
+            if (typeof content !== "string" || options?.deliverAs === undefined) {
+              throw new Error("test sendUserMessage expected string steer input");
+            }
+            sent.push({ content, options: { deliverAs: options.deliverAs } });
           },
         }),
       );
@@ -274,13 +368,25 @@ describe("subagent prompt runtime", () => {
 
       registerSubagentPromptRuntime(
         makeExtensionAPI({
-          registerTool(tool: {
-            name: string;
-            execute: (_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>;
-          }) {
-            if (tool.name === "structured_output") execute = tool.execute;
+          registerTool<TParams extends TSchema, TDetails, TState>(
+            tool: ToolDefinition<TParams, TDetails, TState>,
+          ) {
+            if (tool.name !== "structured_output") return;
+            execute = async (toolCallId, params) => {
+              if (!matchesToolParameters(tool.parameters, params)) {
+                throw new Error("test structured_output params failed schema validation");
+              }
+              const result = await tool.execute(
+                toolCallId,
+                params,
+                undefined,
+                undefined,
+                makeMinimalCtx(process.cwd()),
+              );
+              return { terminate: result.terminate };
+            };
           },
-          on() {},
+          on: () => {},
         }),
       );
 
@@ -400,33 +506,16 @@ describe("subagent prompt runtime", () => {
   });
 
   it("strips parent-only subagent custom messages from forked child context", () => {
-    const user = { role: "user", content: "Task" };
-    const instruction = {
-      role: "custom",
-      customType: "subagent-orchestration-instructions",
-      content: "Subagent orchestration is enabled.",
-    };
-    const slashResult = {
-      role: "custom",
-      customType: "subagent-slash-result",
-      content: "## Orchestration",
-    };
-    const slashTextResult = {
-      role: "custom",
-      customType: "subagent-slash-text-result",
-      content: "Subagent profiles",
-    };
-    const notify = {
-      role: "custom",
-      customType: "subagent-notify",
-      content: "Background task completed",
-    };
-    const control = {
-      role: "custom",
-      customType: "subagent_control_notice",
-      content: "needs attention",
-    };
-    const otherCustom = { role: "custom", customType: "other", content: "keep" };
+    const user = makeUserMessage("Task");
+    const instruction = makeCustomMessage(
+      "subagent-orchestration-instructions",
+      "Subagent orchestration is enabled.",
+    );
+    const slashResult = makeCustomMessage("subagent-slash-result", "## Orchestration");
+    const slashTextResult = makeCustomMessage("subagent-slash-text-result", "Subagent profiles");
+    const notify = makeCustomMessage("subagent-notify", "Background task completed");
+    const control = makeCustomMessage("subagent_control_notice", "needs attention");
+    const otherCustom = makeCustomMessage("other", "keep");
 
     assert.deepEqual(
       stripParentOnlySubagentMessages([
@@ -443,26 +532,27 @@ describe("subagent prompt runtime", () => {
   });
 
   it("strips prior parent subagent tool calls and results from forked child context", () => {
-    const user = { role: "user", content: "Task" };
-    const subagentResult = {
-      role: "toolResult",
-      toolName: "subagent",
-      content: "subagent results",
-    };
-    const readResult = { role: "toolResult", toolName: "read", content: "file contents" };
-    const mixedAssistant = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "I will inspect the repo." },
-        { type: "toolCall", name: "subagent", input: { agent: "worker" } },
-        { type: "toolCall", name: "read", input: { path: "README.md" } },
-      ],
-    };
-    const pureSubagentCall = {
-      role: "assistant",
-      content: [{ type: "toolCall", name: "subagent", input: { agent: "reviewer" } }],
-    };
+    const user = makeUserMessage("Task");
+    const subagentResult = makeToolResultMessage("subagent", "subagent results");
+    const readResult = makeToolResultMessage("read", "file contents");
+    const mixedAssistant = makeAssistantMessage([
+      { type: "text", text: "I will inspect the repo." },
+      { type: "toolCall", id: "subagent-call", name: "subagent", arguments: { agent: "worker" } },
+      { type: "toolCall", id: "read-call", name: "read", arguments: { path: "README.md" } },
+    ]);
+    const pureSubagentCall = makeAssistantMessage([
+      {
+        type: "toolCall",
+        id: "reviewer-call",
+        name: "subagent",
+        arguments: { agent: "reviewer" },
+      },
+    ]);
 
+    const textBlock = mixedAssistant.content[0];
+    const readBlock = mixedAssistant.content[2];
+    assert.ok(textBlock);
+    assert.ok(readBlock);
     assert.deepEqual(
       stripParentOnlySubagentMessages([
         user,
@@ -475,20 +565,17 @@ describe("subagent prompt runtime", () => {
         user,
         readResult,
         {
-          role: "assistant",
-          content: [
-            { type: "text", text: "I will inspect the repo." },
-            { type: "toolCall", name: "read", input: { path: "README.md" } },
-          ],
+          ...mixedAssistant,
+          content: [textBlock, readBlock],
         },
       ],
     );
   });
 
   it("strips wake-up nudge user messages (string content) from forked child context", () => {
-    const normalUser = { role: "user", content: "Hello from the human." };
-    const bgNudge = { role: "user", content: BACKGROUND_COMPLETION_NUDGE_TEXT };
-    const controlNudge = { role: "user", content: CONTROL_NOTICE_NUDGE_TEXT };
+    const normalUser = makeUserMessage("Hello from the human.");
+    const bgNudge = makeUserMessage(BACKGROUND_COMPLETION_NUDGE_TEXT);
+    const controlNudge = makeUserMessage(CONTROL_NOTICE_NUDGE_TEXT);
 
     assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [
       normalUser,
@@ -496,15 +583,9 @@ describe("subagent prompt runtime", () => {
   });
 
   it("strips wake-up nudge user messages (single text-block content) from forked child context", () => {
-    const normalUser = { role: "user", content: [{ type: "text", text: "Hello from the human." }] };
-    const bgNudge = {
-      role: "user",
-      content: [{ type: "text", text: BACKGROUND_COMPLETION_NUDGE_TEXT }],
-    };
-    const controlNudge = {
-      role: "user",
-      content: [{ type: "text", text: CONTROL_NOTICE_NUDGE_TEXT }],
-    };
+    const normalUser = makeUserMessage([{ type: "text", text: "Hello from the human." }]);
+    const bgNudge = makeUserMessage([{ type: "text", text: BACKGROUND_COMPLETION_NUDGE_TEXT }]);
+    const controlNudge = makeUserMessage([{ type: "text", text: CONTROL_NOTICE_NUDGE_TEXT }]);
 
     assert.deepEqual(stripParentOnlySubagentMessages([normalUser, bgNudge, controlNudge]), [
       normalUser,
@@ -512,12 +593,9 @@ describe("subagent prompt runtime", () => {
   });
 
   it("does not strip normal user messages or [tlh]-prefixed messages that are not registered nudges", () => {
-    const normalUser = { role: "user", content: "Do the task." };
-    const tlhPrefixed = { role: "user", content: "[tlh] Some other instruction." };
-    const almostNudge = {
-      role: "user",
-      content: BACKGROUND_COMPLETION_NUDGE_TEXT + " (extra)",
-    };
+    const normalUser = makeUserMessage("Do the task.");
+    const tlhPrefixed = makeUserMessage("[tlh] Some other instruction.");
+    const almostNudge = makeUserMessage(BACKGROUND_COMPLETION_NUDGE_TEXT + " (extra)");
 
     const result = stripParentOnlySubagentMessages([normalUser, tlhPrefixed, almostNudge]);
     assert.deepEqual(result, [normalUser, tlhPrefixed, almostNudge]);
@@ -525,16 +603,16 @@ describe("subagent prompt runtime", () => {
 
   it("defers native supervisor registration until runtime events and respects installed pi-intercom tools", async () => {
     setSupervisorEnv();
-    const handlers = new Map<string, (payload?: unknown) => unknown>();
+    const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
 
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(event: string, handler: (payload?: unknown) => unknown) {
-          handlers.set(event, handler);
-        },
-        getAllTools: () => [{ name: "intercom" }, { name: "contact_supervisor" }],
-        registerTool(tool: { name: string }) {
+        on: recordEvents(handlers),
+        getAllTools: () => [makeToolInfo("intercom"), makeToolInfo("contact_supervisor")],
+        registerTool<TParams extends TSchema, TDetails, TState>(
+          tool: ToolDefinition<TParams, TDetails, TState>,
+        ) {
           registered.push(tool.name);
         },
       }),
@@ -548,16 +626,16 @@ describe("subagent prompt runtime", () => {
 
   it("keeps installed pi-intercom while filling only a missing child contact_supervisor tool", async () => {
     setSupervisorEnv();
-    const handlers = new Map<string, (payload?: unknown) => unknown>();
+    const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
 
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(event: string, handler: (payload?: unknown) => unknown) {
-          handlers.set(event, handler);
-        },
-        getAllTools: () => [{ name: "intercom" }, ...registered.map((name) => ({ name }))],
-        registerTool(tool: { name: string }) {
+        on: recordEvents(handlers),
+        getAllTools: () => [makeToolInfo("intercom"), ...registered.map(makeToolInfo)],
+        registerTool<TParams extends TSchema, TDetails, TState>(
+          tool: ToolDefinition<TParams, TDetails, TState>,
+        ) {
           registered.push(tool.name);
         },
       }),
@@ -571,16 +649,16 @@ describe("subagent prompt runtime", () => {
 
   it("registers only contact_supervisor at runtime when pi-intercom is absent", async () => {
     setSupervisorEnv();
-    const handlers = new Map<string, (payload?: unknown) => unknown>();
+    const handlers = new Map<TestEventName, TestEventHandler>();
     const registered: string[] = [];
 
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(event: string, handler: (payload?: unknown) => unknown) {
-          handlers.set(event, handler);
-        },
-        getAllTools: () => registered.map((name) => ({ name })),
-        registerTool(tool: { name: string }) {
+        on: recordEvents(handlers),
+        getAllTools: () => registered.map(makeToolInfo),
+        registerTool<TParams extends TSchema, TDetails, TState>(
+          tool: ToolDefinition<TParams, TDetails, TState>,
+        ) {
           registered.push(tool.name);
         },
       }),
@@ -596,104 +674,75 @@ describe("subagent prompt runtime", () => {
   it("sets the child intercom session name from env during agent startup", async () => {
     clearSupervisorEnv();
     let sessionName: string | undefined;
-    let beforeAgentStart:
-      | ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>)
-      | undefined;
+    const handlers = new Map<TestEventName, TestEventHandler>();
     process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV] = "subagent-worker-78f659a3";
 
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(
-          event: string,
-          handler: (payload: {
-            systemPrompt: string;
-          }) => Promise<{ systemPrompt: string } | undefined>,
-        ) {
-          if (event === "before_agent_start") beforeAgentStart = handler;
-        },
+        on: recordEvents(handlers),
         setSessionName(name: string) {
           sessionName = name;
         },
       }),
     );
 
-    await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
+    await handlers.get("before_agent_start")?.({ systemPrompt: BASE_PROMPT });
 
     assert.equal(sessionName, "subagent-worker-78f659a3");
   });
 
   it("rewrites the final child-visible prompt through before_agent_start", async () => {
     clearSupervisorEnv();
-    let beforeAgentStart:
-      | ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string } | undefined>)
-      | undefined;
+    const handlers = new Map<TestEventName, TestEventHandler>();
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(
-          event: string,
-          handler: (payload: {
-            systemPrompt: string;
-          }) => Promise<{ systemPrompt: string } | undefined>,
-        ) {
-          if (event === "before_agent_start") beforeAgentStart = handler;
-        },
+        on: recordEvents(handlers),
       }),
     );
 
-    assert.ok(beforeAgentStart, "expected before_agent_start handler");
+    assert.ok(handlers.get("before_agent_start"), "expected before_agent_start handler");
     process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = "0";
     process.env.PI_SUBAGENT_INHERIT_SKILLS = "0";
 
-    const rewritten = await beforeAgentStart?.({ systemPrompt: BASE_PROMPT });
-    assert.ok(rewritten);
+    const rewritten = await handlers.get("before_agent_start")?.({
+      systemPrompt: BASE_PROMPT,
+    });
+    assert.ok(hasSystemPrompt(rewritten));
     assert.ok(!rewritten.systemPrompt.includes("# Project Context"));
     assert.ok(!rewritten.systemPrompt.includes("<available_skills>"));
     assert.ok(rewritten.systemPrompt.includes("Current date: 2026-04-16"));
   });
 
   it("filters parent-only artifacts from polluted fork context while preserving ordinary history", () => {
-    let contextHandler:
-      | ((event: { messages: unknown[] }) => { messages: unknown[] } | undefined)
-      | undefined;
+    const handlers = new Map<TestEventName, TestEventHandler>();
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(
-          event: string,
-          handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined,
-        ) {
-          if (event === "context") contextHandler = handler;
-        },
+        on: recordEvents(handlers),
       }),
     );
 
-    const priorParentTurn = {
-      role: "user",
-      content: "Earlier we said planner → worker → reviewers → worker.",
-    };
-    const currentTask = { role: "user", content: "Now implement only the assigned fix." };
-    const instruction = {
-      role: "custom",
-      customType: "subagent-orchestration-instructions",
-      content: "Subagent orchestration is enabled.",
-    };
-    const slashResult = {
-      role: "custom",
-      customType: "subagent-slash-result",
-      content: "## Orchestration",
-    };
-    const subagentResult = {
-      role: "toolResult",
-      toolName: "subagent",
-      content: "subagent results",
-    };
-    const subagentCall = {
-      role: "assistant",
-      content: [{ type: "toolCall", name: "subagent", input: { agent: "worker" } }],
-    };
-    const otherCustom = { role: "custom", customType: "other", content: "keep" };
+    const priorParentTurn = makeUserMessage(
+      "Earlier we said planner → worker → reviewers → worker.",
+    );
+    const currentTask = makeUserMessage("Now implement only the assigned fix.");
+    const instruction = makeCustomMessage(
+      "subagent-orchestration-instructions",
+      "Subagent orchestration is enabled.",
+    );
+    const slashResult = makeCustomMessage("subagent-slash-result", "## Orchestration");
+    const subagentResult = makeToolResultMessage("subagent", "subagent results");
+    const subagentCall = makeAssistantMessage([
+      {
+        type: "toolCall",
+        id: "worker-call",
+        name: "subagent",
+        arguments: { agent: "worker" },
+      },
+    ]);
+    const otherCustom = makeCustomMessage("other", "keep");
 
     assert.deepEqual(
-      contextHandler?.({
+      handlers.get("context")?.({
         messages: [
           priorParentTurn,
           instruction,
@@ -711,29 +760,26 @@ describe("subagent prompt runtime", () => {
   });
 
   it("does not rewrite child context when no parent-only artifacts are present", () => {
-    let contextHandler:
-      | ((event: { messages: unknown[] }) => { messages: unknown[] } | undefined)
-      | undefined;
+    const handlers = new Map<TestEventName, TestEventHandler>();
     registerSubagentPromptRuntime(
       makeExtensionAPI({
-        on(
-          event: string,
-          handler: (payload: { messages: unknown[] }) => { messages: unknown[] } | undefined,
-        ) {
-          if (event === "context") contextHandler = handler;
-        },
+        on: recordEvents(handlers),
       }),
     );
 
-    const messages = [
-      { role: "user", content: "Task" },
-      { role: "toolResult", toolName: "read", content: "file" },
-      {
-        role: "assistant",
-        content: [{ type: "toolCall", name: "read", input: { path: "README.md" } }],
-      },
+    const messages: AgentMessage[] = [
+      makeUserMessage("Task"),
+      makeToolResultMessage("read", "file"),
+      makeAssistantMessage([
+        {
+          type: "toolCall",
+          id: "read-call",
+          name: "read",
+          arguments: { path: "README.md" },
+        },
+      ]),
     ];
 
-    assert.equal(contextHandler?.({ messages }), undefined);
+    assert.equal(handlers.get("context")?.({ messages }), undefined);
   });
 });

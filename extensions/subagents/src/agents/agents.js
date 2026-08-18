@@ -51,9 +51,21 @@ function getUserChainDir() {
     return path.join(getAgentDir(), "chains");
 }
 let cachedGlobalNpmRoot = null;
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function readJsonFileBestEffort(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch {
         return null;
@@ -61,7 +73,8 @@ function readJsonFileBestEffort(filePath) {
 }
 function readOptionalJsonFile(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch (error) {
         const code = typeof error === "object" && error !== null && "code" in error

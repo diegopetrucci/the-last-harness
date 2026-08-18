@@ -8,10 +8,10 @@ import test from "node:test";
 const repoRoot = resolve(import.meta.dirname, "..");
 const oxlintPath = join(repoRoot, "node_modules/.bin/oxlint");
 const oxlintConfigPath = join(repoRoot, ".oxlintrc.json");
-const ruleCode = "anti-slop(no-widen-then-assert)";
+const ruleCode = "anti-slop(no-chained-type-assertions)";
 
 function lintFixtures(t, fixtures) {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-no-widen-then-assert-"));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "tlh-no-chained-type-assertions-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const fixturePaths = Object.entries(fixtures).map(([name, source]) => {
     const fixturePath = join(fixtureRoot, name);
@@ -41,59 +41,55 @@ function lintFixtures(t, fixtures) {
     );
 }
 
-test("no-widen-then-assert reports representative broad bindings restored with assertions", (t) => {
+test("no-chained-type-assertions reports direct, parenthesized, angle, and mixed chains", (t) => {
   const diagnostics = lintFixtures(t, {
     "rejected.ts": `
-function restore() {
-  const unknownConfig: unknown = { retries: 3 };
-  const fromUnknown = unknownConfig as { retries: number };
-  const fromUnknownAngle = <{ retries: number }>unknownConfig;
-
-  const objectConfig: object = { retries: 3 };
-  const fromObject = objectConfig as { retries: number };
-
-  const recordConfig: Record<string, unknown> = { retries: 3 };
-  const fromRecord = recordConfig as Record<string, number>;
-
-  const assertedConfig = ({ retries: 3 } as unknown);
-  const fromAssertion = assertedConfig as { retries: number };
-
-  return [fromUnknown, fromUnknownAngle, fromObject, fromRecord, fromAssertion];
+interface OwnerContract {
+  ownerId: string;
 }
+
+declare const untrusted: unknown;
+
+const direct = untrusted as unknown as OwnerContract;
+const parenthesized = (untrusted as unknown) as OwnerContract;
+const angle = <OwnerContract><unknown>untrusted;
+const mixed = ({ ownerId: "owner" } as const) as OwnerContract;
 `,
   });
 
   assert.deepEqual(
     diagnostics.map(({ filename, line }) => `${filename}:${line}`),
-    ["rejected.ts:4", "rejected.ts:5", "rejected.ts:8", "rejected.ts:11", "rejected.ts:14"],
+    ["rejected.ts:8", "rejected.ts:9", "rejected.ts:10", "rejected.ts:11"],
   );
   assert.ok(diagnostics.every(({ code, severity }) => code === ruleCode && severity === "error"));
 });
 
-test("no-widen-then-assert allows precise, mutable, boundary, and already-broad flows", (t) => {
+test("no-chained-type-assertions allows one owner assertion, const values, and validated boundaries", (t) => {
   const diagnostics = lintFixtures(t, {
     "allowed.ts": `
-type Config = { retries: number };
-
-const preciseConfig = { retries: 3 };
-const fromPrecise = preciseConfig as Config;
-
-let mutableConfig: unknown = { retries: 3 };
-const fromMutable = mutableConfig as Config;
-
-declare const externalConfig: unknown;
-const fromExternal = externalConfig as Config;
-const remainsBroad = externalConfig as unknown;
-
-const closedOverConfig: unknown = { retries: 3 };
-function narrowAtUseBoundary() {
-  return closedOverConfig as Config;
+interface OwnerContract {
+  ownerId: string;
 }
 
-function parseBoundary(input: unknown) {
-  return input as Config;
+const owner = { ownerId: "owner" } as OwnerContract;
+const frozenOwner = { ownerId: "owner" } as const;
+
+function isOwnerContract(value: unknown): value is OwnerContract {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "ownerId" in value &&
+    typeof value.ownerId === "string"
+  );
 }
 
+function parseOwner(value: unknown): OwnerContract {
+  if (!isOwnerContract(value)) throw new Error("invalid owner");
+  return value;
+}
+
+declare const externalInput: unknown;
+const validatedOwner = parseOwner(externalInput);
 `,
   });
 

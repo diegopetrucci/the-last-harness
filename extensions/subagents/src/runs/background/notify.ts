@@ -138,9 +138,11 @@ interface SubagentResult {
   sessionId?: string | null;
 }
 
+type NotifyTimerHandle = ReturnType<typeof setTimeout> | number;
+
 interface NotifyTimerApi {
-  setTimeout(handler: () => void, delayMs: number): unknown;
-  clearTimeout(handle: unknown): void;
+  setTimeout(handler: () => void, delayMs: number): NotifyTimerHandle;
+  clearTimeout(handle: NotifyTimerHandle): void;
 }
 
 export interface RegisterSubagentNotifyOptions {

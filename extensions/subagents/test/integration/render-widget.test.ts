@@ -4,7 +4,6 @@ import {
   KeybindingsManager,
   type KeyId,
 } from "../../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js";
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   Text,
@@ -12,6 +11,7 @@ import {
   setKeybindings,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { createPlainTheme } from "../support/themes.ts";
 import type { AsyncJobState, AsyncJobStep } from "../../src/shared/types.ts";
 import { createSubagentLiveDetailController } from "../../src/shared/subagent-shortcuts.ts";
 import {
@@ -24,14 +24,7 @@ import {
   whimsicalThinkingPhrase,
 } from "../../src/tui/whimsical-phrases.ts";
 
-// Theme is an SDK class with private colour-table fields; a plain object with
-// the two methods the render functions actually call is sufficient for tests.
-// Casting to the real Theme type (not a handwritten local shape) means the
-// compiler still validates everything except the theme argument itself.
-const theme = {
-  fg: (_name: string, text: string) => text,
-  bold: (text: string) => text,
-} as unknown as Theme;
+const theme = createPlainTheme();
 
 const runningGlyphPattern = "[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]";
 
@@ -111,9 +104,11 @@ function renderWidgetHarnessLines(widget: unknown): string[] {
     theme,
   );
   return component.children.map((child) => {
-    const text = (child as unknown as { text?: unknown }).text;
-    assert.equal(typeof text, "string", "widget harness should expose Text children");
-    return text as string;
+    const text: unknown = Object.getOwnPropertyDescriptor(child, "text")?.value;
+    if (typeof text !== "string") {
+      assert.fail("widget harness should expose Text children");
+    }
+    return text;
   });
 }
 

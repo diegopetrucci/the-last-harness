@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
-import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
+import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
+import { makeSubagentState } from "../support/helpers.ts";
 
 function errno(code: string): NodeJS.ErrnoException {
   const error = new Error(code) as NodeJS.ErrnoException;
@@ -415,7 +416,7 @@ describe("async run status inspection", () => {
         ),
         "utf-8",
       );
-      const state = {
+      const state = makeSubagentState({
         foregroundControls: new Map([
           [
             "fg-run",
@@ -430,7 +431,7 @@ describe("async run status inspection", () => {
             },
           ],
         ]),
-      } as unknown as SubagentState;
+      });
 
       const result = inspectSubagentStatus(
         { view: "fleet" },
@@ -505,11 +506,7 @@ describe("async run status inspection", () => {
         ),
         "utf-8",
       );
-      const state = {
-        currentSessionId: "session-current",
-        asyncJobs: new Map(),
-        foregroundControls: new Map(),
-      } as unknown as SubagentState;
+      const state = makeSubagentState({ currentSessionId: "session-current" });
 
       const result = inspectSubagentStatus(
         { view: "fleet" },
@@ -556,11 +553,7 @@ describe("async run status inspection", () => {
         ),
         "utf-8",
       );
-      const state = {
-        currentSessionId: "session-current",
-        asyncJobs: new Map(),
-        foregroundControls: new Map(),
-      } as unknown as SubagentState;
+      const state = makeSubagentState({ currentSessionId: "session-current" });
 
       const result = inspectSubagentStatus(
         { id: "run-other-session", view: "transcript" },

@@ -3,6 +3,18 @@ import { parseGitSource } from "./tlh-install-package-source.mjs";
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function readManifestJson(path, { allowMissing }) {
     if (!existsSync(path)) {
         if (allowMissing)
@@ -13,7 +25,10 @@ function readManifestJson(path, { allowMissing }) {
     if (!raw.trim())
         return {};
     try {
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (isJsonValue(parsed))
+            return parsed;
+        throw new Error("JSON value is not representable as a JSON document");
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);

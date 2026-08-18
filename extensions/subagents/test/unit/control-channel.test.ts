@@ -502,26 +502,46 @@ describe("control channel: watchAsyncControlInbox", () => {
   function harness(): WatchHarness {
     let listener: (() => void) | undefined;
     let closed = false;
+
+    function watch(
+      filename: fs.PathLike,
+      options?: fs.WatchOptionsWithStringEncoding | BufferEncoding | null,
+      callback?: fs.WatchListener<string>,
+    ): fs.FSWatcher;
+    function watch(
+      filename: fs.PathLike,
+      options: fs.WatchOptionsWithBufferEncoding | "buffer",
+      callback: fs.WatchListener<NonSharedBuffer>,
+    ): fs.FSWatcher;
+    function watch(
+      filename: fs.PathLike,
+      options: fs.WatchOptions | BufferEncoding | "buffer" | null,
+      callback: fs.WatchListener<string | NonSharedBuffer>,
+    ): fs.FSWatcher;
+    function watch(filename: fs.PathLike, callback: fs.WatchListener<string>): fs.FSWatcher;
+    function watch(filename: fs.PathLike, ...args: unknown[]): fs.FSWatcher {
+      const callback = args.find((arg) => typeof arg === "function");
+      listener = () => {
+        if (typeof callback === "function") callback();
+      };
+      const watcher = fs.watch(filename);
+      const close = watcher.close.bind(watcher);
+      watcher.close = () => {
+        closed = true;
+        close();
+      };
+      return watcher;
+    }
+
     const fsImpl = {
       mkdirSync: fs.mkdirSync,
       existsSync: fs.existsSync,
       rmSync: fs.rmSync,
       readdirSync: fs.readdirSync,
       readFileSync: fs.readFileSync,
-      watch: (_dir: string, cb: () => void) => {
-        listener = cb;
-        return {
-          close: () => {
-            closed = true;
-          },
-          on: () => {},
-        };
-      },
-    } as unknown as WatchHarness["fsImpl"];
-    const timers = {
-      setInterval: (() => ({ unref() {} })) as unknown as typeof setInterval,
-      clearInterval: (() => {}) as unknown as typeof clearInterval,
-    };
+      watch,
+    } satisfies WatchHarness["fsImpl"];
+    const timers: WatchHarness["timers"] = { setInterval, clearInterval };
     return { fsImpl, timers, trigger: () => listener?.(), closed: () => closed };
   }
 

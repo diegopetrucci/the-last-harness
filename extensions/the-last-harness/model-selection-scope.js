@@ -7,6 +7,13 @@ export const MODEL_SELECTION_SCOPE_OPTIONS = [
     MODEL_SELECTION_SCOPE_SESSION_ONLY,
     MODEL_SELECTION_SCOPE_ALL_SESSIONS,
 ];
+function isModelSelectorRuntimePrototype(value) {
+    return (value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        "handleSelect" in value &&
+        typeof value.handleSelect === "function");
+}
 const TLH_MODEL_SELECTION_PERSISTENCE_PATCH = Symbol.for("tlh.modelSelectionPersistencePatch");
 function getPatchedPrototype() {
     return SettingsManager.prototype;
@@ -172,7 +179,17 @@ export function installTlhModelSelectionPersistenceOverride() {
     if (prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH]) {
         return true;
     }
-    const modelSelectorPrototype = ModelSelectorComponent.prototype;
+    const modelSelectorPrototypeCandidate = ModelSelectorComponent.prototype;
+    if (!isModelSelectorRuntimePrototype(modelSelectorPrototypeCandidate) ||
+        typeof prototype.setDefaultModelAndProvider !== "function" ||
+        typeof prototype.setDefaultModel !== "function" ||
+        typeof prototype.setDefaultProvider !== "function" ||
+        typeof prototype.setDefaultThinkingLevel !== "function") {
+        console.warn("[TLH] installTlhModelSelectionPersistenceOverride: model selector or SettingsManager default " +
+            "setters are unavailable; skipping patch.");
+        return false;
+    }
+    const modelSelectorPrototype = modelSelectorPrototypeCandidate;
     const originals = {
         handleModelSelect: modelSelectorPrototype.handleSelect,
         setDefaultModelAndProvider: prototype.setDefaultModelAndProvider,
@@ -180,15 +197,6 @@ export function installTlhModelSelectionPersistenceOverride() {
         setDefaultProvider: prototype.setDefaultProvider,
         setDefaultThinkingLevel: prototype.setDefaultThinkingLevel,
     };
-    if (typeof originals.handleModelSelect !== "function" ||
-        typeof originals.setDefaultModelAndProvider !== "function" ||
-        typeof originals.setDefaultModel !== "function" ||
-        typeof originals.setDefaultProvider !== "function" ||
-        typeof originals.setDefaultThinkingLevel !== "function") {
-        console.warn("[TLH] installTlhModelSelectionPersistenceOverride: model selector or SettingsManager default " +
-            "setters are unavailable; skipping patch.");
-        return false;
-    }
     const state = {
         activeModelResolver: undefined,
         sessionOnlyModel: undefined,

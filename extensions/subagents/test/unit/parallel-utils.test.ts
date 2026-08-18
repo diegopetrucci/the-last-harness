@@ -28,7 +28,10 @@ describe("isParallelGroup", () => {
   });
 
   it("returns false when parallel is not an array", () => {
-    const step = { parallel: "not-an-array", agent: "a", task: "x" } as unknown as RunnerStep;
+    const step = {
+      parallel: [makeRunnerStep("a", "do stuff")],
+    } satisfies ParallelStepGroup;
+    Reflect.set(step, "parallel", "not-an-array");
     assert.equal(isParallelGroup(step), false);
   });
 });
