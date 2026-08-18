@@ -3,50 +3,6 @@ import { describe, it } from "node:test";
 
 type JsonSchemaNode = Record<string, unknown>;
 
-interface SubagentParamsSchema {
-  properties?: {
-    context?: {
-      type?: string;
-      enum?: string[];
-      description?: string;
-    };
-    tasks?: {
-      items?: {
-        properties?: {
-          count?: {
-            minimum?: number;
-            description?: string;
-          };
-        };
-      };
-    };
-    concurrency?: {
-      minimum?: number;
-      description?: string;
-    };
-    timeoutMs?: {
-      minimum?: number;
-      description?: string;
-    };
-    id?: {
-      type?: string;
-      description?: string;
-    };
-    async?: {
-      description?: string;
-    };
-    message?: {
-      description?: string;
-    };
-    action?: {
-      type?: string;
-      enum?: string[];
-      description?: string;
-    };
-    output?: JsonSchemaNode;
-  };
-}
-
 function anyOfBranches(schema: JsonSchemaNode | undefined): JsonSchemaNode[] {
   const anyOf = schema?.anyOf;
   if (!Array.isArray(anyOf)) return [];
@@ -65,28 +21,33 @@ function hasAnyOfArrayWithStringItems(schema: JsonSchemaNode | undefined): boole
   });
 }
 
+function isSchemaObject(value: unknown): value is JsonSchemaNode {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireSchemaObject(value: unknown, label: string): JsonSchemaNode {
+  if (!isSchemaObject(value)) throw new Error(`${label} must be a schema object`);
+  return value;
+}
+
 function getPropertySchema(
   schema: JsonSchemaNode | undefined,
   path: string[],
 ): JsonSchemaNode | undefined {
   let current: unknown = schema;
   for (const key of path) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as JsonSchemaNode).properties;
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
+    if (!isSchemaObject(current) || !isSchemaObject(current.properties)) return undefined;
+    current = current.properties[key];
   }
-  return current && typeof current === "object" ? (current as JsonSchemaNode) : undefined;
+  return isSchemaObject(current) ? current : undefined;
 }
 
 // Import from the real module so the compiler tracks the actual exports.
-// SubagentParams is cast to the test-local SubagentParamsSchema type to enable
-// .properties access; if the real export is removed or renamed this line breaks.
-// schemas is typed as a string-keyed record so structural-invariant tests can
-// iterate over all exported schemas without knowing their specific TypeBox types.
+// The concrete TypeBox object remains the owner of SubagentParams' shape; the
+// open-object checks below deliberately inspect its provider-facing JSON view.
 const schemasModule = await import("../../src/extension/schemas.ts");
-const SubagentParams = schemasModule.SubagentParams as unknown as SubagentParamsSchema;
-const schemas: Record<string, unknown> = schemasModule as unknown as Record<string, unknown>;
+const SubagentParams = requireSchemaObject(schemasModule.SubagentParams, "SubagentParams");
+const schemas: Record<string, unknown> = Object.fromEntries(Object.entries(schemasModule));
 type CompileSchemaFunction = (schema: unknown) => {
   Check(value: unknown): boolean;
   Errors(value: unknown): Iterable<{ message: string }>;
@@ -97,7 +58,7 @@ const { Compile: CompileSchema } = (await import("typebox/compile")) as {
 
 describe("SubagentParams schema", () => {
   it("includes context field for fresh/fork execution mode", () => {
-    const contextSchema = SubagentParams?.properties?.context;
+    const contextSchema = getPropertySchema(SubagentParams, ["context"]);
     assert.ok(contextSchema, "context schema should exist");
     assert.equal(contextSchema.type, "string");
     assert.deepEqual(contextSchema.enum, ["fresh", "fork"]);
@@ -109,9 +70,13 @@ describe("SubagentParams schema", () => {
   });
 
   it("includes count and concurrency on top-level parallel mode", () => {
-    const taskItemsSchema = SubagentParams?.properties?.tasks?.items as JsonSchemaNode | undefined;
-    const taskSchema = taskItemsSchema?.properties as Record<string, JsonSchemaNode> | undefined;
-    const taskCountSchema = taskSchema?.count;
+    const taskSchemaOwner = getPropertySchema(SubagentParams, ["tasks"]);
+    const taskItemsSchema = isSchemaObject(taskSchemaOwner?.items)
+      ? taskSchemaOwner.items
+      : undefined;
+    const taskProperties: unknown = taskItemsSchema?.properties;
+    const taskSchema = isSchemaObject(taskProperties) ? taskProperties : undefined;
+    const taskCountSchema = isSchemaObject(taskSchema?.count) ? taskSchema.count : undefined;
     assert.ok(taskCountSchema, "tasks[].count schema should exist");
     assert.equal(taskCountSchema.minimum, 1);
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
@@ -121,24 +86,25 @@ describe("SubagentParams schema", () => {
       "tasks[] allowlist mismatch",
     );
     assert.equal(taskSchema?.cwd, undefined, "tasks[] must not expose cwd");
-    const outputSchema = taskSchema?.output as JsonSchemaNode | undefined;
+    const outputSchema = isSchemaObject(taskSchema?.output) ? taskSchema.output : undefined;
     assert.equal(outputSchema?.type, undefined);
     assert.equal(hasAnyOfType(outputSchema, "string"), true);
     assert.equal(hasAnyOfType(outputSchema, "boolean"), true);
-    const readsSchema = taskSchema?.reads as JsonSchemaNode | undefined;
+    const readsSchema = isSchemaObject(taskSchema?.reads) ? taskSchema.reads : undefined;
     assert.equal(readsSchema?.type, undefined);
     assert.equal(hasAnyOfArrayWithStringItems(readsSchema), true);
     assert.equal(hasAnyOfType(readsSchema, "boolean"), true);
-    assert.equal(taskSchema?.progress?.type, "boolean");
+    const progressSchema = isSchemaObject(taskSchema?.progress) ? taskSchema.progress : undefined;
+    assert.equal(progressSchema?.type, "boolean");
 
-    const concurrencySchema = SubagentParams?.properties?.concurrency;
+    const concurrencySchema = getPropertySchema(SubagentParams, ["concurrency"]);
     assert.ok(concurrencySchema, "concurrency schema should exist");
     assert.equal(concurrencySchema.minimum, 1);
     assert.match(String(concurrencySchema.description ?? ""), /parallel/i);
   });
 
   it("action is a closed enum with exactly the TLH-minimal management values", () => {
-    const actionSchema = SubagentParams?.properties?.action;
+    const actionSchema = getPropertySchema(SubagentParams, ["action"]);
     assert.ok(actionSchema, "action schema should exist");
     assert.equal(actionSchema.type, "string");
     assert.deepEqual(actionSchema.enum, [
@@ -158,7 +124,7 @@ describe("SubagentParams schema", () => {
   });
 
   it("includes foreground timeout", () => {
-    const timeoutSchema = SubagentParams?.properties?.timeoutMs;
+    const timeoutSchema = getPropertySchema(SubagentParams, ["timeoutMs"]);
     assert.ok(timeoutSchema, "timeoutMs schema should exist");
     assert.equal(timeoutSchema.minimum, 1);
     assert.match(String(timeoutSchema.description ?? ""), /foreground and async\/background/i);
@@ -166,16 +132,16 @@ describe("SubagentParams schema", () => {
   });
 
   it("includes id, index, and message control parameters", () => {
-    const idSchema = SubagentParams?.properties?.id;
+    const idSchema = getPropertySchema(SubagentParams, ["id"]);
     assert.ok(idSchema, "id schema should exist");
     assert.equal(idSchema.type, "string");
     assert.match(String(idSchema.description ?? ""), /status/i);
     assert.match(String(idSchema.description ?? ""), /interrupt/i);
     assert.match(String(idSchema.description ?? ""), /resume/i);
     assert.match(String(idSchema.description ?? ""), /durable paused-awaiting-supervisor/i);
-    const asyncSchema = SubagentParams?.properties?.async;
+    const asyncSchema = getPropertySchema(SubagentParams, ["async"]);
     assert.match(String(asyncSchema?.description ?? ""), /detached background work/i);
-    const messageSchema = SubagentParams?.properties?.message;
+    const messageSchema = getPropertySchema(SubagentParams, ["message"]);
     assert.match(String(messageSchema?.description ?? ""), /omit for unchanged resume/i);
   });
 
@@ -245,7 +211,7 @@ describe("SubagentParams schema", () => {
 
   it("keeps only top-level parameter descriptions to keep the provider payload compact", () => {
     assert.ok(SubagentParams, "SubagentParams schema should exist");
-    const schema = SubagentParams as unknown as JsonSchemaNode;
+    const schema = SubagentParams;
     const serialized = JSON.stringify(schema);
     assert.ok(
       serialized.length < 15_000,
@@ -253,9 +219,7 @@ describe("SubagentParams schema", () => {
     );
     assert.equal(serialized.includes('"$ref"'), false);
     assert.equal(serialized.includes('"$defs"'), false);
-    const agentDescription = String(
-      (schema.properties as Record<string, JsonSchemaNode> | undefined)?.agent?.description ?? "",
-    );
+    const agentDescription = String(getPropertySchema(schema, ["agent"])?.description ?? "");
     assert.match(agentDescription, /SINGLE mode/);
     assert.match(agentDescription, /action='get'/);
     assert.doesNotMatch(agentDescription, /update|delete/);
@@ -289,7 +253,7 @@ describe("SubagentParams schema", () => {
 
   it("preserves TypeBox metadata while pruning provider-visible descriptions", () => {
     assert.ok(SubagentParams, "SubagentParams schema should exist");
-    const schema = SubagentParams as unknown as JsonSchemaNode;
+    const schema = SubagentParams;
     const rootKind = Object.getOwnPropertyDescriptor(schema, "~kind");
     assert.equal(rootKind?.value, "Object");
     assert.equal(rootKind?.enumerable, false);
@@ -300,7 +264,7 @@ describe("SubagentParams schema", () => {
     assert.equal(Object.getOwnPropertyDescriptor(agentSchema, "~optional")?.enumerable, false);
 
     const tasksSchema = getPropertySchema(schema, ["tasks"]);
-    const taskItemsSchema = tasksSchema?.items as JsonSchemaNode | undefined;
+    const taskItemsSchema = isSchemaObject(tasksSchema?.items) ? tasksSchema.items : undefined;
     const taskCountSchema = getPropertySchema(taskItemsSchema, ["count"]);
     assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~kind")?.enumerable, false);
     assert.equal(Object.getOwnPropertyDescriptor(taskCountSchema, "~optional")?.value, true);
@@ -345,7 +309,7 @@ describe("SubagentParams schema", () => {
   });
 
   it("uses provider-friendly anyOf unions for flexible top-level fields", () => {
-    const outputSchema = SubagentParams?.properties?.output;
+    const outputSchema = getPropertySchema(SubagentParams, ["output"]);
     assert.ok(outputSchema, "output schema should exist");
     assert.equal(outputSchema.type, undefined);
     assert.equal(hasAnyOfType(outputSchema, "string"), true);
@@ -454,8 +418,9 @@ describe("SubagentParams schema", () => {
 
   it("top-level property allowlist and action enum match TLH-minimal contract snapshot", () => {
     assert.ok(SubagentParams, "SubagentParams schema should exist");
-    const schema = SubagentParams as unknown as JsonSchemaNode;
-    const actualProps = Object.keys((schema.properties as Record<string, unknown>) ?? {}).sort();
+    const schema = SubagentParams;
+    const properties = isSchemaObject(schema.properties) ? schema.properties : {};
+    const actualProps = Object.keys(properties).sort();
     const expectedProps = [
       "agent",
       "task",
@@ -478,7 +443,7 @@ describe("SubagentParams schema", () => {
       "includeProgress",
     ].sort();
     assert.deepEqual(actualProps, expectedProps, "top-level property allowlist mismatch");
-    const actionEnum = (schema.properties as Record<string, JsonSchemaNode>)?.action?.enum;
+    const actionEnum = getPropertySchema(schema, ["action"])?.enum;
     assert.deepEqual(
       actionEnum,
       ["list", "get", "status", "interrupt", "resume", "steer", "doctor"],

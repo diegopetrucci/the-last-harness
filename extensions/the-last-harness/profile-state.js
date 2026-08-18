@@ -234,12 +234,16 @@ function writeCollisionSafeSettingsBackup(settingsPath, current) {
     }
     throw new Error(`Could not create a unique TLH settings backup after ${SETTINGS_BACKUP_SUFFIX_RETRY_LIMIT + 1} attempts: ${settingsPath}.bak-${timestamp}`);
 }
+function isSettingsStorageLike(value) {
+    return isRecord(value) && typeof value.withLock === "function";
+}
 function getSettingsStorageForWrite(cwd) {
     const manager = SettingsManager.create(cwd, getAgentDir());
-    if (!manager.storage || typeof manager.storage.withLock !== "function") {
+    const storage = isRecord(manager) ? manager.storage : undefined;
+    if (!isSettingsStorageLike(storage)) {
         throw new Error("Pi settings storage is unavailable.");
     }
-    return manager.storage;
+    return storage;
 }
 export function withLockedTlhSettingsWrite(cwd, outsideProfileError, update) {
     const settingsPath = tlhSettingsPathForWrite();

@@ -284,13 +284,7 @@ describe("result watcher", () => {
       };
       const state = createState();
       let watchedDir: fs.PathLike | undefined;
-      const fakeWatcher = {
-        on() {
-          return fakeWatcher;
-        },
-        close() {},
-        unref() {},
-      } as unknown as fs.FSWatcher;
+      const fakeWatcher = fs.watch(resultsDir);
       const realpathSync = ((target: fs.PathLike, options?: unknown) =>
         fs.realpathSync(target, options as BufferEncoding)) as typeof fs.realpathSync;
       realpathSync.native = ((target: fs.PathLike) =>

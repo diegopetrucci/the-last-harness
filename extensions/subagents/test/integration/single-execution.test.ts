@@ -215,7 +215,12 @@ interface ExecutorToolResult {
     /** Typed from production SingleResult so structural drift is caught. */
     results?: Pick<
       SingleResult,
-      "agent" | "attemptedModels" | "modelFallbackNotice" | "progress" | "tkTicket"
+      | "agent"
+      | "attemptedModels"
+      | "modelFallbackNotice"
+      | "progress"
+      | "tkTicket"
+      | "controlEvents"
     >[];
   };
 }
@@ -686,11 +691,7 @@ describe(
         undefined,
         context,
       );
-      const freshResult = (
-        fresh.details as unknown as {
-          results?: Array<{ controlEvents?: Array<{ contextPressureSeverity?: string }> }>;
-        }
-      ).results?.[0];
+      const freshResult = fresh.details?.results?.[0];
       assert.deepEqual(
         freshResult?.controlEvents?.map((event) => event.contextPressureSeverity),
         ["warning"],

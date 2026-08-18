@@ -9,20 +9,44 @@ import type {
   AgentProgress,
   PublicNestedRunSummary,
   NestedRunState,
+  SubagentState,
 } from "../../src/shared/types.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import type { AsyncRunnerStepBuildParams } from "../../src/runs/background/async-execution.ts";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-  ExtensionUIContext,
+import {
   ModelRegistry,
+  ModelRuntime,
+  SessionManager,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
+import { createPlainTheme } from "./themes.ts";
 import type { Model, Api } from "@earendil-works/pi-ai";
 
 export type { MockPi };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const testModelRuntimeAuthDir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-subagents-test-auth-"));
+const testModelRuntimeAuthPath = path.join(testModelRuntimeAuthDir, "auth.json");
+let testModelRuntimeAuthCleaned = false;
+function cleanupTestModelRuntimeAuth(): void {
+  if (testModelRuntimeAuthCleaned) return;
+  testModelRuntimeAuthCleaned = true;
+  try {
+    fs.rmSync(testModelRuntimeAuthDir, { recursive: true, force: true });
+  } catch {
+    // Process exit cleanup is best effort after the test runtime is gone.
+  }
+}
+process.once("exit", cleanupTestModelRuntimeAuth);
+
+const testModelRuntime = await ModelRuntime.create({
+  authPath: testModelRuntimeAuthPath,
+  modelsPath: null,
+  allowModelNetwork: false,
+  refreshOnCreate: false,
+});
 
 export function createMockPi(): MockPi {
   return _createMockPi();
@@ -57,6 +81,78 @@ export function createEventBus() {
     },
   };
 }
+
+export type TestEventName =
+  | "tool_call"
+  | "session_start"
+  | "message_start"
+  | "message_update"
+  | "message_end"
+  | "tool_execution_start"
+  | "tool_execution_end"
+  | "turn_end"
+  | "session_shutdown"
+  | "context"
+  | "before_agent_start";
+export type TestEventPayload = Record<string, unknown>;
+export type TestEventResult = object | void | Promise<object | void>;
+export type TestEventHandler = (payload: TestEventPayload) => TestEventResult;
+
+export interface TestEventRegistration {
+  on(event: TestEventName, handler: TestEventHandler): void;
+}
+
+export type ExtensionAPIOverrides = Partial<Omit<ExtensionAPI, "on">> & {
+  /**
+   * Test-only registration seam for the overloaded upstream `ExtensionAPI.on`.
+   * `makeExtensionAPI` validates the event name and callable handler before
+   * adapting it to this deliberately payload-only recorder.
+   */
+  on?: TestEventRegistration["on"];
+};
+
+const defaultExtensionAPI = {
+  registerTool(_tool: unknown): void {},
+  registerCommand(_name: string, _options: unknown): void {},
+  registerShortcut(_shortcut: string, _options: unknown): void {},
+  registerFlag(_name: string, _options: unknown): void {},
+  getFlag(_name: string): boolean | string | undefined {
+    return undefined;
+  },
+  registerMessageRenderer(_customType: string, _renderer: unknown): void {},
+  registerMarkdownTransformer(_transformer: unknown): void {},
+  registerEntryRenderer(_customType: string, _renderer: unknown): void {},
+  sendMessage(_message: unknown, _options?: unknown): void {},
+  sendUserMessage(_content: unknown, _options?: unknown): void {},
+  appendEntry(_customType: string, _data?: unknown): void {},
+  setSessionName(_name: string): void {},
+  getSessionName(): string | undefined {
+    return undefined;
+  },
+  setLabel(_entryId: string, _label: string | undefined): void {},
+  exec(_command: string, _args: string[], _options?: unknown): Promise<never> {
+    return Promise.reject(new Error("test ExtensionAPI exec was not configured"));
+  },
+  getActiveTools(): string[] {
+    return [];
+  },
+  getAllTools(): never[] {
+    return [];
+  },
+  setActiveTools(_toolNames: string[]): void {},
+  getCommands(): never[] {
+    return [];
+  },
+  setModel(_model: unknown): Promise<boolean> {
+    return Promise.resolve(false);
+  },
+  getThinkingLevel(): "off" {
+    return "off";
+  },
+  setThinkingLevel(_level: unknown): void {},
+  registerProvider(_provider: unknown, _config?: unknown): void {},
+  unregisterProvider(_name: string): void {},
+} satisfies Omit<ExtensionAPI, "on" | "events">;
 
 // AgentConfig is imported from production so test fixtures stay in sync with the
 // real shape; exporting it lets test files import the type from this helper.
@@ -149,6 +245,33 @@ export function makePublicNestedRunSummary(
 }
 
 /**
+ * Creates a complete SubagentState fixture with inert runtime services. Tests
+ * can override only the state maps relevant to the behavior under inspection.
+ */
+export function makeSubagentState(overrides: Partial<SubagentState> = {}): SubagentState {
+  return {
+    baseCwd: process.cwd(),
+    currentSessionId: null,
+    asyncJobs: new Map(),
+    foregroundRuns: new Map(),
+    foregroundControls: new Map(),
+    lastForegroundControlId: null,
+    pendingForegroundControlNotices: new Map(),
+    cleanupTimers: new Map(),
+    lastUiContext: null,
+    poller: null,
+    completionSeen: new Map(),
+    watcher: null,
+    watcherRestartTimer: null,
+    resultFileCoalescer: {
+      schedule: () => false,
+      clear: () => {},
+    },
+    ...overrides,
+  };
+}
+
+/**
  * Creates a minimal Model<Api> fixture typed from the production interface.
  * Defaults are inert (zero cost, empty input types). Supply `contextWindow` and
  * other fields via overrides when the test logic depends on them.
@@ -193,9 +316,9 @@ export function makeModel(
 
 /**
  * Creates a minimal AsyncExecutionContext for tests of buildAsyncRunnerSteps,
- * executeAsyncChain, and executeAsyncSingle. The `pi` field is stubbed with a
- * no-op EventBus; the tested code paths in those functions only access
- * pi.events.emit() and only after precondition guards that fire before pi is used.
+ * executeAsyncChain, and executeAsyncSingle. The `pi` field receives a fresh,
+ * isolated functional EventBus from makeExtensionAPI(); the tested code paths
+ * only access pi.events.emit() and only after precondition guards that fire before pi is used.
  *
  * Typed from AsyncRunnerStepBuildParams['ctx'] (AsyncExecutionContext) so that
  * newly required fields surface here rather than at each call site.
@@ -205,18 +328,7 @@ export function makeAsyncCtx(
   overrides: Partial<AsyncRunnerStepBuildParams["ctx"]> = {},
 ): AsyncRunnerStepBuildParams["ctx"] {
   return {
-    // ExtensionAPI has 25+ methods; the code paths exercised in async-execution
-    // tests only call pi.events.emit() (and only after reviewed-rejection checks).
-    // A structural cast is used instead of a full mock to avoid duplicating the
-    // SDK interface and to keep the fixture small and auditable.
-    pi: {
-      events: {
-        emit(_channel: string, _data: unknown) {},
-        on(_channel: string, _handler: (data: unknown) => void) {
-          return () => {};
-        },
-      },
-    } as unknown as ExtensionAPI,
+    pi: makeExtensionAPI(),
     cwd,
     currentSessionId: "session-1",
     currentModel: undefined,
@@ -227,33 +339,62 @@ export function makeAsyncCtx(
 }
 
 /**
- * Creates a minimal ExtensionContext for test fixtures. Typed from the production
- * interface so that newly required fields surface at this factory rather than at
- * every call site. Complex SDK sub-types (ExtensionUIContext, ModelRegistry,
- * ReadonlySessionManager) are stubbed via structural casts; only the methods used
- * by the tested code paths are implemented.
+ * Creates a complete no-UI context fixture from the upstream SDK contracts.
+ * SessionManager and ModelRegistry are real owner instances; only their
+ * externally observable test values are replaced.
+ */
+function createMinimalUiContext(): ExtensionUIContext {
+  const ui: ExtensionUIContext = {
+    select: async () => undefined,
+    confirm: async () => false,
+    input: async () => undefined,
+    notify: () => {},
+    onTerminalInput: () => () => {},
+    setStatus: () => {},
+    setWorkingMessage: () => {},
+    setWorkingVisible: () => {},
+    setWorkingIndicator: () => {},
+    setHiddenThinkingLabel: () => {},
+    setWidget: () => {},
+    setFooter: () => {},
+    setHeader: () => {},
+    setTitle: () => {},
+    custom: async <T>(_factory: unknown, _options?: unknown): Promise<T> => {
+      throw new Error("test UI context does not support custom components");
+    },
+    pasteToEditor: () => {},
+    setEditorText: () => {},
+    getEditorText: () => "",
+    editor: async () => undefined,
+    addAutocompleteProvider: () => {},
+    setEditorComponent: () => {},
+    getEditorComponent: () => undefined,
+    theme: createPlainTheme(),
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false, error: "test UI context has no themes" }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {},
+  };
+  return ui;
+}
+
+/**
+ * Creates a minimal ExtensionContext for test fixtures while preserving the
+ * complete upstream SDK contracts at every nested boundary.
  */
 export function makeMinimalCtx(cwd: string): ExtensionContext {
-  // Explicit type annotation ensures TypeScript checks all required top-level
-  // fields of ExtensionContext here. SDK sub-interfaces that require private
-  // class members or complex TUI types are stubbed with as-unknown casts.
-  const ctx: ExtensionContext = {
+  const sessionManager = SessionManager.inMemory(cwd);
+  sessionManager.getSessionId = () => "session-123";
+  sessionManager.getSessionFile = () => undefined;
+
+  return {
     cwd,
     mode: "json",
     hasUI: false,
-    // ExtensionUIContext has 15+ async methods requiring TUI/Theme types from
-    // the SDK; none are called in tests that use makeMinimalCtx.
-    ui: {} as unknown as ExtensionUIContext,
-    sessionManager: {
-      getSessionId: () => "session-123",
-      getSessionFile: () => undefined,
-      // Remaining ReadonlySessionManager methods are unused in these tests.
-    } as unknown as ExtensionContext["sessionManager"],
-    // ModelRegistry is a class with a private `runtime` field; structural
-    // casting is the only way to supply a no-op instance.
-    modelRegistry: {
-      getAvailable: () => [],
-    } as unknown as ModelRegistry,
+    ui: createMinimalUiContext(),
+    sessionManager,
+    modelRegistry: new ModelRegistry(testModelRuntime),
     model: undefined,
     scopedModels: [],
     isIdle: () => true,
@@ -266,17 +407,58 @@ export function makeMinimalCtx(cwd: string): ExtensionContext {
     compact: () => {},
     getSystemPrompt: () => "",
   };
-  return ctx;
+}
+
+function isTestEventName(value: string): value is TestEventName {
+  return (
+    value === "tool_call" ||
+    value === "session_start" ||
+    value === "message_start" ||
+    value === "message_update" ||
+    value === "message_end" ||
+    value === "tool_execution_start" ||
+    value === "tool_execution_end" ||
+    value === "turn_end" ||
+    value === "session_shutdown" ||
+    value === "context" ||
+    value === "before_agent_start"
+  );
+}
+
+type RegisteredExtensionHandler = (
+  payload: TestEventPayload,
+  context: ExtensionContext,
+) => TestEventResult;
+
+function isRegisteredExtensionHandler(value: unknown): value is RegisteredExtensionHandler {
+  return typeof value === "function";
+}
+
+let testExtensionContext: ExtensionContext | undefined;
+function getTestExtensionContext(): ExtensionContext {
+  return (testExtensionContext ??= makeMinimalCtx(process.cwd()));
 }
 
 /**
- * Creates a minimal ExtensionAPI stub for unit tests.
- * The real ExtensionAPI has 25+ methods; most tests only need a small subset.
- * Using `as unknown as ExtensionAPI` once here keeps call sites clean and avoids
- * scattered suppression casts throughout the test suite.
+ * Creates a complete, typed ExtensionAPI owner object with inert defaults.
+ * Non-event overrides are checked against the upstream ExtensionAPI. The
+ * overloaded `on` method is an explicit test-only adapter: it accepts only
+ * runtime events exercised by these tests, narrows the registered value to a
+ * callable handler, and records payload-only callbacks for direct invocation.
  */
-export function makeExtensionAPI(overrides: Record<string, unknown> = {}): ExtensionAPI {
-  return overrides as unknown as ExtensionAPI;
+export function makeExtensionAPI(overrides: ExtensionAPIOverrides = {}): ExtensionAPI {
+  const { on: testOn, events: overrideEvents, ...extensionOverrides } = overrides;
+  const on: ExtensionAPI["on"] = (event: string, handler: unknown): void => {
+    if (!testOn || !isTestEventName(event)) return;
+    if (!isRegisteredExtensionHandler(handler)) return;
+    testOn(event, (payload) => handler(payload, getTestExtensionContext()));
+  };
+  return {
+    ...defaultExtensionAPI,
+    ...extensionOverrides,
+    on,
+    events: overrideEvents ?? createEventBus(),
+  };
 }
 
 /**
