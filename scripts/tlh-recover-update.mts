@@ -363,9 +363,10 @@ function installStatePath(agentDir: string): string {
   return join(agentDir, "tlh", "install-state.json");
 }
 
-function readJson(pathValue: string): unknown {
+function readJson(pathValue: string): InstallStatePayload | undefined {
   const content = readFileSync(pathValue, "utf8").replace(/^\uFEFF/, "");
-  return JSON.parse(content);
+  const parsed: unknown = JSON.parse(content);
+  return isInstallStatePayload(parsed) ? parsed : undefined;
 }
 
 interface InstallStatePayload {
@@ -379,7 +380,7 @@ interface InstallStatePayload {
 }
 
 function isInstallStatePayload(value: unknown): value is InstallStatePayload {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readTrimmedString(value: unknown): string | undefined {

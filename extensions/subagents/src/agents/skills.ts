@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import {
   getLegacyGlobalAgentsDir,
   hasCustomPiAgentDir,
@@ -97,9 +98,19 @@ function isWithinPath(filePath: string, dir: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function readOptionalJsonFile(filePath: string, label: string): unknown {
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function readOptionalJsonFile(filePath: string, label: string): JsonValue {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isJsonValue(parsed) ? parsed : null;
   } catch (error) {
     const code =
       typeof error === "object" && error !== null && "code" in error
@@ -113,9 +124,10 @@ function readOptionalJsonFile(filePath: string, label: string): unknown {
   }
 }
 
-function readJsonFileBestEffort(filePath: string): unknown {
+function readJsonFileBestEffort(filePath: string): JsonValue {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isJsonValue(parsed) ? parsed : null;
   } catch {
     // Package scans over installed dependencies are opportunistic.
     return null;

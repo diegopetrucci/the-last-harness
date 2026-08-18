@@ -5,11 +5,15 @@
 import { Type } from "typebox";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
-  return pruneNestedDescriptions(schema, []) as T;
+  return pruneNestedDescriptions(schema, []);
 }
 
-function pruneNestedDescriptions(value: unknown, path: string[]): unknown {
-  if (!value || typeof value !== "object") return value;
+function isSchemaCloneObject(value: unknown): value is object {
+  return value !== null && typeof value === "object";
+}
+
+function pruneNestedDescriptions<T>(value: T, path: string[]): T {
+  if (!isSchemaCloneObject(value)) return value;
 
   const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
   for (const key of Reflect.ownKeys(value)) {

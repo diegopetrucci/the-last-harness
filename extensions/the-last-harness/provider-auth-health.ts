@@ -12,6 +12,8 @@
 // - Capability-tested adapter: getProviderAuth / getProviderAuthStatus are
 //   duck-typed; missing methods degrade to no-warning (fail open).
 
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -106,7 +108,7 @@ export type ProviderAuthHealthStore = {
 // We only duck-type what we call, per the TypeScript boundaries skill.
 
 type RegistryWithGetProviderAuth = {
-  getProviderAuth(provider: string): Promise<unknown>;
+  getProviderAuth(provider: string): ReturnType<ModelRegistry["getProviderAuth"]>;
 };
 
 type RegistryWithGetProviderAuthStatus = {

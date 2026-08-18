@@ -36,7 +36,7 @@ export type ControlChannelTimers = {
   setInterval: typeof setInterval;
   clearInterval: typeof clearInterval;
 };
-type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => unknown;
+type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => void;
 
 export interface InterruptRequest {
   type: "interrupt";

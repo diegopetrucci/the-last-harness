@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import type { Credential, JsonValue } from "@earendil-works/pi-ai";
+
 import type {
   TlhSubscriptionUsageProvider,
   TlhSubscriptionUsageSnapshot,
@@ -27,7 +29,7 @@ type JsonRecord = Record<string, unknown>;
 type TlhSubscriptionUsageFetch = typeof globalThis.fetch;
 type ResponseLike = {
   ok?: boolean;
-  json?: (() => Promise<unknown>) | (() => unknown);
+  json?: (() => Promise<JsonValue>) | (() => JsonValue);
 };
 type TlhSubscriptionUsageTarget = {
   provider?: unknown;
@@ -45,11 +47,15 @@ type TlhSubscriptionUsageContext = {
 };
 type TlhSubscriptionUsageModelRegistry = {
   isUsingOAuth?(model: unknown): boolean;
-  getApiKeyForProvider?(provider: string): Promise<unknown> | unknown;
+  getApiKeyForProvider?(provider: string): Promise<string | undefined> | string | undefined;
   getProviderAuthStatus?(
     provider: string,
   ): { configured?: boolean; source?: string; label?: string } | undefined;
   authStorage?: unknown;
+};
+
+type TlhSubscriptionUsageAuthStorage = {
+  get(provider: string): Credential | undefined;
 };
 type EligibleProviderContext = {
   status: "eligible";
@@ -89,6 +95,21 @@ function asObject(value: unknown): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonRecord)
     : undefined;
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function hasAuthStorageGetter(value: unknown): value is TlhSubscriptionUsageAuthStorage {
+  const storage = asObject(value);
+  return storage !== undefined && typeof storage.get === "function";
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -424,21 +445,23 @@ function timeoutSignal(timeoutMs: number): AbortSignal | undefined {
 
 async function responseJson(
   response: ResponseLike | null | undefined,
-): Promise<unknown | undefined> {
+): Promise<JsonValue | undefined> {
   if (response?.ok !== true || typeof response.json !== "function") {
     return undefined;
   }
-  return response.json();
+  const payload: unknown = await response.json();
+  return isJsonValue(payload) ? payload : undefined;
 }
 
 function oauthCredentialFromRegistry(
   modelRegistry: TlhSubscriptionUsageModelRegistry | undefined,
   provider: TlhSubscriptionUsageProvider,
 ): JsonRecord | undefined {
-  const authStorage = modelRegistry?.authStorage as
-    | { get?: (provider: string) => unknown }
-    | undefined;
-  const credential = authStorage?.get?.(provider);
+  const authStorage = modelRegistry?.authStorage;
+  if (!hasAuthStorageGetter(authStorage)) {
+    return undefined;
+  }
+  const credential = authStorage.get(provider);
   const stored = asObject(credential);
   return stored?.type === "oauth" ? stored : undefined;
 }
@@ -490,7 +513,7 @@ function hasRuntimeCredentialOverride(
   provider: TlhSubscriptionUsageProvider,
 ): boolean {
   try {
-    const authStorage = modelRegistry?.authStorage as { runtimeOverrides?: unknown } | undefined;
+    const authStorage = asObject(modelRegistry?.authStorage);
     const runtimeOverrides = authStorage?.runtimeOverrides;
     return runtimeOverrides instanceof Map && runtimeOverrides.has(provider);
   } catch {

@@ -21,6 +21,73 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
+type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
+
+interface SupervisorRequestToolDetails {
+  delivered: boolean;
+  requestId: string;
+  reason: SupervisorReason;
+}
+
+interface PublicPendingSupervisorRequest {
+  id: string;
+  runId: string;
+  agent: string;
+  childIndex: number;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+}
+
+type ParentSupervisorToolDetails =
+  | { active: true; pending: number; root: string }
+  | { pending: PublicPendingSupervisorRequest[] };
+
+type NativeSupervisorToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details: ParentSupervisorToolDetails;
+};
+type ContactSupervisorToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details: SupervisorRequestToolDetails;
+};
+
+function supervisorText(result: NativeSupervisorToolResult): string {
+  return result.content[0]?.text ?? "";
+}
+
+function malformedSupervisorAction(action: string): { action: "pending" | "status" } {
+  const params: { action: "pending" | "status" } = { action: "pending" };
+  Object.defineProperty(params, "action", { value: action, enumerable: true });
+  return params;
+}
+
+interface InterviewRequestFixture {
+  reason: SupervisorReason;
+  message: string;
+  expectsReply: boolean;
+  expiresAt: number;
+  interview: unknown;
+}
+
+function parseInterviewRequestFixture(value: unknown): InterviewRequestFixture | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const reason = Object.getOwnPropertyDescriptor(value, "reason")?.value;
+  const message = Object.getOwnPropertyDescriptor(value, "message")?.value;
+  const expectsReply = Object.getOwnPropertyDescriptor(value, "expectsReply")?.value;
+  const expiresAt = Object.getOwnPropertyDescriptor(value, "expiresAt")?.value;
+  const interview = Object.getOwnPropertyDescriptor(value, "interview")?.value;
+  if (
+    (reason !== "need_decision" &&
+      reason !== "interview_request" &&
+      reason !== "progress_update") ||
+    typeof message !== "string" ||
+    typeof expectsReply !== "boolean" ||
+    typeof expiresAt !== "number"
+  )
+    return undefined;
+  return { reason, message, expectsReply, expiresAt, interview };
+}
+
 const createdChannels: string[] = [];
 const savedEnv = {
   [SUBAGENT_CHILD_AGENT_ENV]: process.env[SUBAGENT_CHILD_AGENT_ENV],
@@ -394,7 +461,10 @@ describe("native supervisor channel", () => {
       string,
       {
         parameters?: { properties?: { action?: { enum?: string[] } } };
-        execute: (_id: string, params: { action: string }) => Promise<unknown>;
+        execute: (
+          _id: string,
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }
     >();
     const ctx = {
@@ -414,7 +484,10 @@ describe("native supervisor channel", () => {
       registerTool: (tool: {
         name: string;
         parameters?: { properties?: { action?: { enum?: string[] } } };
-        execute: (_id: string, params: { action: string }) => Promise<unknown>;
+        execute: (
+          _id: string,
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },
@@ -430,23 +503,21 @@ describe("native supervisor channel", () => {
       assert.deepEqual([...registeredTools.keys()], [NATIVE_SUPERVISOR_TOOL_NAME]);
       const supervisorTool = registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!;
       assert.deepEqual(supervisorTool.parameters?.properties?.action?.enum, ["pending", "status"]);
-      const status = (await supervisorTool.execute("status", { action: "status" })) as {
-        content?: Array<{ text?: string }>;
-      };
-      assert.match(status.content?.[0]?.text ?? "", /Native supervisor channel active/);
-      const pending = (await supervisorTool.execute("pending", { action: "pending" })) as {
-        details?: { pending?: Array<{ id?: string }> };
-      };
+      const status = await supervisorTool.execute("status", { action: "status" });
+      assert.match(supervisorText(status), /Native supervisor channel active/);
+      const pending = await supervisorTool.execute("pending", { action: "pending" });
+      const pendingRequests = pending.details.pending;
+      assert.ok(Array.isArray(pendingRequests));
       assert.deepEqual(
-        pending.details?.pending?.map((request) => request.id),
+        pendingRequests.map((request) => request.id),
         [requestId],
       );
       await assert.rejects(
-        () => supervisorTool.execute("list", { action: "list" }),
+        () => supervisorTool.execute("list", malformedSupervisorAction("list")),
         /Unsupported supervisor action: list/,
       );
       await assert.rejects(
-        () => supervisorTool.execute("reply", { action: "reply" }),
+        () => supervisorTool.execute("reply", malformedSupervisorAction("reply")),
         /Unsupported supervisor action: reply/,
       );
     } finally {
@@ -535,8 +606,8 @@ describe("native supervisor channel", () => {
       {
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }
     >();
     const sent: Array<{ content?: string; details?: { id?: string } }> = [];
@@ -568,8 +639,8 @@ describe("native supervisor channel", () => {
         name: string;
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },
@@ -663,8 +734,8 @@ describe("native supervisor channel", () => {
       {
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }
     >();
     const sent: Array<{ content?: string; details?: { id?: string } }> = [];
@@ -695,8 +766,8 @@ describe("native supervisor channel", () => {
         name: string;
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },
@@ -759,8 +830,8 @@ describe("native supervisor channel", () => {
         {
           execute: (
             _id: string,
-            params: { action: string; message?: string },
-          ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+            params: { action: "pending" | "status" },
+          ) => Promise<NativeSupervisorToolResult>;
         }
       >();
       const sent: Array<{ content?: string; details?: { id?: string } }> = [];
@@ -773,8 +844,8 @@ describe("native supervisor channel", () => {
             name: string;
             execute: (
               _id: string,
-              params: { action: string; message?: string },
-            ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+              params: { action: "pending" | "status" },
+            ) => Promise<NativeSupervisorToolResult>;
           }) => {
             registeredTools.set(tool.name, tool);
           },
@@ -849,8 +920,8 @@ describe("native supervisor channel", () => {
       {
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }
     >();
     const sent: Array<{ details?: { id?: string } }> = [];
@@ -869,8 +940,8 @@ describe("native supervisor channel", () => {
         name: string;
         execute: (
           _id: string,
-          params: { action: string; message?: string },
-        ) => Promise<{ content: Array<{ text: string }>; details?: { pending?: unknown[] } }>;
+          params: { action: "pending" | "status" },
+        ) => Promise<NativeSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },
@@ -980,9 +1051,9 @@ describe("native supervisor channel", () => {
       {
         execute: (
           _id: string,
-          params: { reason: string; message?: string; interview?: unknown },
+          params: { reason: SupervisorReason; message?: string; interview?: unknown },
           signal?: AbortSignal,
-        ) => Promise<unknown> | unknown;
+        ) => Promise<ContactSupervisorToolResult>;
       }
     >();
     const pi = {
@@ -991,9 +1062,9 @@ describe("native supervisor channel", () => {
         name: string;
         execute: (
           _id: string,
-          params: { reason: string; message?: string; interview?: unknown },
+          params: { reason: SupervisorReason; message?: string; interview?: unknown },
           signal?: AbortSignal,
-        ) => Promise<unknown> | unknown;
+        ) => Promise<ContactSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },
@@ -1007,20 +1078,18 @@ describe("native supervisor channel", () => {
         "contact",
         { reason: "interview_request", message: "Need structured input", interview },
         controller.signal,
-      ) as Promise<unknown>;
+      );
 
     assert.deepEqual(fs.readdirSync(channelDir), ["requests"]);
     const requestEntries = fs.readdirSync(path.join(channelDir, "requests"));
     assert.equal(requestEntries.length, 1);
-    const request = JSON.parse(
-      fs.readFileSync(path.join(channelDir, "requests", requestEntries[0]!), "utf-8"),
-    ) as {
-      reason?: string;
-      message?: string;
-      expectsReply?: boolean;
-      expiresAt?: number;
-      interview?: unknown;
-    };
+    const requestEntry = requestEntries[0];
+    assert.ok(requestEntry, "Expected one structured interview request file");
+    const parsedRequest: unknown = JSON.parse(
+      fs.readFileSync(path.join(channelDir, "requests", requestEntry), "utf-8"),
+    );
+    const request = parseInterviewRequestFixture(parsedRequest);
+    assert.ok(request, "Expected a valid structured interview request");
     assert.equal(request.reason, "interview_request");
     assert.match(
       request.message ?? "",
@@ -1052,14 +1121,20 @@ describe("native supervisor channel", () => {
     const registeredTools = new Map<
       string,
       {
-        execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown>;
+        execute: (
+          _id: string,
+          params: { reason: SupervisorReason; message?: string },
+        ) => Promise<ContactSupervisorToolResult>;
       }
     >();
     const pi = {
       getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
       registerTool: (tool: {
         name: string;
-        execute: (_id: string, params: { reason: string; message?: string }) => Promise<unknown>;
+        execute: (
+          _id: string,
+          params: { reason: SupervisorReason; message?: string },
+        ) => Promise<ContactSupervisorToolResult>;
       }) => {
         registeredTools.set(tool.name, tool);
       },

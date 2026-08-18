@@ -17,12 +17,12 @@ function createFakeClock() {
   let nextId = 1;
   const jobs = new Map<number, FakeJob>();
   const api = {
-    setTimeout(handler: () => void, delayMs: number): unknown {
+    setTimeout(handler: () => void, delayMs: number): number {
       const id = nextId++;
       jobs.set(id, { id, fireAt: now + delayMs, handler });
       return id;
     },
-    clearTimeout(handle: unknown): void {
+    clearTimeout(handle: number): void {
       if (typeof handle === "number") jobs.delete(handle);
     },
   };

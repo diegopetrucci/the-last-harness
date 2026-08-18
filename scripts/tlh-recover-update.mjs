@@ -250,10 +250,11 @@ function installStatePath(agentDir) {
 }
 function readJson(pathValue) {
     const content = readFileSync(pathValue, "utf8").replace(/^\uFEFF/, "");
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    return isInstallStatePayload(parsed) ? parsed : undefined;
 }
 function isInstallStatePayload(value) {
-    return typeof value === "object" && value !== null;
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function readTrimmedString(value) {
     return typeof value === "string" && value.trim() ? value.trim() : undefined;

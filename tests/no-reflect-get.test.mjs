@@ -59,7 +59,7 @@ Reflect['get'](target, key);
 test("no-reflect-get ignores shadowed Reflect and unrelated calls", (t) => {
   const diagnostics = lintFixtures(t, {
     "allowed.ts": `
-function shadowedParameter(Reflect: { get(): unknown }) {
+function shadowedParameter(Reflect: { get(): void }) {
   Reflect.get();
   Reflect["get"]();
 }
