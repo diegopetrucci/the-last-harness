@@ -275,7 +275,7 @@ export default function theLastHarness(pi) {
                     }
                     tui.requestRender();
                 };
-                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
+                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, {
                     requestRender,
                     startupTip,
                     launchContextAllocation: sessionState.launchContextAllocation,

@@ -45,7 +45,7 @@ const ANSI_PATTERN = new RegExp(
   `${String.raw`\u001B`}(?:\\][^${String.raw`\u0007\u001B`}]*(?:${String.raw`\u0007`}|${String.raw`\u001B\\`})|\\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])`,
   "gu",
 );
-const HEADER_TEXT_MARKERS = ["Context:", "Press Ctrl+Shift+E", "Warning: running TLH from"];
+const HEADER_TEXT_MARKERS = ["Context:", "Press Ctrl+Shift+E"];
 const HEADER_LOGO_PATTERN = /(^|\n)\s*tlh(?:\s+v\d[^\n]*)?\s*(?=\n|$)/u;
 const HEADER_RULE_PATTERN = /(^|\n)[^\n]*─(?:[^\n]*─){19,}[^\n]*(?=\n|$)/u;
 const FOOTER_MARKER = "agent: ";

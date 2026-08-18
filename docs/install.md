@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context at launch:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.38.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.38.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
@@ -80,7 +80,7 @@ This refreshes the isolated checkout according to your update track and re-merge
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
-At launch, TLH also shows that `Warning: running TLH from {name} track` header warning above `Context at launch:` when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The warning is informational only; it does not change your isolated install or auto-update anything.
+At launch, TLH keeps the install-track label in the footer when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The footer label is informational only; it does not change your isolated install or auto-update anything.
 
 - If you installed from a pinned release tag, a non-stable git ref, or another custom update track while still using the default TLH repo/package source, return to the official latest stable release track with:
 

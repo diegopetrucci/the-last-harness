@@ -164,8 +164,7 @@ test("collapsed launch allocation hides resource names while expanded mode prese
     extensions: ["tools.js"],
     themes: ["night"],
   };
-  const installNotice = { kind: "ref", summary: "non-stable ref", detail: "main" };
-  const header = createTlhHeader(plainTheme, resources, undefined, installNotice, {
+  const header = createTlhHeader(plainTheme, resources, undefined, {
     launchContextAllocation: createAllocation(),
   });
 
@@ -182,11 +181,12 @@ test("collapsed launch allocation hides resource names while expanded mode prese
 
   header.setExpanded(true);
   const expanded = header.render(200);
-  const warningIndex = expanded.findIndex((line) => line.includes("running TLH from main track"));
   const allocationIndex = expanded.indexOf(formatTlhLaunchContextAllocation(createAllocation()));
   const contextIndex = expanded.indexOf("Context: team-rules.md");
-  assert.equal(expanded.filter((line) => line.includes("running TLH from main track")).length, 1);
-  assert.equal(allocationIndex, warningIndex + 1);
+  assert.equal(
+    expanded.some((line) => line.includes("running TLH from")),
+    false,
+  );
   assert.equal(contextIndex, allocationIndex + 1);
   for (const section of ["[Skills]", "[Prompts]", "[Extensions]", "[Themes]"]) {
     assert.ok(expanded.includes(section), `expected expanded inventory section ${section}`);
@@ -393,7 +393,6 @@ test("collapsed launch allocation wraps within narrow terminal widths", () => {
   const header = createTlhHeader(
     plainTheme,
     { context: [], skills: [], prompts: [], extensions: [], themes: [] },
-    undefined,
     undefined,
     { launchContextAllocation: createAllocation() },
   );

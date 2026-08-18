@@ -31,14 +31,10 @@ test("startup tips wrap without truncation and stay last in collapsed and expand
     "     message and explore",
     "     an alternate path.",
   ];
-  const collapsedHeader = createTlhHeader(
-    plainTheme,
-    createEmptyResources(),
-    undefined,
-    undefined,
-    { startupTip },
-  );
-  const expandedHeader = createTlhHeader(plainTheme, createEmptyResources(), undefined, undefined, {
+  const collapsedHeader = createTlhHeader(plainTheme, createEmptyResources(), undefined, {
+    startupTip,
+  });
+  const expandedHeader = createTlhHeader(plainTheme, createEmptyResources(), undefined, {
     startupTip,
   });
   expandedHeader.setExpanded(true);
@@ -75,37 +71,29 @@ test("startup tips wrap without truncation and stay last in collapsed and expand
 });
 
 // ---------------------------------------------------------------------------
-// Install notice warning line (value-based)
+// Install-track notices are footer-only
 // ---------------------------------------------------------------------------
 
-test("header shows no warning line when installNotice is undefined", () => {
-  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, undefined);
+test("collapsed header omits the retired install-track warning", () => {
+  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, {});
+  assert.doesNotMatch(header.render(80).join("\n"), /running TLH from/);
+});
+
+test("expanded header omits the retired install-track warning while retaining resource details", () => {
+  const header = createTlhHeader(
+    plainTheme,
+    {
+      ...createEmptyResources(),
+      context: ["AGENTS.md"],
+      skills: ["tlh-dev-hygiene"],
+    },
+    undefined,
+    {},
+  );
+  header.setExpanded(true);
+
   const lines = header.render(80);
   assert.doesNotMatch(lines.join("\n"), /running TLH from/);
-});
-
-test("header shows warning line when installNotice is a ref notice", () => {
-  const notice = { kind: "ref", summary: "non-stable ref", detail: "my-branch" };
-  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, notice);
-  const lines = header.render(80);
-  assert.ok(
-    lines.some((line) => /Warning.*running TLH from my-branch track/.test(line)),
-    "expected warning line with ref detail",
-  );
-});
-
-test("header shows warning line when installNotice is a pinned-tag notice", () => {
-  const notice = { kind: "pinned-tag", summary: "pinned tag", detail: "v0.28.0" };
-  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined, notice);
-  const lines = header.render(80);
-  assert.ok(
-    lines.some((line) => /Warning.*running TLH from v0\.28\.0 track/.test(line)),
-    "expected warning line with tag detail",
-  );
-});
-
-test("header shows no warning line when installNotice is absent (no 4th arg)", () => {
-  const header = createTlhHeader(plainTheme, createEmptyResources(), undefined);
-  const lines = header.render(80);
-  assert.doesNotMatch(lines.join("\n"), /running TLH from/);
+  assert.ok(lines.includes("Context: AGENTS.md"));
+  assert.ok(lines.includes("[Skills]"));
 });
