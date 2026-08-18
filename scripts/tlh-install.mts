@@ -61,6 +61,7 @@ import {
   subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
+import type { GitInstallConfig } from "./lib/tlh-install-git.mjs";
 import {
   findLocalRepoDir,
   ensureSupportFilesPrepared,
@@ -771,64 +772,33 @@ function spawnCaptureIsolatedPi(
   });
 }
 
-function supportFileIo() {
+function supportFileIo(config: InstallConfig) {
   return {
-    log: log as unknown as (config: SupportFilesConfig, message: string) => void,
-    verboseLog: verboseLog as unknown as (config: SupportFilesConfig, message: string) => void,
+    log: (_supportFilesConfig: SupportFilesConfig, message: string) => log(config, message),
+    verboseLog: (_supportFilesConfig: SupportFilesConfig, message: string) =>
+      verboseLog(config, message),
     warn,
-    requireCommand: requireCommand as unknown as (
-      config: SupportFilesConfig,
-      command: string,
-    ) => void,
+    requireCommand: (_supportFilesConfig: SupportFilesConfig, command: string) =>
+      requireCommand(config, command),
   };
 }
 
-function gitCheckoutIo() {
+function gitCheckoutIo(config: InstallConfig) {
   return {
-    spawnCapture: spawnCapture as unknown as (
-      config: {
-        agentDir: string;
-        env?: NodeJS.ProcessEnv;
-        dryRun?: boolean;
-        quiet?: boolean;
-        verbose?: boolean;
-      },
+    spawnCapture: (
+      _gitConfig: GitInstallConfig,
       commandArgs: string[],
-      options?: { cwd?: string; env?: NodeJS.ProcessEnv; allowFailure?: boolean },
-    ) => SpawnSyncReturns<string>,
-    runCommand: runCommand as unknown as (
-      config: {
-        agentDir: string;
-        env?: NodeJS.ProcessEnv;
-        dryRun?: boolean;
-        quiet?: boolean;
-        verbose?: boolean;
-      },
+      options?: SpawnCaptureOptions,
+    ) => spawnCapture(config, commandArgs, options),
+    runCommand: (
+      _gitConfig: GitInstallConfig,
       commandArgs: string[],
       options?: { cwd?: string; env?: NodeJS.ProcessEnv },
-    ) => void,
-    runInDir: runInDir as unknown as (
-      config: {
-        agentDir: string;
-        env?: NodeJS.ProcessEnv;
-        dryRun?: boolean;
-        quiet?: boolean;
-        verbose?: boolean;
-      },
-      dir: string,
-      commandArgs: string[],
-    ) => void,
-    printCommand: printCommand as unknown as (commandArgs: string[]) => void,
-    log: log as unknown as (
-      config: {
-        agentDir: string;
-        env?: NodeJS.ProcessEnv;
-        dryRun?: boolean;
-        quiet?: boolean;
-        verbose?: boolean;
-      },
-      message: string,
-    ) => void,
+    ) => runCommand(config, commandArgs, options),
+    runInDir: (_gitConfig: GitInstallConfig, dir: string, commandArgs: string[]) =>
+      runInDir(config, dir, commandArgs),
+    printCommand: (commandArgs: string[]) => printCommand(commandArgs),
+    log: (_gitConfig: GitInstallConfig, message: string) => log(config, message),
     warn,
   };
 }
@@ -1492,7 +1462,7 @@ function refreshHarnessPackageCheckout(config: InstallConfig): void {
       label: "The Last Harness package checkout",
       missingMessage: `expected installed package checkout not found or invalid: ${packageRoot}`,
     },
-    gitCheckoutIo(),
+    gitCheckoutIo(config),
   );
 }
 
@@ -1511,7 +1481,7 @@ function installHarnessPackage(config: InstallConfig): void {
     config,
     config.packageSource,
     "The Last Harness package checkout",
-    gitCheckoutIo(),
+    gitCheckoutIo(config),
   );
   runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
   refreshHarnessPackageCheckout(config);
@@ -1541,7 +1511,7 @@ async function mergeSettings(config: InstallConfig): Promise<void> {
     log(config, "Skipping settings/keybinding merge (--no-settings).");
     return;
   }
-  if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) return;
+  if (!(await ensureSupportFilesPrepared(config, supportFileIo(config)))) return;
 
   const args: string[] = [
     config.supportFilePaths.MERGE_SCRIPT,
@@ -1583,7 +1553,7 @@ async function mergeSettings(config: InstallConfig): Promise<void> {
 
 async function installSupportFilesToProfile(config: InstallConfig): Promise<void> {
   if (!installableSupportFilesArePrepared(config))
-    await ensureSupportFilesPrepared(config, supportFileIo());
+    await ensureSupportFilesPrepared(config, supportFileIo(config));
   if (!installableSupportFilesArePrepared(config)) return;
 
   const requireSubagentPrompts = settingsFileRequiresTlhSubagentPrompts(
@@ -1683,7 +1653,7 @@ async function writeInstallState(config: InstallConfig): Promise<void> {
     !config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
     !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)
   ) {
-    if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
+    if (!(await ensureSupportFilesPrepared(config, supportFileIo(config)))) {
       if (config.dryRun) {
         log(config, `Would write tlh update metadata: ${config.statePath}`);
         return;
@@ -1772,7 +1742,12 @@ function splitDefaultExtensionSources(
 function ensureCriticalGitSourceCheckout(config: InstallConfig, source: string): boolean {
   const spec = criticalGitSourceSpec(source, { agentDir: config.agentDir });
   if (!spec) return true;
-  assertGitSourceTargetSafe(config, source, "critical git extension checkout", gitCheckoutIo());
+  assertGitSourceTargetSafe(
+    config,
+    source,
+    "critical git extension checkout",
+    gitCheckoutIo(config),
+  );
   if (!spec.ref) return true;
   return refreshGitCheckout(
     config,
@@ -1784,7 +1759,7 @@ function ensureCriticalGitSourceCheckout(config: InstallConfig, source: string):
       missingMessage: `critical git extension checkout is missing or invalid: ${spec.targetDir}`,
       warnOnMissing: true,
     },
-    gitCheckoutIo(),
+    gitCheckoutIo(config),
   );
 }
 
@@ -1804,7 +1779,7 @@ function preflightCriticalDefaultExtensionTargets(config: InstallConfig, sources
       config,
       source,
       "critical default extension package checkout",
-      gitCheckoutIo(),
+      gitCheckoutIo(config),
     );
   }
 }
@@ -1816,7 +1791,7 @@ function installCriticalDefaultExtension(config: InstallConfig, source: string):
     config,
     source,
     "critical default extension package checkout",
-    gitCheckoutIo(),
+    gitCheckoutIo(config),
   );
   try {
     runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
@@ -2077,7 +2052,7 @@ async function writeWrapper(config: InstallConfig): Promise<void> {
     !config.supportFilePaths.TLH_WRAPPER_SCRIPT ||
     !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)
   ) {
-    if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
+    if (!(await ensureSupportFilesPrepared(config, supportFileIo(config)))) {
       if (config.dryRun) {
         writeWrapperDryRunWithoutHelper(config);
         return;
@@ -2262,7 +2237,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   validateInputs(config);
   requireCommand(config, "npm");
   requireCommand(config, "git");
-  await preflightRuntimeSupportFiles(config, supportFileIo());
+  await preflightRuntimeSupportFiles(config, supportFileIo(config));
 
   const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
   const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);

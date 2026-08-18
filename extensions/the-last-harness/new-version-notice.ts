@@ -21,7 +21,8 @@ type TlhInteractiveModePrototype = typeof InteractiveMode.prototype & {
 
 // Intentional no-op: TLH pins Pi to a supported version window, so the upstream
 // "Update Available — Run `pi update`" banner shown at launch is misleading noise.
-function noOpShowNewVersionNotification(): void {}
+const noOpShowNewVersionNotification: typeof InteractiveMode.prototype.showNewVersionNotification =
+  () => {};
 
 export function installTlhNewVersionNotificationOverride(): void {
   const interactiveModePrototype = InteractiveMode.prototype as TlhInteractiveModePrototype;
@@ -38,7 +39,6 @@ export function installTlhNewVersionNotificationOverride(): void {
     return;
   }
 
-  interactiveModePrototype.showNewVersionNotification =
-    noOpShowNewVersionNotification as unknown as typeof interactiveModePrototype.showNewVersionNotification;
+  interactiveModePrototype.showNewVersionNotification = noOpShowNewVersionNotification;
   interactiveModePrototype[TLH_NEW_VERSION_NOTICE_PATCHED] = true;
 }

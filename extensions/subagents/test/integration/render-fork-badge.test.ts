@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { createPlainTheme } from "../support/themes.ts";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
@@ -11,14 +11,7 @@ import {
   whimsicalThinkingPhrase,
 } from "../../src/tui/whimsical-phrases.ts";
 
-// Theme is an SDK class with private colour-table fields; a plain object with
-// the two methods the render functions actually call is sufficient for tests.
-// Casting to the real Theme type (not a handwritten local shape) means the
-// compiler still validates everything except the theme argument itself.
-const theme = {
-  fg: (_name: string, text: string) => text,
-  bold: (text: string) => text,
-} as unknown as Theme;
+const theme = createPlainTheme();
 
 const expandKey = liveDetailShortcutDisplay();
 const expandHint = `Press ${expandKey} for full output`;
@@ -448,16 +441,10 @@ describe("renderSubagentResult fork indicator", () => {
 
   it("styles keyboard instruction hints with the dim theme", () => {
     const hintStyles: string[] = [];
-    // Theme is an SDK class with private fields; cast to allow a test stub.
-    const styledTheme = {
-      fg(name: string, text: string): string {
-        if (text.includes("Press ")) hintStyles.push(name);
-        return text;
-      },
-      bold(text: string): string {
-        return text;
-      },
-    } as unknown as Theme;
+    const styledTheme = createPlainTheme((name, text) => {
+      if (text.includes("Press ")) hintStyles.push(name);
+      return text;
+    });
     const activeResult = {
       agent: "worker",
       task: "review",

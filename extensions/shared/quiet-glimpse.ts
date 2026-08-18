@@ -116,11 +116,49 @@ export class QuietGlimpseWindowImpl extends EventEmitter implements QuietGlimpse
   }
 }
 
+function isNativeHostInfo(value: unknown): value is NativeHostInfo {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  if (!("path" in value) || typeof value.path !== "string") {
+    return false;
+  }
+  if (
+    "extraArgs" in value &&
+    value.extraArgs !== undefined &&
+    (!Array.isArray(value.extraArgs) ||
+      !value.extraArgs.every((entry) => typeof entry === "string"))
+  ) {
+    return false;
+  }
+  return !(
+    "buildHint" in value &&
+    value.buildHint !== undefined &&
+    typeof value.buildHint !== "string"
+  );
+}
+
+function readNativeHostInfo(module: unknown): NativeHostInfo {
+  if (
+    module === null ||
+    typeof module !== "object" ||
+    Array.isArray(module) ||
+    !("getNativeHostInfo" in module) ||
+    typeof module.getNativeHostInfo !== "function"
+  ) {
+    throw new Error("Glimpse module does not expose getNativeHostInfo().");
+  }
+
+  const host = module.getNativeHostInfo();
+  if (!isNativeHostInfo(host)) {
+    throw new Error("Glimpse module returned an invalid native host description.");
+  }
+  return host;
+}
+
 async function getNativeHostInfo(): Promise<NativeHostInfo> {
-  const glimpseModule = (await import("glimpseui")) as unknown as {
-    getNativeHostInfo: () => NativeHostInfo;
-  };
-  return glimpseModule.getNativeHostInfo();
+  const glimpseModule: unknown = await import("glimpseui");
+  return readNativeHostInfo(glimpseModule);
 }
 
 export async function openQuietGlimpse(

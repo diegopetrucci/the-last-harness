@@ -520,21 +520,21 @@ function spawnCaptureIsolatedPi(config, commandArgs) {
         allowFailure: true,
     });
 }
-function supportFileIo() {
+function supportFileIo(config) {
     return {
-        log: log,
-        verboseLog: verboseLog,
+        log: (_supportFilesConfig, message) => log(config, message),
+        verboseLog: (_supportFilesConfig, message) => verboseLog(config, message),
         warn,
-        requireCommand: requireCommand,
+        requireCommand: (_supportFilesConfig, command) => requireCommand(config, command),
     };
 }
-function gitCheckoutIo() {
+function gitCheckoutIo(config) {
     return {
-        spawnCapture: spawnCapture,
-        runCommand: runCommand,
-        runInDir: runInDir,
-        printCommand: printCommand,
-        log: log,
+        spawnCapture: (_gitConfig, commandArgs, options) => spawnCapture(config, commandArgs, options),
+        runCommand: (_gitConfig, commandArgs, options) => runCommand(config, commandArgs, options),
+        runInDir: (_gitConfig, dir, commandArgs) => runInDir(config, dir, commandArgs),
+        printCommand: (commandArgs) => printCommand(commandArgs),
+        log: (_gitConfig, message) => log(config, message),
         warn,
     };
 }
@@ -1101,7 +1101,7 @@ function refreshHarnessPackageCheckout(config) {
         ref: packageRef,
         label: "The Last Harness package checkout",
         missingMessage: `expected installed package checkout not found or invalid: ${packageRoot}`,
-    }, gitCheckoutIo());
+    }, gitCheckoutIo(config));
 }
 function installHarnessPackage(config) {
     verboseLog(config, `Using isolated Pi agent dir: ${config.agentDir}`);
@@ -1115,7 +1115,7 @@ function installHarnessPackage(config) {
     const piPackageSource = packageSourcePiSource(config.packageSource, {
         agentDir: config.agentDir,
     });
-    assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo());
+    assertGitSourceTargetSafe(config, config.packageSource, "The Last Harness package checkout", gitCheckoutIo(config));
     runIsolatedPi(config, [absolutePiCmd(config), "install", piPackageSource]);
     refreshHarnessPackageCheckout(config);
     if (config.packageSourceIsDefault)
@@ -1136,7 +1136,7 @@ async function mergeSettings(config) {
         log(config, "Skipping settings/keybinding merge (--no-settings).");
         return;
     }
-    if (!(await ensureSupportFilesPrepared(config, supportFileIo())))
+    if (!(await ensureSupportFilesPrepared(config, supportFileIo(config))))
         return;
     const args = [
         config.supportFilePaths.MERGE_SCRIPT,
@@ -1177,7 +1177,7 @@ async function mergeSettings(config) {
 }
 async function installSupportFilesToProfile(config) {
     if (!installableSupportFilesArePrepared(config))
-        await ensureSupportFilesPrepared(config, supportFileIo());
+        await ensureSupportFilesPrepared(config, supportFileIo(config));
     if (!installableSupportFilesArePrepared(config))
         return;
     const requireSubagentPrompts = settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
@@ -1251,7 +1251,7 @@ async function installSupportFilesToProfile(config) {
 async function writeInstallState(config) {
     if (!config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT ||
         !existsSync(config.supportFilePaths.TLH_INSTALL_STATE_SCRIPT)) {
-        if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
+        if (!(await ensureSupportFilesPrepared(config, supportFileIo(config)))) {
             if (config.dryRun) {
                 log(config, `Would write tlh update metadata: ${config.statePath}`);
                 return;
@@ -1331,7 +1331,7 @@ function ensureCriticalGitSourceCheckout(config, source) {
     const spec = criticalGitSourceSpec(source, { agentDir: config.agentDir });
     if (!spec)
         return true;
-    assertGitSourceTargetSafe(config, source, "critical git extension checkout", gitCheckoutIo());
+    assertGitSourceTargetSafe(config, source, "critical git extension checkout", gitCheckoutIo(config));
     if (!spec.ref)
         return true;
     return refreshGitCheckout(config, {
@@ -1341,7 +1341,7 @@ function ensureCriticalGitSourceCheckout(config, source) {
         label: "critical git extension checkout",
         missingMessage: `critical git extension checkout is missing or invalid: ${spec.targetDir}`,
         warnOnMissing: true,
-    }, gitCheckoutIo());
+    }, gitCheckoutIo(config));
 }
 function criticalDefaultGitSources(config, sources) {
     return sources.filter((source) => criticalGitSourceSpec(source, { agentDir: config.agentDir }));
@@ -1352,13 +1352,13 @@ function preflightCriticalDefaultExtensionTargets(config, sources) {
         return;
     detailLog(config, `${config.dryRun ? "Would preflight" : "Preflighting"} ${gitSources.length} critical bundled default git checkout target(s) before any settings-wide default extension update.`);
     for (const source of gitSources) {
-        assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
+        assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
     }
 }
 function installCriticalDefaultExtension(config, source) {
     verboseLog(config, `Installing critical bundled default extension package: ${source}`);
     const installSource = packageSourcePiSource(source, { agentDir: config.agentDir });
-    assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo());
+    assertGitSourceTargetSafe(config, source, "critical default extension package checkout", gitCheckoutIo(config));
     try {
         runIsolatedPi(config, [absolutePiCmd(config), "install", installSource]);
     }
@@ -1577,7 +1577,7 @@ async function writeWrapper(config) {
         log(config, "Creating wrapper command...");
     if (!config.supportFilePaths.TLH_WRAPPER_SCRIPT ||
         !existsSync(config.supportFilePaths.TLH_WRAPPER_SCRIPT)) {
-        if (!(await ensureSupportFilesPrepared(config, supportFileIo()))) {
+        if (!(await ensureSupportFilesPrepared(config, supportFileIo(config)))) {
             if (config.dryRun) {
                 writeWrapperDryRunWithoutHelper(config);
                 return;
@@ -1762,7 +1762,7 @@ async function runInstallFlow(config) {
     validateInputs(config);
     requireCommand(config, "npm");
     requireCommand(config, "git");
-    await preflightRuntimeSupportFiles(config, supportFileIo());
+    await preflightRuntimeSupportFiles(config, supportFileIo(config));
     const piInstalledByTlhPreference = readPiInstalledByTlhPreference(config);
     const { installed: piInstalledByTlh, piCmd } = installPiIfNeeded(config);
     // A runtime installed by this run is always TLH-owned, even if an update passed through a

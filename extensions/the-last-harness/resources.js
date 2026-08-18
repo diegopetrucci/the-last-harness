@@ -96,12 +96,10 @@ function resolveProjectTrusted(cwd, agentDir, options) {
     return readSavedProjectTrust(agentDir, cwd) === true;
 }
 function createSettingsManager(cwd, agentDir, projectTrusted) {
-    const create = SettingsManager.create;
-    return create(cwd, agentDir, { projectTrusted });
+    return SettingsManager.create(cwd, agentDir, { projectTrusted });
 }
 function loadContextFiles(cwd, agentDir) {
-    const load = loadProjectContextFiles;
-    return load({ cwd, agentDir });
+    return loadProjectContextFiles({ cwd, agentDir });
 }
 function filterVisibleResources(resources, projectTrusted) {
     return resources.filter((resource) => resource.enabled &&

@@ -8,6 +8,16 @@ const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.mode
 const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal");
 const TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED = Symbol.for("tlh.modelVisibilityExactLookupPatched");
 const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for("tlh.modelVisibilityFindExactModelMatchOriginal");
+function isInteractiveModePrototype(value) {
+    return (value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        "findExactModelMatch" in value &&
+        typeof value.findExactModelMatch === "function");
+}
+function isModelRuntimeSnapshotSource(value) {
+    return isRecord(value) && typeof value.getAvailableSnapshot === "function";
+}
 export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-3-5-haiku-20241022",
     "anthropic/claude-3-5-haiku-latest",
@@ -184,7 +194,11 @@ export function installTlhModelVisibilityFilter() {
         };
         modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED] = true;
     }
-    const interactiveModePrototype = InteractiveMode.prototype;
+    const interactiveModePrototypeCandidate = InteractiveMode.prototype;
+    if (!isInteractiveModePrototype(interactiveModePrototypeCandidate)) {
+        return;
+    }
+    const interactiveModePrototype = interactiveModePrototypeCandidate;
     if (interactiveModePrototype[TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED] ||
         typeof interactiveModePrototype.findExactModelMatch !== "function") {
         return;
@@ -246,8 +260,8 @@ export function getUnfilteredAvailableModels(modelSource) {
     if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
         return getUnfilteredAvailableModels(modelSource.modelRegistry);
     }
-    const compatibilityRuntime = modelSource.runtime;
-    if (compatibilityRuntime) {
+    const compatibilityRuntime = isRecord(modelSource) && "runtime" in modelSource ? modelSource.runtime : undefined;
+    if (isModelRuntimeSnapshotSource(compatibilityRuntime)) {
         return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
     }
     if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {

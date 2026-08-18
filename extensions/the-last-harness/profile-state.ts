@@ -328,14 +328,17 @@ function writeCollisionSafeSettingsBackup(settingsPath: string, current: string)
   );
 }
 
+function isSettingsStorageLike(value: unknown): value is SettingsStorageLike {
+  return isRecord(value) && typeof value.withLock === "function";
+}
+
 function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
-  const manager = SettingsManager.create(cwd, getAgentDir()) as unknown as {
-    storage?: SettingsStorageLike;
-  };
-  if (!manager.storage || typeof manager.storage.withLock !== "function") {
+  const manager: unknown = SettingsManager.create(cwd, getAgentDir());
+  const storage = isRecord(manager) ? manager.storage : undefined;
+  if (!isSettingsStorageLike(storage)) {
     throw new Error("Pi settings storage is unavailable.");
   }
-  return manager.storage;
+  return storage;
 }
 
 export function withLockedTlhSettingsWrite<

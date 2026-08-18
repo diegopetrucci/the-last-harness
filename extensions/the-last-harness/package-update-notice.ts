@@ -39,7 +39,6 @@ export function installTlhPackageUpdateNotificationOverride(): void {
     return;
   }
 
-  interactiveModePrototype.showPackageUpdateNotification =
-    showTlhPackageUpdateNotification as unknown as typeof interactiveModePrototype.showPackageUpdateNotification;
+  interactiveModePrototype.showPackageUpdateNotification = showTlhPackageUpdateNotification;
   interactiveModePrototype[TLH_PACKAGE_UPDATE_NOTICE_PATCHED] = true;
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import type { Message } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 
 import {
   evaluateCompletionMutationGuard,
@@ -12,17 +12,11 @@ import { isMutatingBashCommand } from "../../src/runs/shared/long-running-guard.
 import { injectSingleOutputInstruction } from "../../src/runs/shared/single-output.ts";
 
 function assistantToolCall(name: string, args: Record<string, unknown> = {}): Message {
-  return {
-    role: "assistant",
-    content: [{ type: "toolCall", name, arguments: args }],
-  } as unknown as Message;
+  return fauxAssistantMessage(fauxToolCall(name, args));
 }
 
 function assistantText(text: string): Message {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text }],
-  } as unknown as Message;
+  return fauxAssistantMessage(fauxText(text));
 }
 
 test("implementation task with no mutation triggers the completion guard", () => {

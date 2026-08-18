@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { fauxAssistantMessage, fauxToolCall, type FauxContentBlock } from "@earendil-works/pi-ai";
 import type { Message } from "@earendil-works/pi-ai";
 import { getFinalOutput } from "../../src/shared/utils.ts";
 
-function assistantContent(content: unknown[]): Message {
-  return { role: "assistant", content } as unknown as Message;
+function assistantContent(content: FauxContentBlock[]): Message {
+  return fauxAssistantMessage(content);
 }
 
 describe("getFinalOutput", () => {
@@ -43,7 +44,7 @@ describe("getFinalOutput", () => {
   it("falls back to an older assistant message when the latest assistant message is tool-only", () => {
     const messages = [
       assistantContent([{ type: "text", text: "Earlier" }]),
-      assistantContent([{ type: "toolCall", name: "read", arguments: { path: "README.md" } }]),
+      assistantContent([fauxToolCall("read", { path: "README.md" })]),
     ];
 
     assert.equal(getFinalOutput(messages), "Earlier");
@@ -87,12 +88,10 @@ describe("getFinalOutput", () => {
 
   it("does not prefer provider-error acceptance reports", () => {
     const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "```acceptance-report\n{}\n```" }],
-        stopReason: "error",
-        errorMessage: "provider transport failed",
-      } as unknown as Message,
+      fauxAssistantMessage(
+        { type: "text", text: "```acceptance-report\n{}\n```" },
+        { stopReason: "error", errorMessage: "provider transport failed" },
+      ),
       assistantContent([{ type: "text", text: "Done." }]),
     ];
 
@@ -110,12 +109,10 @@ describe("getFinalOutput", () => {
 
   it("does not use provider-error assistant text as fallback output", () => {
     const messages = [
-      {
-        role: "assistant",
-        content: [{ type: "text", text: "temporary provider failure" }],
-        stopReason: "error",
-        errorMessage: "provider transport failed",
-      } as unknown as Message,
+      fauxAssistantMessage(
+        { type: "text", text: "temporary provider failure" },
+        { stopReason: "error", errorMessage: "provider transport failed" },
+      ),
       assistantContent([{ type: "text", text: "" }]),
     ];
 
