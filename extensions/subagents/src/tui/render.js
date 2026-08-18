@@ -308,6 +308,27 @@ function isProtectedWidgetLifecycle(state, interruptRequestedAt) {
             state: state === "running" && interruptRequestedAt !== undefined ? "pausing" : state,
         }));
 }
+function isCompletedWidgetStepStatus(status) {
+    return status === "complete" || status === "completed" || status === "continued";
+}
+function projectContinuedWidgetStep(job, step) {
+    if (job.status !== "continued")
+        return step;
+    const status = step.status === "running" || step.status === "pausing" || step.status === "paused"
+        ? "continued"
+        : step.status;
+    return {
+        ...step,
+        status,
+        activityState: undefined,
+        lastActivityAt: undefined,
+        currentTool: undefined,
+        currentToolArgs: undefined,
+        currentToolStartedAt: undefined,
+        currentPath: undefined,
+        interruptRequestedAt: undefined,
+    };
+}
 function widgetRunningStep(job) {
     return job.steps?.find((step) => step.status === "running");
 }
@@ -346,6 +367,8 @@ function widgetInlineThinkingActivity(job) {
     };
 }
 function widgetActivityLines(job, expanded = false) {
+    if (job.status === "continued")
+        return ["continued"];
     const privacySafe = isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt);
     const runningStep = widgetRunningStep(job);
     if (job.interruptRequestedAt !== undefined && job.status === "running") {
@@ -432,7 +455,7 @@ function widgetStatusGlyph(job, theme) {
         return theme.fg("accent", runningGlyph(widgetJobRunningSeed(job)));
     if (job.status === "queued")
         return theme.fg("muted", "◦");
-    if (job.status === "complete")
+    if (job.status === "complete" || job.status === "continued")
         return theme.fg("success", "✓");
     if (job.status === "paused")
         return theme.fg("warning", "■");
@@ -441,7 +464,7 @@ function widgetStatusGlyph(job, theme) {
 function widgetStepGlyph(status, theme, seed) {
     if (status === "running")
         return theme.fg("accent", runningGlyph(seed));
-    if (status === "complete" || status === "completed")
+    if (status === "complete" || status === "completed" || status === "continued")
         return theme.fg("success", "✓");
     if (status === "failed")
         return theme.fg("error", "✗");
@@ -456,6 +479,8 @@ function widgetStepStatus(status, theme, interruptRequestedAt) {
         return "";
     if (status === "complete" || status === "completed")
         return theme.fg("success", "complete");
+    if (status === "continued")
+        return theme.fg("success", "continued");
     if (status === "failed")
         return theme.fg("error", "failed");
     if (status === "paused")
@@ -488,6 +513,8 @@ function foregroundTkTicketLine(result, theme, active, indent = "  ") {
     return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 function widgetStepActivity(step, snapshotNow, expanded = false) {
+    if (step.status === "continued")
+        return "";
     const privacySafe = isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt);
     if (step.interruptRequestedAt !== undefined)
         return "pausing…";
@@ -532,13 +559,15 @@ function widgetChainDetails(job, theme, expanded = false, width = getTermWidth()
     const total = job.chainStepCount ?? job.steps.length;
     const lines = [];
     for (const span of buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups)) {
-        const steps = job.steps.slice(span.start, span.start + span.count);
+        const sourceSteps = job.steps.slice(span.start, span.start + span.count);
+        const steps = sourceSteps.map((step) => projectContinuedWidgetStep(job, step));
         if (span.isParallel) {
-            const status = aggregateStepStatus(steps);
-            lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count, { showRunning: false }))}`);
+            const aggregationSteps = steps.map((step) => step.status === "continued" ? { ...step, status: "complete" } : step);
+            const status = aggregateStepStatus(aggregationSteps);
+            lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(aggregationSteps, span.count, { showRunning: false }))}`);
             continue;
         }
-        const step = steps[0];
+        const step = sourceSteps[0];
         if (!step) {
             lines.push(`  ${theme.fg("dim", `◦ Step ${span.stepIndex + 1}/${total}: pending`)}`);
             continue;
@@ -557,30 +586,31 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
     const total = job.stepsTotal ?? job.steps.length;
     const lines = [];
     for (const [index, step] of job.steps.entries()) {
+        const displayStep = projectContinuedWidgetStep(job, step);
         const marker = index === job.steps.length - 1 ? "└" : "├";
-        const activity = widgetStepActivity(step, job.updatedAt, expanded);
+        const activity = widgetStepActivity(displayStep, job.updatedAt, expanded);
         const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-        const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-        const healthWarning = step.interruptRequestedAt === undefined &&
-            !step.currentTool &&
-            isHealthActivityState(step.activityState)
-            ? buildLiveStatusLine(step, job.updatedAt)
+        const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
+        const healthWarning = displayStep.interruptRequestedAt === undefined &&
+            !displayStep.currentTool &&
+            isHealthActivityState(displayStep.activityState)
+            ? buildLiveStatusLine(displayStep, job.updatedAt)
             : undefined;
         const freshness = !expanded &&
-            step.status === "running" &&
-            step.interruptRequestedAt === undefined &&
-            !step.currentTool &&
+            displayStep.status === "running" &&
+            displayStep.interruptRequestedAt === undefined &&
+            !displayStep.currentTool &&
             !healthWarning
-            ? buildLiveStatusLine(step, job.updatedAt)
+            ? buildLiveStatusLine(displayStep, job.updatedAt)
             : undefined;
-        const stepStatus = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+        const stepStatus = widgetStepStatus(displayStep.status, theme, displayStep.interruptRequestedAt);
         const statusSuffix = stepStatus ? ` ${theme.fg("dim", "·")} ${stepStatus}` : "";
-        const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent}${statusSuffix}${modelDisplay}`)}`;
+        const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${displayStep.agent}${statusSuffix}${modelDisplay}`)}`;
         if (!expanded && healthWarning) {
             lines.push(...fitInlineActivity(prefix, healthWarning, theme, Math.max(1, width - 6)));
         }
         else if (freshness) {
-            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(step.activityState, step.turnCount), freshness, theme, Math.max(1, width - 6)));
+            lines.push(...fitInlineThinkingActivity(prefix, compactThinkingPhrase(displayStep.activityState, displayStep.turnCount), freshness, theme, Math.max(1, width - 6)));
         }
         else {
             lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
@@ -844,9 +874,15 @@ function resultRowLabel(details, label, resultIndex, stepNumber) {
 function widgetStats(job, theme, includeStepProgress = true, expanded = false) {
     const parts = [];
     const stepsTotal = job.stepsTotal ?? job.agents?.length ?? 1;
+    const projectedSteps = job.status === "continued"
+        ? job.steps?.map((step) => projectContinuedWidgetStep(job, step))
+        : undefined;
+    const running = job.status === "continued" ? 0 : (job.runningSteps ?? (job.status === "running" ? 1 : 0));
+    const done = job.status === "continued"
+        ? (projectedSteps?.filter((step) => isCompletedWidgetStepStatus(step.status)).length ??
+            stepsTotal)
+        : (job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0));
     if (includeStepProgress && job.activeParallelGroup) {
-        const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
-        const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
         if (job.mode === "parallel") {
             if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
                 parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
@@ -866,8 +902,6 @@ function widgetStats(job, theme, includeStepProgress = true, expanded = false) {
         }
     }
     else if (includeStepProgress && job.mode === "parallel") {
-        const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
-        const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
         if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
             parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
         if (stepsTotal > 0)
@@ -916,6 +950,8 @@ function modelThinkingBadge(theme, model, thinking) {
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
 function widgetStepActivityLines(step, width, expanded, snapshotNow) {
+    if (step.status === "continued")
+        return [];
     if (step.interruptRequestedAt !== undefined)
         return ["pausing…"];
     const toolLine = formatCurrentToolLine(step, width, expanded, snapshotNow);
@@ -1069,30 +1105,33 @@ function formatNestedWidgetLines(children, theme, width, expanded, snapshotNow, 
     return wrapDisplayLines(lines, width);
 }
 function singleWidgetStepDisplayStatus(job, step) {
-    if (step.status !== "running")
-        return step.status;
+    const projectedStep = projectContinuedWidgetStep(job, step);
+    if (projectedStep.status !== "running")
+        return projectedStep.status;
     if (job.status === "complete" || job.status === "failed")
         return job.status;
-    return step.status;
+    return projectedStep.status;
 }
-function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus = step.status) {
-    const status = widgetStepStatus(displayStatus, theme, displayStatus === "running" ? step.interruptRequestedAt : undefined);
+function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, total, expanded, width, displayStatus) {
+    const displayStep = projectContinuedWidgetStep(job, step);
+    const resolvedDisplayStatus = displayStatus ?? displayStep.status;
+    const status = widgetStepStatus(resolvedDisplayStatus, theme, resolvedDisplayStatus === "running" ? displayStep.interruptRequestedAt : undefined);
     const durationFallbackMs = itemTitle === undefined &&
-        step.status === "running" &&
-        step.durationMs === undefined &&
+        displayStep.status === "running" &&
+        displayStep.durationMs === undefined &&
         job.startedAt !== undefined &&
         job.updatedAt !== undefined
         ? Math.max(0, job.updatedAt - job.startedAt)
         : undefined;
-    const stats = widgetStepStats(theme, step, durationFallbackMs, expanded);
-    const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+    const stats = widgetStepStats(theme, displayStep, durationFallbackMs, expanded);
+    const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
     const itemLabel = itemTitle ? `${itemTitle} ${index}/${total}: ` : "";
     const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
     const lines = [
-        `  ${widgetStepGlyph(displayStatus, theme, widgetStepRunningSeed(step, index - 1))} ${itemLabel}${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+        `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
-    const activityLines = displayStatus === step.status
-        ? widgetStepActivityLines(step, width, expanded, job.updatedAt)
+    const activityLines = resolvedDisplayStatus === displayStep.status
+        ? widgetStepActivityLines(displayStep, width, expanded, job.updatedAt)
         : [];
     for (const [activityIndex, activity] of activityLines.entries()) {
         lines.push(`    ${theme.fg("dim", activityIndex === 0 ? `⎿  ${activity}` : `   ${activity}`)}`);
@@ -1100,7 +1139,7 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 12 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt))) {
         lines.push(`    ${nestedLine}`);
     }
-    if (displayStatus === "running") {
+    if (resolvedDisplayStatus === "running") {
         if (!expanded)
             lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
         if (expanded) {
@@ -1196,6 +1235,8 @@ function singleWidgetHeaderLines(job, theme, expanded) {
     ];
 }
 function jobHealthWarningLines(job, theme) {
+    if (job.status === "continued")
+        return [];
     if (!isHealthActivityState(job.activityState))
         return [];
     if (!job.steps?.length)
@@ -1206,6 +1247,8 @@ function jobHealthWarningLines(job, theme) {
     return warning ? [`  ${theme.fg("dim", `⎿  ${warning}`)}`] : [];
 }
 function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
+    if (job.status === "continued")
+        return [];
     if (!isHealthActivityState(job.activityState))
         return [];
     if (!job.steps?.length)
@@ -1216,9 +1259,10 @@ function singleModeHealthWarningLines(job, theme, contentWidth, expanded) {
     if (!warning)
         return [];
     const step = job.steps[0];
+    const displayStep = projectContinuedWidgetStep(job, step);
     const displayStatus = singleWidgetStepDisplayStatus(job, step);
-    if (displayStatus === step.status) {
-        const stepActivityLines = widgetStepActivityLines(step, contentWidth, expanded, job.updatedAt);
+    if (displayStatus === displayStep.status) {
+        const stepActivityLines = widgetStepActivityLines(displayStep, contentWidth, expanded, job.updatedAt);
         if (stepActivityLines.includes(warning))
             return [];
     }
@@ -1258,24 +1302,27 @@ function compactSingleWidgetLines(job, theme, width) {
         ...widgetTkTicketLines(job, theme),
     ];
     for (const [index, step] of job.steps.entries()) {
-        const status = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+        const displayStep = projectContinuedWidgetStep(job, step);
+        const status = widgetStepStatus(displayStep.status, theme, displayStep.interruptRequestedAt);
         const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
-        const activityLines = widgetStepActivityLines(step, contentWidth, false, job.updatedAt);
+        const activityLines = widgetStepActivityLines(displayStep, contentWidth, false, job.updatedAt);
         const activity = activityLines.join(" · ");
-        const stepStats = widgetStepStats(theme, step);
+        const stepStats = widgetStepStats(theme, displayStep);
         const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
-        const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-        const rowPrefix = `  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
-        const healthWarning = step.status === "running" &&
-            step.interruptRequestedAt === undefined &&
-            !step.currentTool &&
-            isHealthActivityState(step.activityState)
-            ? activityLines.find((activityLine) => activityLine === buildLiveStatusLine(step, job.updatedAt))
+        const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
+        const rowPrefix = `  ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
+        const healthWarning = displayStep.status === "running" &&
+            displayStep.interruptRequestedAt === undefined &&
+            !displayStep.currentTool &&
+            isHealthActivityState(displayStep.activityState)
+            ? activityLines.find((activityLine) => activityLine === buildLiveStatusLine(displayStep, job.updatedAt))
             : undefined;
         if (healthWarning) {
             lines.push(...fitInlineActivity(rowPrefix, healthWarning, theme, contentWidth));
         }
-        else if (step.status === "running" && !step.currentTool && activityLines.length === 2) {
+        else if (displayStep.status === "running" &&
+            !displayStep.currentTool &&
+            activityLines.length === 2) {
             lines.push(...fitInlineThinkingActivity(rowPrefix, activityLines[0], activityLines[1], theme, contentWidth));
         }
         else {
@@ -1284,7 +1331,7 @@ function compactSingleWidgetLines(job, theme, width) {
         for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
             lines.push(`    ${nestedLine}`);
     }
-    if (job.steps.some((step) => step.status === "running"))
+    if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
         lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
     return wrapDisplayLines(lines, contentWidth);
 }
@@ -1312,7 +1359,7 @@ function widgetHeaderCounts(jobs) {
     return {
         running: jobs.filter((job) => job.status === "running"),
         queued: jobs.filter((job) => job.status === "queued"),
-        complete: jobs.filter((job) => job.status === "complete"),
+        complete: jobs.filter((job) => job.status === "complete" || job.status === "continued"),
         failed: jobs.filter((job) => job.status === "failed"),
         paused: jobs.filter((job) => job.status === "paused"),
     };
@@ -1482,7 +1529,8 @@ function progressiveJobLine(job, theme, width) {
         return fitInlineThinkingActivity(prefix, thinkingActivity.phrase, thinkingActivity.freshness, theme, contentWidth);
     const runningStep = widgetRunningStep(job);
     const activityState = widgetActivityState(job, runningStep);
-    const healthWarning = job.interruptRequestedAt === undefined &&
+    const healthWarning = job.status !== "continued" &&
+        job.interruptRequestedAt === undefined &&
         !job.currentTool &&
         !widgetActiveStep(job) &&
         !widgetHasPausingStep(job) &&
