@@ -12,7 +12,6 @@ import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
   getTlhSubscriptionUsageFooterState,
@@ -370,17 +369,6 @@ export function createTlhFooter(
           mcpContextEstimateCache,
         );
       }
-      const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
-      if (tkWorkflowStatus) {
-        const tkWorkflowLines = tkWorkflowStatus
-          .split(/\r?\n/)
-          .map((line) => sanitizeStatusText(line))
-          .filter(Boolean);
-        for (const line of tkWorkflowLines) {
-          lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
-        }
-      }
-
       if (line3 !== undefined) {
         lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
       }
@@ -403,9 +391,9 @@ export function createTlhFooter(
 
       // Extension status line (conditional on registered extension statuses)
       if (extensionStatuses && extensionStatuses.size > 0) {
-        const visibleStatuses = Array.from(extensionStatuses.entries())
-          .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
-          .sort(([a], [b]) => a.localeCompare(b));
+        const visibleStatuses = Array.from(extensionStatuses.entries()).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
         const statusLine = visibleStatuses
           .map(([, text]) =>
             appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix),

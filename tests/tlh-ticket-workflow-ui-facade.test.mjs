@@ -66,15 +66,6 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
     applyCurrentSettings(ctx) {
       runtimeCalls.push(["applyCurrentSettings", ctx.cwd, process.env.TICKETS_DIR]);
     },
-    handleSessionShutdown() {
-      runtimeCalls.push(["handleSessionShutdown"]);
-    },
-    handleUserBash(event, ctx) {
-      runtimeCalls.push(["handleUserBash", event.command, ctx.cwd]);
-    },
-    handleToolResult(event, ctx) {
-      runtimeCalls.push(["handleToolResult", event.input.command, ctx.cwd]);
-    },
   };
 
   await withEnv(
@@ -101,14 +92,6 @@ test("lazy ticket workflow facade loads the runtime at UI session start and reus
       assert.deepEqual(createCalls, ["create"]);
       assert.deepEqual(runtimeCalls.slice(-1), [
         ["applyCurrentSettings", fixture.cwd, join(fixture.cwd, ".tickets")],
-      ]);
-      await fireAll(pi, "user_bash", { command: "tk ready" }, ctx);
-      await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "tk ready" } }, ctx);
-      await fireAll(pi, "session_shutdown", {}, ctx);
-      assert.deepEqual(runtimeCalls.slice(2), [
-        ["handleUserBash", "tk ready", fixture.cwd],
-        ["handleToolResult", "tk ready", fixture.cwd],
-        ["handleSessionShutdown"],
       ]);
     },
   );
@@ -161,9 +144,6 @@ test("lazy ticket workflow facade retries runtime creation after an initial sess
             applyCurrentSettings(ctx) {
               runtimeCalls.push(["applyCurrentSettings", ctx.cwd]);
             },
-            handleSessionShutdown() {},
-            handleUserBash() {},
-            handleToolResult() {},
           };
         },
       });
@@ -198,9 +178,6 @@ test("lazy ticket workflow facade rescopes each session before reapplying the lo
           applyCurrentSettings(ctx) {
             runtimeCalls.push([ctx.cwd, process.env.TICKETS_DIR]);
           },
-          handleSessionShutdown() {},
-          handleUserBash() {},
-          handleToolResult() {},
         }),
       });
       await fireAll(pi, "session_start", { reason: "restore" }, createCtx(repoA));
