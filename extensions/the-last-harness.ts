@@ -63,9 +63,7 @@ const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 
 function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {
-  const projectTrusted = (
-    ctx as ExtensionContext & { isProjectTrusted?: () => unknown }
-  ).isProjectTrusted?.();
+  const projectTrusted = ctx.isProjectTrusted?.();
   return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
 }
 

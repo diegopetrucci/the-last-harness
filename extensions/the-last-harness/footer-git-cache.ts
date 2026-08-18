@@ -43,12 +43,13 @@ export type CommandRunner = (
 ) => Promise<CommandResult>;
 
 /**
- * Injectable interval clock. Timer handles stay explicit `unknown` so callers
- * can provide Node, browser, or fake-clock implementations structurally.
+ * Injectable interval clock. This Node runtime uses the native
+ * `ReturnType<typeof setInterval>` (`NodeJS.Timeout`) handle contract; fake
+ * clocks should provide a compatible handle.
  */
 export type Clock = {
-  setInterval(callback: () => void, ms: number): unknown;
-  clearInterval(handle: unknown): void;
+  setInterval(callback: () => void, ms: number): ReturnType<typeof setInterval>;
+  clearInterval(handle: ReturnType<typeof setInterval>): void;
 };
 
 export type FooterGitCacheOptions = {
@@ -162,11 +163,11 @@ function defaultClock(): Clock {
   return {
     setInterval(callback, ms) {
       const handle = setInterval(callback, ms);
-      (handle as { unref?: () => void }).unref?.();
+      handle.unref?.();
       return handle;
     },
     clearInterval(handle) {
-      clearInterval(handle as ReturnType<typeof setInterval>);
+      clearInterval(handle);
     },
   };
 }
@@ -247,7 +248,7 @@ export class FooterGitCache {
   private readonly ghTimeoutMs: number;
   private readonly onChange: (() => void) | undefined;
 
-  private intervalHandle: unknown;
+  private intervalHandle: ReturnType<typeof setInterval> | undefined;
   private readonly inflightControllers = new Set<AbortController>();
   private disposed = false;
   private refreshInFlight: Promise<void> | undefined;

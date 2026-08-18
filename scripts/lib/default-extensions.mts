@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
+import type { JsonValue } from "@earendil-works/pi-ai";
+
 import { parseGitSource } from "./tlh-install-package-source.mjs";
 
 interface PlainObject {
@@ -39,7 +41,17 @@ function isPlainObject(value: unknown): value is PlainObject {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function readManifestJson(path: string, { allowMissing }: { allowMissing: boolean }): unknown {
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function readManifestJson(path: string, { allowMissing }: { allowMissing: boolean }): JsonValue {
   if (!existsSync(path)) {
     if (allowMissing) return [];
     throw new Error(`File does not exist: ${path}`);
@@ -47,7 +59,9 @@ function readManifestJson(path: string, { allowMissing }: { allowMissing: boolea
   const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
   if (!raw.trim()) return {};
   try {
-    return JSON.parse(raw) as unknown;
+    const parsed: unknown = JSON.parse(raw);
+    if (isJsonValue(parsed)) return parsed;
+    throw new Error("JSON value is not representable as a JSON document");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid JSON in ${path}: ${message}`, { cause: error });

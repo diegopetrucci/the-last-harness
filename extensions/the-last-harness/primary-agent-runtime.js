@@ -1087,9 +1087,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 }
             }
         });
-        const piEventsRecord = pi.events;
-        if (typeof piEventsRecord?.on === "function") {
-            pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => {
+        if (typeof pi.events?.on === "function") {
+            void pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => {
                 const authStore = getProviderAuthHealthStore?.();
                 if (!authStore)
                     return;

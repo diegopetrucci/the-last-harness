@@ -1788,25 +1788,21 @@ function createTlhPrimaryAgentRuntime(
     // artifact carries the full attempt history.
     //
     // Uses pi.events as an EventBus (duck-typed for test compatibility).
-    const piEventsRecord = pi.events as unknown as Record<string, unknown>;
-    if (typeof piEventsRecord?.on === "function") {
-      (pi.events as { on(channel: string, handler: (data: unknown) => void): unknown }).on(
-        SUBAGENT_ASYNC_COMPLETE_EVENT,
-        (data: unknown) => {
-          const authStore = getProviderAuthHealthStore?.();
-          if (!authStore) return;
-          const prevReauthProviders = new Set(authStore.getReauthProviders());
-          processSubagentRunDetails(data, authStore);
-          // We have no ctx here, so we cannot notify immediately. Record intent
-          // for any provider that newly entered reauth-required; the next
-          // turn_end will flush it before any clearing probe can reset the status.
-          for (const provider of authStore.getReauthProviders()) {
-            if (!prevReauthProviders.has(provider)) {
-              pendingReauthNotifications.add(provider);
-            }
+    if (typeof pi.events?.on === "function") {
+      void pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data: unknown) => {
+        const authStore = getProviderAuthHealthStore?.();
+        if (!authStore) return;
+        const prevReauthProviders = new Set(authStore.getReauthProviders());
+        processSubagentRunDetails(data, authStore);
+        // We have no ctx here, so we cannot notify immediately. Record intent
+        // for any provider that newly entered reauth-required; the next
+        // turn_end will flush it before any clearing probe can reset the status.
+        for (const provider of authStore.getReauthProviders()) {
+          if (!prevReauthProviders.has(provider)) {
+            pendingReauthNotifications.add(provider);
           }
-        },
-      );
+        }
+      });
     }
   }
 

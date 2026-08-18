@@ -2,8 +2,11 @@ import { Type } from "typebox";
 function keepTopLevelParameterDescriptions(schema) {
     return pruneNestedDescriptions(schema, []);
 }
+function isSchemaCloneObject(value) {
+    return value !== null && typeof value === "object";
+}
 function pruneNestedDescriptions(value, path) {
-    if (!value || typeof value !== "object")
+    if (!isSchemaCloneObject(value))
         return value;
     const result = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
     for (const key of Reflect.ownKeys(value)) {

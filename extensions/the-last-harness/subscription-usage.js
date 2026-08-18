@@ -19,6 +19,22 @@ function asObject(value) {
         ? value
         : undefined;
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
+function hasAuthStorageGetter(value) {
+    const storage = asObject(value);
+    return storage !== undefined && typeof storage.get === "function";
+}
 function finiteNumber(value) {
     if (typeof value === "number" && Number.isFinite(value)) {
         return value;
@@ -279,11 +295,15 @@ async function responseJson(response) {
     if (response?.ok !== true || typeof response.json !== "function") {
         return undefined;
     }
-    return response.json();
+    const payload = await response.json();
+    return isJsonValue(payload) ? payload : undefined;
 }
 function oauthCredentialFromRegistry(modelRegistry, provider) {
     const authStorage = modelRegistry?.authStorage;
-    const credential = authStorage?.get?.(provider);
+    if (!hasAuthStorageGetter(authStorage)) {
+        return undefined;
+    }
+    const credential = authStorage.get(provider);
     const stored = asObject(credential);
     return stored?.type === "oauth" ? stored : undefined;
 }
@@ -318,7 +338,7 @@ function cacheKeyMatchesProvider(cacheKey, provider) {
 }
 function hasRuntimeCredentialOverride(modelRegistry, provider) {
     try {
-        const authStorage = modelRegistry?.authStorage;
+        const authStorage = asObject(modelRegistry?.authStorage);
         const runtimeOverrides = authStorage?.runtimeOverrides;
         return runtimeOverrides instanceof Map && runtimeOverrides.has(provider);
     }

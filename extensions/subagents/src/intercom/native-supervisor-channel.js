@@ -14,14 +14,14 @@ const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
-const ContactSupervisorParamsSchema = Type.Object({
+const ContactSupervisorParamsSchema = Type.Unsafe(Type.Object({
     reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
     message: Type.Optional(Type.String()),
     interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
-}, { additionalProperties: false });
-const SupervisorParamsSchema = Type.Object({
+}, { additionalProperties: false }));
+const SupervisorParamsSchema = Type.Unsafe(Type.Object({
     action: Type.String({ enum: ["pending", "status"] }),
-}, { additionalProperties: false });
+}, { additionalProperties: false }));
 function safeSegment(value) {
     return (value
         .trim()
@@ -188,9 +188,8 @@ function hasTool(pi, name) {
 export function registerNativeSupervisorClient(pi) {
     if (!readChildMetadata())
         return;
-    const registerTool = pi.registerTool.bind(pi);
     if (!hasTool(pi, "contact_supervisor")) {
-        registerTool({
+        pi.registerTool({
             name: "contact_supervisor",
             label: "Contact Supervisor",
             description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
@@ -478,8 +477,7 @@ function buildParentSupervisorTool(pending, state) {
         parameters: SupervisorParamsSchema,
         async execute(_id, params) {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
-            const input = params;
-            if (input.action === "status") {
+            if (params.action === "status") {
                 return {
                     content: [
                         {
@@ -490,7 +488,7 @@ function buildParentSupervisorTool(pending, state) {
                     details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
                 };
             }
-            if (input.action === "pending") {
+            if (params.action === "pending") {
                 const lines = [...pending.values()]
                     .filter((request) => request.expectsReply)
                     .map((request) => formatPendingLine(request, state));
@@ -504,7 +502,7 @@ function buildParentSupervisorTool(pending, state) {
                     details: { pending: publicPendingRequests(pending) },
                 };
             }
-            throw new Error(`Unsupported supervisor action: ${input.action}`);
+            throw new Error(`Unsupported supervisor action: ${params.action}`);
         },
     };
 }
@@ -513,10 +511,9 @@ export function createNativeSupervisorChannel(pi, state) {
     const seenFiles = new Set();
     let poller;
     let lastStaleCleanupAt = 0;
-    const registerTool = pi.registerTool.bind(pi);
     const registerParentTools = () => {
         if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
-            registerTool(buildParentSupervisorTool(pending, state));
+            pi.registerTool(buildParentSupervisorTool(pending, state));
     };
     const cleanupStaleChannelsIfDue = () => {
         const nowMs = Date.now();

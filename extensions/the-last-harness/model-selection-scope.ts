@@ -57,7 +57,9 @@ type TlhModelSelectionPersistenceState = {
 };
 
 type ModelSelectorRuntimePrototype = {
-  handleSelect(this: unknown, model: unknown): unknown;
+  // The upstream private handleSelect implementation returns void; the model
+  // remains opaque because this shim only wraps the call for async-local scope.
+  handleSelect(this: ModelSelectorComponent, model: unknown): void;
 };
 
 type TlhModelSelectionPersistencePatch = {
@@ -383,7 +385,7 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     state,
   };
 
-  modelSelectorPrototype.handleSelect = function (model: unknown): unknown {
+  modelSelectorPrototype.handleSelect = function (model: unknown): void {
     return patch.nativeSelectorContext.run(true, () =>
       originals.handleModelSelect.call(this, model),
     );

@@ -3,10 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, it } from "node:test";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { ExecResult } from "@earendil-works/pi-coding-agent";
 
 type RegisteredSlashCommand = {
   handler(args: string, ctx: unknown): Promise<void>;
-  getArgumentCompletions?: (prefix: string) => unknown;
+  getArgumentCompletions?: (
+    prefix: string,
+  ) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 };
 
 interface EventBus {
@@ -95,7 +99,7 @@ function createCommandContext(
   overrides: Partial<{
     cwd: string;
     hasUI: boolean;
-    custom: (...args: unknown[]) => Promise<unknown>;
+    custom: () => Promise<undefined>;
     notify: (message: string, type?: string) => void;
     confirm: (title: string, message: string) => Promise<boolean>;
     setStatus: (key: string, text: string | undefined) => void;
@@ -103,7 +107,9 @@ function createCommandContext(
     sessionManager: unknown;
     modelRegistry: {
       getAvailable: () => Array<{ provider: string; id: string }>;
-      find?: (provider: string, id: string) => unknown;
+      find?:
+        | ((provider: string, id: string) => { provider: string; id: string } | undefined)
+        | undefined;
     };
   }> = {},
 ) {
@@ -147,7 +153,7 @@ function registerCommands(
   cwd: string,
   sent: unknown[] = [],
   piOverrides: Partial<{
-    exec: (command: string) => Promise<unknown>;
+    exec: (command: string) => Promise<ExecResult>;
   }> = {},
 ) {
   const commands = new Map<string, RegisteredSlashCommand>();

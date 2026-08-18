@@ -569,14 +569,15 @@ function extractBalancedJson(text, start) {
     return undefined;
 }
 function unwrapAcceptanceReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return value;
-    const record = value;
-    if ("acceptance" in record)
-        return record.acceptance;
-    if ("acceptance-report" in record)
-        return record["acceptance-report"];
-    return value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return { value, wrapper: "" };
+    }
+    if ("acceptance" in value)
+        return { value: value.acceptance, wrapper: "acceptance" };
+    if ("acceptance-report" in value) {
+        return { value: value["acceptance-report"], wrapper: "acceptance-report" };
+    }
+    return { value, wrapper: "" };
 }
 function isCommandsRunArray(value) {
     return (Array.isArray(value) &&
@@ -606,45 +607,50 @@ function hasGenericAcceptanceReportSignal(value) {
             isStringArray(record.reviewFindings) ||
             typeof record.manualNotes === "string"));
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function parseReportJson(body) {
     const trimmed = body.trim();
     try {
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        if (isJsonValue(parsed))
+            return parsed;
     }
     catch (error) {
         const jsonStart = trimmed.indexOf("{");
         if (jsonStart > 0) {
             const json = extractBalancedJson(trimmed, jsonStart);
-            if (json)
-                return JSON.parse(json);
+            if (json) {
+                const parsed = JSON.parse(json);
+                if (isJsonValue(parsed))
+                    return parsed;
+            }
         }
         throw error;
     }
+    throw new Error("Acceptance report JSON must contain a JSON value.");
 }
 function fencedBlocks(output, tag) {
     return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
         .map((match) => match[1]?.trim())
         .filter((value) => Boolean(value));
 }
-function validationPathLabelForWrapper(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return "";
-    const record = value;
-    if ("acceptance" in record)
-        return "acceptance";
-    if ("acceptance-report" in record)
-        return "acceptance-report";
-    return "";
-}
 function parseAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    return validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    return validateAcceptanceReport(parsed.value, parsed.wrapper);
 }
 function parseGenericJsonAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    const validation = validateAcceptanceReport(report);
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    const validation = validateAcceptanceReport(parsed.value);
     if (!validation.report)
         return undefined;
     return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
@@ -681,9 +687,8 @@ export function parseAcceptanceReport(output) {
             const json = extractBalancedJson(output, jsonStart);
             if (json) {
                 try {
-                    const parsed = JSON.parse(json);
-                    const report = unwrapAcceptanceReport(parsed);
-                    const validation = validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+                    const parsed = unwrapAcceptanceReport(parseReportJson(json));
+                    const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
                     if (validation.report)
                         return { report: validation.report };
                     return {

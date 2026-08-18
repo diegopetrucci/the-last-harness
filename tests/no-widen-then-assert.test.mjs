@@ -81,7 +81,7 @@ const fromPrecise = preciseConfig as Config;
 let mutableConfig: unknown = { retries: 3 };
 const fromMutable = mutableConfig as Config;
 
-const externalConfig: unknown = getExternalConfig();
+declare const externalConfig: unknown;
 const fromExternal = externalConfig as Config;
 const remainsBroad = externalConfig as unknown;
 
@@ -94,7 +94,6 @@ function parseBoundary(input: unknown) {
   return input as Config;
 }
 
-declare function getExternalConfig(): unknown;
 `,
   });
 
