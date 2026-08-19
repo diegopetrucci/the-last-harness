@@ -380,17 +380,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
           }
           tui.requestRender();
         };
-        const header = createTlhHeader(
-          theme,
-          sessionState.resources,
-          headerUpdate,
-          event.reason === "startup" ? installNotice : undefined,
-          {
-            requestRender,
-            startupTip,
-            launchContextAllocation: sessionState.launchContextAllocation,
-          },
-        );
+        const header = createTlhHeader(theme, sessionState.resources, headerUpdate, {
+          requestRender,
+          startupTip,
+          launchContextAllocation: sessionState.launchContextAllocation,
+        });
         sessionState.header = header;
         sessionState.requestRender = requestRender;
         if (activeTlhHeaderSessionToken === sessionToken) {

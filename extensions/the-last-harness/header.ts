@@ -1,13 +1,7 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { TLH_NAME } from "./constants.js";
-import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import type {
-  StartupResources,
-  TlhHeaderUpdate,
-  TlhInstallNotice,
-  TlhLaunchContextAllocation,
-} from "./types.js";
+import type { StartupResources, TlhHeaderUpdate, TlhLaunchContextAllocation } from "./types.js";
 
 function formatLaunchContextPercent(tokens: number, contextWindow: number): string {
   if (
@@ -46,7 +40,6 @@ export function createTlhHeader(
   theme: Theme,
   resources: StartupResources,
   headerUpdate: TlhHeaderUpdate | undefined,
-  installNotice?: TlhInstallNotice,
   options: {
     requestRender?: () => void;
     startupTip?: string;
@@ -61,7 +54,6 @@ export function createTlhHeader(
     dim: (text: string) => theme.fg("dim", text),
     muted: (text: string) => theme.fg("muted", text),
     accent: (text: string) => theme.fg("accent", text),
-    warning: (text: string) => theme.fg("warning", text),
   };
 
   const logo = headerUpdate
@@ -101,15 +93,6 @@ export function createTlhHeader(
     wrappedLines.push(color.dim(currentLine));
 
     return [heading, ...wrappedLines];
-  };
-
-  const installWarningLine = (width: number): string[] => {
-    if (!installNotice) {
-      return [];
-    }
-    const label = formatTlhInstallNoticeTrackLabel(installNotice);
-    const warningLine = `${color.warning("Warning")}${color.dim(`: running TLH from ${label} track`)}`;
-    return [truncateToWidth(warningLine, width, color.dim("..."))];
   };
 
   const contextLine = (items: string[], width: number): string[] => {
@@ -157,14 +140,13 @@ export function createTlhHeader(
   };
 
   const headerDetails = (width: number): string[] => [
-    ...installWarningLine(width),
     ...launchContextLines(width),
     ...contextLine(startupResources.context, width),
   ];
 
   const renderCollapsed = (width: number) => {
     const lines = [logo];
-    const details = [...installWarningLine(width), ...launchContextLines(width)];
+    const details = [...launchContextLines(width)];
     if (details.length > 0) {
       lines.push("", ...details);
     }
