@@ -79,13 +79,26 @@ When a run starts, the runtime walks the following locations and collects all sk
 | 300 | `user` | `<agent-dir>/skills/` |
 | 250 | `user-settings` | Paths listed under `skills` in `<agent-dir>/settings.json` |
 | 200 | `user-package` | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root |
+| 180 | `project-claude` | `.claude/skills/` in the project root ² |
+| 170 | `user-claude` | `~/.claude/skills/` ² |
 | 150 | `extension` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
 | 100 | `builtin` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
 | 0 | `unknown` | Anything that does not match a known root |
 
 ¹ `extension` and `builtin` are defined in `SOURCE_PRIORITY` and appear in the doctor's per-source breakdown, but `buildSkillPaths` never emits them and `inferSkillSource` never infers them. No current runtime caller passes either as a `sourceHint`; they are reserved for future use.
 
+² Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where extension-provided paths are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
+
 Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
+
+#### Trust gating and primary-agent / subagent asymmetry
+
+The two surfaces that discover `.claude/skills` directories behave differently:
+
+- **Primary agent** (`resources_discover` hook in `claude-skills.ts`): project roots are gated on `ctx.isProjectTrusted()`. When the project has not been trusted, all `.claude/skills/` directories from the ancestor walk are silently skipped. The ancestor walk starts at `<cwd>` and climbs to the git root, collecting a `.claude/skills/` candidate at every level before stopping. User root (`~/.claude/skills`) is always a candidate regardless of trust.
+- **Subagent resolver** (`buildSkillPaths` in `skills.ts`): only uses `<cwd>/.claude/skills` (no ancestor walk) and does **not** gate on project trust, following the same convention as the existing `.pi/.agents` roots.
+
+To opt out of `.claude/skills` discovery entirely, set `"tlh": { "claudeSkills": { "disabled": true } }` in the isolated profile's **global** `settings.json` (`~/.the-last-harness/agent/settings.json`). The setting is read from that file only; a project-level `.pi/settings.json` has no effect on this flag.
 
 ### Two-cwd fallback
 

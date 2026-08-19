@@ -137,6 +137,10 @@ export type TlhContextCapConfig = {
   disabled?: boolean;
 };
 
+export type TlhClaudeSkillsConfig = {
+  disabled?: boolean;
+};
+
 export type TlhModelVisibilityConfig = {
   disabled?: boolean;
   hidden?: string[];
@@ -164,6 +168,7 @@ export type TlhSettings = {
     primaryAgent?: TlhPrimaryAgentConfig;
     experimental?: TlhExperimentalConfig;
     contextCap?: TlhContextCapConfig;
+    claudeSkills?: TlhClaudeSkillsConfig;
     modelVisibility?: TlhModelVisibilityConfig;
   };
 };

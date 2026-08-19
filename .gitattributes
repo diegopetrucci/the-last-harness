@@ -43,6 +43,7 @@ extensions/the-last-harness/attribution-command.js linguist-generated=true
 extensions/the-last-harness/attribution.js linguist-generated=true
 extensions/the-last-harness/autocomplete.js linguist-generated=true
 extensions/the-last-harness/changelog.js linguist-generated=true
+extensions/the-last-harness/claude-skills.js linguist-generated=true
 extensions/the-last-harness/common.js linguist-generated=true
 extensions/the-last-harness/constants.js linguist-generated=true
 extensions/the-last-harness/context-cap.js linguist-generated=true

@@ -19,6 +19,8 @@ export type SkillSource =
   | "user"
   | "project-package"
   | "user-package"
+  | "project-claude"
+  | "user-claude"
   | "project-settings"
   | "user-settings"
   | "extension"
@@ -71,13 +73,29 @@ const LOAD_SKILLS_CACHE_TTL_MS = 5000;
 // "subagents cannot spawn subagents" boundary.
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
 
-const SOURCE_PRIORITY: Record<SkillSource, number> = {
+// Claude-sourced roots intentionally rank below every non-Claude source, including
+// user-scoped ones. This diverges from the usual project-over-user ordering for
+// three reasons:
+//   1. <cwd>/.claude/skills is repo-controlled content — a cloned repository can
+//      place skills there, and the subagent resolver applies no trust gate (unlike
+//      the primary-agent hook), so ranking it low is the mitigation.
+//   2. ~/.claude/skills is curated for a different tool, not for tlh; tlh's own
+//      curated skills should win any name collision.
+//   3. It keeps the subagent resolver consistent with the primary agent, where
+//      extension-provided paths are appended after all defaults and therefore lose
+//      every same-name collision.
+export const SOURCE_PRIORITY: Record<SkillSource, number> = {
   project: 700,
   "project-settings": 650,
   "project-package": 600,
   user: 300,
   "user-settings": 250,
   "user-package": 200,
+  // Both Claude sources rank below every non-Claude source (see comment above).
+  // project-claude is intentionally above user-claude so that if two .claude/skills
+  // collide with each other, the project-local one wins over the user-home one.
+  "project-claude": 180,
+  "user-claude": 170,
   extension: 150,
   builtin: 100,
   unknown: 0,
@@ -381,10 +399,33 @@ function collectSettingsPackageSkillPaths(cwd: string, agentDir: string): SkillS
   return results;
 }
 
+/**
+ * Check whether the user has disabled .claude/skills discovery via
+ * `tlh.claudeSkills.disabled` in their global agent settings.
+ * Mirrors the opt-out check in the primary-agent claude-skills extension,
+ * reading directly from the JSON settings file that already exists in this
+ * runtime (no SettingsManager import required).
+ */
+function isClaudeSkillsDisabled(agentDir: string): boolean {
+  try {
+    const settings = readOptionalJsonFile(path.join(agentDir, "settings.json"), "user settings");
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
+    const tlh = (settings as { tlh?: unknown }).tlh;
+    if (!tlh || typeof tlh !== "object" || Array.isArray(tlh)) return false;
+    const claudeSkills = (tlh as { claudeSkills?: unknown }).claudeSkills;
+    if (!claudeSkills || typeof claudeSkills !== "object" || Array.isArray(claudeSkills))
+      return false;
+    return (claudeSkills as { disabled?: unknown }).disabled === true;
+  } catch {
+    return false;
+  }
+}
+
 function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
   const projectConfigDir = getProjectConfigDir(cwd);
   const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
   const projectLegacyAgentsDir = path.join(cwd, ".agents");
+  const claudeDisabled = isClaudeSkillsDisabled(agentDir);
   const skillPaths: SkillSearchPath[] = [
     { path: path.join(projectConfigDir, "skills"), source: "project" },
     ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
@@ -398,6 +439,14 @@ function buildSkillPaths(cwd: string, agentDir: string): SkillSearchPath[] {
     ...collectSettingsPackageSkillPaths(cwd, agentDir),
     ...extractSkillPathsFromPackageRoot(cwd, "project-package"),
     ...collectSettingsSkillPaths(cwd, agentDir),
+    // .claude/skills roots — ranked below their non-Claude equivalents so that a
+    // same-named skill in .pi/skills or .agents/skills always wins.
+    ...(claudeDisabled
+      ? []
+      : [
+          { path: path.join(cwd, ".claude", "skills"), source: "project-claude" as const },
+          { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" as const },
+        ]),
   ];
 
   const deduped = new Map<string, SkillSearchPath>();
@@ -430,13 +479,16 @@ function inferSkillSource(
     hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
       ? undefined
       : rawProjectAgentsRoot;
+  const projectClaudeSkillsRoot = path.resolve(cwd, ".claude", "skills");
   const userSkillsRoot = path.resolve(agentDir, "skills");
   const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
   const userAgentRoot = path.resolve(agentDir);
   const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
   const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
+  const userClaudeSkillsRoot = path.resolve(os.homedir(), ".claude", "skills");
 
   if (isWithinPath(filePath, projectPackagesRoot)) return "project-package";
+  if (isWithinPath(filePath, projectClaudeSkillsRoot)) return "project-claude";
   if (
     isWithinPath(filePath, projectSkillsRoot) ||
     (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot))
@@ -445,6 +497,7 @@ function inferSkillSource(
   if (isWithinPath(filePath, projectConfigRoot)) return "project-settings";
 
   if (isWithinPath(filePath, userPackagesRoot)) return "user-package";
+  if (isWithinPath(filePath, userClaudeSkillsRoot)) return "user-claude";
   if (
     isWithinPath(filePath, userSkillsRoot) ||
     (userAgentsRoot && isWithinPath(filePath, userAgentsRoot))

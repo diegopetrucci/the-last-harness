@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **`.claude/skills` discovery.** TLH now reads skills from `~/.claude/skills` (user root, always active) and `.claude/skills` inside your project (project root). These roots are lower priority than every other skill location (profile skills, package-installed skills, `.pi/skills/`, `.agents/skills/`, and settings-listed paths), so same-named skills from any of those sources always win. On the primary agent, project roots require the project to be trusted (`/trust`) before they are read; the subagent resolver reads `<cwd>/.claude/skills` without trust gating, matching the existing `.pi/.agents` convention. Disable the feature entirely by setting `"tlh": { "claudeSkills": { "disabled": true } }` in `~/.the-last-harness/agent/settings.json` (isolated profile global settings only; project-level `.pi/settings.json` is not checked for this flag). To undo, remove the `claudeSkills` key or set `"disabled": false` and restart.
+
 ### Changed
 
 - **Removed the footer ticket status line.** TLH no longer renders a `ticket: <title> (/tickets)` line in the footer for in-progress tickets. Use `/tickets` to see ready, blocked, in-progress, active, and total counts with ID/title details.

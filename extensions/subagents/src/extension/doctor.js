@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.js";
 import { isAsyncAvailable } from "../runs/background/async-execution.js";
 import { diagnoseIntercomBridge, } from "../intercom/intercom-bridge.js";
-import { discoverAvailableSkills } from "../agents/skills.js";
+import { discoverAvailableSkills, SOURCE_PRIORITY } from "../agents/skills.js";
 import { ASYNC_DIR, CHAIN_RUNS_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
 import { inspectRuntimeDirs } from "./runtime-cleanup.js";
 const DEFAULT_PATHS = {
@@ -46,24 +46,12 @@ function formatExistingDirectory(label, dirPath) {
 function formatSourceCounts(counts) {
     return `builtin ${counts.builtin}, package ${counts.package}, user ${counts.user}, project ${counts.project}`;
 }
+const SKILL_SOURCE_ORDER = Object.keys(SOURCE_PRIORITY).sort((a, b) => (SOURCE_PRIORITY[b] ?? 0) - (SOURCE_PRIORITY[a] ?? 0));
 function formatSkillSourceCounts(skills) {
     const counts = new Map();
     for (const skill of skills)
         counts.set(skill.source, (counts.get(skill.source) ?? 0) + 1);
-    const ordered = [
-        "project",
-        "project-settings",
-        "project-package",
-        "user",
-        "user-settings",
-        "user-package",
-        "extension",
-        "builtin",
-        "unknown",
-    ];
-    const parts = ordered
-        .map((source) => `${source} ${counts.get(source) ?? 0}`)
-        .filter((part) => !part.endsWith(" 0"));
+    const parts = SKILL_SOURCE_ORDER.map((source) => `${source} ${counts.get(source) ?? 0}`).filter((part) => !part.endsWith(" 0"));
     return parts.length > 0 ? parts.join(", ") : "none";
 }
 function formatConfiguredSessionDir(input) {
