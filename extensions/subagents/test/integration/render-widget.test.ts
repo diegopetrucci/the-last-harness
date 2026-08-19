@@ -3157,6 +3157,170 @@ describe("subagent async widget rendering", () => {
     assert.match(expandedText, /checking expanded state/);
   });
 
+  it("reflows and caps collapsed multiline command previews while expanded detail preserves them", () => {
+    const command = [
+      "printf 'alpha beta gamma delta",
+      "epsilon zeta eta theta iota",
+      "kappa lambda mu nu xi omicron",
+      "pi rho sigma tau upsilon'",
+    ].join("\n");
+    const job: AsyncJobState = {
+      asyncId: "multiline-command",
+      asyncDir: "/tmp/multiline-command",
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+      stepsTotal: 1,
+      updatedAt: 20_000,
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          status: "running",
+          currentTool: "bash",
+          currentToolArgs: command,
+          currentToolStartedAt: 19_000,
+        },
+      ],
+    };
+
+    const wide = buildWidgetLines([job], theme, 120);
+    const wideHintIndex = wide.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    const wideCommandStart = wide.findIndex((line) => line.includes("bash:"));
+    assert.ok(wideCommandStart >= 0);
+    assert.ok(wideHintIndex > wideCommandStart);
+    const widePreview = wide.slice(wideCommandStart, wideHintIndex);
+    assert.ok(widePreview.length >= 1);
+    assert.ok(widePreview.length <= 3);
+    assert.ok(widePreview.every((line) => visibleWidth(line) <= 118));
+    assertWrappedSource(widePreview, command);
+
+    const narrow = buildWidgetLines([job], theme, 42);
+    const narrowHintIndex = narrow.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    const narrowCommandStart = narrow.findIndex((line) => line.includes("bash:"));
+    assert.ok(narrowCommandStart >= 0);
+    assert.ok(narrowHintIndex > narrowCommandStart);
+    const narrowPreview = narrow.slice(narrowCommandStart, narrowHintIndex);
+    assert.equal(
+      narrowPreview.length,
+      3,
+      "collapsed command preview should use three rows at most",
+    );
+    assert.match(narrowPreview.at(-1) ?? "", /…/);
+    assert.ok(narrowPreview.every((line) => visibleWidth(line) <= 40));
+    assert.match(narrow.join("\n"), /alpha beta gamma/);
+    assert.doesNotMatch(narrow.join("\n"), /upsilon/);
+
+    const expanded = buildWidgetLines([job], theme, 42, true);
+    assertWrappedSource(expanded, command);
+    assert.match(expanded.join("\n"), /alpha beta gamma/);
+    assert.match(expanded.join("\n"), /upsilon/);
+  });
+
+  it("caps collapsed long single-line command previews at narrow widths", () => {
+    const command = `printf '${"alpha beta gamma delta ".repeat(16)}omega'`;
+    const job: AsyncJobState = {
+      asyncId: "long-single-line-command",
+      asyncDir: "/tmp/long-single-line-command",
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+      stepsTotal: 1,
+      updatedAt: 20_000,
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          status: "running",
+          currentTool: "bash",
+          currentToolArgs: command,
+          currentToolStartedAt: 19_000,
+        },
+      ],
+    };
+
+    const narrow = buildWidgetLines([job], theme, 42);
+    const narrowHintIndex = narrow.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    assert.ok(narrowHintIndex > 0);
+    const commandStart = narrow.findIndex((line) => line.includes("bash: printf"));
+    assert.ok(commandStart > 0);
+    const preview = narrow.slice(commandStart, narrowHintIndex);
+    assert.equal(preview.length, 3);
+    assert.match(preview.at(-1) ?? "", /…/);
+    assert.ok(preview.every((line) => visibleWidth(line) <= 40));
+    assert.match(preview.join("\n"), /bash: printf/);
+    assert.doesNotMatch(preview.join("\n"), /omega/);
+
+    const expanded = buildWidgetLines([job], theme, 42, true);
+    assertWrappedSource(expanded, command);
+    assert.match(expanded.join("\n"), /omega/);
+  });
+
+  it("keeps compact widget command continuations aligned with long row prefixes", () => {
+    const width = 60;
+    const command = `printf '${"alpha beta gamma delta ".repeat(18)}omega'`;
+    const longAgent = "worker-with-a-very-long-model-prefix";
+    const job: AsyncJobState = {
+      asyncId: "compact-command-prefix",
+      asyncDir: "/tmp/compact-command-prefix",
+      status: "running",
+      mode: "parallel",
+      activeParallelGroup: true,
+      agents: Array.from({ length: 12 }, () => longAgent),
+      runningSteps: 1,
+      completedSteps: 11,
+      stepsTotal: 12,
+      updatedAt: 20_000,
+      steps: Array.from({ length: 12 }, (_, index) => ({
+        index,
+        agent: longAgent,
+        status: index === 0 ? ("running" as const) : ("complete" as const),
+        model: "provider/super-long-model-name",
+        ...(index === 0
+          ? {
+              currentTool: "bash",
+              currentToolArgs: command,
+              currentToolStartedAt: 19_000,
+            }
+          : {}),
+      })),
+    };
+
+    resetWidgetLayout();
+    withStdoutSize(80, width, () => {
+      const ui = createUiContext();
+      renderWidget(ui.ctx as never, [job]);
+      const lines = renderWidgetHarnessLines(ui.widgets.at(-1));
+      const commandStart = lines.findIndex((line) => line.includes("bash:"));
+      const nextStepStart = lines.findIndex(
+        (line, lineIndex) => lineIndex > commandStart && line.includes("Agent 2/12"),
+      );
+      assert.ok(commandStart > 0);
+      assert.ok(nextStepStart > commandStart);
+      const commandPreview = lines.slice(commandStart, nextStepStart);
+      assert.equal(commandPreview.length, 3);
+      assert.match(commandPreview[0] ?? "", /^    ⎿  bash:/);
+      assert.match(commandPreview.at(-1) ?? "", /…/);
+      assert.ok(commandPreview.every((line) => visibleWidth(line) <= width - 2));
+      const continuationPrefix = commandPreview[1]?.match(/^\s*/)?.[0] ?? "";
+      assert.ok(continuationPrefix.length > 0);
+      assert.ok(
+        commandPreview.slice(1).every((line) => line.startsWith(continuationPrefix)),
+        "command continuation rows should share an explicit alignment prefix",
+      );
+      assert.ok(
+        commandPreview.slice(1).every((line) => line.trim().length > 8),
+        "command continuation rows should not degrade to one-character fragments",
+      );
+      assert.match(commandPreview.join("\n"), /alpha beta gamma/);
+      assert.doesNotMatch(commandPreview.join("\n"), /omega/);
+      const realLines = renderWithRealPiTui(lines, width);
+      assert.equal(realLines.length, lines.length);
+      assert.ok(realLines.every((line) => visibleWidth(line) === width));
+    });
+    resetWidgetLayout();
+  });
+
   it("shows a generic title and one unnumbered agent summary for running single async jobs", () => {
     const now = Date.now();
     const job: AsyncJobState = {
@@ -3635,9 +3799,16 @@ describe("subagent async widget rendering", () => {
     const compact = buildWidgetLines([job], theme, width, false);
     assert.ok(compact.length > 3);
     assert.ok(compact.every((line) => visibleWidth(line) <= width - 2));
-    assertWrappedSource(compact, longArgs);
+    const compactHintIndex = compact.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    assert.ok(compactHintIndex > 0);
+    const compactCommandStart = compact.findIndex((line) => line.includes("grep:"));
+    assert.ok(compactCommandStart > 0);
+    const compactPreview = compact.slice(compactCommandStart, compactHintIndex);
+    assert.equal(compactPreview.length, 3);
+    assert.match(compactPreview.at(-1) ?? "", /…/);
+    assert.match(compactPreview.join(""), /grep:\s+--path=/);
+    assert.doesNotMatch(compactPreview.join(""), /needle/);
     assertWrappedSource(compact, longTicket);
-    assert.doesNotMatch(compact.join(""), /…|\.\.\./);
 
     const expanded = buildWidgetLines([job], theme, width, true);
     assert.ok(expanded.length > compact.length);
