@@ -145,14 +145,6 @@ Repo settings:
 - `.pi/extensions/`
 - `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
 
-When the same skill name appears in more than one location, skills from every other location (your profile’s own skills, package-installed skills, project `.pi/skills/`, `.agents/skills/`, and settings-listed paths) always win over `.claude/skills/`. See [`docs/subagents.md`](docs/subagents.md) for the full priority table.
-
-#### Opting out of `.claude/skills` discovery
-
-To stop TLH from reading `~/.claude/skills` and `.claude/skills`, add `"tlh": { "claudeSkills": { "disabled": true } }` to your isolated profile's global `settings.json` (the file at `~/.the-last-harness/agent/settings.json`). The setting is read from the **isolated profile's global settings only**, not from a project `.pi/settings.json`.
-
-To undo, remove the `claudeSkills` block (or set `"disabled": false`) and restart TLH.
-
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
 ### Docs dump
