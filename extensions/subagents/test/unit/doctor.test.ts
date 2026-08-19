@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { buildDoctorReport } from "../../src/extension/doctor.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import { SOURCE_PRIORITY, type SkillSource } from "../../src/agents/skills.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
 
 function makeState(cwd: string): SubagentState {
@@ -93,6 +94,8 @@ describe("buildDoctorReport", () => {
           discoverAvailableSkills: () => [
             { name: "project-skill", source: "project" },
             { name: "package-skill", source: "user-package" },
+            { name: "claude-project-skill", source: "project-claude" },
+            { name: "claude-user-skill", source: "user-claude" },
           ],
           diagnoseIntercomBridge: () => ({
             active: true,
@@ -117,7 +120,10 @@ describe("buildDoctorReport", () => {
       );
       assert.match(report, /- agents: total 4 \(builtin 1, package 0, user 1, project 2\)/);
       assert.doesNotMatch(report, /- chains:/);
-      assert.match(report, /- skills: total 2 \(project 1, user-package 1\)/);
+      assert.match(
+        report,
+        /- skills: total 4 \(project 1, user-package 1, project-claude 1, user-claude 1\)/,
+      );
       assert.match(report, /- bridge: active/);
       assert.match(
         report,
@@ -171,6 +177,64 @@ describe("buildDoctorReport", () => {
         report,
         /- bridge: inactive \(bridge mode is fork-only and context is not fork\)/,
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("formatSkillSourceCounts ordered list covers every SkillSource value", () => {
+    // Derive allSources from SOURCE_PRIORITY — the single source of truth.
+    // Adding a new SkillSource to SOURCE_PRIORITY automatically includes it here
+    // so the doctor's per-source breakdown cannot silently drop it.
+    const allSources = Object.keys(SOURCE_PRIORITY) as SkillSource[];
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-all-sources-"));
+    try {
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeState(root),
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: {
+          isAsyncAvailable: () => true,
+          discoverAgentsAll: () => ({
+            builtin: [],
+            package: [],
+            user: [],
+            project: [],
+            chains: [],
+            chainDiagnostics: [],
+            userDir: root,
+            projectDir: null,
+            userChainDir: root,
+            projectChainDir: null,
+            userSettingsPath: path.join(root, "settings.json"),
+            projectSettingsPath: null,
+          }),
+          discoverAvailableSkills: () =>
+            allSources.map((source) => ({ name: `${source}-skill`, source })),
+          diagnoseIntercomBridge: () => ({
+            active: false,
+            mode: "fork-only",
+            wantsIntercom: false,
+            supervisorChannelAvailable: false,
+            extensionDir: "native:pi-subagents-supervisor-channel",
+          }),
+        },
+      });
+
+      // Every source must produce a non-zero count in the breakdown line.
+      for (const source of allSources) {
+        assert.match(
+          report,
+          new RegExp(`${source} 1`),
+          `expected source '${source}' to appear in the skills line of the doctor report`,
+        );
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

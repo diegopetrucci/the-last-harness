@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
+
 ### Changed
 
 - **Removed the footer ticket status line.** TLH no longer renders a `ticket: <title> (/tickets)` line in the footer for in-progress tickets. Use `/tickets` to see ready, blocked, in-progress, active, and total counts with ID/title details.
