@@ -460,10 +460,15 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
   assert.ok(header);
   assert.ok(headerLines);
-  assert.ok(
-    headerLines.includes(
-      "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
-    ),
+  // The launch context line (including the /context suffix) only appears when
+  // a launchContextAllocation is provided; the toggle test harness wires none.
+  // The install-track warning is no longer shown in the header (it moved to
+  // the footer only). Verify the header is non-empty and contains no warning.
+  assert.ok(headerLines.length > 0, "collapsed header should be non-empty");
+  assert.equal(
+    headerLines.some((line) => line.includes("Warning: running TLH from")),
+    false,
+    "collapsed header should not contain the retired install-track warning",
   );
 
   const shortcut = shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
@@ -475,10 +480,13 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
   await shortcut.handler(shortcutCtx);
   const expandedLines = header.render(200);
   assert.equal(
-    expandedLines.includes(
-      "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
+    expandedLines.some((line) =>
+      line.includes(
+        "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
+      ),
     ),
     false,
+    "expanded header should not contain the old Ctrl+Shift+E hint line",
   );
   assert.equal(
     expandedLines.some((line) => line.includes("running TLH from")),
@@ -487,10 +495,10 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
   assert.equal(requestRenderCalls(), 1);
 
   await shortcut.handler(shortcutCtx);
-  assert.ok(
-    header
-      .render(200)
-      .includes("Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions"),
+  assert.equal(
+    header.render(200).some((line) => line.includes("Warning: running TLH from")),
+    false,
+    "re-collapsed header should not contain the retired install-track warning",
   );
   assert.equal(requestRenderCalls(), 2);
 });

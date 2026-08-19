@@ -21,7 +21,7 @@ The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a sta
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.38.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.38.1`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
@@ -69,7 +69,7 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
@@ -112,7 +112,7 @@ If a recognized external npm/git subagent entry remains in user or project setti
 
 There is no `tlh defaults disable subagents` path. For a one-run diagnostic, `tlh --no-extensions` disables **all** extensions without changing settings. The upstream resource selector exposed by `tlh config` can persistently disable the root-package resource `./extensions/subagents/src/extension/index.js`, but doing so breaks architect delegation and is not a supported steady state; reopen `tlh config` and re-enable that same resource to recover. Use the full uninstall flow below to remove TLH persistently. See [subagents.md](subagents.md) for runtime behavior and diagnostic details.
 
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
+At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
 Release builds with TelemetryDeck identifiers configured send pseudonymous telemetry from interactive `tlh` runs. `Tlh.launched` is sent at most once per interactive process start. The hashed random install ID means TelemetryDeck unique-user aggregation continues to represent installations rather than people or individual runs. Runtime provider and model values are privacy-filtered, only registered TLH experimental feature IDs are reported, and sensitive fields such as prompts, cwd, command arguments, repo names, file contents, settings contents, API keys, provider base URLs, auth state, headers, and account identifiers are omitted. See [`docs/telemetry.md`](telemetry.md) for the exact signal names, dimensions, filters, and semantics.
 

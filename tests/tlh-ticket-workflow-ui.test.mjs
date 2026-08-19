@@ -20,7 +20,6 @@ test.beforeEach(resetTicketWorkflowTestState);
 test.afterEach(resetTicketWorkflowTestState);
 
 const IN_PROGRESS_TICKET_TITLE = "Implement scoped ticket footer selection";
-const IN_PROGRESS_TICKET_FOOTER_STATUS = `ticket: ${IN_PROGRESS_TICKET_TITLE} (/tickets)`;
 
 function createPiHarness() {
   const commands = new Map();
@@ -49,20 +48,10 @@ function createPiHarness() {
 }
 
 function createUiHarness() {
-  const statusUpdates = [];
-  const widgetUpdates = [];
   const notifications = [];
   return {
-    statusUpdates,
-    widgetUpdates,
     notifications,
     ui: {
-      setStatus(key, text) {
-        statusUpdates.push({ key, text });
-      },
-      setWidget(key, content, options) {
-        widgetUpdates.push({ key, content, options });
-      },
       notify(message, type = "info") {
         notifications.push({ message, type });
       },
@@ -82,10 +71,6 @@ async function fireAll(pi, event, payload, ctx) {
   for (const handler of pi.handlers.get(event) ?? []) {
     await handler(payload, ctx);
   }
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function installFakeTk(agentDir, statePath) {
@@ -288,7 +273,7 @@ esac
   chmodSync(tkPath, 0o755);
 }
 
-test("ticket workflow UI loads by default and stays quiet without a .tickets repo", async (t) => {
+test("ticket workflow UI loads by default and registers /tickets without a .tickets repo", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   writeFileSync(
     join(fixture.agent, "settings.json"),
@@ -304,14 +289,10 @@ test("ticket workflow UI loads by default and stays quiet without a .tickets rep
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
     assert.equal(pi.commands.has("tickets"), true);
-    assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
-    assert.deepEqual(uiHarness.widgetUpdates, [
-      { key: "tlh-ticket-workflow", content: undefined, options: undefined },
-    ]);
   });
 });
 
-test("ticket workflow UI ignores stale delayed refreshes from a superseded session while later restores still rescope correctly", async (t) => {
+test("ticket workflow UI rescopes TICKETS_DIR on each session start and /tickets reports the correct in-progress ticket", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { test: t });
   const repoA = join(fixture.dir, "repo-a");
   const repoB = join(fixture.dir, "repo-b");
@@ -332,27 +313,23 @@ test("ticket workflow UI ignores stale delayed refreshes from a superseded sessi
 
       await fireAll(piA, "session_start", { reason: "restore" }, ctxA);
       assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
-      assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: Repo A ticket title (/tickets)");
-
-      await fireAll(piA, "user_bash", { command: "tk ready" }, ctxA);
-      await fireAll(piA, "session_shutdown", {}, ctxA);
 
       const piB = createPiHarness();
       registerTlhTicketWorkflowUi(piB);
       await fireAll(piB, "session_start", { reason: "restore" }, ctxB);
       assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
-      assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: Repo B ticket title (/tickets)");
 
-      await delay(300);
+      await piB.commands.get("tickets").handler("", ctxB);
       assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
-      assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: Repo B ticket title (/tickets)");
+      assert.match(
+        uiHarness.notifications.at(-1)?.message ?? "",
+        /In progress: repo-b-ticket - Repo B ticket title/,
+      );
 
-      await fireAll(piB, "session_shutdown", {}, ctxB);
       const piARestored = createPiHarness();
       registerTlhTicketWorkflowUi(piARestored);
       await fireAll(piARestored, "session_start", { reason: "restore" }, ctxA);
       assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
-      assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: Repo A ticket title (/tickets)");
 
       await piARestored.commands.get("tickets").handler("", ctxA);
       assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
@@ -364,7 +341,7 @@ test("ticket workflow UI ignores stale delayed refreshes from a superseded sessi
   );
 });
 
-test("ticket workflow UI shows the sole in-progress footer even with a higher-priority open ticket and exposes read-only /tickets details", async (t) => {
+test("ticket workflow /tickets shows the sole in-progress ticket even with a higher-priority open ticket", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -378,49 +355,33 @@ test("ticket workflow UI shows the sole in-progress footer even with a higher-pr
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-
     assert.equal(pi.commands.has("tickets"), true);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
-    assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
 
-    writeFileSync(statePath, "updated\n");
-    await fireAll(pi, "tool_result", { toolName: "bash", input: { command: "git status" } }, ctx);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
-
-    await fireAll(
-      pi,
-      "tool_result",
-      { toolName: "bash", input: { command: "tk close tlhf-7rd2" } },
-      ctx,
-    );
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, undefined);
-    assert.equal(uiHarness.widgetUpdates.at(-1)?.content, undefined);
-
-    writeFileSync(statePath, "default\n");
-    const [userBashHandler] = pi.handlers.get("user_bash") ?? [];
-    const userBashResult = userBashHandler({ command: "tk ready", cwd: fixture.cwd }, ctx);
-    assert.equal(userBashResult, undefined);
-    await delay(300);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
-
-    writeFileSync(statePath, "updated\n");
     await pi.commands.get("tickets").handler("", ctx);
     assert.equal(uiHarness.notifications.at(-1)?.type, "info");
     assert.match(
       uiHarness.notifications.at(-1)?.message ?? "",
-      /tk: 1 ready • 1 blocked • 0 in progress • 1 active • 3 total/,
+      /tk: 1 ready • 1 blocked • 1 in progress • 2 active • 3 total/,
     );
     assert.match(
       uiHarness.notifications.at(-1)?.message ?? "",
-      /In progress: none\. Footer stays quiet\./,
+      /In progress: tlhf-7rd2 - Implement scoped ticket footer selection/,
     );
     assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Ready:/);
     assert.match(uiHarness.notifications.at(-1)?.message ?? "", /Blocked:/);
     assert.doesNotMatch(uiHarness.notifications.at(-1)?.message ?? "", /start|close .*tlhf-/i);
+
+    writeFileSync(statePath, "updated\n");
+    await pi.commands.get("tickets").handler("", ctx);
+    assert.match(
+      uiHarness.notifications.at(-1)?.message ?? "",
+      /tk: 1 ready • 1 blocked • 0 in progress • 1 active • 3 total/,
+    );
+    assert.match(uiHarness.notifications.at(-1)?.message ?? "", /In progress: none\./);
   });
 });
 
-test("ticket workflow UI falls back to the ticket id when the sole in-progress ticket title is unavailable", async (t) => {
+test("ticket workflow /tickets falls back to the ticket id when the sole in-progress ticket title is unavailable", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -434,7 +395,6 @@ test("ticket workflow UI falls back to the ticket id when the sole in-progress t
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: tlhf-7rd2 (/tickets)");
 
     await pi.commands.get("tickets").handler("", ctx);
     assert.match(
@@ -446,7 +406,7 @@ test("ticket workflow UI falls back to the ticket id when the sole in-progress t
   });
 });
 
-test("ticket workflow UI sanitizes decoded terminal controls from fallback ticket ids in the footer and /tickets", async (t) => {
+test("ticket workflow UI sanitizes decoded terminal controls from fallback ticket ids in /tickets", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -482,10 +442,9 @@ test("ticket workflow UI sanitizes decoded terminal controls from fallback ticke
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
     runtime.applyCurrentSettings(ctx);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, "ticket: tlhf-safe-red (/tickets)");
 
     await pi.commands.get("tickets").handler("", ctx);
-    assert.equal(showCalls, 2);
+    assert.equal(showCalls, 1);
     assert.equal(
       uiHarness.notifications.at(-1)?.message,
       "tk: 0 ready • 0 blocked • 1 in progress • 1 active • 1 total\nIn progress: tlhf-safe-red",
@@ -493,7 +452,7 @@ test("ticket workflow UI sanitizes decoded terminal controls from fallback ticke
   });
 });
 
-test("ticket workflow UI strips ANSI and control sequences from the sole in-progress footer title", async (t) => {
+test("ticket workflow /tickets sanitizes ANSI in in-progress ticket title output", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -508,9 +467,13 @@ test("ticket workflow UI strips ANSI and control sequences from the sole in-prog
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
 
-    const statusText = uiHarness.statusUpdates.at(-1)?.text ?? "";
-    assert.equal(statusText, "ticket: Implement scoped ticket footer selection (/tickets)");
-    for (const character of statusText) {
+    await pi.commands.get("tickets").handler("", ctx);
+    const notificationMsg = uiHarness.notifications.at(-1)?.message ?? "";
+    assert.match(
+      notificationMsg,
+      /In progress: tlhf-7rd2 - Implement scoped ticket footer selection/,
+    );
+    for (const character of notificationMsg) {
       const code = character.charCodeAt(0);
       assert.equal(
         (code >= 0x00 && code <= 0x1f && code !== 0x0a) || (code >= 0x7f && code <= 0x9f),
@@ -520,7 +483,7 @@ test("ticket workflow UI strips ANSI and control sequences from the sole in-prog
   });
 });
 
-test("ticket workflow UI still shows a sole blocked in-progress ticket in the footer", async (t) => {
+test("ticket workflow /tickets still shows a sole blocked in-progress ticket", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -534,7 +497,6 @@ test("ticket workflow UI still shows a sole blocked in-progress ticket in the fo
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
 
     await pi.commands.get("tickets").handler("", ctx);
     assert.match(
@@ -549,7 +511,7 @@ test("ticket workflow UI still shows a sole blocked in-progress ticket in the fo
   });
 });
 
-test("ticket workflow UI renders every in-progress ticket on its own footer line and lists each one in /tickets", async (t) => {
+test("ticket workflow /tickets lists each in-progress ticket when multiple exist", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-ticket-workflow-ui-", { cwd: true, test: t });
   mkdirSync(join(fixture.cwd, ".tickets"));
   const statePath = join(fixture.dir, "tk-state");
@@ -563,10 +525,6 @@ test("ticket workflow UI renders every in-progress ticket on its own footer line
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
-    assert.equal(
-      uiHarness.statusUpdates.at(-1)?.text,
-      "ticket: First in-progress ticket (/tickets)\nticket: Second in-progress ticket (/tickets)",
-    );
 
     await pi.commands.get("tickets").handler("", ctx);
     const details = uiHarness.notifications.at(-1)?.message ?? "";
@@ -575,7 +533,7 @@ test("ticket workflow UI renders every in-progress ticket on its own footer line
       details,
       /In progress:\n- tlhf-16ll - First in-progress ticket\n- tlhf-7rd2 - Second in-progress ticket/,
     );
-    assert.doesNotMatch(details, /ambiguous|Footer stays quiet/i);
+    assert.doesNotMatch(details, /ambiguous/i);
   });
 });
 
@@ -638,15 +596,17 @@ test("ticket workflow UI bounds multi-ticket title lookups to one overall timeou
 
     runtime.applyCurrentSettings(ctx);
 
+    await pi.commands.get("tickets").handler("", ctx);
+
     assert.deepEqual(showCalls, [
       { ticketId: "tlhf-first", timeoutMs: 4000 },
       { ticketId: "tlhf-slow", timeoutMs: 3000 },
     ]);
     assert.equal(nowMs, 4000);
-    assert.equal(
-      uiHarness.statusUpdates.at(-1)?.text,
-      "ticket: Resolved first title (/tickets)\nticket: tlhf-slow (/tickets)\nticket: tlhf-unattempted (/tickets)",
-    );
+    const details = uiHarness.notifications.at(-1)?.message ?? "";
+    assert.match(details, /Resolved first title/);
+    assert.match(details, /tlhf-slow/);
+    assert.match(details, /tlhf-unattempted/);
   });
 });
 
@@ -669,7 +629,6 @@ test("legacy experimental and ticket settings do not suppress the permanent tick
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
     assert.equal(pi.commands.has("tickets"), true);
-    assert.equal(uiHarness.statusUpdates.at(-1)?.text, IN_PROGRESS_TICKET_FOOTER_STATUS);
     await pi.commands.get("tickets").handler("", ctx);
     assert.match(
       uiHarness.notifications.at(-1)?.message ?? "",
@@ -694,10 +653,6 @@ test("ticket workflow UI stays quiet without a .tickets repo while /tickets repo
 
       await fireAll(pi, "session_start", { reason: "restore" }, ctx);
       assert.equal(pi.commands.has("tickets"), true);
-      assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
-      assert.deepEqual(uiHarness.widgetUpdates, [
-        { key: "tlh-ticket-workflow", content: undefined, options: undefined },
-      ]);
 
       await pi.commands.get("tickets").handler("", ctx);
       assert.match(uiHarness.notifications.at(-1)?.message ?? "", /No \.tickets directory found/i);
@@ -720,10 +675,6 @@ test("ticket workflow UI stays quiet for an empty ticket repo while /tickets rep
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
     assert.equal(pi.commands.has("tickets"), true);
-    assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
-    assert.deepEqual(uiHarness.widgetUpdates, [
-      { key: "tlh-ticket-workflow", content: undefined, options: undefined },
-    ]);
 
     await pi.commands.get("tickets").handler("", ctx);
     assert.match(uiHarness.notifications.at(-1)?.message ?? "", /tk: no tickets in this repo/i);
@@ -742,10 +693,6 @@ test("ticket workflow UI stays quiet when .tickets exists and tk is missing whil
 
     await fireAll(pi, "session_start", { reason: "restore" }, ctx);
     assert.equal(pi.commands.has("tickets"), true);
-    assert.deepEqual(uiHarness.statusUpdates, [{ key: "tlh-ticket-workflow", text: undefined }]);
-    assert.deepEqual(uiHarness.widgetUpdates, [
-      { key: "tlh-ticket-workflow", content: undefined, options: undefined },
-    ]);
 
     await pi.commands.get("tickets").handler("", ctx);
     assert.match(

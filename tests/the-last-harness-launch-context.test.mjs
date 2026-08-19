@@ -134,7 +134,7 @@ test("launch allocation requires a context window and excludes skill metadata wi
 test("launch allocation formatting preserves category order and distinguishes zero and sub-one percent", () => {
   assert.equal(
     formatTlhLaunchContextAllocation(createAllocation()),
-    "Context at launch: TLH 0% • AGENTS/CLAUDE.md <1% • Skills <1% • MCP <1% • Tools ~1% • Other ~2%",
+    "Context at launch: TLH 0% • AGENTS/CLAUDE.md <1% • Skills <1% • MCP <1% • Tools ~1% • Other ~2% (run /context to see a breakdown)",
   );
 });
 

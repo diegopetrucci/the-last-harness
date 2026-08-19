@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
+import { TLH_NAME } from "./constants.js";
 function formatLaunchContextPercent(tokens, contextWindow) {
     if (!Number.isFinite(tokens) ||
         tokens <= 0 ||
@@ -24,7 +24,7 @@ export function formatTlhLaunchContextAllocation(allocation) {
         segments.push(`MCP ${formatLaunchContextPercent(estimatedTokens.mcp, contextWindow)}`);
     }
     segments.push(`Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`, `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`);
-    return segments.join(" • ");
+    return segments.join(" • ") + " (run /context to see a breakdown)";
 }
 export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
     let expanded = false;
@@ -101,22 +101,20 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
         }
         return wrapTextWithAnsi(formatTlhLaunchContextAllocation(launchContextAllocation), width).map((line) => color.dim(line));
     };
-    const collapsedContextHintLines = (width) => {
-        const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded context files, skills, prompts, and extensions`;
-        return wrapTextWithAnsi(hint, width).map((line) => color.dim(line));
-    };
     const headerDetails = (width) => [
         ...launchContextLines(width),
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
-        const lines = [
-            logo,
-            "",
-            ...launchContextLines(width),
-            ...collapsedContextHintLines(width),
-            ...startupTipLine(width),
-        ];
+        const lines = [logo];
+        const details = [...launchContextLines(width)];
+        if (details.length > 0) {
+            lines.push("", ...details);
+        }
+        const startupTip = startupTipLine(width);
+        if (startupTip.length > 0) {
+            lines.push("", ...startupTip);
+        }
         return lines;
     };
     const renderExpanded = (width) => {
