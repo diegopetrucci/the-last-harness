@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
+
 ### Changed
 
 - **The installer now fetches support files in parallel** instead of sequentially.

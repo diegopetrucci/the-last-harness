@@ -136,12 +136,14 @@ User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
 - `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo`)
+- `~/.claude/skills/` — TLH also discovers skills from the Anthropic Claude Code user directory
 
 Repo settings:
 
 - `.pi/skills/`
 - `.pi/prompts/`
 - `.pi/extensions/`
+- `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 

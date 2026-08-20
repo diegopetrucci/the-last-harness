@@ -512,4 +512,286 @@ describe("skills filesystem fallback", () => {
       /Failed to read package manifest .+broken-package[\\/]package\.json/,
     );
   });
+
+  // -------------------------------------------------------------------------
+  // .claude/skills discovery (tlhm-bisn)
+  // -------------------------------------------------------------------------
+
+  it("discovers a skill from <cwd>/.claude/skills", () => {
+    writeSkillFile(
+      path.join(tempDir, ".claude", "skills", "claude-only-skill"),
+      "Use the claude-only skill.",
+      "Claude-only skill description",
+    );
+
+    const skills = discoverAvailableSkills(tempDir);
+    const discovered = skills.find((s) => s.name === "claude-only-skill");
+    assert.ok(discovered, "expected claude-only-skill to be discovered");
+    assert.equal(discovered?.source, "project-claude");
+    assert.equal(discovered?.description, "Claude-only skill description");
+
+    const { resolved, missing } = resolveSkills(["claude-only-skill"], tempDir);
+    assert.deepEqual(missing, []);
+    assert.equal(resolved.length, 1);
+    assert.match(resolved[0]?.content ?? "", /Use the claude-only skill\./);
+  });
+
+  it("prefers .pi/skills over .claude/skills when the same skill name exists in both", () => {
+    // Lower-priority .claude copy
+    writeSkillFile(
+      path.join(tempDir, ".claude", "skills", "collision-skill"),
+      "Claude copy — should lose.",
+    );
+    // Higher-priority .pi/skills copy
+    makeProjectSkill(tempDir, "collision-skill", "Pi copy — should win.");
+
+    const { resolved, missing } = resolveSkills(["collision-skill"], tempDir);
+    assert.deepEqual(missing, []);
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.source, "project");
+    assert.match(resolved[0]?.content ?? "", /Pi copy/);
+  });
+
+  it("prefers .agents/skills over .claude/skills when the same skill name exists in both", () => {
+    // Lower-priority .claude copy
+    writeSkillFile(
+      path.join(tempDir, ".claude", "skills", "agents-collision-skill"),
+      "Claude copy — should lose.",
+    );
+    // .agents/skills copy (source: project, priority 700)
+    writeSkillFile(
+      path.join(tempDir, ".agents", "skills", "agents-collision-skill"),
+      "Agents copy — should win.",
+    );
+
+    const { resolved, missing } = resolveSkills(["agents-collision-skill"], tempDir);
+    assert.deepEqual(missing, []);
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0]?.source, "project");
+    assert.match(resolved[0]?.content ?? "", /Agents copy/);
+  });
+
+  it(".claude/skills root is exempt from the dot-directory skip rule", () => {
+    // shouldSkipDirectory skips nested dot-directories during recursion, but
+    // explicit search roots in skillPaths are processed directly and are exempt.
+    // This test pins that a skill directly under <cwd>/.claude/skills resolves
+    // even though '.claude' starts with a dot.
+    writeSkillFile(
+      path.join(tempDir, ".claude", "skills", "dot-root-skill"),
+      "Reachable via explicit root.",
+      "Dot-root skill",
+    );
+
+    const { resolved, missing } = resolveSkills(["dot-root-skill"], tempDir);
+    assert.deepEqual(
+      missing,
+      [],
+      ".claude/skills root must be reachable as an explicit search root",
+    );
+    assert.equal(resolved.length, 1);
+    assert.match(resolved[0]?.content ?? "", /Reachable via explicit root\./);
+  });
+
+  it("suppresses .claude/skills when tlh.claudeSkills.disabled is true in user settings", async () => {
+    const fakeHome = path.join(tempDir, "fake-home");
+    const userAgentDir = path.join(fakeHome, ".pi", "agent");
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+    try {
+      process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
+      delete process.env.PI_CODING_AGENT_DIR;
+      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+      // Place a skill in the project .claude/skills directory.
+      writeSkillFile(
+        path.join(tempDir, ".claude", "skills", "disabled-claude-skill"),
+        "Should not appear.",
+      );
+
+      // Place a skill in the user .claude/skills directory.
+      writeSkillFile(
+        path.join(fakeHome, ".claude", "skills", "disabled-user-claude-skill"),
+        "Should not appear either.",
+      );
+
+      // Set tlh.claudeSkills.disabled in the user agent settings.
+      fs.mkdirSync(userAgentDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(userAgentDir, "settings.json"),
+        JSON.stringify({ tlh: { claudeSkills: { disabled: true } } }, null, 2),
+        "utf-8",
+      );
+
+      const fresh = await importSkillsFresh();
+      fresh.clearSkillCache();
+      const discovered = fresh.discoverAvailableSkills(tempDir);
+      const names = discovered.map((s) => s.name);
+      assert.equal(
+        names.includes("disabled-claude-skill"),
+        false,
+        "project .claude/skills must be suppressed when claudeSkills.disabled is true",
+      );
+      assert.equal(
+        names.includes("disabled-user-claude-skill"),
+        false,
+        "user .claude/skills must be suppressed when claudeSkills.disabled is true",
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previousUserProfile;
+      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
+      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
+    }
+  });
+
+  it("<agentDir>/skills beats <cwd>/.claude/skills for the same skill name (cross-scope)", async () => {
+    // Pins the fix for the precedence inversion: project-claude (180) must rank
+    // below user (300) so a user's own <agentDir>/skills always wins over a
+    // same-named skill in a project's .claude/skills directory.
+    const fakeHome = path.join(tempDir, "fake-home");
+    const userAgentDir = path.join(fakeHome, ".pi", "agent");
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+    try {
+      process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
+      process.env.PI_CODING_AGENT_DIR = userAgentDir;
+      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+      // user skill in <agentDir>/skills (source: user, priority 300)
+      writeSkillFile(
+        path.join(userAgentDir, "skills", "cross-scope-skill"),
+        "User agentDir copy — should win.",
+        "User agentDir skill",
+      );
+      // project-claude skill in <cwd>/.claude/skills (source: project-claude, priority 180)
+      writeSkillFile(
+        path.join(tempDir, ".claude", "skills", "cross-scope-skill"),
+        "Project .claude copy — should lose.",
+        "Project claude skill",
+      );
+
+      const fresh = await importSkillsFresh();
+      fresh.clearSkillCache();
+      const { resolved, missing } = fresh.resolveSkills(["cross-scope-skill"], tempDir);
+      assert.deepEqual(missing, []);
+      assert.equal(resolved.length, 1);
+      assert.equal(
+        resolved[0]?.source,
+        "user",
+        "agentDir/skills (user) must beat .claude/skills (project-claude)",
+      );
+      assert.match(resolved[0]?.content ?? "", /User agentDir copy/);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previousUserProfile;
+      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
+      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
+    }
+  });
+
+  it("user-package skill beats user-claude skill for the same skill name (cross-scope)", async () => {
+    // Pins that user-package (200) ranks above user-claude (170): a skill installed
+    // via a user-side package must beat a same-named skill from ~/.claude/skills.
+    const fakeHome = path.join(tempDir, "fake-home");
+    const userAgentDir = path.join(fakeHome, ".pi", "agent");
+    const userPackageRoot = path.join(userAgentDir, "user-pkg");
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+    try {
+      process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
+      delete process.env.PI_CODING_AGENT_DIR;
+      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+      // user-package skill (source: user-package, priority 200)
+      makePackageSkill(userPackageRoot, "pkg-vs-claude-skill", "Package copy — should win.");
+      fs.mkdirSync(userAgentDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(userAgentDir, "settings.json"),
+        JSON.stringify({ packages: [{ source: "./user-pkg" }] }, null, 2),
+        "utf-8",
+      );
+
+      // user-claude skill in ~/.claude/skills (source: user-claude, priority 170)
+      writeSkillFile(
+        path.join(fakeHome, ".claude", "skills", "pkg-vs-claude-skill"),
+        "User .claude copy — should lose.",
+      );
+
+      const fresh = await importSkillsFresh();
+      fresh.clearSkillCache();
+      const { resolved, missing } = fresh.resolveSkills(["pkg-vs-claude-skill"], tempDir);
+      assert.deepEqual(missing, []);
+      assert.equal(resolved.length, 1);
+      assert.equal(resolved[0]?.source, "user-package", "user-package must beat user-claude");
+      assert.match(resolved[0]?.content ?? "", /Package copy/);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previousUserProfile;
+      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
+      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
+    }
+  });
+
+  it("discovers a skill from <home>/.claude/skills", async () => {
+    const fakeHome = path.join(tempDir, "fake-home");
+    const userAgentDir = path.join(fakeHome, ".pi", "agent");
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    const previousPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousExtraAgentDirs = process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+    try {
+      process.env.HOME = fakeHome;
+      process.env.USERPROFILE = fakeHome;
+      delete process.env.PI_CODING_AGENT_DIR;
+      delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+
+      writeSkillFile(
+        path.join(fakeHome, ".claude", "skills", "user-claude-skill"),
+        "Use the user-level claude skill.",
+        "User claude skill",
+      );
+      fs.mkdirSync(userAgentDir, { recursive: true });
+
+      const fresh = await importSkillsFresh();
+      fresh.clearSkillCache();
+      const discovered = fresh.discoverAvailableSkills(tempDir);
+      const skill = discovered.find((s) => s.name === "user-claude-skill");
+      assert.ok(skill, "expected user-claude-skill to be discovered from <home>/.claude/skills");
+      assert.equal(skill?.source, "user-claude");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = previousUserProfile;
+      if (previousPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiCodingAgentDir;
+      if (previousExtraAgentDirs === undefined) delete process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS;
+      else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = previousExtraAgentDirs;
+    }
+  });
 });
