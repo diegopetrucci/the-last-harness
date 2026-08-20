@@ -2,6 +2,8 @@
 
 Run these commands from the repository root with Node.js >=22.19.0. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
 
+The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-type` is recorded in [Unsafe dictionary investigation (2026-08-18)](no-unsafe-dictionary-investigation-2026-08-18.md). It is evidence for a future decision only; do not enable the rule or apply cosmetic remediations from that note without a separately approved implementation slice.
+
 ## Direct dependency pin decisions
 
 Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.84.2`, Oxlint `1.78.0`, `@oxlint/plugins` `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current.
