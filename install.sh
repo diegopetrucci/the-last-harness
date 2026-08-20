@@ -7,6 +7,15 @@ REF="${TLH_REF:-main}"
 TLH_MIN_NODE_VERSION="22.19.0"
 TLH_PINNED_PI_VERSION="0.84.2"
 
+# Keep stage-0 remote support downloads bounded so an unavailable raw-file
+# request cannot hold up the installer indefinitely, especially in parallel.
+TLH_STAGE0_FETCH_CONCURRENCY=8
+TLH_STAGE0_CURL_RETRIES=2
+TLH_STAGE0_CURL_RETRY_DELAY_SECONDS=1
+TLH_STAGE0_CURL_RETRY_MAX_TIME_SECONDS=20
+TLH_STAGE0_CURL_CONNECT_TIMEOUT_SECONDS=5
+TLH_STAGE0_CURL_MAX_TIME_SECONDS=30
+
 DRY_RUN=false
 NO_SETTINGS=false
 NO_WRAPPER=false
@@ -552,40 +561,108 @@ fetch_support_file() {
   local url="$1"
   local target_path="$2"
   mkdir -p "$(dirname "${target_path}")"
-  curl -fsSL "${url}" -o "${target_path}"
+  curl -fsSL \
+    --retry "${TLH_STAGE0_CURL_RETRIES}" \
+    --retry-delay "${TLH_STAGE0_CURL_RETRY_DELAY_SECONDS}" \
+    --retry-max-time "${TLH_STAGE0_CURL_RETRY_MAX_TIME_SECONDS}" \
+    --connect-timeout "${TLH_STAGE0_CURL_CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${TLH_STAGE0_CURL_MAX_TIME_SECONDS}" \
+    -o "${target_path}" "${url}"
 }
 
 fetch_remote_support_root() {
+  # Bash 3.2 has no wait -n, so fetch in bounded batches and wait for every
+  # worker before inspecting results. Status files keep background failures
+  # from triggering the parent shell's set -e trap prematurely.
+  local status_dir requirement relative_path prompt pid
+  local i batch_start batch_end total req rel_path target_path status_file exit_status
+  local -a all_requirements all_paths batch_pids
+  all_requirements=()
+  all_paths=()
+
   require_command curl
   TMP_DIR="$(mktemp -d)"
   TMP_DIR="$(cd "${TMP_DIR}" >/dev/null 2>&1 && pwd -P)"
   verbose_log "Fetching installer support files from ${RAW_BASE}"
 
-  local requirement relative_path target_path
+  # Keep status files inside the existing temporary root so cleanup removes
+  # them on success and on any required-file failure.
+  status_dir="${TMP_DIR}/.fetch-status"
+  mkdir -p "${status_dir}"
+
+  # Build one ordered work list from the manifest, then add the non-fatal
+  # subagent prompt downloads. Results are processed in this same order below.
   while IFS='|' read -r requirement relative_path; do
     [[ -n "${relative_path}" ]] || continue
-    target_path="${TMP_DIR}/${relative_path}"
-    if fetch_support_file "${RAW_BASE}/${relative_path}" "${target_path}"; then
-      continue
-    fi
-    rm -f "${target_path}"
-    if [[ "${requirement}" == "required" ]]; then
-      die "required installer support file not found for ref ${REF}: ${relative_path}"
-    fi
-    warn_missing_optional_support_file "${relative_path}"
+    all_requirements+=("${requirement}")
+    all_paths+=("${relative_path}")
   done <<< "$(bootstrap_support_manifest)"
 
   if [[ "${NO_SETTINGS}" != "true" ]]; then
-    local prompt target_dir
-    target_dir="${TMP_DIR}/agents/subagents"
-    mkdir -p "${target_dir}"
+    mkdir -p "${TMP_DIR}/agents/subagents"
     for prompt in "${TLH_SUBAGENT_PROMPTS[@]}"; do
-      target_path="${target_dir}/${prompt}"
-      if ! fetch_support_file "${RAW_BASE}/agents/subagents/${prompt}" "${target_path}"; then
-        rm -f "${target_path}"
-      fi
+      all_requirements+=("subagent")
+      all_paths+=("agents/subagents/${prompt}")
     done
   fi
+
+  total=${#all_paths[@]}
+  batch_start=0
+  while [[ "${batch_start}" -lt "${total}" ]]; do
+    batch_end=$((batch_start + TLH_STAGE0_FETCH_CONCURRENCY))
+    if [[ "${batch_end}" -gt "${total}" ]]; then
+      batch_end="${total}"
+    fi
+
+    batch_pids=()
+    for ((i = batch_start; i < batch_end; i++)); do
+      rel_path="${all_paths[$i]}"
+      target_path="${TMP_DIR}/${rel_path}"
+      status_file="${status_dir}/${i}"
+      mkdir -p "$(dirname "${target_path}")"
+      (
+        # Keep a worker from ever running the parent cleanup trap.
+        trap - EXIT
+        if fetch_support_file "${RAW_BASE}/${rel_path}" "${target_path}" && [[ -f "${target_path}" ]]; then
+          printf '0\n' >"${status_file}"
+        else
+          printf '1\n' >"${status_file}"
+        fi
+      ) &
+      batch_pids+=("$!")
+    done
+
+    # Always await each PID, including failed workers, before starting another
+    # batch. This prevents cleanup or result handling from racing active curl.
+    if [[ "${#batch_pids[@]}" -gt 0 ]]; then
+      for pid in "${batch_pids[@]}"; do
+        wait "${pid}" || true
+      done
+    fi
+    batch_start="${batch_end}"
+  done
+
+  # Process failures in manifest order so required/optional behavior and error
+  # messages remain identical to the sequential bootstrap implementation.
+  for ((i = 0; i < total; i++)); do
+    req="${all_requirements[$i]}"
+    rel_path="${all_paths[$i]}"
+    target_path="${TMP_DIR}/${rel_path}"
+    status_file="${status_dir}/${i}"
+    exit_status=1
+    if [[ -f "${status_file}" ]]; then
+      exit_status="$(cat "${status_file}")"
+    fi
+
+    if [[ "${exit_status}" != "0" ]]; then
+      rm -f "${target_path}"
+      if [[ "${req}" == "required" ]]; then
+        die "required installer support file not found for ref ${REF}: ${rel_path}"
+      elif [[ "${req}" != "subagent" ]]; then
+        warn_missing_optional_support_file "${rel_path}"
+      fi
+    fi
+  done
 }
 
 # Remote/stale stage-0 installers cannot reliably tell whether their embedded
