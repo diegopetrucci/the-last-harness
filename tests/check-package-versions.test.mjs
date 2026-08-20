@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -13,6 +13,18 @@ const FIXTURE_MANAGED_TYPEBOX_VERSION = "1.3.7";
 const FIXTURE_MANAGED_TYPEBOX_DRIFT_VERSION = "1.3.6";
 const FIXTURE_MANAGED_GNOSIS_VERSION = "4.5.6";
 const FIXTURE_MANAGED_GNOSIS_DRIFT_VERSION = "4.5.5";
+const EXACT_VERSION_RE =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function resolvedRegistryVersion(spec) {
+  const trimmed = String(spec ?? "").trim();
+  if (EXACT_VERSION_RE.test(trimmed)) return trimmed;
+  if (!trimmed.startsWith("npm:")) return undefined;
+
+  const separator = trimmed.lastIndexOf("@");
+  const version = separator === -1 ? "" : trimmed.slice(separator + 1);
+  return EXACT_VERSION_RE.test(version) ? version : undefined;
+}
 
 function tempFixture({
   packageVersion,
@@ -37,6 +49,10 @@ function tempFixture({
   installMjsPiVersion = installShPiVersion,
   piTypeboxVersion = FIXTURE_MANAGED_TYPEBOX_VERSION,
   includeLatestReleaseUrl = true,
+  installedVersions = {},
+  missingInstalledPackages = [],
+  missingLockfilePackages = [],
+  lockfileDependencyVersions = {},
 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tlh-check-package-versions-test-"));
   const packagePath = join(dir, "package.json");
@@ -48,34 +64,53 @@ function tempFixture({
   const installMtsPath = join(dir, "tlh-install.mts");
   const installMjsPath = join(dir, "tlh-install.mjs");
 
-  writeFileSync(
-    packagePath,
-    `${JSON.stringify(
-      {
-        name: "fixture",
-        version: packageVersion,
-        dependencies: {
-          typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
-          ...dependencies,
-        },
-        devDependencies: {
-          "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
-          "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
-          "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
-          "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
-          ...devDependencies,
-        },
-        peerDependencies: {
-          "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
-          "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
-          ...peerDependencies,
-        },
-        overrides,
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  const packageJson = {
+    name: "fixture",
+    version: packageVersion,
+    dependencies: {
+      typebox: FIXTURE_MANAGED_TYPEBOX_VERSION,
+      ...dependencies,
+    },
+    devDependencies: {
+      "@earendil-works/pi-agent-core": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-ai": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      ...devDependencies,
+    },
+    peerDependencies: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_VERSION,
+      "@earendil-works/pi-tui": FIXTURE_MANAGED_PI_VERSION,
+      ...peerDependencies,
+    },
+    overrides,
+  };
+  writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+  const lockPackages = {
+    "": {
+      name: "fixture",
+      version: rootPackageVersion,
+      dependencies: packageJson.dependencies,
+      devDependencies: packageJson.devDependencies,
+      peerDependencies: packageJson.peerDependencies,
+    },
+  };
+  for (const field of ["dependencies", "devDependencies"]) {
+    for (const [name, spec] of Object.entries(packageJson[field])) {
+      const resolvedVersion = lockfileDependencyVersions[name] ?? resolvedRegistryVersion(spec);
+      if (resolvedVersion === undefined) continue;
+      lockPackages[`node_modules/${name}`] = { version: resolvedVersion };
+    }
+  }
+  lockPackages["node_modules/@earendil-works/pi-coding-agent"] = {
+    ...lockPackages["node_modules/@earendil-works/pi-coding-agent"],
+    dependencies: { typebox: piTypeboxVersion },
+  };
+  for (const name of missingLockfilePackages) {
+    delete lockPackages[`node_modules/${name}`];
+  }
+
   writeFileSync(
     lockfilePath,
     `${JSON.stringify(
@@ -83,21 +118,31 @@ function tempFixture({
         name: "fixture",
         version: lockfileVersion,
         lockfileVersion: 3,
-        packages: {
-          "": {
-            name: "fixture",
-            version: rootPackageVersion,
-          },
-          "node_modules/@earendil-works/pi-coding-agent": {
-            version: FIXTURE_MANAGED_PI_VERSION,
-            dependencies: { typebox: piTypeboxVersion },
-          },
-        },
+        packages: lockPackages,
       },
       null,
       2,
     )}\n`,
   );
+
+  const nodeModulesDir = join(dir, "node_modules");
+  const seenInstalledPackages = new Set();
+  for (const field of ["dependencies", "devDependencies"]) {
+    for (const [name] of Object.entries(packageJson[field])) {
+      if (seenInstalledPackages.has(name)) continue;
+      const expectedVersion = lockPackages[`node_modules/${name}`]?.version;
+      if (typeof expectedVersion !== "string") continue;
+      seenInstalledPackages.add(name);
+      if (missingInstalledPackages.includes(name)) continue;
+
+      const packageDir = join(nodeModulesDir, name);
+      mkdirSync(packageDir, { recursive: true });
+      writeFileSync(
+        join(packageDir, "package.json"),
+        `${JSON.stringify({ name, version: installedVersions[name] ?? expectedVersion })}\n`,
+      );
+    }
+  }
   writeFileSync(defaultExtensionsPath, `${JSON.stringify(defaultExtensions, null, 2)}\n`);
   writeFileSync(installShPath, `TLH_PINNED_PI_VERSION=${JSON.stringify(installShPiVersion)}\n`);
   writeFileSync(
@@ -133,6 +178,7 @@ function tempFixture({
     gnosisScriptPath,
     installMtsPath,
     installMjsPath,
+    nodeModulesDir,
   };
 }
 
@@ -159,6 +205,8 @@ function runCheckPackageVersions(fixture) {
       fixture.installMtsPath,
       "--pi-install-script",
       fixture.installMjsPath,
+      "--node-modules-dir",
+      fixture.nodeModulesDir,
     ],
     {
       cwd: repoRoot,
@@ -560,4 +608,106 @@ test("check-package-versions rejects non-exact managed Pi package pins", () => {
     result.stderr,
     /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent must use an exact version, found "\^9\.8\.7"/,
   );
+});
+
+test("check-package-versions reports stale direct registry dependencies with npm ci guidance", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { staleDirect: "2.0.0" },
+    installedVersions: { staleDirect: "1.9.0" },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
+  assert.match(result.stderr, /run npm ci/);
+  assert.match(result.stderr, /dependencies\.staleDirect/);
+  assert.match(result.stderr, /expected "2\.0\.0", got "1\.9\.0"/);
+});
+
+test("check-package-versions reports missing direct registry dependencies", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { missingDirect: "2.0.0" },
+    missingInstalledPackages: ["missingDirect"],
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
+  assert.match(result.stderr, /run npm ci/);
+  assert.match(result.stderr, /dependencies\.missingDirect/);
+  assert.match(result.stderr, /package is not installed/);
+});
+
+test("check-package-versions uses the root lock entry version for exact npm aliases", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { aliasedDirect: "npm:replacement-package@3.4.5" },
+    lockfileDependencyVersions: { aliasedDirect: "3.4.5" },
+    installedVersions: { aliasedDirect: "3.4.5" },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, "");
+});
+
+test("check-package-versions reports an eligible dependency without a usable root lock version", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: { missingLock: "2.0.0" },
+    missingLockfilePackages: ["missingLock"],
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
+  assert.match(
+    result.stderr,
+    /package-lock\.json#packages\["node_modules\/missingLock"\]\.version/,
+  );
+  assert.match(result.stderr, /run npm ci/);
+});
+
+test("check-package-versions excludes peer-only, ranged, and non-registry specs from installed checks", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    dependencies: {
+      rangedDirect: "^2.0.0",
+      localDirect: "file:../local-direct",
+      gitDirect: "git+ssh://git@github.com/example/git-direct.git#abcdef1234567",
+    },
+    devDependencies: { rangedDev: "~3.0.0" },
+    peerDependencies: { peerOnly: "4.0.0" },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /package\.json#dependencies\.rangedDirect must use an exact version/);
+  assert.doesNotMatch(result.stderr, /Installed dependencies are stale or mismatched/);
+  assert.doesNotMatch(result.stderr, /peerOnly/);
+  assert.doesNotMatch(result.stderr, /localDirect/);
+  assert.doesNotMatch(result.stderr, /gitDirect/);
+});
+
+test("check-package-versions keeps managed Pi installed-version freshness checks", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    installedVersions: {
+      "@earendil-works/pi-coding-agent": FIXTURE_MANAGED_PI_DRIFT_VERSION,
+    },
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Installed dependencies are stale or mismatched/);
+  assert.match(result.stderr, /@earendil-works\/pi-coding-agent/);
+  assert.match(result.stderr, /expected "9\.8\.7", got "9\.8\.6"/);
 });

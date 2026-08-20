@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 import { readDefaultExtensions } from "./lib/default-extensions.mjs";
@@ -45,6 +46,7 @@ Options:
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
+  --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
   -h, --help                   Show this help
@@ -57,6 +59,7 @@ function parseArgs(argv) {
     lockfilePath: "package-lock.json",
     defaultExtensionsPath: "config/default-extensions.json",
     installShPath: DEFAULT_INSTALL_SH_PATH,
+    nodeModulesDir: "",
     gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
     piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
     help: false,
@@ -87,6 +90,11 @@ function parseArgs(argv) {
     }
     if (arg === "--install-sh") {
       args.installShPath = requiredValue(argv, index + 1, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--node-modules-dir") {
+      args.nodeModulesDir = requiredValue(argv, index + 1, arg);
       index += 1;
       continue;
     }
@@ -126,6 +134,11 @@ function parseArgs(argv) {
     if (arg.startsWith("--install-sh=")) {
       args.installShPath = arg.slice("--install-sh=".length);
       if (!args.installShPath) throw new Error("--install-sh requires a value");
+      continue;
+    }
+    if (arg.startsWith("--node-modules-dir=")) {
+      args.nodeModulesDir = arg.slice("--node-modules-dir=".length);
+      if (!args.nodeModulesDir) throw new Error("--node-modules-dir requires a value");
       continue;
     }
     if (arg.startsWith("--gnosis-script=")) {
@@ -239,6 +252,15 @@ function splitNpmPackageSpec(spec) {
     name: text.slice(0, separator),
     version: text.slice(separator + 1),
   };
+}
+
+function isExactRegistryDependencySpec(spec) {
+  const trimmed = String(spec ?? "").trim();
+  if (isPinnedExactVersion(trimmed)) return true;
+  if (!trimmed.startsWith("npm:")) return false;
+
+  const { name, version } = splitNpmPackageSpec(trimmed);
+  return Boolean(name) && isPinnedExactVersion(version);
 }
 
 function extractExactVersionToken(value) {
@@ -474,6 +496,94 @@ function validatePinnedManagedScriptDefaults(scriptPaths, constantName, label, p
   }
 }
 
+function resolveNodeModulesDir(args) {
+  if (args.nodeModulesDir) return resolve(args.nodeModulesDir);
+  return join(resolve(dirname(args.packagePath)), "node_modules");
+}
+
+function collectDirectRegistryDependencies(packageJson) {
+  const dependencies = [];
+  const seenNames = new Set();
+
+  for (const field of ["dependencies", "devDependencies"]) {
+    const value = packageJson[field];
+    if (!isPlainObject(value)) continue;
+
+    for (const [name, spec] of Object.entries(value)) {
+      if (seenNames.has(name) || !isExactRegistryDependencySpec(spec)) continue;
+      seenNames.add(name);
+      dependencies.push({ field, name });
+    }
+  }
+
+  return dependencies;
+}
+
+function readInstalledPackageVersion(path) {
+  try {
+    const packageJson = readJsonFile(path);
+    return typeof packageJson.version === "string" ? packageJson.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function validateInstalledDependencies(args, packageJson, packageLock, problems) {
+  const dependencies = collectDirectRegistryDependencies(packageJson);
+  if (dependencies.length === 0) return;
+
+  const nodeModulesDir = resolveNodeModulesDir(args);
+  const packageEntries = isPlainObject(packageLock.packages) ? packageLock.packages : {};
+  const findings = [];
+  const expectedDependencies = [];
+
+  for (const { field, name } of dependencies) {
+    const directLabel = `${args.packagePath}#${field}.${name}`;
+    const lockPath = `node_modules/${name}`;
+    const lockLabel = `${args.lockfilePath}#packages[${JSON.stringify(lockPath)}].version`;
+    const lockEntry = packageEntries[lockPath];
+    const expectedVersion = lockEntry?.version;
+
+    if (typeof expectedVersion !== "string" || !isPinnedExactVersion(expectedVersion)) {
+      findings.push(
+        `  - ${directLabel}: ${lockLabel} is missing a usable resolved version; run npm ci`,
+      );
+      continue;
+    }
+
+    expectedDependencies.push({ directLabel, name, expectedVersion });
+  }
+
+  if (!existsSync(nodeModulesDir)) {
+    problems.push(
+      `node_modules not found at ${nodeModulesDir} — run npm ci to install dependencies before validating`,
+    );
+  } else {
+    for (const { directLabel, name, expectedVersion } of expectedDependencies) {
+      const installedPath = join(nodeModulesDir, name, "package.json");
+      const installedVersion = readInstalledPackageVersion(installedPath);
+      if (typeof installedVersion !== "string" || installedVersion.trim().length === 0) {
+        findings.push(
+          `  - ${directLabel}: expected ${JSON.stringify(expectedVersion)}, but package is not installed (${installedPath})`,
+        );
+        continue;
+      }
+
+      if (installedVersion.trim() !== expectedVersion.trim()) {
+        findings.push(
+          `  - ${directLabel}: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(installedVersion)}`,
+        );
+      }
+    }
+  }
+
+  if (findings.length > 0) {
+    problems.push(
+      `Installed dependencies are stale or mismatched — run npm ci:\n${findings.join("\n")}`,
+    );
+  }
+}
+
 function validatePiTypeboxPin(args, packageJson, packageLock, problems) {
   const directSpec = packageJson.dependencies?.typebox;
   const directLabel = `${args.packagePath}#dependencies.typebox`;
@@ -572,6 +682,7 @@ function collectProblems(args) {
     problems.push(error.message);
   }
 
+  validateInstalledDependencies(args, packageJson, packageLock, problems);
   validatePinnedDependencies(packageJson, args.packagePath, problems);
   validateManagedPiPins(args, packageJson, problems);
   validatePiTypeboxPin(args, packageJson, packageLock, problems);

@@ -9,13 +9,15 @@ const MAX_CACHE_SIZE = 50;
 let loadSkillsCache = null;
 const LOAD_SKILLS_CACHE_TTL_MS = 5000;
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
-const SOURCE_PRIORITY = {
+export const SOURCE_PRIORITY = {
     project: 700,
     "project-settings": 650,
     "project-package": 600,
     user: 300,
     "user-settings": 250,
     "user-package": 200,
+    "project-claude": 180,
+    "user-claude": 170,
     extension: 150,
     builtin: 100,
     unknown: 0,
@@ -309,10 +311,28 @@ function collectSettingsPackageSkillPaths(cwd, agentDir) {
     }
     return results;
 }
+function isClaudeSkillsDisabled(agentDir) {
+    try {
+        const settings = readOptionalJsonFile(path.join(agentDir, "settings.json"), "user settings");
+        if (!settings || typeof settings !== "object" || Array.isArray(settings))
+            return false;
+        const tlh = settings.tlh;
+        if (!tlh || typeof tlh !== "object" || Array.isArray(tlh))
+            return false;
+        const claudeSkills = tlh.claudeSkills;
+        if (!claudeSkills || typeof claudeSkills !== "object" || Array.isArray(claudeSkills))
+            return false;
+        return claudeSkills.disabled === true;
+    }
+    catch {
+        return false;
+    }
+}
 function buildSkillPaths(cwd, agentDir) {
     const projectConfigDir = getProjectConfigDir(cwd);
     const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
     const projectLegacyAgentsDir = path.join(cwd, ".agents");
+    const claudeDisabled = isClaudeSkillsDisabled(agentDir);
     const skillPaths = [
         { path: path.join(projectConfigDir, "skills"), source: "project" },
         ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
@@ -326,6 +346,12 @@ function buildSkillPaths(cwd, agentDir) {
         ...collectSettingsPackageSkillPaths(cwd, agentDir),
         ...extractSkillPathsFromPackageRoot(cwd, "project-package"),
         ...collectSettingsSkillPaths(cwd, agentDir),
+        ...(claudeDisabled
+            ? []
+            : [
+                { path: path.join(cwd, ".claude", "skills"), source: "project-claude" },
+                { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" },
+            ]),
     ];
     const deduped = new Map();
     for (const entry of skillPaths) {
@@ -348,13 +374,17 @@ function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
     const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
         ? undefined
         : rawProjectAgentsRoot;
+    const projectClaudeSkillsRoot = path.resolve(cwd, ".claude", "skills");
     const userSkillsRoot = path.resolve(agentDir, "skills");
     const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
     const userAgentRoot = path.resolve(agentDir);
     const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
     const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
+    const userClaudeSkillsRoot = path.resolve(os.homedir(), ".claude", "skills");
     if (isWithinPath(filePath, projectPackagesRoot))
         return "project-package";
+    if (isWithinPath(filePath, projectClaudeSkillsRoot))
+        return "project-claude";
     if (isWithinPath(filePath, projectSkillsRoot) ||
         (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
         return "project";
@@ -362,6 +392,8 @@ function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
         return "project-settings";
     if (isWithinPath(filePath, userPackagesRoot))
         return "user-package";
+    if (isWithinPath(filePath, userClaudeSkillsRoot))
+        return "user-claude";
     if (isWithinPath(filePath, userSkillsRoot) ||
         (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
         return "user";
