@@ -10,12 +10,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
-- **The installer now fetches support files in parallel** instead of sequentially.
-- **The installer skips a redundant npm install when the harness package checkout has not changed.**
-- **First launch on a fresh profile no longer waits through a long serial per-extension install.** Pinned bundled extensions are now batch pre-installed at install time rather than deferred to first launch (previously measured at about 70 seconds of startup delay). In our testing, a fresh install now takes around 26 seconds (around 16 seconds with a warm npm cache), and first launch takes about a second.
-- **Removed the footer ticket status line.** TLH no longer renders a `ticket: <title> (/tickets)` line in the footer for in-progress tickets. Use `/tickets` to see ready, blocked, in-progress, active, and total counts with ID/title details.
-- **The startup header context hint is now inline.** The standalone "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions" header line has been removed. Its replacement is a `(run /context to see a breakdown)` suffix appended directly to the `Context at launch:` allocation line. Ctrl+Shift+E still works and still appears in `/hotkeys`.
-- **Startup tip spacing.** When a startup tip is shown in the collapsed header, it is now separated from the context line by a blank line for readability.
+- TLH installs much faster now.
 
 ## [0.38.1] - 2026-08-18
 
