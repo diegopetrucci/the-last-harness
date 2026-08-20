@@ -17,8 +17,8 @@ const realPiTuiUrl = pathToFileURL(
 ).href;
 
 const renderPiTuiShim = `
-import { visibleWidth, wrapTextWithAnsi } from ${JSON.stringify(realPiTuiUrl)};
-export { visibleWidth, wrapTextWithAnsi };
+import { stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from ${JSON.stringify(realPiTuiUrl)};
+export { stripTerminalSequences, visibleWidth, wrapTextWithAnsi };
 
 function wrapText(text, width) {
   return wrapTextWithAnsi(String(text), Math.max(1, width || 1));

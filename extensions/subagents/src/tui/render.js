@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text, stripTerminalSequences, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { liveDetailShortcutDisplay, } from "../shared/subagent-shortcuts.js";
 import { MAX_WIDGET_JOBS, WIDGET_KEY, } from "../shared/types.js";
 import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath, } from "../shared/formatters.js";
@@ -147,17 +147,52 @@ const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
 const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
 const FOREGROUND_ACTIVITY_PREFIX = "  ⎿  ";
 const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = "     ";
+function fitCompactToolStatus(toolLines, liveStatus, firstWidth, continuationWidth) {
+    if (!liveStatus || toolLines.includes(liveStatus))
+        return toolLines;
+    const finalLineIndex = toolLines.length - 1;
+    const finalWidth = finalLineIndex === 0 ? firstWidth : continuationWidth;
+    const finalLine = `${toolLines[finalLineIndex]} · ${liveStatus}`;
+    if (visibleWidth(finalLine) <= Math.max(1, finalWidth)) {
+        return [...toolLines.slice(0, finalLineIndex), finalLine];
+    }
+    return [...toolLines, liveStatus];
+}
+function isDisplayWhitespace(character) {
+    return character.trim().length === 0;
+}
+function stripBareTerminalControls(text) {
+    let sanitized = "";
+    let pendingControlSpace = false;
+    for (const character of text) {
+        const code = character.codePointAt(0) ?? 0;
+        if ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) {
+            pendingControlSpace = true;
+            continue;
+        }
+        if (pendingControlSpace) {
+            const previous = sanitized.at(-1);
+            if (previous !== undefined &&
+                !isDisplayWhitespace(previous) &&
+                !isDisplayWhitespace(character)) {
+                sanitized += " ";
+            }
+            pendingControlSpace = false;
+        }
+        sanitized += character;
+    }
+    return sanitized;
+}
 function wrapCommandPreview(text, firstWidth, continuationWidth) {
     const firstLines = wrapDisplayLine(text, Math.max(1, firstWidth));
     if (firstLines.length <= 1)
         return firstLines;
-    return [
-        firstLines[0],
-        ...wrapDisplayLine(firstLines.slice(1).join(" "), Math.max(1, continuationWidth)),
-    ];
+    const firstLine = firstLines[0];
+    const continuationSource = text.slice(firstLine.length).trimStart();
+    return [firstLine, ...wrapDisplayLine(continuationSource, Math.max(1, continuationWidth))];
 }
 function fitCollapsedCommandPreview(commandText, durationSuffix, firstWidth, continuationWidth) {
-    const reflowed = commandText.replace(/\r\n|\r|\n/g, " ");
+    const reflowed = stripBareTerminalControls(stripTerminalSequences(commandText).replace(/\r\n|\r|\n/g, " "));
     const lines = wrapCommandPreview(`${reflowed}${durationSuffix}`, firstWidth, continuationWidth);
     if (lines.length <= COLLAPSED_COMMAND_PREVIEW_ROWS)
         return lines;
@@ -289,7 +324,7 @@ function compactProgressActivityLines(progress, width, firstPrefix, continuation
     const toolLines = formatCurrentToolLines(progress, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix), false, snapshotNow);
     const liveStatus = buildLiveStatusLine(progress, snapshotNow);
     if (toolLines) {
-        return [...toolLines, ...(liveStatus && !toolLines.includes(liveStatus) ? [liveStatus] : [])];
+        return fitCompactToolStatus(toolLines, liveStatus, width - visibleWidth(firstPrefix), width - visibleWidth(continuationPrefix));
     }
     const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
     return [phrase, liveStatus].filter((line) => Boolean(line));
@@ -988,7 +1023,7 @@ function modelThinkingBadge(theme, model, thinking) {
     const label = formatModelThinking(model, thinking);
     return label ? theme.fg("dim", ` (${label})`) : "";
 }
-function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, snapshotNow) {
+function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, snapshotNow, fitTrailingStatus = false) {
     if (step.status === "continued")
         return [];
     if (step.interruptRequestedAt !== undefined)
@@ -996,6 +1031,8 @@ function widgetStepActivityLines(step, firstWidth, continuationWidth, expanded, 
     const toolLines = formatCurrentToolLines(step, firstWidth, continuationWidth, expanded, snapshotNow);
     const activity = buildLiveStatusLine(step, snapshotNow);
     if (toolLines) {
+        if (fitTrailingStatus)
+            return fitCompactToolStatus(toolLines, activity, firstWidth, continuationWidth);
         return [...toolLines, ...(activity && !toolLines.includes(activity) ? [activity] : [])];
     }
     if (!expanded && step.status === "running")
@@ -1358,7 +1395,7 @@ function compactSingleWidgetLines(job, theme, width) {
         const inlineCommand = Boolean(displayStep.currentTool) && inlineFirstWidth >= minimumCommandWidth;
         const activityLines = widgetStepActivityLines(displayStep, inlineCommand ? inlineFirstWidth : contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX), inlineCommand
             ? contentWidth - visibleWidth(activityContinuationPrefix)
-            : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), false, job.updatedAt);
+            : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), false, job.updatedAt, true);
         const activity = activityLines.join(" · ");
         const activitySuffix = activity ? `${activitySeparator}${theme.fg("dim", activity)}` : "";
         const healthWarning = displayStep.status === "running" &&

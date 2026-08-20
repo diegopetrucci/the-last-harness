@@ -9,6 +9,7 @@ import {
   Text,
   getKeybindings,
   setKeybindings,
+  stripTerminalSequences,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { createPlainTheme } from "../support/themes.ts";
@@ -38,6 +39,13 @@ function outputPathPattern(posixPath: string): RegExp {
 
 function firstGrapheme(text: string): string {
   return Array.from(text.trimStart())[0] ?? "";
+}
+
+function containsTerminalControl(text: string): boolean {
+  return Array.from(text).some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return (code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f);
+  });
 }
 
 function firstRunningGlyph(text: string): string {
@@ -3215,6 +3223,241 @@ describe("subagent async widget rendering", () => {
     assertWrappedSource(expanded, command);
     assert.match(expanded.join("\n"), /alpha beta gamma/);
     assert.match(expanded.join("\n"), /upsilon/);
+  });
+
+  it("preserves unbroken command tokens across unequal preview row widths", () => {
+    const longToken = `https://example.com/${"a".repeat(30)}`;
+    const command = `curl ${longToken}`;
+    const longAgent = "worker-with-a-very-long-model-prefix";
+    const job: AsyncJobState = {
+      asyncId: "unbroken-command-token",
+      asyncDir: "/tmp/unbroken-command-token",
+      status: "running",
+      mode: "parallel",
+      activeParallelGroup: true,
+      agents: Array.from({ length: 12 }, () => longAgent),
+      runningSteps: 1,
+      completedSteps: 11,
+      stepsTotal: 12,
+      updatedAt: 20_000,
+      steps: Array.from({ length: 12 }, (_, index) => ({
+        index,
+        agent: longAgent,
+        status: index === 0 ? ("running" as const) : ("complete" as const),
+        ...(index === 0
+          ? {
+              currentTool: "bash",
+              currentToolArgs: command,
+              currentToolStartedAt: 19_000,
+            }
+          : {}),
+      })),
+    };
+
+    const width = 80;
+    withStdoutSize(80, width, () => {
+      const ui = createUiContext();
+      renderWidget(ui.ctx as never, [job]);
+      const lines = renderWidgetHarnessLines(ui.widgets.at(-1));
+      const commandStart = lines.findIndex((line) => line.includes("bash:"));
+      const nextStepStart = lines.findIndex(
+        (line, lineIndex) => lineIndex > commandStart && line.includes("Agent 2/12"),
+      );
+      assert.ok(commandStart > 0);
+      assert.ok(nextStepStart > commandStart);
+
+      const preview = lines.slice(commandStart, nextStepStart);
+      assert.ok(preview.length <= 3);
+      assert.ok(preview.slice(1).every((line) => line.startsWith("       ")));
+      const previewText = preview
+        .map((line, index) => (index === 0 ? line.slice(line.indexOf("bash: ")) : line.trimStart()))
+        .join("");
+      assert.match(
+        previewText,
+        new RegExp(escapeRegExp(longToken)),
+        "collapsed preview should preserve an unbroken URL across row reflow",
+      );
+    });
+  });
+
+  it("fits compact live status on command rows and spills only when needed", () => {
+    const makeJob = (): AsyncJobState => ({
+      asyncId: "compact-command-status-density",
+      asyncDir: "/tmp/compact-command-status-density",
+      status: "running",
+      mode: "parallel",
+      activeParallelGroup: true,
+      agents: Array.from({ length: 12 }, () => "worker"),
+      runningSteps: 1,
+      completedSteps: 11,
+      stepsTotal: 12,
+      updatedAt: 20_000,
+      steps: Array.from({ length: 12 }, (_, index) => ({
+        index,
+        agent: "worker",
+        status: index === 0 ? ("running" as const) : ("complete" as const),
+        ...(index === 0
+          ? {
+              currentTool: "bash",
+              currentToolArgs: "echo hi",
+              currentToolStartedAt: 19_000,
+              lastActivityAt: 18_000,
+            }
+          : {}),
+      })),
+    });
+
+    const renderCompact = (width: number): string[] => {
+      resetWidgetLayout();
+      return withStdoutSize(80, width, () => {
+        const ui = createUiContext();
+        renderWidget(ui.ctx as never, [makeJob()]);
+        return renderWidgetHarnessLines(ui.widgets.at(-1));
+      });
+    };
+
+    const fits = renderCompact(80);
+    const fitsCommand = fits.find((line) => line.includes("bash: echo hi")) ?? "";
+    assert.match(fitsCommand, /bash: echo hi \| 1\.0s · active 2s ago/);
+
+    const spills = renderCompact(30);
+    const spillCommandIndex = spills.findIndex((line) => line.includes("bash: echo hi"));
+    const nextStepIndex = spills.findIndex(
+      (line, lineIndex) => lineIndex > spillCommandIndex && line.includes("Agent 2/12"),
+    );
+    assert.ok(spillCommandIndex >= 0);
+    assert.ok(nextStepIndex > spillCommandIndex);
+    const spillPreview = spills.slice(spillCommandIndex, nextStepIndex);
+    assert.ok(
+      spillPreview.some((line) => line.includes("active 2s ago")),
+      "live status should remain visible when it cannot share the command row",
+    );
+    assert.ok(
+      spillPreview.every((line) => !line.includes("bash: echo hi · active 2s ago")),
+      "live status should spill instead of overflowing the command row",
+    );
+  });
+
+  it("strips ANSI and OSC sequences before collapsed command reflow", () => {
+    const escape = "\u001b";
+    const oscOpen = `${escape}]8;;https://example.com${escape}\\`;
+    const oscClose = `${escape}]8;;${escape}\\`;
+    const ansiOpen = `${escape}[31m`;
+    const ansiClose = `${escape}[0m`;
+    const command = [
+      `${oscOpen}foo ${"x".repeat(30)}${oscClose} ${ansiOpen}${"y".repeat(10)}${ansiClose}`,
+      "echo multiline",
+    ].join("\n");
+    const job: AsyncJobState = {
+      asyncId: "ansi-osc-command-preview",
+      asyncDir: "/tmp/ansi-osc-command-preview",
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+      stepsTotal: 1,
+      updatedAt: 20_000,
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          status: "running",
+          currentTool: "bash",
+          currentToolArgs: command,
+          currentToolStartedAt: 19_000,
+        },
+      ],
+    };
+
+    const collapsed = buildWidgetLines([job], theme, 42);
+    const hintIndex = collapsed.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    const commandStart = collapsed.findIndex((line) => line.includes("bash:"));
+    assert.ok(commandStart >= 0);
+    assert.ok(hintIndex > commandStart);
+    const preview = collapsed.slice(commandStart, hintIndex);
+    assert.equal(preview.length, 3);
+    assert.ok(preview.every((line) => visibleWidth(line) <= 40));
+    assert.ok(
+      !preview.join("").includes(escape),
+      "collapsed preview should not contain control sequences",
+    );
+    const collapsedText = stripTerminalSequences(preview.join(""));
+    const collapsedSource = `bash: ${stripTerminalSequences(command).replace(/\r\n|\r|\n/g, " ")}`;
+    assert.ok(
+      collapsedText.replace(/\s/g, "").includes(collapsedSource.replace(/\s/g, "")),
+      "collapsed preview should preserve all visible characters from ANSI/OSC-bearing commands",
+    );
+
+    const expanded = buildWidgetLines([job], theme, 180, true);
+    const expandedText = expanded.join("\n");
+    assert.match(
+      expandedText,
+      new RegExp(`${escapeRegExp(oscOpen)}foo ${"x".repeat(30)}${escapeRegExp(oscClose)}`),
+    );
+    assert.match(
+      expandedText,
+      new RegExp(`${escapeRegExp(ansiOpen)}${"y".repeat(10)}${escapeRegExp(ansiClose)}`),
+    );
+    const expandedCommandStart = expanded.findIndex((line) => line.includes("bash:"));
+    const expandedSecondLine = expanded.findIndex(
+      (line, lineIndex) => lineIndex > expandedCommandStart && line.includes("echo multiline"),
+    );
+    assert.ok(expandedCommandStart >= 0);
+    assert.ok(
+      expandedSecondLine > expandedCommandStart,
+      "expanded detail should retain the command's original multiline structure",
+    );
+  });
+
+  it("removes bare C0/C1 controls from collapsed previews while preserving expanded source", () => {
+    const c0 = "\u0001";
+    const c1 = "\u0090";
+    const tab = "\t";
+    const command = `printf 'before${c0}middle${c1}after\u007f\u009f'\necho${tab}multiline`;
+    const job: AsyncJobState = {
+      asyncId: "bare-control-command-preview",
+      asyncDir: "/tmp/bare-control-command-preview",
+      status: "running",
+      mode: "single",
+      agents: ["worker"],
+      stepsTotal: 1,
+      updatedAt: 20_000,
+      steps: [
+        {
+          index: 0,
+          agent: "worker",
+          status: "running",
+          currentTool: "bash",
+          currentToolArgs: command,
+          currentToolStartedAt: 19_000,
+        },
+      ],
+    };
+
+    const collapsed = buildWidgetLines([job], theme, 80);
+    const hintIndex = collapsed.findIndex((line) => line.includes("Press Ctrl+Shift+D"));
+    const commandStart = collapsed.findIndex((line) => line.includes("bash:"));
+    assert.ok(commandStart >= 0);
+    assert.ok(hintIndex > commandStart);
+    const preview = collapsed.slice(commandStart, hintIndex).join("");
+    assert.equal(containsTerminalControl(preview), false);
+    assert.match(preview, /before middle after/);
+    assert.match(preview, /echo multiline/);
+
+    const expanded = buildWidgetLines([job], theme, 120, true);
+    const expandedText = expanded.join("\n");
+    assert.ok(expandedText.includes(c0), "expanded detail should preserve C0 source");
+    assert.ok(expandedText.includes(c1), "expanded detail should preserve C1 source");
+    assert.ok(expandedText.includes(tab), "expanded detail should preserve tab source");
+    const expandedCommandStart = expanded.findIndex((line) => line.includes("bash:"));
+    const expandedSecondLine = expanded.findIndex(
+      (line, lineIndex) =>
+        lineIndex > expandedCommandStart && line.includes("echo") && line.includes("multiline"),
+    );
+    assert.ok(expandedCommandStart >= 0);
+    assert.ok(
+      expandedSecondLine > expandedCommandStart,
+      "expanded detail should retain the command's original multiline structure",
+    );
   });
 
   it("caps collapsed long single-line command previews at narrow widths", () => {
