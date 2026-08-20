@@ -10,6 +10,14 @@ Before considering changes ready, run:
 npm run validate
 ```
 
+**Dependency precondition:** `npm run validate` runs against whatever is in `node_modules`. The first `check:package-versions` step checks installed versions for direct exact registry dependencies in `dependencies` and `devDependencies`, using the corresponding `packages["node_modules/<name>"].version` entries in `package-lock.json` as the expected resolved versions. It intentionally does not audit the full transitive lock snapshot or check peer-only, ranged, or non-registry specs. Missing or stale direct packages are reported with this remediation:
+
+```sh
+npm ci
+```
+
+This is also how CI (`.github/workflows/ci.yml`, `release.yml`) and `.symphony/setup` install dependencies — always from the lockfile, never from a loose install.
+
 This is the standard full validation flow. It checks managed version pins and package contents; runs the main and runtime TypeScript targets (the main target covers subagent test sources directly); verifies generated runtime JavaScript freshness; runs installer smoke tests; executes the root and imported subagent test suites; runs JavaScript/TypeScript lint via Oxlint, formatting checks via Oxfmt, and shell lint via ShellCheck; exercises the settings merge dry-run; and finishes with `npm pack --dry-run`.
 
 The validation scripts retain Oxlint's built-in default rule selection while `.oxlintrc.json` registers the vendored anti-slop plugin for deliberate per-rule adoption. The current rollout enables `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` at error severity; the other 6 anti-slop rule entries remain visibly commented out. `npm run lint` runs `oxlint --deny-warnings scripts tests extensions`, so any warning or error fails validation. The same npm script is used by the CI validation lane; CI does not duplicate the Oxlint flag. The enforcing formatting gate is `npm run format:check`, which only selects Oxfmt check mode. The default root tests use Node's dot reporter. Imported subagent suites capture TAP so the runner can enforce their counts and print one concise success line; on any failure or invalid summary it relays the full TAP and stderr diagnostics.

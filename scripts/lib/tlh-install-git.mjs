@@ -1,9 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync } from "node:fs";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { criticalGitSourceSpec } from "./tlh-install-package-source.mjs";
 import { assertProfilePathWithinAgent, isSymlink, realpathForCompare, } from "./tlh-install-paths.mjs";
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
+// Keep the completion marker in the checkout's resolved Git metadata so it
+// neither dirties the worktree nor depends on node_modules being ignored.
+// Format: JSON { schemaVersion: 1, head: <full installed checkout HEAD> }.
+const NPM_INSTALL_MARKER_FILENAME = "tlh-npm-install-complete.json";
+const NPM_INSTALL_MARKER_SCHEMA_VERSION = 1;
 function commandDisplay(commandArgs) {
     return commandArgs.map(String).join(" ");
 }
@@ -54,6 +60,73 @@ function warn(message, io) {
         io.warn(message);
     else
         console.error(`warning: ${message}`);
+}
+function npmInstallMarkerPath(config, targetDir, label, io) {
+    const gitDir = gitOutput(config, targetDir, ["rev-parse", "--absolute-git-dir"], io);
+    if (!gitDir)
+        throw new Error(`could not resolve ${label} git metadata directory`);
+    const confinedGitDir = realpathForCompare(gitDir);
+    assertProfilePathWithinAgent(config, confinedGitDir, `${label} npm install marker`);
+    return join(confinedGitDir, NPM_INSTALL_MARKER_FILENAME);
+}
+function isRegularDirectory(path) {
+    try {
+        const stats = lstatSync(path);
+        return stats.isDirectory() && !stats.isSymbolicLink();
+    }
+    catch {
+        return false;
+    }
+}
+function readNpmInstallMarker(markerPath, head) {
+    try {
+        const stats = lstatSync(markerPath);
+        if (stats.isSymbolicLink() || !stats.isFile())
+            return false;
+        const parsed = JSON.parse(readFileSync(markerPath, "utf8"));
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+            return false;
+        const marker = parsed;
+        return marker.schemaVersion === NPM_INSTALL_MARKER_SCHEMA_VERSION && marker.head === head;
+    }
+    catch {
+        return false;
+    }
+}
+function invalidateNpmInstallMarker(markerPath) {
+    try {
+        const stats = lstatSync(markerPath);
+        if (!stats.isSymbolicLink() && !stats.isFile()) {
+            // An unexpected directory or special file cannot validate as a marker.
+            // Leave it untouched; marker persistence will warn and the next refresh
+            // will retry rather than treating it as a successful install.
+            return;
+        }
+        // unlinkSync removes a symlink itself and never follows its target.
+        unlinkSync(markerPath);
+    }
+    catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+            return;
+        }
+        throw error;
+    }
+}
+function writeNpmInstallMarker(markerPath, head) {
+    if (isSymlink(markerPath)) {
+        throw new Error(`refusing to replace symlinked npm install marker: ${markerPath}`);
+    }
+    const tempPath = join(dirname(markerPath), `.${basename(markerPath)}.${randomUUID()}.tmp`);
+    try {
+        writeFileSync(tempPath, `${JSON.stringify({ schemaVersion: NPM_INSTALL_MARKER_SCHEMA_VERSION, head })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+        if (isSymlink(markerPath)) {
+            throw new Error(`refusing to replace symlinked npm install marker: ${markerPath}`);
+        }
+        renameSync(tempPath, markerPath);
+    }
+    finally {
+        rmSync(tempPath, { force: true });
+    }
 }
 export function gitOutput(config, targetDir, args, io = {}) {
     const spawnCapture = io.spawnCapture || defaultSpawnCapture;
@@ -131,7 +204,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
         printDryRunCommand(["git", "-C", targetDir, "checkout", "--detach", "<resolved-ref>"], io);
         printDryRunCommand(["git", "-C", targetDir, "reset", "--hard", "<resolved-ref>"], io);
         printDryRunCommand(["git", "-C", targetDir, "clean", "-fd"], io);
-        logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present.", io);
+        logDryRun(config, "Would run npm install --omit=dev --legacy-peer-deps --package-lock=false if package.json is present and the clean unchanged-checkout marker is not valid.", io);
         return true;
     }
     if (!safeGitCheckoutDirForMutation(config, targetDir, label, io)) {
@@ -140,6 +213,11 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
             return false;
         }
         throw new Error(missingMessage);
+    }
+    const markerPath = npmInstallMarkerPath(config, targetDir, label, io);
+    let priorHead = null;
+    if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
+        priorHead = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
     }
     if (repo) {
         if (gitSucceeds(config, targetDir, ["remote", "get-url", "origin"], io)) {
@@ -151,6 +229,7 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
     }
     runGitCommand(config, ["git", "-C", targetDir, "fetch", "--prune", "--tags", "origin"], io);
     const statusOutput = gitOutput(config, targetDir, ["status", "--porcelain"], io);
+    const wasClean = statusOutput === "";
     if (statusOutput !== "") {
         const timestamp = new Date().toISOString();
         const refTimestamp = timestamp.replace(/:/g, "-");
@@ -201,7 +280,33 @@ export function refreshGitCheckout(config, { targetDir, repo, ref, label, missin
     runGitCommand(config, ["git", "-C", targetDir, "reset", "--hard", targetRef], io);
     runGitCommand(config, ["git", "-C", targetDir, "clean", "-fd"], io);
     if (existsSync(join(targetDir, "package.json"))) {
-        runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
+        let newHead = null;
+        if (gitSucceeds(config, targetDir, ["rev-parse", "HEAD"], io)) {
+            newHead = gitOutput(config, targetDir, ["rev-parse", "HEAD"], io);
+        }
+        const canReuseNpmInstall = wasClean &&
+            priorHead !== null &&
+            newHead !== null &&
+            priorHead === newHead &&
+            isRegularDirectory(join(targetDir, "node_modules")) &&
+            readNpmInstallMarker(markerPath, newHead);
+        if (!canReuseNpmInstall) {
+            // Remove any previous success claim before npm starts. If npm is
+            // interrupted or fails, a stale matching marker must not authorize reuse.
+            invalidateNpmInstallMarker(markerPath);
+            runGitCommandInDir(config, targetDir, ["npm", "install", "--omit=dev", "--legacy-peer-deps", "--package-lock=false"], io);
+            if (newHead === null) {
+                warn(`could not resolve installed checkout HEAD for npm install marker at ${markerPath}`, io);
+            }
+            else {
+                try {
+                    writeNpmInstallMarker(markerPath, newHead);
+                }
+                catch (error) {
+                    warn(`could not persist npm install completion marker at ${markerPath}: ${String(error)}`, io);
+                }
+            }
+        }
     }
     return true;
 }

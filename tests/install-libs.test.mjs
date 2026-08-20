@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -96,7 +96,7 @@ function createManagedGitCheckout(t) {
   mkdirSync(join(agentDir, "git", "github.com", "owner"), { recursive: true });
   runGit(["clone", originDir, targetDir]);
 
-  return { agentDir, originDir, targetDir };
+  return { root, agentDir, originDir, targetDir };
 }
 
 function gitCheckoutIo(warnings) {
@@ -117,6 +117,45 @@ function gitCheckoutIo(warnings) {
 function listBackupRefs(targetDir) {
   const refs = runGit(["-C", targetDir, "for-each-ref", "refs/tlh-backup", "--format=%(refname)"]);
   return refs === "" ? [] : refs.split("\n");
+}
+
+function npmInstallMarkerPath(targetDir) {
+  return join(
+    runGit(["-C", targetDir, "rev-parse", "--absolute-git-dir"]),
+    "tlh-npm-install-complete.json",
+  );
+}
+
+function trackingCheckoutIo(warnings, npmInstallCalls, { onNpmInstall } = {}) {
+  return {
+    runCommand(_config, commandArgs, options = {}) {
+      const [command, ...args] = commandArgs;
+      runCommand(command, args, {
+        cwd: options.cwd,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
+      });
+    },
+    runInDir(_config, dir, commandArgs) {
+      npmInstallCalls.push([...commandArgs]);
+      if (onNpmInstall) onNpmInstall(dir);
+    },
+    warn(message) {
+      warnings.push(message);
+    },
+  };
+}
+
+function addPackageJsonToCheckout(targetDir, originDir) {
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0" }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
 }
 
 test("package-source parsing resolves git, hash-pinned, and local package sources", (t) => {
@@ -751,6 +790,203 @@ test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode"
   assert.equal(runGit(["-C", targetDir, "show", `${backupRefs[0]}:tracked.txt`]), "tracked local");
   assert.equal(readFileSync(join(targetDir, "tracked.txt"), "utf8"), "tracked v1\n");
   assert.deepEqual(warnings, []);
+});
+
+test("refreshGitCheckout reuses npm install only with a matching TLH marker", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), {
+    schemaVersion: 1,
+    head,
+  });
+  assert.equal(npmInstallCalls.length, 1, "the first refresh must repair the absent marker");
+
+  refreshGitCheckout({ agentDir }, options, io);
+
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "an unchanged clean checkout with a matching marker must skip npm install",
+  );
+  assert.deepEqual(listBackupRefs(targetDir), []);
+});
+
+test("refreshGitCheckout repairs missing, malformed, mismatched, and non-directory npm state", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+  const markerPath = npmInstallMarkerPath(targetDir);
+
+  // No marker: a bare node_modules directory is deliberately insufficient.
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  writeFileSync(markerPath, "not json\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 2);
+
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head: "0".repeat(40) }) + "\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 3);
+
+  rmSync(join(targetDir, "node_modules"), { recursive: true, force: true });
+  writeFileSync(join(targetDir, "node_modules"), "not a directory\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 4);
+});
+
+test("refreshGitCheckout invalidates an old marker before a failed npm install", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head }) + "\n");
+  // A dirty checkout forces reconciliation even though the old marker matches.
+  writeFileSync(join(targetDir, "tracked.txt"), "dirty local change\n");
+
+  const failingIo = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall() {
+      throw new Error("simulated npm failure");
+    },
+  });
+  assert.throws(
+    () =>
+      refreshGitCheckout(
+        { agentDir, quiet: true },
+        {
+          targetDir,
+          repo: originDir,
+          ref: "main",
+          label: "test checkout",
+          missingMessage: `missing checkout: ${targetDir}`,
+        },
+        failingIo,
+      ),
+    /simulated npm failure/,
+  );
+  assert.equal(existsSync(markerPath), false, "failed npm must not retain an old success marker");
+
+  const repairCalls = [];
+  refreshGitCheckout(
+    { agentDir, quiet: true },
+    {
+      targetDir,
+      repo: originDir,
+      ref: "main",
+      label: "test checkout",
+      missingMessage: `missing checkout: ${targetDir}`,
+    },
+    trackingCheckoutIo([], repairCalls, {
+      onNpmInstall(dir) {
+        mkdirSync(join(dir, "node_modules"), { recursive: true });
+      },
+    }),
+  );
+  assert.equal(repairCalls.length, 1, "the next refresh must repair after the failed install");
+});
+
+test("refreshGitCheckout stores its marker in the resolved Git directory", (t) => {
+  const { root, agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  addPackageJsonToCheckout(targetDir, originDir);
+  const separateTarget = join(root, "agent", "git", "github.com", "owner", "separate");
+  const separateGitDir = join(root, "agent", "git-metadata", "separate.git");
+  mkdirSync(dirname(separateGitDir), { recursive: true });
+  runGit(["clone", "--separate-git-dir", separateGitDir, originDir, separateTarget]);
+  assert.equal(lstatSync(join(separateTarget, ".git")).isFile(), true);
+
+  const npmInstallCalls = [];
+  const options = {
+    targetDir: separateTarget,
+    repo: originDir,
+    ref: "main",
+    label: "separate test checkout",
+    missingMessage: `missing checkout: ${separateTarget}`,
+  };
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+
+  refreshGitCheckout({ agentDir }, options, io);
+  const markerPath = npmInstallMarkerPath(separateTarget);
+  assert.equal(markerPath, join(realpathSync(separateGitDir), "tlh-npm-install-complete.json"));
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+});
+
+test("refreshGitCheckout does not follow a symlinked completion marker", (t) => {
+  const { root, agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  addPackageJsonToCheckout(targetDir, originDir);
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const externalMarkerPath = join(root, "external-marker.json");
+  writeFileSync(externalMarkerPath, "keep this external file\n");
+  symlinkSync(externalMarkerPath, markerPath);
+
+  const npmInstallCalls = [];
+  refreshGitCheckout(
+    { agentDir },
+    {
+      targetDir,
+      repo: originDir,
+      ref: "main",
+      label: "test checkout",
+      missingMessage: `missing checkout: ${targetDir}`,
+    },
+    trackingCheckoutIo([], npmInstallCalls, {
+      onNpmInstall(dir) {
+        mkdirSync(join(dir, "node_modules"), { recursive: true });
+      },
+    }),
+  );
+
+  assert.equal(readFileSync(externalMarkerPath, "utf8"), "keep this external file\n");
+  assert.equal(lstatSync(markerPath).isFile(), true);
+  assert.equal(npmInstallCalls.length, 1);
 });
 
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {

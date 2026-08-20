@@ -31,7 +31,15 @@ function writeFakePi(fakebin, body) {
 
 export function makeDefaultExtensionInstallConfig(
   t,
-  { defaultExtensions, settings, dryRun = false, fakePiBody = "exit 0", fakeGitBody = "" },
+  {
+    defaultExtensions,
+    settings,
+    dryRun = false,
+    fakePiBody = "exit 0",
+    fakeGitBody = "",
+    fakeNpmBody = "",
+    fakeCloudSyncBody = "",
+  },
 ) {
   const root = makeTempDir();
   const homeDir = join(root, "home");
@@ -46,6 +54,11 @@ export function makeDefaultExtensionInstallConfig(
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify(settings, null, 2));
   writeFakePi(fakebin, fakePiBody);
   if (fakeGitBody) writeFakeCommand(fakebin, "git", fakeGitBody);
+  if (fakeNpmBody) writeFakeCommand(fakebin, "npm", fakeNpmBody);
+  if (fakeCloudSyncBody) {
+    const command = process.platform === "darwin" ? "xattr" : "setfattr";
+    writeFakeCommand(fakebin, command, fakeCloudSyncBody);
+  }
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
   const env = scrubInstallerEnv({
