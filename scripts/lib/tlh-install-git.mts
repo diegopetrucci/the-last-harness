@@ -166,6 +166,45 @@ function readNpmInstallMarker(markerPath: string, head: string): boolean {
   }
 }
 
+/**
+ * Returns true when every key of the checkout's `dependencies` map resolves to
+ * an existing directory under `<targetDir>/node_modules/<name>`. Only direct
+ * production dependencies are checked because the checkout installs with
+ * `--omit=dev`, and `optionalDependencies` can legitimately be absent.
+ * Transitive packages are not verified because the install uses
+ * `--package-lock=false`. Fails toward correctness: a missing, unreadable, or
+ * malformed package.json forces reinstall; an absent or empty `dependencies`
+ * map may still reuse when the other gates pass.
+ */
+function allDirectDepsPresent(targetDir: string): boolean {
+  let pkgJson: unknown;
+  try {
+    pkgJson = JSON.parse(readFileSync(join(targetDir, "package.json"), "utf8"));
+  } catch {
+    // Missing or unreadable package.json — cannot reuse.
+    return false;
+  }
+  if (typeof pkgJson !== "object" || pkgJson === null || Array.isArray(pkgJson)) {
+    // Malformed package.json — cannot reuse.
+    return false;
+  }
+  const pkg = pkgJson as Record<string, unknown>;
+  const deps = pkg["dependencies"];
+  // An absent or empty dependencies map is fine; nothing to verify.
+  if (deps === undefined || deps === null) return true;
+  if (typeof deps !== "object" || Array.isArray(deps)) {
+    // Malformed dependencies field — cannot reuse.
+    return false;
+  }
+  for (const name of Object.keys(deps as Record<string, unknown>)) {
+    // Scoped names (e.g. "@scope/pkg") resolve naturally through path joining.
+    if (!isRegularDirectory(join(targetDir, "node_modules", name))) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function invalidateNpmInstallMarker(markerPath: string): void {
   try {
     const stats = lstatSync(markerPath);
@@ -440,7 +479,8 @@ export function refreshGitCheckout(
       newHead !== null &&
       priorHead === newHead &&
       isRegularDirectory(join(targetDir, "node_modules")) &&
-      readNpmInstallMarker(markerPath, newHead);
+      readNpmInstallMarker(markerPath, newHead) &&
+      allDirectDepsPresent(targetDir);
 
     if (!canReuseNpmInstall) {
       // Remove any previous success claim before npm starts. If npm is

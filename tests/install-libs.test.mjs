@@ -989,6 +989,262 @@ test("refreshGitCheckout does not follow a symlinked completion marker", (t) => 
   assert.equal(npmInstallCalls.length, 1);
 });
 
+test("refreshGitCheckout forces npm install when a direct dependency directory is missing from node_modules", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  // Add a package.json with a direct production dependency.
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0", dependencies: { "some-dep": "^1.0.0" } }) +
+      "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      // Simulate npm install: create node_modules with the dep directory.
+      mkdirSync(join(dir, "node_modules", "some-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh: installs and writes marker.
+  refreshGitCheckout({ agentDir }, options, io);
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Second refresh: all gates pass, including the dependency directory — reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1, "reuse must skip npm install when dep dir is present");
+
+  // Now remove the dep directory to simulate partial deletion.
+  rmSync(join(targetDir, "node_modules", "some-dep"), { recursive: true, force: true });
+
+  // Third refresh: missing dep directory must force reinstall and rewrite marker.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    2,
+    "a missing direct dependency directory must force npm install",
+  );
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+});
+
+test("refreshGitCheckout forces npm install when a scoped direct dependency directory is missing", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "@scope/scoped-dep": "^2.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with scoped dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules", "@scope", "scoped-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh installs, creating the scoped dep directory.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Second refresh: scoped dep directory present — reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1, "reuse must work for scoped dep when dir is present");
+
+  // Remove the scoped dep directory.
+  rmSync(join(targetDir, "node_modules", "@scope"), { recursive: true, force: true });
+
+  // Third refresh: missing scoped dep must force reinstall.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 2, "a missing scoped dep directory must force npm install");
+});
+
+test("refreshGitCheckout reuses npm install when all direct dependencies are present", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "dep-a": "^1.0.0", "dep-b": "^2.0.0" },
+      devDependencies: { "dev-only": "^3.0.0" },
+      optionalDependencies: { "opt-dep": "^4.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with multiple deps"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      // Install only production deps (--omit=dev); optionalDependencies absent.
+      mkdirSync(join(dir, "node_modules", "dep-a"), { recursive: true });
+      mkdirSync(join(dir, "node_modules", "dep-b"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // All production dep dirs present; devDependencies and absent optionalDependencies must not block reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "reuse must work when all production dep dirs are present and optional ones absent",
+  );
+});
+
+test("refreshGitCheckout forces npm install when checkout package.json is malformed or missing", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+  const markerPath = npmInstallMarkerPath(targetDir);
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  // Start with a valid package.json that has no dependencies.
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0" }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "initial package.json"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh: installs normally.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+  // Valid second refresh: reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Corrupt the in-tree package.json (git clean will restore the committed version,
+  // so we corrupt the committed version by amending).
+  writeFileSync(join(targetDir, "package.json"), "not valid json\n");
+  runGit(["-C", targetDir, "add", "package.json"]);
+  runGit(["-C", targetDir, "commit", "--amend", "--no-edit"]);
+  runGit(["-C", targetDir, "push", "--force", originDir, "HEAD:main"]);
+
+  // Force a dirty state so wasClean is false and the checkout updates the tree.
+  writeFileSync(join(targetDir, "extra.txt"), "dirty\n");
+  // Also reset the marker to the old head so it would otherwise match.
+  const oldHead = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head: oldHead }) + "\n");
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    2,
+    "a malformed package.json must force npm install even when the marker would match",
+  );
+});
+
+test("refreshGitCheckout reuses npm install when optionalDependencies are absent from node_modules", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "prod-dep": "^1.0.0" },
+      optionalDependencies: { "opt-dep": "^2.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with optional dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      // opt-dep intentionally not installed (e.g. platform-incompatible optional).
+      mkdirSync(join(dir, "node_modules", "prod-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Reuse must succeed: opt-dep absent from node_modules must not block it.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "absent optionalDependency directory must not block npm install reuse",
+  );
+});
+
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
   const root = tempFixture(t);
   const agentDir = join(root, "agent");
