@@ -131,7 +131,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `/subagents-fleet` shows active dispatch status; neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", view: "fleet" })` shows active dispatch status; neither command changes these overrides.
 
 ### `/reconcile`
 
@@ -215,7 +215,6 @@ These commands ship inside the TLH package itself rather than through separately
 | `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
 | `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 | `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
-| `/subagents-fleet` | `subagents` | Show active subagent fleet status and transcript commands |
 
 ### `/annotate-last-message`
 
@@ -338,12 +337,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-
-### Hidden first-party extension commands
-
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/subagent-cost` | `subagents` | Show parent and child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 
 ### Hidden bundled extension commands
 

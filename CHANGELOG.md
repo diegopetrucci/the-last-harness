@@ -12,6 +12,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 - TLH installs much faster now.
 
+### Removed
+
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
+
 ## [0.38.1] - 2026-08-18
 
 ### Fixed

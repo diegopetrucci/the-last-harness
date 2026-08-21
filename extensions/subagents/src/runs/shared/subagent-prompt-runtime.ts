@@ -48,6 +48,7 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 
 const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
   "subagent-orchestration-instructions",
+  // Retained solely for child-context safety, not rendering compatibility.
   "subagent-slash-result",
   "subagent-slash-text-result",
   "subagent-notify",

@@ -175,7 +175,7 @@ The `pi-subagents` skill is filtered out of discovery output by design — it wi
 
 ## Async control, pause, and resume
 
-An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `/subagents-fleet` for the interactive fleet view or `subagent({ action: "status", id: "..." })` for the model-facing status path.
+An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status", view: "fleet" })` for the read-only fleet view or `subagent({ action: "status", id: "..." })` for a specific model-facing status path.
 
 The runtime distinguishes these controls:
 
@@ -217,7 +217,7 @@ Useful diagnostics:
 - `tlh doctor` checks installer-owned profile resources without writing.
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics.
-- `/subagents-fleet` reports active runs and transcript commands.
+- `subagent({ action: "status", view: "fleet" })` reports active runs and transcript commands.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.
 

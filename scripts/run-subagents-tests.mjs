@@ -16,7 +16,7 @@ export const suiteConfigs = {
   },
   integration: {
     directory: join(repoRoot, "extensions/subagents/test/integration"),
-    minimumFiles: 24,
+    minimumFiles: 23,
     minimumTests: 517,
   },
   e2e: {
