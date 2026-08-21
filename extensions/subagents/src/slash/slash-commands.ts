@@ -3,10 +3,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey } from "@earendil-works/pi-tui";
-import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { formatTokens } from "../shared/formatters.ts";
 import { liveDetailShortcutDisplay } from "../shared/subagent-shortcuts.ts";
-import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
+import type {
+  AllowedSlashSubagentParams,
+  SlashSubagentResponse,
+  SlashSubagentUpdate,
+} from "./slash-bridge.ts";
 import {
   applySlashUpdate,
   buildSlashInitialResult,
@@ -156,7 +159,7 @@ async function requestSlashRun(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   requestId: string,
-  params: SubagentParamsLike,
+  params: AllowedSlashSubagentParams,
 ): Promise<SlashSubagentResponse> {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -308,7 +311,7 @@ function persistSlashSessionSnapshot(ctx: ExtensionContext): void {
 async function runSlashSubagent(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  params: SubagentParamsLike,
+  params: AllowedSlashSubagentParams,
 ): Promise<void> {
   const requestId = randomUUID();
   const initialDetails = buildSlashInitialResult(requestId, params);

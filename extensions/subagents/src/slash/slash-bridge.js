@@ -1,4 +1,46 @@
 import { SLASH_SUBAGENT_CANCEL_EVENT, SLASH_SUBAGENT_REQUEST_EVENT, SLASH_SUBAGENT_RESPONSE_EVENT, SLASH_SUBAGENT_STARTED_EVENT, SLASH_SUBAGENT_UPDATE_EVENT, } from "../shared/types.js";
+const INVALID_SLASH_REQUEST_TEXT = "Unsupported slash subagent request.";
+function resolveAllowedSlashSubagentParams(value) {
+    try {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            return undefined;
+        if (Object.getPrototypeOf(value) !== Object.prototype)
+            return undefined;
+        const keys = Reflect.ownKeys(value);
+        if (keys.length === 1 && keys[0] === "action") {
+            const action = Object.getOwnPropertyDescriptor(value, "action");
+            return action?.enumerable && "value" in action && action.value === "doctor"
+                ? { action: "doctor" }
+                : undefined;
+        }
+        if (keys.length !== 2 || !keys.includes("action") || !keys.includes("view"))
+            return undefined;
+        const action = Object.getOwnPropertyDescriptor(value, "action");
+        const view = Object.getOwnPropertyDescriptor(value, "view");
+        return action?.enumerable &&
+            "value" in action &&
+            action.value === "status" &&
+            view?.enumerable &&
+            "value" in view &&
+            view.value === "fleet"
+            ? { action: "status", view: "fleet" }
+            : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function invalidSlashSubagentResponse(requestId) {
+    return {
+        requestId,
+        result: {
+            content: [{ type: "text", text: INVALID_SLASH_REQUEST_TEXT }],
+            details: { mode: "single", results: [] },
+        },
+        isError: true,
+        errorText: INVALID_SLASH_REQUEST_TEXT,
+    };
+}
 export function registerSlashSubagentBridge(options) {
     const controllers = new Map();
     const pendingCancels = new Set();
@@ -7,6 +49,10 @@ export function registerSlashSubagentBridge(options) {
         const unsubscribe = options.events.on(event, handler);
         if (typeof unsubscribe === "function")
             subscriptions.push(unsubscribe);
+    };
+    const rejectRequest = (requestId) => {
+        pendingCancels.delete(requestId);
+        options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, invalidSlashSubagentResponse(requestId));
     };
     subscribe(SLASH_SUBAGENT_CANCEL_EVENT, (data) => {
         if (!data || typeof data !== "object")
@@ -24,12 +70,44 @@ export function registerSlashSubagentBridge(options) {
     subscribe(SLASH_SUBAGENT_REQUEST_EVENT, async (data) => {
         if (!data || typeof data !== "object")
             return;
-        const request = data;
-        if (typeof request.requestId !== "string" || !request.params)
+        let requestId;
+        try {
+            requestId = data.requestId;
+        }
+        catch {
             return;
-        const { requestId, params } = request;
-        const ctx = request.ctx ?? options.getContext();
+        }
+        if (typeof requestId !== "string" || requestId.length === 0)
+            return;
+        if (Array.isArray(data)) {
+            rejectRequest(requestId);
+            return;
+        }
+        let params;
+        try {
+            params = data.params;
+        }
+        catch {
+            rejectRequest(requestId);
+            return;
+        }
+        const allowedParams = resolveAllowedSlashSubagentParams(params);
+        if (!allowedParams) {
+            rejectRequest(requestId);
+            return;
+        }
+        const request = data;
+        let requesterContext;
+        try {
+            requesterContext = request.ctx;
+        }
+        catch {
+            rejectRequest(requestId);
+            return;
+        }
+        const ctx = requesterContext ?? options.getContext();
         if (!ctx) {
+            pendingCancels.delete(requestId);
             const response = {
                 requestId,
                 result: {
@@ -63,7 +141,7 @@ export function registerSlashSubagentBridge(options) {
         }
         options.events.emit(SLASH_SUBAGENT_STARTED_EVENT, { requestId });
         try {
-            const result = await options.execute(requestId, params, controller.signal, (update) => {
+            const result = await options.execute(requestId, allowedParams, controller.signal, (update) => {
                 const progress = update.details?.progress;
                 const first = progress?.[0];
                 const payload = {

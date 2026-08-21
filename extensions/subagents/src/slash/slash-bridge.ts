@@ -10,11 +10,59 @@ import {
   type SubagentToolResult,
 } from "../shared/types.ts";
 
+export type AllowedSlashSubagentParams = { action: "doctor" } | { action: "status"; view: "fleet" };
+
 interface SlashSubagentRequest {
   requestId: string;
-  params: SubagentParamsLike;
+  params: AllowedSlashSubagentParams;
   /** Optional requester context for in-process extension bridge calls. */
   ctx?: ExtensionContext;
+}
+
+const INVALID_SLASH_REQUEST_TEXT = "Unsupported slash subagent request.";
+
+/**
+ * Private first-party boundary: retained slash commands emit only these exact
+ * read-only parameter shapes before reaching the executor.
+ */
+function resolveAllowedSlashSubagentParams(value: unknown): AllowedSlashSubagentParams | undefined {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    if (Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+
+    const keys = Reflect.ownKeys(value);
+    if (keys.length === 1 && keys[0] === "action") {
+      const action = Object.getOwnPropertyDescriptor(value, "action");
+      return action?.enumerable && "value" in action && action.value === "doctor"
+        ? { action: "doctor" }
+        : undefined;
+    }
+    if (keys.length !== 2 || !keys.includes("action") || !keys.includes("view")) return undefined;
+    const action = Object.getOwnPropertyDescriptor(value, "action");
+    const view = Object.getOwnPropertyDescriptor(value, "view");
+    return action?.enumerable &&
+      "value" in action &&
+      action.value === "status" &&
+      view?.enumerable &&
+      "value" in view &&
+      view.value === "fleet"
+      ? { action: "status", view: "fleet" }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function invalidSlashSubagentResponse(requestId: string): SlashSubagentResponse {
+  return {
+    requestId,
+    result: {
+      content: [{ type: "text", text: INVALID_SLASH_REQUEST_TEXT }],
+      details: { mode: "single" as const, results: [] },
+    },
+    isError: true,
+    errorText: INVALID_SLASH_REQUEST_TEXT,
+  };
 }
 
 export interface SlashSubagentResponse {
@@ -61,6 +109,11 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
     if (typeof unsubscribe === "function") subscriptions.push(unsubscribe);
   };
 
+  const rejectRequest = (requestId: string): void => {
+    pendingCancels.delete(requestId);
+    options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, invalidSlashSubagentResponse(requestId));
+  };
+
   subscribe(SLASH_SUBAGENT_CANCEL_EVENT, (data) => {
     if (!data || typeof data !== "object") return;
     const requestId = (data as { requestId?: unknown }).requestId;
@@ -75,12 +128,46 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 
   subscribe(SLASH_SUBAGENT_REQUEST_EVENT, async (data) => {
     if (!data || typeof data !== "object") return;
-    const request = data as Partial<SlashSubagentRequest>;
-    if (typeof request.requestId !== "string" || !request.params) return;
-    const { requestId, params } = request as SlashSubagentRequest;
 
-    const ctx = request.ctx ?? options.getContext();
+    let requestId: unknown;
+    try {
+      requestId = (data as { requestId?: unknown }).requestId;
+    } catch {
+      return;
+    }
+    if (typeof requestId !== "string" || requestId.length === 0) return;
+    if (Array.isArray(data)) {
+      rejectRequest(requestId);
+      return;
+    }
+
+    let params: unknown;
+    try {
+      params = (data as { params?: unknown }).params;
+    } catch {
+      rejectRequest(requestId);
+      return;
+    }
+    const allowedParams = resolveAllowedSlashSubagentParams(params);
+    if (!allowedParams) {
+      rejectRequest(requestId);
+      return;
+    }
+
+    const request = data as Partial<SlashSubagentRequest>;
+    // Trust the request-time context: this event bus is private first-party
+    // in-process plumbing, and retaining it avoids stale cached lastUiContext.
+    // Only read-only params cross the allowlist above; ctx provenance belongs elsewhere.
+    let requesterContext: ExtensionContext | undefined;
+    try {
+      requesterContext = request.ctx;
+    } catch {
+      rejectRequest(requestId);
+      return;
+    }
+    const ctx = requesterContext ?? options.getContext();
     if (!ctx) {
+      pendingCancels.delete(requestId);
       const response: SlashSubagentResponse = {
         requestId,
         result: {
@@ -120,7 +207,7 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
     try {
       const result = await options.execute(
         requestId,
-        params,
+        allowedParams,
         controller.signal,
         (update) => {
           const progress = update.details?.progress;
