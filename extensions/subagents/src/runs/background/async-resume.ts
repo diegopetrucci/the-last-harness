@@ -199,6 +199,19 @@ interface AsyncResultFile {
 	}>;
 }
 
+function resolveSelectedTkTicket(
+	statusStep: NonNullable<AsyncStatus["steps"]>[number] | undefined,
+	resultStep: NonNullable<AsyncResultFile["results"]>[number] | undefined,
+	rootTkTicket: TkTicketMetadata | undefined,
+	allowRootTkTicketFallback: boolean,
+): TkTicketMetadata | undefined {
+	return (
+		normalizeTkTicketMetadata(statusStep?.tkTicket) ??
+		normalizeTkTicketMetadata(resultStep?.tkTicket) ??
+		(allowRootTkTicketFallback ? rootTkTicket : undefined)
+	);
+}
+
 export interface AsyncRunLocation {
 	asyncDir: string | null;
 	resultPath: string | null;
@@ -529,6 +542,10 @@ export function resolveAsyncResumeTarget(
 	let statusSteps = status?.steps ?? [];
 	const resultSteps = result?.results ?? [];
 	const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
+	const allowRootTkTicketFallback =
+		stepCount === 1 ||
+		(!statusSteps.some((step) => step.tkTicket !== undefined) &&
+			!resultSteps.some((step) => step.tkTicket !== undefined));
 	const requestedIndex = params.index;
 	if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
 		throw new Error(`Async run '${runId}' index must be an integer.`);
@@ -540,6 +557,12 @@ export function resolveAsyncResumeTarget(
 				throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${requestedIndex} is out of range.`);
 			const selectedStep = statusSteps[requestedIndex];
 			if (selectedStep?.status === "running") {
+				const selectedTkTicket = resolveSelectedTkTicket(
+					selectedStep,
+					resultSteps[requestedIndex],
+					rootTkTicket,
+					allowRootTkTicketFallback,
+				);
 				return {
 					kind: "live",
 					runId,
@@ -550,9 +573,7 @@ export function resolveAsyncResumeTarget(
 					intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
 					cwd: status?.cwd ?? result?.cwd,
 					sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-					...((normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket)
-						? { tkTicket: normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket }
-						: {}),
+					...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
 				};
 			}
 			if (selectedStep?.status === "pending")
@@ -571,6 +592,12 @@ export function resolveAsyncResumeTarget(
 			if (!selected) {
 				throw new Error(`Async run '${runId}' has ${running.length} running children. Provide index to choose one.`);
 			}
+			const selectedTkTicket = resolveSelectedTkTicket(
+				selected.step,
+				resultSteps[selected.index],
+				rootTkTicket,
+				allowRootTkTicketFallback,
+			);
 			return {
 				kind: "live",
 				runId,
@@ -581,9 +608,7 @@ export function resolveAsyncResumeTarget(
 				intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
 				cwd: status?.cwd ?? result?.cwd,
 				sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-				...((normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket)
-					? { tkTicket: normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket }
-					: {}),
+				...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
 			};
 		}
 	}
@@ -638,10 +663,12 @@ export function resolveAsyncResumeTarget(
 	}
 	const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
 	if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
-	const selectedTkTicket =
-		normalizeTkTicketMetadata(selectedStatusStep?.tkTicket) ??
-		normalizeTkTicketMetadata(resultSteps[index]?.tkTicket) ??
-		rootTkTicket;
+	const selectedTkTicket = resolveSelectedTkTicket(
+		selectedStatusStep,
+		resultSteps[index],
+		rootTkTicket,
+		allowRootTkTicketFallback,
+	);
 	const sessionFile =
 		statusSteps[index]?.sessionFile ??
 		resultSteps[index]?.sessionFile ??

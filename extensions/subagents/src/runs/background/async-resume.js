@@ -87,6 +87,11 @@ export function interruptLiveAsyncResumeTarget(input) {
         return { ok: false, message: `Failed to interrupt async run ${asyncId}: ${message}` };
     }
 }
+function resolveSelectedTkTicket(statusStep, resultStep, rootTkTicket, allowRootTkTicketFallback) {
+    return (normalizeTkTicketMetadata(statusStep?.tkTicket) ??
+        normalizeTkTicketMetadata(resultStep?.tkTicket) ??
+        (allowRootTkTicketFallback ? rootTkTicket : undefined));
+}
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -367,6 +372,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     let statusSteps = status?.steps ?? [];
     const resultSteps = result?.results ?? [];
     const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
+    const allowRootTkTicketFallback = stepCount === 1 ||
+        (!statusSteps.some((step) => step.tkTicket !== undefined) &&
+            !resultSteps.some((step) => step.tkTicket !== undefined));
     const requestedIndex = params.index;
     if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
         throw new Error(`Async run '${runId}' index must be an integer.`);
@@ -377,6 +385,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${requestedIndex} is out of range.`);
             const selectedStep = statusSteps[requestedIndex];
             if (selectedStep?.status === "running") {
+                const selectedTkTicket = resolveSelectedTkTicket(selectedStep, resultSteps[requestedIndex], rootTkTicket, allowRootTkTicketFallback);
                 return {
                     kind: "live",
                     runId,
@@ -387,9 +396,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                     intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
                     cwd: status?.cwd ?? result?.cwd,
                     sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-                    ...((normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket)
-                        ? { tkTicket: normalizeTkTicketMetadata(selectedStep.tkTicket) ?? rootTkTicket }
-                        : {}),
+                    ...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
                 };
             }
             if (selectedStep?.status === "pending")
@@ -405,6 +412,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
             if (!selected) {
                 throw new Error(`Async run '${runId}' has ${running.length} running children. Provide index to choose one.`);
             }
+            const selectedTkTicket = resolveSelectedTkTicket(selected.step, resultSteps[selected.index], rootTkTicket, allowRootTkTicketFallback);
             return {
                 kind: "live",
                 runId,
@@ -415,9 +423,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
                 cwd: status?.cwd ?? result?.cwd,
                 sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-                ...((normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket)
-                    ? { tkTicket: normalizeTkTicketMetadata(selected.step.tkTicket) ?? rootTkTicket }
-                    : {}),
+                ...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
             };
         }
     }
@@ -463,9 +469,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
     if (!agent)
         throw new Error(`Could not determine child agent for async run '${runId}'.`);
-    const selectedTkTicket = normalizeTkTicketMetadata(selectedStatusStep?.tkTicket) ??
-        normalizeTkTicketMetadata(resultSteps[index]?.tkTicket) ??
-        rootTkTicket;
+    const selectedTkTicket = resolveSelectedTkTicket(selectedStatusStep, resultSteps[index], rootTkTicket, allowRootTkTicketFallback);
     const sessionFile = statusSteps[index]?.sessionFile ??
         resultSteps[index]?.sessionFile ??
         (stepCount === 1 ? (status?.sessionFile ?? result?.sessionFile) : undefined);
