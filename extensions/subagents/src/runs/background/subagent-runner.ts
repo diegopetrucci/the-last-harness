@@ -136,8 +136,8 @@ import {
   buildSkippedAcceptanceLedger,
   evaluateAcceptance,
   formatAcceptancePrompt,
-  parseAcceptanceReport,
-  stripAcceptanceReport,
+  isNearlyEmpty,
+  analyzeAcceptanceOutput,
 } from "../shared/acceptance.ts";
 import {
   cleanupOwnedProcessGroup,
@@ -1605,8 +1605,11 @@ async function runSingleStep(
       attemptNotes.push(resolutionNotice);
   }
   const rawOutput = finalResult?.finalOutput ?? "";
-  const outputForPersistence = stripAcceptanceReport(rawOutput);
-  const { report: rawAcceptanceReport } = parseAcceptanceReport(rawOutput);
+  // Single atomic analysis: parse and strip share the same candidate so they
+  // can never act on different fences (tlhm-wbvp).
+  const rawAnalysis = analyzeAcceptanceOutput(rawOutput);
+  const rawAcceptanceReport = rawAnalysis.status === "valid" ? rawAnalysis.report : undefined;
+  const outputForPersistence = rawAnalysis.strippedOutput;
   const resolvedOutput =
     step.outputPath && finalResult?.exitCode === 0
       ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
@@ -1794,7 +1797,12 @@ async function runSingleStep(
         rawAcceptanceReport && !resolvedOutput.savedPath
           ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
           : artifactBaseOutput;
-      fs.writeFileSync(artifactPaths.outputPath, artifactOutput, "utf-8");
+      // Non-destruction floor: if raw output was non-empty but the artifact is
+      // empty or contains only horizontal rules and whitespace, write the raw
+      // output instead so that evidence is never silently destroyed.
+      const safeArtifactOutput =
+        rawOutput.trim().length > 0 && isNearlyEmpty(artifactOutput) ? rawOutput : artifactOutput;
+      fs.writeFileSync(artifactPaths.outputPath, safeArtifactOutput, "utf-8");
     }
     if (ctx.artifactConfig?.includeMetadata !== false) {
       fs.writeFileSync(
@@ -3220,9 +3228,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         resetMutatingFailureState(mutatingFailureStates[flatIndex]!);
       }
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
+      const progressContent = extractTextFromContent(event.message.content);
       appendRecentStepOutput(
         step,
-        stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10),
+        // analyzeAcceptanceOutput returns strippedOutput === progressContent when
+        // the report is invalid, so evidence is never silently removed from the tail.
+        analyzeAcceptanceOutput(progressContent).strippedOutput.split("\n").slice(-10),
       );
       step.turnCount = (step.turnCount ?? 0) + 1;
       const configuredModel = activeConfiguredModels[flatIndex];

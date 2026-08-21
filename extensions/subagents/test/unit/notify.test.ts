@@ -2724,6 +2724,311 @@ describe("completion formatting helpers", () => {
     // 4. Outer session also present.
     assert.ok(content.includes(`Session: ${shareUrl}`), "outer session pointer must be present");
   });
+
+  // ---------------------------------------------------------------------------
+  // Acceptance rejection visibility in completion notifications
+  // ---------------------------------------------------------------------------
+
+  it("single-child rejection with a diagnosable reason shows the rejection marker and truncated reason", () => {
+    const { events, sentMessages } = createPi();
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-reason",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done with work",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              {
+                id: "evidence:no-staged-files",
+                status: "failed",
+                message: "Staged files present: src/file.ts",
+              },
+            ],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    assert.match(content, /Acceptance: rejected — Staged files present: src\/file\.ts/);
+    // Summary is still present
+    assert.match(content, /Done with work/);
+  });
+
+  it("single-child rejection with no diagnosable reason shows the marker only", () => {
+    const { events, sentMessages } = createPi();
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-no-reason",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    assert.match(content, /Acceptance: rejected/);
+    // No dash-reason suffix when there is no diagnosable cause
+    assert.doesNotMatch(content, /Acceptance: rejected —/);
+  });
+
+  it("rejection reason longer than 200 chars is truncated with an ellipsis", () => {
+    const { events, sentMessages } = createPi();
+    const longReason = "x".repeat(250);
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-long",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              { id: "evidence:changed-files", status: "failed", message: longReason },
+            ],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    // The reason is truncated to 199 chars + ellipsis marker = 200 code units total
+    // (truncateWithMarker reserves 1 code unit for the marker, so the content is 199).
+    assert.match(content, /Acceptance: rejected — x{199}\u2026/);
+    // Full 250-char reason must not appear verbatim.
+    assert.doesNotMatch(content, new RegExp(`x{200}`));
+  });
+
+  // tlhm-ilsw: line injection — newlines in the reason must not forge extra notification lines
+  it("normalizes newlines in rejection reason to prevent line injection in notifications", () => {
+    const { events, sentMessages } = createPi();
+    const poisonReason = "first line\nsecond line\r\nthird line";
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-newline",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              { id: "evidence:changed-files", status: "failed", message: poisonReason },
+            ],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    // All three segments must appear joined on a single line, not forged as separate lines
+    assert.match(content, /first line second line third line/);
+    // The injected lines must not appear as separate content lines
+    assert.doesNotMatch(content, /^second line$/m);
+    assert.doesNotMatch(content, /^third line$/m);
+  });
+
+  // tlhm-ilsw: shared constant — both surfaces truncate at exactly REJECTION_REASON_MAX_LENGTH
+  // Proves that the budget is pinned at 200 and shared from one constant in string-utils.ts:
+  // a 200-char reason fits without truncation, a 201-char reason is truncated.
+  it("truncates rejection reason at exactly 200 code units (shared-constant boundary)", () => {
+    // 200-char reason must NOT be truncated.
+    const { events: evExact, sentMessages: sentExact } = createPi();
+    const exactReason = "B".repeat(200);
+    evExact.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-exact",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 2,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              { id: "evidence:changed-files", status: "failed", message: exactReason },
+            ],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentExact.length, 1);
+    const contentExact = (sentExact[0]!.message as { content: string }).content;
+    assert.match(contentExact, new RegExp(`B{200}`));
+    assert.doesNotMatch(contentExact, /\u2026/);
+
+    // 201-char reason must be truncated.
+    // If the constant were larger (e.g. 300), 201 chars would not be truncated
+    // and this assertion would fail, proving the budget is exactly 200.
+    const { events: evOver, sentMessages: sentOver } = createPi();
+    const overReason = "C".repeat(201);
+    evOver.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "acceptance-rejected-over",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 3,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              { id: "evidence:changed-files", status: "failed", message: overReason },
+            ],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentOver.length, 1);
+    const contentOver = (sentOver[0]!.message as { content: string }).content;
+    assert.match(contentOver, /\u2026/);
+    assert.doesNotMatch(contentOver, new RegExp(`C{201}`));
+  });
+
+  it("non-rejected acceptance statuses add no acceptance noise to the notification", () => {
+    const { events, sentMessages } = createPi();
+    const nonRejectedStatuses = ["attested", "checked", "verified", "skipped", "not-required"];
+    for (const status of nonRejectedStatuses) {
+      events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+        id: `acceptance-non-rejected-${status}`,
+        agent: "worker",
+        success: true,
+        summary: "done",
+        timestamp: Date.now() + Math.random() * 1e9,
+        sessionId: "session-1",
+        results: [
+          {
+            agent: "worker",
+            status: "completed",
+            summary: "Done",
+            acceptance: { status, runtimeChecks: [], verifyRuns: [] },
+          },
+        ],
+      });
+    }
+    assert.equal(sentMessages.length, nonRejectedStatuses.length);
+    for (const msg of sentMessages) {
+      const content = (msg.message as { content: string }).content;
+      assert.doesNotMatch(
+        content,
+        /[Aa]cceptance:/,
+        `acceptance line must not appear for non-rejected status`,
+      );
+    }
+  });
+
+  it("child with no acceptance ledger renders exactly as before", () => {
+    const { events, sentMessages } = createPi();
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "no-acceptance-ledger",
+      agent: "worker",
+      success: true,
+      summary: "done",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "worker",
+          status: "completed",
+          summary: "Done without acceptance",
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    assert.doesNotMatch(content, /[Aa]cceptance:/);
+    assert.match(content, /Done without acceptance/);
+  });
+
+  it("grouped path shows rejection markers for each rejected child", () => {
+    const { events, sentMessages } = createPi();
+    events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
+      id: "grouped-acceptance-rejected",
+      agent: "parallel:a+b",
+      success: true,
+      summary: "combined",
+      timestamp: 1,
+      sessionId: "session-1",
+      results: [
+        {
+          agent: "a",
+          status: "completed",
+          summary: "A done",
+          acceptance: {
+            status: "rejected",
+            runtimeChecks: [
+              { id: "evidence:no-staged-files", status: "failed", message: "Staged files: a.ts" },
+            ],
+            verifyRuns: [],
+          },
+        },
+        {
+          agent: "b",
+          status: "completed",
+          summary: "B done",
+          acceptance: {
+            status: "checked",
+            runtimeChecks: [],
+            verifyRuns: [],
+          },
+        },
+      ],
+    });
+    assert.equal(sentMessages.length, 1);
+    const content = (sentMessages[0]!.message as { content: string }).content;
+    // Child a: rejected, marker must appear
+    assert.match(content, /Acceptance: rejected — Staged files: a\.ts/);
+    // Child b: checked, no acceptance noise — check the block starting at "2/2. b"
+    // does not contain an acceptance line.
+    const childBSection = content.slice(content.indexOf("2/2. b"));
+    assert.doesNotMatch(childBSection, /Acceptance:/);
+    // Only one acceptance rejection line in the whole message.
+    assert.equal((content.match(/Acceptance: rejected/g) ?? []).length, 1);
+  });
 });
 
 // MAX_REFERENCE_CHARS is 500; tests use the literal value so they remain sensitive

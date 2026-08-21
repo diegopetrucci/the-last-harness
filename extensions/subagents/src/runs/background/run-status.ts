@@ -44,6 +44,8 @@ import {
   isProtectedPausedLifecycle,
   protectedLifecycleText,
 } from "../shared/lifecycle-privacy.ts";
+import { acceptanceRejectionReason } from "../shared/acceptance.ts";
+import { formatRejectionReason } from "../../shared/string-utils.ts";
 
 interface RunStatusParams {
   action?: "status";
@@ -719,6 +721,10 @@ export function inspectSubagentStatus(
             );
           else lines.push("  Pause: cohort pause while another child awaited supervisor.");
           lines.push("  Stopping/reaping child; not resumable yet; check status again.");
+        }
+        if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
+          const reason = acceptanceRejectionReason(step.acceptance);
+          if (reason) lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
         }
         if (step.exitCode !== undefined) lines.push(`  Exit code: ${step.exitCode}`);
         if (step.exitSignal) lines.push(`  Exit signal: ${step.exitSignal}`);

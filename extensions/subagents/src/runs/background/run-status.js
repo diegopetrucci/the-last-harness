@@ -16,6 +16,8 @@ import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegis
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.js";
 import { formatProtectedLifecycleCleanup, isProtectedPausedLifecycle, protectedLifecycleText, } from "../shared/lifecycle-privacy.js";
+import { acceptanceRejectionReason } from "../shared/acceptance.js";
+import { formatRejectionReason } from "../../shared/string-utils.js";
 function hasExistingSessionFile(value) {
     return typeof value === "string" && fs.existsSync(value);
 }
@@ -592,6 +594,11 @@ export function inspectSubagentStatus(params, deps = {}) {
                     else
                         lines.push("  Pause: cohort pause while another child awaited supervisor.");
                     lines.push("  Stopping/reaping child; not resumable yet; check status again.");
+                }
+                if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
+                    const reason = acceptanceRejectionReason(step.acceptance);
+                    if (reason)
+                        lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
                 }
                 if (step.exitCode !== undefined)
                     lines.push(`  Exit code: ${step.exitCode}`);

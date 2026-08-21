@@ -18,7 +18,7 @@ import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, resolveEffectiveAcceptance, stripAcceptanceReport, } from "../shared/acceptance.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isNearlyEmpty, analyzeAcceptanceOutput, parseAcceptanceReport, resolveEffectiveAcceptance, stripAcceptanceReportIfValid, } from "../shared/acceptance.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
@@ -165,7 +165,7 @@ function stripAcceptanceReportsFromMessages(messages) {
             continue;
         for (const part of message.content) {
             if (part.type === "text" && "text" in part && typeof part.text === "string") {
-                part.text = stripAcceptanceReport(part.text);
+                part.text = stripAcceptanceReportIfValid(part.text);
             }
         }
     }
@@ -1331,8 +1331,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         durationMs: progress.durationMs,
     };
     const acceptanceOutput = getFinalOutput(result.messages ?? []);
-    const { report: finalAcceptanceReport } = parseAcceptanceReport(acceptanceOutput);
-    let fullOutput = stripAcceptanceReport(acceptanceOutput);
+    const acceptanceAnalysis = analyzeAcceptanceOutput(acceptanceOutput);
+    const finalAcceptanceReport = acceptanceAnalysis.status === "valid" ? acceptanceAnalysis.report : undefined;
+    let fullOutput = acceptanceAnalysis.strippedOutput;
     if (result.timedOut) {
         const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
         fullOutput = fullOutput.trim()
@@ -1373,7 +1374,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     }
     if (options.outputPath && result.exitCode === 0) {
         const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
-        fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+        fullOutput = stripAcceptanceReportIfValid(resolvedOutput.fullOutput);
         result.savedOutputPath = resolvedOutput.savedPath;
         result.outputSaveError = resolvedOutput.saveError;
         if (resolvedOutput.savedPath) {
@@ -1385,9 +1386,13 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         : result.exitCode !== 0 && !result.interrupted
             ? formatErrorWithOutput(result.error, fullOutput)
             : fullOutput;
-    artifactOutputByResult.set(result, finalAcceptanceReport && !result.savedOutputPath
+    const artifactOutput = finalAcceptanceReport && !result.savedOutputPath
         ? appendAcceptanceReportDigest(artifactBaseOutput, finalAcceptanceReport)
-        : artifactBaseOutput);
+        : artifactBaseOutput;
+    const safeArtifactOutput = acceptanceOutput.trim().length > 0 && isNearlyEmpty(artifactOutput)
+        ? acceptanceOutput
+        : artifactOutput;
+    artifactOutputByResult.set(result, safeArtifactOutput);
     acceptanceOutputByResult.set(result, acceptanceOutput);
     result.outputMode = options.outputMode ?? "inline";
     const preservedFinalOutput = result.finalOutput;

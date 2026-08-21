@@ -18,10 +18,15 @@ import {
   createCompletionBatcher,
   resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
+import {
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  type AcceptanceLedger,
+  type SubagentState,
+} from "../../shared/types.ts";
+import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
-import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
+import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
 
 // --- Injection / context bounds on child-controlled text ---
 // These constants limit text that originates from child subagents and enters
@@ -88,6 +93,7 @@ interface ChainStepResult {
   sessionPath?: string;
   index?: number;
   children?: NestedNotifyChild[];
+  acceptance?: AcceptanceLedger;
 }
 
 interface ResumeTarget {
@@ -478,9 +484,18 @@ function formatNestedChildren(
   return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
 }
 
+function formatAcceptanceRejectionLine(acceptance: AcceptanceLedger): string {
+  const reason = acceptanceRejectionReason(acceptance);
+  if (!reason) return "Acceptance: rejected";
+  return `Acceptance: rejected \u2014 ${formatRejectionReason(reason)}`;
+}
+
 function formatChildReferences(child: ChainStepResult, privacySafe = false): string[] {
   if (privacySafe) return [];
   return [
+    child.acceptance?.status === "rejected"
+      ? formatAcceptanceRejectionLine(child.acceptance)
+      : undefined,
     child.artifactPath ? `Output artifact: ${boundedReference(child.artifactPath)}` : undefined,
     child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
   ].filter((line): line is string => Boolean(line));

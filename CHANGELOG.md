@@ -4,6 +4,18 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **Free-form `commandsRun[].result` strings no longer cause spurious rejections.** The `result` field previously required an exact enum value; anything else (e.g. `"failed as expected"`) would silently mark a valid report as unparseable. This was the root cause of 82% of all observed acceptance rejections.
+- **The rejection reason is now surfaced instead of silently swallowed.** When an acceptance report cannot be parsed, the parse error is included in the status shown to the supervisor rather than being discarded.
+- **Acceptance reports are recognized consistently across all supported forms.** Tagged (` ```acceptance-report `), json-family (` ```json `), and bare-prefix variants are now all detected by the same logic, eliminating format-sensitive missed detections.
+- **Subagent output artifacts can no longer be emptied or truncated by report removal.** Previously, stripping an invalid acceptance report from the child's final message could collapse the artifact to near-zero bytes, destroying the evidence the supervisor needed to diagnose the failure.
+
+### Changed
+
+- **Multi-part assistant messages now return all non-empty text parts joined with a blank line, instead of only the last part.** This affects progress snapshots, final output, saved output files, and results referenced by chain and parallel steps.
+- **The newest acceptance report now has authority even when it is invalid.** A stale valid report is never surfaced in place of a newer failed one.
+
 ### Added
 
 - TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.

@@ -32,7 +32,7 @@ import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { parseSessionTokens } from "../../shared/session-tokens.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, stripAcceptanceReport, } from "../shared/acceptance.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, isNearlyEmpty, analyzeAcceptanceOutput, } from "../shared/acceptance.js";
 import { cleanupOwnedProcessGroup, formatOwnedProcessGroupCleanup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
@@ -1138,8 +1138,9 @@ async function runSingleStep(step, ctx) {
             attemptNotes.push(resolutionNotice);
     }
     const rawOutput = finalResult?.finalOutput ?? "";
-    const outputForPersistence = stripAcceptanceReport(rawOutput);
-    const { report: rawAcceptanceReport } = parseAcceptanceReport(rawOutput);
+    const rawAnalysis = analyzeAcceptanceOutput(rawOutput);
+    const rawAcceptanceReport = rawAnalysis.status === "valid" ? rawAnalysis.report : undefined;
+    const outputForPersistence = rawAnalysis.strippedOutput;
     const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
         ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
         : { fullOutput: outputForPersistence };
@@ -1303,7 +1304,8 @@ async function runSingleStep(step, ctx) {
             const artifactOutput = rawAcceptanceReport && !resolvedOutput.savedPath
                 ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
                 : artifactBaseOutput;
-            fs.writeFileSync(artifactPaths.outputPath, artifactOutput, "utf-8");
+            const safeArtifactOutput = rawOutput.trim().length > 0 && isNearlyEmpty(artifactOutput) ? rawOutput : artifactOutput;
+            fs.writeFileSync(artifactPaths.outputPath, safeArtifactOutput, "utf-8");
         }
         if (ctx.artifactConfig?.includeMetadata !== false) {
             fs.writeFileSync(artifactPaths.metadataPath, JSON.stringify({
@@ -2443,7 +2445,8 @@ async function runSubagent(config) {
             }
         }
         else if (event.type === "message_end" && event.message?.role === "assistant") {
-            appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
+            const progressContent = extractTextFromContent(event.message.content);
+            appendRecentStepOutput(step, analyzeAcceptanceOutput(progressContent).strippedOutput.split("\n").slice(-10));
             step.turnCount = (step.turnCount ?? 0) + 1;
             const configuredModel = activeConfiguredModels[flatIndex];
             const configuredContextWindow = contextWindowForModel(configuredModel, flatSteps[flatIndex]?.contextWindows);

@@ -21,6 +21,7 @@ import {
   events,
   tryImport,
 } from "../support/helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ArtifactPaths {
   inputPath: string;
@@ -192,5 +193,83 @@ describe(
       const recent = (result.progress?.recentOutput ?? []).join("\n");
       assert.doesNotMatch(recent, /Validation evidence/);
     });
+
+    it("preserves raw output in artifact when acceptance-report block is present but invalid", async () => {
+      // Fixture: criteriaSatisfied[].status is not a valid enum value.
+      // Do NOT use commandsRun[].result — that field was made permissive in tlhm-uaw2.
+      const invalidJson = JSON.stringify({
+        criteriaSatisfied: [{ id: "c1", status: "INVALID_STATUS", evidence: "e" }],
+        changedFiles: ["src/file.ts"],
+        commandsRun: [{ command: "npm test", result: "passed", summary: "ok" }],
+        validationOutput: [],
+        residualRisks: [],
+        noStagedFiles: true,
+      });
+      // Embed the invalid block directly so the mock does not replace it with a valid one.
+      const textWithInvalidReport = `Foreground work done.\n\`\`\`acceptance-report\n${invalidJson}\n\`\`\``;
+      mockPi.onCall({ jsonl: [events.assistantMessage(textWithInvalidReport)] });
+
+      const result = await runSync!(
+        tempDir,
+        readOnlyAgents(),
+        "reviewer",
+        readOnlyTask,
+        artifactOptions("digest-invalid-report"),
+      );
+
+      assert.ok(result.artifactPaths, "expected artifact paths");
+      const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+
+      // The raw acceptance-report block must survive in the artifact because
+      // stripping is gated on parse success (shared-predicate fix).
+      assert.ok(artifact.trim().length > 3, "artifact must not be nearly empty");
+      assert.match(artifact, /acceptance-report/, "raw block must survive in artifact");
+      // No digest — only valid reports get a digest.
+      assert.doesNotMatch(artifact, /Validation evidence/);
+    });
+
+    it(
+      "preserves raw output in artifact via the non-destruction floor when output is nearly-empty after stripping (foreground writer, tlhm-huto)",
+      { timeout: scaleTestTimeout(20_000) },
+      async () => {
+        // DESIGN (see tlhm-huto):
+        // To reach the floor at execution.ts, all three conditions must hold:
+        //   1. Valid acceptance report — stripping is authorized.
+        //   2. Prose is a bare horizontal rule — after strip, output becomes "---" (nearly-empty).
+        //   3. Configured outputPath — savedOutputPath is set, suppressing digest
+        //      appending so the digest cannot mask the nearly-empty artifact.
+        // Without the floor the artifact would be written as "---", silently
+        // destroying evidence. The floor writes the raw output instead.
+        //
+        // REMOVAL PROOF: delete the floor expression in execution.ts:
+        //   const safeArtifactOutput = ... ? acceptanceOutput : artifactOutput;
+        // This test then fails because the artifact becomes "---" and
+        // does not match /```acceptance-report/.
+        const outputPath = path.join(tempDir, "floor-foreground-output.md");
+        // Mock emits "---". withAcceptanceReport auto-appends the valid fence
+        // because the task carries an acceptance contract and the text has no
+        // fence yet. Full raw output: "---\n```acceptance-report\n{...}\n```".
+        mockPi.onCall({ jsonl: [events.assistantMessage("---")] });
+
+        const result = await runSync!(tempDir, readOnlyAgents(), "reviewer", readOnlyTask, {
+          ...artifactOptions("floor-foreground"),
+          outputPath,
+        });
+
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.artifactPaths, "expected artifact paths");
+        const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+
+        // The floor preserved the raw output. Without the floor, artifact = "---".
+        assert.match(
+          artifact,
+          /```acceptance-report/,
+          "floor must write raw output (fence preserved), not the stripped ---",
+        );
+        // The user-requested output file receives the stripped content; only the
+        // artifact benefits from the raw-output fallback.
+        assert.equal(fs.readFileSync(outputPath, "utf-8"), "---");
+      },
+    );
   },
 );

@@ -557,7 +557,7 @@ export interface AcceptanceReport {
   testsAddedOrUpdated?: string[];
   commandsRun?: Array<{
     command: string;
-    result: "passed" | "failed" | "not-run";
+    result: string;
     summary: string;
   }>;
   validationOutput?: string[];

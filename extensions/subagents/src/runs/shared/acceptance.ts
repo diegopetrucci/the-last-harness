@@ -674,8 +674,11 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
   }
   lines.push(
     "",
+    "Write a one-line prose summary of your outcome before the fence.",
     "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
     "Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
+    'For commandsRun[].result, prefer "passed" or "failed"; honest annotations like "failed as expected" are also accepted.',
+    "If your response includes a real fence example to illustrate the format, put it before your actual report — the parser selects the last fence, so an example placed after the real report would shadow it.",
     "```acceptance-report",
     JSON.stringify(
       {
@@ -801,95 +804,414 @@ function parseReportJson(body: string): JsonValue {
   throw new Error("Acceptance report JSON must contain a JSON value.");
 }
 
-function fencedBlocks(output: string, tag: string): string[] {
-  return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
-    .map((match) => match[1]?.trim())
-    .filter((value): value is string => Boolean(value));
-}
-
 function parseAcceptanceReportBody(body: string): { report?: AcceptanceReport; errors: string[] } {
   const parsed = unwrapAcceptanceReport(parseReportJson(body));
   return validateAcceptanceReport(parsed.value, parsed.wrapper);
 }
 
-function parseGenericJsonAcceptanceReportBody(body: string): AcceptanceReport | undefined {
-  const parsed = unwrapAcceptanceReport(parseReportJson(body));
-  const validation = validateAcceptanceReport(parsed.value);
-  if (!validation.report) return undefined;
-  return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
+// ─── Atomic acceptance analysis ───────────────────────────────────────────────
+//
+// One analysis operation selects the best candidate and derives both the parsed
+// report and the cleaned output from the same span. This closes the class of
+// bugs where parse and strip chose candidates independently (tlhm-wbvp).
+//
+// Candidate authority policy (uniform across all forms — no per-form carve-outs):
+//   1. Terminality first — an authoritative report terminates the semantic
+//      output modulo whitespace (the generated prompt contract says to finish
+//      with the report; see formatAcceptancePrompt above).
+//   2. Latest position second — later candidates are corrections.
+//   3. Explicitness as tie-break only: tagged > prefix > shape-sniffed json.
+//
+// A later malformed explicit candidate blocks an earlier valid one rather than
+// silently accepting stale evidence.
+
+/** Syntactic form for an acceptance report candidate. */
+type AcceptanceForm = "tagged" | "prefix" | "jsonfam";
+
+/**
+ * The result of analysing a single `output` string for an acceptance report.
+ * All three variants carry `strippedOutput` and `stripped` so callers that
+ * need both the report and the cleaned output consume a single result.
+ *
+ * - `valid`  : report parsed successfully; `stripped` is true when the candidate
+ *              terminated the output and the span has been removed from `strippedOutput`.
+ * - `invalid`: a candidate was found but failed to parse; `strippedOutput` equals
+ *              `output` (the fence is left visible as evidence).
+ * - `missing`: no candidate found in any form; `strippedOutput` equals `output`.
+ */
+export type AcceptanceAnalysisResult =
+  | {
+      status: "valid";
+      report: AcceptanceReport;
+      form: AcceptanceForm;
+      start: number;
+      end: number;
+      strippedOutput: string;
+      stripped: boolean;
+    }
+  | {
+      status: "invalid";
+      error: string;
+      form: AcceptanceForm;
+      start: number;
+      end: number;
+      strippedOutput: string;
+      stripped: false;
+    }
+  | { status: "missing"; error: string; strippedOutput: string; stripped: false };
+
+/** Explicitness rank used as a tie-breaker only. Higher = more explicit. */
+function formRank(form: AcceptanceForm): number {
+  return form === "tagged" ? 3 : form === "prefix" ? 2 : 1;
 }
 
+/** Internal: a candidate before its body has been parsed. */
+interface AcceptanceCandidateRaw {
+  start: number;
+  end: number;
+  form: AcceptanceForm;
+  isTerminal: boolean;
+  /** Trimmed body text, ready for the form-specific parser. */
+  body: string;
+}
+
+/**
+ * Compare two raw candidates and return the better one per the authority
+ * policy: terminality first, latest end-position second, explicitness third.
+ */
+function betterCandidate(
+  a: AcceptanceCandidateRaw,
+  b: AcceptanceCandidateRaw,
+): AcceptanceCandidateRaw {
+  if (a.isTerminal && !b.isTerminal) return a;
+  if (!a.isTerminal && b.isTerminal) return b;
+  if (a.end !== b.end) return a.end > b.end ? a : b;
+  return formRank(a.form) >= formRank(b.form) ? a : b;
+}
+
+/**
+ * Collect all acceptance report candidates from `output` across all three
+ * syntactic forms. Shape-sniffed json-family fences are included only when
+ * their body satisfies `hasGenericAcceptanceReportSignal`; `isCommandsRunArray`
+ * stays strict for this sniff.
+ *
+ * Span semantics (uniform across all three forms — tlhm-bnlt):
+ * The `\n?` prefix in the tagged/json patterns and the manual `\n` check for
+ * prefix blocks capture the separator newline inside the span. `end` is always
+ * the exact byte position after the closing delimiter (closing ``` or last `}`)
+ * so `output.slice(end)` preserves trailing whitespace identically for every
+ * form. `output.slice(0, start)` is an exact byte splice — no `trimEnd` on
+ * surrounding content.
+ */
+function collectAcceptanceCandidates(output: string): AcceptanceCandidateRaw[] {
+  const candidates: AcceptanceCandidateRaw[] = [];
+
+  // 1. Tagged ```acceptance-report fences — every occurrence.
+  const taggedPattern = /\n?```acceptance-report\s*\n([\s\S]*?)```/gi;
+  for (const match of output.matchAll(taggedPattern)) {
+    if (match[1] === undefined) continue;
+    // CRLF fix: the \n? prefix consumes only the LF of a CRLF pair; if the
+    // character immediately before the matched \n is \r, extend start backward
+    // to include the \r so the complete line ending is inside the span.
+    let start = match.index ?? 0;
+    if (output[start] === "\n" && start > 0 && output[start - 1] === "\r") start -= 1;
+    const end = (match.index ?? 0) + match[0].length;
+    candidates.push({
+      start,
+      end,
+      form: "tagged",
+      isTerminal: output.slice(end).trim().length === 0,
+      body: match[1].trim(),
+    });
+  }
+
+  // 2. Json-family ```json/jsonc/json5 fences — every occurrence that carries
+  //    the acceptance report signal. No trailing whitespace is consumed by the
+  //    pattern: `end` is the exact byte position after the closing ``` so that
+  //    output.slice(end) preserves trailing whitespace uniformly with the tagged
+  //    and prefix forms (tlhm-bnlt cross-form trailing-byte fix).
+  const jsonPattern = /\n?```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi;
+  for (const match of output.matchAll(jsonPattern)) {
+    if (!match[1]) continue;
+    const body = match[1].trim();
+    // CRLF fix: same as tagged — extend start to include \r when \n follows it.
+    let start = match.index ?? 0;
+    if (output[start] === "\n" && start > 0 && output[start - 1] === "\r") start -= 1;
+    const end = (match.index ?? 0) + match[0].length;
+    // Screen with the acceptance shape signal before treating as a candidate.
+    try {
+      const parsed = unwrapAcceptanceReport(parseReportJson(body));
+      if (!hasGenericAcceptanceReportSignal(parsed.value)) continue;
+    } catch {
+      continue; // JSON that cannot be parsed is never an acceptance candidate.
+    }
+    candidates.push({
+      start,
+      end,
+      form: "jsonfam",
+      isTerminal: output.slice(end).trim().length === 0,
+      body,
+    });
+  }
+
+  // 3. ACCEPTANCE_REPORT: prefix blocks — every occurrence.
+  //    The span captures the separator `\n` (if any) in `start`, matching the
+  //    behaviour of the tagged/json patterns above.
+  const prefixPattern = /ACCEPTANCE_REPORT\s*:/gi;
+  for (const match of output.matchAll(prefixPattern)) {
+    const markerIndex = match.index ?? 0;
+    const markerEnd = markerIndex + match[0].length;
+    // Adjacency check (tlhm-m5jm): only create a candidate when the first
+    // non-whitespace character immediately after the marker is `{`. A prose
+    // mention such as "Use ACCEPTANCE_REPORT: as the marker" would otherwise
+    // forward-search to the next `{` anywhere in the output, adopt the real
+    // report's JSON as its payload, and produce a spurious candidate whose span
+    // starts at the prose mention — deleting intervening content.
+    // `continue` (not `break`) so that scanning proceeds to later markers; a
+    // real prefix report that follows a prose mention must still be found.
+    const afterMarker = output.slice(markerEnd);
+    const firstNonWs = afterMarker.search(/\S/);
+    if (firstNonWs === -1 || afterMarker[firstNonWs] !== "{") continue;
+    const jsonStart = markerEnd + firstNonWs;
+    const json = extractBalancedJson(output, jsonStart);
+    if (!json) continue;
+    const jsonEnd = jsonStart + json.length;
+    const isTerminal = output.slice(jsonEnd).trim().length === 0;
+    // Include the preceding newline in the span so that output.slice(0, start)
+    // ends at prose without a trailing newline. CRLF fix: when the preceding
+    // character is \n and the one before it is \r, consume both so the whole
+    // line ending is inside the span (not just the LF).
+    const nlBefore = markerIndex > 0 && output[markerIndex - 1] === "\n";
+    const crLfBefore = nlBefore && markerIndex > 1 && output[markerIndex - 2] === "\r";
+    const start = crLfBefore ? markerIndex - 2 : nlBefore ? markerIndex - 1 : markerIndex;
+    // `end` is always jsonEnd — the exact byte position after the JSON body.
+    // output.slice(end) therefore preserves trailing whitespace uniformly with
+    // the tagged and json-family forms (tlhm-bnlt cross-form trailing-byte fix).
+    // Previously, terminal blocks used output.length here, which destroyed
+    // trailing bytes that should have been preserved after stripping.
+    const end = jsonEnd;
+    candidates.push({ start, end, form: "prefix", isTerminal, body: json });
+  }
+
+  return candidates;
+}
+
+/**
+ * Parse the already-selected best candidate and return the final analysis
+ * result. `strippedOutput` is an exact slice of `output[0..start]` with no
+ * `trimEnd` on surrounding content — any separator newline is already inside
+ * the `[start, end)` span (see `collectAcceptanceCandidates`). For invalid and
+ * non-terminal candidates, `strippedOutput` equals the original `output` so
+ * that bytes outside the span are never changed.
+ */
+function parseCandidate(
+  candidate: AcceptanceCandidateRaw,
+  output: string,
+): Exclude<AcceptanceAnalysisResult, { status: "missing" }> {
+  const { start, end, form, isTerminal, body } = candidate;
+  // Exact span splice — only applied when the candidate is both valid and terminal.
+  // Use slice(0, start) + slice(end) so bytes outside [start, end) are never lost
+  // (defect 1 fix: the old slice(0, start) discarded everything after end).
+  const strippedWhenValid = isTerminal ? output.slice(0, start) + output.slice(end) : output;
+
+  try {
+    switch (form) {
+      case "tagged": {
+        const validation = parseAcceptanceReportBody(body);
+        if (validation.report) {
+          return {
+            status: "valid",
+            report: validation.report,
+            form,
+            start,
+            end,
+            strippedOutput: strippedWhenValid,
+            stripped: isTerminal,
+          };
+        }
+        return {
+          status: "invalid",
+          error: validation.errors.join("; "),
+          form,
+          start,
+          end,
+          strippedOutput: output,
+          stripped: false,
+        };
+      }
+
+      case "jsonfam": {
+        const parsed = unwrapAcceptanceReport(parseReportJson(body));
+        const validation = validateAcceptanceReport(parsed.value);
+        const report =
+          validation.report && hasGenericAcceptanceReportSignal(validation.report)
+            ? validation.report
+            : undefined;
+        if (report) {
+          return {
+            status: "valid",
+            report,
+            form,
+            start,
+            end,
+            strippedOutput: strippedWhenValid,
+            stripped: isTerminal,
+          };
+        }
+        return {
+          status: "invalid",
+          error:
+            validation.errors.length > 0
+              ? validation.errors.join("; ")
+              : "json-family fence did not match acceptance report shape",
+          form,
+          start,
+          end,
+          strippedOutput: output,
+          stripped: false,
+        };
+      }
+
+      case "prefix": {
+        const parsed = unwrapAcceptanceReport(parseReportJson(body));
+        const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
+        if (validation.report) {
+          return {
+            status: "valid",
+            report: validation.report,
+            form,
+            start,
+            end,
+            strippedOutput: strippedWhenValid,
+            stripped: isTerminal,
+          };
+        }
+        return {
+          status: "invalid",
+          error: `Invalid acceptance-report: ${validation.errors.join("; ")}`,
+          form,
+          start,
+          end,
+          strippedOutput: output,
+          stripped: false,
+        };
+      }
+    }
+  } catch (error) {
+    return {
+      status: "invalid",
+      error: error instanceof Error ? error.message : String(error),
+      form,
+      start,
+      end,
+      strippedOutput: output,
+      stripped: false,
+    };
+  }
+}
+
+/**
+ * Atomically analyse `output` for an acceptance report across all three
+ * syntactic forms (tagged ```acceptance-report fence, json-family fence, and
+ * ACCEPTANCE_REPORT: prefix).
+ *
+ * A single result carries the parsed report, the selected candidate's span,
+ * and the derived `strippedOutput` — so call sites that need both the report
+ * and the cleaned output consume one result instead of calling separate parse
+ * and strip functions that could disagree on which candidate to act on.
+ *
+ * Candidate selection follows the uniform authority policy:
+ *   1. Terminality first — the report should terminate the semantic output.
+ *   2. Latest position second — later candidates supersede earlier ones.
+ *   3. Explicitness as tie-break: tagged > prefix > shape-sniffed json.
+ *
+ * A later malformed explicit candidate blocks an earlier valid one; no
+ * per-form carve-out for generic json is applied. `isCommandsRunArray` remains
+ * strict for json-family shape-sniffing.
+ */
+export function analyzeAcceptanceOutput(output: string): AcceptanceAnalysisResult {
+  const candidates = collectAcceptanceCandidates(output);
+  if (candidates.length === 0) {
+    return {
+      status: "missing",
+      error: "Structured acceptance report not found.",
+      strippedOutput: output,
+      stripped: false,
+    };
+  }
+  const best = candidates.reduce(betterCandidate);
+  const result = parseCandidate(best, output);
+  // When a terminal invalid candidate displaced earlier candidates the raw
+  // parse error alone ("expected at least one acceptance report field") gives
+  // a supervisor no signal about why. The most common trigger is a prose fence
+  // example placed after the real report: an agent that documented the format
+  // with a real ``` acceptance-report ``` fence, then got rejected for it.
+  // Annotate the error so the cause is visible without changing the policy —
+  // the uniform terminal-wins rule is preserved (tlhm-wbvp).
+  //
+  // Ordering (tlhm-ilsw): remedy and directive first so the actionable instruction
+  // survives budget truncation. The diagnostic preamble in the earlier version
+  // consumed ~95 chars before the directive, pushing it past the 200-char budget.
+  // Now: remedy ("must be last", "move it before") occupies the first ~93 chars;
+  // condensed diagnosis follows; raw validator detail is appended last.
+  // Strip the leading "acceptance-report: " path label from the raw error to
+  // eliminate the redundant "Failed to parse acceptance-report: acceptance-report:"
+  // prefix that appeared when the pathLabel defaulted to the fence tag name.
+  if (result.status === "invalid" && candidates.length > 1) {
+    const displacedCount = candidates.length - 1;
+    const noun = displacedCount === 1 ? "candidate" : "candidates";
+    // Gate "Terminal fence" wording on actual terminality; use "Failing fence"
+    // when the best candidate was selected for position, not terminality.
+    const fenceKind = best.isTerminal ? "Terminal fence" : "Failing fence";
+    const note =
+      `Your real report must be last. If this fence is a prose example, ` +
+      `move it before your report. ` +
+      `${fenceKind} displaced ${displacedCount} earlier ${noun} and failed validation.`;
+    const rawError = result.error.replace(/^acceptance-report:\s*/i, "");
+    return { ...result, error: `${note} — ${rawError}` };
+  }
+  return result;
+}
+
+/**
+ * Parse `output` for an acceptance report across all three syntactic forms.
+ * Thin projection over `analyzeAcceptanceOutput` — shares exactly one candidate
+ * selection site with `stripAcceptanceReportIfValid`.
+ */
 export function parseAcceptanceReport(output: string): {
   report?: AcceptanceReport;
   error?: string;
 } {
-  const fenced = fencedBlocks(output, "acceptance-report");
-  const parseErrors: string[] = [];
-  for (const body of fenced) {
-    try {
-      const validation = parseAcceptanceReportBody(body);
-      if (validation.report) return { report: validation.report };
-      parseErrors.push(`Invalid acceptance-report: ${validation.errors.join("; ")}`);
-    } catch (error) {
-      parseErrors.push(error instanceof Error ? error.message : String(error));
-    }
+  const analysis = analyzeAcceptanceOutput(output);
+  if (analysis.status === "valid") return { report: analysis.report };
+  if (analysis.status === "invalid") {
+    return { error: `Failed to parse acceptance-report: ${analysis.error}` };
   }
-  if (parseErrors.length > 0)
-    return { error: `Failed to parse acceptance-report: ${parseErrors.join("; ")}` };
-  for (const body of fencedBlocks(output, "(?:json|jsonc|json5)")) {
-    try {
-      const report = parseGenericJsonAcceptanceReportBody(body);
-      if (report) return { report };
-    } catch {
-      // Ignore unrelated or malformed generic JSON fences; only explicit
-      // acceptance-report fences should turn parse failures into blockers.
-    }
-  }
-  const markerIndex = output.search(/ACCEPTANCE_REPORT\s*:/i);
-  if (markerIndex !== -1) {
-    const jsonStart = output.indexOf("{", markerIndex);
-    if (jsonStart !== -1) {
-      const json = extractBalancedJson(output, jsonStart);
-      if (json) {
-        try {
-          const parsed = unwrapAcceptanceReport(parseReportJson(json));
-          const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
-          if (validation.report) return { report: validation.report };
-          return {
-            error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`,
-          };
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : String(error) };
-        }
-      }
-    }
-  }
-  return { error: "Structured acceptance report not found." };
+  return { error: analysis.error };
 }
 
-export function stripAcceptanceReport(output: string): string {
-  const trailingFencePattern = /\n?```(acceptance-report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;
-  let trailingFence: { index: number; tag: string; body: string } | undefined;
-  for (const match of output.matchAll(trailingFencePattern)) {
-    const end = (match.index ?? 0) + match[0].length;
-    if (output.slice(end).trim().length === 0 && match[1] && match[2]) {
-      trailingFence = { index: match.index ?? 0, tag: match[1].toLowerCase(), body: match[2] };
-    }
-  }
-  if (trailingFence) {
-    if (trailingFence.tag === "acceptance-report")
-      return output.slice(0, trailingFence.index).trimEnd();
-    try {
-      if (parseGenericJsonAcceptanceReportBody(trailingFence.body))
-        return output.slice(0, trailingFence.index).trimEnd();
-    } catch {
-      // Leave unrelated or malformed generic JSON fences visible.
-    }
-  }
-  return output
-    .replace(/\n?```acceptance-report\s*\n[\s\S]*?```\s*$/i, "")
-    .replace(/\n?ACCEPTANCE_REPORT\s*:\s*\{[\s\S]*\}\s*$/i, "")
-    .trimEnd();
+/**
+ * Strip the acceptance-report from `output` only when it is valid and
+ * terminates the output. Thin projection over `analyzeAcceptanceOutput`.
+ *
+ * Validity gates the strip; the syntactic form does not. An invalid report
+ * in any form leaves the string byte-for-byte unchanged so evidence is never
+ * silently destroyed (message-list parts, user-owned output files). Removal is
+ * an exact span splice — no `trimEnd` on surrounding content.
+ */
+export function stripAcceptanceReportIfValid(output: string): string {
+  return analyzeAcceptanceOutput(output).strippedOutput;
+}
+
+/**
+ * Return true if the string is empty or contains only horizontal rules ("---")
+ * and whitespace. Used as the non-destruction floor predicate: if a post-strip
+ * artifact satisfies this predicate but the raw output did not, the raw output
+ * is written instead so that evidence is never silently destroyed.
+ */
+export function isNearlyEmpty(s: string): boolean {
+  const trimmed = s.trim();
+  return trimmed.length === 0 || /^(---\s*)+$/.test(trimmed);
 }
 
 /**
@@ -1043,18 +1365,8 @@ function validateAcceptanceReport(
         const command = item as { command?: unknown; result?: unknown; summary?: unknown };
         if (typeof command.command !== "string" || !command.command.trim())
           pushTypeError(errors, `${itemPath}.command`, "non-empty string", command.command);
-        if (
-          command.result !== "passed" &&
-          command.result !== "failed" &&
-          command.result !== "not-run"
-        ) {
-          pushTypeError(
-            errors,
-            `${itemPath}.result`,
-            'one of "passed", "failed", "not-run"',
-            command.result,
-          );
-        }
+        if (typeof command.result !== "string")
+          pushTypeError(errors, `${itemPath}.result`, "string", command.result);
         if (typeof command.summary !== "string")
           pushTypeError(errors, `${itemPath}.summary`, "string", command.summary);
       }
@@ -1418,6 +1730,31 @@ export async function evaluateAcceptance(input: {
   }
 
   return ledger;
+}
+
+/**
+ * Extracts a human-readable rejection reason from an acceptance ledger for
+ * display in supervisor-facing surfaces (status lines, completion notifications).
+ * Returns undefined when there is no diagnosable cause (e.g. a manually-rejected
+ * ledger with no checks).
+ *
+ * Priority order:
+ *   1. childReportParseError – the exact parse-failure message
+ *   2. first failed runtimeChecks[].message
+ *   3. first failed/timed-out verifyRuns entry
+ *
+ * Callers are responsible for truncating the returned string to fit their display
+ * budget. This function makes no length guarantees.
+ */
+export function acceptanceRejectionReason(ledger: AcceptanceLedger): string | undefined {
+  if (ledger.childReportParseError) return ledger.childReportParseError;
+  const failedCheck = ledger.runtimeChecks?.find((c) => c.status === "failed");
+  if (failedCheck) return failedCheck.message;
+  const failedVerify = ledger.verifyRuns?.find(
+    (r) => r.status === "failed" || r.status === "timed-out",
+  );
+  if (failedVerify) return `Verification '${failedVerify.id}' ${failedVerify.status}.`;
+  return undefined;
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {

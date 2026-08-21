@@ -61,6 +61,7 @@ interface AsyncExecutionModule {
 
 interface TypesModule {
   RESULTS_DIR: string;
+  ASYNC_DIR: string;
 }
 
 const asyncMod = await tryImport<AsyncExecutionModule>("./src/runs/background/async-execution.ts");
@@ -68,6 +69,7 @@ const typesMod = await tryImport<TypesModule>("./src/shared/types.ts");
 
 const executeAsyncSingle = asyncMod.executeAsyncSingle;
 const RESULTS_DIR = typesMod.RESULTS_DIR;
+const ASYNC_DIR = typesMod.ASYNC_DIR;
 assert.equal(asyncMod.isAsyncAvailable(), true, "required async runner module is unavailable");
 
 // Mirrors the default report the mock pi harness appends whenever the child
@@ -253,4 +255,159 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
     assert.equal(artifact, "async findings only");
     assert.doesNotMatch(artifact, /Validation evidence/);
   });
+
+  it("preserves raw output in artifact when acceptance-report block is present but invalid (async path)", async () => {
+    // Fixture: criteriaSatisfied[].status is not a valid enum value.
+    // Do NOT use commandsRun[].result — that field was made permissive in tlhm-uaw2.
+    const invalidJson = JSON.stringify({
+      criteriaSatisfied: [{ id: "c1", status: "INVALID_STATUS", evidence: "e" }],
+      changedFiles: ["src/file.ts"],
+      commandsRun: [{ command: "npm test", result: "passed", summary: "ok" }],
+      validationOutput: [],
+      residualRisks: [],
+      noStagedFiles: true,
+    });
+    // Embed the invalid block directly so the mock does not replace it with a valid one.
+    const textWithInvalidReport = `Async work done.\n\`\`\`acceptance-report\n${invalidJson}\n\`\`\``;
+    mockPi.onCall({ jsonl: [events.assistantMessage(textWithInvalidReport)] });
+    const id = `async-digest-invalid-${Date.now().toString(36)}`;
+
+    const launch = executeAsyncSingle!(id, {
+      agent: "reviewer",
+      task: "Review-only. Do not edit.",
+      ...checkedParams(id),
+    });
+    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+    const payload = await readAsyncPayload(id);
+    // The run exits with a non-zero code because the explicit "checked" acceptance
+    // gate rejects an invalid report. What matters is that the artifact is NOT
+    // nearly empty — the raw block must survive so evidence is preserved.
+    assert.equal(payload.results[0]?.exitCode, 1, "acceptance gate must reject the run");
+    assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
+    const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
+
+    // The raw acceptance-report block must survive in the artifact because
+    // stripping is gated on parse success (shared-predicate fix).
+    assert.ok(artifact.trim().length > 3, "artifact must not be nearly empty");
+    assert.match(artifact, /acceptance-report/, "raw block must survive in artifact");
+    // No digest — only valid reports get a digest.
+    assert.doesNotMatch(artifact, /Validation evidence/);
+  });
+
+  it(
+    "preserves raw output in artifact via the non-destruction floor when output is nearly-empty after stripping (async writer, tlhm-huto)",
+    { timeout: scaleTestTimeout(20_000) },
+    async () => {
+      // DESIGN (see tlhm-huto):
+      // To reach the floor at subagent-runner.ts, all three conditions must hold:
+      //   1. Valid acceptance report — stripping is authorized.
+      //   2. Prose is a bare horizontal rule — after strip, output becomes "---" (nearly-empty).
+      //   3. Configured output path — resolvedOutput.savedPath is set, suppressing
+      //      digest appending so the digest cannot mask the nearly-empty artifact.
+      // Without the floor the artifact would be written as "---", silently
+      // destroying evidence. The floor writes rawOutput instead.
+      //
+      // REMOVAL PROOF: delete the floor expression in subagent-runner.ts:
+      //   const safeArtifactOutput = rawOutput.trim().length > 0 && isNearlyEmpty(artifactOutput)
+      //     ? rawOutput : artifactOutput;
+      // This test then fails because the artifact becomes "---" and
+      // does not match /```acceptance-report/.
+      const outputPath = path.join(tempDir, "async-floor-output.md");
+      // Mock emits "---". withAcceptanceReport auto-appends the valid fence.
+      // Full rawOutput: "---\n```acceptance-report\n{...}\n```".
+      mockPi.onCall({ jsonl: [events.assistantMessage("---")] });
+      const id = `async-floor-${Date.now().toString(36)}`;
+
+      const launch = executeAsyncSingle!(id, {
+        agent: "reviewer",
+        task: "Review-only. Do not edit.",
+        ...checkedParams(id),
+        output: outputPath,
+      });
+      assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+      const payload = await readAsyncPayload(id);
+      assert.equal(payload.success, true);
+      assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
+      const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
+
+      // The floor preserved rawOutput. Without the floor, artifact = "---".
+      assert.match(
+        artifact,
+        /```acceptance-report/,
+        "floor must write raw output (fence preserved), not the stripped ---",
+      );
+      // The user-requested output file receives the stripped content.
+      assert.equal(fs.readFileSync(outputPath, "utf-8"), "---");
+    },
+  );
+
+  it(
+    "preserves invalid acceptance-report block in the progress tail (invalid progress-tail path, tlhm-huto)",
+    { timeout: scaleTestTimeout(20_000) },
+    async () => {
+      // Exercises the analyzeAcceptanceOutput(progressContent).strippedOutput call at
+      // subagent-runner.ts (the appendRecentStepOutput site).
+      //
+      // For INVALID reports, analyzeAcceptanceOutput returns strippedOutput ===
+      // progressContent (unchanged), so the block survives in recentOutput.
+      // A naive strip (e.g., removing the fence regardless of validity) would
+      // clear the block from the tail, losing evidence.
+      //
+      // REMOVAL PROOF: replace the call-site expression with naive fence removal
+      // (e.g., a regex that strips the block unconditionally). The recentOutput
+      // in the status file would then NOT contain "acceptance-report", and this
+      // test’s assert.ok below would fail.
+      //
+      // Fixture: criteriaSatisfied[].status is not a valid enum value.
+      const invalidJson = JSON.stringify({
+        criteriaSatisfied: [{ id: "c1", status: "INVALID_STATUS", evidence: "e" }],
+        changedFiles: ["src/file.ts"],
+        commandsRun: [{ command: "npm test", result: "passed", summary: "ok" }],
+        validationOutput: [],
+        residualRisks: [],
+        noStagedFiles: true,
+      });
+      // Embed the invalid block directly. withAcceptanceReport will not append
+      // another fence because the text already contains one.
+      const textWithInvalidReport = `Work in progress.\n\`\`\`acceptance-report\n${invalidJson}\n\`\`\``;
+      mockPi.onCall({ jsonl: [events.assistantMessage(textWithInvalidReport)] });
+      const id = `async-invalid-tail-${Date.now().toString(36)}`;
+
+      const launch = executeAsyncSingle!(id, {
+        agent: "reviewer",
+        task: "Summarize findings",
+        agentConfig: makeAgent("reviewer"),
+        ctx: {
+          pi: { events: { emit() {} } },
+          cwd: tempDir,
+          currentSessionId: "session-async-tail",
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+        acceptance: { level: "none", reason: "exercising the invalid-tail path" },
+        ...artifactOptions(id),
+      });
+      assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+      // Wait for the run to complete before reading the status file.
+      await readAsyncPayload(id);
+
+      // Read the status file to observe recentOutput.
+      const statusPath = path.join(ASYNC_DIR!, id, "status.json");
+      assert.ok(fs.existsSync(statusPath), `status file must exist at ${statusPath}`);
+      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as {
+        steps?: Array<{ recentOutput?: string[] }>;
+      };
+      const recentOutput = status.steps?.[0]?.recentOutput ?? [];
+
+      // analyzeAcceptanceOutput preserves invalid block content in the tail.
+      // Without the protection, the block would be stripped and this fails.
+      assert.ok(
+        recentOutput.some((line) => line.includes("acceptance-report")),
+        `invalid acceptance-report block must be preserved in tail; got: ${JSON.stringify(recentOutput)}`,
+      );
+    },
+  );
 });

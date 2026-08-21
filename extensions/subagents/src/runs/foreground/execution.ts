@@ -98,9 +98,11 @@ import {
   buildSkippedAcceptanceLedger,
   evaluateAcceptance,
   formatAcceptancePrompt,
+  isNearlyEmpty,
+  analyzeAcceptanceOutput,
   parseAcceptanceReport,
   resolveEffectiveAcceptance,
-  stripAcceptanceReport,
+  stripAcceptanceReportIfValid,
 } from "../shared/acceptance.ts";
 import {
   appendTurnBudgetSystemPrompt,
@@ -295,7 +297,10 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
     if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (part.type === "text" && "text" in part && typeof part.text === "string") {
-        part.text = stripAcceptanceReport(part.text);
+        // Evaluate each text part independently: strip only when THIS part's own
+        // acceptance-report fence parses successfully. A valid report in a
+        // different part or in a different string must never authorise a strip here.
+        part.text = stripAcceptanceReportIfValid(part.text);
       }
     }
   }
@@ -1622,8 +1627,12 @@ async function runSingleAttempt(
   };
 
   const acceptanceOutput = getFinalOutput(result.messages ?? []);
-  const { report: finalAcceptanceReport } = parseAcceptanceReport(acceptanceOutput);
-  let fullOutput = stripAcceptanceReport(acceptanceOutput);
+  // Single atomic analysis: parse and strip share the same candidate selection so
+  // they can never act on different fences (tlhm-wbvp).
+  const acceptanceAnalysis = analyzeAcceptanceOutput(acceptanceOutput);
+  const finalAcceptanceReport =
+    acceptanceAnalysis.status === "valid" ? acceptanceAnalysis.report : undefined;
+  let fullOutput = acceptanceAnalysis.strippedOutput;
   if (result.timedOut) {
     const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
     fullOutput = fullOutput.trim()
@@ -1675,7 +1684,13 @@ async function runSingleAttempt(
       fullOutput,
       shared.outputSnapshot,
     );
-    fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+    // Parse resolvedOutput.fullOutput independently. Never use finalAcceptanceReport
+    // (parsed from acceptanceOutput, a different string) to authorise a strip here:
+    // resolvedOutput.fullOutput may be a user-owned deliverable at a configured output
+    // path, and cross-authorising its strip would be a D1-class evidence-destruction
+    // bug. Strip only when this file's own fence parses successfully; when in doubt
+    // leave the fence visible rather than silently destroying content.
+    fullOutput = stripAcceptanceReportIfValid(resolvedOutput.fullOutput);
     result.savedOutputPath = resolvedOutput.savedPath;
     result.outputSaveError = resolvedOutput.saveError;
     if (resolvedOutput.savedPath) {
@@ -1684,9 +1699,9 @@ async function runSingleAttempt(
   }
   // The artifact file is the supervisor-facing surface (it is what gets read back
   // as *_output.md). Append the validation-evidence digest there only, so the
-  // acceptance evidence survives stripAcceptanceReport without touching
-  // result.finalOutput, which is a semantic value feeding user-requested output
-  // files and chain/parallel output references.
+  // acceptance evidence survives stripping without touching result.finalOutput,
+  // which is a semantic value feeding user-requested output files and
+  // chain/parallel output references.
   //
   // Exception: when the run saved a user-requested output file, the artifact is a
   // verbatim archive of that deliverable, so it stays byte-exact.
@@ -1695,12 +1710,18 @@ async function runSingleAttempt(
     : result.exitCode !== 0 && !result.interrupted
       ? formatErrorWithOutput(result.error, fullOutput)
       : fullOutput;
-  artifactOutputByResult.set(
-    result,
+  const artifactOutput =
     finalAcceptanceReport && !result.savedOutputPath
       ? appendAcceptanceReportDigest(artifactBaseOutput, finalAcceptanceReport)
-      : artifactBaseOutput,
-  );
+      : artifactBaseOutput;
+  // Non-destruction floor: if raw output was non-empty but the artifact is
+  // empty or contains only horizontal rules and whitespace, write the raw
+  // output instead so that evidence is never silently destroyed.
+  const safeArtifactOutput =
+    acceptanceOutput.trim().length > 0 && isNearlyEmpty(artifactOutput)
+      ? acceptanceOutput
+      : artifactOutput;
+  artifactOutputByResult.set(result, safeArtifactOutput);
   acceptanceOutputByResult.set(result, acceptanceOutput);
   result.outputMode = options.outputMode ?? "inline";
   const preservedFinalOutput = result.finalOutput;

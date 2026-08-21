@@ -26,6 +26,7 @@ import type {
 } from "./types.ts";
 import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.ts";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.ts";
+import { analyzeAcceptanceOutput } from "../runs/shared/acceptance.ts";
 
 // ============================================================================
 // File System Utilities
@@ -179,29 +180,26 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 // Message Parsing Utilities
 // ============================================================================
 
-/** True when a text part carries a structured acceptance report in any accepted form. */
-function containsAcceptanceReport(text: string): boolean {
-  if (/```acceptance-report\s*\n[\s\S]*?```/i.test(text)) return true;
-  if (/ACCEPTANCE_REPORT\s*:/i.test(text)) return true;
-  for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
-    const body = match[1] ?? "";
-    if (
-      /"criteriaSatisfied"/.test(body) &&
-      /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(
-        body,
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
- * Get the final text output from a list of messages
+ * Get the final text output from a list of messages.
+ *
+ * Scans backward across messages to find the latest assistant message whose
+ * aggregate text carries any acceptance report candidate (status !== "missing").
+ * All non-empty text parts within a message are joined in document order with
+ * "\n\n" — no part is silently dropped and no per-part analysis is performed
+ * (tlhm-t34y). The newest candidate has authority regardless of validity so that
+ * a newer invalid report is never silently beaten by a stale valid one (tlhm-xwtc).
+ *
+ * Single-message scoping is intentional: concatenating across messages would
+ * risk pulling in unrelated intermediate chatter.
+ *
+ * Fallback: if no message aggregate carries any acceptance report candidate,
+ * returns the aggregate of the latest non-error assistant message that has
+ * any non-empty text.
  */
 export function getFinalOutput(messages: Message[]): string {
-  const validTextParts: string[] = [];
+  let fallback: string | undefined;
+
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     if (msg.role !== "assistant") continue;
@@ -211,34 +209,34 @@ export function getFinalOutput(messages: Message[]): string {
         msg.errorMessage.length > 0) ||
       ("stopReason" in msg && msg.stopReason === "error");
     if (hasAssistantError) continue;
-    for (let j = msg.content.length - 1; j >= 0; j--) {
-      const part = msg.content[j];
-      if (part.type !== "text" || part.text.trim().length === 0) continue;
-      validTextParts.push(part.text);
-      if (containsAcceptanceReport(part.text)) {
-        // Iteration is reverse, so text parts before this one were never visited.
-        // Collect them in document order; otherwise prose written in an earlier
-        // part is silently dropped and only the block-bearing part survives.
-        // Scoped to this message on purpose: walking back further risks pulling
-        // in unrelated intermediate chatter.
-        const precedingParts: string[] = [];
-        for (let k = 0; k < j; k++) {
-          const precedingPart = msg.content[k];
-          if (
-            precedingPart.type === "text" &&
-            precedingPart.text.trim().length > 0 &&
-            !containsAcceptanceReport(precedingPart.text)
-          ) {
-            precedingParts.push(precedingPart.text);
-          }
-        }
-        return precedingParts.length > 0
-          ? `${precedingParts.join("\n\n")}\n\n${part.text}`
-          : part.text;
+
+    // Aggregate all non-empty text parts in document order — no per-part
+    // analysis, no part dropped. Scoped to this message only.
+    const textParts: string[] = [];
+    for (const part of msg.content) {
+      if (part.type === "text" && part.text.trim().length > 0) {
+        textParts.push(part.text);
       }
     }
+    if (textParts.length === 0) continue;
+
+    const aggregate = textParts.join("\n\n");
+
+    // Record as fallback only on the first (latest) non-error message with text.
+    if (fallback === undefined) fallback = aggregate;
+
+    // Exactly one analyzeAcceptanceOutput call per message aggregate.
+    // Return the latest message aggregate that contains ANY candidate (valid or
+    // invalid). Continue scanning backward only past messages with no candidate
+    // at all (status "missing"). This keeps the fence-layer rule — newest
+    // candidate has authority — at the message layer too, so a stale valid
+    // report never beats a newer invalid one.
+    if (analyzeAcceptanceOutput(aggregate).status !== "missing") {
+      return aggregate;
+    }
   }
-  return validTextParts[0] ?? "";
+
+  return fallback ?? "";
 }
 
 export function getSingleResultOutput(

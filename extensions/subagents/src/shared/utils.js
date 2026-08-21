@@ -5,6 +5,7 @@ import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV
 import { getPiAgentDir } from "./profile.js";
 import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
+import { analyzeAcceptanceOutput } from "../runs/shared/acceptance.js";
 export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, };
 export function getAgentDir() {
     return getPiAgentDir();
@@ -120,22 +121,8 @@ export function findLatestSessionFile(sessionDir) {
         .sort((a, b) => b.mtime - a.mtime);
     return files.length > 0 ? files[0].path : null;
 }
-function containsAcceptanceReport(text) {
-    if (/```acceptance-report\s*\n[\s\S]*?```/i.test(text))
-        return true;
-    if (/ACCEPTANCE_REPORT\s*:/i.test(text))
-        return true;
-    for (const match of text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
-        const body = match[1] ?? "";
-        if (/"criteriaSatisfied"/.test(body) &&
-            /"(?:changedFiles|testsAddedOrUpdated|commandsRun|validationOutput|residualRisks|noStagedFiles|diffSummary|reviewFindings|manualNotes)"/.test(body)) {
-            return true;
-        }
-    }
-    return false;
-}
 export function getFinalOutput(messages) {
-    const validTextParts = [];
+    let fallback;
     for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         if (msg.role !== "assistant")
@@ -146,28 +133,22 @@ export function getFinalOutput(messages) {
             ("stopReason" in msg && msg.stopReason === "error");
         if (hasAssistantError)
             continue;
-        for (let j = msg.content.length - 1; j >= 0; j--) {
-            const part = msg.content[j];
-            if (part.type !== "text" || part.text.trim().length === 0)
-                continue;
-            validTextParts.push(part.text);
-            if (containsAcceptanceReport(part.text)) {
-                const precedingParts = [];
-                for (let k = 0; k < j; k++) {
-                    const precedingPart = msg.content[k];
-                    if (precedingPart.type === "text" &&
-                        precedingPart.text.trim().length > 0 &&
-                        !containsAcceptanceReport(precedingPart.text)) {
-                        precedingParts.push(precedingPart.text);
-                    }
-                }
-                return precedingParts.length > 0
-                    ? `${precedingParts.join("\n\n")}\n\n${part.text}`
-                    : part.text;
+        const textParts = [];
+        for (const part of msg.content) {
+            if (part.type === "text" && part.text.trim().length > 0) {
+                textParts.push(part.text);
             }
         }
+        if (textParts.length === 0)
+            continue;
+        const aggregate = textParts.join("\n\n");
+        if (fallback === undefined)
+            fallback = aggregate;
+        if (analyzeAcceptanceOutput(aggregate).status !== "missing") {
+            return aggregate;
+        }
     }
-    return validTextParts[0] ?? "";
+    return fallback ?? "";
 }
 export function getSingleResultOutput(result) {
     return result.finalOutput ?? getFinalOutput(result.messages ?? []);

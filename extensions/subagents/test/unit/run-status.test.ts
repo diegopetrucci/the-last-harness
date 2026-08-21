@@ -1741,4 +1741,551 @@ describe("async run status inspection", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Acceptance rejection reason surfacing (ticket tlhm-uz2h)
+  // These tests assert the reason reaches rendered output, not just status.json.
+
+  it("renders acceptance parse-error reason beneath a rejected step line", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-parse-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-parse");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-parse",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: false,
+                  effectiveAcceptance: { level: "attested" },
+                  inferredReason: [],
+                  criteria: [],
+                  childReportParseError:
+                    "Failed to parse acceptance-report: Invalid acceptance-report: commandsRun[1].result: expected one of passed, failed, not-run; got failed as expected",
+                  runtimeChecks: [
+                    {
+                      id: "attestation",
+                      status: "failed",
+                      message:
+                        "Failed to parse acceptance-report: Invalid acceptance-report: commandsRun[1].result: expected one of passed, failed, not-run; got failed as expected",
+                    },
+                  ],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-parse" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: rejected/);
+      assert.match(
+        text,
+        /Acceptance reason: Failed to parse acceptance-report: Invalid acceptance-report/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renders first failed runtimeCheck reason when there is no parse error", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-check-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-check");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-check",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: true,
+                  effectiveAcceptance: { level: "checked" },
+                  inferredReason: [],
+                  criteria: [],
+                  runtimeChecks: [
+                    {
+                      id: "tests-added",
+                      status: "failed",
+                      message: "tests-added evidence missing from acceptance report",
+                    },
+                  ],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-check" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: rejected/);
+      assert.match(text, /Acceptance reason: tests-added evidence missing from acceptance report/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renders first failed verifyRuns entry when there is no parse error or failed check", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-verify-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-verify");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-verify",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: true,
+                  effectiveAcceptance: { level: "verified" },
+                  inferredReason: [],
+                  criteria: [],
+                  runtimeChecks: [],
+                  verifyRuns: [
+                    {
+                      id: "typecheck",
+                      command: "npm run typecheck",
+                      exitCode: 1,
+                      status: "failed",
+                      durationMs: 1200,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-verify" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: rejected/);
+      assert.match(text, /Acceptance reason: Verification 'typecheck' failed\./);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits the acceptance reason line when the rejection has no diagnosable cause", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-no-cause-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-no-cause");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-no-cause",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: true,
+                  effectiveAcceptance: { level: "checked" },
+                  inferredReason: [],
+                  criteria: [],
+                  runtimeChecks: [],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-no-cause" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: rejected/);
+      assert.doesNotMatch(text, /Acceptance reason:/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not add an acceptance reason line for non-rejected statuses", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-accept-checked-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-accept-checked");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-accept-checked",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "checked",
+                  explicit: true,
+                  effectiveAcceptance: { level: "checked" },
+                  inferredReason: [],
+                  criteria: [],
+                  runtimeChecks: [{ id: "all-criteria", status: "passed", message: "OK" }],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-accept-checked" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: checked/);
+      assert.doesNotMatch(text, /Acceptance reason:/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("truncates very long acceptance rejection reasons at 200 characters", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-long-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-long");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      const longReason = "A".repeat(250);
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-long",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: false,
+                  effectiveAcceptance: { level: "attested" },
+                  inferredReason: [],
+                  criteria: [],
+                  childReportParseError: longReason,
+                  runtimeChecks: [],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-long" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      assert.match(text, /acceptance: rejected/);
+      // The rendered reason line must contain the truncation ellipsis and not exceed 200 chars + label
+      const reasonLine = text.split("\n").find((l) => l.includes("Acceptance reason:"));
+      assert.ok(reasonLine, "Acceptance reason line should be present");
+      assert.match(reasonLine, /\u2026$/);
+      assert.ok(
+        reasonLine.length < 250,
+        `reason line should be truncated, but got length ${reasonLine.length}`,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // tlhm-ilsw: privacy guard — reason must not leak in privacy-safe lifecycle
+  it("omits acceptance reason line in privacy-safe (awaiting-supervisor) lifecycle", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-privacy-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-privacy");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-privacy",
+            mode: "single",
+            state: "pausing",
+            startedAt: 100,
+            lastUpdate: 150,
+            pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140 },
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "pausing",
+                pause: { kind: "awaiting_supervisor", summary: "Need approval", requestedAt: 140 },
+                acceptance: {
+                  status: "rejected",
+                  explicit: false,
+                  effectiveAcceptance: { level: "attested" },
+                  inferredReason: [],
+                  criteria: [],
+                  childReportParseError: "Structured acceptance report not found.",
+                  runtimeChecks: [
+                    {
+                      id: "attestation",
+                      status: "failed",
+                      message: "Structured acceptance report not found.",
+                    },
+                  ],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-privacy" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      // The step line shows acceptance: rejected but the reason must not appear
+      assert.match(text, /acceptance: rejected/);
+      assert.doesNotMatch(
+        text,
+        /Acceptance reason:/,
+        "acceptance reason must be suppressed in privacy-safe lifecycle",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // tlhm-ilsw: line injection — newlines in the reason must not forge extra lines
+  it("normalizes newlines in rejection reason to prevent line injection", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-newline-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-newline");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      const poisonReason = "first line\nsecond line\nthird line";
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-newline",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: false,
+                  effectiveAcceptance: { level: "attested" },
+                  inferredReason: [],
+                  criteria: [],
+                  childReportParseError: poisonReason,
+                  runtimeChecks: [],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-newline" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      // There must be exactly one Acceptance reason line (no injected extra lines)
+      const reasonLines = text.split("\n").filter((l) => l.includes("Acceptance reason:"));
+      assert.equal(reasonLines.length, 1, "reason must collapse to a single line");
+      const reasonLine = reasonLines[0]!;
+      // The forged line prefixes must not appear as separate status lines
+      assert.doesNotMatch(text, /^second line$/m);
+      assert.doesNotMatch(text, /^third line$/m);
+      // All three content words must be present on the single reason line
+      assert.ok(reasonLine.includes("first line"), "first segment must appear on the reason line");
+      assert.ok(
+        reasonLine.includes("second line"),
+        "second segment must be collapsed onto the reason line",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // tlhm-ilsw: safe truncation — must not split a surrogate pair at the cut point
+  it("truncates rejection reason safely at a surrogate pair boundary", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-reject-surrogate-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const asyncDir = path.join(asyncRoot, "run-reject-surrogate");
+      fs.mkdirSync(asyncDir, { recursive: true });
+      // Build a reason where the high surrogate sits at position 199 (0-indexed),
+      // exactly at the REJECTION_REASON_MAX_LENGTH budget boundary (200 chars).
+      // truncateWithMarker calls sliceSafe(value, 200-1) = sliceSafe(value, 199),
+      // which detects no surrogate at the end of the 199-char slice and is safe.
+      // A raw .slice(0, 200) would cut the pair, yielding a lone \uD800 followed
+      // only by the ellipsis marker (not a low surrogate) — an ill-formed string.
+      const pair = "\uD800\uDC00"; // 2 UTF-16 code units for U+10000
+      const prefix = "A".repeat(199); // high surrogate lands at position 199
+      const surrogateReason = prefix + pair + "Z"; // 202 UTF-16 code units total
+      fs.writeFileSync(
+        path.join(asyncDir, "status.json"),
+        JSON.stringify(
+          {
+            runId: "run-reject-surrogate",
+            mode: "single",
+            state: "done",
+            startedAt: 100,
+            lastUpdate: 200,
+            currentStep: 0,
+            steps: [
+              {
+                agent: "worker",
+                status: "done",
+                acceptance: {
+                  status: "rejected",
+                  explicit: false,
+                  effectiveAcceptance: { level: "attested" },
+                  inferredReason: [],
+                  criteria: [],
+                  childReportParseError: surrogateReason,
+                  runtimeChecks: [],
+                  verifyRuns: [],
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const text = textContent(
+        inspectSubagentStatus(
+          { id: "run-reject-surrogate" },
+          { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results"), kill: () => true },
+        ),
+      );
+      const reasonLine = text.split("\n").find((l) => l.includes("Acceptance reason:"));
+      assert.ok(reasonLine, "Acceptance reason line should be present");
+      // The string must be well-formed UTF-16: no lone high surrogate at the cut point.
+      // A high surrogate (\uD800-\uDBFF) not followed by a low surrogate (\uDC00-\uDFFF)
+      // is a lone surrogate that produces ill-formed output.
+      const hasLoneHighSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(reasonLine);
+      assert.ok(
+        !hasLoneHighSurrogate,
+        "truncated reason must not contain a lone high surrogate — raw .slice() at the budget would produce one",
+      );
+      // The ellipsis must be appended as the truncation marker
+      assert.match(reasonLine, /\u2026$/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
