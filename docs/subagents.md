@@ -210,7 +210,7 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). Existing values and unrelated keys survive. Remove a customized key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30); the parent-facing subagent tool description is always compact. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Existing values and unrelated keys survive. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
 Useful diagnostics:
 
