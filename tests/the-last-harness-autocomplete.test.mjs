@@ -26,7 +26,7 @@ test("autocomplete hides configured slash commands only in slash-command-name co
       { value: "clone", label: "/clone" },
       { value: "import", label: "/import" },
       { value: "scoped-models", label: "/scoped-models" },
-      { value: "subagent-cost", label: "/subagent-cost" },
+      { value: "visible-command", label: "/visible-command" },
       { value: "skill:librarian", label: "/skill:librarian" },
       { value: "websearch", label: "/websearch" },
       { value: "curator", label: "/curator" },
@@ -43,7 +43,7 @@ test("autocomplete hides configured slash commands only in slash-command-name co
 
   assert.deepEqual(
     result?.items.map((item) => item.value),
-    ["clone", "investigate-revalidate-current", "tlh-changelog", "agent"],
+    ["clone", "visible-command", "investigate-revalidate-current", "tlh-changelog", "agent"],
   );
 });
 
@@ -54,7 +54,7 @@ test("autocomplete keeps hidden commands outside slash-command-name context", as
       { value: "clone", label: "/clone" },
       { value: "import", label: "/import" },
       { value: "scoped-models", label: "/scoped-models" },
-      { value: "subagent-cost", label: "/subagent-cost" },
+      { value: "visible-command", label: "/visible-command" },
       { value: "skill:librarian", label: "/skill:librarian" },
       { value: "websearch", label: "/websearch" },
       { value: "curator", label: "/curator" },
@@ -80,7 +80,6 @@ test("autocomplete returns null when filtering removes every slash-command sugge
         { value: "changelog", label: "/changelog" },
         { value: "import", label: "/import" },
         { value: "scoped-models", label: "/scoped-models" },
-        { value: "subagent-cost", label: "/subagent-cost" },
         { value: "skill:librarian", label: "/skill:librarian" },
         { value: "websearch", label: "/websearch" },
         { value: "curator", label: "/curator" },
