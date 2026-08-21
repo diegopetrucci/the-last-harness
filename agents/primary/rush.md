@@ -4,6 +4,7 @@ description: Implements small bounded changes directly with narrow validation an
 model: anthropic/claude-sonnet-4-6
 tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicThinking: low
+tlhOpenrouterThinking: low
 tlhOpenaiThinking: medium
 preferCurrentOpenaiModel: true
 applyModel: true
