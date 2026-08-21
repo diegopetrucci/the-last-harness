@@ -5,11 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import {
-  buildSubagentToolDescription,
-  COMPACT_SUBAGENT_TOOL_DESCRIPTION,
-  FULL_SUBAGENT_TOOL_DESCRIPTION,
-} from "../../src/extension/tool-description.ts";
+import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "../../src/extension/tool-description.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -61,67 +57,31 @@ function parentToolEnv(agentDir?: string): NodeJS.ProcessEnv {
 }
 
 describe("registered subagent tool description", () => {
-  it("keeps full mode within the TLH-minimal contract and size bound", () => {
-    const description = buildSubagentToolDescription();
-
+  it("always uses the compact TLH-minimal contract", () => {
+    const description = COMPACT_SUBAGENT_TOOL_DESCRIPTION;
+    assert.ok(
+      description.length <= 2500,
+      `expected compact description <= 2500 chars, got ${description.length}`,
+    );
     for (const builtinName of ["scout", "worker", "planner"]) {
       assert.doesNotMatch(description, new RegExp(`\\b${builtinName}\\b`));
     }
     assertMinimalContract(description);
-    assert.ok(
-      description.length >= 2500 && description.length <= 3900,
-      `expected 2500-3900 chars, got ${description.length}`,
-    );
-    assert.match(description, /SINGLE mode: \{ agent, task\?  }|SINGLE mode: \{ agent, task\? \}/i);
-    assert.match(description, /PARALLEL mode:/i);
+    assert.match(description, /SINGLE:/i);
+    assert.match(description, /PARALLEL:/i);
     assert.match(description, /fallbackModels/i);
-    assert.match(description, /context: "fresh" \| "fork"/);
+    assert.match(description, /context:\s*"fresh"\s*\|\s*"fork"/);
     assert.match(description, /async:true|async: true/);
-    assert.match(description, /detached mode so the parent can continue/i);
-    assert.match(description, /durable paused-awaiting-supervisor state/i);
+    assert.match(description, /Do not sleep or poll(?: status)? just to wait/i);
     assert.match(description, /no child process is running/i);
-    assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
-    assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
-    assert.match(description, /affects inferred acceptance only, never tool access/i);
-
-    assert.match(description, /status\.json/);
-    assert.match(description, /events\.jsonl/);
-    assert.match(description, /Do not sleep or poll status just to wait/i);
     assert.match(description, /subagents cannot spawn subagents/i);
     assert.match(description, /keep one writer/i);
-  });
-
-  it("offers a compact mode that keeps the TLH-minimal contract", () => {
-    const description = buildSubagentToolDescription({ toolDescriptionMode: "compact" });
-
-    assert.equal(description, COMPACT_SUBAGENT_TOOL_DESCRIPTION);
-    assert.ok(
-      description.length < FULL_SUBAGENT_TOOL_DESCRIPTION.length * 0.8,
-      "compact mode should be materially shorter than full mode",
-    );
-    assertMinimalContract(description);
-    assert.match(description, /SINGLE/);
-    assert.match(description, /PARALLEL/);
-    assert.match(description, /no child process is running/i);
     assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
-    assert.match(description, /fallbackModels/i);
     assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
-    assert.match(description, /affects inferred acceptance only, never tools/i);
+    assert.match(description, /affects inferred acceptance only, never tools?/i);
 
     assert.match(description, /status\.json/);
     assert.match(description, /events\.jsonl/);
-  });
-
-  it("falls back to full mode when toolDescriptionMode is invalid", () => {
-    const warnings: string[] = [];
-
-    const description = buildSubagentToolDescription({ toolDescriptionMode: "tiny" } as never, {
-      warn: (message) => warnings.push(message),
-    });
-
-    assert.equal(description, FULL_SUBAGENT_TOOL_DESCRIPTION);
-    assert.ok(warnings.some((message) => message.includes("Ignoring invalid toolDescriptionMode")));
-    assert.ok(warnings.some((message) => message.includes('"full" or "compact"')));
   });
 
   function readRegisteredDescription(agentDir: string): string {
@@ -168,22 +128,25 @@ describe("registered subagent tool description", () => {
     fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify(config), "utf-8");
   }
 
-  it("registers full, compact, and fallback descriptions from extension config", () => {
+  it("registers compact description regardless of legacy extension config", () => {
     const defaultAgentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-tool-desc-default-"),
     );
-    assert.equal(readRegisteredDescription(defaultAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+    assert.equal(readRegisteredDescription(defaultAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 
-    const compactAgentDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "pi-subagents-tool-desc-compact-"),
+    const legacyFullAgentDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-full-"),
     );
-    writeExtensionConfig(compactAgentDir, { toolDescriptionMode: "compact" });
-    assert.equal(readRegisteredDescription(compactAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
+    writeExtensionConfig(legacyFullAgentDir, { toolDescriptionMode: "full" });
+    assert.equal(readRegisteredDescription(legacyFullAgentDir), COMPACT_SUBAGENT_TOOL_DESCRIPTION);
 
-    const invalidAgentDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "pi-subagents-tool-desc-invalid-"),
+    const legacyInvalidAgentDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-subagents-tool-desc-legacy-invalid-"),
     );
-    writeExtensionConfig(invalidAgentDir, { toolDescriptionMode: "tiny" });
-    assert.equal(readRegisteredDescription(invalidAgentDir), FULL_SUBAGENT_TOOL_DESCRIPTION);
+    writeExtensionConfig(legacyInvalidAgentDir, { toolDescriptionMode: "tiny" });
+    assert.equal(
+      readRegisteredDescription(legacyInvalidAgentDir),
+      COMPACT_SUBAGENT_TOOL_DESCRIPTION,
+    );
   });
 });
