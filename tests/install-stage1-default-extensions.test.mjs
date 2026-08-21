@@ -262,7 +262,7 @@ test("stage-1 batches only enabled pinned npm defaults from matching string and 
   }
 });
 
-test("stage-1 leaves an existing final npm root untouched without reading inside it", (t) => {
+test("stage-1 hides the existing final npm root notice unless verbose", (t) => {
   const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
   const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
     defaultExtensions: defaults,
@@ -272,9 +272,22 @@ test("stage-1 leaves an existing final npm root untouched without reading inside
   const npmRoot = join(agentDir, "npm");
   mkdirSync(npmRoot, { recursive: true });
   writeFileSync(join(npmRoot, "sentinel"), "preserve me");
+  config.quiet = false;
 
-  preInstallNpmDefaultExtensions(config);
+  const normalStdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
 
+  assert.doesNotMatch(
+    normalStdout,
+    /Skipping pinned npm default-extension pre-install because the npm root already exists/,
+  );
+
+  config.verbose = true;
+  const verboseStdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+  assert.match(
+    verboseStdout,
+    /Skipping pinned npm default-extension pre-install because the npm root already exists \(left untouched\):/,
+  );
   assert.equal(readFileSync(join(npmRoot, "sentinel"), "utf8"), "preserve me");
   assert.equal(existsSync(join(agentDir, "npm-called.log")), false);
   assert.deepEqual(

@@ -1712,7 +1712,7 @@ function preInstallNpmDefaultExtensions(config) {
     const npmRoot = join(config.agentDir, "npm");
     try {
         if (npmDestinationExists(npmRoot)) {
-            log(config, `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`);
+            verboseLog(config, `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`);
             return;
         }
     }
