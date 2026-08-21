@@ -52,25 +52,41 @@ function collapsedForegroundSummaryLines(hiddenCount, theme, width, maxLines) {
     }
     return firstLines;
 }
-function fitCollapsedForegroundLines(lines, theme, width) {
+function fitCollapsedForegroundLines(contentLines, theme, width, footerLines = []) {
     const budget = collapsedForegroundLineBudget();
-    if (lines.length <= budget)
-        return lines;
-    for (let visibleCount = Math.min(lines.length, budget - 1); visibleCount >= 0; visibleCount--) {
-        const hiddenCount = lines.length - visibleCount;
+    if (footerLines.length > budget) {
+        const summaryLines = collapsedForegroundSummaryLines(contentLines.length, theme, width, budget);
+        return summaryLines.slice(0, budget);
+    }
+    if (contentLines.length + footerLines.length <= budget) {
+        return [...contentLines, ...footerLines];
+    }
+    const contentBudget = budget - footerLines.length;
+    for (let visibleCount = Math.min(contentLines.length, contentBudget - 1); visibleCount >= 0; visibleCount--) {
+        const hiddenCount = contentLines.length - visibleCount;
         const summaryLines = wrapDisplayLine(theme.fg("dim", `… ${hiddenCount} lines hidden · ${liveDetailKeyText()} expands`), width);
-        if (visibleCount + summaryLines.length <= budget) {
-            return [...lines.slice(0, visibleCount), ...summaryLines];
+        if (visibleCount + summaryLines.length <= contentBudget) {
+            return [...contentLines.slice(0, visibleCount), ...summaryLines, ...footerLines];
         }
     }
-    return collapsedForegroundSummaryLines(lines.length, theme, width, budget);
+    const summaryLines = contentBudget > 0
+        ? collapsedForegroundSummaryLines(contentLines.length, theme, width, contentBudget)
+        : [];
+    return [...summaryLines.slice(0, contentBudget), ...footerLines];
 }
 function collapsedForegroundComponent(logicalLines, theme) {
     return {
         render(width) {
             const contentWidth = Math.max(1, width);
-            const physicalLines = wrapDisplayLines(logicalLines, contentWidth);
-            return fitCollapsedForegroundLines(physicalLines, theme, contentWidth);
+            const trailingLiveDetailFooter = logicalLines.at(-1);
+            const hasLiveDetailFooter = trailingLiveDetailFooter !== undefined &&
+                stripTerminalSequences(trailingLiveDetailFooter).trim() === liveDetailHintText();
+            const contentLogicalLines = hasLiveDetailFooter ? logicalLines.slice(0, -1) : logicalLines;
+            const contentLines = wrapDisplayLines(contentLogicalLines, contentWidth);
+            const footerLines = hasLiveDetailFooter
+                ? wrapDisplayLine(trailingLiveDetailFooter, contentWidth)
+                : [];
+            return fitCollapsedForegroundLines(contentLines, theme, contentWidth, footerLines);
         },
         invalidate() { },
     };
@@ -1955,6 +1971,7 @@ function renderMultiCompact(d, theme, frame) {
                 agentName: r?.agent || `${fallbackLabel}-${rowNumber}`,
             };
         });
+    let hasRunningResult = false;
     for (const entry of renderEntries) {
         if (entry.kind === "placeholder") {
             const glyph = widgetStepGlyph(entry.status, theme);
@@ -1995,11 +2012,11 @@ function renderMultiCompact(d, theme, frame) {
         if (ticketLine)
             lines.push(ticketLine);
         if (rRunning && liveProgress) {
+            hasRunningResult = true;
             for (const [activityIndex, activity] of compactProgressActivityLines(liveProgress, width, WIDGET_ACTIVITY_PREFIX, WIDGET_ACTIVITY_CONTINUATION_PREFIX).entries()) {
                 const prefix = activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
                 lines.push(theme.fg("dim", `${prefix}${activity}`));
             }
-            lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
         }
         else if (!rPending &&
             (r.exitCode !== 0 ||
@@ -2011,6 +2028,8 @@ function renderMultiCompact(d, theme, frame) {
     }
     if (d.artifacts)
         lines.push(theme.fg("dim", `  artifacts: ${shortenPath(d.artifacts.dir)}`));
+    if (hasRunningResult)
+        lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
     return collapsedForegroundComponent(lines, theme);
 }
 export function renderSubagentResult(result, options, theme, frame) {
