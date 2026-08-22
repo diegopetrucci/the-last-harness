@@ -1352,11 +1352,7 @@ interface TopLevelParallelConfig {
   concurrency?: number;
 }
 
-export type ToolDescriptionMode = "full" | "compact";
-
 export interface ExtensionConfig {
-  /** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
-  toolDescriptionMode?: ToolDescriptionMode;
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;

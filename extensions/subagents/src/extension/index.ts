@@ -74,7 +74,7 @@ import registerSubagentNotify, {
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
-import { buildSubagentToolDescription } from "./tool-description.ts";
+import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
   type SubagentState,
@@ -559,7 +559,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   const tool = defineTool<typeof parameters, Details>({
     name: "subagent",
     label: "Subagent",
-    description: buildSubagentToolDescription(config),
+    description: COMPACT_SUBAGENT_TOOL_DESCRIPTION,
     parameters,
 
     async execute(id, params, signal, onUpdate, ctx) {

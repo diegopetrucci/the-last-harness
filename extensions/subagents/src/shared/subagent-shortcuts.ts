@@ -163,7 +163,3 @@ export function formatShortcutDisplay(key: string): string {
 export function liveDetailShortcutDisplay(): string {
   return formatShortcutDisplay(SUBAGENT_LIVE_DETAIL_SHORTCUT);
 }
-
-export function pauseAllShortcutDisplay(): string {
-  return formatShortcutDisplay(SUBAGENT_PAUSE_ALL_SHORTCUT);
-}
