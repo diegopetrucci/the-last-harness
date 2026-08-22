@@ -618,19 +618,6 @@ export function projectNestedRegistryForRoot(rootRunId) {
     const route = findNestedRouteForRootId(rootRunId);
     return route ? projectNestedEvents(route) : undefined;
 }
-export function findNestedRun(children, id) {
-    if (!children?.length)
-        return undefined;
-    for (const child of children) {
-        if (child.id === id)
-            return child;
-        const nested = findNestedRun(child.children, id) ??
-            findNestedRun(child.steps?.flatMap((step) => step.children ?? []), id);
-        if (nested)
-            return nested;
-    }
-    return undefined;
-}
 function collectNestedRuns(children, output = []) {
     for (const child of children ?? []) {
         output.push(child);
