@@ -140,23 +140,6 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 }
 
 /**
- * Get human-readable last activity time for a file
- */
-export function getLastActivity(outputFile: string | undefined): string {
-  if (!outputFile) return "";
-  try {
-    const stat = fs.statSync(outputFile);
-    const ago = Date.now() - stat.mtimeMs;
-    if (ago < 1000) return "active now";
-    if (ago < 60000) return `active ${Math.floor(ago / 1000)}s ago`;
-    return `active ${Math.floor(ago / 60000)}m ago`;
-  } catch {
-    // Last-activity text is best effort; missing files should simply omit the hint.
-    return "";
-  }
-}
-
-/**
  * Find the latest session file in a directory
  */
 export function findLatestSessionFile(sessionDir: string): string | null {
