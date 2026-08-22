@@ -144,7 +144,7 @@ export function createSubagentLiveDetailController(
   };
 }
 
-export function formatShortcutDisplay(key: string): string {
+function formatShortcutDisplay(key: string): string {
   return key
     .split("/")
     .map((binding) =>

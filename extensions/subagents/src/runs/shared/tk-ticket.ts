@@ -5,18 +5,18 @@ import type { TkTicketMetadata } from "../../shared/types.ts";
 const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
-export interface ResolveTkTicketMetadataOptions {
+interface ResolveTkTicketMetadataOptions {
   cwd?: string;
   findTicketFile?: (id: string, cwd?: string) => TkTicketMatch | undefined;
   readFileSync?: (filePath: string, encoding: "utf-8") => string;
 }
 
-export interface TkTicketTaskContextInput {
+interface TkTicketTaskContextInput {
   task?: string;
   cwd?: string;
 }
 
-export interface TkTicketTaskContext {
+interface TkTicketTaskContext {
   task: string;
   cwd: string;
   taskIndex?: number;

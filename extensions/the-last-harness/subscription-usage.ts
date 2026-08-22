@@ -11,9 +11,9 @@ import type {
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA = "oauth-2025-04-20";
-export const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
+const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
 
 const SUPPORTED_PROVIDERS = new Set<TlhSubscriptionUsageProvider>(["openai-codex", "anthropic"]);
 const ACCOUNT_ID_KEYS = [
@@ -83,7 +83,7 @@ type ResolvedTargetResult =
   | { status: "ineligible" }
   | { status: "mismatch" };
 
-export type TlhSubscriptionUsageServiceOptions = {
+type TlhSubscriptionUsageServiceOptions = {
   fetch?: TlhSubscriptionUsageFetch;
   now?: () => number;
   cacheTtlMs?: number;
@@ -389,7 +389,7 @@ function createSnapshot(
   return { provider, fetchedAt, windows };
 }
 
-export function isSupportedTlhSubscriptionUsageProvider(
+function isSupportedTlhSubscriptionUsageProvider(
   provider: unknown,
 ): provider is TlhSubscriptionUsageProvider {
   return (
@@ -775,7 +775,7 @@ async function resolveTlhSubscriptionUsageTarget(
   };
 }
 
-export class TlhSubscriptionUsageService {
+class TlhSubscriptionUsageService {
   fetch: TlhSubscriptionUsageFetch | undefined;
   now: () => number;
   cacheTtlMs: number;

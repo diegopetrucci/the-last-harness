@@ -33,7 +33,7 @@ export function isDefaultPiAgentDir(agentDir: string): boolean {
   }
 }
 
-export function isNormalPiConfigPath(resolvedPath: string): boolean {
+function isNormalPiConfigPath(resolvedPath: string): boolean {
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) {
     return false;
@@ -97,7 +97,7 @@ export function readTlhStartupState(): TlhStartupState {
   }
 }
 
-export function tlhInstallStatePath(): string | undefined {
+function tlhInstallStatePath(): string | undefined {
   return safeTlhProfileFilePath(join("tlh", "install-state.json"));
 }
 

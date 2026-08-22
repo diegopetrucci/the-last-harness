@@ -25,7 +25,7 @@ export function countNestedRuns(children) {
     }
     return counts;
 }
-export function formatNestedAggregate(children) {
+function formatNestedAggregate(children) {
     const counts = countNestedRuns(children);
     if (counts.total === 0)
         return undefined;

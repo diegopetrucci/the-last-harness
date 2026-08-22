@@ -65,12 +65,12 @@ function isCancelPayload(value: unknown): value is AnnotateLastMessageCancelPayl
 export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
   "Open a native annotation window for the latest assistant message";
 
-export type AnnotateLastMessageCommand = {
+type AnnotateLastMessageCommand = {
   handler: (_args: string, ctx: ExtensionCommandContext) => Promise<void>;
   handleSessionShutdown: () => void;
 };
 
-export type AnnotateLastMessageDependencies = {
+type AnnotateLastMessageDependencies = {
   sendUserMessage: (message: string, options: { deliverAs: "followUp" }) => void;
   openAnnotationWindow?: typeof openQuietGlimpse;
   setTimeoutFn?: typeof setTimeout;

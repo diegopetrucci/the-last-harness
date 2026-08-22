@@ -1,8 +1,8 @@
 import { closeSync, openSync, readSync } from "node:fs";
 import { findModelInfo, splitKnownThinkingSuffix } from "./model-info.js";
-export const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
-export const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
-export const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS = Object.freeze([
+const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
+const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
+const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS = Object.freeze([
     { severity: "warning", percent: DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT },
     { severity: "critical", percent: CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT },
 ]);

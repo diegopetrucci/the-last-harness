@@ -203,7 +203,7 @@ export function stripParentOnlySubagentMessages(messages: AgentMessage[]): Agent
   return changed ? filtered : messages;
 }
 
-export function formatSteerMessage(request: SteerRequest): string {
+function formatSteerMessage(request: SteerRequest): string {
   return [
     "Mid-run steering from the parent orchestrator:",
     "",
@@ -213,7 +213,7 @@ export function formatSteerMessage(request: SteerRequest): string {
   ].join("\n");
 }
 
-export function formatResumeMessage(request: ResumeRequest): string {
+function formatResumeMessage(request: ResumeRequest): string {
   return [
     "Resume follow-up from the parent orchestrator:",
     "",

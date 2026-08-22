@@ -9,7 +9,7 @@ export interface AsyncStatusCorruptionFingerprint {
   readonly value: string;
 }
 
-export class AsyncStatusCorruptionError extends Error {
+class AsyncStatusCorruptionError extends Error {
   readonly name = "AsyncStatusCorruptionError";
   readonly kind: AsyncStatusCorruptionKind;
   readonly asyncDir: string;

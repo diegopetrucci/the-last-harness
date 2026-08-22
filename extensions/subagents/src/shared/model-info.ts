@@ -1,6 +1,6 @@
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
+type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
 
 /** Parse a persisted thinking level against the canonical runtime vocabulary. */
 export function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {

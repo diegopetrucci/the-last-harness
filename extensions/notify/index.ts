@@ -308,7 +308,7 @@ type SettleCtx = {
 };
 
 /** Injectable options — used in tests to control timing without real timers. */
-export type NotifyExtensionOptions = {
+type NotifyExtensionOptions = {
   setTimeout?: typeof setTimeout;
   clearTimeout?: typeof clearTimeout;
   /** Override settle-debounce delay (ms). Defaults to 300. */

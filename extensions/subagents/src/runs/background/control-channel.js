@@ -7,19 +7,19 @@ export const INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIG
 const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
 const CHILD_MESSAGE_ACKS_DIR = "message-acks";
-export function controlInboxDir(asyncDir) {
+function controlInboxDir(asyncDir) {
     return path.join(asyncDir, "control");
 }
 export function interruptRequestPath(asyncDir) {
     return path.join(controlInboxDir(asyncDir), "interrupt.json");
 }
-export function timeoutRequestPath(asyncDir) {
+function timeoutRequestPath(asyncDir) {
     return path.join(controlInboxDir(asyncDir), "timeout.json");
 }
 export function steerRequestsDir(asyncDir) {
     return path.join(controlInboxDir(asyncDir), STEER_REQUESTS_DIR);
 }
-export function childMessageAcksDir(asyncDir) {
+function childMessageAcksDir(asyncDir) {
     return path.join(controlInboxDir(asyncDir), CHILD_MESSAGE_ACKS_DIR);
 }
 export function childMessageAckPath(asyncDir, requestId) {
@@ -49,7 +49,7 @@ export function requestAsyncInterrupt(asyncDir, payload = {}, deps = {}) {
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
-export function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
+function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
     const requestPath = timeoutRequestPath(asyncDir);
     const request = {
         ...payload,
@@ -145,7 +145,7 @@ export function writeChildMessageAcceptance(asyncDir, acceptance) {
     writeAtomicJson(acceptancePath, acceptance);
     return acceptancePath;
 }
-export function childMessageRequestRequiresAcceptance(request) {
+function childMessageRequestRequiresAcceptance(request) {
     return request.type === "resume";
 }
 export function writeChildMessageAcceptanceForRequest(asyncDir, request, acceptance) {
@@ -270,7 +270,7 @@ function consumeMatchingChildMessageRequestsFromDir(dir, matches, fsImpl = fs) {
 export function consumeChildMessageRequestsFromDir(dir, fsImpl = fs) {
     return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer" || request.type === "resume", fsImpl);
 }
-export function consumeSteerRequestsFromDir(dir, fsImpl = fs) {
+function consumeSteerRequestsFromDir(dir, fsImpl = fs) {
     return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer", fsImpl);
 }
 export function consumeSteerRequests(asyncDir, fsImpl = fs) {
@@ -301,7 +301,7 @@ export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
     }
     return true;
 }
-export function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
+function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     const requestPath = timeoutRequestPath(asyncDir);
     if (!fsImpl.existsSync(requestPath))
         return false;

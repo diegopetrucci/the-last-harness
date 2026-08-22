@@ -14,7 +14,7 @@ import type { RawSessionEntry } from "./session-limit-report-scan.js";
  * equals `startMs` or `endMs` is included. This matches the `[startMs, endMs]`
  * interval notation used throughout the session-limit report.
  */
-export type AggregationWindow = {
+type AggregationWindow = {
   startMs: number;
   endMs: number;
 };
@@ -22,7 +22,7 @@ export type AggregationWindow = {
 /**
  * A parsed session file ready for aggregation.
  */
-export type ParsedSessionFileInput = {
+type ParsedSessionFileInput = {
   /** Absolute path to the `.jsonl` session file. */
   filePath: string;
   /** Parsed entries from the file. */
@@ -34,7 +34,7 @@ export type ParsedSessionFileInput = {
 /**
  * Per-provider usage totals within the aggregation window.
  */
-export type SessionProviderTotals = {
+type SessionProviderTotals = {
   /** Provider identifier (e.g. `"anthropic"`, `"openai-codex"`).  Resolved from the
    *  per-message `provider` field when present; otherwise from the most recent
    *  `model_change` entry, or `"unknown"` when neither is available. */

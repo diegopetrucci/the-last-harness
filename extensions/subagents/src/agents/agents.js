@@ -10,13 +10,13 @@ import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
-export function defaultSystemPromptMode(name) {
+function defaultSystemPromptMode(name) {
     return name === "delegate" ? "append" : "replace";
 }
-export function defaultInheritProjectContext(name) {
+function defaultInheritProjectContext(name) {
     return name === "delegate";
 }
-export function defaultInheritSkills() {
+function defaultInheritSkills() {
     return false;
 }
 const KNOWN_FIELDS = new Set([

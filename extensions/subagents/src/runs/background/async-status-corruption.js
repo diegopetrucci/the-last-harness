@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-export class AsyncStatusCorruptionError extends Error {
+class AsyncStatusCorruptionError extends Error {
     name = "AsyncStatusCorruptionError";
     kind;
     asyncDir;

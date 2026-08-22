@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 // Deliberately limited to the retired npm/git sources TLH previously managed.
 // local:/path entries are outside this migration's ownership evidence and scope.
-export const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([
+const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([
   "npm:@diegopetrucci/pi-subagents",
   "npm:pi-subagents",
   "git:github.com/nicobailon/pi-subagents",
@@ -18,7 +18,7 @@ interface PlainObject {
   [key: string]: unknown;
 }
 
-export interface ExternalSubagentPackageMatch {
+interface ExternalSubagentPackageMatch {
   scope: "user" | "project";
   settingsPath: string;
   source: string;

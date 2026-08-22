@@ -154,7 +154,7 @@ export function stripParentOnlySubagentMessages(messages) {
     }
     return changed ? filtered : messages;
 }
-export function formatSteerMessage(request) {
+function formatSteerMessage(request) {
     return [
         "Mid-run steering from the parent orchestrator:",
         "",
@@ -163,7 +163,7 @@ export function formatSteerMessage(request) {
         "Incorporate this guidance at the next safe point. Do not restart the task unless the guidance explicitly asks you to.",
     ].join("\n");
 }
-export function formatResumeMessage(request) {
+function formatResumeMessage(request) {
     return [
         "Resume follow-up from the parent orchestrator:",
         "",

@@ -15,7 +15,7 @@ export type ResolvedSubagentRunId =
   | { kind: "async"; id: string; location: AsyncRunLocation }
   | { kind: "nested"; id: string; match: NestedRunMatch };
 
-export interface ResolveSubagentRunIdDeps {
+interface ResolveSubagentRunIdDeps {
   state?: SubagentState;
   asyncDirRoot?: string;
   resultsDir?: string;

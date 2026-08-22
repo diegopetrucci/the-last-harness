@@ -8,16 +8,16 @@ export function isGhGraphqlQuotaFailure(stderr: string): boolean {
   return /graphql/i.test(stderr) && /(rate limit|quota|submitted too quickly)/i.test(stderr);
 }
 
-export type GitHubRepoRef = { owner: string; repo: string };
+type GitHubRepoRef = { owner: string; repo: string };
 export type GitHubPrRef = GitHubRepoRef & { number: number };
-export type GitHubRestPrMetadata = {
+type GitHubRestPrMetadata = {
   number: number;
   headRefName: string;
   baseRefName: string;
   isCrossRepository: boolean;
 };
 
-export function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
+function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
   try {
     const url = new URL(value);
     if (url.hostname !== "github.com") {
@@ -33,7 +33,7 @@ export function parseGitHubPrUrl(value: string): GitHubPrRef | undefined {
   }
 }
 
-export function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
+function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
   const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
   if (!match) {
     return undefined;
@@ -41,7 +41,7 @@ export function parseGitHubRepoSlug(value: string): GitHubRepoRef | undefined {
   return { owner: match[1], repo: match[2] };
 }
 
-export function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
+function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
   const trimmed = value.trim();
   const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
   if (sshMatch) {
@@ -63,7 +63,7 @@ export function parseGitHubRemoteUrl(value: string): GitHubRepoRef | undefined {
   }
 }
 
-export async function resolveGitHubRepoRefFromGhDefault(
+async function resolveGitHubRepoRefFromGhDefault(
   pi: ExtensionAPI,
   cwd: string,
 ): Promise<GitHubRepoRef | undefined> {
@@ -82,7 +82,7 @@ export async function resolveGitHubRepoRefFromGhDefault(
   return undefined;
 }
 
-export async function resolveGitHubRepoRefFromLocalRemotes(
+async function resolveGitHubRepoRefFromLocalRemotes(
   pi: ExtensionAPI,
   cwd: string,
 ): Promise<{ ok: true; repoRef: GitHubRepoRef } | { ok: false; message: string }> {

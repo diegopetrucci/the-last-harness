@@ -150,7 +150,7 @@ export interface AsyncRunCorruptEntryIssue {
   fingerprint?: AsyncStatusCorruptionFingerprint;
 }
 
-export interface AsyncRunRestoreScanResult {
+interface AsyncRunRestoreScanResult {
   runs: AsyncRunSummary[];
   issues: AsyncRunCorruptEntryIssue[];
 }

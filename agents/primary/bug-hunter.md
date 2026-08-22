@@ -4,6 +4,7 @@ description: Investigates reported bugs, identifies root causes, and recommends 
 model: anthropic/claude-opus-5
 tlhOpenaiModels: openai-codex/gpt-5.6-sol
 tlhAnthropicThinking: high
+tlhOpenrouterThinking: high
 tlhOpenaiThinking: high
 applyModel: true
 applyThinking: true

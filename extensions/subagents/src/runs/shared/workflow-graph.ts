@@ -7,7 +7,7 @@ import type {
   WorkflowNodeStatus,
 } from "../../shared/types.ts";
 
-export interface WorkflowGraphBuildInput {
+interface WorkflowGraphBuildInput {
   runId: string;
   mode?: SubagentRunMode;
   steps: ChainStep[];

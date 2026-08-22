@@ -133,15 +133,15 @@ export type TlhPrimaryAgentWriteResult = {
   changed: boolean;
 };
 
-export type TlhContextCapConfig = {
+type TlhContextCapConfig = {
   disabled?: boolean;
 };
 
-export type TlhClaudeSkillsConfig = {
+type TlhClaudeSkillsConfig = {
   disabled?: boolean;
 };
 
-export type TlhModelVisibilityConfig = {
+type TlhModelVisibilityConfig = {
   disabled?: boolean;
   hidden?: string[];
   visible?: string[];
@@ -153,7 +153,7 @@ export type TlhSubagentOverride = {
   thinking?: string | false;
 };
 
-export type TlhSubagentsConfig = {
+type TlhSubagentsConfig = {
   agentOverrides?: Record<string, TlhSubagentOverride>;
 };
 
@@ -198,7 +198,7 @@ export type TlhInstallState = {
   installedAt?: string;
 };
 
-export type TlhInstallNoticeKind =
+type TlhInstallNoticeKind =
   | "pinned-tag"
   | "ref"
   | "custom-track"
@@ -270,6 +270,7 @@ export type AgentPrompt = {
   thinking?: ThinkingLevel;
   tlhOpenaiThinking?: ThinkingLevel;
   tlhAnthropicThinking?: ThinkingLevel;
+  tlhOpenrouterThinking?: ThinkingLevel;
   preferCurrentOpenaiModel?: boolean;
   preferOppositeProvider?: boolean;
   applyModel?: boolean;
@@ -290,6 +291,7 @@ export type SubagentMetadata = {
   thinking?: ThinkingLevel;
   tlhOpenaiThinking?: ThinkingLevel;
   tlhAnthropicThinking?: ThinkingLevel;
+  tlhOpenrouterThinking?: ThinkingLevel;
   preferOppositeProvider?: boolean;
 };
 

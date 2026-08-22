@@ -15,7 +15,7 @@ import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from ".
 import { parseFrontmatterValue } from "./prompts.js";
 import type { StartupResources, StartupResourceSnapshot } from "./types.js";
 
-export type CollectStartupResourcesOptions = {
+type CollectStartupResourcesOptions = {
   projectTrusted?: boolean;
 };
 
