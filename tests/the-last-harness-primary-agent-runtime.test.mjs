@@ -50,6 +50,152 @@ test("primary runtime applies OpenAI Rush-like metadata defaults with no setting
   }
 });
 
+test("primary runtime follows OpenRouter session models and resolves effective provider thinking", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const openrouterModel = { provider: "openrouter", id: "openai/gpt-5.4" };
+  const availableModels = [
+    openrouterModel,
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+  ];
+  const architectPrimary = createPrimaryPrompt("architect", {
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+    tlhAnthropicThinking: "high",
+    tlhOpenaiThinking: "medium",
+    tlhOpenrouterThinking: "max",
+    applyModel: true,
+    applyThinking: true,
+  });
+  const primaryAgents = new Map([["architect", architectPrimary]]);
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const makeCtx = () => ({
+        cwd: fixture.cwd,
+        sessionManager: { getBranch: () => [] },
+        ui: { notify() {} },
+        modelRegistry: { getAvailable: () => availableModels },
+        model: openrouterModel,
+      });
+
+      const first = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+      await first.runtime.applySessionStart(makeCtx());
+      assert.equal(first.pi.model, undefined, "unlocked primary leaves session model untouched");
+      assert.equal(
+        first.pi.thinkingLevel,
+        "max",
+        "OpenRouter thinking applies to effective session model",
+      );
+
+      writePrimaryConfig(fixture.agent, {
+        modelOverrides: { architect: "anthropic/claude-sonnet-4-6" },
+      });
+      const anthropicPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+      await anthropicPin.runtime.applySessionStart(makeCtx());
+      assert.deepEqual(anthropicPin.pi.model, availableModels[1]);
+      assert.equal(
+        anthropicPin.pi.thinkingLevel,
+        "high",
+        "stored Anthropic pin selects Anthropic thinking",
+      );
+
+      writePrimaryConfig(fixture.agent, {
+        modelOverrides: { architect: "openai-codex/gpt-5.6-luna" },
+      });
+      const codexPin = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+      await codexPin.runtime.applySessionStart(makeCtx());
+      assert.deepEqual(codexPin.pi.model, availableModels[2]);
+      assert.equal(codexPin.pi.thinkingLevel, "medium", "stored Codex pin selects OpenAI thinking");
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("architect preserves and enforces its OpenRouter minThinking floor", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const sessionModel = { provider: "openrouter", id: "openai/gpt-5.4" };
+  const architectPrimary = createPrimaryPrompt("architect", {
+    model: "anthropic/claude-sonnet-4-6",
+    minThinking: "medium",
+    tlhOpenrouterThinking: "high",
+    applyModel: true,
+    applyThinking: true,
+  });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectPrimary]]),
+        subagentMetadata: [],
+      });
+      const context = {
+        cwd: fixture.cwd,
+        sessionManager: { getBranch: () => [] },
+        ui: { notify() {} },
+        modelRegistry: { getAvailable: () => [sessionModel] },
+        model: sessionModel,
+      };
+
+      await runtime.applySessionStart(context);
+      assert.equal(pi.thinkingLevel, "high");
+      pi.thinkingLevel = "medium";
+      await beforeAgentStart({ systemPrompt: "base" }, context);
+      assert.equal(pi.thinkingLevel, "medium", "a level meeting the floor is preserved");
+      pi.thinkingLevel = "low";
+      await beforeAgentStart({ systemPrompt: "base" }, context);
+      assert.equal(
+        pi.thinkingLevel,
+        "high",
+        "a level below the floor is restored to OpenRouter target",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("locked primary on OpenRouter keeps the session model while enforcing thinking", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const sessionModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" };
+  const rushPrimary = createPrimaryPrompt("rush", {
+    model: "anthropic/claude-opus-4-8",
+    thinking: "low",
+    tlhOpenrouterThinking: "high",
+    applyModel: true,
+    applyThinking: true,
+    lockThinking: true,
+  });
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { pi, runtime } = registerRuntimeHarness({
+        primaryAgents: new Map([["rush", rushPrimary]]),
+        subagentMetadata: [],
+      });
+      await runtime.applySessionStart({
+        cwd: fixture.cwd,
+        sessionManager: {
+          getBranch: () => [
+            {
+              type: "custom",
+              customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+              data: { selected: "rush" },
+            },
+          ],
+        },
+        ui: { notify() {} },
+        modelRegistry: { getAvailable: () => [sessionModel] },
+        model: sessionModel,
+      });
+      assert.equal(pi.model, undefined, "locked OpenRouter primary does not reapply bundled model");
+      assert.equal(pi.thinkingLevel, "high", "locked primary enforces OpenRouter thinking");
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
 test("primary runtime scopes tickets during session start before later session work", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 

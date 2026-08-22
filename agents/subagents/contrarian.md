@@ -6,6 +6,7 @@ tlhOpenaiModels: openai-codex/gpt-5.6-sol
 tlhAnthropicModels: anthropic/claude-opus-5
 preferOppositeProvider: true
 tlhAnthropicThinking: high
+tlhOpenrouterThinking: high
 tlhOpenaiThinking: high
 systemPromptMode: replace
 inheritProjectContext: true

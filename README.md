@@ -41,7 +41,7 @@ The architect has access to a few subagents, which can be divided in three big c
 - Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
-Notably, the oracle, contrarian, and reviewer all run on the opposite provider from your active session — Anthropic primary sessions get OpenAI, and OpenAI/Codex primary sessions get Anthropic — so that their second opinion truly is a second opinion, and not just Claude with a moustache and shades. See [docs/models.md](docs/models.md) for the full detail.
+Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Anthropic sessions get OpenAI/Codex and OpenAI/Codex sessions get Anthropic; OpenRouter sessions use vendor-aware direct-provider selection with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
 
 Again, the core idea: explore and plan with the architect. Double check with the oracle/contrarian. Go back and forth. This is where you, as a human, are required. Once happy, the implementation follows, until ready for your review.
 
