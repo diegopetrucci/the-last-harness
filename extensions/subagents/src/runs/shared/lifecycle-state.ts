@@ -22,7 +22,7 @@ const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBu
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
 
 export type PidLiveness = "alive" | "dead" | "unknown";
-export type ContinuationClaimLiveness =
+type ContinuationClaimLiveness =
   | PidLiveness
   | "missing-owner"
   | "completed"
@@ -34,28 +34,28 @@ export type ContinuationClaimLiveness =
  * acquiring the lock. Callers that want to distinguish lock-contention from
  * genuine I/O errors catch this specific class.
  */
-export class LifecycleLockExhaustedError extends Error {
+class LifecycleLockExhaustedError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "LifecycleLockExhaustedError";
   }
 }
 
-export interface LifecycleLockOptions {
+interface LifecycleLockOptions {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
   retryDelaysMs?: readonly number[];
   ownerlessStaleMs?: number;
 }
 
-export interface LifecycleTransitionOptions {
+interface LifecycleTransitionOptions {
   asyncDir: string;
   expectedGeneration: number;
   mutate: (status: AsyncStatus) => AsyncStatus;
   lockOptions?: LifecycleLockOptions;
 }
 
-export interface LifecycleTransitionResult {
+interface LifecycleTransitionResult {
   previousGeneration: number;
   nextGeneration: number;
   status: AsyncStatus;
@@ -283,7 +283,7 @@ function hasActionablePausedChildren(status: AsyncStatus["steps"] | undefined): 
   );
 }
 
-export function finalizeLifecycleContinuationStatus(
+function finalizeLifecycleContinuationStatus(
   status: AsyncStatus,
   index: number,
   continuation: AsyncLifecycleContinuationMetadata,
@@ -963,7 +963,7 @@ export function finalizeLifecycleContinuationLaunch(
   }
 }
 
-export interface StaleLifecycleContinuationRecoveryOptions {
+interface StaleLifecycleContinuationRecoveryOptions {
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
   asyncDirRoot?: string;

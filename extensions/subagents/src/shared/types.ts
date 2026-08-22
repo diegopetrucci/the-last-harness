@@ -117,7 +117,7 @@ export interface ResolvedToolBudget {
   block: string[] | "*";
 }
 
-export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
+type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
 
 export interface ToolBudgetState extends ResolvedToolBudget {
   outcome: ToolBudgetOutcome;
@@ -127,7 +127,7 @@ export interface ToolBudgetState extends ResolvedToolBudget {
   blockedTool?: string;
 }
 
-export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
+type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
 
 export interface TurnBudgetState extends ResolvedTurnBudget {
   outcome: TurnBudgetOutcome;
@@ -266,8 +266,8 @@ export interface ContextUsageDiagnostics {
   contextPercent?: number;
 }
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
-export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
-export type AsyncLifecycleState =
+type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
+type AsyncLifecycleState =
   | "queued"
   | "running"
   | "pausing"
@@ -300,7 +300,7 @@ export interface ForegroundSupervisorRequestMetadata {
   summary?: string;
 }
 
-export interface ForegroundPauseMetadata extends AsyncPauseMetadata {
+interface ForegroundPauseMetadata extends AsyncPauseMetadata {
   request?: ForegroundSupervisorRequestMetadata;
 }
 
@@ -316,13 +316,13 @@ export interface AsyncLifecycleContinuationMetadata {
   continuationRunId?: string;
 }
 
-export interface AsyncLifecycleMetadata {
+interface AsyncLifecycleMetadata {
   generation?: number;
   continuation?: AsyncLifecycleContinuationMetadata;
   continuationsByIndex?: Record<string, AsyncLifecycleContinuationMetadata>;
 }
 
-export type PublicNestedStepSummary = Pick<
+type PublicNestedStepSummary = Pick<
   NestedStepSummary,
   | "agent"
   | "status"
@@ -494,7 +494,7 @@ export type AcceptanceEvidenceKind =
   | "review-findings"
   | "manual-notes";
 
-export interface AcceptanceGate {
+interface AcceptanceGate {
   id: string;
   must: string;
   evidence?: AcceptanceEvidenceKind[];
@@ -510,7 +510,7 @@ export interface AcceptanceVerifyCommand {
   allowFailure?: boolean;
 }
 
-export interface AcceptanceReviewGate {
+interface AcceptanceReviewGate {
   agent?: string;
   focus?: string;
   required?: boolean;
@@ -753,9 +753,9 @@ export interface AsyncParallelGroupStatus {
 }
 
 export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
-export type NestedOwnerState = "live" | "gone" | "unknown";
+type NestedOwnerState = "live" | "gone" | "unknown";
 
-export interface NestedRunAddress {
+interface NestedRunAddress {
   id: string;
   parentRunId: string;
   parentStepIndex?: number;
@@ -1428,7 +1428,7 @@ function resolveTempScopeId(options?: {
 }
 
 const MAX_PARALLEL = 8;
-export const MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 4;
 
 /**
  * Resolve the temp root directory used for async run state.

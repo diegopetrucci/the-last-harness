@@ -12,18 +12,18 @@ const ROUTE_FILE = "route.json";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
-export interface RuntimeCleanupPaths {
+interface RuntimeCleanupPaths {
   asyncDir: string;
   nestedRunsDir: string;
   nestedEventsDir: string;
 }
 
-export interface RuntimeCleanupResult {
+interface RuntimeCleanupResult {
   removedAsyncDirs: number;
   removedNestedEventDirs: number;
 }
 
-export interface RuntimeDirCounts {
+interface RuntimeDirCounts {
   topLevelAsyncDirs: number;
   nestedAsyncDirs: number;
   retainedAsyncDirs: number;

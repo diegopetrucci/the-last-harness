@@ -2,11 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { OutputMode, SavedOutputReference } from "../../shared/types.ts";
 
-export const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
+const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
 const SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL = String.raw`(?:\*\*Output:\*\*\s*)?`;
 const SINGLE_OUTPUT_INSTRUCTION_PATTERN =
   "(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
-export const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(
+const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(
   String.raw`${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`,
   "i",
 );

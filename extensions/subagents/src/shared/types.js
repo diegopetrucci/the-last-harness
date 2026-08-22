@@ -60,7 +60,7 @@ function resolveTempScopeId(options) {
     return "shared";
 }
 const MAX_PARALLEL = 8;
-export const MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 4;
 export function resolveTempRootDir(options) {
     const env = options?.env ?? process.env;
     const override = env.PI_SUBAGENTS_TEMP_ROOT?.trim();

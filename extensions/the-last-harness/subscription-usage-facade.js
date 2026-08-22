@@ -10,7 +10,7 @@ function createRetryableLazyImport(loader) {
         return modulePromise;
     };
 }
-export class LazyTlhSubscriptionUsageService {
+class LazyTlhSubscriptionUsageService {
     loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
     service;
     servicePromise;

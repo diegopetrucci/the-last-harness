@@ -2,7 +2,7 @@ import { controlNotificationKey, formatControlNoticeMessage, } from "../runs/sha
 import { CONTROL_NOTICE_NUDGE_TEXT } from "../runs/shared/nudge-texts.js";
 export const SUBAGENT_CONTROL_MESSAGE_TYPE = "subagent_control_notice";
 const NUDGE_TEXT = CONTROL_NOTICE_NUDGE_TEXT;
-export function controlNoticeTarget(details) {
+function controlNoticeTarget(details) {
     return details.childIntercomTarget;
 }
 export function formatSubagentControlNotice(details, content) {

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "../shared/utils.js";
-export function getConfigPath() {
+function getConfigPath() {
     return path.join(getAgentDir(), "extensions", "subagent", "config.json");
 }
 function readConfigForUpdate(configPath = getConfigPath()) {

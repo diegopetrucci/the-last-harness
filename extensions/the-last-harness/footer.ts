@@ -217,7 +217,7 @@ function appendMcpContextEstimate(statusText: string, suffix: string | undefined
   return `${statusText}${suffix}`;
 }
 
-export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
+type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
 
 /**
  * Choose the widest reauth warning text that fits within `width` visible columns.

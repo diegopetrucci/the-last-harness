@@ -3,9 +3,7 @@ import type { ResolvedToolBudget, ToolBudgetConfig, ToolBudgetState } from "../.
 export const DEFAULT_TOOL_BUDGET_BLOCK = ["read", "grep", "find", "ls"] as const;
 export const TOOL_BUDGET_ENV = "PI_SUBAGENT_TOOL_BUDGET";
 
-export function normalizeToolBudgetBlock(
-  block: ToolBudgetConfig["block"] | undefined,
-): "*" | string[] {
+function normalizeToolBudgetBlock(block: ToolBudgetConfig["block"] | undefined): "*" | string[] {
   if (block === "*") return "*";
   if (block === undefined) return [...DEFAULT_TOOL_BUDGET_BLOCK];
   return [...new Set(block.map((tool) => tool.trim()).filter(Boolean))];

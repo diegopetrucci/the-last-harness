@@ -553,7 +553,7 @@ async function dispatchReviewMode(pi, cmdCtx, parsed) {
     pi.sendUserMessage(envelope);
 }
 export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
-export function getReviewArgumentCompletions() {
+function getReviewArgumentCompletions() {
     return null;
 }
 export function createReviewCommandHandler(pi) {

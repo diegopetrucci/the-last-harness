@@ -6,8 +6,8 @@ import type { ReviewDispatchArgs } from "./review-args.js";
 
 // --- Delimiter constants ---
 
-export const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
-export const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
+const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
+const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
 
 // --- Types ---
 
@@ -104,11 +104,11 @@ export function parseNullDelimitedGitPaths(stdout: string): string[] {
   return stdout.split("\0").filter((filePath) => filePath.length > 0);
 }
 
-export function escapeDelimitedContentLine(line: string): string {
+function escapeDelimitedContentLine(line: string): string {
   return `\\${line}`;
 }
 
-export function escapeContentDelimiters(content: string): string {
+function escapeContentDelimiters(content: string): string {
   return content
     .split("\n")
     .map((line) => {
@@ -126,7 +126,7 @@ export function escapeContentDelimiters(content: string): string {
     .join("\n");
 }
 
-export function escapeEnvelopeFenceLines(body: string, fenceKind: string): string {
+function escapeEnvelopeFenceLines(body: string, fenceKind: string): string {
   const beginFence = `--- begin ${fenceKind} ---`;
   const endFence = `--- end ${fenceKind} ---`;
   return body
@@ -137,7 +137,7 @@ export function escapeEnvelopeFenceLines(body: string, fenceKind: string): strin
     .join("\n");
 }
 
-export function renderDelimitedPath(relPath: string): string {
+function renderDelimitedPath(relPath: string): string {
   return JSON.stringify(relPath)
     .replace(
       /[\u007f-\u009f\u2028\u2029]/g,
@@ -149,7 +149,7 @@ export function renderDelimitedPath(relPath: string): string {
 
 // --- Snapshot helpers ---
 
-export function getNonRegularSnapshotMarker(relPath: string, pathStat: Stats): string | undefined {
+function getNonRegularSnapshotMarker(relPath: string, pathStat: Stats): string | undefined {
   const renderedPath = renderDelimitedPath(relPath);
   if (pathStat.isSymbolicLink()) {
     return `[skipped symlink: ${renderedPath}]`;

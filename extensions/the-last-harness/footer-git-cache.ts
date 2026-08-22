@@ -47,12 +47,12 @@ export type CommandRunner = (
  * `ReturnType<typeof setInterval>` (`NodeJS.Timeout`) handle contract; fake
  * clocks should provide a compatible handle.
  */
-export type Clock = {
+type Clock = {
   setInterval(callback: () => void, ms: number): ReturnType<typeof setInterval>;
   clearInterval(handle: ReturnType<typeof setInterval>): void;
 };
 
-export type FooterGitCacheOptions = {
+type FooterGitCacheOptions = {
   /**
    * Accessor for the working directory used by every spawned subprocess.
    * Resolved lazily on each command invocation so that Pi-internal cwd

@@ -89,7 +89,7 @@ export function hasMeaningfulSubagentOverride(override: unknown): boolean {
  * Seeding on override creation ensures drift detection can fire on the very first
  * TLH update, even if /reconcile has never been run.
  */
-export type ProviderAcknowledgment = {
+type ProviderAcknowledgment = {
   /** Packaged model at baseline time (base model without thinking suffix). */
   model?: string;
   /** Packaged thinking level at baseline time. */
@@ -126,7 +126,7 @@ export type AcknowledgedRoleSnapshot = {
 };
 
 /** Persisted reconcile state under tlh/reconcile-state.json. */
-export type ReconcileState = {
+type ReconcileState = {
   /**
    * Per-role baseline snapshots.  Keyed by agent name (primary and subagent names
    * live in separate pools and do not overlap in the bundled catalog).
@@ -142,7 +142,7 @@ export type ReconcileState = {
 };
 
 /** Provider-resolved packaged defaults for a single role. */
-export type PackagedRoleDefaults = {
+type PackagedRoleDefaults = {
   /** Base model string (no thinking suffix) resolved for the current provider. */
   model?: string;
   /** Packaged thinking level resolved for the current provider. */
