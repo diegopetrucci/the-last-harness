@@ -1,5 +1,4 @@
 import { isParallelStep } from "../../shared/settings.js";
-import { getSingleResultOutput } from "../../shared/utils.js";
 const OUTPUT_REF_PATTERN = /\{outputs\.([^}]*)\}/g;
 const SAFE_OUTPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export class ChainOutputValidationError extends Error {
@@ -18,7 +17,7 @@ function taskTemplatesForStep(step) {
 export function validateChainOutputBindings(steps) {
     validateChainOutputBindingsWithContext(steps);
 }
-export function validateChainOutputBindingsWithContext(steps, context = {}) {
+function validateChainOutputBindingsWithContext(steps, context = {}) {
     const priorOutputNames = [...(context.priorOutputNames ?? [])];
     const available = new Set(priorOutputNames);
     const seen = new Set(priorOutputNames);
@@ -65,19 +64,11 @@ export function resolveOutputReferences(template, outputs) {
 function compactStructuredText(value) {
     return JSON.stringify(value);
 }
-export function outputEntryFromResult(result, stepIndex) {
+export function outputEntryFromAsyncResult(result, stepIndex) {
     return {
         text: result.structuredOutput !== undefined
             ? compactStructuredText(result.structuredOutput)
-            : getSingleResultOutput(result),
-        ...(result.structuredOutput !== undefined ? { structured: result.structuredOutput } : {}),
-        agent: result.agent,
-        stepIndex,
-    };
-}
-export function outputEntryFromAsyncResult(result, stepIndex) {
-    return {
-        text: result.structuredOutput !== undefined ? compactStructuredText(result.structuredOutput) : result.output,
+            : result.output,
         ...(result.structuredOutput !== undefined ? { structured: result.structuredOutput } : {}),
         agent: result.agent,
         stepIndex,

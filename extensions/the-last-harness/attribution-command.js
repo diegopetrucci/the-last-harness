@@ -47,7 +47,9 @@ function toggleTlhCommitAttribution(cwd) {
     });
 }
 function formatCommitAttributionStatus(state) {
-    return state.enabled ? "TLH commit attribution is enabled." : "TLH commit attribution is disabled.";
+    return state.enabled
+        ? "TLH commit attribution is enabled."
+        : "TLH commit attribution is disabled.";
 }
 export async function handleToggleTlhGitAttributionCommand(_pi, args, ctx) {
     if (args.trim()) {

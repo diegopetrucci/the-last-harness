@@ -180,7 +180,7 @@ async function fetchWithTimeout(url, options = {}) {
         ...options,
         headers: {
             "User-Agent": "tlh-gnosis-installer",
-            ...(options.headers || {}),
+            ...options.headers,
         },
         signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
@@ -295,7 +295,10 @@ function createManagedGnosisTempTarget(args, agentDir, target) {
     mkdirSync(targetParent, { recursive: true });
     validateManagedGnosisTarget(args, agentDir);
     const tempDir = mkdtempSync(join(targetParent, ".tlh-gnosis-"));
-    assertManagedGnosisTempPath(tempDir, agentDir, "install directory", { mustExist: true, expectDirectory: true });
+    assertManagedGnosisTempPath(tempDir, agentDir, "install directory", {
+        mustExist: true,
+        expectDirectory: true,
+    });
     const tempTarget = join(tempDir, "gn");
     assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: false });
     return { tempDir, tempTarget };
@@ -320,7 +323,9 @@ async function installManagedGnosis(args, agentDir) {
         throw new Error(unsupportedGnosisPlatformMessage());
     if (args.dryRun) {
         logStderr(args, `Would install Gnosis into isolated profile: ${target}`);
-        const versionLabel = args.gnosisVersion === "latest" ? "latest compatible release" : `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
+        const versionLabel = args.gnosisVersion === "latest"
+            ? "latest compatible release"
+            : `Gnosis ${args.gnosisVersion.replace(/^v/, "")}`;
         logStderr(args, `Would download ${versionLabel} from https://github.com/${args.gnosisRepo}`);
         return target;
     }
@@ -352,11 +357,17 @@ async function installManagedGnosis(args, agentDir) {
             throw new Error("Gnosis release archive did not contain a gn binary");
         ({ tempDir: installTempDir, tempTarget } = createManagedGnosisTempTarget(args, agentDir, target));
         copyFileExclusive(extracted, tempTarget, 0o755);
-        assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: true, expectFile: true });
+        assertManagedGnosisTempPath(tempTarget, agentDir, "binary", {
+            mustExist: true,
+            expectFile: true,
+        });
         if (!validateGnosisCommand(tempTarget)) {
             throw new Error("downloaded Gnosis binary did not validate");
         }
-        assertManagedGnosisTempPath(tempTarget, agentDir, "binary", { mustExist: true, expectFile: true });
+        assertManagedGnosisTempPath(tempTarget, agentDir, "binary", {
+            mustExist: true,
+            expectFile: true,
+        });
         const finalTarget = validateManagedGnosisTarget(args, agentDir);
         renameSync(tempTarget, finalTarget);
         return finalTarget;

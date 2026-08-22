@@ -17,7 +17,7 @@ Thanks for helping improve The Last Harness (`tlh`). Keep changes small, safe, a
 Use Node.js >=22.19.0 from the repository root. Install dependencies with:
 
 ```sh
-npm install --no-package-lock
+npm ci
 ```
 
 Prefer temporary directories for installer and wrapper checks so local testing does not touch a real `tlh` profile or normal Pi profile.
@@ -46,11 +46,13 @@ For vendored/adapted upstream code and Pi-sensitive compatibility shims, see [do
 
 Docs-only changes may use narrower validation, but inspect the rendered/content shape and review the diff before opening a PR.
 
-## Refresh the Understand Anything graph when needed
+## Formatting
 
-If your change materially affects repository architecture, repository structure, or documented contributor workflows, refresh the tracked Understand Anything graph before opening a PR. From the repository root, start an interactive TLH or upstream Pi session, then enable the Understand Anything skill/extension in that session before running `/understand`. TLH does not expose `/understand` by default. Use `/understand --full` only when an incremental refresh is not enough.
+`npm run format` (Oxfmt over `scripts/`, `tests/`, and `extensions/`) is the formatter fixer; run it after editing those sources. Validation enforces the result via the `format:check` step inside `npm run validate`, so unformatted code fails CI.
 
-Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-anything/meta.json`, `.understand-anything/fingerprints.json`, and `.understand-anything/intermediate/scan-result.json` changes before committing them. Only commit those generated updates when the graph refresh is warranted by the change; skip incidental churn for unrelated work.
+## Packaged vs contributor-only files
+
+The `files` allowlist in `package.json` defines what ships in the published npm package. `tools/` is excluded by omission because it is contributor-only tooling that never ships. The negated `docs/*` entries (for example `!docs/subagents-history`, `!docs/brand`, `!docs/local-development.md`) keep contributor-only documentation out of the tarball while still publishing the core end-user docs.
 
 ## Repo-only eval workflows
 
@@ -61,7 +63,7 @@ For the full workflow-eval guide, including scenario details, scoring, and bound
 Quick reference:
 
 - Default contributor/CI path: `npm run validate`
-- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/trace-policy/trace-policy-incident-matrix.test.mjs tests/agent-prompt-contracts.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
+- Workflow-specific deterministic checks: `node --test tests/hermetic-core-workflow.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs tests/evals/tlh-live-evals.test.mjs tests/evals/tlh-live-eval-results.test.mjs`
 - Discover live scenarios: `node tests/evals/tlh-live-evals.mjs --list`
 - Run automated install/update smoke: `node tests/evals/tlh-live-evals.mjs --run --scenario install-update-smoke`
 - Prepare a manual architect workflow eval: `TLH_RUN_LIVE_EVALS=1 node tests/evals/tlh-live-evals.mjs --scenario architect-e2e`
@@ -109,7 +111,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/<bra
 
 The `Install this branch` command above applies to pin PRs too. Subagents are first-party TLH code under `extensions/subagents/`, so do not open standalone subagent pin, publish, release, or fork-sync PRs; develop and validate that runtime as part of the root package per [docs/local-development.md](docs/local-development.md).
 
-CI runs on `pull_request` and on `push` to `main`. The CI job/status name is `Repository validation`, and current GitHub repository rulesets protect the default branch/main and require that status check before merge. Required-merge enforcement is controlled by repository rules and settings, not by this file.
+CI runs on `pull_request` and on `push` to `main`. The CI workflow has three jobs: `Linting and formatting` (ubuntu-only, runs lint/format/shellcheck), `Non-test validation` (ubuntu + macOS, runs all other non-test checks), and `Tests` (ubuntu + macOS, two shards). Which status checks are required for merge is configured in GitHub repository rulesets — that is the source of truth, not this file.
 
 ## Releases
 

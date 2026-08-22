@@ -16,7 +16,6 @@ export const DUMB_ZONE_LABEL = "DUMB ZONE";
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
-export const TLH_HEADER_TOGGLE_SHORTCUT_LABEL = "Ctrl+Shift+E";
 export const HARNESS_PROMPT = `
 ## The Last Harness Defaults
 
@@ -45,8 +44,22 @@ You are running inside a delegated TLH child subagent session.
 - If you learn something durable that should be recorded in project memory, report it to the parent primary agent or supervisor instead.
 `;
 export const GNOSIS_VALIDATION_TIMEOUT_MS = 5000;
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-export const FALLBACK_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"];
+export const THINKING_LEVELS = [
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+];
+export const FALLBACK_THINKING_LEVELS = [
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+];
 export const THINKING_LEVEL_DESCRIPTIONS = {
     off: "No extra reasoning effort",
     minimal: "Smallest reasoning budget",

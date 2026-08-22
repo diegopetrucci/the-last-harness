@@ -4,7 +4,7 @@ import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
 import { createFileCoalescer } from "../../shared/file-coalescer.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { attachNestedChildrenToResultChildren, compactNestedResultChildren, resolveSubagentResultStatus, } from "../../intercom/result-intercom.js";
-import { lifecycleContinuationForIndex, withLifecycleStatusLock } from "../shared/lifecycle-state.js";
+import { lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -46,7 +46,10 @@ function resolveNativeWatchDir(fsApi, resultsDir) {
 function resolveResultFileChildStatus(result, parentState) {
     const hasChildStatusMetadata = typeof result.success === "boolean" || typeof result.exitCode === "number";
     const interrupted = result.interrupted === true ||
-        (result.interrupted === undefined && parentState === "paused" && result.success === false && result.exitCode === 0);
+        (result.interrupted === undefined &&
+            parentState === "paused" &&
+            result.success === false &&
+            result.exitCode === 0);
     return resolveSubagentResultStatus({
         interrupted,
         success: result.success,
@@ -66,7 +69,9 @@ function resolvePausedArtifactTargetIndex(data) {
 function resolvePausedArtifactDecision(data) {
     if (data.state !== "paused")
         return "compat";
-    if (typeof data.asyncDir !== "string" || data.asyncDir.length === 0 || data.lifecycleArtifactVersion !== 1)
+    if (typeof data.asyncDir !== "string" ||
+        data.asyncDir.length === 0 ||
+        data.lifecycleArtifactVersion !== 1)
         return "compat";
     try {
         return withLifecycleStatusLock(data.asyncDir, (status) => {
@@ -156,7 +161,9 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     summary,
                     index: arrayIndex,
                     artifactPath: result.artifactPaths?.outputPath,
-                    ...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath) ? { sessionPath } : {}),
+                    ...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath)
+                        ? { sessionPath }
+                        : {}),
                     ...(result.intercomTarget ? { intercomTarget: result.intercomTarget } : {}),
                     ...(childNestedChildren ? { children: childNestedChildren } : {}),
                 };

@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { homedir, arch as osArch, platform as osPlatform, release as osRelease, type as osType } from "node:os";
+import { homedir, arch as osArch, platform as osPlatform, release as osRelease, type as osType, } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { THINKING_LEVELS, TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_APP_ID, TLH_TELEMETRY_INGEST_BASE_URL, TLH_TELEMETRY_NAMESPACE, TLH_TELEMETRY_STATE_SCHEMA_VERSION, TLH_TELEMETRY_TIMEOUT_MS, } from "./constants.js";
 import { isFalseyEnvFlag, isPlainObject, isTruthyEnvFlag, readText } from "./common.js";
 import { buildExperimentalFeatureTelemetryPayload } from "./experimental.js";
@@ -75,7 +75,9 @@ function configuredTlhTelemetryAppId() {
     return (process.env.TLH_TELEMETRY_APP_ID || TLH_TELEMETRY_APP_ID).trim();
 }
 function configuredTlhTelemetryIngestBaseUrl() {
-    return (process.env.TLH_TELEMETRY_INGEST_BASE_URL || TLH_TELEMETRY_INGEST_BASE_URL).trim().replace(/\/+$/, "");
+    return (process.env.TLH_TELEMETRY_INGEST_BASE_URL || TLH_TELEMETRY_INGEST_BASE_URL)
+        .trim()
+        .replace(/\/+$/, "");
 }
 function extractBundledSubagentOverrides(settings) {
     const subagentsSection = isPlainObject(settings.subagents) ? settings.subagents : undefined;
@@ -195,17 +197,25 @@ function readTlhLaunchSettings() {
     if (enabled !== undefined && typeof enabled !== "boolean") {
         return { ok: false };
     }
-    const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental) ? tlh.experimental : undefined;
+    const experimental = isPlainObject(tlh) && isPlainObject(tlh.experimental)
+        ? tlh.experimental
+        : undefined;
     const subagentOverrides = extractBundledSubagentOverrides(settings);
     return {
         ok: true,
-        config: { telemetry: telemetry, experimental, subagentOverrides },
+        config: {
+            telemetry: telemetry,
+            experimental,
+            subagentOverrides,
+        },
     };
 }
-export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
+function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
     if (!tlhTelemetryStatePath())
         return true;
-    if (!configuredTlhTelemetryNamespace() || !configuredTlhTelemetryAppId() || !configuredTlhTelemetryIngestBaseUrl())
+    if (!configuredTlhTelemetryNamespace() ||
+        !configuredTlhTelemetryAppId() ||
+        !configuredTlhTelemetryIngestBaseUrl())
         return true;
     if (isTruthyEnvFlag(process.env.PI_OFFLINE))
         return true;
@@ -252,7 +262,8 @@ function writeTlhTelemetryState(state) {
 }
 function getOrCreateTlhTelemetryInstallId() {
     const existing = readTlhTelemetryState();
-    if (existing?.schemaVersion === TLH_TELEMETRY_STATE_SCHEMA_VERSION && isUuid(existing.installId)) {
+    if (existing?.schemaVersion === TLH_TELEMETRY_STATE_SCHEMA_VERSION &&
+        isUuid(existing.installId)) {
         return existing.installId;
     }
     const installId = randomUUID();
@@ -298,7 +309,7 @@ export function privacySafeTlhTelemetryThinkingLevel(thinkingLevel) {
     const normalized = thinkingLevel.trim();
     return THINKING_LEVELS.includes(normalized) ? normalized : "custom";
 }
-export function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName) {
+function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName) {
     if (typeof primaryAgentName !== "string" || !primaryAgentName.trim()) {
         return "unknown";
     }
@@ -317,7 +328,9 @@ export function privacySafeTlhTelemetryModelId(modelId) {
     if (!normalized || normalized.length > 80 || !/^[a-z0-9._-]+$/.test(normalized)) {
         return "custom";
     }
-    return PUBLIC_MODEL_ID_PATTERNS.some((pattern) => pattern.test(normalized)) ? normalized : "custom";
+    return PUBLIC_MODEL_ID_PATTERNS.some((pattern) => pattern.test(normalized))
+        ? normalized
+        : "custom";
 }
 function unknownIfEmpty(value) {
     return value && value.trim() ? value.trim() : "unknown";
@@ -335,7 +348,8 @@ function parseOsRelease(content) {
         if (!match)
             continue;
         let value = match[2].trim();
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
         }
         fields[match[1]] = value.replace(/\\(["'`$\\])/g, "$1");
@@ -344,7 +358,10 @@ function parseOsRelease(content) {
 }
 async function getMacOsVersion() {
     try {
-        const { stdout } = await execFileAsync("sw_vers", ["-productVersion"], { encoding: "utf8", timeout: 750 });
+        const { stdout } = await execFileAsync("sw_vers", ["-productVersion"], {
+            encoding: "utf8",
+            timeout: 750,
+        });
         return majorMinorVersion(stdout.trim());
     }
     catch {
@@ -369,7 +386,11 @@ async function getTlhOsMetadata() {
         if (platform === "win32") {
             return { osName: "Windows", osVersion: majorMinorVersion(osRelease()), osArch: architecture };
         }
-        return { osName: unknownIfEmpty(osType()), osVersion: majorMinorVersion(osRelease()), osArch: architecture };
+        return {
+            osName: unknownIfEmpty(osType()),
+            osVersion: majorMinorVersion(osRelease()),
+            osArch: architecture,
+        };
     }
     catch {
         return { osName: "unknown", osVersion: "unknown", osArch: architecture };
@@ -409,7 +430,7 @@ export async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings
     catch {
     }
 }
-function readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) {
+function readSubagentFrontmatterConfig(agentDir, name, providerId, currentModel, availableModels) {
     const filePath = join(agentDir, "tlh", "agents", "subagents", `${name}.md`);
     const content = readText(filePath);
     if (!content)
@@ -424,12 +445,17 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
         model: frontmatter.model || undefined,
         tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
         tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
-        thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking) ? frontmatter.thinking : undefined,
+        thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking)
+            ? frontmatter.thinking
+            : undefined,
         tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
             ? frontmatter.tlhOpenaiThinking
             : undefined,
         tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
             ? frontmatter.tlhAnthropicThinking
+            : undefined,
+        tlhOpenrouterThinking: frontmatter.tlhOpenrouterThinking && isThinkingLevel(frontmatter.tlhOpenrouterThinking)
+            ? frontmatter.tlhOpenrouterThinking
             : undefined,
         preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true"
             ? true
@@ -442,7 +468,7 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
                 ? false
                 : undefined,
     };
-    const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId);
+    const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId, currentModel);
     const thinking = result.thinking;
     const model = result.model
         ? formatProviderModelReference(result.model)
@@ -451,23 +477,28 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, availableMode
             : undefined;
     return { thinking, model };
 }
-function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId, availableModels) {
+function joinModelEffort(model, effort) {
+    return `${model}:${effort}`;
+}
+function buildSubagentTelemetryPayload(effectiveOverrides, agentDir, providerId, currentModel, availableModels) {
     const payload = {};
     for (const name of BUNDLED_SUBAGENT_NAMES) {
         const override = effectiveOverrides[name];
         if (override?.disabled === true) {
-            payload[`Tlh.Subagent.${name}.thinking`] = "disabled";
-            payload[`Tlh.Subagent.${name}.model`] = "disabled";
+            payload[`Tlh.Subagent.${name}.modelEffort`] = "disabled";
             continue;
         }
         const needFrontmatter = agentDir !== undefined && (override?.thinking === undefined || override?.model === undefined);
-        const fm = needFrontmatter ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels) : undefined;
-        payload[`Tlh.Subagent.${name}.thinking`] =
-            override?.thinking === false
-                ? "cleared"
-                : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
-        payload[`Tlh.Subagent.${name}.model`] =
-            override?.model === false ? "cleared" : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+        const fm = needFrontmatter
+            ? readSubagentFrontmatterConfig(agentDir, name, providerId, currentModel, availableModels)
+            : undefined;
+        const model = override?.model === false
+            ? "cleared"
+            : privacySafeTlhTelemetryModelId(override?.model ?? fm?.model);
+        const effort = override?.thinking === false
+            ? "cleared"
+            : privacySafeTlhTelemetryThinkingLevel(override?.thinking ?? fm?.thinking);
+        payload[`Tlh.Subagent.${name}.modelEffort`] = joinModelEffort(model, effort);
     }
     return payload;
 }
@@ -478,6 +509,9 @@ export async function sendTlhLaunchTelemetry(snapshot) {
     }
     const stateDir = tlhStateDir();
     const agentDir = stateDir ? dirname(stateDir) : undefined;
+    const currentModel = snapshot.providerId && snapshot.modelId
+        ? { provider: snapshot.providerId, id: snapshot.modelId }
+        : undefined;
     const effectiveSubagentOverrides = resolveEffectiveSubagentOverrides(launchSettings.ok ? launchSettings.config.subagentOverrides : undefined, readTlhProjectSubagentOverrides(snapshot.cwd ?? process.cwd()));
     const osMetadata = await getTlhOsMetadata();
     await sendTlhTelemetry([
@@ -486,14 +520,13 @@ export async function sendTlhLaunchTelemetry(snapshot) {
             payload: {
                 "Tlh.App.version": snapshot.version,
                 "Tlh.Runtime.provider": privacySafeTlhTelemetryProviderId(snapshot.providerId),
-                "Tlh.Runtime.model": privacySafeTlhTelemetryModelId(snapshot.modelId),
-                "Tlh.Runtime.thinking": privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel),
+                "Tlh.Runtime.modelEffort": joinModelEffort(privacySafeTlhTelemetryModelId(snapshot.modelId), privacySafeTlhTelemetryThinkingLevel(snapshot.thinkingLevel)),
                 "Tlh.PrimaryAgent.name": privacySafeTlhTelemetryPrimaryAgentName(snapshot.primaryAgentName),
                 "Tlh.Device.osName": osMetadata.osName,
                 "Tlh.Device.osVersion": osMetadata.osVersion,
                 "Tlh.Device.osArch": osMetadata.osArch,
                 ...buildExperimentalFeatureTelemetryPayload(launchSettings.ok ? launchSettings.config.experimental : undefined),
-                ...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, snapshot.availableModels ?? []),
+                ...buildSubagentTelemetryPayload(effectiveSubagentOverrides, agentDir, snapshot.providerId, currentModel, snapshot.availableModels ?? []),
             },
         },
     ], snapshot.version, launchSettings);

@@ -12,11 +12,13 @@ export function getMarkdownTheme() { return {}; }
 export function keyText(keybinding) { return keybinding === "app.tools.expand" ? "configured-expand-key" : ""; }
 `;
 
-const realPiTuiUrl = pathToFileURL(createRequire(import.meta.url).resolve("@earendil-works/pi-tui")).href;
+const realPiTuiUrl = pathToFileURL(
+  createRequire(import.meta.url).resolve("@earendil-works/pi-tui"),
+).href;
 
 const renderPiTuiShim = `
-import { visibleWidth, wrapTextWithAnsi } from ${JSON.stringify(realPiTuiUrl)};
-export { visibleWidth, wrapTextWithAnsi };
+import { stripTerminalSequences, visibleWidth, wrapTextWithAnsi } from ${JSON.stringify(realPiTuiUrl)};
+export { stripTerminalSequences, visibleWidth, wrapTextWithAnsi };
 
 function wrapText(text, width) {
   return wrapTextWithAnsi(String(text), Math.max(1, width || 1));
@@ -68,30 +70,32 @@ export class Container {
 `;
 
 function asDataModule(source) {
-	return `data:text/javascript,${encodeURIComponent(source)}`;
+  return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
 export function resolve(specifier, context, nextResolve) {
-	if (context.parentURL?.endsWith("/render.ts")) {
-		if (specifier === "@earendil-works/pi-coding-agent") {
-			return { url: asDataModule(renderPiCodingAgentShim), shortCircuit: true };
-		}
-		if (specifier === "@earendil-works/pi-tui") {
-			return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
-		}
-	}
+  if (context.parentURL?.endsWith("/render.ts")) {
+    if (specifier === "@earendil-works/pi-coding-agent") {
+      return { url: asDataModule(renderPiCodingAgentShim), shortCircuit: true };
+    }
+    if (specifier === "@earendil-works/pi-tui") {
+      return { url: asDataModule(renderPiTuiShim), shortCircuit: true };
+    }
+  }
 
-	if (!specifier.startsWith(".") || !specifier.endsWith(".js")) {
-		return nextResolve(specifier, context);
-	}
+  if (!specifier.startsWith(".") || !specifier.endsWith(".js")) {
+    return nextResolve(specifier, context);
+  }
 
-	const parentDir = context.parentURL ? path.dirname(fileURLToPath(context.parentURL)) : process.cwd();
-	const jsPath = path.resolve(parentDir, specifier);
-	const tsPath = jsPath.replace(/\.js$/, ".ts");
+  const parentDir = context.parentURL
+    ? path.dirname(fileURLToPath(context.parentURL))
+    : process.cwd();
+  const jsPath = path.resolve(parentDir, specifier);
+  const tsPath = jsPath.replace(/\.js$/, ".ts");
 
-	if (!fs.existsSync(jsPath) && fs.existsSync(tsPath)) {
-		return nextResolve(specifier.replace(/\.js$/, ".ts"), context);
-	}
+  if (!fs.existsSync(jsPath) && fs.existsSync(tsPath)) {
+    return nextResolve(specifier.replace(/\.js$/, ".ts"), context);
+  }
 
-	return nextResolve(specifier, context);
+  return nextResolve(specifier, context);
 }

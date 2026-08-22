@@ -1,14 +1,16 @@
 export const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["-C", "-P", "-a", "-u"]);
-export const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
-export const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);
-export const ENV_LONG_OPTIONS_WITHOUT_VALUES = new Set(["--ignore-environment", "--null"]);
-export const ENV_SHORT_SPLIT_STRING_OPTIONS = new Set(["-S"]);
-export const ENV_LONG_SPLIT_STRING_OPTIONS = new Set(["--split-string"]);
-export const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
-export const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
+const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);
+const ENV_LONG_OPTIONS_WITHOUT_VALUES = new Set(["--ignore-environment", "--null"]);
+const ENV_SHORT_SPLIT_STRING_OPTIONS = new Set(["-S"]);
+const ENV_LONG_SPLIT_STRING_OPTIONS = new Set(["--split-string"]);
+const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
+const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 export const MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH = 4;
 export function readHereDocSpec(command, startIndex) {
-    if (command[startIndex] !== "<" || command[startIndex + 1] !== "<" || command[startIndex + 2] === "<") {
+    if (command[startIndex] !== "<" ||
+        command[startIndex + 1] !== "<" ||
+        command[startIndex + 2] === "<") {
         return undefined;
     }
     let index = startIndex + 2;
@@ -192,7 +194,7 @@ export function readProcessSubstitutionBody(command, startIndex) {
     }
     return undefined;
 }
-export function readShellCommandSegment(command, startIndex) {
+function readShellCommandSegment(command, startIndex) {
     let quote;
     let escaped = false;
     const hereDocs = [];
@@ -255,7 +257,9 @@ export function readShellCommandSegment(command, startIndex) {
             return { segment: command.slice(startIndex, nextIndex), nextIndex };
         }
         const next = command[index + 1];
-        const separatorLength = (character === "&" && next === "&") || (character === "|" && (next === "|" || next === "&")) ? 2 : 1;
+        const separatorLength = (character === "&" && next === "&") || (character === "|" && (next === "|" || next === "&"))
+            ? 2
+            : 1;
         return {
             segment: command.slice(startIndex, index),
             nextIndex: index + separatorLength,
@@ -380,28 +384,29 @@ export function commandBasename(token) {
 export function isSupportedEnvCommand(command) {
     return commandBasename(command) === "env";
 }
-export function normalizeCaseInsensitiveLongOptionToken(token) {
+function normalizeCaseInsensitiveLongOptionToken(token) {
     return token.startsWith("--") ? token.toLowerCase() : token;
 }
-export function isSupportedEnvOptionWithoutValue(token) {
+function isSupportedEnvOptionWithoutValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) || ENV_LONG_OPTIONS_WITHOUT_VALUES.has(normalizedToken);
+    return (ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) ||
+        ENV_LONG_OPTIONS_WITHOUT_VALUES.has(normalizedToken));
 }
-export function isSupportedEnvOptionWithValue(token) {
+function isSupportedEnvOptionWithValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken);
+    return (ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken));
 }
-export function isSupportedEnvOptionWithAttachedValue(token) {
+function isSupportedEnvOptionWithAttachedValue(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
     return (normalizedToken.startsWith("--argv0=") ||
         normalizedToken.startsWith("--chdir=") ||
         normalizedToken.startsWith("--unset="));
 }
-export function isEnvSplitStringOption(token) {
+function isEnvSplitStringOption(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
-    return ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken);
+    return (ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken));
 }
-export function getAttachedEnvSplitStringCommand(token) {
+function getAttachedEnvSplitStringCommand(token) {
     const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
     if (normalizedToken.startsWith("--split-string=")) {
         return token.slice(token.indexOf("=") + 1);
@@ -423,10 +428,12 @@ export function getEnvSplitStringEffectiveTokens(tokens, splitStringIndex) {
     if (payload === undefined) {
         return undefined;
     }
-    const remainingTokens = attachedPayload !== undefined ? tokens.slice(splitStringIndex + 1) : tokens.slice(splitStringIndex + 2);
+    const remainingTokens = attachedPayload !== undefined
+        ? tokens.slice(splitStringIndex + 1)
+        : tokens.slice(splitStringIndex + 2);
     return buildEnvSplitStringEffectiveTokens(payload, remainingTokens);
 }
-export function getShortEnvLeadingOptionParseResult(tokens, index) {
+function getShortEnvLeadingOptionParseResult(tokens, index) {
     const token = tokens[index];
     if (!token || token === "-" || !token.startsWith("-") || token.startsWith("--")) {
         return undefined;
@@ -442,7 +449,9 @@ export function getShortEnvLeadingOptionParseResult(tokens, index) {
             if (attachedValue) {
                 return { kind: "continue", nextIndex: index + 1 };
             }
-            return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+            return tokens[index + 1] === undefined
+                ? { kind: "missing-value" }
+                : { kind: "continue", nextIndex: index + 2 };
         }
         if (ENV_SHORT_SPLIT_STRING_OPTIONS.has(option)) {
             const attachedPayload = shortOptions.slice(optionIndex + 1);
@@ -451,7 +460,10 @@ export function getShortEnvLeadingOptionParseResult(tokens, index) {
                 return { kind: "split-string", effectiveTokens: undefined };
             }
             const remainingTokens = attachedPayload ? tokens.slice(index + 1) : tokens.slice(index + 2);
-            return { kind: "split-string", effectiveTokens: buildEnvSplitStringEffectiveTokens(payload, remainingTokens) };
+            return {
+                kind: "split-string",
+                effectiveTokens: buildEnvSplitStringEffectiveTokens(payload, remainingTokens),
+            };
         }
         return { kind: "unknown-option" };
     }
@@ -463,13 +475,18 @@ export function getEnvLeadingOptionParseResult(tokens, index) {
         return { kind: "continue", nextIndex: index + 1 };
     }
     if (isSupportedEnvOptionWithValue(token)) {
-        return tokens[index + 1] === undefined ? { kind: "missing-value" } : { kind: "continue", nextIndex: index + 2 };
+        return tokens[index + 1] === undefined
+            ? { kind: "missing-value" }
+            : { kind: "continue", nextIndex: index + 2 };
     }
     if (isSupportedEnvOptionWithAttachedValue(token)) {
         return { kind: "continue", nextIndex: index + 1 };
     }
     if (isEnvSplitStringOption(token) || getAttachedEnvSplitStringCommand(token) !== undefined) {
-        return { kind: "split-string", effectiveTokens: getEnvSplitStringEffectiveTokens(tokens, index) };
+        return {
+            kind: "split-string",
+            effectiveTokens: getEnvSplitStringEffectiveTokens(tokens, index),
+        };
     }
     const shortOptionParseResult = getShortEnvLeadingOptionParseResult(tokens, index);
     if (shortOptionParseResult) {
@@ -519,7 +536,7 @@ export function normalizeShellCommandTokensFromTokens(tokens) {
 export function normalizeShellCommandTokens(segment) {
     return normalizeShellCommandTokensFromTokens(tokenizeShellWords(segment));
 }
-export function getShellCommandPrefix(command) {
+function getShellCommandPrefix(command) {
     let quote;
     let escaped = false;
     for (let index = 0; index < command.length; index += 1) {
@@ -564,7 +581,7 @@ export function getShellCommandPrefix(command) {
     }
     return command;
 }
-export function renderPrintfEscape(format, index) {
+function renderPrintfEscape(format, index) {
     const specifier = format[index + 1];
     if (specifier === undefined) {
         return undefined;
@@ -574,7 +591,7 @@ export function renderPrintfEscape(format, index) {
     }
     return undefined;
 }
-export function renderPrintfCycle(format, args, startIndex) {
+function renderPrintfCycle(format, args, startIndex) {
     let output = "";
     let nextIndex = startIndex;
     for (let index = 0; index < format.length; index += 1) {
@@ -689,7 +706,7 @@ export function getProcessSubstitutionOutput(command) {
     }
     return output;
 }
-export function isSupportedShellCommandWrapper(command) {
+function isSupportedShellCommandWrapper(command) {
     return SHELL_COMMAND_WRAPPERS.has(commandBasename(command));
 }
 export function getWrappedShellCommandFromTokens(tokens) {

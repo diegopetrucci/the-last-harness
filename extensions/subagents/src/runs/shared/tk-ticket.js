@@ -24,7 +24,11 @@ export function resolveTkTicketTaskContext(input) {
     for (const [taskIndex, task] of (input.tasks ?? []).entries()) {
         if (!task.task || !detectTkTicketId(task.task))
             continue;
-        matches.push({ task: task.task, cwd: resolveTkTicketTaskCwd(input.runnerCwd, task.cwd), taskIndex });
+        matches.push({
+            task: task.task,
+            cwd: resolveTkTicketTaskCwd(input.runnerCwd, task.cwd),
+            taskIndex,
+        });
     }
     return matches.length === 1 ? matches[0] : undefined;
 }
@@ -92,7 +96,10 @@ export function resolveTkTicketMetadata(task, options = {}) {
         if (!ticketMatch)
             return undefined;
         const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
-        return normalizeTkTicketMetadata({ id: ticketMatch.id, title: parseTkTicketTitle(content) ?? "" });
+        return normalizeTkTicketMetadata({
+            id: ticketMatch.id,
+            title: parseTkTicketTitle(content) ?? "",
+        });
     }
     catch {
         return undefined;

@@ -42,7 +42,11 @@ export function classifyTlhInstallState(state) {
     const ref = normalizedString(state?.ref);
     const packageSource = normalizedString(state?.packageSource);
     const defaultPackageSource = isDefaultPackageSource(state);
-    if (!repo || !track || !VALID_TRACKS.has(track) || !packageSource || defaultPackageSource === undefined) {
+    if (!repo ||
+        !track ||
+        !VALID_TRACKS.has(track) ||
+        !packageSource ||
+        defaultPackageSource === undefined) {
         return {
             kind: "unknown",
             summary: "TLH install metadata is missing or invalid.",
@@ -115,7 +119,8 @@ export function formatTlhInstallNoticeTrackLabel(notice) {
     if (notice.kind === "unknown") {
         return "unknown";
     }
-    if (notice.kind === "custom-package-source" && isLocalPackageSource(normalizedString(notice.detail))) {
+    if (notice.kind === "custom-package-source" &&
+        isLocalPackageSource(normalizedString(notice.detail))) {
         return "local";
     }
     if ((notice.kind === "pinned-tag" || notice.kind === "ref") && normalizedString(notice.detail)) {

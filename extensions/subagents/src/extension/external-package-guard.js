@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-export const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([
+const EXTERNAL_SUBAGENT_PACKAGE_SOURCES = Object.freeze([
     "npm:@diegopetrucci/pi-subagents",
     "npm:pi-subagents",
     "git:github.com/nicobailon/pi-subagents",
@@ -64,7 +64,9 @@ export function externalSubagentPackageIdentity(entry) {
         return undefined;
     if (source.startsWith("npm:"))
         return npmIdentity(source);
-    if (source.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(source) || source.startsWith("git@")) {
+    if (source.startsWith("git:") ||
+        /^(https?|ssh|git):\/\//i.test(source) ||
+        source.startsWith("git@")) {
         return gitIdentity(source);
     }
     return undefined;
@@ -84,7 +86,10 @@ function settingsMatches(settingsPath, scope) {
     for (const entry of settings.packages) {
         const source = packageSourceOf(entry)?.trim();
         const identity = externalSubagentPackageIdentity(entry);
-        if (!source || !identity || !EXTERNAL_SUBAGENT_PACKAGE_IDENTITIES.has(identity) || seen.has(identity))
+        if (!source ||
+            !identity ||
+            !EXTERNAL_SUBAGENT_PACKAGE_IDENTITIES.has(identity) ||
+            seen.has(identity))
             continue;
         seen.add(identity);
         matches.push({ scope, settingsPath, source, identity });
@@ -94,7 +99,10 @@ function settingsMatches(settingsPath, scope) {
 export function findConfiguredExternalSubagentPackages(options) {
     const userSettingsPath = path.join(options.agentDir, "settings.json");
     const projectSettingsPath = path.join(options.cwd, options.configDirName, "settings.json");
-    return [...settingsMatches(userSettingsPath, "user"), ...settingsMatches(projectSettingsPath, "project")];
+    return [
+        ...settingsMatches(userSettingsPath, "user"),
+        ...settingsMatches(projectSettingsPath, "project"),
+    ];
 }
 export function externalSubagentCoexistenceWarning(matches) {
     const scopes = [...new Set(matches.map((match) => match.scope))].join(" and ");

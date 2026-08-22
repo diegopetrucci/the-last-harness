@@ -8,7 +8,17 @@ const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL = Symbol.for("tlh.mode
 const TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL = Symbol.for("tlh.modelVisibilityRuntimeGetAvailableSnapshotOriginal");
 const TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED = Symbol.for("tlh.modelVisibilityExactLookupPatched");
 const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for("tlh.modelVisibilityFindExactModelMatchOriginal");
-export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
+function isInteractiveModePrototype(value) {
+    return (value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        "findExactModelMatch" in value &&
+        typeof value.findExactModelMatch === "function");
+}
+function isModelRuntimeSnapshotSource(value) {
+    return isRecord(value) && typeof value.getAvailableSnapshot === "function";
+}
+const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-3-5-haiku-20241022",
     "anthropic/claude-3-5-haiku-latest",
     "anthropic/claude-3-5-sonnet-20240620",
@@ -26,6 +36,7 @@ export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-opus-4-5",
     "anthropic/claude-opus-4-5-20251101",
     "anthropic/claude-opus-4-6",
+    "anthropic/claude-opus-4-7",
     "anthropic/claude-sonnet-4-0",
     "anthropic/claude-sonnet-4-20250514",
     "anthropic/claude-sonnet-4-5",
@@ -35,6 +46,7 @@ export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "openai-codex/gpt-5.3-codex-spark",
     "openai-codex/gpt-5.4",
     "openai-codex/gpt-5.4-mini",
+    "openai-codex/gpt-5.6-luna",
 ]);
 function normalizePatternList(value) {
     if (!Array.isArray(value)) {
@@ -52,7 +64,10 @@ export function normalizeTlhModelVisibilityConfig(config) {
     return {
         disabled: config.disabled === true,
         hidden: normalizePatternList(config.hidden),
-        visible: uniqueSorted([...normalizePatternList(config.visible), ...normalizePatternList(config.unhide)]),
+        visible: uniqueSorted([
+            ...normalizePatternList(config.visible),
+            ...normalizePatternList(config.unhide),
+        ]),
     };
 }
 function readTlhSettings() {
@@ -119,7 +134,8 @@ function findExactModelReferenceMatch(modelReference, availableModels) {
         const provider = trimmedReference.substring(0, slashIndex).trim();
         const modelId = trimmedReference.substring(slashIndex + 1).trim();
         if (provider && modelId) {
-            const providerMatches = availableModels.filter((model) => model.provider.toLowerCase() === provider.toLowerCase() && model.id.toLowerCase() === modelId.toLowerCase());
+            const providerMatches = availableModels.filter((model) => model.provider.toLowerCase() === provider.toLowerCase() &&
+                model.id.toLowerCase() === modelId.toLowerCase());
             if (providerMatches.length === 1) {
                 return providerMatches[0];
             }
@@ -143,9 +159,9 @@ export function isTlhModelHidden(model, config = getTlhModelVisibilityConfig()) 
     if (matchesAnyPattern(model, config.visible)) {
         return false;
     }
-    return matchesAnyPattern(model, TLH_HIDDEN_MODEL_DEFAULTS) || matchesAnyPattern(model, config.hidden);
+    return (matchesAnyPattern(model, TLH_HIDDEN_MODEL_DEFAULTS) || matchesAnyPattern(model, config.hidden));
 }
-export function filterTlhVisibleModels(models, config = getTlhModelVisibilityConfig()) {
+function filterTlhVisibleModels(models, config = getTlhModelVisibilityConfig()) {
     if (config.disabled) {
         return [...models];
     }
@@ -156,14 +172,17 @@ export function installTlhModelVisibilityFilter() {
     if (!modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED]) {
         const originalGetAvailable = modelRuntimePrototype.getAvailable;
         const originalGetAvailableSnapshot = modelRuntimePrototype.getAvailableSnapshot;
-        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] = originalGetAvailable;
-        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] = originalGetAvailableSnapshot;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_ORIGINAL] =
+            originalGetAvailable;
+        modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_GET_AVAILABLE_SNAPSHOT_ORIGINAL] =
+            originalGetAvailableSnapshot;
         modelRuntimePrototype.getAvailable = async function tlhModelVisibilityRuntimeGetAvailable(providerId, options) {
             return filterTlhVisibleModels(await originalGetAvailable.call(this, providerId, options));
         };
-        modelRuntimePrototype.getAvailableSnapshot = function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
-            return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
-        };
+        modelRuntimePrototype.getAvailableSnapshot =
+            function tlhModelVisibilityRuntimeGetAvailableSnapshot() {
+                return filterTlhVisibleModels(originalGetAvailableSnapshot.call(this));
+            };
         modelRuntimePrototype[TLH_MODEL_VISIBILITY_RUNTIME_PATCHED] = true;
     }
     const modelRegistryPrototype = ModelRegistry.prototype;
@@ -175,18 +194,25 @@ export function installTlhModelVisibilityFilter() {
         };
         modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED] = true;
     }
-    const interactiveModePrototype = InteractiveMode.prototype;
+    const interactiveModePrototypeCandidate = InteractiveMode.prototype;
+    if (!isInteractiveModePrototype(interactiveModePrototypeCandidate)) {
+        return;
+    }
+    const interactiveModePrototype = interactiveModePrototypeCandidate;
     if (interactiveModePrototype[TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED] ||
         typeof interactiveModePrototype.findExactModelMatch !== "function") {
         return;
     }
     const originalFindExactModelMatch = interactiveModePrototype.findExactModelMatch;
-    interactiveModePrototype[TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL] = originalFindExactModelMatch;
+    interactiveModePrototype[TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL] =
+        originalFindExactModelMatch;
     interactiveModePrototype.findExactModelMatch = async function tlhFindExactModelMatch(searchTerm) {
         const isUnscopedCanonicalReference = isCanonicalModelReference(searchTerm) && (this.session?.scopedModels?.length ?? 0) === 0;
         if (isUnscopedCanonicalReference) {
             try {
-                const filteredCachedMatch = findExactModelReferenceMatch(searchTerm, this.session?.modelRuntime?.getAvailableSnapshot() ?? this.session?.modelRegistry?.getAvailable() ?? []);
+                const filteredCachedMatch = findExactModelReferenceMatch(searchTerm, this.session?.modelRuntime?.getAvailableSnapshot() ??
+                    this.session?.modelRegistry?.getAvailable() ??
+                    []);
                 if (filteredCachedMatch) {
                     return filteredCachedMatch;
                 }
@@ -224,7 +250,8 @@ export function getUnfilteredAvailableModels(modelSource) {
     if (!modelSource) {
         return [];
     }
-    if ("getAvailableSnapshot" in modelSource && typeof modelSource.getAvailableSnapshot === "function") {
+    if ("getAvailableSnapshot" in modelSource &&
+        typeof modelSource.getAvailableSnapshot === "function") {
         return getUnfilteredRuntimeAvailableSnapshot(modelSource);
     }
     if ("modelRuntime" in modelSource && modelSource.modelRuntime) {
@@ -233,9 +260,8 @@ export function getUnfilteredAvailableModels(modelSource) {
     if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
         return getUnfilteredAvailableModels(modelSource.modelRegistry);
     }
-    const compatibilityRuntime = modelSource
-        .runtime;
-    if (compatibilityRuntime) {
+    const compatibilityRuntime = isRecord(modelSource) && "runtime" in modelSource ? modelSource.runtime : undefined;
+    if (isModelRuntimeSnapshotSource(compatibilityRuntime)) {
         return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
     }
     if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {

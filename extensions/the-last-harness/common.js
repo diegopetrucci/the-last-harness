@@ -35,7 +35,7 @@ export function isFalseyEnvFlag(value) {
     const normalized = value.trim().toLowerCase();
     return normalized === "0" || normalized === "false" || normalized === "no";
 }
-export function stripTrailingPathSeparators(path) {
+function stripTrailingPathSeparators(path) {
     let stripped = path;
     while (stripped.length > sep.length && stripped.endsWith(sep)) {
         stripped = stripped.slice(0, -sep.length);
@@ -48,7 +48,7 @@ export function pathWithinOrEqual(root, child) {
     if (normalizedRoot === sep) {
         return normalizedChild.startsWith(sep);
     }
-    return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`));
 }
 export function expandHomePath(path) {
     const home = process.env.HOME || process.env.USERPROFILE;

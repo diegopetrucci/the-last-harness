@@ -3,6 +3,18 @@ import { parseGitSource } from "./tlh-install-package-source.mjs";
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function readManifestJson(path, { allowMissing }) {
     if (!existsSync(path)) {
         if (allowMissing)
@@ -13,7 +25,10 @@ function readManifestJson(path, { allowMissing }) {
     if (!raw.trim())
         return {};
     try {
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (isJsonValue(parsed))
+            return parsed;
+        throw new Error("JSON value is not representable as a JSON document");
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -26,7 +41,9 @@ function readStringArrayField(entry, key, label) {
     if (!Array.isArray(entry[key])) {
         throw new Error(`Default extension ${label} field '${key}' must be an array`);
     }
-    return entry[key].map((value) => (typeof value === "string" ? value.trim() : "")).filter((value) => value.length > 0);
+    return entry[key]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0);
 }
 function readBooleanField(entry, key, label) {
     if (entry[key] === undefined)
@@ -98,6 +115,9 @@ export const FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES = Object.freeze([
     "npm:pi-intercom",
     "git:github.com/nicobailon/pi-intercom",
     "git:github.com/diegopetrucci/pi-intercom",
+    // notify is now bundled first-party; the npm package must be removed to prevent
+    // two notify extensions running in parallel and every notification firing twice.
+    "npm:@diegopetrucci/pi-notify",
 ]);
 const TARGETED_DEFAULT_EXTENSION_LOAD_ORDER = [];
 export function packageSourceOf(entry) {
@@ -114,7 +134,9 @@ export function packageIdentity(entry) {
     const trimmed = source.trim();
     if (trimmed.startsWith("npm:"))
         return npmIdentity(trimmed);
-    if (trimmed.startsWith("git:") || /^(https?|ssh|git):\/\//i.test(trimmed) || trimmed.startsWith("git@")) {
+    if (trimmed.startsWith("git:") ||
+        /^(https?|ssh|git):\/\//i.test(trimmed) ||
+        trimmed.startsWith("git@")) {
         return gitIdentity(trimmed);
     }
     return `local:${trimmed}`;

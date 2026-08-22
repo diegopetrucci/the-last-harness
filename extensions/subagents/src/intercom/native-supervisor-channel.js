@@ -14,14 +14,14 @@ const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
-const ContactSupervisorParamsSchema = Type.Object({
+const ContactSupervisorParamsSchema = Type.Unsafe(Type.Object({
     reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
     message: Type.Optional(Type.String()),
     interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
-}, { additionalProperties: false });
-const SupervisorParamsSchema = Type.Object({
+}, { additionalProperties: false }));
+const SupervisorParamsSchema = Type.Unsafe(Type.Object({
     action: Type.String({ enum: ["pending", "status"] }),
-}, { additionalProperties: false });
+}, { additionalProperties: false }));
 function safeSegment(value) {
     return (value
         .trim()
@@ -47,7 +47,12 @@ function readChildMetadata() {
     const agent = readTextEnv(SUBAGENT_CHILD_AGENT_ENV);
     const rawIndex = readTextEnv(SUBAGENT_CHILD_INDEX_ENV);
     const orchestratorSessionId = readTextEnv(SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV);
-    if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex))
+    if (!channelDir ||
+        !runId ||
+        !agent ||
+        !orchestratorSessionId ||
+        rawIndex === undefined ||
+        !/^\d+$/.test(rawIndex))
         return undefined;
     return {
         channelDir,
@@ -122,7 +127,9 @@ async function sendSupervisorRequest(params, signal) {
     const metadata = readChildMetadata();
     if (!metadata)
         throw new Error("Native supervisor channel is not available for this subagent.");
-    if (params.reason !== "progress_update" && !params.message?.trim() && params.reason !== "interview_request") {
+    if (params.reason !== "progress_update" &&
+        !params.message?.trim() &&
+        params.reason !== "interview_request") {
         throw new Error("message is required for supervisor decisions.");
     }
     ensureSupervisorChannelDir(metadata.channelDir);
@@ -146,7 +153,9 @@ async function sendSupervisorRequest(params, signal) {
         message,
         expectsReply,
         ...(metadata.orchestratorTarget ? { orchestratorTarget: metadata.orchestratorTarget } : {}),
-        ...(metadata.orchestratorSessionId ? { orchestratorSessionId: metadata.orchestratorSessionId } : {}),
+        ...(metadata.orchestratorSessionId
+            ? { orchestratorSessionId: metadata.orchestratorSessionId }
+            : {}),
         runId: metadata.runId,
         agent: metadata.agent,
         childIndex: metadata.childIndex,
@@ -179,9 +188,8 @@ function hasTool(pi, name) {
 export function registerNativeSupervisorClient(pi) {
     if (!readChildMetadata())
         return;
-    const registerTool = pi.registerTool.bind(pi);
     if (!hasTool(pi, "contact_supervisor")) {
-        registerTool({
+        pi.registerTool({
             name: "contact_supervisor",
             label: "Contact Supervisor",
             description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
@@ -205,7 +213,9 @@ function parseRequestFile(file, channelDir) {
             return undefined;
         if (typeof parsed.message !== "string" || !parsed.message)
             return undefined;
-        if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number")
+        if (typeof parsed.runId !== "string" ||
+            typeof parsed.agent !== "string" ||
+            typeof parsed.childIndex !== "number")
             return undefined;
         return { ...parsed, channelDir, requestFile: file };
     }
@@ -346,14 +356,15 @@ function requestExpiresAt(request, now) {
     return Number.isFinite(request.createdAt) ? request.createdAt + askTimeoutMs() : now;
 }
 function isAwaitingSupervisorPause(pause) {
-    return Boolean(pause && typeof pause === "object" && pause.kind === "awaiting_supervisor");
+    return Boolean(pause &&
+        typeof pause === "object" &&
+        pause.kind === "awaiting_supervisor");
 }
 function requestBlockingPhase(request, state) {
     if (state.foregroundControls.has(request.runId))
         return "pausing";
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
-        foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
     if (foregroundChild && isAwaitingSupervisorPause(foregroundChild.pause)) {
         return foregroundChild.status === "paused" ? "paused" : "pausing";
     }
@@ -369,8 +380,7 @@ function requestBlockingPhase(request, state) {
 }
 function requestTerminalState(request, state) {
     const foregroundRun = state.foregroundRuns?.get(request.runId);
-    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ??
-        foregroundRun?.children[request.childIndex];
+    const foregroundChild = foregroundRun?.children.find((child) => child.index === request.childIndex && child.agent === request.agent) ?? foregroundRun?.children[request.childIndex];
     if (foregroundChild?.cancel?.cancelledAt)
         return "cancelled";
     if (foregroundChild?.status === "completed")
@@ -385,7 +395,9 @@ function requestTerminalState(request, state) {
         return "cancelled";
     if (step?.status === "failed" || asyncJob?.status === "failed")
         return "failed";
-    if (step?.status === "complete" || step?.status === "completed" || asyncJob?.status === "complete")
+    if (step?.status === "complete" ||
+        step?.status === "completed" ||
+        asyncJob?.status === "complete")
         return "completed";
     return undefined;
 }
@@ -465,23 +477,32 @@ function buildParentSupervisorTool(pending, state) {
         parameters: SupervisorParamsSchema,
         async execute(_id, params) {
             refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
-            const input = params;
-            if (input.action === "status") {
+            if (params.action === "status") {
                 return {
-                    content: [{ type: "text", text: `Native supervisor channel active. Pending requests: ${pending.size}.` }],
+                    content: [
+                        {
+                            type: "text",
+                            text: `Native supervisor channel active. Pending requests: ${pending.size}.`,
+                        },
+                    ],
                     details: { active: true, pending: pending.size, root: SUPERVISOR_CHANNEL_ROOT },
                 };
             }
-            if (input.action === "pending") {
+            if (params.action === "pending") {
                 const lines = [...pending.values()]
                     .filter((request) => request.expectsReply)
                     .map((request) => formatPendingLine(request, state));
                 return {
-                    content: [{ type: "text", text: lines.length ? lines.join("\n") : "No pending supervisor requests." }],
+                    content: [
+                        {
+                            type: "text",
+                            text: lines.length ? lines.join("\n") : "No pending supervisor requests.",
+                        },
+                    ],
                     details: { pending: publicPendingRequests(pending) },
                 };
             }
-            throw new Error(`Unsupported supervisor action: ${input.action}`);
+            throw new Error(`Unsupported supervisor action: ${params.action}`);
         },
     };
 }
@@ -490,10 +511,9 @@ export function createNativeSupervisorChannel(pi, state) {
     const seenFiles = new Set();
     let poller;
     let lastStaleCleanupAt = 0;
-    const registerTool = pi.registerTool.bind(pi);
     const registerParentTools = () => {
         if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME))
-            registerTool(buildParentSupervisorTool(pending, state));
+            pi.registerTool(buildParentSupervisorTool(pending, state));
     };
     const cleanupStaleChannelsIfDue = () => {
         const nowMs = Date.now();

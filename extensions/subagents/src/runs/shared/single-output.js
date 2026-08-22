@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-export const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
+const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
 const SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL = String.raw `(?:\*\*Output:\*\*\s*)?`;
 const SINGLE_OUTPUT_INSTRUCTION_PATTERN = "(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
-export const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(String.raw `${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`, "i");
+const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(String.raw `${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`, "i");
 export const SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw `^\s*${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}`, "i");
 export function extractSingleOutputInstructionTarget(text) {
     const match = text.match(SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN);
@@ -114,10 +114,13 @@ export function resolveSingleOutput(outputPath, fallbackOutput, beforeRun) {
     let changedSinceStart = false;
     try {
         const stat = fs.statSync(outputPath);
-        changedSinceStart = !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
+        changedSinceStart =
+            !beforeRun?.exists || stat.mtimeMs !== beforeRun.mtimeMs || stat.size !== beforeRun.size;
     }
     catch (error) {
-        const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+        const code = error && typeof error === "object" && "code" in error
+            ? error.code
+            : undefined;
         if (code !== "ENOENT" && code !== "ENOTDIR") {
             return {
                 fullOutput: fallbackOutput,
@@ -146,7 +149,11 @@ export function finalizeSingleOutput(params) {
     if (params.exitCode === 0 && params.savedPath) {
         const outputReference = params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
         if (params.outputMode === "file-only") {
-            return { displayOutput: outputReference.message, savedPath: params.savedPath, outputReference };
+            return {
+                displayOutput: outputReference.message,
+                savedPath: params.savedPath,
+                outputReference,
+            };
         }
         displayOutput += `\n\n${outputReference.message}`;
         return { displayOutput, savedPath: params.savedPath, outputReference };

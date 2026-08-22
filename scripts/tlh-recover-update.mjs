@@ -91,7 +91,8 @@ function firstConfiguredValue(...values) {
 }
 function defaultTlhAgentDir(env = process.env, options = {}) {
     const homeDir = options.homeDir ?? env.HOME ?? homedir();
-    return expandHomePath(firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) || join(homeDir, ".the-last-harness", "agent"), { homeDir });
+    return expandHomePath(firstConfiguredValue(env.TLH_AGENT_DIR, env.PI_CODING_AGENT_DIR) ||
+        join(homeDir, ".the-last-harness", "agent"), { homeDir });
 }
 function defaultTlhBinDir(env = process.env, options = {}) {
     const homeDir = options.homeDir ?? env.HOME ?? homedir();
@@ -232,36 +233,37 @@ function pathWithinOrEqual(root, child) {
     if (normalizedRoot === sep) {
         return normalizedChild.startsWith(sep);
     }
-    return normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedChild === normalizedRoot || normalizedChild.startsWith(`${normalizedRoot}${sep}`));
 }
 function pathIsProtectedPiConfig(pathValue, options = {}) {
     const homeDir = options.homeDir ?? process.env.HOME ?? homedir();
-    const normalizedPath = options.alreadyNormalized ? stripTrailingSlashes(pathValue) : realpathForCompare(pathValue);
+    const normalizedPath = options.alreadyNormalized
+        ? stripTrailingSlashes(pathValue)
+        : realpathForCompare(pathValue);
     const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
     const normalPiAgentRoot = realpathForCompare(join(homeDir, ".pi", "agent"));
-    return pathWithinOrEqual(normalPiRoot, normalizedPath) || pathWithinOrEqual(normalPiAgentRoot, normalizedPath);
+    return (pathWithinOrEqual(normalPiRoot, normalizedPath) ||
+        pathWithinOrEqual(normalPiAgentRoot, normalizedPath));
 }
 function installStatePath(agentDir) {
     return join(agentDir, "tlh", "install-state.json");
 }
 function readJson(pathValue) {
     const content = readFileSync(pathValue, "utf8").replace(/^\uFEFF/, "");
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    return isInstallStatePayload(parsed) ? parsed : undefined;
 }
-function hasObjectShape(value) {
-    return typeof value === "object" && value !== null;
+function isInstallStatePayload(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function readTrimmedStringProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return typeof propertyValue === "string" && propertyValue.trim() ? propertyValue.trim() : undefined;
+function readTrimmedString(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
-function readBooleanProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return typeof propertyValue === "boolean" ? propertyValue : undefined;
+function readBoolean(value) {
+    return typeof value === "boolean" ? value : undefined;
 }
-function readIntegerProperty(value, key) {
-    const propertyValue = Reflect.get(value, key);
-    return Number.isInteger(propertyValue) ? propertyValue : undefined;
+function readInteger(value) {
+    return typeof value === "number" && Number.isInteger(value) ? value : undefined;
 }
 function isValidTrack(value) {
     switch (value) {
@@ -275,26 +277,26 @@ function isValidTrack(value) {
     }
 }
 function normalizeState(raw) {
-    if (!hasObjectShape(raw)) {
+    if (!isInstallStatePayload(raw)) {
         return undefined;
     }
-    const repo = readTrimmedStringProperty(raw, "repo");
-    const track = readTrimmedStringProperty(raw, "track");
-    const ref = readTrimmedStringProperty(raw, "ref");
-    const packageSource = readTrimmedStringProperty(raw, "packageSource");
+    const repo = readTrimmedString(raw.repo);
+    const track = readTrimmedString(raw.track);
+    const ref = readTrimmedString(raw.ref);
+    const packageSource = readTrimmedString(raw.packageSource);
+    const packageSourceIsDefault = readBoolean(raw.packageSourceIsDefault);
+    const piInstalledByTlh = readBoolean(raw.piInstalledByTlh);
     if (!repo || !track || !isValidTrack(track)) {
         return undefined;
     }
     return {
-        schemaVersion: readIntegerProperty(raw, "schemaVersion"),
+        schemaVersion: readInteger(raw.schemaVersion),
         repo,
         track,
         ref,
         packageSource,
-        packageSourceIsDefault: readBooleanProperty(raw, "packageSourceIsDefault") === true,
-        ...(typeof readBooleanProperty(raw, "piInstalledByTlh") === "boolean"
-            ? { piInstalledByTlh: readBooleanProperty(raw, "piInstalledByTlh") }
-            : {}),
+        packageSourceIsDefault: packageSourceIsDefault === true,
+        ...(piInstalledByTlh !== undefined ? { piInstalledByTlh } : {}),
     };
 }
 function loadState(args) {
@@ -330,7 +332,9 @@ function resolvePlan(state, args) {
     const track = args.track || state?.track;
     const ref = args.ref || state?.ref;
     const packageSource = args.packageSource || state?.packageSource;
-    const packageSourceIsDefault = args.packageSource ? false : state?.packageSourceIsDefault === true;
+    const packageSourceIsDefault = args.packageSource
+        ? false
+        : state?.packageSourceIsDefault === true;
     const changesStoredCustomTarget = state?.packageSourceIsDefault === false &&
         !args.packageSource &&
         ((args.ref && args.ref !== state.ref) ||

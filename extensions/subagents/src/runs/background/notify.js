@@ -5,6 +5,7 @@ import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./comple
 import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
+import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_GROUPED_ENTRIES = 8;
@@ -16,13 +17,6 @@ const MAX_NESTED_DEPTH = 2;
 const MAX_LABEL_CHARS = 160;
 const MAX_ASYNC_ID_CHARS = 200;
 const MAX_SESSION_PATH_CHARS = 4_096;
-function truncateWithMarker(value, maxChars, marker) {
-    if (value.length <= maxChars)
-        return value;
-    if (marker.length >= maxChars)
-        return marker.slice(0, maxChars);
-    return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
-}
 function boundedSummary(value, maxChars) {
     return truncateWithMarker(value, maxChars, "… [summary truncated]");
 }
@@ -38,11 +32,6 @@ function resolvePerChildSummaryBudget(displayedChildCount, nonSummaryCostWithinP
     const count = Math.max(displayedChildCount, 1);
     const availableForSummaries = Math.max(ceilingForPreview - nonSummaryCostWithinPreview, 0);
     return Math.min(MAX_SUMMARY_CHARS, Math.floor(availableForSummaries / count));
-}
-function sliceSafe(value, end) {
-    const sliced = value.slice(0, end);
-    const last = sliced.charCodeAt(sliced.length - 1);
-    return last >= 0xd800 && last <= 0xdbff ? sliced.slice(0, -1) : sliced;
 }
 export function boundedReference(value) {
     if (value.length <= MAX_REFERENCE_CHARS)
@@ -80,7 +69,9 @@ function hasUnsafeIdentifierCharacters(value) {
 function normalizeAsyncIdentifier(value) {
     if (typeof value !== "string")
         return undefined;
-    if (value.trim() === "" || value.length > MAX_ASYNC_ID_CHARS || hasUnsafeIdentifierCharacters(value))
+    if (value.trim() === "" ||
+        value.length > MAX_ASYNC_ID_CHARS ||
+        hasUnsafeIdentifierCharacters(value))
         return undefined;
     if (path.isAbsolute(value) || /[\\/]/.test(value) || value.includes(".."))
         return undefined;
@@ -109,7 +100,10 @@ function formatResumeLine(details) {
 function formatPausedSupervisorActionLines(details) {
     const asyncId = normalizeAsyncIdentifier(details.asyncId);
     const target = details.resumeTarget;
-    if (!details.awaitingSupervisor || !asyncId || !target || !hasExistingSessionFile(target.sessionPath))
+    if (!details.awaitingSupervisor ||
+        !asyncId ||
+        !target ||
+        !hasExistingSessionFile(target.sessionPath))
         return [];
     const idLiteral = JSON.stringify(asyncId);
     if (target.index === undefined) {
@@ -132,7 +126,9 @@ function formatPausedSupervisorActionLines(details) {
     ];
 }
 function normalizeSessionPath(value) {
-    return typeof value === "string" && value.length > 0 && value.length <= MAX_SESSION_PATH_CHARS ? value : undefined;
+    return typeof value === "string" && value.length > 0 && value.length <= MAX_SESSION_PATH_CHARS
+        ? value
+        : undefined;
 }
 function hasExistingSessionFile(value) {
     const sessionPath = normalizeSessionPath(value);
@@ -142,7 +138,11 @@ function resolveAsyncIdentifier(result) {
     return normalizeAsyncIdentifier(result.id) ?? normalizeAsyncIdentifier(result.runId);
 }
 function isValidChildIndex(value, childCount) {
-    return (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0 && value < childCount);
+    return (typeof value === "number" &&
+        Number.isFinite(value) &&
+        Number.isInteger(value) &&
+        value >= 0 &&
+        value < childCount);
 }
 function resolveResumeTarget(result, asyncId) {
     if (!asyncId)
@@ -152,14 +152,21 @@ function resolveResumeTarget(result, asyncId) {
         const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
         return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
     }
-    const statusPriority = ["failed", "paused", "completed", "detached"];
+    const statusPriority = [
+        "failed",
+        "paused",
+        "completed",
+        "detached",
+    ];
     const resumableChild = statusPriority
         .map((status) => children.find((child) => resolveChildStatus(child) === status &&
         isValidChildIndex(child.index, children.length) &&
         hasExistingSessionFile(child.sessionPath)))
         .find((child) => child !== undefined);
     const sessionPath = normalizeSessionPath(resumableChild?.sessionPath);
-    if (!resumableChild || sessionPath === undefined || !isValidChildIndex(resumableChild.index, children.length))
+    if (!resumableChild ||
+        sessionPath === undefined ||
+        !isValidChildIndex(resumableChild.index, children.length))
         return undefined;
     return { sessionPath, index: resumableChild.index, childCount: children.length };
 }
@@ -174,7 +181,9 @@ function resolveOuterStatus(result) {
             (result.exitCode === 0 || summary.startsWith("Paused after interrupt.")));
     if (paused)
         return "paused";
-    if (!result.success || result.state === "failed" || (typeof result.exitCode === "number" && result.exitCode !== 0))
+    if (!result.success ||
+        result.state === "failed" ||
+        (typeof result.exitCode === "number" && result.exitCode !== 0))
         return "failed";
     return "completed";
 }
@@ -245,7 +254,10 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const nestedBudgetForCost = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const nestedBudgetForCost = {
+        remaining: MAX_NESTED_ENTRIES,
+        omissionMarkers: new Set(),
+    };
     const childCosts = displayedChildren.map(({ child, index, status }) => {
         const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
         const nested = formatNestedChildren(child.children, "   ", nestedBudgetForCost);
@@ -255,18 +267,25 @@ function formatProtectedLifecyclePreview(result, ceilingForPreview = MAX_COMPLET
     while (effectiveCount > 0) {
         const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
         const effectiveOmitted = children.length - effectiveCount;
-        const omissionCost = effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+        const omissionCost = effectiveOmitted > 0
+            ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""])
+            : 0;
         if (partialScaffold + countsCost + omissionCost <= ceilingForPreview)
             break;
         effectiveCount--;
     }
     const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
     const effectiveOmittedCount = children.length - effectiveCount;
-    const effectiveOmissionCost = effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+    const effectiveOmissionCost = effectiveOmittedCount > 0
+        ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""])
+        : 0;
     const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
     const showCountsLine = !!counts && optionalLinesAffordable;
     const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
-    const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const nestedBudget = {
+        remaining: MAX_NESTED_ENTRIES,
+        omissionMarkers: new Set(),
+    };
     const lines = [];
     if (showCountsLine)
         lines.push(`Children: ${counts}`, "");
@@ -287,10 +306,14 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     if (privacySafe)
         return formatProtectedLifecyclePreview(result, ceilingForPreview);
     const children = Array.isArray(result.results) ? result.results : [];
-    const nestedBudget = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const nestedBudget = {
+        remaining: MAX_NESTED_ENTRIES,
+        omissionMarkers: new Set(),
+    };
     if (children.length === 0)
         return boundedSummaryOrSuppress(typeof result.summary === "string" ? result.summary : "", Math.min(MAX_SUMMARY_CHARS, ceilingForPreview));
-    const isUnrepresentedOuterFailure = resolveOuterStatus(result) === "failed" && !children.some((child) => resolveChildStatus(child) === "failed");
+    const isUnrepresentedOuterFailure = resolveOuterStatus(result) === "failed" &&
+        !children.some((child) => resolveChildStatus(child) === "failed");
     if (children.length === 1) {
         const child = children[0];
         const singleChildRefs = formatChildReferences(child, privacySafe);
@@ -332,7 +355,10 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
         .filter((entry) => entry.status === status))
         .slice(0, MAX_DISPLAYED_CHILDREN);
-    const nestedBudgetForCost = { remaining: MAX_NESTED_ENTRIES, omissionMarkers: new Set() };
+    const nestedBudgetForCost = {
+        remaining: MAX_NESTED_ENTRIES,
+        omissionMarkers: new Set(),
+    };
     const childCosts = displayedChildren.map(({ child, index, status }) => {
         const labelLine = `${index + 1}/${children.length}. ${boundedLabel(child.agent)} — ${status}`;
         const refs = formatChildReferences(child, privacySafe);
@@ -343,15 +369,21 @@ function formatResultPreview(result, ceilingForPreview = MAX_COMPLETION_MESSAGE_
     while (effectiveCount > 0) {
         const partialScaffold = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
         const effectiveOmitted = children.length - effectiveCount;
-        const omissionCost = effectiveOmitted > 0 ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""]) : 0;
+        const omissionCost = effectiveOmitted > 0
+            ? joinedLineCost([`… [${effectiveOmitted} child results omitted]`, ""])
+            : 0;
         if (partialScaffold + countsCost + omissionCost <= ceilingForPreview)
             break;
         effectiveCount--;
     }
     const effectiveDisplayedChildren = displayedChildren.slice(0, effectiveCount);
     const effectiveOmittedCount = children.length - effectiveCount;
-    const perChildScaffoldCostForEffective = childCosts.slice(0, effectiveCount).reduce((s, c) => s + c, 0);
-    const effectiveOmissionCost = effectiveOmittedCount > 0 ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""]) : 0;
+    const perChildScaffoldCostForEffective = childCosts
+        .slice(0, effectiveCount)
+        .reduce((s, c) => s + c, 0);
+    const effectiveOmissionCost = effectiveOmittedCount > 0
+        ? joinedLineCost([`… [${effectiveOmittedCount} child results omitted]`, ""])
+        : 0;
     const optionalLinesAffordable = effectiveCount > 0 || countsCost + effectiveOmissionCost <= ceilingForPreview;
     const showCountsLine = !!counts && optionalLinesAffordable;
     const showOmissionLine = effectiveOmittedCount > 0 && optionalLinesAffordable;
@@ -446,7 +478,11 @@ export function formatGroupedCompletion(details) {
         const headLines = [
             `${index + 1}. ${detail.agent}${detail.taskInfo ?? ""}`,
             ...(asyncIdLine ? [asyncIdLine] : []),
-            ...(pausedSupervisorActionLines.length > 0 ? pausedSupervisorActionLines : resumeLine ? [resumeLine] : []),
+            ...(pausedSupervisorActionLines.length > 0
+                ? pausedSupervisorActionLines
+                : resumeLine
+                    ? [resumeLine]
+                    : []),
         ];
         const tailLines = [...(sessionLine ? [sessionLine] : []), ""];
         return { detail, headLines, tailLines };
@@ -456,7 +492,8 @@ export function formatGroupedCompletion(details) {
         (omissionMarker ? joinedLineCost([omissionMarker, ""]) : 0) +
         entries.reduce((total, entry) => total + joinedLineCost(entry.headLines) + joinedLineCost(entry.tailLines), 0);
     const previewSeparatorCost = Math.max(entries.length - 2, 0);
-    const previewCeiling = Math.max(Math.floor((MAX_COMPLETION_MESSAGE_CHARS - reservedChars - previewSeparatorCost) / Math.max(entries.length, 1)), 0);
+    const previewCeiling = Math.max(Math.floor((MAX_COMPLETION_MESSAGE_CHARS - reservedChars - previewSeparatorCost) /
+        Math.max(entries.length, 1)), 0);
     const blocks = [header, ""];
     if (omissionMarker) {
         blocks.push(omissionMarker, "");
@@ -484,11 +521,15 @@ function sendCompletion(pi, details, options = { triggerTurn: true }) {
         ? {
             ...serializableDetail,
             resultPreview: boundedSummary(details[0].resultPreview, MAX_DISPLAY_SUMMARY_CHARS),
-            ...(details[0].sessionValue ? { sessionValue: boundedReference(details[0].sessionValue) } : {}),
+            ...(details[0].sessionValue
+                ? { sessionValue: boundedReference(details[0].sessionValue) }
+                : {}),
             ...(details[0].awaitingSupervisor && details[0].resumeTarget
                 ? {
                     resumeTarget: {
-                        ...(details[0].resumeTarget.index !== undefined ? { index: details[0].resumeTarget.index } : {}),
+                        ...(details[0].resumeTarget.index !== undefined
+                            ? { index: details[0].resumeTarget.index }
+                            : {}),
                         ...(details[0].resumeTarget.childCount !== undefined
                             ? { childCount: details[0].resumeTarget.childCount }
                             : {}),
@@ -563,7 +604,8 @@ export function buildCompletionDetails(result) {
         ...(asyncId ? { asyncId } : {}),
         ...(resumeTarget ? { resumeTarget } : {}),
         ...(session ? { sessionLabel: session.label, sessionValue: session.value } : {}),
-        ...(result.state === "paused" && result.pause?.kind === "awaiting_supervisor"
+        ...(result.state === "paused" &&
+            result.pause?.kind === "awaiting_supervisor"
             ? { awaitingSupervisor: true }
             : {}),
     };
@@ -581,7 +623,8 @@ export default function registerSubagentNotify(pi, state, options = {}) {
         }
     }
     const previousBatcher = globalStore[batcherStoreKey];
-    if (previousBatcher && typeof previousBatcher.dispose === "function") {
+    if (previousBatcher &&
+        typeof previousBatcher.dispose === "function") {
         try {
             previousBatcher.dispose();
         }
@@ -628,7 +671,10 @@ export default function registerSubagentNotify(pi, state, options = {}) {
                         batchers.delete(batchKey);
                         return;
                     }
-                    sendCompletion(pi, items, { triggerTurn: !lifecycleFlush && !suppressFlushNudge, isIdle });
+                    sendCompletion(pi, items, {
+                        triggerTurn: !lifecycleFlush && !suppressFlushNudge,
+                        isIdle,
+                    });
                 },
                 ...(options.timers ? { timers: options.timers } : {}),
                 now: nowFn,

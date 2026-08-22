@@ -1,21 +1,16 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { keyText, } from "@earendil-works/pi-coding-agent";
 import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
+import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
 export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-usage.js";
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
-const KNOWN_PI_MCP_ADAPTER_SOURCES = [
-    "npm:pi-mcp-adapter",
-    "npm:@diegopetrucci/pi-mcp-adapter",
-    "git:github.com/diegopetrucci/pi-mcp-adapter",
-];
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -72,31 +67,6 @@ function resultContentChars(content) {
 }
 function estimateTokensFromChars(charCount) {
     return charCount > 0 ? Math.ceil(charCount / CHARS_PER_TOKEN) : 0;
-}
-function hasKnownPiMcpAdapterSource(source) {
-    return (typeof source === "string" &&
-        KNOWN_PI_MCP_ADAPTER_SOURCES.some((knownSource) => source === knownSource || source.startsWith(`${knownSource}@`)));
-}
-function hasPersistedDirectMcpResultDetails(toolName, details) {
-    if (!details || typeof details !== "object") {
-        return false;
-    }
-    const candidate = details;
-    if (typeof candidate.server !== "string" ||
-        candidate.server.length === 0 ||
-        typeof candidate.tool !== "string" ||
-        candidate.tool.length === 0) {
-        return false;
-    }
-    const serverPrefix = candidate.server.replaceAll("-", "_");
-    const shortPrefix = candidate.server.replace(/-?mcp$/i, "").replaceAll("-", "_") || "mcp";
-    return new Set([candidate.tool, `${serverPrefix}_${candidate.tool}`, `${shortPrefix}_${candidate.tool}`]).has(toolName);
-}
-function getMcpToolKind(toolName, toolInfo) {
-    if (toolName === "mcp") {
-        return "proxy";
-    }
-    return hasKnownPiMcpAdapterSource(toolInfo?.sourceInfo?.source) ? "direct" : undefined;
 }
 function estimateMcpDefinitionTokens(toolInfo) {
     return estimateTokensFromChars(safeJsonLength({
@@ -162,12 +132,16 @@ function getMcpContextEstimateSuffix(pi, ctx, contextUsage, cache) {
             continue;
         }
         if (message.role === "toolResult" && typeof message.toolName === "string") {
-            const pendingCall = typeof message.toolCallId === "string" ? pendingToolCallsById.get(message.toolCallId) : undefined;
+            const pendingCall = typeof message.toolCallId === "string"
+                ? pendingToolCallsById.get(message.toolCallId)
+                : undefined;
             const hasPairedDirectResultProvenance = message.toolName !== "mcp" &&
                 pendingCall?.toolName === message.toolName &&
                 hasPersistedDirectMcpResultDetails(message.toolName, message.details);
             const kind = getMcpToolKind(message.toolName, toolCatalogByName.get(message.toolName)) ??
-                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance ? "direct" : undefined);
+                (knownDirectMcpToolNames.has(message.toolName) || hasPairedDirectResultProvenance
+                    ? "direct"
+                    : undefined);
             if (!kind) {
                 continue;
             }
@@ -194,7 +168,23 @@ function appendMcpContextEstimate(statusText, suffix) {
     }
     return `${statusText}${suffix}`;
 }
-export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice) {
+export function formatReauthWarningLine(providers, width, theme) {
+    if (providers.length === 0)
+        return undefined;
+    const fullText = `\u26a0 reauth: ${providers.join(", ")}`;
+    const fullStyled = theme.fg("warning", fullText);
+    if (visibleWidth(fullStyled) <= width)
+        return fullStyled;
+    const shortLabels = providers.map((p) => p.split("-").at(-1) ?? p);
+    const shortText = `\u26a0 reauth: ${shortLabels.join(", ")}`;
+    const shortStyled = theme.fg("warning", shortText);
+    if (visibleWidth(shortStyled) <= width)
+        return shortStyled;
+    const countText = `\u26a0 reauth \u00d7${providers.length}`;
+    const countStyled = theme.fg("warning", countText);
+    return truncateToWidth(countStyled, width, theme.fg("warning", "..."));
+}
+export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usageOptions = {}, gitCache, installNotice, providerAuthHealth) {
     let mcpContextEstimateCache;
     return {
         render(width) {
@@ -216,11 +206,14 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
             const dimSep = theme.fg("dim", " • ");
-            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT ? theme.fg("dim", primaryName) : theme.fg("accent", primaryName);
+            const nameSegment = primaryName === DEFAULT_PRIMARY_AGENT
+                ? theme.fg("dim", primaryName)
+                : theme.fg("accent", primaryName);
             let agentLine2Str = theme.fg("dim", "agent: ") + nameSegment + dimSep + theme.fg("dim", modelPart);
             if (model?.reasoning) {
                 const thinkingLevel = getCurrentThinkingLevel(pi);
-                agentLine2Str += dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
+                agentLine2Str +=
+                    dimSep + theme.fg("dim", thinkingLevel === "off" ? "thinking off" : thinkingLevel);
             }
             const contextPercentDisplay = contextPercent === "?"
                 ? `?/${formatCompactTokenCount(contextWindow)}`
@@ -241,7 +234,9 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             }
             const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
             const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
-            const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost ? formatCost(totals.cost) : undefined;
+            const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost
+                ? formatCost(totals.cost)
+                : undefined;
             const line3Parts = [];
             if (costStr)
                 line3Parts.push(costStr);
@@ -249,22 +244,18 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 line3Parts.push(subscriptionUsageState.segment);
             const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
             const lines = [pwdLine, agentLine2];
+            if (providerAuthHealth) {
+                const reauthProviders = providerAuthHealth.getReauthProviders();
+                const warningLine = formatReauthWarningLine(reauthProviders, width, theme);
+                if (warningLine !== undefined)
+                    lines.push(warningLine);
+            }
             const extensionStatuses = footerData?.getExtensionStatuses?.();
             const hasMcpStatus = extensionStatuses
                 ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))
                 : false;
             if (hasMcpStatus) {
                 mcpContextEstimateCache = getMcpContextEstimateSuffix(pi, ctx, contextUsage, mcpContextEstimateCache);
-            }
-            const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
-            if (tkWorkflowStatus) {
-                const tkWorkflowLines = tkWorkflowStatus
-                    .split(/\r?\n/)
-                    .map((line) => sanitizeStatusText(line))
-                    .filter(Boolean);
-                for (const line of tkWorkflowLines) {
-                    lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
-                }
             }
             if (line3 !== undefined) {
                 lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
@@ -278,9 +269,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
             }
             if (extensionStatuses && extensionStatuses.size > 0) {
-                const visibleStatuses = Array.from(extensionStatuses.entries())
-                    .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
-                    .sort(([a], [b]) => a.localeCompare(b));
+                const visibleStatuses = Array.from(extensionStatuses.entries()).sort(([a], [b]) => a.localeCompare(b));
                 const statusLine = visibleStatuses
                     .map(([, text]) => appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix))
                     .filter(Boolean)

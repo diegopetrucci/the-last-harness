@@ -6,7 +6,42 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- [pi-transcribe](https://github.com/earendil-works/pi-transcribe) is now bundled by default.```
+- [pi-transcribe](https://github.com/earendil-works/pi-transcribe) is now bundled by default.
+- TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
+- TLH now bundles the show-me skill for visual explanations with diagrams, code-shape sketches, and focused HTML artifacts.
+
+### Changed
+
+- TLH installs much faster now.
+
+### Removed
+
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
+- Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
+
+## [0.38.1] - 2026-08-18
+
+### Fixed
+
+- Fixed async subagent widgets that could show stale activity or health warnings after continuing a run.
+- Update-available warnings now reappear on every interactive launch until the release is installed.
+
+## [0.38.0] - 2026-08-17
+
+### Added
+
+- At launch, TLH now shows what’s eating up your context.
+- TLH now warns you if a provider you've logged in with needs you to re-authenticate.
+- The `/annotate-last-message` window is now prettier because it renders Markdown and includes other niceties.
+- Changing `/model`, `/thinking`, or `/effort` now asks you whether it should apply to only that session, or to all sessions.
+- TLH now bundles skills for using Herdr, Cmux, and Tmux.
+
+### Changed
+
+- `/fast` now supports both OpenAI and Anthropic models.
+- Bumped the pinned Pi runtime to `0.84.2`.
+- Various improvements to how subagents look in the TUI, and how they report issues to the primary agents.
+- The installer's default output is now more concise.
 
 ## [0.37.0] - 2026-08-11
 

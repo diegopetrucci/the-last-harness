@@ -1,4 +1,4 @@
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -74,7 +74,8 @@ export function defaultTlhKeybindingsPath({ agentDir, env = process.env, homeDir
     return join(resolveTlhAgentDir(agentDir, { env, homeDir, preferTlhAgentDir }), "keybindings.json");
 }
 export function defaultTlhBinDir(env = process.env, { homeDir = homedir() } = {}) {
-    return (expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) || join(homeDir, ".local", "bin"));
+    return (expandHomePath(env.TLH_BIN_DIR || join(homeDir, ".local", "bin"), { homeDir }) ||
+        join(homeDir, ".local", "bin"));
 }
 export function readJsonFile(path, { missingValue, emptyValue = {} } = {}) {
     if (!existsSync(path)) {
@@ -272,7 +273,7 @@ export function selectExpiredBackups(candidates, { maxAgeMs = 28 * 24 * 60 * 60 
     }
     return toDelete;
 }
-export function pathIsInNormalPiConfig(path, { homeDir = homedir(), alreadyNormalized = false } = {}) {
+export function pathIsInNormalPiConfig(path, { homeDir = homedir(), alreadyNormalized = false, } = {}) {
     const normalPiRoot = realpathForCompare(join(homeDir, ".pi"));
     const normalizedPath = alreadyNormalized ? path : realpathForCompare(path);
     return pathWithinOrEqual(normalPiRoot, normalizedPath);

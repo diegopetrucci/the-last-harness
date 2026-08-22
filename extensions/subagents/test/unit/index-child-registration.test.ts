@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,14 +7,14 @@ import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function parentToolEnv(): NodeJS.ProcessEnv {
-	const env = { ...process.env };
-	delete env[SUBAGENT_CHILD_ENV];
-	return env;
+  const env = { ...process.env };
+  delete env[SUBAGENT_CHILD_ENV];
+  return env;
 }
 
 describe("subagent extension child mode", () => {
-	it("does not mutate Pi tool expansion before direct subagent tool execution", () => {
-		const script = String.raw`
+  it("does not mutate Pi tool expansion before direct subagent tool execution", () => {
+    const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
@@ -52,22 +51,22 @@ describe("subagent extension child mode", () => {
 			if (calls.length !== 0) throw new Error("unexpected Pi tool expansion mutation: " + JSON.stringify(calls));
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
-	});
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+    );
+  });
 
-	it("consumes enhanced Ctrl+Shift+D before Pi debug and keeps the registered shortcut discoverable", () => {
-		const script = String.raw`
+  it("consumes enhanced Ctrl+Shift+D before Pi debug and keeps the registered shortcut discoverable", () => {
+    const script = String.raw`
 			import assert from "node:assert/strict";
 			import registerSubagentExtension from "./src/extension/index.ts";
 			import { SUBAGENT_LIVE_DETAIL_SHORTCUT } from "./src/shared/subagent-shortcuts.ts";
@@ -314,22 +313,22 @@ describe("subagent extension child mode", () => {
 			assert.equal(terminalInputHandlers.has("replacement-session"), false, "shutdown retained the replacement raw listener");
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
-	});
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+    );
+  });
 
-	it("keeps one result block when the pinned ToolExecutionComponent registers and reclaims", () => {
-		const script = String.raw`
+  it("keeps one result block when the pinned ToolExecutionComponent registers and reclaims", () => {
+    const script = String.raw`
 			import assert from "node:assert/strict";
 			import { ToolExecutionComponent } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js";
 			import { initTheme } from "../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
@@ -458,22 +457,22 @@ describe("subagent extension child mode", () => {
 			await emitExtensionEvent("session_shutdown", { type: "session_shutdown", reason: "quit" });
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
-	});
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+    );
+  });
 
-	it("shows async badge for direct async single and parallel calls", () => {
-		const script = String.raw`
+  it("shows async badge for direct async single and parallel calls", () => {
+    const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
 			let registeredTool;
@@ -497,25 +496,25 @@ describe("subagent extension child mode", () => {
 			const asyncSingle = registeredTool.renderCall({ agent: "worker", async: true }, theme).text;
 			const asyncParallel = registeredTool.renderCall({ tasks: [{ agent: "worker" }, { agent: "reviewer", count: 2 }], async: true }, theme).text;
 			if (!asyncSingle.includes("[async]")) throw new Error("expected async single badge, got " + asyncSingle);
-			if (!asyncParallel.includes("parallel (3) [async]")) throw new Error("expected async parallel badge, got " + asyncParallel);
+			if (!asyncParallel.includes("[async]") || asyncParallel.includes("parallel")) throw new Error("expected async parallel badge without parallel count, got " + asyncParallel);
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
-	});
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
+    );
+  });
 
-	it("returns before registering anything for child subagents", () => {
-		const script = String.raw`
+  it("returns before registering anything for child subagents", () => {
+    const script = String.raw`
 			import registerSubagentExtension from "./src/extension/index.ts";
 			import { SUBAGENT_CHILD_ENV } from "./src/runs/shared/pi-args.ts";
 			process.env[SUBAGENT_CHILD_ENV] = "1";
@@ -534,17 +533,17 @@ describe("subagent extension child mode", () => {
 			}
 		`;
 
-		execFileSync(
-			process.execPath,
-			[
-				"--experimental-strip-types",
-				"--import",
-				"./test/support/register-loader.mjs",
-				"--input-type=module",
-				"--eval",
-				script,
-			],
-			{ cwd: projectRoot, stdio: "pipe" },
-		);
-	});
+    execFileSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--import",
+        "./test/support/register-loader.mjs",
+        "--input-type=module",
+        "--eval",
+        script,
+      ],
+      { cwd: projectRoot, stdio: "pipe" },
+    );
+  });
 });

@@ -4,7 +4,7 @@ import { extname, relative, resolve } from "node:path";
 const WORKING_TREE_COMMIT_SHA = "__tlh_working_tree__";
 const WORKING_TREE_COMMIT_SHORT_SHA = "WT";
 const WORKING_TREE_COMMIT_SUBJECT = "Uncommitted changes";
-export function isWorkingTreeCommitSha(sha) {
+function isWorkingTreeCommitSha(sha) {
     return sha === WORKING_TREE_COMMIT_SHA;
 }
 function createWorkingTreeCommitInfo() {
@@ -31,7 +31,7 @@ async function runBashAllowFailure(pi, repoRoot, script) {
     }
     return result.stdout;
 }
-export async function getRepoRoot(pi, cwd) {
+async function getRepoRoot(pi, cwd) {
     const result = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
     if (result.code !== 0) {
         throw new Error("Not inside a git repository.");
@@ -57,7 +57,11 @@ async function getUpstreamRef(pi, repoRoot) {
     return value.length > 0 ? value : null;
 }
 async function getOriginHeadRef(pi, repoRoot) {
-    const output = await runGitAllowFailure(pi, repoRoot, ["symbolic-ref", "refs/remotes/origin/HEAD", "--short"]);
+    const output = await runGitAllowFailure(pi, repoRoot, [
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "--short",
+    ]);
     const value = output.trim();
     return value.length > 0 ? value : null;
 }
@@ -166,7 +170,12 @@ function parseStatusPorcelainZ(output) {
     return info;
 }
 async function getWorkingTreeStatusInfo(pi, repoRoot) {
-    const output = await runGitAllowFailure(pi, repoRoot, ["status", "--porcelain=1", "--untracked-files=all", "-z"]);
+    const output = await runGitAllowFailure(pi, repoRoot, [
+        "status",
+        "--porcelain=1",
+        "--untracked-files=all",
+        "-z",
+    ]);
     return parseStatusPorcelainZ(output);
 }
 function toDisplayPath(change) {
@@ -264,7 +273,9 @@ function shellQuote(value) {
 }
 async function getRevisionBytes(pi, repoRoot, revision, path) {
     const spec = shellQuote(`${revision}:${path}`);
-    const result = await pi.exec("bash", ["-lc", `git show ${spec} | base64 | tr -d '\\n'`], { cwd: repoRoot });
+    const result = await pi.exec("bash", ["-lc", `git show ${spec} | base64 | tr -d '\\n'`], {
+        cwd: repoRoot,
+    });
     if (result.code !== 0)
         return null;
     const encoded = (result.stdout ?? "").trim();
@@ -519,9 +530,16 @@ export async function getReviewWindowData(pi, cwd) {
         : await getWorkingTreeReviewChanges(pi, repoRoot, false);
     const reviewableBranchChanges = branchChanges.filter((change) => isIncludedReviewPath(change.newPath ?? change.oldPath ?? ""));
     const { allFiles: files, branchFiles } = await getAllReviewFiles(pi, repoRoot, reviewableBranchChanges);
-    const commits = reviewBase ? await listRangeCommits(pi, repoRoot, `${reviewBase.mergeBase}..HEAD`, 100) : [];
-    const workingTreeCommit = workingTreeStatus.hasReviewableChanges ? [createWorkingTreeCommitInfo()] : [];
-    const fallbackCommits = repositoryHasHead && branchFiles.length === 0 && commits.length === 0 && !workingTreeStatus.hasReviewableChanges
+    const commits = reviewBase
+        ? await listRangeCommits(pi, repoRoot, `${reviewBase.mergeBase}..HEAD`, 100)
+        : [];
+    const workingTreeCommit = workingTreeStatus.hasReviewableChanges
+        ? [createWorkingTreeCommitInfo()]
+        : [];
+    const fallbackCommits = repositoryHasHead &&
+        branchFiles.length === 0 &&
+        commits.length === 0 &&
+        !workingTreeStatus.hasReviewableChanges
         ? await listRangeCommits(pi, repoRoot, "HEAD", 20)
         : commits;
     return {
@@ -533,10 +551,15 @@ export async function getReviewWindowData(pi, cwd) {
         repositoryHasHead,
     };
 }
-export async function listRangeCommits(pi, repoRoot, range, limit) {
+async function listRangeCommits(pi, repoRoot, range, limit) {
     const sep = "\x1f";
     const format = ["%H", "%h", "%s", "%an", "%aI"].join(sep);
-    const output = await runGitAllowFailure(pi, repoRoot, ["log", `-${limit}`, `--format=${format}`, range]);
+    const output = await runGitAllowFailure(pi, repoRoot, [
+        "log",
+        `-${limit}`,
+        `--format=${format}`,
+        range,
+    ]);
     return output
         .split(/\r?\n/)
         .map((line) => line.trimEnd())
@@ -666,7 +689,9 @@ export async function loadReviewFileContents(pi, repoRoot, file, scope, commitSh
         const content = file.hasWorkingTreeFile
             ? await getWorkingTreeContent(repoRoot, path)
             : await getRevisionContent(pi, repoRoot, "HEAD", path);
-        const exists = file.hasWorkingTreeFile ? workingTreeExists : content.length > 0 || path.length > 0;
+        const exists = file.hasWorkingTreeFile
+            ? workingTreeExists
+            : content.length > 0 || path.length > 0;
         return {
             originalContent: content,
             modifiedContent: content,
@@ -728,8 +753,12 @@ export async function loadReviewFileContents(pi, repoRoot, file, scope, commitSh
                 modifiedPreviewUrl: null,
             };
         }
-        const originalContent = comparison.oldPath == null ? "" : await getRevisionContent(pi, repoRoot, `${commitSha}^`, comparison.oldPath);
-        const modifiedContent = comparison.newPath == null ? "" : await getRevisionContent(pi, repoRoot, commitSha, comparison.newPath);
+        const originalContent = comparison.oldPath == null
+            ? ""
+            : await getRevisionContent(pi, repoRoot, `${commitSha}^`, comparison.oldPath);
+        const modifiedContent = comparison.newPath == null
+            ? ""
+            : await getRevisionContent(pi, repoRoot, commitSha, comparison.newPath);
         return {
             originalContent,
             modifiedContent,
@@ -753,8 +782,12 @@ export async function loadReviewFileContents(pi, repoRoot, file, scope, commitSh
             modifiedPreviewUrl: null,
         };
     }
-    const originalContent = comparison.oldPath == null ? "" : await getRevisionContent(pi, repoRoot, branchMergeBaseSha, comparison.oldPath);
-    const modifiedExists = comparison.newPath != null && file.hasWorkingTreeFile ? hasWorkingTreeFile(repoRoot, comparison.newPath) : false;
+    const originalContent = comparison.oldPath == null
+        ? ""
+        : await getRevisionContent(pi, repoRoot, branchMergeBaseSha, comparison.oldPath);
+    const modifiedExists = comparison.newPath != null && file.hasWorkingTreeFile
+        ? hasWorkingTreeFile(repoRoot, comparison.newPath)
+        : false;
     const modifiedContent = comparison.newPath == null
         ? ""
         : file.hasWorkingTreeFile

@@ -2,15 +2,23 @@
 
 Run these commands from the repository root with Node.js >=22.19.0. Prefer temporary isolated profile directories so local testing does not touch a real `tlh` or normal Pi profile.
 
+The deferred, contributor-only investigation of `anti-slop/no-unsafe-dictionary-type` is recorded in [Unsafe dictionary investigation (2026-08-18)](no-unsafe-dictionary-investigation-2026-08-18.md). It is evidence for a future decision only; do not enable the rule or apply cosmetic remediations from that note without a separately approved implementation slice.
+
+## Direct dependency pin decisions
+
+Direct dependency, devDependency, and peerDependency specs remain exact. The refresh selected the latest stable registry releases for the compatible direct pins: Pi `0.84.2`, Oxlint `1.78.0`, `@oxlint/plugins` `1.78.0`, Oxfmt `0.63.0`, and `@types/node` `26.2.0`; the other unchanged direct pins (`@tailwindcss/browser` `4.3.3`, `glimpseui` `0.8.1`, `monaco-editor` `0.56.0`, `jiti` `2.7.0`, and `shellcheck` `4.1.0`) were already current.
+
+Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.84.2` declares that exact transitive pin, and `typescript` stays at `6.0.3` because registry latest `7.0.2` does not export `typescript/bin/tsc`, which TLH's runtime TypeScript freshness check resolves, and also removes the `ts.ScriptTarget.Latest` API used by the extension static tests. Both holds are therefore compatibility requirements, not stale version metadata.
+
 ## Run validation
 
-Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, lint, settings merge dry-run, and package dry-run:
+Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, Oxlint linting, Oxfmt formatting checks, ShellCheck linting, settings merge dry-run, and package dry-run:
 
 ```sh
 npm run validate
 ```
 
-This default validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
+Oxlint retains its built-in default rule selection and registers the vendored anti-slop plugin through `.oxlintrc.json`. Anti-slop adoption is deliberately per-rule: `anti-slop/no-chained-type-assertions`, `anti-slop/no-module-mocking`, `anti-slop/no-object-parameters`, `anti-slop/no-reflect-apply`, `anti-slop/no-reflect-get`, `anti-slop/no-shape-in-symbol-names`, `anti-slop/no-unknown-returns`, `anti-slop/no-unknown-type-aliases`, and `anti-slop/no-widen-then-assert` are active at error severity, while the other 6 rule entries remain visibly commented out. Oxlint still runs with `--deny-warnings` through `npm run lint`; any warning or error fails validation. CI invokes that same npm script rather than duplicating the Oxlint command. This validation path stays deterministic and repo-local. Its `npm test` step uses the quiet dot reporter for passing runs.
 
 When you need the full Node test reporter for diagnostics, rerun:
 
@@ -23,6 +31,8 @@ If you are iterating on runtime TypeScript sources under `scripts/` or `extensio
 ```sh
 npm run typecheck:runtime
 npm run check:runtime
+npm run lint
+npm run format:check
 npm run build
 ```
 
@@ -52,30 +62,6 @@ node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-su
 ```
 
 That verifier compares source Git objects with the immutable import checkpoint and current historical archive. It is separate from routine `npm run validate` because the external history checkout is not a repository dependency. See [subagents-history/HISTORY.md](subagents-history/HISTORY.md) for the repository URL, exact commits/tree, checksum command, and history-inspection commands.
-
-## Refresh the Understand Anything graph
-
-When a change materially affects architecture, repository structure, or documented workflows, refresh the tracked Understand Anything graph from the repository root. Launch an interactive TLH or upstream Pi session, then enable the Understand Anything skill/extension in that same session before using `/understand`. TLH does not expose `/understand` by default.
-
-For example, start a TLH session with:
-
-```sh
-tlh
-```
-
-Then, after the Understand Anything skill/extension is enabled in that session, run the refresh command:
-
-```text
-/understand
-```
-
-Use a full refresh only when the incremental update is insufficient:
-
-```text
-/understand --full
-```
-
-Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-anything/meta.json`, `.understand-anything/fingerprints.json`, and `.understand-anything/intermediate/scan-result.json` diff before committing it. Commit those generated updates only when the graph refresh is actually warranted by the change.
 
 ## Test the extension directly
 
@@ -133,7 +119,7 @@ node scripts/merge-settings.mjs config/settings.defaults.json \
 node scripts/tlh-defaults.mjs \
   --settings "$tmp/settings.json" \
   --defaults config/default-extensions.json \
-  disable notify
+  disable context-inspector
 ```
 
 ## Test the Gnosis manager

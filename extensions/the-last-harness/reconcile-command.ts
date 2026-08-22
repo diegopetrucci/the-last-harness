@@ -1,40 +1,44 @@
 // /reconcile command: review and resolve model/effort override drift from TLH packaged defaults.
 // TUI-only picker; non-TUI invocation prints read-only drift status.
 import {
-	SettingsManager,
-	getAgentDir,
-	type ExtensionAPI,
-	type ExtensionCommandContext,
+  SettingsManager,
+  getAgentDir,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 
 import { formatHomePath, isRecord } from "./common.js";
 import {
-	computeModelEffortDrift,
-	readReconcileState,
-	updateReconcileAcknowledgedSnapshot,
-	type AcknowledgedRoleSnapshot,
-	type RoleDriftEntry,
+  computeModelEffortDrift,
+  readReconcileState,
+  updateReconcileAcknowledgedSnapshot,
+  type AcknowledgedRoleSnapshot,
+  type RoleDriftEntry,
 } from "./model-effort-reconcile.js";
-import { clearPrimaryAgentModelOverrideByName, type TlhPrimaryAgentRuntime } from "./primary-agent-runtime.js";
+import {
+  clearPrimaryAgentModelOverrideByName,
+  type TlhPrimaryAgentRuntime,
+} from "./primary-agent-runtime.js";
 import { tlhSettingsPathForWrite } from "./profile-state.js";
 import { loadPrimaryAgents, loadSubagentMetadata } from "./prompts.js";
 import { resetSubagentOverride } from "./subagent-settings.js";
 import type { TlhSettings } from "./types.js";
 
 const RECONCILE_COMMAND = "reconcile";
-const RECONCILE_COMMAND_DESCRIPTION = "Review and resolve model/effort override drift from TLH packaged defaults";
+const RECONCILE_COMMAND_DESCRIPTION =
+  "Review and resolve model/effort override drift from TLH packaged defaults";
 
 // ---------------------------------------------------------------------------
 // Settings helpers
 // ---------------------------------------------------------------------------
 
 function getTlhGlobalSettings(cwd: string): TlhSettings {
-	try {
-		const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
-		return isRecord(settings) ? (settings as TlhSettings) : {};
-	} catch {
-		return {};
-	}
+  try {
+    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as unknown;
+    return isRecord(settings) ? (settings as TlhSettings) : {};
+  } catch {
+    return {};
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -42,17 +46,17 @@ function getTlhGlobalSettings(cwd: string): TlhSettings {
 // ---------------------------------------------------------------------------
 
 function computeDrift(cwd: string, provider: string | undefined): RoleDriftEntry[] {
-	const primaryAgents = loadPrimaryAgents();
-	const subagentMetadata = loadSubagentMetadata();
-	const settings = getTlhGlobalSettings(cwd);
-	const reconcileState = readReconcileState();
-	return computeModelEffortDrift(
-		primaryAgents,
-		subagentMetadata,
-		settings,
-		provider,
-		reconcileState.acknowledgedSnapshot,
-	);
+  const primaryAgents = loadPrimaryAgents();
+  const subagentMetadata = loadSubagentMetadata();
+  const settings = getTlhGlobalSettings(cwd);
+  const reconcileState = readReconcileState();
+  return computeModelEffortDrift(
+    primaryAgents,
+    subagentMetadata,
+    settings,
+    provider,
+    reconcileState.acknowledgedSnapshot,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -60,25 +64,25 @@ function computeDrift(cwd: string, provider: string | undefined): RoleDriftEntry
 // ---------------------------------------------------------------------------
 
 function formatOverrideDisplay(override: RoleDriftEntry["override"]): string {
-	const parts: string[] = [];
-	if (override.model !== undefined) {
-		parts.push(`model: ${override.model === false ? "disabled" : override.model}`);
-	}
-	if (override.thinking !== undefined) {
-		parts.push(`effort: ${override.thinking === false ? "off" : override.thinking}`);
-	}
-	return parts.join(", ") || "(none)";
+  const parts: string[] = [];
+  if (override.model !== undefined) {
+    parts.push(`model: ${override.model === false ? "disabled" : override.model}`);
+  }
+  if (override.thinking !== undefined) {
+    parts.push(`effort: ${override.thinking === false ? "off" : override.thinking}`);
+  }
+  return parts.join(", ") || "(none)";
 }
 
 function formatPackagedDisplay(packaged: RoleDriftEntry["packaged"]): string {
-	const parts: string[] = [];
-	if (packaged.model) {
-		parts.push(`model: ${packaged.model}`);
-	}
-	if (packaged.thinking) {
-		parts.push(`effort: ${packaged.thinking}`);
-	}
-	return parts.join(", ") || "(unset)";
+  const parts: string[] = [];
+  if (packaged.model) {
+    parts.push(`model: ${packaged.model}`);
+  }
+  if (packaged.thinking) {
+    parts.push(`effort: ${packaged.thinking}`);
+  }
+  return parts.join(", ") || "(unset)";
 }
 
 /**
@@ -87,21 +91,21 @@ function formatPackagedDisplay(packaged: RoleDriftEntry["packaged"]): string {
  * It may name a model that is not currently available to the user.
  */
 function driftPickerLabel(entry: RoleDriftEntry): string {
-	return `${entry.name} [${entry.role}] — yours: ${formatOverrideDisplay(entry.override)} → TLH default: ${formatPackagedDisplay(entry.packaged)}`;
+  return `${entry.name} [${entry.role}] — yours: ${formatOverrideDisplay(entry.override)} → TLH default: ${formatPackagedDisplay(entry.packaged)}`;
 }
 
 function formatDriftStatus(drift: RoleDriftEntry[]): string {
-	if (drift.length === 0) {
-		return "TLH reconcile: No overrides found. All roles are using TLH packaged defaults (or have no overrides).";
-	}
-	const lines = [
-		"TLH model/effort override status (yours → TLH packaged default):",
-		...drift.map((entry) => `  ${driftPickerLabel(entry)}`),
-		"",
-		"Note: TLH packaged defaults are environment-independent and may name a model you cannot currently reach.",
-		"Run /reconcile in TUI mode to keep or reset overrides interactively.",
-	];
-	return lines.join("\n");
+  if (drift.length === 0) {
+    return "TLH reconcile: No overrides found. All roles are using TLH packaged defaults (or have no overrides).";
+  }
+  const lines = [
+    "TLH model/effort override status (yours → TLH packaged default):",
+    ...drift.map((entry) => `  ${driftPickerLabel(entry)}`),
+    "",
+    "Note: TLH packaged defaults are environment-independent and may name a model you cannot currently reach.",
+    "Run /reconcile in TUI mode to keep or reset overrides interactively.",
+  ];
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -113,26 +117,32 @@ function formatDriftStatus(drift: RoleDriftEntry[]): string {
  * call this when a provider is known; no empty-string key is ever created.
  */
 function buildAcknowledgedSnapshot(
-	entries: RoleDriftEntry[],
-	provider: string,
+  entries: RoleDriftEntry[],
+  provider: string,
 ): Record<string, AcknowledgedRoleSnapshot> {
-	return Object.fromEntries(
-		entries.map((entry) => [
-			entry.name,
-			{ byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } } },
-		]),
-	);
+  return Object.fromEntries(
+    entries.map((entry) => [
+      entry.name,
+      {
+        byProvider: {
+          [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
+        },
+      },
+    ]),
+  );
 }
 
 function buildSingleAcknowledgedSnapshot(
-	entry: RoleDriftEntry,
-	provider: string,
+  entry: RoleDriftEntry,
+  provider: string,
 ): Record<string, AcknowledgedRoleSnapshot> {
-	return {
-		[entry.name]: {
-			byProvider: { [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking } },
-		},
-	};
+  return {
+    [entry.name]: {
+      byProvider: {
+        [provider]: { model: entry.packaged.model, thinking: entry.packaged.thinking },
+      },
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,42 +161,49 @@ type WriteResult = { changed: boolean; settingsPath: string; backupPath?: string
  */
 type ClearOutcome = { status: "cleared"; result: WriteResult } | { status: "unrecognized" };
 
-function notifyResetResult(ctx: Pick<ExtensionCommandContext, "ui">, result: WriteResult, agentName: string): void {
-	const label = result.changed ? "Reset override for" : "No change for";
-	const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
-	ctx.ui.notify(
-		`TLH reconcile: ${label} ${agentName} in settings at ${formatHomePath(result.settingsPath)}.${backupLabel}`,
-		"info",
-	);
+function notifyResetResult(
+  ctx: Pick<ExtensionCommandContext, "ui">,
+  result: WriteResult,
+  agentName: string,
+): void {
+  const label = result.changed ? "Reset override for" : "No change for";
+  const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+  ctx.ui.notify(
+    `TLH reconcile: ${label} ${agentName} in settings at ${formatHomePath(result.settingsPath)}.${backupLabel}`,
+    "info",
+  );
 }
 
 function unrecognizedPrimaryOverrideMessage(agentName: string): string {
-	const settingsPath = tlhSettingsPathForWrite();
-	const location = settingsPath ? ` in ${formatHomePath(settingsPath)}` : "";
-	return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides${location}.`;
+  const settingsPath = tlhSettingsPathForWrite();
+  const location = settingsPath ? ` in ${formatHomePath(settingsPath)}` : "";
+  return `TLH reconcile: "${agentName}" is not a recognised TLH primary agent, so its override cannot be reset automatically. Remove it by hand from settings.tlh.primaryAgent.modelOverrides${location}.`;
 }
 
-function notifyUnrecognizedPrimaryOverride(ctx: Pick<ExtensionCommandContext, "ui">, agentName: string): void {
-	ctx.ui.notify(unrecognizedPrimaryOverrideMessage(agentName), "error");
+function notifyUnrecognizedPrimaryOverride(
+  ctx: Pick<ExtensionCommandContext, "ui">,
+  agentName: string,
+): void {
+  ctx.ui.notify(unrecognizedPrimaryOverrideMessage(agentName), "error");
 }
 
 async function clearOverride(
-	ctx: ExtensionCommandContext,
-	entry: RoleDriftEntry,
-	runtime: TlhPrimaryAgentRuntime | undefined,
+  ctx: ExtensionCommandContext,
+  entry: RoleDriftEntry,
+  runtime: TlhPrimaryAgentRuntime | undefined,
 ): Promise<ClearOutcome> {
-	if (entry.role === "subagent") {
-		return { status: "cleared", result: resetSubagentOverride(ctx.cwd, entry.name) };
-	}
-	// Route primary-agent Reset through the runtime so the packaged default is
-	// reapplied to the active session, matching /switch-primary-agent model reset
-	// behaviour. Fall back to settings-only clear when runtime is unavailable.
-	if (runtime) {
-		const result = await runtime.resetPrimaryAgentModelOverride(ctx, entry.name);
-		return result ? { status: "cleared", result } : { status: "unrecognized" };
-	}
-	const result = clearPrimaryAgentModelOverrideByName(ctx.cwd, entry.name);
-	return result ? { status: "cleared", result } : { status: "unrecognized" };
+  if (entry.role === "subagent") {
+    return { status: "cleared", result: resetSubagentOverride(ctx.cwd, entry.name) };
+  }
+  // Route primary-agent Reset through the runtime so the packaged default is
+  // reapplied to the active session, matching /switch-primary-agent model reset
+  // behaviour. Fall back to settings-only clear when runtime is unavailable.
+  if (runtime) {
+    const result = await runtime.resetPrimaryAgentModelOverride(ctx, entry.name);
+    return result ? { status: "cleared", result } : { status: "unrecognized" };
+  }
+  const result = clearPrimaryAgentModelOverrideByName(ctx.cwd, entry.name);
+  return result ? { status: "cleared", result } : { status: "unrecognized" };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,190 +211,198 @@ async function clearOverride(
 // ---------------------------------------------------------------------------
 
 async function runReconcilePicker(
-	ctx: ExtensionCommandContext,
-	provider: string | undefined,
-	runtime: TlhPrimaryAgentRuntime | undefined,
+  ctx: ExtensionCommandContext,
+  provider: string | undefined,
+  runtime: TlhPrimaryAgentRuntime | undefined,
 ): Promise<void> {
-	const drift = computeDrift(ctx.cwd, provider);
+  const drift = computeDrift(ctx.cwd, provider);
 
-	if (drift.length === 0) {
-		ctx.ui.notify(
-			"TLH reconcile: No overrides found. All roles are using TLH packaged defaults (or have no overrides).",
-			"info",
-		);
-		return;
-	}
+  if (drift.length === 0) {
+    ctx.ui.notify(
+      "TLH reconcile: No overrides found. All roles are using TLH packaged defaults (or have no overrides).",
+      "info",
+    );
+    return;
+  }
 
-	const KEEP_ALL_OPTION = "Keep all — acknowledge TLH defaults, keep my overrides";
-	const RESET_ALL_OPTION = "Reset all — clear all overrides, use TLH packaged defaults";
+  const KEEP_ALL_OPTION = "Keep all — acknowledge TLH defaults, keep my overrides";
+  const RESET_ALL_OPTION = "Reset all — clear all overrides, use TLH packaged defaults";
 
-	const roleOptions = drift.map((entry) => driftPickerLabel(entry));
-	const driftByLabel = new Map(drift.map((entry) => [driftPickerLabel(entry), entry]));
-	const allOptions = [...roleOptions, KEEP_ALL_OPTION, RESET_ALL_OPTION];
+  const roleOptions = drift.map((entry) => driftPickerLabel(entry));
+  const driftByLabel = new Map(drift.map((entry) => [driftPickerLabel(entry), entry]));
+  const allOptions = [...roleOptions, KEEP_ALL_OPTION, RESET_ALL_OPTION];
 
-	const selected = await ctx.ui.select("TLH reconcile: model/effort overrides", allOptions);
-	if (!selected) {
-		return;
-	}
+  const selected = await ctx.ui.select("TLH reconcile: model/effort overrides", allOptions);
+  if (!selected) {
+    return;
+  }
 
-	if (selected === KEEP_ALL_OPTION) {
-		// Cannot acknowledge without a known provider — the snapshot would have no
-		// meaningful provider key and would be unreachable by the drift comparator.
-		if (!provider) {
-			ctx.ui.notify(
-				"TLH reconcile: Cannot acknowledge — no provider is known for this session. Run /reconcile when a provider is active.",
-				"warning",
-			);
-			return;
-		}
-		const snapshot = buildAcknowledgedSnapshot(drift, provider);
-		const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
-		if (!acknowledged) {
-			ctx.ui.notify(
-				`TLH reconcile: Failed to persist acknowledgment. The notice may reappear on the next launch.`,
-				"error",
-			);
-			return;
-		}
-		ctx.ui.notify(
-			`TLH reconcile: Acknowledged current TLH packaged defaults for ${drift.length} role(s). Overrides preserved.`,
-			"info",
-		);
-		return;
-	}
+  if (selected === KEEP_ALL_OPTION) {
+    // Cannot acknowledge without a known provider — the snapshot would have no
+    // meaningful provider key and would be unreachable by the drift comparator.
+    if (!provider) {
+      ctx.ui.notify(
+        "TLH reconcile: Cannot acknowledge — no provider is known for this session. Run /reconcile when a provider is active.",
+        "warning",
+      );
+      return;
+    }
+    const snapshot = buildAcknowledgedSnapshot(drift, provider);
+    const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
+    if (!acknowledged) {
+      ctx.ui.notify(
+        `TLH reconcile: Failed to persist acknowledgment. The notice may reappear on the next launch.`,
+        "error",
+      );
+      return;
+    }
+    ctx.ui.notify(
+      `TLH reconcile: Acknowledged current TLH packaged defaults for ${drift.length} role(s). Overrides preserved.`,
+      "info",
+    );
+    return;
+  }
 
-	if (selected === RESET_ALL_OPTION) {
-		// Acknowledge only what the write path actually owns. `changed: false` still counts
-		// as cleared: the underlying writers report it when the override key is already
-		// absent, so nothing is left behind. `unrecognized` roles are excluded because
-		// their override survives the attempt.
-		const clearedEntries: RoleDriftEntry[] = [];
-		const unrecognizedNames: string[] = [];
-		const failedNames: string[] = [];
-		let changedCount = 0;
-		let unchangedCount = 0;
+  if (selected === RESET_ALL_OPTION) {
+    // Acknowledge only what the write path actually owns. `changed: false` still counts
+    // as cleared: the underlying writers report it when the override key is already
+    // absent, so nothing is left behind. `unrecognized` roles are excluded because
+    // their override survives the attempt.
+    const clearedEntries: RoleDriftEntry[] = [];
+    const unrecognizedNames: string[] = [];
+    const failedNames: string[] = [];
+    let changedCount = 0;
+    let unchangedCount = 0;
 
-		for (const entry of drift) {
-			let outcome: ClearOutcome;
-			try {
-				outcome = await clearOverride(ctx, entry, runtime);
-			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				failedNames.push(entry.name);
-				ctx.ui.notify(`TLH reconcile: Failed to clear override for ${entry.name}: ${message}`, "error");
-				continue;
-			}
-			if (outcome.status === "unrecognized") {
-				unrecognizedNames.push(entry.name);
-				continue;
-			}
-			clearedEntries.push(entry);
-			if (outcome.result.changed) {
-				changedCount += 1;
-			} else {
-				unchangedCount += 1;
-			}
-			// Each reset is its own locked write with its own backup; surface them all.
-			notifyResetResult(ctx, outcome.result, entry.name);
-		}
+    for (const entry of drift) {
+      let outcome: ClearOutcome;
+      try {
+        outcome = await clearOverride(ctx, entry, runtime);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failedNames.push(entry.name);
+        ctx.ui.notify(
+          `TLH reconcile: Failed to clear override for ${entry.name}: ${message}`,
+          "error",
+        );
+        continue;
+      }
+      if (outcome.status === "unrecognized") {
+        unrecognizedNames.push(entry.name);
+        continue;
+      }
+      clearedEntries.push(entry);
+      if (outcome.result.changed) {
+        changedCount += 1;
+      } else {
+        unchangedCount += 1;
+      }
+      // Each reset is its own locked write with its own backup; surface them all.
+      notifyResetResult(ctx, outcome.result, entry.name);
+    }
 
-		for (const name of unrecognizedNames) {
-			notifyUnrecognizedPrimaryOverride(ctx, name);
-		}
+    for (const name of unrecognizedNames) {
+      notifyUnrecognizedPrimaryOverride(ctx, name);
+    }
 
-		let acknowledgmentFailed = false;
-		if (clearedEntries.length > 0 && provider) {
-			// Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
-			const acknowledged = updateReconcileAcknowledgedSnapshot(
-				buildAcknowledgedSnapshot(clearedEntries, provider),
-				new Date().toISOString(),
-			);
-			if (!acknowledged) {
-				acknowledgmentFailed = true;
-			}
-		}
+    let acknowledgmentFailed = false;
+    if (clearedEntries.length > 0 && provider) {
+      // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+      const acknowledged = updateReconcileAcknowledgedSnapshot(
+        buildAcknowledgedSnapshot(clearedEntries, provider),
+        new Date().toISOString(),
+      );
+      if (!acknowledged) {
+        acknowledgmentFailed = true;
+      }
+    }
 
-		const summaryParts = [`Reset ${changedCount} of ${drift.length} role(s).`];
-		if (unchangedCount > 0) {
-			summaryParts.push(`${unchangedCount} already had no stored override.`);
-		}
-		if (unrecognizedNames.length > 0) {
-			summaryParts.push(`${unrecognizedNames.length} unrecognised and left untouched.`);
-		}
-		if (failedNames.length > 0) {
-			summaryParts.push(`${failedNames.length} failed to clear.`);
-		}
-		if (changedCount > 0) {
-			summaryParts.push("Reset roles now resolve to TLH packaged defaults.");
-		}
-		if (acknowledgmentFailed) {
-			summaryParts.push("Acknowledgment could not be persisted; the notice may reappear.");
-		}
-		ctx.ui.notify(
-			`TLH reconcile: ${summaryParts.join(" ")}`,
-			unrecognizedNames.length > 0 || acknowledgmentFailed || failedNames.length > 0 ? "error" : "info",
-		);
-		return;
-	}
+    const summaryParts = [`Reset ${changedCount} of ${drift.length} role(s).`];
+    if (unchangedCount > 0) {
+      summaryParts.push(`${unchangedCount} already had no stored override.`);
+    }
+    if (unrecognizedNames.length > 0) {
+      summaryParts.push(`${unrecognizedNames.length} unrecognised and left untouched.`);
+    }
+    if (failedNames.length > 0) {
+      summaryParts.push(`${failedNames.length} failed to clear.`);
+    }
+    if (changedCount > 0) {
+      summaryParts.push("Reset roles now resolve to TLH packaged defaults.");
+    }
+    if (acknowledgmentFailed) {
+      summaryParts.push("Acknowledgment could not be persisted; the notice may reappear.");
+    }
+    ctx.ui.notify(
+      `TLH reconcile: ${summaryParts.join(" ")}`,
+      unrecognizedNames.length > 0 || acknowledgmentFailed || failedNames.length > 0
+        ? "error"
+        : "info",
+    );
+    return;
+  }
 
-	const entry = driftByLabel.get(selected);
-	if (!entry) {
-		ctx.ui.notify("Unknown TLH reconcile picker selection.", "error");
-		return;
-	}
+  const entry = driftByLabel.get(selected);
+  if (!entry) {
+    ctx.ui.notify("Unknown TLH reconcile picker selection.", "error");
+    return;
+  }
 
-	const KEEP_OPTION = "Keep — acknowledge TLH default, keep my override";
-	const RESET_OPTION = "Reset — clear override, use TLH packaged default";
+  const KEEP_OPTION = "Keep — acknowledge TLH default, keep my override";
+  const RESET_OPTION = "Reset — clear override, use TLH packaged default";
 
-	const action = await ctx.ui.select(`Reconcile ${entry.name}`, [KEEP_OPTION, RESET_OPTION]);
-	if (!action) {
-		return;
-	}
+  const action = await ctx.ui.select(`Reconcile ${entry.name}`, [KEEP_OPTION, RESET_OPTION]);
+  if (!action) {
+    return;
+  }
 
-	if (action === KEEP_OPTION) {
-		// Cannot acknowledge without a known provider.
-		if (!provider) {
-			ctx.ui.notify(
-				`TLH reconcile: Cannot acknowledge ${entry.name} — no provider is known for this session. Run /reconcile when a provider is active.`,
-				"warning",
-			);
-			return;
-		}
-		const snapshot = buildSingleAcknowledgedSnapshot(entry, provider);
-		const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
-		if (!acknowledged) {
-			ctx.ui.notify(
-				`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
-				"error",
-			);
-			return;
-		}
-		ctx.ui.notify(`TLH reconcile: Acknowledged TLH packaged default for ${entry.name}. Override preserved.`, "info");
-		return;
-	}
+  if (action === KEEP_OPTION) {
+    // Cannot acknowledge without a known provider.
+    if (!provider) {
+      ctx.ui.notify(
+        `TLH reconcile: Cannot acknowledge ${entry.name} — no provider is known for this session. Run /reconcile when a provider is active.`,
+        "warning",
+      );
+      return;
+    }
+    const snapshot = buildSingleAcknowledgedSnapshot(entry, provider);
+    const acknowledged = updateReconcileAcknowledgedSnapshot(snapshot, new Date().toISOString());
+    if (!acknowledged) {
+      ctx.ui.notify(
+        `TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
+        "error",
+      );
+      return;
+    }
+    ctx.ui.notify(
+      `TLH reconcile: Acknowledged TLH packaged default for ${entry.name}. Override preserved.`,
+      "info",
+    );
+    return;
+  }
 
-	if (action === RESET_OPTION) {
-		const outcome = await clearOverride(ctx, entry, runtime);
-		if (outcome.status === "unrecognized") {
-			// The override survives, so do not acknowledge it: the role must keep being reported.
-			notifyUnrecognizedPrimaryOverride(ctx, entry.name);
-			return;
-		}
-		notifyResetResult(ctx, outcome.result, entry.name);
-		// Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
-		if (provider) {
-			const acknowledged = updateReconcileAcknowledgedSnapshot(
-				buildSingleAcknowledgedSnapshot(entry, provider),
-				new Date().toISOString(),
-			);
-			if (!acknowledged) {
-				ctx.ui.notify(
-					`TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
-					"error",
-				);
-			}
-		}
-	}
+  if (action === RESET_OPTION) {
+    const outcome = await clearOverride(ctx, entry, runtime);
+    if (outcome.status === "unrecognized") {
+      // The override survives, so do not acknowledge it: the role must keep being reported.
+      notifyUnrecognizedPrimaryOverride(ctx, entry.name);
+      return;
+    }
+    notifyResetResult(ctx, outcome.result, entry.name);
+    // Skip acknowledgment when provider is unknown — defer semantics (ts-7w6o).
+    if (provider) {
+      const acknowledged = updateReconcileAcknowledgedSnapshot(
+        buildSingleAcknowledgedSnapshot(entry, provider),
+        new Date().toISOString(),
+      );
+      if (!acknowledged) {
+        ctx.ui.notify(
+          `TLH reconcile: Failed to persist acknowledgment for ${entry.name}. The notice may reappear on the next launch.`,
+          "error",
+        );
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,31 +410,31 @@ async function runReconcilePicker(
 // ---------------------------------------------------------------------------
 
 export function registerReconcileCommand(pi: ExtensionAPI, runtime?: TlhPrimaryAgentRuntime): void {
-	pi.registerCommand(RECONCILE_COMMAND, {
-		description: RECONCILE_COMMAND_DESCRIPTION,
-		handler: async (_args, ctx) => {
-			// Capture the provider once so comparison and acknowledgment always use
-			// the same value, even if ctx.model were mutated mid-command (ts-7w6o).
-			const provider = ctx.model?.provider;
+  pi.registerCommand(RECONCILE_COMMAND, {
+    description: RECONCILE_COMMAND_DESCRIPTION,
+    handler: async (_args, ctx) => {
+      // Capture the provider once so comparison and acknowledgment always use
+      // the same value, even if ctx.model were mutated mid-command (ts-7w6o).
+      const provider = ctx.model?.provider;
 
-			if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
-				if (!provider) {
-					ctx.ui.notify(
-						"TLH reconcile: No provider is known for this session — packaged defaults cannot be provider-resolved yet. Your overrides are preserved. Run /reconcile when a provider is active.",
-						"info",
-					);
-					return;
-				}
-				const drift = computeDrift(ctx.cwd, provider);
-				ctx.ui.notify(formatDriftStatus(drift), "info");
-				return;
-			}
-			try {
-				await runReconcilePicker(ctx, provider, runtime);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(message, "error");
-			}
-		},
-	});
+      if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
+        if (!provider) {
+          ctx.ui.notify(
+            "TLH reconcile: No provider is known for this session — packaged defaults cannot be provider-resolved yet. Your overrides are preserved. Run /reconcile when a provider is active.",
+            "info",
+          );
+          return;
+        }
+        const drift = computeDrift(ctx.cwd, provider);
+        ctx.ui.notify(formatDriftStatus(drift), "info");
+        return;
+      }
+      try {
+        await runReconcilePicker(ctx, provider, runtime);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(message, "error");
+      }
+    },
+  });
 }

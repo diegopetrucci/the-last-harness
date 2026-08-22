@@ -33,7 +33,9 @@ export function validateStructuredOutputValue(schema, value) {
     if (validator.Check(value))
         return { status: "valid" };
     const errors = [...validator.Errors(value)].slice(0, 8).map((error) => {
-        const pathText = error.instancePath ? error.instancePath.replace(/^\//, "").replace(/\//g, ".") : "root";
+        const pathText = error.instancePath
+            ? error.instancePath.replace(/^\//, "").replace(/\//g, ".")
+            : "root";
         return `${pathText}: ${error.message}`;
     });
     return { status: "invalid", message: errors.join("; ") || "schema validation failed" };
@@ -49,19 +51,12 @@ export function readStructuredOutput(runtime) {
         value = JSON.parse(fs.readFileSync(runtime.outputPath, "utf-8"));
     }
     catch (error) {
-        return { error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}` };
+        return {
+            error: `Failed to read structured output: ${error instanceof Error ? error.message : String(error)}`,
+        };
     }
     const validation = validateStructuredOutputValue(runtime.schema, value);
     if (validation.status === "invalid")
         return { error: `Structured output validation failed: ${validation.message}` };
     return { value };
-}
-export function cleanupStructuredOutputRuntime(runtime) {
-    if (!runtime)
-        return;
-    try {
-        fs.rmSync(path.dirname(runtime.schemaPath), { recursive: true, force: true });
-    }
-    catch {
-    }
 }

@@ -2,15 +2,38 @@ import { createHash } from "node:crypto";
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA = "oauth-2025-04-20";
-export const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
+const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
 const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
-const ACCOUNT_ID_KEYS = ["accountId", "account_id", "chatgptAccountId", "chatgpt_account_id"];
+const ACCOUNT_ID_KEYS = [
+    "accountId",
+    "account_id",
+    "chatgptAccountId",
+    "chatgpt_account_id",
+];
 const USAGE_PERCENT_KEYS = ["used_percent", "usedPercent", "utilization"];
 const WINDOW_DURATION_SECONDS_KEYS = ["limit_window_seconds", "limitWindowSeconds"];
 function asObject(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : undefined;
+}
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
+function hasAuthStorageGetter(value) {
+    const storage = asObject(value);
+    return storage !== undefined && typeof storage.get === "function";
 }
 function finiteNumber(value) {
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -240,8 +263,9 @@ function createSnapshot(provider, session, weekly, fetchedAt) {
     }
     return { provider, fetchedAt, windows };
 }
-export function isSupportedTlhSubscriptionUsageProvider(provider) {
-    return typeof provider === "string" && SUPPORTED_PROVIDERS.has(provider);
+function isSupportedTlhSubscriptionUsageProvider(provider) {
+    return (typeof provider === "string" &&
+        SUPPORTED_PROVIDERS.has(provider));
 }
 export function normalizeOpenAICodexUsage(data, options = {}) {
     const nowMs = options.nowMs ?? Date.now();
@@ -271,11 +295,15 @@ async function responseJson(response) {
     if (response?.ok !== true || typeof response.json !== "function") {
         return undefined;
     }
-    return response.json();
+    const payload = await response.json();
+    return isJsonValue(payload) ? payload : undefined;
 }
 function oauthCredentialFromRegistry(modelRegistry, provider) {
     const authStorage = modelRegistry?.authStorage;
-    const credential = authStorage?.get?.(provider);
+    if (!hasAuthStorageGetter(authStorage)) {
+        return undefined;
+    }
+    const credential = authStorage.get(provider);
     const stored = asObject(credential);
     return stored?.type === "oauth" ? stored : undefined;
 }
@@ -310,7 +338,7 @@ function cacheKeyMatchesProvider(cacheKey, provider) {
 }
 function hasRuntimeCredentialOverride(modelRegistry, provider) {
     try {
-        const authStorage = modelRegistry?.authStorage;
+        const authStorage = asObject(modelRegistry?.authStorage);
         const runtimeOverrides = authStorage?.runtimeOverrides;
         return runtimeOverrides instanceof Map && runtimeOverrides.has(provider);
     }
@@ -350,7 +378,9 @@ export async function fetchTlhSubscriptionUsage(target, options = {}) {
     const provider = target?.provider;
     const accessToken = typeof target?.accessToken === "string" ? target.accessToken.trim() : "";
     const fetchImpl = options.fetch ?? globalThis.fetch;
-    if (!isSupportedTlhSubscriptionUsageProvider(provider) || !accessToken || typeof fetchImpl !== "function") {
+    if (!isSupportedTlhSubscriptionUsageProvider(provider) ||
+        !accessToken ||
+        typeof fetchImpl !== "function") {
         return undefined;
     }
     const nowMs = options.nowMs ?? Date.now();
@@ -406,7 +436,13 @@ function resolveTlhSubscriptionUsageProviderContext(ctx) {
     if (!credentialResult.credential) {
         return { status: "ineligible", provider };
     }
-    return { status: "eligible", model, provider, modelRegistry, credential: credentialResult.credential };
+    return {
+        status: "eligible",
+        model,
+        provider,
+        modelRegistry,
+        credential: credentialResult.credential,
+    };
 }
 function resolveTlhSubscriptionUsageProvider(ctx) {
     const resolved = resolveTlhSubscriptionUsageProviderContext(ctx);
@@ -505,7 +541,7 @@ async function resolveTlhSubscriptionUsageTarget(resolved) {
         },
     };
 }
-export class TlhSubscriptionUsageService {
+class TlhSubscriptionUsageService {
     fetch;
     now;
     cacheTtlMs;
@@ -521,7 +557,8 @@ export class TlhSubscriptionUsageService {
         this.fetch = options.fetch;
         this.now = typeof options.now === "function" ? options.now : () => Date.now();
         this.cacheTtlMs = options.cacheTtlMs ?? TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS;
-        this.minFetchIntervalMs = options.minFetchIntervalMs ?? TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS;
+        this.minFetchIntervalMs =
+            options.minFetchIntervalMs ?? TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS;
         this.timeoutMs = options.timeoutMs ?? TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS;
         this.snapshots = new Map();
         this.lastAttempts = new Map();
@@ -531,7 +568,9 @@ export class TlhSubscriptionUsageService {
         this.refreshGenerations = new Map();
     }
     snapshotForCacheKey(provider, cacheKey) {
-        return this.activeCacheKeys.get(provider) === cacheKey ? this.snapshots.get(cacheKey) : undefined;
+        return this.activeCacheKeys.get(provider) === cacheKey
+            ? this.snapshots.get(cacheKey)
+            : undefined;
     }
     getSnapshot(provider) {
         if (provider !== undefined && !isSupportedTlhSubscriptionUsageProvider(provider)) {
@@ -612,7 +651,8 @@ export class TlhSubscriptionUsageService {
             return !isRuntimeCredentialOverride(modelRegistry, provider);
         }
         const displayTarget = resolveTlhSubscriptionUsageDisplayTarget(target);
-        return Boolean(displayTarget && this.ineligibleCacheKeys.get(displayTarget.provider) !== displayTarget.cacheKey);
+        return Boolean(displayTarget &&
+            this.ineligibleCacheKeys.get(displayTarget.provider) !== displayTarget.cacheKey);
     }
     clearProvider(provider) {
         if (!isSupportedTlhSubscriptionUsageProvider(provider)) {
@@ -712,7 +752,9 @@ export class TlhSubscriptionUsageService {
         if (!options.force && cached && nowMs - cached.fetchedAt < this.cacheTtlMs) {
             return cached;
         }
-        if (!options.force && lastAttempt !== undefined && nowMs - lastAttempt < this.minFetchIntervalMs) {
+        if (!options.force &&
+            lastAttempt !== undefined &&
+            nowMs - lastAttempt < this.minFetchIntervalMs) {
             return cached;
         }
         const existing = this.inFlight.get(cacheKey);

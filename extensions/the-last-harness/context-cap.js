@@ -2,7 +2,7 @@ import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath } from "./common.js";
 import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-export const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
+const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
 const TOGGLE_CONTEXT_CAP_COMMAND_HELP = "Usage: /toggle-context-cap";
 const originalContextWindows = new WeakMap();
 function getOriginalContextWindow(model) {
@@ -109,7 +109,9 @@ export function registerContextCap(pi) {
             }
             try {
                 const result = toggleContextCapSetting(ctx.cwd);
-                const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                const backupLabel = result.backupPath
+                    ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                    : "";
                 if (result.nowDisabled) {
                     restoreContextCapForSession(ctx);
                     ctx.ui.notify(`Context cap disabled. Updated TLH settings at ${formatHomePath(result.settingsPath)}.${backupLabel}`, "info");

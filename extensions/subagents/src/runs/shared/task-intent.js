@@ -118,7 +118,9 @@ export function classifyTaskMutationIntent(agent, task) {
         return { kind: "implementation" };
     if (/\breviewer\b/i.test(agent))
         return { kind: "read-only" };
-    return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints) ? { kind: "read-only" } : { kind: "unknown" };
+    return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints)
+        ? { kind: "read-only" }
+        : { kind: "unknown" };
 }
 function legacyClassifyTaskMutationIntent(agent, task) {
     const taskText = stripFrameworkInstructions(task);
@@ -135,7 +137,9 @@ function legacyClassifyTaskMutationIntent(agent, task) {
     }
     if (hasImplementationIntent(agent, taskText))
         return { kind: "implementation" };
-    return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints) ? { kind: "read-only" } : { kind: "unknown" };
+    return taskHasReadOnlyDeliverable(taskTextWithoutScopedConstraints)
+        ? { kind: "read-only" }
+        : { kind: "unknown" };
 }
 export function expectsImplementationMutation(agent, task) {
     return legacyClassifyTaskMutationIntent(agent, task).kind === "implementation";

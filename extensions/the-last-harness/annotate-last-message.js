@@ -1,5 +1,5 @@
 import { openQuietGlimpse } from "../shared/quiet-glimpse.js";
-import { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback } from "./annotate-last-message/prompt.js";
+import { composeAnnotateLastMessagePrompt, hasAnnotateLastMessageFeedback, } from "./annotate-last-message/prompt.js";
 import { findLastAssistantMessage } from "./annotate-last-message/session.js";
 import { buildAnnotateLastMessageHtml } from "./annotate-last-message/ui.js";
 function isInlineComment(value) {
@@ -79,7 +79,7 @@ export function buildAnnotateLastMessageCommand(dependencies) {
         const generation = lifecycleGeneration;
         openingGeneration = generation;
         try {
-            const html = buildAnnotateLastMessageHtml(messageData);
+            const html = buildAnnotateLastMessageHtml(messageData, dependencies.getTheme);
             const window = await openAnnotationWindow(html, {
                 width: 1440,
                 height: 980,

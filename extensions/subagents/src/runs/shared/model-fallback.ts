@@ -1,33 +1,224 @@
-import type { ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
-import type { Usage } from "../../shared/types.ts";
-import { checkModelScope, type ModelScopeConfig, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
+import {
+  parseThinkingLevel,
+  splitKnownThinkingSuffix,
+  type ModelInfo as AvailableModelInfo,
+} from "../../shared/model-info.ts";
+import type { SubagentModelIdentity, SubagentModelResolution, Usage } from "../../shared/types.ts";
+import {
+  checkModelScope,
+  type ModelScopeConfig,
+  type ModelScopeViolation,
+  type ModelSource,
+} from "./model-scope.ts";
 
 export type { AvailableModelInfo };
 
 interface ModelAttemptSummary {
-	model: string;
-	success: boolean;
-	exitCode?: number | null;
-	error?: string;
-	usage?: Usage;
+  model: string;
+  success: boolean;
+  exitCode?: number | null;
+  error?: string;
+  usage?: Usage;
 }
 
-export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };
-	return {
-		baseModel: model.substring(0, colonIdx),
-		thinkingSuffix: model.substring(colonIdx),
-	};
+function sameModelIdentity(
+  left: SubagentModelIdentity | undefined,
+  right: SubagentModelIdentity,
+): boolean {
+  return Boolean(
+    left &&
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.thinking === right.thinking,
+  );
+}
+
+/**
+ * Append one completed runtime-fallback transition to the durable resolution.
+ * `sourceAttempt` is the candidate that just failed; callers invoke this at
+ * attempt start and again at terminalization, so crash-window and final
+ * artifacts share the same ordered history.
+ */
+export function appendRuntimeFallbackResolution(input: {
+  previous?: SubagentModelResolution;
+  sourceAttempt?: ModelAttemptSummary;
+  currentIdentity?: SubagentModelIdentity;
+  originalIdentity?: SubagentModelIdentity;
+}): SubagentModelResolution | undefined {
+  const current = input.currentIdentity;
+  const source = input.sourceAttempt;
+  if (!current || !source) return input.previous;
+  if (sameModelIdentity(input.previous?.resumed, current)) return input.previous;
+  const original =
+    input.previous?.original ??
+    input.originalIdentity ??
+    canonicalSubagentModelIdentity(source.model);
+  const currentReference = `${current.provider}/${current.model}${current.thinking ? `:${current.thinking}` : ""}`;
+  const transition = `Runtime fallback selected '${currentReference}' after '${source.model}' failed: ${source.error ?? `exit ${source.exitCode ?? 1}`}.`;
+  return {
+    kind: "fallback",
+    ...(original ? { original } : {}),
+    resumed: current,
+    reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
+  };
+}
+
+function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
+  const colonIdx = model.lastIndexOf(":");
+  if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };
+  return {
+    baseModel: model.substring(0, colonIdx),
+    thinkingSuffix: model.substring(colonIdx),
+  };
 }
 
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
-export const INHERIT_MODEL = "inherit";
+const INHERIT_MODEL = "inherit";
+
+/**
+ * Convert a canonical provider/model argument and effective thinking level into
+ * the durable identity used by resume artifacts. Model strings without a
+ * provider cannot safely be persisted as an identity because they may resolve
+ * to a different provider after a session reload.
+ */
+export function canonicalSubagentModelIdentity(
+  model: string | undefined,
+  thinking?: string,
+): SubagentModelIdentity | undefined {
+  if (!model) return undefined;
+  const parsed = splitKnownThinkingSuffix(model);
+  const separator = parsed.baseModel.indexOf("/");
+  if (separator <= 0 || separator === parsed.baseModel.length - 1) return undefined;
+  const effectiveThinking = parsed.thinkingSuffix
+    ? parsed.thinkingSuffix.slice(1)
+    : parseThinkingLevel(thinking);
+  return {
+    provider: parsed.baseModel.slice(0, separator),
+    model: parsed.baseModel.slice(separator + 1),
+    ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+  };
+}
+
+/**
+ * Sanitize persisted model identity at artifact boundaries. Provider and model
+ * remain authoritative when valid; unsupported thinking values are omitted.
+ */
+export function sanitizeSubagentModelIdentity(value: unknown): SubagentModelIdentity | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  if (
+    typeof input.provider !== "string" ||
+    input.provider.trim() === "" ||
+    typeof input.model !== "string" ||
+    input.model.trim() === ""
+  )
+    return undefined;
+  const thinking = parseThinkingLevel(input.thinking);
+  return {
+    provider: input.provider.trim(),
+    model: input.model.trim(),
+    ...(thinking ? { thinking } : {}),
+  };
+}
+
+/** Sanitize a persisted model resolution, including both nested identities. */
+export function sanitizeSubagentModelResolution(
+  value: unknown,
+): SubagentModelResolution | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const input = value as Record<string, unknown>;
+  if (
+    (input.kind !== "restored" && input.kind !== "override" && input.kind !== "fallback") ||
+    typeof input.reason !== "string" ||
+    input.reason.trim() === ""
+  )
+    return undefined;
+  const original = sanitizeSubagentModelIdentity(input.original);
+  const resumed = sanitizeSubagentModelIdentity(input.resumed);
+  if ((input.original !== undefined && !original) || (input.resumed !== undefined && !resumed))
+    return undefined;
+  return {
+    kind: input.kind,
+    ...(original ? { original } : {}),
+    ...(resumed ? { resumed } : {}),
+    reason: input.reason,
+  };
+}
+
+export function modelReferenceFromIdentity(identity: SubagentModelIdentity): string {
+  return `${identity.provider}/${identity.model}`;
+}
+
+interface RuntimeModelContextResolution {
+  identity: SubagentModelIdentity;
+  contextWindow: number;
+}
+
+const SAFE_RUNTIME_PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// Model ids are registry-owned values. Keep the boundary conservative without
+// treating `/` or `:` as separators: providers such as OpenRouter and Ollama
+// legitimately report those characters in the model id itself.
+const SAFE_RUNTIME_MODEL = /^(?!\/)(?!.*\/$)[^\s\0]+$/;
+
+function runtimeIdentityFromFullId(
+  fullId: string,
+  thinkingSuffix: string,
+): SubagentModelIdentity | undefined {
+  // Match canonicalSubagentModelIdentity: only the first slash separates the
+  // provider, so nested provider model ids remain intact.
+  const separator = fullId.indexOf("/");
+  if (separator <= 0 || separator === fullId.length - 1) return undefined;
+  const provider = fullId.slice(0, separator);
+  const model = fullId.slice(separator + 1);
+  if (!SAFE_RUNTIME_PROVIDER.test(provider) || !SAFE_RUNTIME_MODEL.test(model)) return undefined;
+  return {
+    provider,
+    model,
+    ...(thinkingSuffix ? { thinking: thinkingSuffix.slice(1) } : {}),
+  };
+}
+
+/**
+ * Resolve a model identity reported by an untrusted child message only when it
+ * names an exact registered context window. A separately reported provider
+ * scopes the opaque model id; an empty provider accepts a qualified full id.
+ */
+export function resolveRuntimeModelContext(
+  providerValue: unknown,
+  modelValue: unknown,
+  contextWindows: Record<string, number> | undefined,
+): RuntimeModelContextResolution | undefined {
+  if (
+    !contextWindows ||
+    (typeof contextWindows !== "object" && typeof contextWindows !== "function") ||
+    typeof modelValue !== "string" ||
+    (providerValue !== undefined && typeof providerValue !== "string")
+  )
+    return undefined;
+  const provider = typeof providerValue === "string" ? providerValue.trim() : "";
+  const model = modelValue.trim();
+  if (model === "") return undefined;
+  if (provider !== "" && !SAFE_RUNTIME_PROVIDER.test(provider)) return undefined;
+  const parsed = splitKnownThinkingSuffix(model);
+  if (!SAFE_RUNTIME_MODEL.test(parsed.baseModel)) return undefined;
+
+  // With a separately reported provider, the model portion is opaque. This is
+  // what preserves registry ids such as openrouter/anthropic/claude-* and
+  // ollama/qwen3:8b instead of mis-parsing their model portions as providers.
+  const fullId = provider ? `${provider}/${parsed.baseModel}` : parsed.baseModel;
+  if (!Object.hasOwn(contextWindows, fullId)) return undefined;
+  const identity = runtimeIdentityFromFullId(fullId, parsed.thinkingSuffix);
+  if (!identity) return undefined;
+  const contextWindow = contextWindows[fullId];
+  if (typeof contextWindow !== "number" || !Number.isFinite(contextWindow) || contextWindow <= 0)
+    return undefined;
+  return { identity, contextWindow };
+}
 
 /** Minimal shape of the parent session's in-memory model (`ctx.model`). */
 export interface ParentModel {
-	provider: string;
-	id: string;
+  provider: string;
+  id: string;
 }
 
 /**
@@ -36,43 +227,43 @@ export interface ParentModel {
  * repeated separators. Pure.
  */
 export function normalizeModelSegment(segment: string): string {
-	return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  return segment.toLowerCase().replace(/[._]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
 function isPlausibleDateStamp(year: string, month: string, day: string): boolean {
-	const yyyy = Number(year);
-	const mm = Number(month);
-	const dd = Number(day);
-	return yyyy >= 1900 && yyyy <= 2099 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
+  const yyyy = Number(year);
+  const mm = Number(month);
+  const dd = Number(day);
+  return yyyy >= 1900 && yyyy <= 2099 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31;
 }
 
 /** Drop a trailing date stamp (`-20251001` or `-2025-10-01`) so dated and undated ids match. Pure. */
 function stripTrailingDateStamp(segment: string): string {
-	const dashed = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(segment);
-	if (dashed && isPlausibleDateStamp(dashed[2]!, dashed[3]!, dashed[4]!)) return dashed[1]!;
-	const compact = /^(.*)-(\d{4})(\d{2})(\d{2})$/.exec(segment);
-	if (compact && isPlausibleDateStamp(compact[2]!, compact[3]!, compact[4]!)) return compact[1]!;
-	return segment;
+  const dashed = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(segment);
+  if (dashed && isPlausibleDateStamp(dashed[2]!, dashed[3]!, dashed[4]!)) return dashed[1]!;
+  const compact = /^(.*)-(\d{4})(\d{2})(\d{2})$/.exec(segment);
+  if (compact && isPlausibleDateStamp(compact[2]!, compact[3]!, compact[4]!)) return compact[1]!;
+  return segment;
 }
 
 function resolveBaseModelCandidate(
-	baseModel: string,
-	availableModels: AvailableModelInfo[],
-	preferredProvider?: string,
+  baseModel: string,
+  availableModels: AvailableModelInfo[],
+  preferredProvider?: string,
 ): string | undefined {
-	if (baseModel.includes("/")) {
-		const exact = availableModels.find((entry) => entry.fullId === baseModel);
-		if (exact) return exact.fullId;
-	} else {
-		const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
-		if (preferredProvider) {
-			const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
-			if (preferredMatch) return preferredMatch.fullId;
-		}
-		if (exactMatches.length === 1) return exactMatches[0]!.fullId;
-	}
+  if (baseModel.includes("/")) {
+    const exact = availableModels.find((entry) => entry.fullId === baseModel);
+    if (exact) return exact.fullId;
+  } else {
+    const exactMatches = availableModels.filter((entry) => entry.id === baseModel);
+    if (preferredProvider) {
+      const preferredMatch = exactMatches.find((entry) => entry.provider === preferredProvider);
+      if (preferredMatch) return preferredMatch.fullId;
+    }
+    if (exactMatches.length === 1) return exactMatches[0]!.fullId;
+  }
 
-	return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
+  return fuzzyResolveModel(baseModel, availableModels, preferredProvider);
 }
 
 /**
@@ -85,45 +276,49 @@ function resolveBaseModelCandidate(
  * providers (and no `preferredProvider` disambiguates). Pure.
  */
 export function fuzzyResolveModel(
-	baseModel: string,
-	availableModels: AvailableModelInfo[],
-	preferredProvider?: string,
+  baseModel: string,
+  availableModels: AvailableModelInfo[],
+  preferredProvider?: string,
 ): string | undefined {
-	let queryProvider: string | undefined;
-	let queryIdRaw = baseModel;
-	const slashIdx = baseModel.indexOf("/");
-	if (slashIdx !== -1) {
-		queryProvider = normalizeModelSegment(baseModel.slice(0, slashIdx));
-		queryIdRaw = baseModel.slice(slashIdx + 1);
-	} else {
-		const providerSeparators = [":", "."];
-		for (const separator of providerSeparators) {
-			const separatorIdx = baseModel.indexOf(separator);
-			if (separatorIdx <= 0) continue;
-			const providerPart = normalizeModelSegment(baseModel.slice(0, separatorIdx));
-			if (!availableModels.some((entry) => normalizeModelSegment(entry.provider) === providerPart)) continue;
-			queryProvider = providerPart;
-			queryIdRaw = baseModel.slice(separatorIdx + 1);
-			break;
-		}
-	}
-	const queryId = normalizeModelSegment(queryIdRaw);
-	const queryIdNoDate = stripTrailingDateStamp(queryId);
+  let queryProvider: string | undefined;
+  let queryIdRaw = baseModel;
+  const slashIdx = baseModel.indexOf("/");
+  if (slashIdx !== -1) {
+    queryProvider = normalizeModelSegment(baseModel.slice(0, slashIdx));
+    queryIdRaw = baseModel.slice(slashIdx + 1);
+  } else {
+    const providerSeparators = [":", "."];
+    for (const separator of providerSeparators) {
+      const separatorIdx = baseModel.indexOf(separator);
+      if (separatorIdx <= 0) continue;
+      const providerPart = normalizeModelSegment(baseModel.slice(0, separatorIdx));
+      if (!availableModels.some((entry) => normalizeModelSegment(entry.provider) === providerPart))
+        continue;
+      queryProvider = providerPart;
+      queryIdRaw = baseModel.slice(separatorIdx + 1);
+      break;
+    }
+  }
+  const queryId = normalizeModelSegment(queryIdRaw);
+  const queryIdNoDate = stripTrailingDateStamp(queryId);
 
-	const candidates = availableModels.filter((entry) => {
-		const entryId = normalizeModelSegment(entry.id);
-		if (entryId !== queryId && stripTrailingDateStamp(entryId) !== queryIdNoDate) return false;
-		if (queryProvider !== undefined && normalizeModelSegment(entry.provider) !== queryProvider) return false;
-		return true;
-	});
-	if (candidates.length === 0) return undefined;
-	if (preferredProvider) {
-		const preferredProviderNorm = normalizeModelSegment(preferredProvider);
-		const preferred = candidates.find((entry) => normalizeModelSegment(entry.provider) === preferredProviderNorm);
-		if (preferred) return preferred.fullId;
-	}
-	if (candidates.length === 1) return candidates[0]!.fullId;
-	return undefined;
+  const candidates = availableModels.filter((entry) => {
+    const entryId = normalizeModelSegment(entry.id);
+    if (entryId !== queryId && stripTrailingDateStamp(entryId) !== queryIdNoDate) return false;
+    if (queryProvider !== undefined && normalizeModelSegment(entry.provider) !== queryProvider)
+      return false;
+    return true;
+  });
+  if (candidates.length === 0) return undefined;
+  if (preferredProvider) {
+    const preferredProviderNorm = normalizeModelSegment(preferredProvider);
+    const preferred = candidates.find(
+      (entry) => normalizeModelSegment(entry.provider) === preferredProviderNorm,
+    );
+    if (preferred) return preferred.fullId;
+  }
+  if (candidates.length === 1) return candidates[0]!.fullId;
+  return undefined;
 }
 
 /**
@@ -134,34 +329,34 @@ export function fuzzyResolveModel(
  * query. Pure.
  */
 export function resolveModelCandidate(
-	model: string | undefined,
-	availableModels: AvailableModelInfo[] | undefined,
-	preferredProvider?: string,
+  model: string | undefined,
+  availableModels: AvailableModelInfo[] | undefined,
+  preferredProvider?: string,
 ): string | undefined {
-	if (!model) return undefined;
-	if (!availableModels || availableModels.length === 0) return model;
+  if (!model) return undefined;
+  if (!availableModels || availableModels.length === 0) return model;
 
-	const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
-	if (resolvedWhole) return resolvedWhole;
+  const resolvedWhole = resolveBaseModelCandidate(model, availableModels, preferredProvider);
+  if (resolvedWhole) return resolvedWhole;
 
-	const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
-	if (!thinkingSuffix) return model;
-	const resolvedBase = resolveBaseModelCandidate(baseModel, availableModels, preferredProvider);
-	if (resolvedBase) return `${resolvedBase}${thinkingSuffix}`;
-	return model;
+  const { baseModel, thinkingSuffix } = splitThinkingSuffix(model);
+  if (!thinkingSuffix) return model;
+  const resolvedBase = resolveBaseModelCandidate(baseModel, availableModels, preferredProvider);
+  if (resolvedBase) return `${resolvedBase}${thinkingSuffix}`;
+  return model;
 }
 
-export interface ResolveSubagentModelOverrideOptions {
-	/** When set with `enforce: true`, out-of-scope models are rejected. */
-	scope?: ModelScopeConfig;
-	/** Origin of the requested model: explicit caller-supplied (hard error) vs inherited (warn). Defaults to `"inherited"`. */
-	source?: ModelSource;
-	/** Called for warn-severity violations instead of `console.warn`. */
-	onWarn?: (violation: ModelScopeViolation) => void;
+interface ResolveSubagentModelOverrideOptions {
+  /** When set with `enforce: true`, out-of-scope models are rejected. */
+  scope?: ModelScopeConfig;
+  /** Origin of the requested model: explicit caller-supplied (hard error) vs inherited (warn). Defaults to `"inherited"`. */
+  source?: ModelSource;
+  /** Called for warn-severity violations instead of `console.warn`. */
+  onWarn?: (violation: ModelScopeViolation) => void;
 }
 
 function defaultScopeWarn(violation: ModelScopeViolation): void {
-	console.warn(`[pi-subagents] ${violation.message}`);
+  console.warn(`[pi-subagents] ${violation.message}`);
 }
 
 /**
@@ -182,137 +377,138 @@ function defaultScopeWarn(violation: ModelScopeViolation): void {
  * an explicit (`source: "explicit"`) request and warns for an inherited one.
  */
 export function resolveSubagentModelOverride(
-	requestedModel: string | boolean | undefined,
-	parentModel: ParentModel | undefined,
-	availableModels: AvailableModelInfo[] | undefined,
-	preferredProvider?: string,
-	options?: ResolveSubagentModelOverrideOptions,
+  requestedModel: string | boolean | undefined,
+  parentModel: ParentModel | undefined,
+  availableModels: AvailableModelInfo[] | undefined,
+  preferredProvider?: string,
+  options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
-	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
-	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
-	let resolved: string | undefined;
-	if (explicit === undefined) {
-		resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
-	} else {
-		resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
-	}
-	if (resolved && options?.scope?.enforce) {
-		const source: ModelSource = explicit === undefined ? "inherited" : (options.source ?? "inherited");
-		const violation = checkModelScope(resolved, options.scope, source);
-		if (violation) {
-			if (violation.severity === "error") throw new Error(violation.message);
-			(options.onWarn ?? defaultScopeWarn)(violation);
-		}
-	}
-	return resolved;
+  const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
+  const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
+  let resolved: string | undefined;
+  if (explicit === undefined) {
+    resolved = parentModel ? `${parentModel.provider}/${parentModel.id}` : undefined;
+  } else {
+    resolved = resolveModelCandidate(explicit, availableModels, preferredProvider);
+  }
+  if (resolved && options?.scope?.enforce) {
+    const source: ModelSource =
+      explicit === undefined ? "inherited" : (options.source ?? "inherited");
+    const violation = checkModelScope(resolved, options.scope, source);
+    if (violation) {
+      if (violation.severity === "error") throw new Error(violation.message);
+      (options.onWarn ?? defaultScopeWarn)(violation);
+    }
+  }
+  return resolved;
 }
 
-export interface BuildModelCandidatesOptions {
-	/** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
-	scope?: ModelScopeConfig;
-	onWarn?: (violation: ModelScopeViolation) => void;
+interface BuildModelCandidatesOptions {
+  /** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
+  scope?: ModelScopeConfig;
+  onWarn?: (violation: ModelScopeViolation) => void;
 }
 
 export function buildFallbackModelList(
-	perExecutionFallbackModels: string[] | undefined,
-	agentFallbackModels: string[] | undefined,
+  perExecutionFallbackModels: string[] | undefined,
+  agentFallbackModels: string[] | undefined,
 ): string[] | undefined {
-	const seen = new Set<string>();
-	const fallbackModels: string[] = [];
-	for (const raw of [...(perExecutionFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
-		const model = typeof raw === "string" ? raw.trim() : "";
-		if (!model || seen.has(model)) continue;
-		seen.add(model);
-		fallbackModels.push(model);
-	}
-	return fallbackModels.length > 0 ? fallbackModels : undefined;
+  const seen = new Set<string>();
+  const fallbackModels: string[] = [];
+  for (const raw of [...(perExecutionFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
+    const model = typeof raw === "string" ? raw.trim() : "";
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    fallbackModels.push(model);
+  }
+  return fallbackModels.length > 0 ? fallbackModels : undefined;
 }
 
 export function buildModelCandidates(
-	primaryModel: string | undefined,
-	fallbackModels: string[] | undefined,
-	availableModels: AvailableModelInfo[] | undefined,
-	preferredProvider?: string,
-	options?: BuildModelCandidatesOptions,
+  primaryModel: string | undefined,
+  fallbackModels: string[] | undefined,
+  availableModels: AvailableModelInfo[] | undefined,
+  preferredProvider?: string,
+  options?: BuildModelCandidatesOptions,
 ): string[] {
-	const seen = new Set<string>();
-	const candidates: string[] = [];
-	const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
-	for (let index = 0; index < rawCandidates.length; index++) {
-		const raw = rawCandidates[index];
-		if (!raw) continue;
-		const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
-		if (!normalized || seen.has(normalized)) continue;
-		if (index > 0 && options?.scope?.enforce) {
-			const violation = checkModelScope(normalized, options.scope, "inherited");
-			if (violation) (options.onWarn ?? defaultScopeWarn)(violation);
-		}
-		seen.add(normalized);
-		candidates.push(normalized);
-	}
-	return candidates;
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
+  for (let index = 0; index < rawCandidates.length; index++) {
+    const raw = rawCandidates[index];
+    if (!raw) continue;
+    const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
+    if (!normalized || seen.has(normalized)) continue;
+    if (index > 0 && options?.scope?.enforce) {
+      const violation = checkModelScope(normalized, options.scope, "inherited");
+      if (violation) (options.onWarn ?? defaultScopeWarn)(violation);
+    }
+    seen.add(normalized);
+    candidates.push(normalized);
+  }
+  return candidates;
 }
 
 function replaceModelNoticeControlCharacters(value: string): string {
-	return [...value]
-		.map((character) => {
-			const code = character.codePointAt(0) ?? 0;
-			return code <= 0x1f || code === 0x7f ? " " : character;
-		})
-		.join("");
+  return [...value]
+    .map((character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return code <= 0x1f || code === 0x7f ? " " : character;
+    })
+    .join("");
 }
 
 export function sanitizeModelFallbackNotice(notice: string | undefined): string | undefined {
-	if (typeof notice !== "string") return undefined;
-	const sanitized = replaceModelNoticeControlCharacters(notice).replace(/\s+/g, " ").trim();
-	return sanitized ? sanitized.slice(0, 240) : undefined;
+  if (typeof notice !== "string") return undefined;
+  const sanitized = replaceModelNoticeControlCharacters(notice).replace(/\s+/g, " ").trim();
+  return sanitized ? sanitized.slice(0, 240) : undefined;
 }
 
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
-	/rate\s*limit/i,
-	/too many requests/i,
-	/\b429\b/,
-	/quota/i,
-	/billing/i,
-	/credit/i,
-	/auth(?:entication)?/i,
-	/unauthori[sz]ed/i,
-	/forbidden/i,
-	/api key/i,
-	/token expired/i,
-	/invalid key/i,
-	/provider.*unavailable/i,
-	/model.*unavailable/i,
-	/model.*disabled/i,
-	/model.*not found/i,
-	/unknown model/i,
-	/overloaded/i,
-	/service unavailable/i,
-	/temporar(?:ily)? unavailable/i,
-	/connection refused/i,
-	/fetch failed/i,
-	/network error/i,
-	/socket hang up/i,
-	/upstream/i,
-	/timed? out/i,
-	/timeout/i,
-	/\b502\b/,
-	/\b503\b/,
-	/\b504\b/,
-	/cold.?start/i,
-	/empty response/i,
-	/no output/i,
-	/model.*(?:load|fail|error)/i,
+  /rate\s*limit/i,
+  /too many requests/i,
+  /\b429\b/,
+  /quota/i,
+  /billing/i,
+  /credit/i,
+  /auth(?:entication)?/i,
+  /unauthori[sz]ed/i,
+  /forbidden/i,
+  /api key/i,
+  /token expired/i,
+  /invalid key/i,
+  /provider.*unavailable/i,
+  /model.*unavailable/i,
+  /model.*disabled/i,
+  /model.*not found/i,
+  /unknown model/i,
+  /overloaded/i,
+  /service unavailable/i,
+  /temporar(?:ily)? unavailable/i,
+  /connection refused/i,
+  /fetch failed/i,
+  /network error/i,
+  /socket hang up/i,
+  /upstream/i,
+  /timed? out/i,
+  /timeout/i,
+  /\b502\b/,
+  /\b503\b/,
+  /\b504\b/,
+  /cold.?start/i,
+  /empty response/i,
+  /no output/i,
+  /model.*(?:load|fail|error)/i,
 ];
 
 export function isRetryableModelFailure(error: string | undefined): boolean {
-	if (!error) return false;
-	return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
+  if (!error) return false;
+  return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 
 export function formatModelAttemptNote(attempt: ModelAttemptSummary, nextModel?: string): string {
-	const failure = attempt.error?.trim() || `exit ${attempt.exitCode ?? 1}`;
-	return nextModel
-		? `[fallback] ${attempt.model} failed: ${failure}. Retrying with ${nextModel}.`
-		: `[fallback] ${attempt.model} failed: ${failure}.`;
+  const failure = attempt.error?.trim() || `exit ${attempt.exitCode ?? 1}`;
+  return nextModel
+    ? `[fallback] ${attempt.model} failed: ${failure}. Retrying with ${nextModel}.`
+    : `[fallback] ${attempt.model} failed: ${failure}.`;
 }

@@ -1,6 +1,6 @@
 import * as path from "node:path";
 const MAX_NESTED_ID_LENGTH = 128;
-export const MAX_NESTED_PATH_ENTRIES = 4;
+const MAX_NESTED_PATH_ENTRIES = 4;
 export function isSafeNestedPathId(value) {
     return (typeof value === "string" &&
         value.length > 0 &&
@@ -28,7 +28,9 @@ export function sanitizeNestedPath(value) {
             return undefined;
         return {
             runId: record.runId,
-            ...(finiteNumber(record.stepIndex) !== undefined ? { stepIndex: finiteNumber(record.stepIndex) } : {}),
+            ...(finiteNumber(record.stepIndex) !== undefined
+                ? { stepIndex: finiteNumber(record.stepIndex) }
+                : {}),
             ...(nonEmptyString(record.agent, 128) ? { agent: nonEmptyString(record.agent, 128) } : {}),
         };
     })
@@ -44,8 +46,4 @@ export function parseNestedPathEnv(value) {
     catch {
         return [];
     }
-}
-export function encodeNestedPathEnv(value) {
-    const sanitized = sanitizeNestedPath(value);
-    return sanitized.length ? JSON.stringify(sanitized) : "";
 }

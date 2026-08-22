@@ -5,7 +5,7 @@ import { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV
 import { getPiAgentDir } from "./profile.js";
 import { createAsyncStatusJsonParseError } from "../runs/background/async-status-corruption.js";
 import { normalizeAsyncLifecycleStatus } from "../runs/shared/lifecycle-state.js";
-export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName };
+export { getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName, };
 export function getAgentDir() {
     return getPiAgentDir();
 }
@@ -25,7 +25,10 @@ export function resolveChildCwd(baseCwd, childCwd) {
     return path.isAbsolute(childCwd) ? childCwd : path.resolve(baseCwd, childCwd);
 }
 function isNotFoundError(error) {
-    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
 }
 export function readStatus(asyncDir) {
     const statusPath = path.join(asyncDir, "status.json");
@@ -85,22 +88,6 @@ export function readStatus(asyncDir) {
     }
     return status;
 }
-export function getLastActivity(outputFile) {
-    if (!outputFile)
-        return "";
-    try {
-        const stat = fs.statSync(outputFile);
-        const ago = Date.now() - stat.mtimeMs;
-        if (ago < 1000)
-            return "active now";
-        if (ago < 60000)
-            return `active ${Math.floor(ago / 1000)}s ago`;
-        return `active ${Math.floor(ago / 60000)}m ago`;
-    }
-    catch {
-        return "";
-    }
-}
 export function findLatestSessionFile(sessionDir) {
     if (!fs.existsSync(sessionDir))
         return null;
@@ -137,7 +124,9 @@ export function getFinalOutput(messages) {
         const msg = messages[i];
         if (msg.role !== "assistant")
             continue;
-        const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0) ||
+        const hasAssistantError = ("errorMessage" in msg &&
+            typeof msg.errorMessage === "string" &&
+            msg.errorMessage.length > 0) ||
             ("stopReason" in msg && msg.stopReason === "error");
         if (hasAssistantError)
             continue;
@@ -156,7 +145,9 @@ export function getFinalOutput(messages) {
                         precedingParts.push(precedingPart.text);
                     }
                 }
-                return precedingParts.length > 0 ? `${precedingParts.join("\n\n")}\n\n${part.text}` : part.text;
+                return precedingParts.length > 0
+                    ? `${precedingParts.join("\n\n")}\n\n${part.text}`
+                    : part.text;
             }
         }
     }
@@ -236,7 +227,9 @@ function extractToolCallSummaries(messages) {
         for (const part of msg.content) {
             if (part.type !== "toolCall")
                 continue;
-            const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
+            const args = typeof part.arguments === "object" &&
+                part.arguments !== null &&
+                !Array.isArray(part.arguments)
                 ? part.arguments
                 : {};
             const text = formatToolCall(part.name, args);
@@ -307,7 +300,10 @@ export function detectSubagentError(messages) {
         const msg = messages[i];
         if (msg.role === "assistant") {
             const hasText = Array.isArray(msg.content) &&
-                msg.content.some((c) => c.type === "text" && "text" in c && typeof c.text === "string" && c.text.trim().length > 0);
+                msg.content.some((c) => c.type === "text" &&
+                    "text" in c &&
+                    typeof c.text === "string" &&
+                    c.text.trim().length > 0);
             if (hasText) {
                 lastAssistantTextIndex = i;
                 break;
@@ -399,7 +395,17 @@ export function extractToolArgsPreview(args) {
         return urlsPreview;
     if (typeof args.prompt === "string" && args.prompt.trim().length > 0)
         return args.prompt;
-    const previewKeys = ["command", "path", "file_path", "pattern", "query", "url", "task", "describe", "search"];
+    const previewKeys = [
+        "command",
+        "path",
+        "file_path",
+        "pattern",
+        "query",
+        "url",
+        "task",
+        "describe",
+        "search",
+    ];
     for (const key of previewKeys) {
         if (args[key] && typeof args[key] === "string")
             return args[key];

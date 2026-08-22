@@ -147,7 +147,9 @@ export function createChildTranscriptWriter(input) {
                     ...baseRecord("tool_start"),
                     sourceEventType: event.type,
                     toolName: event.toolName,
-                    ...(Object.keys(args).length > 0 ? { argsPreview: childTranscriptArgsPreview(args) } : {}),
+                    ...(Object.keys(args).length > 0
+                        ? { argsPreview: childTranscriptArgsPreview(args) }
+                        : {}),
                 });
                 return;
             }

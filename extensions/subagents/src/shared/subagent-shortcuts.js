@@ -103,21 +103,17 @@ export function createSubagentLiveDetailController(initialExpanded = false) {
         },
     };
 }
-export function formatShortcutDisplay(key) {
+function formatShortcutDisplay(key) {
     return key
         .split("/")
         .map((binding) => binding
         .split("+")
-        .map((part) => (part.length === 1 ? part.toUpperCase() : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
+        .map((part) => part.length === 1
+        ? part.toUpperCase()
+        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
         .join("+"))
         .join("/");
 }
 export function liveDetailShortcutDisplay() {
     return formatShortcutDisplay(SUBAGENT_LIVE_DETAIL_SHORTCUT);
-}
-export function pauseAllShortcutDisplay() {
-    return formatShortcutDisplay(SUBAGENT_PAUSE_ALL_SHORTCUT);
-}
-export function subagentRunningHintText() {
-    return `Press ${liveDetailShortcutDisplay()} for live detail · ${pauseAllShortcutDisplay()} pauses all`;
 }

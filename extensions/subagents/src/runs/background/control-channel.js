@@ -7,19 +7,19 @@ export const INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIG
 const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
 const CHILD_MESSAGE_ACKS_DIR = "message-acks";
-export function controlInboxDir(asyncDir) {
+function controlInboxDir(asyncDir) {
     return path.join(asyncDir, "control");
 }
 export function interruptRequestPath(asyncDir) {
     return path.join(controlInboxDir(asyncDir), "interrupt.json");
 }
-export function timeoutRequestPath(asyncDir) {
+function timeoutRequestPath(asyncDir) {
     return path.join(controlInboxDir(asyncDir), "timeout.json");
 }
 export function steerRequestsDir(asyncDir) {
     return path.join(controlInboxDir(asyncDir), STEER_REQUESTS_DIR);
 }
-export function childMessageAcksDir(asyncDir) {
+function childMessageAcksDir(asyncDir) {
     return path.join(controlInboxDir(asyncDir), CHILD_MESSAGE_ACKS_DIR);
 }
 export function childMessageAckPath(asyncDir, requestId) {
@@ -41,13 +41,21 @@ export function writeSteerRequestToDir(dir, request) {
 }
 export function requestAsyncInterrupt(asyncDir, payload = {}, deps = {}) {
     const requestPath = interruptRequestPath(asyncDir);
-    const request = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "interrupt" };
+    const request = {
+        ...payload,
+        ts: payload.ts ?? deps.now?.() ?? Date.now(),
+        type: "interrupt",
+    };
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
-export function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
+function requestAsyncTimeout(asyncDir, payload = {}, deps = {}) {
     const requestPath = timeoutRequestPath(asyncDir);
-    const request = { ...payload, ts: payload.ts ?? deps.now?.() ?? Date.now(), type: "timeout" };
+    const request = {
+        ...payload,
+        ts: payload.ts ?? deps.now?.() ?? Date.now(),
+        type: "timeout",
+    };
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
@@ -55,7 +63,8 @@ function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
     const message = payload.message.trim();
     if (!message)
         throw new Error(`${type} message must not be empty.`);
-    if (payload.targetIndex !== undefined && (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
+    if (payload.targetIndex !== undefined &&
+        (!Number.isInteger(payload.targetIndex) || payload.targetIndex < 0)) {
         throw new Error(`${type} targetIndex must be a non-negative integer.`);
     }
     if (payload.deliveryDeadlineAt !== undefined &&
@@ -68,7 +77,9 @@ function requestAsyncChildMessage(asyncDir, type, payload, deps = {}) {
         ts: payload.ts ?? deps.now?.() ?? Date.now(),
         message,
         ...(payload.targetIndex !== undefined ? { targetIndex: payload.targetIndex } : {}),
-        ...(payload.deliveryDeadlineAt !== undefined ? { deliveryDeadlineAt: payload.deliveryDeadlineAt } : {}),
+        ...(payload.deliveryDeadlineAt !== undefined
+            ? { deliveryDeadlineAt: payload.deliveryDeadlineAt }
+            : {}),
         ...(payload.source ? { source: payload.source } : {}),
     };
     return writeChildMessageRequestToDir(steerRequestsDir(asyncDir), request);
@@ -82,7 +93,10 @@ export function requestAsyncResume(asyncDir, payload, deps = {}) {
 export function enqueueStepChildMessage(asyncDir, index, request) {
     if (!Number.isInteger(index) || index < 0)
         throw new Error("child message index must be a non-negative integer.");
-    return writeChildMessageRequestToDir(stepSteerInboxDir(asyncDir, index), { ...request, targetIndex: index });
+    return writeChildMessageRequestToDir(stepSteerInboxDir(asyncDir, index), {
+        ...request,
+        targetIndex: index,
+    });
 }
 export function enqueueStepSteer(asyncDir, index, request) {
     return enqueueStepChildMessage(asyncDir, index, { ...request, type: "steer" });
@@ -97,7 +111,10 @@ export function acceptChildMessageRequest(input) {
     const rejected = [];
     if (input.request.deliveryDeadlineAt !== undefined &&
         (input.now?.() ?? Date.now()) >= input.request.deliveryDeadlineAt) {
-        return { acceptedIndexes, rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })) };
+        return {
+            acceptedIndexes,
+            rejected: targets.map((index) => ({ index, reason: "delivery deadline expired" })),
+        };
     }
     for (const index of targets) {
         const step = input.steps[index];
@@ -128,13 +145,17 @@ export function writeChildMessageAcceptance(asyncDir, acceptance) {
     writeAtomicJson(acceptancePath, acceptance);
     return acceptancePath;
 }
-export function childMessageRequestRequiresAcceptance(request) {
+function childMessageRequestRequiresAcceptance(request) {
     return request.type === "resume";
 }
 export function writeChildMessageAcceptanceForRequest(asyncDir, request, acceptance) {
     if (!childMessageRequestRequiresAcceptance(request))
         return undefined;
-    return writeChildMessageAcceptance(asyncDir, { ...acceptance, requestId: request.id, type: request.type });
+    return writeChildMessageAcceptance(asyncDir, {
+        ...acceptance,
+        requestId: request.id,
+        type: request.type,
+    });
 }
 function parseChildMessageAcceptance(raw, requestId) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
@@ -197,7 +218,8 @@ function parseChildMessageRequest(raw) {
         return undefined;
     if (typeof input.message !== "string" || !input.message.trim())
         return undefined;
-    if (input.targetIndex !== undefined && (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
+    if (input.targetIndex !== undefined &&
+        (!Number.isInteger(input.targetIndex) || input.targetIndex < 0))
         return undefined;
     if (input.deliveryDeadlineAt !== undefined &&
         (typeof input.deliveryDeadlineAt !== "number" ||
@@ -210,7 +232,9 @@ function parseChildMessageRequest(raw) {
         ts: input.ts,
         message: input.message.trim(),
         ...(input.targetIndex !== undefined ? { targetIndex: input.targetIndex } : {}),
-        ...(input.deliveryDeadlineAt !== undefined ? { deliveryDeadlineAt: input.deliveryDeadlineAt } : {}),
+        ...(input.deliveryDeadlineAt !== undefined
+            ? { deliveryDeadlineAt: input.deliveryDeadlineAt }
+            : {}),
         ...(typeof input.source === "string" && input.source.trim() ? { source: input.source } : {}),
     };
 }
@@ -246,7 +270,7 @@ function consumeMatchingChildMessageRequestsFromDir(dir, matches, fsImpl = fs) {
 export function consumeChildMessageRequestsFromDir(dir, fsImpl = fs) {
     return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer" || request.type === "resume", fsImpl);
 }
-export function consumeSteerRequestsFromDir(dir, fsImpl = fs) {
+function consumeSteerRequestsFromDir(dir, fsImpl = fs) {
     return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer", fsImpl);
 }
 export function consumeSteerRequests(asyncDir, fsImpl = fs) {
@@ -277,7 +301,7 @@ export function consumeInterruptRequest(asyncDir, fsImpl = fs) {
     }
     return true;
 }
-export function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
+function consumeTimeoutRequest(asyncDir, fsImpl = fs) {
     const requestPath = timeoutRequestPath(asyncDir);
     if (!fsImpl.existsSync(requestPath))
         return false;
@@ -310,7 +334,9 @@ export function deliverInterruptRequest(input) {
     }
 }
 export function deliverTimeoutRequest(input) {
-    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+    requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, {
+        now: input.now,
+    });
 }
 export function watchAsyncControlInbox(asyncDir, opts) {
     const fsImpl = opts.fs ?? fs;

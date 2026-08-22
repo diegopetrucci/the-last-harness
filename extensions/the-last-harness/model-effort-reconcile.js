@@ -96,13 +96,15 @@ export function writeReconcileState(state) {
 }
 export function updateReconcileAcknowledgedSnapshot(snapshot, lastDecisionAt) {
     const current = readReconcileState();
-    const merged = { ...(current.acknowledgedSnapshot ?? {}) };
+    const merged = {
+        ...current.acknowledgedSnapshot,
+    };
     for (const [name, incoming] of Object.entries(snapshot)) {
         const existing = merged[name];
         if (existing != null && incoming.byProvider != null) {
             merged[name] = {
                 ...existing,
-                byProvider: { ...(existing.byProvider ?? {}), ...incoming.byProvider },
+                byProvider: { ...existing.byProvider, ...incoming.byProvider },
             };
         }
         else {
@@ -117,7 +119,11 @@ export function updateReconcileAcknowledgedSnapshot(snapshot, lastDecisionAt) {
 }
 function packagedCandidateModels(agent) {
     const seen = new Map();
-    for (const raw of [agent.model, ...(agent.tlhOpenaiModels ?? []), ...(agent.tlhAnthropicModels ?? [])]) {
+    for (const raw of [
+        agent.model,
+        ...(agent.tlhOpenaiModels ?? []),
+        ...(agent.tlhAnthropicModels ?? []),
+    ]) {
         const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
         if (!parsed) {
             continue;
@@ -224,7 +230,7 @@ export function backfillMissingBaselines(primaryAgents, subagentMetadata, settin
             if (existing != null && incoming.byProvider != null) {
                 merged[name] = {
                     ...existing,
-                    byProvider: { ...(existing.byProvider ?? {}), ...incoming.byProvider },
+                    byProvider: { ...existing.byProvider, ...incoming.byProvider },
                 };
             }
             else {

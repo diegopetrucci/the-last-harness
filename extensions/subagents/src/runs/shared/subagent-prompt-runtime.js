@@ -1,9 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.js";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, validateStructuredOutputValue, } from "./structured-output.js";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, assertJsonSchemaObject, validateStructuredOutputValue, } from "./structured-output.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
 import { PARENT_ONLY_NUDGE_TEXTS } from "./nudge-texts.js";
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
@@ -54,7 +55,10 @@ export function stripProjectContext(prompt) {
     const startIndex = prompt.indexOf(PROJECT_CONTEXT_HEADER);
     if (startIndex === -1)
         return prompt;
-    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [SKILLS_HEADER, DATE_HEADER]);
+    const endIndex = findSectionEnd(prompt, startIndex + PROJECT_CONTEXT_HEADER.length, [
+        SKILLS_HEADER,
+        DATE_HEADER,
+    ]);
     return `${prompt.slice(0, startIndex)}${prompt.slice(endIndex)}`;
 }
 export function stripInheritedSkills(prompt) {
@@ -84,7 +88,9 @@ export function rewriteSubagentPrompt(prompt, options) {
     }
     rewritten = stripSubagentOrchestrationSkill(rewritten);
     rewritten = stripChildBoundaryInstructions(rewritten);
-    const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}` : "";
+    const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV]
+        ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}`
+        : "";
     return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
 }
 function userMessageTextContent(message) {
@@ -102,7 +108,9 @@ function userMessageTextContent(message) {
 }
 function isParentOnlySubagentMessage(message) {
     const m = message;
-    if (m?.role === "custom" && typeof m.customType === "string" && PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
+    if (m?.role === "custom" &&
+        typeof m.customType === "string" &&
+        PARENT_ONLY_CUSTOM_MESSAGE_TYPES.has(m.customType))
         return true;
     const text = userMessageTextContent(message);
     if (text !== undefined && PARENT_ONLY_NUDGE_TEXTS.has(text))
@@ -118,15 +126,14 @@ function isSubagentToolCallBlock(block) {
     return b?.type === "toolCall" && b.name === "subagent";
 }
 function stripAssistantSubagentToolCallBlocks(message) {
-    const m = message;
-    if (m?.role !== "assistant" || !Array.isArray(m.content))
+    if (message.role !== "assistant" || !Array.isArray(message.content))
         return message;
-    const filteredContent = m.content.filter((block) => !isSubagentToolCallBlock(block));
-    if (filteredContent.length === m.content.length)
+    const filteredContent = message.content.filter((block) => !isSubagentToolCallBlock(block));
+    if (filteredContent.length === message.content.length)
         return message;
     if (filteredContent.length === 0)
         return undefined;
-    return { ...m, content: filteredContent };
+    return { ...message, content: filteredContent };
 }
 export function stripParentOnlySubagentMessages(messages) {
     let changed = false;
@@ -147,7 +154,7 @@ export function stripParentOnlySubagentMessages(messages) {
     }
     return changed ? filtered : messages;
 }
-export function formatSteerMessage(request) {
+function formatSteerMessage(request) {
     return [
         "Mid-run steering from the parent orchestrator:",
         "",
@@ -156,7 +163,7 @@ export function formatSteerMessage(request) {
         "Incorporate this guidance at the next safe point. Do not restart the task unless the guidance explicitly asks you to.",
     ].join("\n");
 }
-export function formatResumeMessage(request) {
+function formatResumeMessage(request) {
     return [
         "Resume follow-up from the parent orchestrator:",
         "",
@@ -173,10 +180,8 @@ function registerToolBudget(pi, budget) {
         return;
     let toolCount = 0;
     let softNudged = false;
-    const sendUserMessage = pi
-        .sendUserMessage;
-    const onRuntimeEvent = pi.on;
-    onRuntimeEvent("tool_call", (event) => {
+    const sendUserMessage = typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
+    pi.on("tool_call", (event) => {
         const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
         toolCount++;
         if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
@@ -196,9 +201,8 @@ function registerSteeringInbox(pi) {
     const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
     if (!steerInbox)
         return;
-    const sendUserMessage = pi
-        .sendUserMessage;
-    if (typeof sendUserMessage !== "function")
+    const sendUserMessage = typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
+    if (!sendUserMessage)
         return;
     let canSteer = false;
     let disposed = false;
@@ -252,27 +256,20 @@ function registerSteeringInbox(pi) {
         start();
         canSteer = true;
         flush();
-        return undefined;
     };
-    const onRuntimeEvent = pi.on;
-    onRuntimeEvent("session_start", () => start());
-    for (const eventName of [
-        "message_start",
-        "message_update",
-        "message_end",
-        "tool_execution_start",
-        "tool_execution_end",
-        "turn_end",
-    ]) {
-        onRuntimeEvent(eventName, activate);
-    }
-    onRuntimeEvent("session_shutdown", () => {
+    pi.on("session_start", () => start());
+    pi.on("message_start", activate);
+    pi.on("message_update", activate);
+    pi.on("message_end", activate);
+    pi.on("tool_execution_start", activate);
+    pi.on("tool_execution_end", activate);
+    pi.on("turn_end", activate);
+    pi.on("session_shutdown", () => {
         disposed = true;
         try {
             watcher?.close();
         }
         catch {
-            void 0;
         }
         if (interval)
             clearInterval(interval);
@@ -288,24 +285,24 @@ export default function registerSubagentPromptRuntime(pi) {
         nativeSupervisorClientRegistered = true;
         registerNativeSupervisorClient(pi);
     };
-    const onRuntimeEvent = pi.on;
-    onRuntimeEvent("session_start", registerNativeSupervisorClientOnce);
+    pi.on("session_start", registerNativeSupervisorClientOnce);
     const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
     const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
     if (structuredOutputPath && structuredSchemaPath) {
-        const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8"));
-        const parameters = {
+        const parsedSchema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8"));
+        assertJsonSchemaObject(parsedSchema, "structured output schema");
+        const schema = parsedSchema;
+        const parameters = Type.Unsafe({
             type: "object",
             properties: { value: schema },
             required: ["value"],
             additionalProperties: false,
-        };
-        const registerTool = pi.registerTool;
-        registerTool({
+        });
+        pi.registerTool({
             name: "structured_output",
             label: "Structured Output",
             description: "Submit the required final structured output for this subagent step. This terminates the step.",
-            parameters: parameters,
+            parameters,
             async execute(_id, params) {
                 const validation = validateStructuredOutputValue(schema, params.value);
                 if (validation.status === "invalid") {
@@ -321,19 +318,13 @@ export default function registerSubagentPromptRuntime(pi) {
             },
         });
     }
-    onRuntimeEvent("context", (event) => {
-        if (!event || typeof event !== "object" || !Array.isArray(event.messages))
-            return undefined;
-        const contextEvent = event;
-        const messages = stripParentOnlySubagentMessages(contextEvent.messages);
-        if (messages === contextEvent.messages)
+    pi.on("context", (event) => {
+        const messages = stripParentOnlySubagentMessages(event.messages);
+        if (messages === event.messages)
             return undefined;
         return { messages };
     });
-    onRuntimeEvent("before_agent_start", async (event) => {
-        if (!event || typeof event !== "object" || typeof event.systemPrompt !== "string")
-            return undefined;
-        const startEvent = event;
+    pi.on("before_agent_start", (event) => {
         const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
         if (intercomSessionName && typeof pi.setSessionName === "function") {
             pi.setSessionName(intercomSessionName);
@@ -341,13 +332,13 @@ export default function registerSubagentPromptRuntime(pi) {
         const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
         const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
         if (inheritProjectContext === undefined && inheritSkills === undefined)
-            return;
-        const rewritten = rewriteSubagentPrompt(startEvent.systemPrompt, {
+            return undefined;
+        const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
             inheritProjectContext: inheritProjectContext ?? true,
             inheritSkills: inheritSkills ?? true,
         });
-        if (rewritten === startEvent.systemPrompt)
-            return;
+        if (rewritten === event.systemPrompt)
+            return undefined;
         return { systemPrompt: rewritten };
     });
 }
