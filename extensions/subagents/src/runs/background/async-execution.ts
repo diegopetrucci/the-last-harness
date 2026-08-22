@@ -218,7 +218,7 @@ export interface AsyncRunnerStepBuildParams {
   toolBudget?: ResolvedToolBudget;
 }
 
-export type AsyncRunnerStepBuildResult =
+type AsyncRunnerStepBuildResult =
   | {
       steps: RunnerStep[];
       runnerCwd: string;
@@ -237,7 +237,7 @@ export function formatAsyncStartedMessage(headline: string): string {
  * TypeScript runner for development/test loaders; generated runtime modules
  * always resolve the committed JavaScript runner.
  */
-export function resolveAsyncRunnerModulePath(moduleUrl: string = import.meta.url): string {
+function resolveAsyncRunnerModulePath(moduleUrl: string = import.meta.url): string {
   const modulePath = fileURLToPath(moduleUrl);
   const runnerExtension = path.extname(modulePath) === ".ts" ? ".ts" : ".js";
   return path.join(path.dirname(modulePath), `subagent-runner${runnerExtension}`);

@@ -6,7 +6,7 @@ const SAFE_OUTPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export class ChainOutputValidationError extends Error {}
 
-export interface ChainOutputValidationContext {
+interface ChainOutputValidationContext {
   priorOutputNames?: Iterable<string>;
   startStepIndex?: number;
 }
@@ -27,7 +27,7 @@ export function validateChainOutputBindings(steps: ChainStep[]): void {
   validateChainOutputBindingsWithContext(steps);
 }
 
-export function validateChainOutputBindingsWithContext(
+function validateChainOutputBindingsWithContext(
   steps: ChainStep[],
   context: ChainOutputValidationContext = {},
 ): void {

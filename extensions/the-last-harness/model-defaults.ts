@@ -21,22 +21,17 @@ export type AgentModelDefaults = {
   preferOppositeProvider?: boolean;
 };
 
-export type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> =
-  {
-    model?: T;
-    thinking?: ThinkingLevel;
-  };
+type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> = {
+  model?: T;
+  thinking?: ThinkingLevel;
+};
 
-export type ProviderAwareSubagentFallback<
-  T extends ProviderModelReference = ProviderModelReference,
-> = {
+type ProviderAwareSubagentFallback<T extends ProviderModelReference = ProviderModelReference> = {
   model: T;
   thinking?: ThinkingLevel;
 };
 
-export type ProviderAwareSubagentResolution<
-  T extends ProviderModelReference = ProviderModelReference,
-> = {
+type ProviderAwareSubagentResolution<T extends ProviderModelReference = ProviderModelReference> = {
   model?: T;
   unavailableModel?: string;
   fallbackModels?: ProviderAwareSubagentFallback<T>[];
@@ -47,7 +42,7 @@ export type ProviderAwareSubagentResolution<
   fallbackWarning?: string;
 };
 
-export type ApplyProviderAwareSubagentModelOptions = {
+type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
   onWarning?: (warning: { agent: string; message: string }) => void;
 };
@@ -332,7 +327,7 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
   return undefined;
 }
 
-export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
+function selectProviderAwareAgentModel<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
   currentProvider?: string,

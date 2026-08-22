@@ -103,7 +103,7 @@ function supervisorChannelDir(runId: string, agent: string, childIndex: number):
   );
 }
 
-export interface ThinkingSuffixOptions {
+interface ThinkingSuffixOptions {
   availableModels?: ModelInfo[];
   preferredModelProvider?: string;
 }

@@ -15,7 +15,7 @@ export function isDefaultPiAgentDir(agentDir) {
         return resolve(agentDir) === resolve(home, ".pi", "agent");
     }
 }
-export function isNormalPiConfigPath(resolvedPath) {
+function isNormalPiConfigPath(resolvedPath) {
     const home = process.env.HOME || process.env.USERPROFILE;
     if (!home) {
         return false;
@@ -68,7 +68,7 @@ export function readTlhStartupState() {
         return {};
     }
 }
-export function tlhInstallStatePath() {
+function tlhInstallStatePath() {
     return safeTlhProfileFilePath(join("tlh", "install-state.json"));
 }
 export function readTlhInstallState() {

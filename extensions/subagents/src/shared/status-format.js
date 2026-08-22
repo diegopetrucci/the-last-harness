@@ -42,7 +42,7 @@ export function aggregateStepStatus(steps) {
         return "complete";
     return "pending";
 }
-export function formatAgentRunningLabel(count) {
+function formatAgentRunningLabel(count) {
     return count === 1 ? "1 agent running" : `${count} agents running`;
 }
 export function formatParallelOutcome(steps, total, options = {}) {

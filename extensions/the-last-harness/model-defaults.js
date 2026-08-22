@@ -175,7 +175,7 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     }
     return undefined;
 }
-export function selectProviderAwareAgentModel(agent, availableModels, currentProvider) {
+function selectProviderAwareAgentModel(agent, availableModels, currentProvider) {
     return (selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
         selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider));
 }

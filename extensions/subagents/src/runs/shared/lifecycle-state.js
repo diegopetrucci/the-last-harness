@@ -10,7 +10,7 @@ const DEFAULT_LOCK_RETRY_DELAYS_MS = [10, 25, 50, 100, 200];
 const DEFAULT_OWNERLESS_LOCK_STALE_MS = 30_000;
 const WAIT_BUFFER = typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(4) : undefined;
 const WAIT_VIEW = WAIT_BUFFER ? new Int32Array(WAIT_BUFFER) : undefined;
-export class LifecycleLockExhaustedError extends Error {
+class LifecycleLockExhaustedError extends Error {
     constructor(message, options) {
         super(message, options);
         this.name = "LifecycleLockExhaustedError";
@@ -199,7 +199,7 @@ export function withLifecycleContinuation(status, index, continuation) {
 function hasActionablePausedChildren(status) {
     return (status?.some((step) => step.status === "paused" || step.status === "pausing" || step.status === "pending") ?? false);
 }
-export function finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId) {
+function finalizeLifecycleContinuationStatus(status, index, continuation, continuedAt, continuationRunId) {
     const nextSteps = status.steps?.map((step, stepIndex) => stepIndex === index
         ? {
             ...step,

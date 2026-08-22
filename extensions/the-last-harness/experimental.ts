@@ -213,7 +213,7 @@ export function parseExperimentalSlashAction(args: string): TlhExperimentalSlash
   return undefined;
 }
 
-export const EXPERIMENTAL_COMMAND_COMPLETIONS = [
+const EXPERIMENTAL_COMMAND_COMPLETIONS = [
   { value: "list", description: "List TLH experimental features" },
   { value: "status", description: "Show TLH experimental feature status" },
   ...TLH_EXPERIMENTAL_FEATURES.flatMap((feature) => [

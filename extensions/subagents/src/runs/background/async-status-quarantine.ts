@@ -20,7 +20,7 @@ export interface AsyncStatusQuarantineOptions {
   createUniqueSuffix?: () => string;
 }
 
-export type AsyncStatusQuarantineResult =
+type AsyncStatusQuarantineResult =
   | { outcome: "quarantined"; kind: AsyncRunCorruptEntryIssue["kind"]; quarantineDir: string }
   | { outcome: "skipped"; reason: "missing" | "repaired"; kind: AsyncRunCorruptEntryIssue["kind"] }
   | {

@@ -16,7 +16,7 @@ export const MODEL_SELECTION_SCOPE_OPTIONS = [
   MODEL_SELECTION_SCOPE_ALL_SESSIONS,
 ] as const;
 
-export type TlhModelSelectionScope = "session-only" | "all-sessions" | "cancel";
+type TlhModelSelectionScope = "session-only" | "all-sessions" | "cancel";
 type TlhModelSelection = Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
 type DefaultThinkingLevel = Parameters<typeof SettingsManager.prototype.setDefaultThinkingLevel>[0];
 
@@ -84,14 +84,14 @@ type TlhModelSelectionPersistencePatch = {
   state: TlhModelSelectionPersistenceState;
 };
 
-export type TlhModelSelectionDefaultsClaim = {
+type TlhModelSelectionDefaultsClaim = {
   consumed: boolean;
   nativeSelector: boolean;
   writes: SuppressedDefaultWrite[];
 };
 
 /** Captures the settings write emitted by one interactive thinking selection. */
-export type TlhThinkingLevelSelectionClaim = {
+type TlhThinkingLevelSelectionClaim = {
   consumed: boolean;
   writes: ThinkingWrite[];
 };

@@ -12,7 +12,7 @@ export const PI_CODING_AGENT_PACKAGE_ROOT_ENV = "PI_SUBAGENTS_PI_CODING_AGENT_PA
 
 let cachedRuntimeConfigDirName: string | null | undefined;
 
-export interface RuntimeConfigDirDeps {
+interface RuntimeConfigDirDeps {
   readFileSync?: (filePath: string, encoding: "utf-8") => string;
   resolveRuntimePackageRoot?: () => string | undefined;
   resolveInstalledPackageRoot?: () => string | undefined;

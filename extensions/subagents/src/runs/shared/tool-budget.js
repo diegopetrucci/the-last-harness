@@ -1,6 +1,6 @@
 export const DEFAULT_TOOL_BUDGET_BLOCK = ["read", "grep", "find", "ls"];
 export const TOOL_BUDGET_ENV = "PI_SUBAGENT_TOOL_BUDGET";
-export function normalizeToolBudgetBlock(block) {
+function normalizeToolBudgetBlock(block) {
     if (block === "*")
         return "*";
     if (block === undefined)

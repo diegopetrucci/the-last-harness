@@ -36,7 +36,7 @@ const WORKING_TREE_COMMIT_SHA = "__tlh_working_tree__";
 const WORKING_TREE_COMMIT_SHORT_SHA = "WT";
 const WORKING_TREE_COMMIT_SUBJECT = "Uncommitted changes";
 
-export function isWorkingTreeCommitSha(sha: string): boolean {
+function isWorkingTreeCommitSha(sha: string): boolean {
   return sha === WORKING_TREE_COMMIT_SHA;
 }
 
@@ -75,7 +75,7 @@ async function runBashAllowFailure(
   return result.stdout;
 }
 
-export async function getRepoRoot(pi: ExtensionAPI, cwd: string): Promise<string> {
+async function getRepoRoot(pi: ExtensionAPI, cwd: string): Promise<string> {
   const result = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
   if (result.code !== 0) {
     throw new Error("Not inside a git repository.");
@@ -712,7 +712,7 @@ export async function getReviewWindowData(
   };
 }
 
-export async function listRangeCommits(
+async function listRangeCommits(
   pi: ExtensionAPI,
   repoRoot: string,
   range: string,

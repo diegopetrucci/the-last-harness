@@ -73,7 +73,7 @@ export type TlhSanitizedReference = {
   pathRedacted: true;
 };
 
-export type TlhToolSourceEstimate = {
+type TlhToolSourceEstimate = {
   key: string;
   label: string;
   kind: "built-in" | "extension" | "mcp-proxy" | "mcp-direct" | "unknown";
@@ -133,7 +133,7 @@ export type TlhAgentProviderUsage = {
   usage: TlhUsageTotals;
 };
 
-export type TlhDiscoveredSubagentRun = {
+type TlhDiscoveredSubagentRun = {
   key: string;
   sourceEntryId: string;
   sourceTurnIndex?: number;
@@ -181,14 +181,14 @@ export type TlhUsageTimelineTurn = {
   };
 };
 
-export type TlhToolCatalogEntry = Pick<ToolInfo, "name" | "sourceInfo">;
+type TlhToolCatalogEntry = Pick<ToolInfo, "name" | "sourceInfo">;
 
 /**
  * Structural interface for a model price source.
  * ctx.modelRegistry from ExtensionContext satisfies this shape.
  * When absent, the cache-read rate fallback is 0.
  */
-export type ModelPriceSource = {
+type ModelPriceSource = {
   find(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
 };
 
@@ -207,7 +207,7 @@ export type TlhCacheMissEvent = {
   missedCost: number;
 };
 
-export type TlhCacheMisses = {
+type TlhCacheMisses = {
   /** Total tokens that could have been served from cache but were not. */
   missedTokens: number;
   /** Estimated USD cost of the cache misses. */
@@ -218,7 +218,7 @@ export type TlhCacheMisses = {
   worst: TlhCacheMissEvent[];
 };
 
-export type TlhSessionUsageAnalysisOptions = {
+type TlhSessionUsageAnalysisOptions = {
   sessionId?: string;
   sessionName?: string;
   startedAt?: string;

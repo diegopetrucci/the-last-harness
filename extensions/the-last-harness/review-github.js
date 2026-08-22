@@ -1,7 +1,7 @@
 export function isGhGraphqlQuotaFailure(stderr) {
     return /graphql/i.test(stderr) && /(rate limit|quota|submitted too quickly)/i.test(stderr);
 }
-export function parseGitHubPrUrl(value) {
+function parseGitHubPrUrl(value) {
     try {
         const url = new URL(value);
         if (url.hostname !== "github.com") {
@@ -17,14 +17,14 @@ export function parseGitHubPrUrl(value) {
         return undefined;
     }
 }
-export function parseGitHubRepoSlug(value) {
+function parseGitHubRepoSlug(value) {
     const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
     if (!match) {
         return undefined;
     }
     return { owner: match[1], repo: match[2] };
 }
-export function parseGitHubRemoteUrl(value) {
+function parseGitHubRemoteUrl(value) {
     const trimmed = value.trim();
     const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
     if (sshMatch) {
@@ -45,7 +45,7 @@ export function parseGitHubRemoteUrl(value) {
         return undefined;
     }
 }
-export async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
+async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
     const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
     if (defaultRepoResult.code !== 0) {
         return undefined;
@@ -58,7 +58,7 @@ export async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
     }
     return undefined;
 }
-export async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
+async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
     const remoteListResult = await pi.exec("git", ["remote"], { cwd });
     if (remoteListResult.code !== 0) {
         const firstLine = remoteListResult.stderr.split("\n")[0]?.trim() || "git remote failed";

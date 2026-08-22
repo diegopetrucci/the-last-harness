@@ -14,7 +14,7 @@ const USAGE_COMMAND_COMPLETIONS = [
 import { handleUsageCommand } from "./usage-limits-command.js";
 
 let cachedTlhUsageWeeklyVisibility: boolean | undefined;
-export function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | undefined {
+function getTlhUsageLimitsConfig(cwd: string): TlhUsageLimitsConfig | undefined {
   try {
     const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
     return settings.tlh?.usageLimits;

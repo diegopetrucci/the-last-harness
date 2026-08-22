@@ -184,7 +184,7 @@ function inferLevel(input) {
             async: input.async,
         });
 }
-export function normalizeAcceptanceInput(input) {
+function normalizeAcceptanceInput(input) {
     if (input === undefined || input === "auto")
         return { level: "auto" };
     if (input === false)

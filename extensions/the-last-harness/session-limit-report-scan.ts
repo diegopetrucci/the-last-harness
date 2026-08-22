@@ -33,7 +33,7 @@ export type RawSessionEntry = Record<string, unknown> & { type: string };
 /**
  * Result of parsing a session JSONL file.
  */
-export type ParsedSessionFile = {
+type ParsedSessionFile = {
   /** Entries that parsed successfully (all have a `type` string field). */
   entries: RawSessionEntry[];
   /** Number of lines that could not be parsed (empty lines excluded from count). */
@@ -43,7 +43,7 @@ export type ParsedSessionFile = {
 /**
  * Result of enumerating candidate session files.
  */
-export type SessionFileScanResult = {
+type SessionFileScanResult = {
   /** Absolute paths to .jsonl files whose mtime is at or after `windowStartMs`. */
   files: string[];
   /** Non-fatal observations recorded during the scan. */
