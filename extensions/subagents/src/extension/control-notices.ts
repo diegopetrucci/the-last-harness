@@ -18,7 +18,7 @@ export interface SubagentControlMessageDetails {
   noticeText?: string;
 }
 
-export function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
+function controlNoticeTarget(details: SubagentControlMessageDetails): string | undefined {
   return details.childIntercomTarget;
 }
 

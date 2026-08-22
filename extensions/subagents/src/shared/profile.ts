@@ -21,7 +21,7 @@ export function getPiAgentDir(): string {
   return path.resolve(expandTildePath(configured));
 }
 
-export function getGlobalAgentsDir(): string {
+function getGlobalAgentsDir(): string {
   return path.join(os.homedir(), ".agents");
 }
 

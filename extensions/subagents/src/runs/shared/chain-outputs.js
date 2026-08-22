@@ -17,7 +17,7 @@ function taskTemplatesForStep(step) {
 export function validateChainOutputBindings(steps) {
     validateChainOutputBindingsWithContext(steps);
 }
-export function validateChainOutputBindingsWithContext(steps, context = {}) {
+function validateChainOutputBindingsWithContext(steps, context = {}) {
     const priorOutputNames = [...(context.priorOutputNames ?? [])];
     const available = new Set(priorOutputNames);
     const seen = new Set(priorOutputNames);

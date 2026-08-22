@@ -7,6 +7,7 @@ const {
   applyProviderAwareSubagentModels,
   findAvailableProviderModel,
   resolveProviderAwareSubagentResolution,
+  resolveProviderThinking,
   selectProviderAwareAgentDefaults,
   selectProviderAwareAgentModelId,
   splitKnownThinkingSuffix,
@@ -240,6 +241,174 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
   assert.equal(Object.hasOwn(noOppositeInput, "model"), false);
   assert.equal(Object.hasOwn(noOppositeInput, "fallbackModels"), false);
   assert.equal(Object.hasOwn(noOppositeInput, "modelFallbackNotice"), false);
+});
+
+// Reconcile intentionally does not drift-check these dynamic OpenRouter candidates: OpenRouter
+// has no packaged frontmatter model entries to reconcile against.
+test("provider-aware OpenRouter opposite roles use vendor-aware direct candidates and session fallback", () => {
+  const openrouterReviewer = {
+    name: "openrouter-reviewer",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+    tlhAnthropicModels: ["anthropic/claude-opus-5"],
+    tlhOpenaiThinking: "high",
+    tlhAnthropicThinking: "medium",
+    tlhOpenrouterThinking: "low",
+    preferOppositeProvider: true,
+  };
+  const openrouterAgents = new Map([[openrouterReviewer.name, openrouterReviewer]]);
+  const available = [...anthropicAvailable, ...codexAvailable];
+  const neutralNotice = "TLH fell back to the session model; review independence is reduced.";
+
+  const anthropicSession = { agent: openrouterReviewer.name };
+  assert.equal(
+    applyProviderAwareSubagentModels(anthropicSession, openrouterAgents, available, "openrouter", {
+      provider: "openrouter",
+      id: "anthropic/claude-sonnet-4-6",
+    }),
+    1,
+  );
+  assert.equal(anthropicSession.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(anthropicSession.fallbackModels, ["openrouter/anthropic/claude-sonnet-4-6:low"]);
+  assert.equal(anthropicSession.modelFallbackNotice, neutralNotice);
+  assert.equal(
+    resolveProviderAwareSubagentResolution(openrouterReviewer, available, "openrouter", {
+      provider: "openrouter",
+      id: "anthropic/claude-sonnet-4-6",
+    }).independence,
+    "preferred",
+  );
+
+  const openaiSession = { agent: openrouterReviewer.name };
+  assert.equal(
+    applyProviderAwareSubagentModels(openaiSession, openrouterAgents, available, "openrouter", {
+      provider: "openrouter",
+      id: "openai/gpt-5.6",
+    }),
+    1,
+  );
+  assert.equal(openaiSession.model, "anthropic/claude-opus-5:medium");
+  assert.deepEqual(openaiSession.fallbackModels, ["openrouter/openai/gpt-5.6:low"]);
+
+  const unknownSession = { agent: openrouterReviewer.name };
+  assert.equal(
+    applyProviderAwareSubagentModels(unknownSession, openrouterAgents, available, "openrouter", {
+      provider: "openrouter",
+      id: "google/gemini-2.5",
+    }),
+    1,
+  );
+  assert.equal(unknownSession.model, "openai-codex/gpt-5.6-sol:high");
+  assert.equal(
+    resolveProviderAwareSubagentResolution(openrouterReviewer, available, "openrouter", {
+      provider: "openrouter",
+      id: "google/gemini-2.5",
+    }).independence,
+    "unknown",
+  );
+
+  const anthropicOnly = { agent: openrouterReviewer.name };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      anthropicOnly,
+      openrouterAgents,
+      anthropicAvailable,
+      "openrouter",
+      { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" },
+    ),
+    1,
+  );
+  const resolution = resolveProviderAwareSubagentResolution(
+    openrouterReviewer,
+    anthropicAvailable,
+    "openrouter",
+    { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" },
+  );
+  assert.equal(resolution.independence, "degraded");
+});
+
+test("OpenRouter opposite fallback omits generic thinking while direct candidate keeps provider thinking", () => {
+  const agent = {
+    name: "openrouter-opposite-no-fallback-thinking",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+    tlhAnthropicModels: ["anthropic/claude-opus-5"],
+    tlhOpenaiThinking: "high",
+    thinking: "low",
+    preferOppositeProvider: true,
+  };
+  const currentModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" };
+  const resolution = resolveProviderAwareSubagentResolution(
+    agent,
+    [...anthropicAvailable, ...codexAvailable],
+    "openrouter",
+    currentModel,
+  );
+
+  assert.equal(resolution.model, codexAvailable[1]);
+  assert.equal(resolution.thinking, "high");
+  assert.deepEqual(resolution.fallbackModels, [{ model: currentModel, thinking: undefined }]);
+});
+
+test("OpenRouter registry-missing fallback preserves stored effort and distinguishes unknown from unsupported", () => {
+  const openrouterReviewer = {
+    name: "openrouter-reviewer-effort",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+    tlhAnthropicModels: ["anthropic/claude-opus-5"],
+    preferOppositeProvider: true,
+  };
+  const openrouterAgents = new Map([[openrouterReviewer.name, openrouterReviewer]]);
+  const directCandidates = [...reasoningCodexAvailable, ...reasoningAnthropicAvailable];
+  const currentModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" };
+  const warnings = [];
+  const input = { agent: openrouterReviewer.name, task: "Review" };
+
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      openrouterAgents,
+      directCandidates,
+      "openrouter",
+      currentModel,
+      {
+        agentOverrides: new Map([[openrouterReviewer.name, { thinking: "high" }]]),
+        onWarning: (warning) => warnings.push(warning.message),
+      },
+    ),
+    1,
+  );
+  assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(input.fallbackModels, ["openrouter/anthropic/claude-sonnet-4-6:high"]);
+  assert.equal(
+    input.modelFallbackNotice,
+    "TLH fell back to the session model; review independence is reduced.",
+  );
+  assert.deepEqual(warnings, []);
+
+  const resolution = resolveProviderAwareSubagentResolution(
+    openrouterReviewer,
+    directCandidates,
+    "openrouter",
+    currentModel,
+    { thinking: "high" },
+  );
+  assert.equal(resolution.thinking, "high");
+  assert.equal(resolution.fallbackModels[0].thinking, "high");
+  assert.equal(resolution.warning, undefined);
+  assert.equal(resolution.fallbackWarning, undefined);
+
+  const unsupportedCurrentModel = { ...currentModel, reasoning: false };
+  const unsupportedResolution = resolveProviderAwareSubagentResolution(
+    openrouterReviewer,
+    directCandidates,
+    "openrouter",
+    unsupportedCurrentModel,
+    { thinking: "high" },
+  );
+  assert.equal(unsupportedResolution.thinking, "high");
+  assert.equal(unsupportedResolution.fallbackModels[0].thinking, "off");
+  assert.equal(
+    unsupportedResolution.fallbackWarning,
+    'TLH stored minor-agent effort "high" is not supported by generated fallback openrouter/anthropic/claude-sonnet-4-6; that fallback will use explicit off for this run.',
+  );
 });
 
 test("provider-aware subagent mutation gives code-reviewer and oracle current-session model fallback first", () => {
@@ -766,7 +935,7 @@ test("saved effort appends after exact suffix-like primary and generated fallbac
   assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:high:low"]);
 });
 
-test("model-only exact suffix-like IDs receive bundled effort after the full model identity", () => {
+test("model-only exact suffix-like OpenRouter IDs do not receive generic effort", () => {
   const mediumDeveloper = { ...overrideDeveloper, thinking: "medium" };
   const mediumDeveloperAgents = new Map([[mediumDeveloper.name, mediumDeveloper]]);
   const available = [{ provider: "openrouter", id: "reasoner:high", reasoning: true }];
@@ -780,7 +949,7 @@ test("model-only exact suffix-like IDs receive bundled effort after the full mod
     },
   );
   assert.equal(resolution.model, available[0]);
-  assert.equal(resolution.thinking, "medium");
+  assert.equal(resolution.thinking, undefined);
 
   const input = { agent: "developer", task: "Implement the ticket" };
   assert.equal(
@@ -796,7 +965,7 @@ test("model-only exact suffix-like IDs receive bundled effort after the full mod
     ),
     1,
   );
-  assert.equal(input.model, "openrouter/reasoner:high:medium");
+  assert.equal(input.model, "openrouter/reasoner:high");
 });
 
 test("shared lookup still treats a non-exact recognized suffix as base-model effort", () => {
@@ -1660,4 +1829,366 @@ test("splitKnownThinkingSuffix now splits a :max suffix like every other level",
     0,
   );
   assert.equal(suffixedInput.model, "anthropic/max-model:max");
+});
+
+// --- tlhOpenrouterThinking: parsing and provider resolution ---
+
+test("resolveThinkingForProvider returns tlhOpenrouterThinking when provider is openrouter", () => {
+  const agentWithOpenrouterThinking = {
+    name: "openrouter-agent",
+    tlhAnthropicThinking: "high",
+    tlhOpenrouterThinking: "medium",
+    tlhOpenaiThinking: "max",
+    thinking: "low",
+  };
+  const openrouterAvailable = [{ provider: "openrouter", id: "some-model", reasoning: true }];
+
+  const result = selectProviderAwareAgentDefaults(
+    agentWithOpenrouterThinking,
+    openrouterAvailable,
+    "openrouter",
+  );
+  assert.equal(result.thinking, "medium");
+});
+
+test("resolveThinkingForProvider does not return tlhOpenrouterThinking for anthropic provider", () => {
+  const agentWithOpenrouterThinking = {
+    name: "openrouter-agent",
+    tlhAnthropicThinking: "high",
+    tlhOpenrouterThinking: "medium",
+    thinking: "low",
+  };
+  const available = [{ provider: "anthropic", id: "claude-opus-5" }];
+
+  const result = selectProviderAwareAgentDefaults(
+    agentWithOpenrouterThinking,
+    available,
+    "anthropic",
+  );
+  assert.equal(result.thinking, "high");
+});
+
+test("resolveThinkingForProvider does not return tlhOpenrouterThinking for openai-codex provider", () => {
+  const agentWithOpenrouterThinking = {
+    name: "openrouter-agent",
+    tlhOpenaiThinking: "max",
+    tlhOpenrouterThinking: "medium",
+    thinking: "low",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+  };
+  const available = [{ provider: "openai-codex", id: "gpt-5.6-luna" }];
+
+  const result = selectProviderAwareAgentDefaults(
+    agentWithOpenrouterThinking,
+    available,
+    "openai-codex",
+  );
+  assert.equal(result.thinking, "max");
+});
+
+test("tlhOpenrouterThinking is undefined when provider is openrouter but key is absent", () => {
+  const agentWithoutOpenrouterThinking = {
+    name: "no-openrouter-agent",
+    tlhAnthropicThinking: "high",
+    thinking: "low",
+  };
+  const openrouterAvailable = [{ provider: "openrouter", id: "some-model", reasoning: true }];
+
+  const result = selectProviderAwareAgentDefaults(
+    agentWithoutOpenrouterThinking,
+    openrouterAvailable,
+    "openrouter",
+  );
+  assert.equal(result.thinking, undefined);
+  assert.equal(resolveProviderThinking(agentWithoutOpenrouterThinking, "openrouter"), undefined);
+});
+
+test("selectProviderAwareAgentDefaults uses tlhOpenrouterThinking when no bundled openrouter model is available (fallback via currentProvider)", () => {
+  // When no bundled model resolves for 'openrouter', selectProviderAwareAgentDefaults
+  // falls back to resolveThinkingForProvider(agent, currentProvider), so tlhOpenrouterThinking
+  // is still returned as the thinking level.
+  const openrouterDeveloper = {
+    name: "developer",
+    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+    tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+    tlhAnthropicThinking: "medium",
+    tlhOpenaiThinking: "max",
+    tlhOpenrouterThinking: "medium",
+  };
+  const openrouterModel = [{ provider: "openrouter", id: "some-model", reasoning: true }];
+  // No openrouter entry in tlhOpenaiModels/tlhAnthropicModels → model is undefined.
+  // thinking = resolveThinkingForProvider(agent, undefined ?? "openrouter") → "medium".
+  const result = selectProviderAwareAgentDefaults(
+    openrouterDeveloper,
+    openrouterModel,
+    "openrouter",
+  );
+  assert.equal(result.model, undefined);
+  assert.equal(result.thinking, "medium");
+});
+
+// =============================================================================
+// OpenRouter follow-session-model rule (ticket tw-0lu9)
+// =============================================================================
+// When currentProvider === "openrouter" (literal), non-opposite-role agents follow
+// the current session model. Thinking comes from tlhOpenrouterThinking only;
+// the generic `thinking` key must not leak through on this path.
+
+const openrouterSessionModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-5" };
+const openrouterAvailableModels = [
+  { provider: "openrouter", id: "anthropic/claude-sonnet-4-5", reasoning: true },
+  { provider: "openrouter", id: "anthropic/claude-opus-4", reasoning: true },
+];
+const openrouterDeveloperWithThinking = {
+  name: "developer",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+  tlhAnthropicThinking: "medium",
+  tlhOpenaiThinking: "max",
+  tlhOpenrouterThinking: "low",
+  thinking: "high",
+};
+const openrouterDeveloperNoOrThinking = {
+  name: "developer",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
+  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+  tlhAnthropicThinking: "medium",
+  tlhOpenaiThinking: "max",
+  // no tlhOpenrouterThinking
+  thinking: "high",
+};
+const openrouterCodeReviewer = {
+  name: "code-reviewer",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  preferOppositeProvider: true,
+};
+
+test("openrouter follow rule: selectProviderAwareAgentDefaults follows session model with tlhOpenrouterThinking", () => {
+  const result = selectProviderAwareAgentDefaults(
+    openrouterDeveloperWithThinking,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
+  assert.equal(result.thinking, "low"); // from tlhOpenrouterThinking
+});
+
+test("openrouter follow rule: registry-missing session model is still followed", () => {
+  const result = selectProviderAwareAgentDefaults(
+    openrouterDeveloperWithThinking,
+    [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterSessionModel);
+  assert.equal(result.thinking, "low");
+});
+
+test("openrouter follow rule: thinking-only override fails open for unknown capability", () => {
+  const resolution = resolveProviderAwareSubagentResolution(
+    openrouterDeveloperWithThinking,
+    [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+    "openrouter",
+    openrouterSessionModel,
+    { thinking: "high" },
+  );
+  assert.deepEqual(resolution.model, openrouterSessionModel);
+  assert.equal(resolution.thinking, "high");
+  assert.equal(resolution.warning, undefined);
+});
+
+test("openrouter follow rule: generic thinking key does NOT leak when tlhOpenrouterThinking is absent", () => {
+  const result = selectProviderAwareAgentDefaults(
+    openrouterDeveloperNoOrThinking,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
+  // Must be undefined, not the generic 'high' from agent.thinking
+  assert.equal(result.thinking, undefined);
+});
+
+test("openrouter follow rule: applyProviderAwareSubagentModels follows session model without suffix when no tlhOpenrouterThinking", () => {
+  const orAgents = new Map([
+    [openrouterDeveloperNoOrThinking.name, openrouterDeveloperNoOrThinking],
+  ]);
+  const input = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      openrouterAvailableModels,
+      "openrouter",
+      openrouterSessionModel,
+    ),
+    1,
+  );
+  assert.equal(input.model, "openrouter/anthropic/claude-sonnet-4-5");
+  assert.equal(Object.hasOwn(input, "thinking"), false);
+  assert.equal(Object.hasOwn(input, "fallbackModels"), false);
+});
+
+test("openrouter follow rule: applyProviderAwareSubagentModels appends tlhOpenrouterThinking suffix when set", () => {
+  const orAgents = new Map([
+    [openrouterDeveloperWithThinking.name, openrouterDeveloperWithThinking],
+  ]);
+  const input = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      openrouterAvailableModels,
+      "openrouter",
+      openrouterSessionModel,
+    ),
+    1,
+  );
+  assert.equal(input.model, "openrouter/anthropic/claude-sonnet-4-5:low");
+  assert.equal(Object.hasOwn(input, "thinking"), false);
+  assert.equal(Object.hasOwn(input, "fallbackModels"), false);
+});
+
+test("openrouter follow rule: resolveProviderAwareSubagentResolution follows session model (no override)", () => {
+  const resolution = resolveProviderAwareSubagentResolution(
+    openrouterDeveloperWithThinking,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+    undefined,
+  );
+  assert.deepEqual(resolution.model, openrouterAvailableModels[0]);
+  assert.equal(resolution.thinking, "low"); // from tlhOpenrouterThinking
+  assert.deepEqual(resolution.fallbackModels, []);
+  assert.equal(resolution.independence, "not-applicable");
+  assert.equal(resolution.warning, undefined);
+});
+
+test("openrouter follow rule: stored thinking-only override is capability-gated on the session model", () => {
+  const reasoningOrAvailable = openrouterAvailableModels.map((m) => ({ ...m, reasoning: true }));
+  const resolution = resolveProviderAwareSubagentResolution(
+    openrouterDeveloperWithThinking,
+    reasoningOrAvailable,
+    "openrouter",
+    openrouterSessionModel,
+    { thinking: "high" },
+  );
+  assert.deepEqual(resolution.model, reasoningOrAvailable[0]);
+  assert.equal(resolution.thinking, "high"); // stored thinking, capability-gated
+  assert.deepEqual(resolution.fallbackModels, []);
+  assert.equal(resolution.independence, "not-applicable");
+});
+
+test("openrouter follow rule: stored thinking-only override applied via applyProviderAwareSubagentModels", () => {
+  const reasoningOrAvailable = openrouterAvailableModels.map((m) => ({ ...m, reasoning: true }));
+  const orAgents = new Map([
+    [openrouterDeveloperWithThinking.name, openrouterDeveloperWithThinking],
+  ]);
+  const input = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      reasoningOrAvailable,
+      "openrouter",
+      openrouterSessionModel,
+      { agentOverrides: new Map([["developer", { thinking: "high" }]]) },
+    ),
+    1,
+  );
+  assert.equal(input.model, "openrouter/anthropic/claude-sonnet-4-5:high");
+});
+
+test("openrouter follow rule: opposite-role agents (preferOppositeProvider) are NOT affected", () => {
+  const orAgents = new Map([[openrouterCodeReviewer.name, openrouterCodeReviewer]]);
+  // On openrouter, code-reviewer should NOT follow the session model.
+  // With only openrouter models available, opposite-provider logic finds nothing.
+  const input = { agent: "code-reviewer", task: "Review" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      openrouterAvailableModels,
+      "openrouter",
+      openrouterSessionModel,
+    ),
+    0,
+  );
+  assert.equal(input.model, undefined);
+});
+
+test("openrouter follow rule: non-openrouter sessions behave exactly as before", () => {
+  // anthropic session: developer picks bundled Anthropic model, not the session model
+  const orAgents = new Map([
+    [openrouterDeveloperWithThinking.name, openrouterDeveloperWithThinking],
+  ]);
+  const anthropicInput = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(anthropicInput, orAgents, anthropicAvailable, "anthropic", {
+      provider: "anthropic",
+      id: "claude-sonnet-4-6",
+    }),
+    1,
+  );
+  assert.equal(anthropicInput.model, "anthropic/claude-sonnet-4-6:medium");
+
+  // codex session: developer picks bundled Codex model
+  const codexInput = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(codexInput, orAgents, codexAvailable, "openai-codex", {
+      provider: "openai-codex",
+      id: "gpt-5.6-luna",
+    }),
+    1,
+  );
+  assert.equal(codexInput.model, "openai-codex/gpt-5.6-luna:max");
+});
+
+test("openrouter follow rule: stored model pin wins over session follow", () => {
+  // Stored model pin (case 1 in resolveProviderAwareSubagentResolution) must beat
+  // the openrouter follow rule which only applies in case 4 (no stored model).
+  const reasoningOrAvailable = [
+    ...openrouterAvailableModels.map((m) => ({ ...m, reasoning: true })),
+    { provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true },
+  ];
+  const orAgents = new Map([
+    [openrouterDeveloperWithThinking.name, openrouterDeveloperWithThinking],
+  ]);
+  const input = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      reasoningOrAvailable,
+      "openrouter",
+      openrouterSessionModel,
+      { agentOverrides: new Map([["developer", { model: "anthropic/claude-sonnet-4-6" }]]) },
+    ),
+    1,
+  );
+  // Stored pin wins, not the openrouter session model.
+  // Thinking resolves from tlhAnthropicThinking (the pinned model's provider), not openrouter.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+});
+
+test("openrouter follow rule: no session model available → fall through to existing bundled defaults", () => {
+  // If currentModel is undefined on openrouter, follow rule returns nothing and
+  // bundled logic tries to find openai/anthropic candidates (probably none for OR).
+  const orAgents = new Map([
+    [openrouterDeveloperWithThinking.name, openrouterDeveloperWithThinking],
+  ]);
+  const input = { agent: "developer", task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      input,
+      orAgents,
+      openrouterAvailableModels,
+      "openrouter",
+      undefined, // no current model
+    ),
+    0,
+  );
+  assert.equal(input.model, undefined);
 });

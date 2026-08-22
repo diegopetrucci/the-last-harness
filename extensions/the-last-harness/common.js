@@ -35,7 +35,7 @@ export function isFalseyEnvFlag(value) {
     const normalized = value.trim().toLowerCase();
     return normalized === "0" || normalized === "false" || normalized === "no";
 }
-export function stripTrailingPathSeparators(path) {
+function stripTrailingPathSeparators(path) {
     let stripped = path;
     while (stripped.length > sep.length && stripped.endsWith(sep)) {
         stripped = stripped.slice(0, -sep.length);

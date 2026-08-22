@@ -16,7 +16,7 @@ const MAX_DEPTH = 3;
 export const NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS = 500;
 export const NESTED_CONTROL_DELIVERY_TIMEOUT_MS = 700;
 export const NESTED_CONTROL_RESULT_TIMEOUT_MS = 1_000;
-export function isSafeNestedId(value) {
+function isSafeNestedId(value) {
     return isSafeNestedPathId(value);
 }
 export function assertSafeNestedId(label, value) {
@@ -536,7 +536,7 @@ function attachChild(children, event) {
         ? next.map((child, index) => (index === childIndex ? nextChild : child))
         : [...next, nextChild].slice(0, MAX_CHILDREN);
 }
-export function applyNestedEvent(registry, event) {
+function applyNestedEvent(registry, event) {
     return {
         ...registry,
         updatedAt: Math.max(registry.updatedAt, event.ts),
@@ -618,19 +618,6 @@ export function projectNestedRegistryForRoot(rootRunId) {
     const route = findNestedRouteForRootId(rootRunId);
     return route ? projectNestedEvents(route) : undefined;
 }
-export function findNestedRun(children, id) {
-    if (!children?.length)
-        return undefined;
-    for (const child of children) {
-        if (child.id === id)
-            return child;
-        const nested = findNestedRun(child.children, id) ??
-            findNestedRun(child.steps?.flatMap((step) => step.children ?? []), id);
-        if (nested)
-            return nested;
-    }
-    return undefined;
-}
 function collectNestedRuns(children, output = []) {
     for (const child of children ?? []) {
         output.push(child);
@@ -702,7 +689,7 @@ export function findNestedRunMatchesById(id, options = {}) {
     }
     return matches;
 }
-export function readNestedRegistry(route) {
+function readNestedRegistry(route) {
     validateNestedRoute(route);
     try {
         const parsed = JSON.parse(fs.readFileSync(registryPath(route), "utf-8"));

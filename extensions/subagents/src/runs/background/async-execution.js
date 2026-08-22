@@ -26,7 +26,7 @@ const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
 }
-export function resolveAsyncRunnerModulePath(moduleUrl = import.meta.url) {
+function resolveAsyncRunnerModulePath(moduleUrl = import.meta.url) {
     const modulePath = fileURLToPath(moduleUrl);
     const runnerExtension = path.extname(modulePath) === ".ts" ? ".ts" : ".js";
     return path.join(path.dirname(modulePath), `subagent-runner${runnerExtension}`);

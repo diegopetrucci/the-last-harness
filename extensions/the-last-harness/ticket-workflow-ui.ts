@@ -40,7 +40,7 @@ type TkCommandRunner = (
   timeoutMs: number,
 ) => TkCommandResult;
 
-export type TlhTicketWorkflowUiRuntimeOptions = {
+type TlhTicketWorkflowUiRuntimeOptions = {
   runner?: TkCommandRunner;
   now?: () => number;
 };

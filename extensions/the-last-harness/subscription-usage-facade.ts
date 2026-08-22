@@ -28,7 +28,7 @@ function createRetryableLazyImport<TModule>(
   };
 }
 
-export class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotProvider {
+class LazyTlhSubscriptionUsageService implements TlhSubscriptionUsageSnapshotProvider {
   private readonly loadModule = createRetryableLazyImport(() => import("./subscription-usage.js"));
   private service: TlhSubscriptionUsageServiceLike | undefined;
   private servicePromise: Promise<TlhSubscriptionUsageServiceLike> | undefined;

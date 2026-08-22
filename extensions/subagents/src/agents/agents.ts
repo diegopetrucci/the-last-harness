@@ -24,19 +24,19 @@ import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
-export type AgentSource = "builtin" | "package" | "user" | "project";
+type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
-export type AgentDefaultContext = "fresh" | "fork";
+type AgentDefaultContext = "fresh" | "fork";
 
-export function defaultSystemPromptMode(name: string): SystemPromptMode {
+function defaultSystemPromptMode(name: string): SystemPromptMode {
   return name === "delegate" ? "append" : "replace";
 }
 
-export function defaultInheritProjectContext(name: string): boolean {
+function defaultInheritProjectContext(name: string): boolean {
   return name === "delegate";
 }
 
-export function defaultInheritSkills(): boolean {
+function defaultInheritSkills(): boolean {
   return false;
 }
 
@@ -67,7 +67,7 @@ const KNOWN_FIELDS = new Set([
   "toolBudget",
 ]);
 
-export interface BuiltinAgentOverrideBase {
+interface BuiltinAgentOverrideBase {
   model?: string;
   fallbackModels?: string[];
   thinking?: string | false;
@@ -111,7 +111,7 @@ interface BuiltinAgentOverrideInfo {
   base: BuiltinAgentOverrideBase;
 }
 
-export interface AgentModelSourceInfo {
+interface AgentModelSourceInfo {
   type: "subagents.defaultModel";
   scope: "user" | "project";
   path: string;
@@ -162,7 +162,7 @@ interface SubagentSettings {
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
 
-export interface ChainStepConfig {
+interface ChainStepConfig {
   agent?: string;
   task?: string;
   phase?: string;
@@ -195,7 +195,7 @@ export interface ChainConfig {
   extraFields?: Record<string, string>;
 }
 
-export interface ChainDiscoveryDiagnostic {
+interface ChainDiscoveryDiagnostic {
   source: AgentSource;
   filePath: string;
   error: string;

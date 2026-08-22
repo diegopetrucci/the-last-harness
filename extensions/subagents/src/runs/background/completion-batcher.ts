@@ -17,7 +17,7 @@ import type { CompletionBatchConfig } from "../../shared/types.ts";
 
 export type { CompletionBatchConfig };
 
-export interface ResolvedCompletionBatchConfig {
+interface ResolvedCompletionBatchConfig {
   enabled: boolean;
   debounceMs: number;
   maxWaitMs: number;
@@ -85,7 +85,7 @@ function unrefHandle(handle: TimerHandle): void {
   }
 }
 
-export interface CompletionBatcherOptions<T> {
+interface CompletionBatcherOptions<T> {
   config: ResolvedCompletionBatchConfig;
   emit: (items: T[]) => void;
   timers?: TimerApi;

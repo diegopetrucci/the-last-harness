@@ -18,7 +18,7 @@ function isInteractiveModePrototype(value) {
 function isModelRuntimeSnapshotSource(value) {
     return isRecord(value) && typeof value.getAvailableSnapshot === "function";
 }
-export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
+const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
     "anthropic/claude-3-5-haiku-20241022",
     "anthropic/claude-3-5-haiku-latest",
     "anthropic/claude-3-5-sonnet-20240620",
@@ -161,7 +161,7 @@ export function isTlhModelHidden(model, config = getTlhModelVisibilityConfig()) 
     }
     return (matchesAnyPattern(model, TLH_HIDDEN_MODEL_DEFAULTS) || matchesAnyPattern(model, config.hidden));
 }
-export function filterTlhVisibleModels(models, config = getTlhModelVisibilityConfig()) {
+function filterTlhVisibleModels(models, config = getTlhModelVisibilityConfig()) {
     if (config.disabled) {
         return [...models];
     }

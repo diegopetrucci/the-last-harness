@@ -9,7 +9,7 @@ interface ClipboardCommand {
   args: string[];
 }
 
-export interface ClipboardCommandResult {
+interface ClipboardCommandResult {
   status: number | null;
   signal?: NodeJS.Signals | null;
   stdout?: string | Buffer;
@@ -17,7 +17,7 @@ export interface ClipboardCommandResult {
   error?: Error;
 }
 
-export type ClipboardCommandRunner = (
+type ClipboardCommandRunner = (
   command: string,
   args: string[],
   options: { encoding: "utf8"; maxBuffer: number; input?: string },

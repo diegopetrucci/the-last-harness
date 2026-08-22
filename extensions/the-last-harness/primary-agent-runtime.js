@@ -8,7 +8,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, parseProviderModelReference, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
@@ -666,8 +666,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
         const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
         const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
-        const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider);
-        const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
+        const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider, ctx.model);
         let resolvedModel = primaryDefaults.model;
         if (!forceApply) {
             const storedOverride = primaryConfig?.modelOverrides?.[selection];
@@ -689,7 +688,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             ? await applyPrimaryModel(ctx, primary, resolvedModel)
             : undefined;
         if (shouldApplyThinking) {
-            applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
+            const effectiveModel = activePrimaryModel ?? ctx.model;
+            applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
         }
     }
     async function applyPrimaryModeChange(ctx) {
@@ -929,7 +929,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 return;
             }
             const chosenKey = `${event.model.provider}/${event.model.id}`;
-            const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
+            const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider, event.model);
             const bundledKey = primaryDefaults.model
                 ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
                 : undefined;
@@ -1133,7 +1133,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     runtime.registerLifecycleHooks();
     return runtime;
 }
-export function isTlhPrimaryAgentSelection(value) {
+function isTlhPrimaryAgentSelection(value) {
     return PRIMARY_AGENT_CYCLE.includes(value);
 }
 export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {

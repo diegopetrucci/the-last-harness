@@ -4,7 +4,7 @@ import { extname, relative, resolve } from "node:path";
 const WORKING_TREE_COMMIT_SHA = "__tlh_working_tree__";
 const WORKING_TREE_COMMIT_SHORT_SHA = "WT";
 const WORKING_TREE_COMMIT_SUBJECT = "Uncommitted changes";
-export function isWorkingTreeCommitSha(sha) {
+function isWorkingTreeCommitSha(sha) {
     return sha === WORKING_TREE_COMMIT_SHA;
 }
 function createWorkingTreeCommitInfo() {
@@ -31,7 +31,7 @@ async function runBashAllowFailure(pi, repoRoot, script) {
     }
     return result.stdout;
 }
-export async function getRepoRoot(pi, cwd) {
+async function getRepoRoot(pi, cwd) {
     const result = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd });
     if (result.code !== 0) {
         throw new Error("Not inside a git repository.");
@@ -551,7 +551,7 @@ export async function getReviewWindowData(pi, cwd) {
         repositoryHasHead,
     };
 }
-export async function listRangeCommits(pi, repoRoot, range, limit) {
+async function listRangeCommits(pi, repoRoot, range, limit) {
     const sep = "\x1f";
     const format = ["%H", "%h", "%s", "%an", "%aI"].join(sep);
     const output = await runGitAllowFailure(pi, repoRoot, [

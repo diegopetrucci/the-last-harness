@@ -103,7 +103,7 @@ export function createSubagentLiveDetailController(initialExpanded = false) {
         },
     };
 }
-export function formatShortcutDisplay(key) {
+function formatShortcutDisplay(key) {
     return key
         .split("/")
         .map((binding) => binding

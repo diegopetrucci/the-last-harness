@@ -54,7 +54,7 @@ export function writeArtifact(filePath: string, content: string): void {
  * The background runner writes a separate process metadata shape directly in
  * runs/background/subagent-runner.ts; these writers intentionally remain distinct.
  */
-export interface ForegroundSubagentArtifactMetadata extends Pick<
+interface ForegroundSubagentArtifactMetadata extends Pick<
   SingleResult,
   | "agent"
   | "task"

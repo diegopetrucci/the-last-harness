@@ -5,6 +5,7 @@ tools: read, grep, find, ls, bash, contact_supervisor
 tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 tlhAnthropicThinking: high
+tlhOpenrouterThinking: high
 tlhOpenaiThinking: medium
 toolBudget: {"soft":20,"hard":30}
 systemPromptMode: replace

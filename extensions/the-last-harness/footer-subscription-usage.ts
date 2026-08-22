@@ -18,7 +18,7 @@ export type TlhFooterSubscriptionUsageOptions = {
   nowMs?: number;
 };
 
-export type TlhSubscriptionUsageFooterState = {
+type TlhSubscriptionUsageFooterState = {
   suppressCost: boolean;
   segment?: string;
 };

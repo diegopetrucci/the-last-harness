@@ -2,9 +2,9 @@ import type { GitStatusSnapshot, PullRequestSnapshot } from "./footer-git-cache.
 import { formatTlhGitFooterSegments } from "./footer-git.js";
 
 /** Bullet divider used between segments on the TLH footer's first line. */
-export const FOOTER_FIRST_LINE_SEPARATOR = " • ";
+const FOOTER_FIRST_LINE_SEPARATOR = " • ";
 
-export type TlhFooterFirstLineInput = {
+type TlhFooterFirstLineInput = {
   cwd: string;
   sessionName?: string | null;
   status?: GitStatusSnapshot | undefined;

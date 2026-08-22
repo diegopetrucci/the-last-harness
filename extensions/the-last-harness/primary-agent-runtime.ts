@@ -51,6 +51,7 @@ import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
   parseProviderModelReference,
+  resolveProviderThinking,
   selectProviderAwareAgentDefaults,
 } from "./model-defaults.js";
 import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
@@ -1141,11 +1142,7 @@ function createTlhPrimaryAgentRuntime(
       primary,
       availableModels,
       ctx.model?.provider,
-    );
-    const currentProviderDefaults = selectProviderAwareAgentDefaults(
-      primary,
-      [],
-      ctx.model?.provider,
+      ctx.model,
     );
 
     // Resolve model: stored override (if still available in registry) takes precedence over frontmatter default
@@ -1176,10 +1173,10 @@ function createTlhPrimaryAgentRuntime(
         ? await applyPrimaryModel(ctx, primary, resolvedModel)
         : undefined;
     if (shouldApplyThinking) {
-      applyPrimaryThinking(
-        primary,
-        activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking,
-      );
+      // Thinking follows the model that is actually effective after stored pins
+      // and model-application decisions, rather than the pre-pin selection.
+      const effectiveModel = activePrimaryModel ?? ctx.model;
+      applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
     }
   }
 
@@ -1519,6 +1516,7 @@ function createTlhPrimaryAgentRuntime(
         primary,
         getUnfilteredAvailableModels(ctx.modelRegistry),
         event.model.provider,
+        event.model,
       );
       const bundledKey = primaryDefaults.model
         ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
@@ -1857,7 +1855,7 @@ export function registerTlhPrimaryAgentRuntime(
  * which is user-editable JSON, i.e. an external I/O boundary. Callers must validate
  * before treating a key as a `TlhPrimaryAgentSelection` rather than asserting the type.
  */
-export function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
+function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
   return (PRIMARY_AGENT_CYCLE as readonly string[]).includes(value);
 }
 

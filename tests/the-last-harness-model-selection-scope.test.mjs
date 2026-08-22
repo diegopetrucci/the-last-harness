@@ -349,6 +349,93 @@ test("All sessions persists one upstream default and the applicable primary over
   });
 });
 
+test("OpenRouter session-only selection stays active without creating a primary override", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-scope-openrouter-session-", {
+    cwd: true,
+    test: t,
+  });
+  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+  const selectedModel = { provider: "openrouter", id: "openai/gpt-5.4" };
+  const primary = createPrimaryPrompt("architect", {
+    model: "anthropic/claude-sonnet-4-6",
+    tlhOpenrouterThinking: "high",
+    applyModel: true,
+    applyThinking: true,
+  });
+  writeSettings(fixture.agent, {
+    defaultProvider: previousModel.provider,
+    defaultModel: previousModel.id,
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+    const { modelSelect, pi, runtime } = registerScopeRuntime(new Map([["architect", primary]]));
+    pi.model = previousModel;
+    installScopeOverride(() => pi.model);
+    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
+    Object.defineProperty(context, "model", { get: () => pi.model });
+    await runtime.applySessionStart(context);
+    await queueNativeSelectorWrites(manager, selectedModel, () => {
+      pi.model = selectedModel;
+    });
+    await modelSelect(
+      { type: "model_select", model: selectedModel, previousModel, source: "set" },
+      context,
+    );
+    await manager.flush();
+
+    assert.deepEqual(pi.model, selectedModel);
+    assert.deepEqual(readSettings(fixture.agent), {
+      defaultProvider: previousModel.provider,
+      defaultModel: previousModel.id,
+    });
+    assert.equal(
+      readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.architect,
+      undefined,
+    );
+  });
+});
+
+test("OpenRouter All sessions selection clears the prior primary override", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-scope-openrouter-all-", {
+    cwd: true,
+    test: t,
+  });
+  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+  const selectedModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" };
+  writeSettings(fixture.agent, {
+    defaultProvider: previousModel.provider,
+    defaultModel: previousModel.id,
+    tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    let activeModel = previousModel;
+    installScopeOverride(() => activeModel);
+    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+    const primary = createPrimaryPrompt("architect", {
+      model: "anthropic/claude-opus-5",
+      tlhOpenrouterThinking: "high",
+      applyModel: true,
+      applyThinking: true,
+    });
+    const { modelSelect } = registerScopeRuntime(new Map([["architect", primary]]));
+    await queueNativeSelectorWrites(manager, selectedModel, () => {
+      activeModel = selectedModel;
+    });
+    await modelSelect(
+      { type: "model_select", model: selectedModel, previousModel, source: "set" },
+      createScopeContext(fixture, 1, selectedModel, [previousModel, selectedModel]),
+    );
+    await manager.flush();
+
+    const written = readSettings(fixture.agent);
+    assert.equal(written.defaultProvider, selectedModel.provider);
+    assert.equal(written.defaultModel, selectedModel.id);
+    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
+  });
+});
+
 test("native selector claims survive preceding async extension dispatch and stay session-only", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-model-scope-dispatch-", { cwd: true, test: t });
   const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };

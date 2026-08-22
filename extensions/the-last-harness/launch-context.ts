@@ -10,7 +10,7 @@ const CHARS_PER_TOKEN = 4;
 
 type TlhLaunchContextCharacterAllocation = Record<keyof TlhLaunchContextTokenAllocation, number>;
 
-export type EstimateTlhLaunchContextAllocationOptions = {
+type EstimateTlhLaunchContextAllocationOptions = {
   contextWindow: number | undefined;
   baseSystemPrompt: string;
   launchSystemPrompt: string;

@@ -127,20 +127,20 @@ function resolvePausedContinuationAcceptance(
   );
 }
 
-export interface AsyncResumeParams {
+interface AsyncResumeParams {
   id?: string;
   dir?: string;
   index?: number;
 }
 
-export interface AsyncResumeDeps {
+interface AsyncResumeDeps {
   asyncDirRoot?: string;
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
 }
 
-export interface AsyncResumeOptions {
+interface AsyncResumeOptions {
   requireSessionFile?: boolean;
   /** Read persisted state without repairing lifecycle metadata before a resume gate. */
   readOnly?: boolean;
