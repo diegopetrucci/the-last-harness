@@ -1,4 +1,4 @@
-Third-party notices for bundled terminal skills
+Third-party notices for bundled skills
 
 The Last Harness bundles the following upstream skill files. The source files
 are preserved verbatim; this file consolidates the license texts and attribution
@@ -21,6 +21,14 @@ Bundled files: skills/cmux-cli/SKILL.md and
 skills/cmux-cli/references/commands.md
 License: MIT
 Copyright: Copyright (c) 2026 Manaflow, Inc.
+
+Show-me skill
+--------------
+Source: https://github.com/humanlayer/skills/tree/6ab9013a10c28f5046f7f999549cd5328a0b30d7/plugins/show-me/skills/show-me
+Pinned commit: 6ab9013a10c28f5046f7f999549cd5328a0b30d7
+Bundled files: skills/show-me/SKILL.md
+License: MIT
+Copyright: Copyright (c) 2026 HumanLayer
 
 OpenClaw tmux skill
 -------------------
@@ -244,6 +252,7 @@ MIT License
 
 Copyright (c) 2026 Manaflow, Inc.
 Copyright (c) 2026 OpenClaw Foundation
+Copyright (c) 2026 HumanLayer
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

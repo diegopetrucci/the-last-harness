@@ -82,6 +82,7 @@ const TERMINAL_SKILL_FILES = [
   "skills/tmux/SKILL.md",
   "skills/tmux/scripts/find-sessions.sh",
   "skills/tmux/scripts/wait-for-text.sh",
+  "skills/show-me/SKILL.md",
 ];
 const packagedSkillFiles = [...files].filter((file) => file.startsWith("skills/"));
 const missingSkillFiles = TERMINAL_SKILL_FILES.filter((file) => !files.has(file));

@@ -7,6 +7,7 @@ All notable changes to The Last Harness will be documented in this file.
 ### Added
 
 - TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
+- TLH now bundles the show-me skill for visual explanations with diagrams, code-shape sketches, and focused HTML artifacts.
 
 ### Changed
 
