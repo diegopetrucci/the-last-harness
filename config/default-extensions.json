@@ -50,5 +50,10 @@
     "id": "dirty-repo-guard",
     "source": "npm:@diegopetrucci/pi-dirty-repo-guard@0.1.8",
     "description": "Prompt before session changes when the current git repo has uncommitted changes."
+  },
+  {
+    "id": "pi-transcribe",
+    "source": "git:github.com/earendil-works/pi-transcribe@e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1",
+    "description": "Local speech-to-text dictation with /transcribe, Ctrl+Alt+Z, and the transcribe_file tool."
   }
 ]

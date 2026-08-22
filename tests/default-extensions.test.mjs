@@ -33,6 +33,8 @@ const previousMcporterSource = "git:github.com/diegopetrucci/pi-mcp-adapter@tlh-
 const previousBundledMcporterSource = "npm:@diegopetrucci/pi-mcp-adapter@2.10.1";
 const previousBundledNotifySource = "npm:@diegopetrucci/pi-notify@0.1.7";
 const previousPiWebAccessSource = "git:github.com/diegopetrucci/pi-web-access@tlh-v0.10.7-1";
+const piTranscribeGitSource = "git:github.com/earendil-works/pi-transcribe@e4c1b04c9a383a0b95c2ef7bbd8d39cf90437ec1";
+const piTranscribeNpmSource = "npm:@earendil-works/pi-transcribe@0.0.1";
 const expectedBundledNpmPackageIdentities = new Map([
 	["openai-fast", "npm:@diegopetrucci/pi-openai-fast"],
 	["anthropic-auth", "npm:@gotgenes/pi-anthropic-auth"],
@@ -195,6 +197,16 @@ test("bundled manifest keeps expected managed npm package identities", () => {
 	for (const [id, packageId] of expectedBundledNpmPackageIdentities) {
 		assert.equal(packageIdentity(bundledSource(id)), packageId, `${id} should keep managing ${packageId}`);
 	}
+});
+
+test("bundled manifest pins pi-transcribe to the reviewed Git commit as a non-critical default", () => {
+	const piTranscribe = bundledExtension("pi-transcribe");
+
+	assert.ok(piTranscribe, "bundled pi-transcribe default should exist");
+	assert.equal(piTranscribe.source, piTranscribeGitSource);
+	assert.equal(packageIdentity(piTranscribe.source), "git:github.com/earendil-works/pi-transcribe");
+	assert.equal(piTranscribe.critical, false, "pi-transcribe must remain opt-outable");
+	assert.match(piTranscribe.description, /transcribe_file/);
 });
 
 test("tlh-defaults errors when the default-extension manifest is missing", () => {
@@ -1671,6 +1683,80 @@ test("bundled manifest contains mcporter entry and migrates prior TLH-managed in
 	const disabledSettings = readJson(disableFixture.settings);
 	assert.deepEqual(disabledSettings.tlh.disabledDefaultExtensions, ["mcporter"]);
 	assert.deepEqual(disabledSettings.packages, []);
+});
+
+test("future pi-transcribe npm manifest migrates TLH-managed Git installs and preserves manual npm pins", () => {
+	const bundled = bundledExtension("pi-transcribe");
+	assert.ok(bundled, "bundled pi-transcribe default should exist");
+	const futurePiTranscribe = {
+		...bundled,
+		replaces: [piTranscribeGitSource],
+		migrateReplacements: true,
+		source: piTranscribeNpmSource,
+	};
+
+	const managedFixture = tempFixture();
+	writeFileSync(managedFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+	writeFileSync(
+		managedFixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, piTranscribeGitSource, "npm:user-owned-package@1.2.3"],
+				tlh: {
+					defaultExtensionProvenance: {
+						managedPackageIdentities: [packageIdentity(piTranscribeGitSource)],
+					},
+				},
+			},
+			null,
+			2,
+		),
+	);
+
+	runNode(mergeScript, [
+		managedFixture.defaults,
+		"--settings",
+		managedFixture.settings,
+		"--default-extensions",
+		managedFixture.extensions,
+		"--quiet",
+	]);
+
+	const managedSettings = readJson(managedFixture.settings);
+	assert.equal(managedSettings.packages.includes(piTranscribeGitSource), false);
+	assert.equal(managedSettings.packages.includes(piTranscribeNpmSource), true);
+	assert.equal(managedSettings.packages.includes("npm:user-owned-package@1.2.3"), true);
+	assert.deepEqual(managedSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, [
+		"npm:@earendil-works/pi-transcribe",
+	]);
+
+	const manualFixture = tempFixture();
+	const manualPiTranscribeSource = "npm:@earendil-works/pi-transcribe@0.0.0";
+	writeFileSync(manualFixture.extensions, JSON.stringify([futurePiTranscribe], null, 2));
+	writeFileSync(
+		manualFixture.settings,
+		JSON.stringify(
+			{
+				packages: [harnessPackage, manualPiTranscribeSource, "npm:user-owned-package@1.2.3"],
+				tlh: { defaultExtensionProvenance: { managedPackageIdentities: [] } },
+			},
+			null,
+			2,
+		),
+	);
+
+	runNode(mergeScript, [
+		manualFixture.defaults,
+		"--settings",
+		manualFixture.settings,
+		"--default-extensions",
+		manualFixture.extensions,
+		"--quiet",
+	]);
+
+	const manualSettings = readJson(manualFixture.settings);
+	assert.deepEqual(manualSettings.packages, [harnessPackage, manualPiTranscribeSource, "npm:user-owned-package@1.2.3"]);
+	assert.deepEqual(manualSettings.tlh.defaultExtensionProvenance.managedPackageIdentities, []);
 });
 
 test("bundled same-identity managed npm pins advance while manual pins stay untouched", () => {

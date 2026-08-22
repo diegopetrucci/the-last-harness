@@ -302,6 +302,11 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
+| `/transcribe` | `pi-transcribe` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
+
+### `/transcribe` and `Ctrl+Alt+Z`
+
+Run `/transcribe` once to choose and confirm a local model; pi-transcribe downloads the model after confirmation. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
 
 ---
 

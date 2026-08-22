@@ -2,6 +2,7 @@ export const TLH_STARTUP_TIPS = [
 	"Use /review to open TLH’s interactive review picker for branch, commit, PR, or folder reviews.",
 	"Run /annotate-git-diff for a native review window across branch, commit, or all-files scopes.",
 	"Use /annotate-last-message to mark up the latest assistant reply before your next prompt.",
+	"Run /transcribe once to choose a local model, then press Ctrl+Alt+Z to start and stop microphone dictation.",
 	"Run /context to inspect where your context window is going before a long follow-up.",
 	"Use /usage to check TLH usage status or toggle the weekly usage window.",
 	"Press Shift+Tab to switch to Rush for a small bounded task TLH can implement directly.",

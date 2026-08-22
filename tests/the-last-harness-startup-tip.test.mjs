@@ -20,6 +20,13 @@ test("selectTlhStartupTip chooses from the curated TLH startup tip list", () => 
 	);
 });
 
+test("the curated startup tips explain pi-transcribe setup and microphone usage", () => {
+	assert.ok(
+		TLH_STARTUP_TIPS.some((tip) => tip.includes("/transcribe") && tip.includes("Ctrl+Alt+Z")),
+		"expected a pi-transcribe setup tip with its default shortcut",
+	);
+});
+
 test("getTlhStartupTip returns one process-scoped selection from the curated list", () => {
 	const startupTip = getTlhStartupTip();
 
