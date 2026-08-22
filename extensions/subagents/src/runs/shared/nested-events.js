@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
+import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
@@ -702,10 +702,6 @@ export function findNestedRunMatchesById(id, options = {}) {
     }
     return matches;
 }
-export function findNestedRunById(id) {
-    const match = findNestedRunMatchesById(id)[0];
-    return match ? { rootRunId: match.rootRunId, run: match.run } : undefined;
-}
 export function readNestedRegistry(route) {
     validateNestedRoute(route);
     try {
@@ -934,28 +930,6 @@ export function readNestedControlRequests(route) {
     }
     return requests;
 }
-export function nestedControlRequestOwnedBy(request, owner) {
-    return (request.ownerParentRunId === owner.parentRunId &&
-        request.ownerParentStepIndex === owner.parentStepIndex);
-}
-export function claimNestedControlRequest(route, request, claimantId) {
-    validateNestedRoute(route);
-    assertSafeId("claimantId", claimantId);
-    if (!containedPath(route.controlInbox, request.filePath))
-        return undefined;
-    const claimDir = path.join(route.controlInbox, ".claims", claimantId);
-    fs.mkdirSync(claimDir, { recursive: true, mode: 0o700 });
-    const claimPath = path.join(claimDir, path.basename(request.filePath));
-    try {
-        fs.renameSync(request.filePath, claimPath);
-        return claimPath;
-    }
-    catch (error) {
-        if (error.code === "ENOENT")
-            return undefined;
-        throw error;
-    }
-}
 export function writeNestedControlResult(route, result) {
     validateNestedRoute(route);
     assertSafeId("requestId", result.requestId);
@@ -1008,14 +982,6 @@ export function readNestedControlResults(route) {
         }
     }
     return results;
-}
-export function nestedRouteEnv(route) {
-    return {
-        [SUBAGENT_PARENT_EVENT_SINK_ENV]: route.eventSink,
-        [SUBAGENT_PARENT_CONTROL_INBOX_ENV]: route.controlInbox,
-        [SUBAGENT_PARENT_ROOT_RUN_ID_ENV]: route.rootRunId,
-        [SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]: route.capabilityToken,
-    };
 }
 export function attachRootChildrenToSteps(rootRunId, steps, children) {
     if (!steps?.length)
@@ -1145,17 +1111,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
             }
             : {}),
     };
-}
-export function nestedArtifactEnv(rootRunId, parentRunId) {
-    return {
-        PI_SUBAGENT_NESTED_ROOT_RUN_ID: rootRunId,
-        PI_SUBAGENT_NESTED_PARENT_RUN_ID: parentRunId,
-    };
-}
-export function isTopLevelAsyncDir(asyncDir) {
-    const resolved = path.resolve(asyncDir);
-    return (containedPath(ASYNC_DIR, resolved) &&
-        !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved));
 }
 export function nestedResultsPath(rootRunId, id) {
     assertSafeId("rootRunId", rootRunId);

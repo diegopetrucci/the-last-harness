@@ -1,5 +1,4 @@
-import { SettingsManager, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { isRecord } from "./common.js";
+import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   commandBasename,
   extractHereDocBodies,
@@ -17,7 +16,7 @@ import {
   stripLeadingShellCommandPrefixes,
   tokenizeShellWords,
 } from "./shell-parser.js";
-import type { TlhAttributionConfig, TlhCommitAttributionState, TlhSettings } from "./types.js";
+import type { TlhAttributionConfig, TlhCommitAttributionState } from "./types.js";
 
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 
@@ -33,26 +32,6 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
   "--super-prefix",
   "--work-tree",
 ]);
-
-function normalizeTlhAttributionConfig(config: unknown): TlhAttributionConfig | undefined {
-  if (!isRecord(config)) {
-    return undefined;
-  }
-  const commit = config.commit;
-  if (commit === undefined) {
-    return {};
-  }
-  return typeof commit === "boolean" ? { commit } : undefined;
-}
-
-export function getTlhAttributionConfig(cwd: string): TlhAttributionConfig | undefined {
-  try {
-    const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings() as TlhSettings;
-    return normalizeTlhAttributionConfig(settings.tlh?.attribution);
-  } catch {
-    return undefined;
-  }
-}
 
 export function resolveTlhCommitAttribution(
   config: TlhAttributionConfig | undefined,

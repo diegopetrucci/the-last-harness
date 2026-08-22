@@ -117,6 +117,3 @@ export function formatShortcutDisplay(key) {
 export function liveDetailShortcutDisplay() {
     return formatShortcutDisplay(SUBAGENT_LIVE_DETAIL_SHORTCUT);
 }
-export function pauseAllShortcutDisplay() {
-    return formatShortcutDisplay(SUBAGENT_PAUSE_ALL_SHORTCUT);
-}

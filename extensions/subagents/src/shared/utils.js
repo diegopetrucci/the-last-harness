@@ -88,22 +88,6 @@ export function readStatus(asyncDir) {
     }
     return status;
 }
-export function getLastActivity(outputFile) {
-    if (!outputFile)
-        return "";
-    try {
-        const stat = fs.statSync(outputFile);
-        const ago = Date.now() - stat.mtimeMs;
-        if (ago < 1000)
-            return "active now";
-        if (ago < 60000)
-            return `active ${Math.floor(ago / 1000)}s ago`;
-        return `active ${Math.floor(ago / 60000)}m ago`;
-    }
-    catch {
-        return "";
-    }
-}
 export function findLatestSessionFile(sessionDir) {
     if (!fs.existsSync(sessionDir))
         return null;
