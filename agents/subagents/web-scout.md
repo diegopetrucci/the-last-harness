@@ -5,6 +5,7 @@ tools: web_search, fetch_content, get_search_content, read, grep, find, ls, cont
 tlhOpenaiModels: openai-codex/gpt-5.6-luna
 tlhAnthropicModels: anthropic/claude-haiku-4-5
 tlhAnthropicThinking: high
+tlhOpenrouterThinking: high
 tlhOpenaiThinking: medium
 toolBudget: {"soft":5,"hard":7}
 systemPromptMode: replace
