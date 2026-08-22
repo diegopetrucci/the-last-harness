@@ -63,30 +63,6 @@ node docs/subagents-history/verify-import.mjs /absolute/path/to/a-verified-pi-su
 
 That verifier compares source Git objects with the immutable import checkpoint and current historical archive. It is separate from routine `npm run validate` because the external history checkout is not a repository dependency. See [subagents-history/HISTORY.md](subagents-history/HISTORY.md) for the repository URL, exact commits/tree, checksum command, and history-inspection commands.
 
-## Refresh the Understand Anything graph
-
-When a change materially affects architecture, repository structure, or documented workflows, refresh the tracked Understand Anything graph from the repository root. Launch an interactive TLH or upstream Pi session, then enable the Understand Anything skill/extension in that same session before using `/understand`. TLH does not expose `/understand` by default.
-
-For example, start a TLH session with:
-
-```sh
-tlh
-```
-
-Then, after the Understand Anything skill/extension is enabled in that session, run the refresh command:
-
-```text
-/understand
-```
-
-Use a full refresh only when the incremental update is insufficient:
-
-```text
-/understand --full
-```
-
-Review the resulting `.understand-anything/knowledge-graph.json`, `.understand-anything/meta.json`, `.understand-anything/fingerprints.json`, and `.understand-anything/intermediate/scan-result.json` diff before committing it. Commit those generated updates only when the graph refresh is actually warranted by the change.
-
 ## Test the extension directly
 
 Test the extension directly from this checkout without installing it. After TypeScript edits, run `npm run build` first so the generated JS entrypoint matches the authoritative source:
