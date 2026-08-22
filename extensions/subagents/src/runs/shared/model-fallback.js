@@ -25,7 +25,7 @@ export function appendRuntimeFallbackResolution(input) {
         reason: [input.previous?.reason, transition].filter(Boolean).join(" "),
     };
 }
-export function splitThinkingSuffix(model) {
+function splitThinkingSuffix(model) {
     const colonIdx = model.lastIndexOf(":");
     if (colonIdx === -1)
         return { baseModel: model, thinkingSuffix: "" };
@@ -34,7 +34,7 @@ export function splitThinkingSuffix(model) {
         thinkingSuffix: model.substring(colonIdx),
     };
 }
-export const INHERIT_MODEL = "inherit";
+const INHERIT_MODEL = "inherit";
 export function canonicalSubagentModelIdentity(model, thinking) {
     if (!model)
         return undefined;

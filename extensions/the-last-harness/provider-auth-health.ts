@@ -19,13 +19,9 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 // ---------------------------------------------------------------------------
 
 /** Closed status enum for provider credential health. */
-export type ProviderAuthHealthStatus =
-  | "healthy"
-  | "reauth-required"
-  | "transient-unavailable"
-  | "unknown";
+type ProviderAuthHealthStatus = "healthy" | "reauth-required" | "transient-unavailable" | "unknown";
 
-export type ProviderHealthEntry = {
+type ProviderHealthEntry = {
   status: ProviderAuthHealthStatus;
   checkedAt: number;
 };
@@ -427,7 +423,7 @@ function isTransientError(message: string, error: unknown, statuses: ReadonlySet
 // Factory
 // ---------------------------------------------------------------------------
 
-export type ProviderAuthHealthStoreOptions = {
+type ProviderAuthHealthStoreOptions = {
   /** Injectable clock for testing. Defaults to Date.now. */
   now?: () => number;
 };

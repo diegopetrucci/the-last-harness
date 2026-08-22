@@ -210,7 +210,7 @@ function readTlhLaunchSettings() {
         },
     };
 }
-export function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
+function shouldSkipTlhLaunchTelemetry(launchSettings = readTlhLaunchSettings()) {
     if (!tlhTelemetryStatePath())
         return true;
     if (!configuredTlhTelemetryNamespace() ||
@@ -309,7 +309,7 @@ export function privacySafeTlhTelemetryThinkingLevel(thinkingLevel) {
     const normalized = thinkingLevel.trim();
     return THINKING_LEVELS.includes(normalized) ? normalized : "custom";
 }
-export function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName) {
+function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName) {
     if (typeof primaryAgentName !== "string" || !primaryAgentName.trim()) {
         return "unknown";
     }

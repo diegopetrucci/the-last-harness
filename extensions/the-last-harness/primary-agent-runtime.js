@@ -1133,7 +1133,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     runtime.registerLifecycleHooks();
     return runtime;
 }
-export function isTlhPrimaryAgentSelection(value) {
+function isTlhPrimaryAgentSelection(value) {
     return PRIMARY_AGENT_CYCLE.includes(value);
 }
 export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {

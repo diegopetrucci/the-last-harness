@@ -64,7 +64,7 @@ export function resolveStepBehavior(agentConfig, stepOverrides) {
         modelFallbackNotice,
     };
 }
-export function resolveTaskTextForFileUpdatePolicy(task, originalTask) {
+function resolveTaskTextForFileUpdatePolicy(task, originalTask) {
     if (!task)
         return originalTask;
     return originalTask ? task.replaceAll("{task}", originalTask) : task;

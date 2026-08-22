@@ -8,9 +8,9 @@ import type {
   SubagentTerminationReason,
 } from "./types.ts";
 
-export const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
-export const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
-export const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS: ReadonlyArray<{
+const DURABLE_RESUME_CONTEXT_THRESHOLD_PERCENT = 80;
+const CONTEXT_EXHAUSTED_CONTEXT_THRESHOLD_PERCENT = 95;
+const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS: ReadonlyArray<{
   severity: ContextPressureSeverity;
   percent: number;
 }> = Object.freeze([
@@ -20,7 +20,7 @@ export const DEFAULT_CONTEXT_PRESSURE_THRESHOLDS: ReadonlyArray<{
 export const CONTEXT_EXHAUSTED_TERMINATION_MESSAGE =
   "Subagent stopped with an unfinished tool interaction under high context pressure.";
 
-export interface DurableResumeContextAssessment {
+interface DurableResumeContextAssessment {
   blocked: boolean;
   measured: boolean;
   usedTokens?: number;

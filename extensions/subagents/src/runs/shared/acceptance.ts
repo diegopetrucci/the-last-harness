@@ -274,7 +274,7 @@ function inferLevel(input: {
       });
 }
 
-export function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
+function normalizeAcceptanceInput(input: AcceptanceInput | undefined): AcceptanceConfig {
   if (input === undefined || input === "auto") return { level: "auto" };
   if (input === false) return { level: "none", reason: "disabled by deprecated false shorthand" };
   if (typeof input === "string") return { level: input };

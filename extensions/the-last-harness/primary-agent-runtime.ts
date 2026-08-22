@@ -1855,7 +1855,7 @@ export function registerTlhPrimaryAgentRuntime(
  * which is user-editable JSON, i.e. an external I/O boundary. Callers must validate
  * before treating a key as a `TlhPrimaryAgentSelection` rather than asserting the type.
  */
-export function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
+function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
   return (PRIMARY_AGENT_CYCLE as readonly string[]).includes(value);
 }
 

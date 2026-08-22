@@ -52,7 +52,7 @@ export function aggregateStepStatus(steps: StepStatusLike[]): AsyncJobStep["stat
   return "pending";
 }
 
-export function formatAgentRunningLabel(count: number): string {
+function formatAgentRunningLabel(count: number): string {
   return count === 1 ? "1 agent running" : `${count} agents running`;
 }
 

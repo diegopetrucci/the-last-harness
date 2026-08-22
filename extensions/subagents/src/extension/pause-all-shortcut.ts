@@ -2,7 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { requestInterruptAllRunningSubagentRuns } from "../runs/foreground/subagent-executor.ts";
 import type { SubagentState } from "../shared/types.ts";
 
-export interface PauseAllShortcutResult {
+interface PauseAllShortcutResult {
   level: "info" | "warning";
   message: string;
 }

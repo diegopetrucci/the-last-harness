@@ -169,7 +169,7 @@ export function renderMetricCard(title, value, detail) {
         "</article>",
     ].join("");
 }
-export function renderKeyValueGrid(items) {
+function renderKeyValueGrid(items) {
     return [
         '<dl class="kv-grid">',
         ...items.flatMap(([label, value]) => [

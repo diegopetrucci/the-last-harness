@@ -34,7 +34,7 @@ export type TlhEffectiveActivitySnapshot = {
   activeAsyncJobIds: string[];
 };
 
-export type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
+type TlhEffectiveActivityListener = (snapshot: TlhEffectiveActivitySnapshot) => void;
 
 export type TlhEffectiveActivityTracker = {
   getSnapshot(): TlhEffectiveActivitySnapshot;

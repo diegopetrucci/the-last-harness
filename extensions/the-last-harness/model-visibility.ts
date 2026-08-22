@@ -83,7 +83,7 @@ function isModelRuntimeSnapshotSource(
   return isRecord(value) && typeof value.getAvailableSnapshot === "function";
 }
 
-export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
+const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
   "anthropic/claude-3-5-haiku-20241022",
   "anthropic/claude-3-5-haiku-latest",
   "anthropic/claude-3-5-sonnet-20240620",
@@ -263,7 +263,7 @@ export function isTlhModelHidden(
   );
 }
 
-export function filterTlhVisibleModels<T extends ProviderModelReference>(
+function filterTlhVisibleModels<T extends ProviderModelReference>(
   models: readonly T[],
   config: ResolvedTlhModelVisibilityConfig = getTlhModelVisibilityConfig(),
 ): T[] {

@@ -1849,7 +1849,7 @@ function discoverDiskOnlyRunningAsyncTargets(
   return { targets, errors };
 }
 
-export interface InterruptAllRunningSubagentRunsResult {
+interface InterruptAllRunningSubagentRunsResult {
   foregroundRunIds: string[];
   asyncRunIds: string[];
   skippedForegroundRunIds: string[];

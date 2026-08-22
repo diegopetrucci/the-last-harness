@@ -43,7 +43,7 @@ function hasTkCommandName(candidate: string): boolean {
   return candidate === "tk" || basename(candidate) === "tk";
 }
 
-export function validateTlhTicketCommand(command: string): boolean {
+function validateTlhTicketCommand(command: string): boolean {
   const result = spawnSync(command, ["help"], {
     encoding: "utf8",
     timeout: TK_VALIDATION_TIMEOUT_MS,

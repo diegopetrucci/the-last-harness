@@ -46,7 +46,7 @@ const PERCENT_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-export type SessionLimitReportDependencies = {
+type SessionLimitReportDependencies = {
   /** Override for opening the report (injectable for tests). */
   openReport?: (path: string) => Promise<void>;
   /** Override for current time (injectable for tests). */

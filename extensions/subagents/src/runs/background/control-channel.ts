@@ -38,14 +38,14 @@ export type ControlChannelTimers = {
 };
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => void;
 
-export interface InterruptRequest {
+interface InterruptRequest {
   type: "interrupt";
   ts?: number;
   source?: string;
   reason?: string;
 }
 
-export interface TimeoutRequest {
+interface TimeoutRequest {
   type: "timeout";
   ts?: number;
   source?: string;
@@ -73,7 +73,7 @@ const STEER_REQUESTS_DIR = "steer-requests";
 const STEER_TARGETS_DIR = "steer-targets";
 const CHILD_MESSAGE_ACKS_DIR = "message-acks";
 
-export interface ChildMessageAcceptance {
+interface ChildMessageAcceptance {
   requestId: string;
   type: ChildMessageRequest["type"];
   status: "accepted" | "rejected";
@@ -83,13 +83,13 @@ export interface ChildMessageAcceptance {
   reason?: string;
 }
 
-export type ChildMessageAcceptanceWaitResult =
+type ChildMessageAcceptanceWaitResult =
   | { outcome: "acknowledged"; acceptance: ChildMessageAcceptance }
   | { outcome: "timeout" }
   | { outcome: "runner_gone" };
 
 /** Control inbox directory inside an async run dir. */
-export function controlInboxDir(asyncDir: string): string {
+function controlInboxDir(asyncDir: string): string {
   return path.join(asyncDir, "control");
 }
 
@@ -99,7 +99,7 @@ export function interruptRequestPath(asyncDir: string): string {
 }
 
 /** Path of the portable timeout request file. */
-export function timeoutRequestPath(asyncDir: string): string {
+function timeoutRequestPath(asyncDir: string): string {
   return path.join(controlInboxDir(asyncDir), "timeout.json");
 }
 
@@ -109,7 +109,7 @@ export function steerRequestsDir(asyncDir: string): string {
 }
 
 /** Atomic runner acceptance acknowledgements consumed by request originators. */
-export function childMessageAcksDir(asyncDir: string): string {
+function childMessageAcksDir(asyncDir: string): string {
   return path.join(controlInboxDir(asyncDir), CHILD_MESSAGE_ACKS_DIR);
 }
 
@@ -158,7 +158,7 @@ export function requestAsyncInterrupt(
   return requestPath;
 }
 
-export function requestAsyncTimeout(
+function requestAsyncTimeout(
   asyncDir: string,
   payload: Omit<TimeoutRequest, "type"> = {},
   deps: { now?: () => number } = {},
@@ -317,7 +317,7 @@ export function writeChildMessageAcceptance(
   return acceptancePath;
 }
 
-export function childMessageRequestRequiresAcceptance(request: ChildMessageRequest): boolean {
+function childMessageRequestRequiresAcceptance(request: ChildMessageRequest): boolean {
   return request.type === "resume";
 }
 
@@ -474,7 +474,7 @@ export function consumeChildMessageRequestsFromDir(
   );
 }
 
-export function consumeSteerRequestsFromDir(
+function consumeSteerRequestsFromDir(
   dir: string,
   fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
 ): SteerRequest[] {
@@ -530,7 +530,7 @@ export function consumeInterruptRequest(
   return true;
 }
 
-export function consumeTimeoutRequest(
+function consumeTimeoutRequest(
   asyncDir: string,
   fsImpl: Pick<typeof fs, "existsSync" | "rmSync"> = fs,
 ): boolean {

@@ -346,7 +346,7 @@ function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok
   };
 }
 
-export function shouldSkipTlhLaunchTelemetry(
+function shouldSkipTlhLaunchTelemetry(
   launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings(),
 ): boolean {
   if (!tlhTelemetryStatePath()) return true;
@@ -459,9 +459,7 @@ export function privacySafeTlhTelemetryThinkingLevel(thinkingLevel: string | und
   return (THINKING_LEVELS as readonly string[]).includes(normalized) ? normalized : "custom";
 }
 
-export function privacySafeTlhTelemetryPrimaryAgentName(
-  primaryAgentName: string | undefined,
-): string {
+function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName: string | undefined): string {
   if (typeof primaryAgentName !== "string" || !primaryAgentName.trim()) {
     return "unknown";
   }
