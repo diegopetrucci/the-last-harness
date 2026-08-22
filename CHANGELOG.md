@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Bundled the non-critical `pi-transcribe` extension by default; run `/transcribe` to configure it and use `Ctrl+Alt+Z` for microphone recording. `ffmpeg` is required only for file transcription.
+- [pi-transcribe](https://github.com/earendil-works/pi-transcribe) is now bundled by default.```
 
 ## [0.37.0] - 2026-08-11
 
