@@ -68,6 +68,7 @@
     "!docs/subagents-history",
     "!docs/brand",
     "!docs/local-development.md",
+    "!docs/no-unsafe-dictionary-investigation-2026-08-18.md",
     "!docs/releasing.md",
     "!docs/pin-bump-verification.md",
     "!docs/upstream-sync-inventory.md",

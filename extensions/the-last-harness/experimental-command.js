@@ -1,5 +1,5 @@
 import { formatHomePath, isRecord } from "./common.js";
-import { availableExperimentalFeatureList, EXPERIMENTAL_COMMAND_COMPLETIONS, EXPERIMENTAL_COMMAND_HELP, getExperimentalFeature, getTlhExperimentalConfig, hasRegisteredExperimentalFeatures, isTlhExperimentalFeatureEnabled, noExperimentalFeaturesMessage, normalizeEnabledFeatures, parseExperimentalSlashAction, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, TLH_EXPERIMENTAL_FEATURES, unknownExperimentalFeatureMessage, } from "./experimental.js";
+import { availableExperimentalFeatureList, EXPERIMENTAL_COMMAND_HELP, getExperimentalFeature, getTlhExperimentalConfig, hasRegisteredExperimentalFeatures, isTlhExperimentalFeatureEnabled, noExperimentalFeaturesMessage, normalizeEnabledFeatures, parseExperimentalSlashAction, TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, TLH_EXPERIMENTAL_FEATURES, unknownExperimentalFeatureMessage, } from "./experimental.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
 function validateTlhExperimentalSettings(settings) {
     if (!isRecord(settings)) {
@@ -149,15 +149,6 @@ function writeExperimentalFeaturePreference(cwd, featureId, action) {
             nextContent: `${JSON.stringify(settings, null, 2)}\n`,
         };
     });
-}
-export function getExperimentalCommandCompletions(prefix) {
-    const normalizedPrefix = prefix.trim().toLowerCase();
-    const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) => option.value.startsWith(normalizedPrefix)).map((option) => ({
-        value: option.value,
-        label: option.value,
-        description: option.description,
-    }));
-    return completions.length > 0 ? completions : null;
 }
 export async function handleExperimentalCommand(pi, args, ctx) {
     const command = parseExperimentalSlashAction(args);

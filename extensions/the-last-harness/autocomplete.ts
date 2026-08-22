@@ -9,7 +9,6 @@ const HIDDEN_SLASH_COMMANDS = new Set([
   "changelog",
   "import",
   "scoped-models",
-  "subagent-cost",
   "skill:librarian",
   "websearch",
   "curator",

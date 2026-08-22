@@ -25,9 +25,6 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  Box,
-  Container,
-  Spacer,
   Text,
   isKeyRelease,
   matchesKey,
@@ -54,7 +51,6 @@ import {
   createSubagentLiveDetailController,
   SUBAGENT_LIVE_DETAIL_SHORTCUT,
   SUBAGENT_PAUSE_ALL_SHORTCUT,
-  type SubagentLiveDetailController,
 } from "../shared/subagent-shortcuts.ts";
 import {
   clearLegacyResultAnimationTimer,
@@ -69,15 +65,7 @@ import {
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
-import {
-  clearSlashSnapshots,
-  getSlashRenderableSnapshot,
-  resolveSlashMessageDetails,
-  restoreSlashFinalSnapshots,
-  type SlashMessageDetails,
-} from "../slash/slash-live-state.ts";
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
@@ -86,7 +74,7 @@ import registerSubagentNotify, {
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.ts";
 import { formatDuration, shortenPath } from "../shared/formatters.ts";
 import { loadConfig } from "./config.ts";
-import { buildSubagentToolDescription } from "./tool-description.ts";
+import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.ts";
 import {
   type Details,
   type SubagentState,
@@ -94,7 +82,6 @@ import {
   ASYNC_DIR,
   DEFAULT_ARTIFACT_CONFIG,
   RESULTS_DIR,
-  SLASH_RESULT_TYPE,
   SLASH_TEXT_RESULT_TYPE,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   SUBAGENT_ASYNC_STARTED_EVENT,
@@ -194,14 +181,6 @@ function ensureAccessibleDir(dirPath: string): void {
   }
 }
 
-function isSlashResultRunning(result: { details?: Details }): boolean {
-  return (
-    result.details?.progress?.some((entry) => entry.status === "running") ||
-    result.details?.results.some((entry) => entry.progress?.status === "running") ||
-    false
-  );
-}
-
 // Drives the inline running-indicator braille animation for foreground subagent
 // results. Foreground runs receive progress only on child events, so the glyph
 // (derived from progress fields) would freeze between events. While a result is
@@ -236,57 +215,8 @@ function ensureSubagentResultAnimation(context: {
   }, 80);
 }
 
-function isSlashResultError(result: { details?: Details }): boolean {
-  return (
-    result.details?.results.some(
-      (entry) => entry.exitCode !== 0 && entry.progress?.status !== "running",
-    ) || false
-  );
-}
-
 function isStaleExtensionContextError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Extension context no longer active");
-}
-
-function rebuildSlashResultContainer(
-  container: Container,
-  result: SubagentToolResult<Details>,
-  expanded: boolean,
-  theme: ExtensionContext["ui"]["theme"],
-): void {
-  container.clear();
-  container.addChild(new Spacer(1));
-  const boxTheme = isSlashResultRunning(result)
-    ? "toolPendingBg"
-    : isSlashResultError(result)
-      ? "toolErrorBg"
-      : "toolSuccessBg";
-  const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-  box.addChild(renderSubagentResult(result, { expanded }, theme));
-  container.addChild(box);
-}
-
-export function createSlashResultComponent(
-  details: SlashMessageDetails,
-  options: { expanded: boolean },
-  theme: ExtensionContext["ui"]["theme"],
-  liveDetailController?: SubagentLiveDetailController,
-): Container {
-  const container = new Container();
-  let lastVersion = -1;
-  let lastExpanded = options.expanded;
-  container.render = (width: number): string[] => {
-    const snapshot = getSlashRenderableSnapshot(details);
-    const isRunning = isSlashResultRunning(snapshot.result);
-    const expanded = liveDetailController?.isExpanded() ?? options.expanded;
-    if (snapshot.version !== lastVersion || isRunning || expanded !== lastExpanded) {
-      lastVersion = snapshot.version;
-      lastExpanded = expanded;
-      rebuildSlashResultContainer(container, snapshot.result, expanded, theme);
-    }
-    return Container.prototype.render.call(container, width);
-  };
-  return container;
 }
 
 interface ParsedSubagentNotifyContent {
@@ -508,12 +438,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     discoverAgents,
   });
 
-  pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
-    const details = resolveSlashMessageDetails(message.details);
-    if (!details) return undefined;
-    return createSlashResultComponent(details, options, theme, liveDetailController);
-  });
-
   pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
     const content =
       typeof message.content === "string"
@@ -631,18 +555,11 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     return executor.execute(id, params, signal, onUpdate, ctx);
   };
 
-  const slashBridge = registerSlashSubagentBridge({
-    events: pi.events,
-    getContext: () => state.lastUiContext,
-    execute: (id, params, signal, onUpdate, ctx) =>
-      executeSubagent(id, params, signal, onUpdate, ctx),
-  });
-
   const parameters = SubagentParams;
   const tool = defineTool<typeof parameters, Details>({
     name: "subagent",
     label: "Subagent",
-    description: buildSubagentToolDescription(config),
+    description: COMPACT_SUBAGENT_TOOL_DESCRIPTION,
     parameters,
 
     async execute(id, params, signal, onUpdate, ctx) {
@@ -712,7 +629,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     },
   });
 
-  registerSlashCommands(pi, state);
+  registerSlashCommands(pi, state, config);
 
   const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
   const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
@@ -802,7 +719,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     liveDetailController.clearToolRows();
     resetJobs(ctx);
     restoreActiveJobs(ctx);
-    restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
     primeExistingResults();
   };
 
@@ -847,9 +763,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     state.cleanupTimers.clear();
     state.asyncJobs.clear();
     liveDetailController.clearToolRows();
-    clearSlashSnapshots();
-    slashBridge.cancelAll();
-    slashBridge.dispose();
     supervisorChannel.dispose();
     if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
       delete globalStore[runtimeCleanupStoreKey];

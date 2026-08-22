@@ -82,10 +82,3 @@ export async function handleTlhChangelogCommand(
     details: { title: TLH_RELEASE_NOTES_TITLE },
   });
 }
-
-export function registerTlhChangelogCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("tlh-changelog", {
-    description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
-    handler: async (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
-  });
-}

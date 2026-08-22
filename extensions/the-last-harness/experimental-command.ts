@@ -3,7 +3,6 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { formatHomePath, isRecord } from "./common.js";
 import {
   availableExperimentalFeatureList,
-  EXPERIMENTAL_COMMAND_COMPLETIONS,
   EXPERIMENTAL_COMMAND_HELP,
   getExperimentalFeature,
   getTlhExperimentalConfig,
@@ -248,18 +247,6 @@ function writeExperimentalFeaturePreference(
       };
     },
   );
-}
-
-export function getExperimentalCommandCompletions(prefix: string) {
-  const normalizedPrefix = prefix.trim().toLowerCase();
-  const completions = EXPERIMENTAL_COMMAND_COMPLETIONS.filter((option) =>
-    option.value.startsWith(normalizedPrefix),
-  ).map((option) => ({
-    value: option.value,
-    label: option.value,
-    description: option.description,
-  }));
-  return completions.length > 0 ? completions : null;
 }
 
 export async function handleExperimentalCommand(

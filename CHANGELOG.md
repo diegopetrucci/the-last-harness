@@ -15,16 +15,16 @@ All notable changes to The Last Harness will be documented in this file.
 
 - **Multi-part assistant messages now return all non-empty text parts joined with a blank line, instead of only the last part.** This affects progress snapshots, final output, saved output files, and results referenced by chain and parallel steps.
 - **The newest acceptance report now has authority even when it is invalid.** A stale valid report is never surfaced in place of a newer failed one.
+- TLH installs much faster now.
 
 ### Added
 
 - TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
 
-### Changed
+### Removed
 
-- **Removed the footer ticket status line.** TLH no longer renders a `ticket: <title> (/tickets)` line in the footer for in-progress tickets. Use `/tickets` to see ready, blocked, in-progress, active, and total counts with ID/title details.
-- **The startup header context hint is now inline.** The standalone "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions" header line has been removed. Its replacement is a `(run /context to see a breakdown)` suffix appended directly to the `Context at launch:` allocation line. Ctrl+Shift+E still works and still appears in `/hotkeys`.
-- **Startup tip spacing.** When a startup tip is shown in the collapsed header, it is now separated from the context line by a blank line for readability.
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
+- Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
 
 ## [0.38.1] - 2026-08-18
 

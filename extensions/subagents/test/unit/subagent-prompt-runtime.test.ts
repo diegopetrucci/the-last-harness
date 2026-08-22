@@ -511,7 +511,6 @@ describe("subagent prompt runtime", () => {
       "subagent-orchestration-instructions",
       "Subagent orchestration is enabled.",
     );
-    const slashResult = makeCustomMessage("subagent-slash-result", "## Orchestration");
     const slashTextResult = makeCustomMessage("subagent-slash-text-result", "Subagent profiles");
     const notify = makeCustomMessage("subagent-notify", "Background task completed");
     const control = makeCustomMessage("subagent_control_notice", "needs attention");
@@ -521,7 +520,6 @@ describe("subagent prompt runtime", () => {
       stripParentOnlySubagentMessages([
         user,
         instruction,
-        slashResult,
         slashTextResult,
         notify,
         control,
@@ -529,6 +527,15 @@ describe("subagent prompt runtime", () => {
       ]),
       [user, otherCustom],
     );
+  });
+
+  it("strips legacy slash-result custom messages from forked child context", () => {
+    const legacySlashResult = makeCustomMessage("subagent-slash-result", "## Legacy result");
+    const otherCustom = makeCustomMessage("other", "keep");
+
+    assert.deepEqual(stripParentOnlySubagentMessages([legacySlashResult, otherCustom]), [
+      otherCustom,
+    ]);
   });
 
   it("strips prior parent subagent tool calls and results from forked child context", () => {
@@ -729,7 +736,6 @@ describe("subagent prompt runtime", () => {
       "subagent-orchestration-instructions",
       "Subagent orchestration is enabled.",
     );
-    const slashResult = makeCustomMessage("subagent-slash-result", "## Orchestration");
     const subagentResult = makeToolResultMessage("subagent", "subagent results");
     const subagentCall = makeAssistantMessage([
       {
@@ -746,7 +752,6 @@ describe("subagent prompt runtime", () => {
         messages: [
           priorParentTurn,
           instruction,
-          slashResult,
           subagentCall,
           subagentResult,
           otherCustom,

@@ -6,11 +6,13 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -35,13 +37,17 @@ import {
 } from "./lib/tlh-install-paths.mjs";
 import {
   FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES,
+  disabledDefaultExtensionIds,
   packageIdentity,
+  packageSourceOf,
+  readDefaultExtensions,
   RETIRED_TLH_DEFAULT_PACKAGE_SOURCES,
 } from "./lib/default-extensions.mjs";
 import {
   assignRequiredEqualsValue,
   backupPathWithTimestamp,
   isTlhOwnedBackupFilename,
+  readJsonFile,
   renderShellWords,
   requiredValue,
   selectExpiredBackups,
@@ -1943,6 +1949,335 @@ function installDefaultExtensions(config: InstallConfig): void {
   if (failures === 0) verboseLog(config, "Bundled default extensions installed.");
 }
 
+const EXACT_NPM_VERSION_RE =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const NPM_PREINSTALL_STAGE_PREFIX = ".tlh-npm-defaults-";
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function npmPinnedSpec(source: string): string | undefined {
+  const trimmed = source.trim();
+  if (!trimmed.startsWith("npm:")) return undefined;
+
+  const spec = trimmed.slice("npm:".length).trim();
+  const separator = spec.startsWith("@") ? spec.indexOf("@", 1) : spec.lastIndexOf("@");
+  if (separator <= 0) return undefined;
+
+  const version = spec.slice(separator + 1);
+  if (!EXACT_NPM_VERSION_RE.test(version)) return undefined;
+  return spec;
+}
+
+function readNpmPreinstallSettings(config: InstallConfig): JsonRecord | undefined {
+  try {
+    const parsed: unknown = readJsonFile<unknown>(config.settingsPath, { emptyValue: null });
+    if (!isJsonRecord(parsed)) throw new Error("settings must be a JSON object");
+    if (parsed.packages !== undefined && !Array.isArray(parsed.packages)) {
+      throw new Error("settings.packages must be an array when present");
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const prefix = config.dryRun ? "Would skip" : "Skipping";
+    log(
+      config,
+      `${prefix} pinned npm default-extension pre-install because merged settings are unreadable or malformed (${message}).`,
+    );
+    return undefined;
+  }
+}
+
+function configuredPlainNpmCommand(settings: JsonRecord): string[] | undefined {
+  if (!Object.hasOwn(settings, "npmCommand")) return ["npm"];
+  const value = settings.npmCommand;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    return undefined;
+  }
+  if (value.length === 0) return ["npm"];
+  if (value.length !== 1) return undefined;
+
+  const command = value[0];
+  if (!command) return undefined;
+  const commandName = command.split(/[\\/]/).at(-1)?.toLowerCase() || "";
+  if (commandName !== "npm" && commandName !== "npm.cmd" && commandName !== "npm.exe") {
+    return undefined;
+  }
+  return [command];
+}
+
+function truthyEnvironmentValue(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
+}
+
+function npmDestinationExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (spawnErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function ensureNpmStageParent(config: InstallConfig): string {
+  const agentDir = resolve(config.agentDir);
+  if (isSymlink(agentDir)) {
+    throw new Error(
+      `refusing to create npm staging root through symlinked TLH profile path: ${agentDir}`,
+    );
+  }
+  if (existsSync(agentDir) && !lstatSync(agentDir).isDirectory()) {
+    throw new Error(`refusing to use non-directory TLH profile root for npm staging: ${agentDir}`);
+  }
+  assertProfilePathWithinAgent(config, agentDir, "npm staging root parent");
+  if (!existsSync(agentDir)) mkdirSync(agentDir, { recursive: true });
+  return agentDir;
+}
+
+function markNpmStageIgnoredByCloudSync(config: InstallConfig, stagePath: string): void {
+  const attributes =
+    process.platform === "darwin"
+      ? ["com.dropbox.ignored", "com.apple.fileprovider.ignore#P"]
+      : process.platform === "linux"
+        ? ["user.com.dropbox.ignored"]
+        : [];
+  if (attributes.length === 0) return;
+
+  const command = process.platform === "darwin" ? "xattr" : "setfattr";
+  for (const attribute of attributes) {
+    try {
+      spawnSync(
+        command,
+        process.platform === "darwin"
+          ? ["-w", attribute, "1", stagePath]
+          : ["-n", attribute, "-v", "1", stagePath],
+        { env: inheritedCommandEnv(config), stdio: "ignore" },
+      );
+    } catch {
+      // Cloud-sync metadata is an optional parity improvement. npm installation
+      // remains safe when xattr/setfattr is unavailable or rejects the path.
+    }
+  }
+}
+
+function assertNpmStageDirectory(config: InstallConfig, stagePath: string, phase: string): void {
+  const stats = lstatSync(stagePath);
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
+    throw new Error(`npm staging root is not a regular directory ${phase}: ${stagePath}`);
+  }
+  assertProfilePathWithinAgent(config, stagePath, `npm staging root ${phase}`);
+}
+
+function prepareNpmStage(config: InstallConfig, stagePath: string): void {
+  assertNpmStageDirectory(config, stagePath, "before install");
+  markNpmStageIgnoredByCloudSync(config, stagePath);
+  writeFileSync(join(stagePath, ".gitignore"), "*\n!.gitignore\n", {
+    encoding: "utf8",
+    flag: "wx",
+  });
+  writeFileSync(
+    join(stagePath, "package.json"),
+    JSON.stringify({ name: "pi-extensions", private: true }, null, 2),
+    { encoding: "utf8", flag: "wx" },
+  );
+}
+
+function cleanupNpmStage(config: InstallConfig, stagePath: string | undefined): void {
+  if (!stagePath) return;
+  try {
+    const stats = lstatSync(stagePath);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      unlinkSync(stagePath);
+      return;
+    }
+    assertProfilePathWithinAgent(config, stagePath, "npm staging cleanup");
+    rmSync(stagePath, { recursive: true, force: true });
+  } catch (error) {
+    if (spawnErrorCode(error) === "ENOENT") return;
+    warn(`could not clean npm staging root ${stagePath}: ${String(error)}`);
+  }
+}
+
+function promoteNpmStage(config: InstallConfig, stagePath: string, npmRoot: string): boolean {
+  if (npmDestinationExists(npmRoot)) {
+    warn(
+      `npm pre-install destination appeared during staging; leaving the existing npm root untouched: ${npmRoot}`,
+    );
+    return false;
+  }
+
+  try {
+    renameSync(stagePath, npmRoot);
+    return true;
+  } catch (error) {
+    const destinationAppeared = (() => {
+      try {
+        return npmDestinationExists(npmRoot);
+      } catch {
+        return false;
+      }
+    })();
+    const code = spawnErrorCode(error);
+    if (destinationAppeared || code === "EEXIST" || code === "ENOTEMPTY" || code === "EISDIR") {
+      warn(
+        `npm pre-install destination appeared during promotion; leaving the existing npm root untouched: ${npmRoot}`,
+      );
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Pre-install enabled, pinned npm defaults into a fresh staging root and
+ * atomically promote that root to the profile's npm project after npm exits
+ * successfully. Pi's startup package manager remains the fallback for every
+ * skipped, offline, failed, or raced install.
+ */
+function preInstallNpmDefaultExtensions(config: InstallConfig): void {
+  if (config.noSettings) {
+    log(config, "Skipping pinned npm default-extension pre-install (--no-settings).");
+    return;
+  }
+  if (truthyEnvironmentValue(config.env?.PI_OFFLINE)) {
+    log(config, "Skipping pinned npm default-extension pre-install (PI_OFFLINE is set).");
+    return;
+  }
+  if (
+    !config.supportFilePaths.DEFAULT_EXTENSIONS_FILE ||
+    !existsSync(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE)
+  ) {
+    if (config.dryRun) {
+      log(config, "Would pre-install pinned npm default extensions after settings merge.");
+    }
+    return;
+  }
+
+  const settingsExists = existsSync(config.settingsPath);
+  const settings = settingsExists || !config.dryRun ? readNpmPreinstallSettings(config) : undefined;
+  if (settingsExists && !settings) return;
+  if (!settingsExists && !config.dryRun) return;
+
+  let defaultExtensions;
+  try {
+    defaultExtensions = readDefaultExtensions(config.supportFilePaths.DEFAULT_EXTENSIONS_FILE);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(`could not read bundled default extensions for npm pre-install: ${message}`);
+    return;
+  }
+
+  const disabledIds = settings
+    ? disabledDefaultExtensionIds(settings, defaultExtensions)
+    : new Set<string>();
+  const configuredEntries = settings && Array.isArray(settings.packages) ? settings.packages : [];
+  const configuredSources = configuredEntries
+    .map(packageSourceOf)
+    .filter((source): source is string => typeof source === "string")
+    .map((source) => source.trim());
+  const configuredIdentities = new Set(
+    configuredEntries
+      .map(packageIdentity)
+      .filter((identity): identity is string => typeof identity === "string"),
+  );
+  const npmSpecs: string[] = [];
+  for (const extension of defaultExtensions) {
+    if (disabledIds.has(extension.id)) continue;
+    const spec = npmPinnedSpec(extension.source);
+    if (!spec) continue;
+    const sourceMatches = configuredSources.some((source) => source === extension.source);
+    const identity = packageIdentity(extension.source);
+    const dryRunMergeWouldAddDefault =
+      config.dryRun && identity !== undefined && !configuredIdentities.has(identity);
+    if (!sourceMatches && !dryRunMergeWouldAddDefault) continue;
+    npmSpecs.push(spec);
+  }
+
+  if (npmSpecs.length === 0) {
+    verboseLog(config, "No enabled pinned npm default extensions match merged settings.");
+    return;
+  }
+
+  const npmCommand = configuredPlainNpmCommand(settings || {});
+  if (!npmCommand) {
+    log(
+      config,
+      "Skipping pinned npm default-extension pre-install because Pi's configured npmCommand is not plain npm.",
+    );
+    return;
+  }
+
+  const npmRoot = join(config.agentDir, "npm");
+  try {
+    if (npmDestinationExists(npmRoot)) {
+      verboseLog(
+        config,
+        `Skipping pinned npm default-extension pre-install because the npm root already exists (left untouched): ${npmRoot}`,
+      );
+      return;
+    }
+  } catch (error) {
+    warn(
+      `could not inspect the npm root safely; skipping pinned npm default-extension pre-install: ${String(error)}`,
+    );
+    return;
+  }
+
+  const displayStagePath = join(config.agentDir, `${NPM_PREINSTALL_STAGE_PREFIX}<fresh>`);
+  const installArgs: CommandArgs = [
+    ...npmCommand,
+    "install",
+    ...npmSpecs,
+    "--prefix",
+    config.dryRun ? displayStagePath : "<staging-root>",
+    "--legacy-peer-deps",
+  ];
+  log(
+    config,
+    `Pre-installing ${npmSpecs.length} pinned npm default extension(s) in a fresh staging root...`,
+  );
+  if (config.dryRun) {
+    log(
+      config,
+      `Would create a fresh npm staging root under ${config.agentDir}; existing npm roots are not read or changed.`,
+    );
+    runCommand(
+      config,
+      installArgs.map((arg) => (arg === "<staging-root>" ? displayStagePath : arg)),
+    );
+    log(config, `Would atomically promote the successful staging root to ${npmRoot}.`);
+    return;
+  }
+
+  let stagePath: string | undefined;
+  try {
+    const stageParent = ensureNpmStageParent(config);
+    stagePath = mkdtempSync(join(stageParent, NPM_PREINSTALL_STAGE_PREFIX));
+    assertProfilePathWithinAgent(config, stagePath, "npm staging root");
+    prepareNpmStage(config, stagePath);
+    const commandArgs: CommandArgs = [
+      ...npmCommand,
+      "install",
+      ...npmSpecs,
+      "--prefix",
+      stagePath,
+      "--legacy-peer-deps",
+    ];
+    runCommand(config, commandArgs);
+    assertNpmStageDirectory(config, stagePath, "after npm install");
+    if (promoteNpmStage(config, stagePath, npmRoot)) stagePath = undefined;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warn(
+      `npm pre-install of pinned default extensions failed: ${message}; Pi will install missing packages on first launch.`,
+    );
+  } finally {
+    cleanupNpmStage(config, stagePath);
+  }
+}
+
 function gnosisInstallSkippedByEnv(config: InstallConfig): boolean {
   const value = config.env?.TLH_SKIP_GNOSIS_INSTALL;
   return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "yes";
@@ -2274,6 +2609,7 @@ async function runInstallFlow(config: InstallConfig): Promise<void> {
   if (!config.noSettings) cleanupOldSettingsBackups(config);
   await writeInstallState(config);
   installDefaultExtensions(config);
+  preInstallNpmDefaultExtensions(config);
   configureGnosis(config);
   configureTickets(config);
   await writeWrapper(config);
@@ -2337,6 +2673,7 @@ export {
   expandPath,
   installDefaultExtensions,
   nodeVersionMeetsMinimum,
+  preInstallNpmDefaultExtensions,
   parseArgs,
   run,
   usage,

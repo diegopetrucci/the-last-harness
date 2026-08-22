@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -9,7 +17,10 @@ import {
   makeDefaultExtensionInstallConfig,
 } from "./install-stage1-default-extensions-test-helpers.mjs";
 
-import { installDefaultExtensions } from "../scripts/tlh-install.mjs";
+import {
+  installDefaultExtensions,
+  preInstallNpmDefaultExtensions,
+} from "../scripts/tlh-install.mjs";
 
 test("stage-1 batches non-critical default extension updates", (t) => {
   const defaults = [
@@ -205,4 +216,265 @@ test("stage-1 keeps critical defaults on per-source install path while dry-run s
   assert.match(stdout, /would retry only 1 non-critical bundled default source\(s\) individually/i);
   assert.doesNotMatch(stdout, /^Would.*\bpi\s+update\b/m);
   assert.doesNotMatch(stdout, /pi update --extension npm:helper/);
+});
+
+test("stage-1 batches only enabled pinned npm defaults from matching string and object settings", (t) => {
+  const defaults = [
+    { id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" },
+    { id: "pkg-b", source: "npm:@scope/pkg-b@2.0.0" },
+    { id: "pkg-c", source: "npm:@scope/pkg-c@3.0.0" },
+    { id: "pkg-d", source: "npm:@scope/pkg-d@4.0.0" },
+    { id: "unpinned", source: "npm:@scope/unpinned" },
+    { id: "git", source: "git:github.com/example/git@pin" },
+  ];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: [
+        { source: "npm:@scope/pkg-a@1.0.0", extensions: ["index.js"] },
+        "npm:@scope/pkg-b@2.0.0",
+        "npm:@scope/unpinned",
+        "npm:@scope/pkg-c@3.0.0",
+        "npm:@scope/pkg-d@9.9.9",
+        "npm:@scope/user-package@9.9.9",
+      ],
+      tlh: { disabledDefaultExtensions: ["pkg-c"] },
+    },
+    fakeNpmBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+    fakeCloudSyncBody: 'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/cloud-sync.log"',
+  });
+
+  preInstallNpmDefaultExtensions(config);
+
+  const npmLog = readFileSync(join(agentDir, "npm.log"), "utf8").trim();
+  assert.equal(npmLog.split(/\r?\n/).length, 1);
+  assert.match(npmLog, /@scope\/pkg-a@1\.0\.0/);
+  assert.match(npmLog, /@scope\/pkg-b@2\.0\.0/);
+  assert.doesNotMatch(npmLog, /pkg-c|pkg-d|unpinned|user-package|git:/);
+  assert.match(npmLog, /--prefix .*\.tlh-npm-defaults-/);
+  assert.equal(npmLog.includes(`--prefix ${join(agentDir, "npm")}`), false);
+  assert.ok(existsSync(join(agentDir, "npm", "package.json")));
+  if (process.platform === "darwin" || process.platform === "linux") {
+    assert.ok(
+      existsSync(join(agentDir, "cloud-sync.log")),
+      "cloud-sync ignore should be best effort invoked",
+    );
+  }
+});
+
+test("stage-1 hides the existing final npm root notice unless verbose", (t) => {
+  const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  const npmRoot = join(agentDir, "npm");
+  mkdirSync(npmRoot, { recursive: true });
+  writeFileSync(join(npmRoot, "sentinel"), "preserve me");
+  config.quiet = false;
+
+  const normalStdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+  assert.doesNotMatch(
+    normalStdout,
+    /Skipping pinned npm default-extension pre-install because the npm root already exists/,
+  );
+
+  config.verbose = true;
+  const verboseStdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+  assert.match(
+    verboseStdout,
+    /Skipping pinned npm default-extension pre-install because the npm root already exists \(left untouched\):/,
+  );
+  assert.equal(readFileSync(join(npmRoot, "sentinel"), "utf8"), "preserve me");
+  assert.equal(existsSync(join(agentDir, "npm-called.log")), false);
+  assert.deepEqual(
+    readdirSync(agentDir).filter((entry) => entry.startsWith(".tlh-npm-defaults-")),
+    [],
+  );
+});
+
+test("stage-1 cleans staging and preserves a destination race after npm succeeds", (t) => {
+  const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: [
+      'printf \'%s\\n\' "$*" >>"${AGENT_DIR}/npm.log"',
+      'mkdir -p "${AGENT_DIR}/npm"',
+      "printf 'race\\n' >\"${AGENT_DIR}/npm/race-sentinel\"",
+    ].join("\n"),
+  });
+
+  preInstallNpmDefaultExtensions(config);
+
+  assert.equal(readFileSync(join(agentDir, "npm", "race-sentinel"), "utf8"), "race\n");
+  assert.deepEqual(
+    readdirSync(agentDir).filter((entry) => entry.startsWith(".tlh-npm-defaults-")),
+    [],
+  );
+});
+
+test(
+  "stage-1 rejects a staging symlink and cleans only the staging entry",
+  { skip: process.platform === "win32" },
+  (t) => {
+    const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+    const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+      defaultExtensions: defaults,
+      settings: { packages: defaults.map((entry) => entry.source) },
+      fakeNpmBody: [
+        'stage_path=""',
+        'while [[ "$#" -gt 0 ]]; do',
+        '  if [[ "${1:-}" == "--prefix" ]]; then stage_path="${2:-}"; break; fi',
+        "  shift",
+        "done",
+        '[[ -n "$stage_path" ]]',
+        'rm -rf "$stage_path"',
+        'ln -s "$NPM_EXTERNAL_TARGET" "$stage_path"',
+      ].join("\n"),
+    });
+    const externalTarget = join(agentDir, "..", "external-stage-target");
+    mkdirSync(externalTarget, { recursive: true });
+    writeFileSync(join(externalTarget, "sentinel"), "keep me\n");
+    config.env.NPM_EXTERNAL_TARGET = externalTarget;
+
+    preInstallNpmDefaultExtensions(config);
+
+    assert.equal(existsSync(join(agentDir, "npm")), false);
+    assert.equal(readFileSync(join(externalTarget, "sentinel"), "utf8"), "keep me\n");
+    assert.deepEqual(
+      readdirSync(agentDir).filter((entry) => entry.startsWith(".tlh-npm-defaults-")),
+      [],
+    );
+  },
+);
+
+test(
+  "stage-1 preserves a raced final npm symlink and its external target",
+  { skip: process.platform === "win32" },
+  (t) => {
+    const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+    const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+      defaultExtensions: defaults,
+      settings: { packages: defaults.map((entry) => entry.source) },
+      fakeNpmBody: [
+        'mkdir -p "${AGENT_DIR}/external-npm"',
+        "printf 'keep me\\n' >\"${AGENT_DIR}/external-npm/sentinel\"",
+        'ln -s "${AGENT_DIR}/external-npm" "${AGENT_DIR}/npm"',
+      ].join("\n"),
+    });
+
+    preInstallNpmDefaultExtensions(config);
+
+    assert.equal(lstatSync(join(agentDir, "npm")).isSymbolicLink(), true);
+    assert.equal(readFileSync(join(agentDir, "external-npm", "sentinel"), "utf8"), "keep me\n");
+    assert.deepEqual(
+      readdirSync(agentDir).filter((entry) => entry.startsWith(".tlh-npm-defaults-")),
+      [],
+    );
+  },
+);
+
+test("stage-1 cleans staging after npm failure and preserves a destination that appeared", (t) => {
+  const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: [
+      'mkdir -p "${AGENT_DIR}/npm"',
+      "printf 'failure-race\\n' >\"${AGENT_DIR}/npm/race-sentinel\"",
+      "exit 17",
+    ].join("\n"),
+  });
+
+  preInstallNpmDefaultExtensions(config);
+
+  assert.equal(readFileSync(join(agentDir, "npm", "race-sentinel"), "utf8"), "failure-race\n");
+  assert.deepEqual(
+    readdirSync(agentDir).filter((entry) => entry.startsWith(".tlh-npm-defaults-")),
+    [],
+  );
+});
+
+test("stage-1 treats an empty settings file as malformed and skips npm safely", (t) => {
+  const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  config.quiet = false;
+  writeFileSync(config.settingsPath, "");
+
+  const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+  assert.match(stdout, /settings are unreadable or malformed/);
+  assert.equal(existsSync(join(agentDir, "npm-called.log")), false);
+});
+
+test("stage-1 skips malformed settings, offline mode, and non-npm package managers safely", (t) => {
+  const defaults = [{ id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" }];
+  const malformed = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  writeFileSync(malformed.config.settingsPath, "not-json");
+  preInstallNpmDefaultExtensions(malformed.config);
+  assert.equal(existsSync(join(malformed.agentDir, "npm-called.log")), false);
+
+  const missing = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  rmSync(missing.config.settingsPath);
+  preInstallNpmDefaultExtensions(missing.config);
+  assert.equal(existsSync(join(missing.agentDir, "npm-called.log")), false);
+
+  const offline = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: { packages: defaults.map((entry) => entry.source) },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  offline.config.env.PI_OFFLINE = "1";
+  preInstallNpmDefaultExtensions(offline.config);
+  assert.equal(existsSync(join(offline.agentDir, "npm-called.log")), false);
+
+  const nonNpmManager = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {
+      packages: defaults.map((entry) => entry.source),
+      npmCommand: ["pnpm"],
+    },
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+  preInstallNpmDefaultExtensions(nonNpmManager.config);
+  assert.equal(existsSync(join(nonNpmManager.agentDir, "npm-called.log")), false);
+});
+
+test("stage-1 dry-run prints the staged npm command without creating roots", (t) => {
+  const defaults = [
+    { id: "pkg-a", source: "npm:@scope/pkg-a@1.0.0" },
+    { id: "pkg-b", source: "npm:@scope/pkg-b@2.0.0" },
+  ];
+  const { config, agentDir } = makeDefaultExtensionInstallConfig(t, {
+    defaultExtensions: defaults,
+    settings: {},
+    dryRun: true,
+    fakeNpmBody: "printf 'called\\n' >>\"${AGENT_DIR}/npm-called.log\"",
+  });
+
+  const stdout = captureConsole("log", () => preInstallNpmDefaultExtensions(config));
+
+  assert.match(stdout, /npm install/);
+  assert.match(stdout, /@scope\/pkg-a@1\.0\.0/);
+  assert.match(stdout, /@scope\/pkg-b@2\.0\.0/);
+  assert.match(stdout, /--prefix .*\.tlh-npm-defaults-<fresh>/);
+  assert.match(stdout, /atomically promote/);
+  assert.equal(existsSync(join(agentDir, "npm")), false);
+  assert.equal(existsSync(join(agentDir, "npm-called.log")), false);
 });

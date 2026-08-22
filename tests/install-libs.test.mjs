@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -96,7 +96,7 @@ function createManagedGitCheckout(t) {
   mkdirSync(join(agentDir, "git", "github.com", "owner"), { recursive: true });
   runGit(["clone", originDir, targetDir]);
 
-  return { agentDir, originDir, targetDir };
+  return { root, agentDir, originDir, targetDir };
 }
 
 function gitCheckoutIo(warnings) {
@@ -117,6 +117,45 @@ function gitCheckoutIo(warnings) {
 function listBackupRefs(targetDir) {
   const refs = runGit(["-C", targetDir, "for-each-ref", "refs/tlh-backup", "--format=%(refname)"]);
   return refs === "" ? [] : refs.split("\n");
+}
+
+function npmInstallMarkerPath(targetDir) {
+  return join(
+    runGit(["-C", targetDir, "rev-parse", "--absolute-git-dir"]),
+    "tlh-npm-install-complete.json",
+  );
+}
+
+function trackingCheckoutIo(warnings, npmInstallCalls, { onNpmInstall } = {}) {
+  return {
+    runCommand(_config, commandArgs, options = {}) {
+      const [command, ...args] = commandArgs;
+      runCommand(command, args, {
+        cwd: options.cwd,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
+      });
+    },
+    runInDir(_config, dir, commandArgs) {
+      npmInstallCalls.push([...commandArgs]);
+      if (onNpmInstall) onNpmInstall(dir);
+    },
+    warn(message) {
+      warnings.push(message);
+    },
+  };
+}
+
+function addPackageJsonToCheckout(targetDir, originDir) {
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0" }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
 }
 
 test("package-source parsing resolves git, hash-pinned, and local package sources", (t) => {
@@ -753,6 +792,459 @@ test("refreshGitCheckout stays quiet about dirty-checkout backups in quiet mode"
   assert.deepEqual(warnings, []);
 });
 
+test("refreshGitCheckout reuses npm install only with a matching TLH marker", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), {
+    schemaVersion: 1,
+    head,
+  });
+  assert.equal(npmInstallCalls.length, 1, "the first refresh must repair the absent marker");
+
+  refreshGitCheckout({ agentDir }, options, io);
+
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "an unchanged clean checkout with a matching marker must skip npm install",
+  );
+  assert.deepEqual(listBackupRefs(targetDir), []);
+});
+
+test("refreshGitCheckout repairs missing, malformed, mismatched, and non-directory npm state", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+  const markerPath = npmInstallMarkerPath(targetDir);
+
+  // No marker: a bare node_modules directory is deliberately insufficient.
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  writeFileSync(markerPath, "not json\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 2);
+
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head: "0".repeat(40) }) + "\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 3);
+
+  rmSync(join(targetDir, "node_modules"), { recursive: true, force: true });
+  writeFileSync(join(targetDir, "node_modules"), "not a directory\n");
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 4);
+});
+
+test("refreshGitCheckout invalidates an old marker before a failed npm install", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  addPackageJsonToCheckout(targetDir, originDir);
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head }) + "\n");
+  // A dirty checkout forces reconciliation even though the old marker matches.
+  writeFileSync(join(targetDir, "tracked.txt"), "dirty local change\n");
+
+  const failingIo = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall() {
+      throw new Error("simulated npm failure");
+    },
+  });
+  assert.throws(
+    () =>
+      refreshGitCheckout(
+        { agentDir, quiet: true },
+        {
+          targetDir,
+          repo: originDir,
+          ref: "main",
+          label: "test checkout",
+          missingMessage: `missing checkout: ${targetDir}`,
+        },
+        failingIo,
+      ),
+    /simulated npm failure/,
+  );
+  assert.equal(existsSync(markerPath), false, "failed npm must not retain an old success marker");
+
+  const repairCalls = [];
+  refreshGitCheckout(
+    { agentDir, quiet: true },
+    {
+      targetDir,
+      repo: originDir,
+      ref: "main",
+      label: "test checkout",
+      missingMessage: `missing checkout: ${targetDir}`,
+    },
+    trackingCheckoutIo([], repairCalls, {
+      onNpmInstall(dir) {
+        mkdirSync(join(dir, "node_modules"), { recursive: true });
+      },
+    }),
+  );
+  assert.equal(repairCalls.length, 1, "the next refresh must repair after the failed install");
+});
+
+test("refreshGitCheckout stores its marker in the resolved Git directory", (t) => {
+  const { root, agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  addPackageJsonToCheckout(targetDir, originDir);
+  const separateTarget = join(root, "agent", "git", "github.com", "owner", "separate");
+  const separateGitDir = join(root, "agent", "git-metadata", "separate.git");
+  mkdirSync(dirname(separateGitDir), { recursive: true });
+  runGit(["clone", "--separate-git-dir", separateGitDir, originDir, separateTarget]);
+  assert.equal(lstatSync(join(separateTarget, ".git")).isFile(), true);
+
+  const npmInstallCalls = [];
+  const options = {
+    targetDir: separateTarget,
+    repo: originDir,
+    ref: "main",
+    label: "separate test checkout",
+    missingMessage: `missing checkout: ${separateTarget}`,
+  };
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+
+  refreshGitCheckout({ agentDir }, options, io);
+  const markerPath = npmInstallMarkerPath(separateTarget);
+  assert.equal(markerPath, join(realpathSync(separateGitDir), "tlh-npm-install-complete.json"));
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+});
+
+test("refreshGitCheckout does not follow a symlinked completion marker", (t) => {
+  const { root, agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  addPackageJsonToCheckout(targetDir, originDir);
+  mkdirSync(join(targetDir, "node_modules"), { recursive: true });
+
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const externalMarkerPath = join(root, "external-marker.json");
+  writeFileSync(externalMarkerPath, "keep this external file\n");
+  symlinkSync(externalMarkerPath, markerPath);
+
+  const npmInstallCalls = [];
+  refreshGitCheckout(
+    { agentDir },
+    {
+      targetDir,
+      repo: originDir,
+      ref: "main",
+      label: "test checkout",
+      missingMessage: `missing checkout: ${targetDir}`,
+    },
+    trackingCheckoutIo([], npmInstallCalls, {
+      onNpmInstall(dir) {
+        mkdirSync(join(dir, "node_modules"), { recursive: true });
+      },
+    }),
+  );
+
+  assert.equal(readFileSync(externalMarkerPath, "utf8"), "keep this external file\n");
+  assert.equal(lstatSync(markerPath).isFile(), true);
+  assert.equal(npmInstallCalls.length, 1);
+});
+
+test("refreshGitCheckout forces npm install when a direct dependency directory is missing from node_modules", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const warnings = [];
+  const npmInstallCalls = [];
+
+  // Add a package.json with a direct production dependency.
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0", dependencies: { "some-dep": "^1.0.0" } }) +
+      "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo(warnings, npmInstallCalls, {
+    onNpmInstall(dir) {
+      // Simulate npm install: create node_modules with the dep directory.
+      mkdirSync(join(dir, "node_modules", "some-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh: installs and writes marker.
+  refreshGitCheckout({ agentDir }, options, io);
+  const markerPath = npmInstallMarkerPath(targetDir);
+  const head = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Second refresh: all gates pass, including the dependency directory — reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1, "reuse must skip npm install when dep dir is present");
+
+  // Now remove the dep directory to simulate partial deletion.
+  rmSync(join(targetDir, "node_modules", "some-dep"), { recursive: true, force: true });
+
+  // Third refresh: missing dep directory must force reinstall and rewrite marker.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    2,
+    "a missing direct dependency directory must force npm install",
+  );
+  assert.deepEqual(JSON.parse(readFileSync(markerPath, "utf8")), { schemaVersion: 1, head });
+});
+
+test("refreshGitCheckout forces npm install when a scoped direct dependency directory is missing", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "@scope/scoped-dep": "^2.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with scoped dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules", "@scope", "scoped-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh installs, creating the scoped dep directory.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Second refresh: scoped dep directory present — reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1, "reuse must work for scoped dep when dir is present");
+
+  // Remove the scoped dep directory.
+  rmSync(join(targetDir, "node_modules", "@scope"), { recursive: true, force: true });
+
+  // Third refresh: missing scoped dep must force reinstall.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 2, "a missing scoped dep directory must force npm install");
+});
+
+test("refreshGitCheckout reuses npm install when all direct dependencies are present", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "dep-a": "^1.0.0", "dep-b": "^2.0.0" },
+      devDependencies: { "dev-only": "^3.0.0" },
+      optionalDependencies: { "opt-dep": "^4.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with multiple deps"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      // Install only production deps (--omit=dev); optionalDependencies absent.
+      mkdirSync(join(dir, "node_modules", "dep-a"), { recursive: true });
+      mkdirSync(join(dir, "node_modules", "dep-b"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // All production dep dirs present; devDependencies and absent optionalDependencies must not block reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "reuse must work when all production dep dirs are present and optional ones absent",
+  );
+});
+
+test("refreshGitCheckout forces npm install when checkout package.json is malformed or missing", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+  const markerPath = npmInstallMarkerPath(targetDir);
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  // Start with a valid package.json that has no dependencies.
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({ name: "test-pkg", version: "1.0.0" }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "initial package.json"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  // First refresh: installs normally.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+  // Valid second refresh: reuse.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Corrupt the in-tree package.json (git clean will restore the committed version,
+  // so we corrupt the committed version by amending).
+  writeFileSync(join(targetDir, "package.json"), "not valid json\n");
+  runGit(["-C", targetDir, "add", "package.json"]);
+  runGit(["-C", targetDir, "commit", "--amend", "--no-edit"]);
+  runGit(["-C", targetDir, "push", "--force", originDir, "HEAD:main"]);
+
+  // Force a dirty state so wasClean is false and the checkout updates the tree.
+  writeFileSync(join(targetDir, "extra.txt"), "dirty\n");
+  // Also reset the marker to the old head so it would otherwise match.
+  const oldHead = runGit(["-C", targetDir, "rev-parse", "HEAD"]);
+  writeFileSync(markerPath, JSON.stringify({ schemaVersion: 1, head: oldHead }) + "\n");
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    2,
+    "a malformed package.json must force npm install even when the marker would match",
+  );
+});
+
+test("refreshGitCheckout reuses npm install when optionalDependencies are absent from node_modules", (t) => {
+  const { agentDir, originDir, targetDir } = createManagedGitCheckout(t);
+  const npmInstallCalls = [];
+
+  runGit(["-C", targetDir, "config", "user.email", "tests@example.com"]);
+  runGit(["-C", targetDir, "config", "user.name", "TLH Tests"]);
+  writeFileSync(join(targetDir, ".gitignore"), "build/\nnode_modules/\n");
+  writeFileSync(
+    join(targetDir, "package.json"),
+    JSON.stringify({
+      name: "test-pkg",
+      version: "1.0.0",
+      dependencies: { "prod-dep": "^1.0.0" },
+      optionalDependencies: { "opt-dep": "^2.0.0" },
+    }) + "\n",
+  );
+  runGit(["-C", targetDir, "add", ".gitignore", "package.json"]);
+  runGit(["-C", targetDir, "commit", "-m", "add package.json with optional dep"]);
+  runGit(["-C", targetDir, "push", originDir, "HEAD:main"]);
+
+  const io = trackingCheckoutIo([], npmInstallCalls, {
+    onNpmInstall(dir) {
+      // opt-dep intentionally not installed (e.g. platform-incompatible optional).
+      mkdirSync(join(dir, "node_modules", "prod-dep"), { recursive: true });
+    },
+  });
+  const options = {
+    targetDir,
+    repo: originDir,
+    ref: "main",
+    label: "test checkout",
+    missingMessage: `missing checkout: ${targetDir}`,
+  };
+
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(npmInstallCalls.length, 1);
+
+  // Reuse must succeed: opt-dep absent from node_modules must not block it.
+  refreshGitCheckout({ agentDir }, options, io);
+  assert.equal(
+    npmInstallCalls.length,
+    1,
+    "absent optionalDependency directory must not block npm install reuse",
+  );
+});
+
 test("subagent prompt discovery honors source precedence and copies prompt files safely", (t) => {
   const root = tempFixture(t);
   const agentDir = join(root, "agent");
@@ -819,34 +1311,44 @@ test("settings defaults declare when bundled subagent prompts are required", (t)
   assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
 });
 
-test("subagentExtensionConfigMissingDefaults describes only writable defaults", (t) => {
+test("subagentExtensionConfigMissingDefaults reports only the active-notice default", (t) => {
   const agentDir = tempFixture(t, "tlh-ext-config-notice-");
   const config = { agentDir };
   const configPath = join(agentDir, "extensions", "subagent", "config.json");
 
   assert.deepEqual(
     subagentExtensionConfigMissingDefaults(config),
-    ["toolDescriptionMode: compact", "control.activeNoticeAfterMs: 270000 (4m30)"],
-    "missing config reports both defaults",
+    ["control.activeNoticeAfterMs: 270000 (4m30)"],
+    "missing config reports only the active-notice default",
   );
 
   mkdirSync(join(agentDir, "extensions", "subagent"), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ control: null }) + "\n");
-  assert.deepEqual(
-    subagentExtensionConfigMissingDefaults(config),
-    ["toolDescriptionMode: compact"],
-    "non-object control reports only the writable tool-description default",
-  );
-
   writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: null }) + "\n");
   assert.deepEqual(
     subagentExtensionConfigMissingDefaults(config),
     [],
-    "complete writable defaults report no provisioning",
+    "unprovisionable control and an unknown legacy key report no defaults",
+  );
+
+  writeFileSync(configPath, JSON.stringify({ toolDescriptionMode: "full", control: {} }) + "\n");
+  assert.deepEqual(
+    subagentExtensionConfigMissingDefaults(config),
+    ["control.activeNoticeAfterMs: 270000 (4m30)"],
+    "only the active-notice default is reported when it can be written",
+  );
+
+  writeFileSync(
+    configPath,
+    JSON.stringify({ toolDescriptionMode: "full", control: { activeNoticeAfterMs: 123 } }) + "\n",
+  );
+  assert.deepEqual(
+    subagentExtensionConfigMissingDefaults(config),
+    [],
+    "complete config reports no provisioning",
   );
 });
 
-test("provisionSubagentExtensionConfig sets TLH defaults independently and is idempotent", (t) => {
+test("provisionSubagentExtensionConfig manages only the active-notice default", (t) => {
   const agentDir = tempFixture(t, "tlh-ext-config-test-");
   const config = { agentDir };
   const configPath = join(agentDir, "extensions", "subagent", "config.json");
@@ -855,7 +1357,11 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
   provisionSubagentExtensionConfig(config);
   assert.ok(existsSync(configPath), "config.json created on first run");
   const created = JSON.parse(readFileSync(configPath, "utf8"));
-  assert.equal(created.toolDescriptionMode, "compact", "toolDescriptionMode set to compact");
+  assert.equal(
+    Object.hasOwn(created, "toolDescriptionMode"),
+    false,
+    "fresh config does not receive the retired description-mode key",
+  );
   assert.deepEqual(
     created.control,
     { activeNoticeAfterMs: 270000 },
@@ -867,7 +1373,7 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
   const afterRerun = JSON.parse(readFileSync(configPath, "utf8"));
   assert.deepEqual(afterRerun, created, "re-running leaves the completed config unchanged");
 
-  // A user override is preserved while the independently missing default is added.
+  // Existing user values and unrelated keys survive unchanged.
   writeFileSync(
     configPath,
     JSON.stringify({
@@ -878,9 +1384,9 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
   provisionSubagentExtensionConfig(config);
   const afterActiveNoticeOverride = JSON.parse(readFileSync(configPath, "utf8"));
   assert.equal(
-    afterActiveNoticeOverride.toolDescriptionMode,
-    "compact",
-    "compact added when toolDescriptionMode is missing",
+    Object.hasOwn(afterActiveNoticeOverride, "toolDescriptionMode"),
+    false,
+    "missing legacy key is not injected",
   );
   assert.equal(
     afterActiveNoticeOverride.control.activeNoticeAfterMs,
@@ -894,8 +1400,7 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
   );
   assert.equal(afterActiveNoticeOverride.topLevelKey, true, "top-level user keys are preserved");
 
-  // The other direction is independent too: an existing tool override does not block
-  // provisioning the missing active-notice default.
+  // An existing legacy key is preserved while the independently missing default is added.
   writeFileSync(
     configPath,
     JSON.stringify({
@@ -904,35 +1409,40 @@ test("provisionSubagentExtensionConfig sets TLH defaults independently and is id
     }) + "\n",
   );
   provisionSubagentExtensionConfig(config);
-  const afterToolDescriptionOverride = JSON.parse(readFileSync(configPath, "utf8"));
+  const afterLegacyConfig = JSON.parse(readFileSync(configPath, "utf8"));
+  assert.equal(afterLegacyConfig.toolDescriptionMode, "full", "legacy key is preserved");
   assert.equal(
-    afterToolDescriptionOverride.toolDescriptionMode,
-    "full",
-    "tool description override is preserved",
-  );
-  assert.equal(
-    afterToolDescriptionOverride.control.activeNoticeAfterMs,
+    afterLegacyConfig.control.activeNoticeAfterMs,
     270000,
-    "active notice added independently",
+    "active notice is added independently",
   );
+  assert.equal(afterLegacyConfig.control.nestedKey, "preserve", "nested keys remain");
+
+  // A complete config is not rewritten, including its unknown legacy key.
+  const completeContent =
+    JSON.stringify({
+      toolDescriptionMode: "full",
+      control: { activeNoticeAfterMs: 123, nestedKey: "preserve" },
+      topLevelKey: true,
+    }) + "\n";
+  writeFileSync(configPath, completeContent);
+  provisionSubagentExtensionConfig(config);
   assert.equal(
-    afterToolDescriptionOverride.control.nestedKey,
-    "preserve",
-    "existing nested control keys remain",
+    readFileSync(configPath, "utf8"),
+    completeContent,
+    "complete config remains byte-for-byte unchanged",
   );
 
-  // A malformed nested control value is preserved while the independently writable
-  // tool-description default is still added.
-  writeFileSync(configPath, JSON.stringify({ control: null, topLevelKey: "preserve" }) + "\n");
+  // A malformed nested control value cannot receive the managed default and is untouched.
+  const malformedContent =
+    JSON.stringify({ toolDescriptionMode: "full", control: null, topLevelKey: "preserve" }) + "\n";
+  writeFileSync(configPath, malformedContent);
   provisionSubagentExtensionConfig(config);
-  const afterNonObjectControl = JSON.parse(readFileSync(configPath, "utf8"));
   assert.equal(
-    afterNonObjectControl.toolDescriptionMode,
-    "compact",
-    "compact added with a non-object control value",
+    readFileSync(configPath, "utf8"),
+    malformedContent,
+    "unprovisionable config remains byte-for-byte unchanged",
   );
-  assert.equal(afterNonObjectControl.control, null, "non-object control value is preserved");
-  assert.equal(afterNonObjectControl.topLevelKey, "preserve", "top-level key remains preserved");
 });
 
 test("provisionSubagentExtensionConfig preserves byte-for-byte non-object and unreadable configs", (t) => {
