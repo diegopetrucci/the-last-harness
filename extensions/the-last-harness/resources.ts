@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
-import type { StartupResources, StartupResourceSnapshot } from "./types.js";
+import type { StartupResourceSnapshot } from "./types.js";
 
 type CollectStartupResourcesOptions = {
   projectTrusted?: boolean;
@@ -185,11 +185,4 @@ export async function collectStartupResourceSnapshot(
       })),
     },
   };
-}
-
-export async function collectStartupResources(
-  cwd: string,
-  options: CollectStartupResourcesOptions = {},
-): Promise<StartupResources> {
-  return (await collectStartupResourceSnapshot(cwd, options)).resources;
 }

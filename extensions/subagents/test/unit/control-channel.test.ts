@@ -7,10 +7,10 @@ import {
   acceptChildMessageRequest,
   childMessageAckPath,
   consumeChildMessageAcceptance,
+  consumeChildMessageRequests,
   consumeInterruptRequest,
-  consumeSteerRequests,
   deliverInterruptRequest,
-  enqueueStepSteer,
+  enqueueStepChildMessage,
   interruptRequestPath,
   requestAsyncInterrupt,
   requestAsyncResume,
@@ -102,7 +102,7 @@ describe("control channel: request file", () => {
       requestAsyncSteer(asyncDir, { message: "first guidance", id: "a", ts: 100 });
       assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 2);
 
-      assert.deepEqual(consumeSteerRequests(asyncDir), [
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), [
         { type: "steer", id: "a", ts: 100, message: "first guidance" },
         {
           type: "steer",
@@ -113,7 +113,7 @@ describe("control channel: request file", () => {
           source: "test",
         },
       ]);
-      assert.deepEqual(consumeSteerRequests(asyncDir), []);
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), []);
     } finally {
       cleanup(asyncDir);
     }
@@ -132,7 +132,7 @@ describe("control channel: request file", () => {
         path.basename(requestPath),
         `0000000000001-${Buffer.from("../outside\\bad:thing").toString("base64url")}.json`,
       );
-      assert.deepEqual(consumeSteerRequests(asyncDir), [
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), [
         { type: "steer", id: "../outside\\bad:thing", ts: 1, message: "safe" },
       ]);
     } finally {
@@ -155,8 +155,8 @@ describe("control channel: request file", () => {
           throw error;
         },
       };
-      assert.deepEqual(consumeSteerRequests(asyncDir, fsImpl), []);
-      assert.deepEqual(consumeSteerRequests(asyncDir), []);
+      assert.deepEqual(consumeChildMessageRequests(asyncDir, fsImpl), []);
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), []);
     } finally {
       cleanup(asyncDir);
     }
@@ -165,7 +165,7 @@ describe("control channel: request file", () => {
   it("enqueues a steer request for a specific child inbox", () => {
     const asyncDir = tmpAsyncDir("pi-control-step-steer-");
     try {
-      enqueueStepSteer(asyncDir, 2, {
+      enqueueStepChildMessage(asyncDir, 2, {
         type: "steer",
         id: "s1",
         ts: 300,
@@ -204,7 +204,7 @@ describe("control channel: request file", () => {
     }
   });
 
-  it("steer-only consumers preserve resume requests in a mixed inbox", () => {
+  it("consumes mixed child messages in timestamp order", () => {
     const asyncDir = tmpAsyncDir("pi-control-mixed-requests-");
     try {
       requestAsyncResume(asyncDir, {
@@ -220,17 +220,17 @@ describe("control channel: request file", () => {
         ts: 2,
       });
 
-      assert.deepEqual(consumeSteerRequests(asyncDir), [
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), [
+        {
+          type: "resume",
+          id: "resume",
+          ts: 1,
+          message: "resume guidance",
+          targetIndex: 1,
+        },
         { type: "steer", id: "steer", ts: 2, message: "steer guidance", targetIndex: 0 },
       ]);
-      assert.equal(fs.readdirSync(steerRequestsDir(asyncDir)).length, 1);
-      const preserved = JSON.parse(
-        fs.readFileSync(
-          path.join(steerRequestsDir(asyncDir), fs.readdirSync(steerRequestsDir(asyncDir))[0]!),
-          "utf-8",
-        ),
-      );
-      assert.equal(preserved.type, "resume");
+      assert.deepEqual(consumeChildMessageRequests(asyncDir), []);
     } finally {
       cleanup(asyncDir);
     }

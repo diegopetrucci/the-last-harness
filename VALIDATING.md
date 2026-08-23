@@ -110,7 +110,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
 
-Ticket `tlh-2ej0` also owns the remaining first-party subagent live-session smoke. `npm run validate` does not replace these checks: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the eight supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes on the ticket. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the eight supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes in the release validation notes. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`.
 

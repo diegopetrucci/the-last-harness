@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
 import {
   consumeChildMessageRequests,
-  consumeSteerRequests,
   steerRequestsDir,
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
@@ -153,8 +152,9 @@ describe("async interrupt action", () => {
 
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Steering queued for async run ${runId}`));
-      const requests = consumeSteerRequests(asyncDir);
+      const requests = consumeChildMessageRequests(asyncDir);
       assert.equal(requests.length, 1);
+      assert.equal(requests[0]?.type, "steer");
       assert.equal(requests[0]?.message, "Focus on tests.");
       assert.equal(requests[0]?.source, "steer-action");
       assert.equal(requests[0]?.targetIndex, undefined);
@@ -178,8 +178,9 @@ describe("async interrupt action", () => {
 
       assert.equal(result.isError, undefined);
       assert.match(text(result), new RegExp(`Steering queued for async run ${runId}`));
-      const requests = consumeSteerRequests(asyncDir);
+      const requests = consumeChildMessageRequests(asyncDir);
       assert.equal(requests.length, 1);
+      assert.equal(requests[0]?.type, "steer");
       assert.equal(requests[0]?.message, "Focus on validation.");
     } finally {
       cleanup(runId, asyncDir);
@@ -214,8 +215,9 @@ describe("async interrupt action", () => {
       );
 
       assert.equal(result.isError, undefined);
-      const requests = consumeSteerRequests(asyncDir);
+      const requests = consumeChildMessageRequests(asyncDir);
       assert.equal(requests.length, 1);
+      assert.equal(requests[0]?.type, "steer");
       assert.equal(requests[0]?.message, "Use the new API.");
       assert.equal(requests[0]?.targetIndex, 1);
     } finally {

@@ -33,7 +33,7 @@ import { buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocatio
 import { lifecycleContinuationForIndex, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationClaim, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, deliverInterruptRequest, requestAsyncResume, requestAsyncSteer, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
-import { attachRootChildrenToSteps, createNestedRoute, NESTED_CONTROL_DELIVERY_TIMEOUT_MS, NESTED_CONTROL_RESULT_TIMEOUT_MS, readNestedControlResults, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedControlRequest, writeNestedEvent, } from "../shared/nested-events.js";
+import { attachRootChildrenToSteps, createNestedRoute, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedEvent, } from "../shared/nested-events.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { assessDurableResumeContext, formatDurableResumeContextBlock, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, resolveEffectiveContextWindow, } from "../../shared/context-diagnostics.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
@@ -324,6 +324,7 @@ function persistPausedForegroundSingleRun(input) {
                 : now,
             lastUpdate: now,
             cwd: input.cwd,
+            ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
             ...(pause ? { pause } : {}),
             steps: [
                 {
@@ -374,6 +375,7 @@ function persistPausedForegroundSingleRun(input) {
             lastUpdate: now,
             ...(input.stage === "paused" ? { endedAt: now } : {}),
             cwd: input.cwd,
+            ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
             ...(pause ? { pause } : {}),
             sessionFile: input.result.sessionFile ?? status.sessionFile,
             steps: status.steps?.map((step, index) => index === 0
@@ -1594,7 +1596,7 @@ function resolveNestedContinuationAcceptance(runId, step) {
         throw failClosed();
     return step.acceptance.status === "skipped" ? step.acceptance.effectiveAcceptance : undefined;
 }
-export function resolveNestedResumeTarget(match, trustedSessionRoots) {
+function resolveNestedResumeTarget(match, trustedSessionRoots) {
     const run = match.match.run;
     if (run.state === "running" || run.state === "queued")
         throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
@@ -1638,42 +1640,6 @@ export function resolveNestedResumeTarget(match, trustedSessionRoots) {
         cwd: asyncDir ? path.dirname(asyncDir) : undefined,
         sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
     };
-}
-async function waitForNestedControlResult(target, requestId, timeoutMs = NESTED_CONTROL_RESULT_TIMEOUT_MS) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-        const result = readNestedControlResults(target.match.route).find((candidate) => candidate.requestId === requestId && candidate.targetRunId === target.match.run.id);
-        if (result)
-            return result;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    return undefined;
-}
-async function sendNestedControlRequest(target, action, message, targetIndex) {
-    const requestId = randomUUID();
-    const now = Date.now();
-    const requestPath = writeNestedControlRequest(target.match.route, {
-        ts: now,
-        requestId,
-        targetRunId: target.match.run.id,
-        ownerParentRunId: target.match.run.parentRunId,
-        ...(target.match.run.parentStepIndex !== undefined
-            ? { ownerParentStepIndex: target.match.run.parentStepIndex }
-            : {}),
-        deliveryDeadlineAt: now + NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
-        action,
-        ...(targetIndex !== undefined ? { targetIndex } : {}),
-        ...(message ? { message } : {}),
-    });
-    const result = await waitForNestedControlResult(target, requestId);
-    if (!result) {
-        try {
-            fs.rmSync(requestPath, { force: true });
-        }
-        catch {
-        }
-    }
-    return result;
 }
 function directNestedAsyncInterrupt(target) {
     const run = target.match.run;
@@ -1786,7 +1752,7 @@ function directNestedAsyncSteer(input) {
         details: { mode: "management", results: [] },
     };
 }
-async function interruptNestedRun(target) {
+function interruptNestedRun(target) {
     const run = target.match.run;
     if (run.state === "complete")
         return {
@@ -1813,13 +1779,6 @@ async function interruptNestedRun(target) {
             isError: true,
             details: { mode: "management", results: [] },
         };
-    const result = await sendNestedControlRequest(target, "interrupt");
-    if (result)
-        return {
-            content: [{ type: "text", text: result.message }],
-            isError: result.ok ? undefined : true,
-            details: { mode: "management", results: [] },
-        };
     const direct = directNestedAsyncInterrupt(target);
     if (direct)
         return direct;
@@ -1827,27 +1786,20 @@ async function interruptNestedRun(target) {
         content: [
             {
                 type: "text",
-                text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.`,
+                text: `Nested run ${run.id} has no live async target (async run directory/pid), so no safe direct interrupt is available.`,
             },
         ],
         isError: true,
         details: { mode: "management", results: [] },
     };
 }
-async function resumeLiveNestedRun(input) {
-    const run = input.target.match.run;
-    const result = await sendNestedControlRequest(input.target, "resume", input.message, input.index);
-    if (result)
-        return {
-            content: [{ type: "text", text: result.message }],
-            isError: result.ok ? undefined : true,
-            details: { mode: "management", results: [] },
-        };
+function resumeLiveNestedRun(target) {
+    const run = target.match.run;
     return {
         content: [
             {
                 type: "text",
-                text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.`,
+                text: `Nested run ${run.id} is live; no supported live nested resume path is available. Wait for completion, then retry action='resume' with a follow-up message.`,
             },
         ],
         isError: true,
@@ -2083,18 +2035,7 @@ async function resumeAsyncRun(input) {
         }
         if (resolved?.kind === "nested") {
             if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-                if (!requestedFollowUp) {
-                    return {
-                        content: [{ type: "text", text: "action='resume' requires message." }],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                }
-                return resumeLiveNestedRun({
-                    target: resolved,
-                    message: requestedFollowUp,
-                    index: input.params.index,
-                });
+                return resumeLiveNestedRun(resolved);
             }
             const trustedSessionRoots = parentSessionFile
                 ? [input.deps.getSubagentSessionRoot(parentSessionFile)]

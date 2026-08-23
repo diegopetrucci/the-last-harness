@@ -29,6 +29,35 @@ export const TRACE_POLICY_FIXTURES = [
     },
   },
   {
+    id: "architect-valid-normalized-target-ticket-handoff",
+    name: "architect preserves an explicit ticket when normalized targets accompany subagent input",
+    expectedResult: "allow",
+    transcript: {
+      agent: "architect",
+      steps: [
+        { type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+        { type: "user", text: "approved" },
+        {
+          type: "tool",
+          tool: "bash",
+          command: 'tk create "Implement the focused change" -d "..." --acceptance "..."',
+        },
+        { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+        { type: "user", text: "approved" },
+        {
+          type: "tool",
+          tool: "subagent",
+          targets: ["developer"],
+          input: {
+            agent: "developer",
+            task: "Implement the approved change.",
+            ticket: "tlhf-normalized-target",
+          },
+        },
+      ],
+    },
+  },
+  {
     id: "architect-invalid-non-exact-approved-wording",
     name: "architect invalid if approval wording is not the exact word approved",
     expectedResult: "reject",

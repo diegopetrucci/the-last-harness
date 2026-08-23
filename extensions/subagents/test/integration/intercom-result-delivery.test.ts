@@ -2261,6 +2261,96 @@ describe(
       );
     });
 
+    it("persists and resumes paused foreground single-run ticket metadata", async () => {
+      const originalTicketsDir = process.env.TICKETS_DIR;
+      process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+      try {
+        fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tempDir, ".tickets", "psr-paused-single.md"),
+          "---\nid: psr-paused-single\n---\n# Paused single ticket\n",
+          "utf-8",
+        );
+        mockPi.onCall({
+          steps: [
+            {
+              jsonl: [
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need a decision",
+                }),
+              ],
+            },
+            {
+              delay: scaleTestTimeout(1_000),
+              jsonl: [events.assistantMessage("should not replay before resume")],
+            },
+          ],
+        });
+        mockPi.onCall({ output: "resumed ticketed child" });
+        const { executor } = makeExecutor({
+          agents: [
+            makeAgent("developer", {
+              systemPrompt: "Intercom orchestration channel:",
+              tkTicketRequired: true,
+            }),
+          ],
+        });
+        const ticket = { id: "psr-paused-single", title: "Paused single ticket" };
+        const original = await executor.execute(
+          "foreground-paused-ticket-original",
+          { agent: "developer", task: "ask supervisor", ticket: ticket.id },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        const runId = original.details?.runId;
+        assert.ok(runId, "expected foreground run id");
+
+        const pausedStatus = readAsyncStatusJson<{
+          state?: string;
+          tkTicket?: { id?: string; title?: string };
+          steps?: Array<{ status?: string; tkTicket?: { id?: string; title?: string } }>;
+        }>(runId);
+        assert.equal(pausedStatus.state, "paused");
+        assert.deepEqual(pausedStatus.tkTicket, ticket);
+        assert.deepEqual(pausedStatus.steps?.[0]?.tkTicket, ticket);
+
+        const revived = await executor.execute(
+          "foreground-paused-ticket-resume",
+          { action: "resume", id: runId },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(revived.isError, undefined);
+        const revivedId = await waitForRevivedAsyncResult(revived);
+        await waitForAsyncState(runId, "continued");
+
+        const continuedStatus = readAsyncStatusJson<{
+          state?: string;
+          tkTicket?: { id?: string; title?: string };
+          steps?: Array<{ status?: string; tkTicket?: { id?: string; title?: string } }>;
+        }>(runId);
+        assert.equal(continuedStatus.state, "continued");
+        assert.deepEqual(continuedStatus.tkTicket, ticket);
+        assert.equal(continuedStatus.steps?.[0]?.status, "continued");
+        assert.deepEqual(continuedStatus.steps?.[0]?.tkTicket, ticket);
+
+        const resumedArtifact = JSON.parse(
+          fs.readFileSync(path.join(RESULTS_DIR, `${revivedId}.json`), "utf-8"),
+        ) as {
+          tkTicket?: { id?: string; title?: string };
+          results?: Array<{ tkTicket?: { id?: string; title?: string } }>;
+        };
+        assert.deepEqual(resumedArtifact.tkTicket, ticket);
+        assert.deepEqual(resumedArtifact.results?.[0]?.tkTicket, ticket);
+      } finally {
+        if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+        else process.env.TICKETS_DIR = originalTicketsDir;
+      }
+    });
+
     it("disk-only paused foreground recovery supports status and unchanged resume", async () => {
       mockPi.onCall({
         steps: [

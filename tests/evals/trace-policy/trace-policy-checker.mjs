@@ -1432,7 +1432,7 @@ function isSubagentContinuation(value) {
   return action === "resume" || action === "steer";
 }
 
-function collectSubagentDispatches(value) {
+function collectSubagentDispatches(value, { includeRoot = true } = {}) {
   if (!isRecord(value) || isSubagentContinuation(value)) {
     return [];
   }
@@ -1448,7 +1448,7 @@ function collectSubagentDispatches(value) {
     }
   };
 
-  push(value);
+  if (includeRoot) push(value);
   if (Array.isArray(value.tasks)) {
     for (const task of value.tasks) push(task);
   }
@@ -1463,6 +1463,14 @@ function collectSubagentDispatches(value) {
   return dispatches;
 }
 
+function hasStructuredSubagentDispatches(value) {
+  return (
+    isRecord(value) &&
+    ((Array.isArray(value.tasks) && value.tasks.length > 0) ||
+      (Array.isArray(value.chain) && value.chain.length > 0))
+  );
+}
+
 function subagentDispatches(step) {
   if (toolName(step) !== "subagent") {
     return [];
@@ -1471,9 +1479,28 @@ function subagentDispatches(step) {
     return [];
   }
   if (Array.isArray(step.targets)) {
-    return step.targets
-      .map((target) => ({ agent: normalizeText(target), ticket: undefined }))
-      .filter((dispatch) => dispatch.agent);
+    const normalizedTargets = step.targets.map((target) => normalizeText(target)).filter(Boolean);
+    const input = isRecord(step.input) ? step.input : undefined;
+    const structuredInput = hasStructuredSubagentDispatches(input);
+    const canUseRootInput =
+      normalizedTargets.length === 1 &&
+      !structuredInput &&
+      normalizeText(input?.agent) === normalizedTargets[0];
+    const inputDispatches = collectSubagentDispatches(input, {
+      includeRoot: canUseRootInput,
+    });
+    const consumedInputIndexes = new Set();
+
+    return normalizedTargets.map((agent) => {
+      const inputIndex = inputDispatches.findIndex(
+        (dispatch, index) => !consumedInputIndexes.has(index) && dispatch.agent === agent,
+      );
+      if (inputIndex < 0) {
+        return { agent, ticket: undefined };
+      }
+      consumedInputIndexes.add(inputIndex);
+      return { agent, ticket: inputDispatches[inputIndex].ticket };
+    });
   }
   return collectSubagentDispatches(isRecord(step.input) ? step.input : step);
 }
