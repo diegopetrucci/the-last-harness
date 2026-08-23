@@ -121,7 +121,6 @@ const PACKAGED_SCRIPT_FILES = [
   "scripts/lib/tlh-install-support-manifest.mts",
   "scripts/lib/tlh-install-utils.mjs",
   "scripts/lib/tlh-install-utils.mts",
-  "scripts/lib/tlh-profile-writes.mjs",
   "scripts/lib/tlh-safe-profile-write.mjs",
   "scripts/lib/tlh-safe-profile-write.mts",
   "scripts/merge-keybindings.mjs",
