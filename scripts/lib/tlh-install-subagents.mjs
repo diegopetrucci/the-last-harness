@@ -467,14 +467,6 @@ export function subagentExtensionConfigMissingDefaults(config) {
     const existing = readExistingSubagentExtensionConfig(config);
     return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
 }
-/**
- * Returns true when provisionSubagentExtensionConfig would write to disk,
- * false when it would leave the existing file untouched (all writable defaults
- * are present, the config has a non-object JSON value, or it is unreadable).
- */
-export function subagentExtensionConfigNeedsProvisioning(config) {
-    return subagentExtensionConfigMissingDefaults(config).length > 0;
-}
 export function provisionSubagentExtensionConfig(config) {
     const relativePath = "extensions/subagent/config.json";
     const existing = readExistingSubagentExtensionConfig(config);

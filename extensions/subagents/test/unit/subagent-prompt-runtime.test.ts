@@ -9,10 +9,7 @@ import type { Static, TSchema } from "typebox";
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { ToolDefinition, ToolInfo } from "@earendil-works/pi-coding-agent";
-import {
-  writeChildMessageRequestToDir,
-  writeSteerRequestToDir,
-} from "../../src/runs/background/control-channel.ts";
+import { writeChildMessageRequestToDir } from "../../src/runs/background/control-channel.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
@@ -285,7 +282,7 @@ describe("subagent prompt runtime", () => {
         }),
       );
 
-      writeSteerRequestToDir(inbox, {
+      writeChildMessageRequestToDir(inbox, {
         type: "steer",
         id: "steer-1",
         ts: 1,

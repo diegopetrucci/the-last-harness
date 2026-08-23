@@ -2100,7 +2100,7 @@ function cleanupNpmStage(config: InstallConfig, stagePath: string | undefined): 
   }
 }
 
-function promoteNpmStage(config: InstallConfig, stagePath: string, npmRoot: string): boolean {
+function promoteNpmStage(stagePath: string, npmRoot: string): boolean {
   if (npmDestinationExists(npmRoot)) {
     warn(
       `npm pre-install destination appeared during staging; leaving the existing npm root untouched: ${npmRoot}`,
@@ -2267,7 +2267,7 @@ function preInstallNpmDefaultExtensions(config: InstallConfig): void {
     ];
     runCommand(config, commandArgs);
     assertNpmStageDirectory(config, stagePath, "after npm install");
-    if (promoteNpmStage(config, stagePath, npmRoot)) stagePath = undefined;
+    if (promoteNpmStage(stagePath, npmRoot)) stagePath = undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     warn(

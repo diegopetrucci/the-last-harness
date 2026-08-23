@@ -5,7 +5,6 @@ import { aggregateSessionUsage, } from "./session-limit-report-aggregator.js";
 import { discoverSessionFiles, parseSessionJsonl, resolveSessionLimitWindow, } from "./session-limit-report-scan.js";
 import { escapeHtml, openLocalReport, renderMetricCard, renderSection, renderTable, TOKENS_REPORT_CSS, writeLocalTokensReport, } from "./tokens.js";
 export const SESSION_LIMIT_REPORT_COMMAND_NAME = "what-consumed-my-session-limit-and-tokens";
-export const SESSION_LIMIT_REPORT_COMMAND_DESCRIPTION = "Generate and open a local TLH session-limit usage report across all in-window sessions";
 const COMMAND_HELP = `Usage: /${SESSION_LIMIT_REPORT_COMMAND_NAME}`;
 const REPORT_FILE_NAME = "session-limit-report.html";
 const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
