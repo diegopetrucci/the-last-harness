@@ -8,8 +8,11 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { createTlhTicketWorkflowUiRuntime, registerTlhTicketWorkflowUi } = await jiti.import(
+const { createTlhTicketWorkflowUiRuntime } = await jiti.import(
   "../extensions/the-last-harness/ticket-workflow-ui.ts",
+);
+const { registerLazyTlhTicketWorkflowUi } = await jiti.import(
+  "../extensions/the-last-harness/ticket-workflow-ui-facade.ts",
 );
 
 function resetTicketWorkflowTestState() {
@@ -67,10 +70,17 @@ function createCtx(cwd, ui) {
   };
 }
 
+function registerTicketWorkflowFacade(pi, options = {}) {
+  registerLazyTlhTicketWorkflowUi(pi, {
+    createRuntime: () => createTlhTicketWorkflowUiRuntime(pi, options),
+  });
+}
+
 async function fireAll(pi, event, payload, ctx) {
   for (const handler of pi.handlers.get(event) ?? []) {
     await handler(payload, ctx);
   }
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 function installFakeTk(agentDir, statePath) {
@@ -282,7 +292,7 @@ test("ticket workflow UI loads by default and registers /tickets without a .tick
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -309,13 +319,13 @@ test("ticket workflow UI rescopes TICKETS_DIR on each session start and /tickets
       const ctxA = createCtx(repoA, uiHarness.ui);
       const ctxB = createCtx(repoB, uiHarness.ui);
       const piA = createPiHarness();
-      registerTlhTicketWorkflowUi(piA);
+      registerTicketWorkflowFacade(piA);
 
       await fireAll(piA, "session_start", { reason: "restore" }, ctxA);
       assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
 
       const piB = createPiHarness();
-      registerTlhTicketWorkflowUi(piB);
+      registerTicketWorkflowFacade(piB);
       await fireAll(piB, "session_start", { reason: "restore" }, ctxB);
       assert.equal(process.env.TICKETS_DIR, repoBTicketsDir);
 
@@ -327,7 +337,7 @@ test("ticket workflow UI rescopes TICKETS_DIR on each session start and /tickets
       );
 
       const piARestored = createPiHarness();
-      registerTlhTicketWorkflowUi(piARestored);
+      registerTicketWorkflowFacade(piARestored);
       await fireAll(piARestored, "session_start", { reason: "restore" }, ctxA);
       assert.equal(process.env.TICKETS_DIR, repoATicketsDir);
 
@@ -350,7 +360,7 @@ test("ticket workflow /tickets shows the sole in-progress ticket even with a hig
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -390,7 +400,7 @@ test("ticket workflow /tickets falls back to the ticket id when the sole in-prog
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -437,12 +447,11 @@ test("ticket workflow UI sanitizes decoded terminal controls from fallback ticke
     };
 
     const pi = createPiHarness();
-    const runtime = createTlhTicketWorkflowUiRuntime(pi, { runner });
+    registerTicketWorkflowFacade(pi, { runner });
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
-    runtime.applyCurrentSettings(ctx);
-
+    await fireAll(pi, "session_start", { reason: "restore" }, ctx);
     await pi.commands.get("tickets").handler("", ctx);
     assert.equal(showCalls, 1);
     assert.equal(
@@ -461,7 +470,7 @@ test("ticket workflow /tickets sanitizes ANSI in in-progress ticket title output
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -492,7 +501,7 @@ test("ticket workflow /tickets still shows a sole blocked in-progress ticket", a
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -520,7 +529,7 @@ test("ticket workflow /tickets lists each in-progress ticket when multiple exist
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -590,12 +599,11 @@ test("ticket workflow UI bounds multi-ticket title lookups to one overall timeou
     };
 
     const pi = createPiHarness();
-    const runtime = createTlhTicketWorkflowUiRuntime(pi, { runner, now: () => nowMs });
+    registerTicketWorkflowFacade(pi, { runner, now: () => nowMs });
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
-    runtime.applyCurrentSettings(ctx);
-
+    await fireAll(pi, "session_start", { reason: "restore" }, ctx);
     await pi.commands.get("tickets").handler("", ctx);
 
     assert.deepEqual(showCalls, [
@@ -623,7 +631,7 @@ test("legacy experimental and ticket settings do not suppress the permanent tick
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -647,7 +655,7 @@ test("ticket workflow UI stays quiet without a .tickets repo while /tickets repo
     { HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, TICKETS_DIR: undefined },
     async () => {
       const pi = createPiHarness();
-      registerTlhTicketWorkflowUi(pi);
+      registerTicketWorkflowFacade(pi);
       const uiHarness = createUiHarness();
       const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -669,7 +677,7 @@ test("ticket workflow UI stays quiet for an empty ticket repo while /tickets rep
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 
@@ -687,7 +695,7 @@ test("ticket workflow UI stays quiet when .tickets exists and tk is missing whil
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent, PATH: "" }, async () => {
     const pi = createPiHarness();
-    registerTlhTicketWorkflowUi(pi);
+    registerTicketWorkflowFacade(pi);
     const uiHarness = createUiHarness();
     const ctx = createCtx(fixture.cwd, uiHarness.ui);
 

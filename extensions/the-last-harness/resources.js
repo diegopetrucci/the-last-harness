@@ -139,6 +139,3 @@ export async function collectStartupResourceSnapshot(cwd, options = {}) {
         },
     };
 }
-export async function collectStartupResources(cwd, options = {}) {
-    return (await collectStartupResourceSnapshot(cwd, options)).resources;
-}

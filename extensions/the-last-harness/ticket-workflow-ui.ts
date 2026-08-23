@@ -367,12 +367,3 @@ export function createTlhTicketWorkflowUiRuntime(
     },
   };
 }
-
-export function registerTlhTicketWorkflowUi(pi: ExtensionAPI): void {
-  const runtime = createTlhTicketWorkflowUiRuntime(pi);
-
-  pi.on("session_start", async (_event, ctx) => {
-    activateTlhTicketSessionScope(ctx.cwd);
-    runtime.applyCurrentSettings(ctx);
-  });
-}

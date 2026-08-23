@@ -13,7 +13,7 @@ import {
 } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { buildReviewEnvelope, decideBranchAction, parseReviewArgs, registerReviewCommand } =
+const { buildReviewEnvelope, createReviewCommandHandler, decideBranchAction, parseReviewArgs } =
   await jiti.import("../extensions/the-last-harness/review.ts");
 
 const reviewEnvRoot = makeSharedTempDir("tlh-review-agent-env-");
@@ -68,12 +68,7 @@ export function createReviewHarness({
   const editorCalls = [];
   let customCallCount = 0;
 
-  registerReviewCommand({
-    registerCommand(name, command) {
-      if (name === "review") {
-        handler = command.handler;
-      }
-    },
+  handler = createReviewCommandHandler({
     exec: async (command, args, options) => {
       execCalls.push({ command, args, cwd: options?.cwd });
       return exec(command, args, options ?? {});
@@ -83,7 +78,7 @@ export function createReviewHarness({
     },
   });
 
-  assert.equal(typeof handler, "function", "review command should register a handler");
+  assert.equal(typeof handler, "function", "review command should build a handler");
 
   return {
     handler,
