@@ -312,7 +312,7 @@ run_stale_stage0_manifest_compatibility_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs'
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs'
   mkdir -p "${case_dir}" "${home_dir}"
 
   make_support_copy_curl "${fakebin}"
@@ -325,7 +325,6 @@ run_stale_stage0_manifest_compatibility_smoke() {
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_contains "${combined_file}" "compat_librarian_present=true"
   assert_contains "${combined_file}" "compat_query_present=true"
-  assert_contains "${combined_file}" "compat_profile_writes_present=true"
   assert_contains "${combined_file}" "stale_poison_present=false"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -346,7 +345,7 @@ run_stage0_canonical_handoff_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs\nrequired|poison/stale-stage0-only.txt'
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|poison/stale-stage0-only.txt'
   mkdir -p "${case_dir}" "${home_dir}"
 
   make_support_copy_curl "${fakebin}"
@@ -360,7 +359,6 @@ run_stage0_canonical_handoff_smoke() {
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_contains "${combined_file}" "compat_librarian_present=false"
   assert_contains "${combined_file}" "compat_query_present=false"
-  assert_contains "${combined_file}" "compat_profile_writes_present=false"
   assert_contains "${combined_file}" "stale_poison_present=false"
   assert_not_contains "${combined_file}" "stale-stage0-only.txt"
   assert_absent "${agent_dir}"

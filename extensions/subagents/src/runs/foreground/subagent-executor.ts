@@ -116,7 +116,6 @@ import {
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import {
   attachRootChildrenToSteps,
-  createNestedRoute,
   resolveInheritedNestedRouteFromEnv,
   resolveNestedAsyncDir,
   resolveNestedParentAddressFromEnv,
@@ -5231,7 +5230,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const nestedParentAddress = inheritedNestedRoute
       ? resolveNestedParentAddressFromEnv()
       : undefined;
-    const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
+    const nestedRoute = inheritedNestedRoute;
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);

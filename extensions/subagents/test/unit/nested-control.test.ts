@@ -12,6 +12,7 @@ import {
 } from "../../src/runs/foreground/subagent-executor.ts";
 import {
   createNestedRoute,
+  NESTED_EVENTS_DIR,
   projectNestedEvents,
   writeNestedEvent,
 } from "../../src/runs/shared/nested-events.ts";
@@ -68,6 +69,17 @@ function createState(): SubagentState {
     watcherRestartTimer: null,
     resultFileCoalescer: { schedule: () => false, clear: () => {} },
   };
+}
+
+class CapturingForegroundControls extends Map<string, ForegroundRunControl> {
+  readonly capturedRunIds: string[] = [];
+  readonly capturedControls: ForegroundRunControl[] = [];
+
+  override set(runId: string, control: ForegroundRunControl): this {
+    this.capturedRunIds.push(runId);
+    this.capturedControls.push(control);
+    return super.set(runId, control);
+  }
 }
 
 function createExecutor(
@@ -966,6 +978,53 @@ describe("nested run control behavior", () => {
 
       assert.equal(result.isError, true);
       assert.match(text(result), /not under that nested run's session directory/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create a nested route for an ordinary root run", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-root-no-route-"));
+    const state = createState();
+    const controls = new CapturingForegroundControls();
+    state.foregroundControls = controls;
+    try {
+      for (const key of Object.keys(savedEnv)) delete process.env[key];
+      const throwingCtx = {
+        ...ctx(root),
+        modelRegistry: {
+          getAvailable() {
+            throw new Error("ordinary root model lookup failed");
+          },
+        },
+      };
+
+      const result = await createExecutor(state, [
+        { name: "worker", description: "Worker", prompt: "Do work" },
+      ]).execute(
+        "run",
+        { agent: "worker", task: "go", sessionDir: path.join(root, "session") },
+        new AbortController().signal,
+        undefined,
+        throwingCtx,
+      );
+
+      assert.equal(result.isError, true);
+      assert.match(text(result), /ordinary root model lookup failed/);
+      assert.equal(controls.capturedRunIds.length, 1);
+      const runId = controls.capturedRunIds[0];
+      assert.ok(runId);
+      assert.equal(controls.capturedControls[0]?.nestedRoute, undefined);
+
+      let routesForRun: string[] = [];
+      try {
+        routesForRun = fs
+          .readdirSync(NESTED_EVENTS_DIR)
+          .filter((entry) => entry.startsWith(`${runId}-`));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      assert.deepEqual(routesForRun, []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
