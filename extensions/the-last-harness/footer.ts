@@ -25,6 +25,7 @@ export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-u
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
+const FAST_STATUS_KEY = "fast";
 
 type McpFooterContextEstimateCache = {
   key: string;
@@ -285,9 +286,11 @@ export function createTlhFooter(
         fallbackBranch: footerData?.getGitBranch?.(),
       });
       const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+      const extensionStatuses = footerData?.getExtensionStatuses?.();
+      const hasFastStatus = extensionStatuses?.has(FAST_STATUS_KEY) ?? false;
 
       // Line 2 (single flowing left-justified line):
-      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE]
+      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE] [• fast]
       // Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
       // theme.fg() calls. Non-default agent names are highlighted with the accent color.
       const modelOrNoModel = model?.id ?? "no-model";
@@ -326,7 +329,16 @@ export function createTlhFooter(
       if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
         agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
       }
-      const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
+      const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
+      const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
+      const agentLine2 =
+        fastLine2SuffixWidth <= width
+          ? `${truncateToWidth(
+              agentLine2Str,
+              width - fastLine2SuffixWidth,
+              theme.fg("dim", "..."),
+            )}${fastLine2Suffix}`
+          : truncateToWidth(agentLine2Str + fastLine2Suffix, width, theme.fg("dim", "..."));
 
       // Line 3 (optional): [<cost> · ]<subscription usage segment>
       // Omitted entirely when both parts are absent.
@@ -355,7 +367,6 @@ export function createTlhFooter(
         if (warningLine !== undefined) lines.push(warningLine);
       }
 
-      const extensionStatuses = footerData?.getExtensionStatuses?.();
       const hasMcpStatus = extensionStatuses
         ? Array.from(extensionStatuses.values()).some((status) =>
             MCP_STATUS_PREFIX.test(sanitizeStatusText(status)),
@@ -391,9 +402,9 @@ export function createTlhFooter(
 
       // Extension status line (conditional on registered extension statuses)
       if (extensionStatuses && extensionStatuses.size > 0) {
-        const visibleStatuses = Array.from(extensionStatuses.entries()).sort(([a], [b]) =>
-          a.localeCompare(b),
-        );
+        const visibleStatuses = Array.from(extensionStatuses.entries())
+          .filter(([key]) => key !== FAST_STATUS_KEY)
+          .sort(([a], [b]) => a.localeCompare(b));
         const statusLine = visibleStatuses
           .map(([, text]) =>
             appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix),
