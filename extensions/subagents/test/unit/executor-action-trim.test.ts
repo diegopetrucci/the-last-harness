@@ -16,7 +16,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import { writeAsyncArtifactJson as writeJson } from "../support/async-artifact-fixtures.ts";
-import { consumeSteerRequests } from "../../src/runs/background/control-channel.ts";
+import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 import { SUBAGENT_CHILD_ENV } from "../../src/runs/shared/pi-args.ts";
@@ -253,8 +253,9 @@ describe("executor: steer still routes correctly", () => {
       );
       assert.equal(result.isError, undefined, `unexpected error: ${text(result)}`);
       assert.match(text(result), /Steering queued/);
-      const requests = consumeSteerRequests(asyncDir);
+      const requests = consumeChildMessageRequests(asyncDir);
       assert.equal(requests.length, 1);
+      assert.equal(requests[0]?.type, "steer");
       assert.equal(requests[0]?.message, "adjust focus");
     } finally {
       fs.rmSync(asyncDir, { recursive: true, force: true });
