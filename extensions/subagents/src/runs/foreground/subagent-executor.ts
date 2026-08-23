@@ -59,7 +59,7 @@ import {
 } from "../shared/subagent-control.ts";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import { resolveExplicitTkTicketMetadata, resolveTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { normalizeTkTicketMetadata, resolveDispatchTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
 	finalizeSingleOutput,
 	injectSingleOutputInstruction,
@@ -333,6 +333,7 @@ function persistPausedForegroundCohortRun(input: {
 		input.steps ??
 		input.results?.map((result) => ({
 			agent: result.agent,
+			...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
 			status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
 			sessionFile: result.sessionFile,
 			transcriptPath: result.transcriptPath,
@@ -426,6 +427,7 @@ function buildPausedStepFromResult(
 		options.status ?? (options.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result));
 	return {
 		agent: result.agent,
+		...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
 		status,
 		sessionFile: result.sessionFile,
 		transcriptPath: result.transcriptPath,
@@ -667,6 +669,7 @@ function rememberForegroundRun(
 			const child = {
 				agent: result.agent,
 				index,
+				...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
 				status: resolveSubagentResultStatus({
 					exitCode: result.exitCode,
 					interrupted: result.interrupted,
@@ -720,6 +723,7 @@ function updateRememberedForegroundChild(
 			detached: false,
 		}),
 		updatedAt,
+		...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
 		...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
 		...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
 		...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
@@ -778,6 +782,7 @@ function resolveForegroundResumeTarget(
 			state: "complete" | "failed" | "paused";
 			agent: string;
 			index: number;
+			tkTicket?: TkTicketMetadata;
 			intercomTarget: string;
 			cwd: string;
 			sessionFile: string;
@@ -820,6 +825,7 @@ function resolveForegroundResumeTarget(
 		index,
 		intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index),
 		cwd: run.cwd,
+		...(child.tkTicket ? { tkTicket: child.tkTicket } : {}),
 		sessionFile,
 		...(fs.existsSync(pausedForegroundStatusPath(run.runId))
 			? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -842,6 +848,7 @@ type NestedResumeSourceTarget = {
 	state: "complete" | "failed" | "paused";
 	agent: string;
 	index: number;
+	tkTicket?: TkTicketMetadata;
 	intercomTarget: string;
 	cwd?: string;
 	sessionFile: string;
@@ -1710,6 +1717,7 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 
 type NestedResumeStatusStep = {
 	status?: string;
+	tkTicket?: TkTicketMetadata;
 	acceptance?: import("../../shared/types.ts").AcceptanceLedger;
 	activeRuntimeMs?: number;
 };
@@ -1749,7 +1757,7 @@ function resolveNestedContinuationAcceptance(
 	return step.acceptance.status === "skipped" ? step.acceptance.effectiveAcceptance : undefined;
 }
 
-function resolveNestedResumeTarget(
+export function resolveNestedResumeTarget(
 	match: ResolvedSubagentRunId & { kind: "nested" },
 	trustedSessionRoots: string[],
 ): NestedResumeSourceTarget {
@@ -1763,6 +1771,7 @@ function resolveNestedResumeTarget(
 	const statusStep = readNestedResumeStatusStep(run.id, asyncDir);
 	const continuationAcceptance =
 		state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
+	const tkTicket = normalizeTkTicketMetadata(statusStep?.tkTicket);
 	return {
 		kind: "revive",
 		source: "nested",
@@ -1770,6 +1779,7 @@ function resolveNestedResumeTarget(
 		state,
 		agent,
 		index: 0,
+		...(tkTicket ? { tkTicket } : {}),
 		...(continuationAcceptance ? { continuationAcceptance } : {}),
 		...(statusStep?.activeRuntimeMs !== undefined ? { activeRuntimeMs: statusStep.activeRuntimeMs } : {}),
 		...(run.state === "paused" ? { pauseKind: "cohort_pause" as const } : {}),
@@ -2360,6 +2370,7 @@ async function resumeAsyncRun(input: {
 	try {
 		result = executeAsyncSingle(runId, {
 			agent: target.agent,
+			continuation: true,
 			...(claimedPause
 				? {
 						continuationSource: {
@@ -2370,7 +2381,7 @@ async function resumeAsyncRun(input: {
 						},
 					}
 				: {}),
-			...(target.source === "async" && target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
+			...(target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
 			task: buildRevivedAsyncTask(target, followUp),
 			modelOverride: input.params.model,
 			agentConfig,
@@ -2619,16 +2630,16 @@ function validateExecutionInput(
 		};
 	}
 
-	if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
-		return {
-			content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-			isError: true,
-			details: { mode: "single" as const, results: [] },
-		};
-	}
-
-	if (hasSingle && params.ticket !== undefined) {
-		const ticketResolution = resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd });
+	if (hasSingle) {
+		const agentConfig = agents.find((agent) => agent.name === params.agent);
+		if (!agentConfig) {
+			return {
+				content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+				isError: true,
+				details: { mode: "single" as const, results: [] },
+			};
+		}
+		const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: effectiveCwd });
 		if (ticketResolution.error) {
 			return {
 				content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],
@@ -2641,24 +2652,23 @@ function validateExecutionInput(
 	if (hasTasks && params.tasks) {
 		for (let i = 0; i < params.tasks.length; i++) {
 			const task = params.tasks[i]!;
-			if (!agents.find((agent) => agent.name === task.agent)) {
+			const agentConfig = agents.find((agent) => agent.name === task.agent);
+			if (!agentConfig) {
 				return {
 					content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
 					isError: true,
 					details: { mode: "parallel" as const, results: [] },
 				};
 			}
-			if (task.ticket !== undefined) {
-				const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, {
-					cwd: resolveParallelTaskCwd(task, effectiveCwd),
-				});
-				if (ticketResolution.error) {
-					return {
-						content: [{ type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` }],
-						isError: true,
-						details: { mode: "parallel" as const, results: [] },
-					};
-				}
+			const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, {
+				cwd: resolveParallelTaskCwd(task, effectiveCwd),
+			});
+			if (ticketResolution.error) {
+				return {
+					content: [{ type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` }],
+					isError: true,
+					details: { mode: "parallel" as const, results: [] },
+				};
 			}
 		}
 	}
@@ -3485,14 +3495,12 @@ async function runParallelPath(data: ExecutionContextData, deps: ExecutorDeps): 
 	for (let index = 0; index < tasks.length; index++) {
 		const task = tasks[index]!;
 		const taskCwd = resolveParallelTaskCwd(task, effectiveCwd);
-		if (task.ticket !== undefined) {
-			const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, { cwd: taskCwd });
-			if (ticketResolution.error)
-				return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
-			tkTickets.push(ticketResolution.metadata);
-			continue;
-		}
-		tkTickets.push(resolveTkTicketMetadata(task.task, { cwd: taskCwd }));
+		const agentConfig = agents.find((agent) => agent.name === task.agent);
+		if (!agentConfig) return buildParallelModeError(`Unknown agent: ${task.agent}`);
+		const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, { cwd: taskCwd });
+		if (ticketResolution.error)
+			return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
+		tkTickets.push(ticketResolution.metadata);
 	}
 	const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
 	const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
@@ -3796,10 +3804,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 	const currentProvider = ctx.model?.provider;
 	const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	let task = params.task ?? "";
-	const ticketResolution =
-		params.ticket !== undefined
-			? resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd })
-			: { metadata: resolveTkTicketMetadata(params.task, { cwd: effectiveCwd }) };
+	const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: effectiveCwd });
 	if (ticketResolution.error) {
 		return {
 			content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],

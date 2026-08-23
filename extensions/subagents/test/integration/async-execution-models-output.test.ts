@@ -937,7 +937,56 @@ describe("async execution utilities", () => {
 		assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
 	});
 
-	it("background single runs propagate tk ticket metadata from the effective task cwd", async () => {
+	it("rejects a developer async dispatch without a ticket before spawning", () => {
+		const id = `async-developer-no-ticket-${Date.now().toString(36)}`;
+		const result = executeAsyncSingle(id, {
+			agent: "developer",
+			task: "Implement the work",
+			agentConfig: makeAgent("developer", { tkTicketRequired: true }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /requires.*explicit ticket/i);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("rejects a marked developer chain step without a ticket before spawning", () => {
+		const id = `async-developer-chain-no-ticket-${Date.now().toString(36)}`;
+		const result = executeAsyncChain(id, {
+			chain: [{ agent: "developer", task: "Implement the chain work" }],
+			agents: [makeAgent("developer", { tkTicketRequired: true })],
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, true);
+		assert.match(result.content[0]?.text ?? "", /Invalid ticket for async step.*requires.*explicit ticket/i);
+		assert.equal(mockPi.callCount(), 0);
+	});
+
+	it("background developer runs propagate explicit tk ticket metadata", async () => {
 		mockPi.onCall({ output: "Done asynchronously" });
 		const ticketRoot = createTempDir("pi-subagent-async-ticket-cwd-");
 		const taskCwd = path.join(ticketRoot, "child", "nested");
@@ -956,9 +1005,10 @@ describe("async execution utilities", () => {
 				"utf-8",
 			);
 			executeAsyncSingle(id, {
-				agent: "worker",
-				task: "Run `tk show psr-raw4` first.",
-				agentConfig: makeAgent("worker"),
+				agent: "developer",
+				task: "Implement the ticketed work.",
+				ticket: "psr-raw4",
+				agentConfig: makeAgent("developer", { tkTicketRequired: true }),
 				ctx: {
 					pi: {
 						events: {
@@ -1008,6 +1058,7 @@ describe("async execution utilities", () => {
 		const asyncDir = path.join(ASYNC_DIR, id);
 		executeAsyncSingle(id, {
 			agent: "worker",
+			continuation: true,
 			task: "Continue from the paused work; legacy text says `tk show psr-other`.",
 			inheritedTkTicket: { id: "psr-raw4", title: "Show active tk title" },
 			agentConfig: makeAgent("worker"),
@@ -1031,7 +1082,36 @@ describe("async execution utilities", () => {
 		assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
 	});
 
-	it("background parallel launches propagate step-cwd tk tickets and fail open for ambiguous matches", async () => {
+	it("legacy async continuations without persisted tickets remain resumable", async () => {
+		mockPi.onCall({ output: "Legacy continuation completed" });
+		const id = `async-ticket-legacy-continuation-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, id);
+		const result = executeAsyncSingle(id, {
+			agent: "developer",
+			continuation: true,
+			task: "Continue the legacy work.",
+			agentConfig: makeAgent("developer", { tkTicketRequired: true }),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: {
+				enabled: false,
+				includeInput: false,
+				includeOutput: false,
+				includeJsonl: false,
+				includeMetadata: false,
+				cleanupDays: 7,
+			},
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+		});
+
+		assert.equal(result.isError, undefined);
+		await waitForAsyncResultFile(id, 10_000);
+		const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
+		assert.equal(status.tkTicket, undefined);
+	});
+
+	it("background parallel launches do not infer task-text tk tickets", async () => {
 		mockPi.onCall({ output: "parallel one done" });
 		mockPi.onCall({ output: "parallel two done" });
 		const ticketRoot = createTempDir("pi-subagent-async-parallel-ticket-");
@@ -1054,13 +1134,13 @@ describe("async execution utilities", () => {
 				chain: [
 					{
 						parallel: [
-							{ agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
-							{ agent: "reviewer", task: "Do the review" },
+							{ agent: "developer", task: "Implement the ticketed work.", ticket: "psr-raw4", cwd: ticketCwd },
+							{ agent: "reviewer", task: "Run `tk show psr-other` first." },
 						],
 					},
 				],
 				resultMode: "parallel",
-				agents: [makeAgent("worker"), makeAgent("reviewer")],
+				agents: [makeAgent("developer", { tkTicketRequired: true }), makeAgent("reviewer")],
 				ctx: {
 					pi: {
 						events: {
@@ -1087,14 +1167,18 @@ describe("async execution utilities", () => {
 
 			await waitForAsyncResultFile(id, 10_000);
 			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatusPayload;
-			assert.deepEqual(status.tkTicket, { id: "psr-raw4", title: "Show active tk title" });
+			assert.equal(status.tkTicket, undefined);
+			assert.deepEqual(
+				status.steps?.map((step) => step.tkTicket),
+				[{ id: "psr-raw4", title: "Show active tk title" }, undefined],
+			);
 			assert.deepEqual(
 				(
 					emitted.find((entry) => entry.channel === "subagent:async-started")?.payload as
 						| { tkTicket?: unknown }
 						| undefined
 				)?.tkTicket,
-				{ id: "psr-raw4", title: "Show active tk title" },
+				undefined,
 			);
 
 			mockPi.onCall({ output: "ambiguous one done" });
@@ -1129,6 +1213,10 @@ describe("async execution utilities", () => {
 				fs.readFileSync(path.join(ASYNC_DIR, ambiguousId, "status.json"), "utf-8"),
 			) as AsyncStatusPayload;
 			assert.equal(ambiguousStatus.tkTicket, undefined);
+			assert.deepEqual(
+				ambiguousStatus.steps?.map((step) => step.tkTicket),
+				[undefined, undefined],
+			);
 		} finally {
 			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
 			else process.env.TICKETS_DIR = originalTicketsDir;
@@ -1162,13 +1250,13 @@ describe("async execution utilities", () => {
 				chain: [
 					{
 						parallel: [
-							{ agent: "worker", task: "Work A", ticket: "psr-explicit-a" },
-							{ agent: "reviewer", task: "Work B", ticket: "psr-explicit-b" },
+							{ agent: "developer", task: "Work A", ticket: "psr-explicit-a" },
+							{ agent: "developer", task: "Work B", ticket: "psr-explicit-b" },
 						],
 					},
 				],
 				resultMode: "parallel",
-				agents: [makeAgent("worker"), makeAgent("reviewer")],
+				agents: [makeAgent("developer", { tkTicketRequired: true })],
 				ctx: {
 					pi: {
 						events: {

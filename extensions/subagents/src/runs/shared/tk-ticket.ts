@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { AgentConfig } from "../../agents/agents.ts";
 import type { TkTicketMetadata } from "../../shared/types.ts";
 
-const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
 export interface ResolveTkTicketMetadataOptions {
@@ -16,26 +16,38 @@ export interface ExplicitTkTicketResolution {
 	error?: string;
 }
 
-export interface TkTicketTaskContextInput {
-	task?: string;
-	cwd?: string;
-}
+export type TkTicketDispatchAgent = Pick<AgentConfig, "name" | "tkTicketRequired">;
 
-export interface TkTicketTaskContext {
-	task: string;
-	cwd: string;
-	taskIndex?: number;
+export const BUNDLED_DEVELOPER_AGENT_NAME = "developer";
+
+/**
+ * Resolve the ticket contract for a fresh child dispatch.
+ *
+ * Ticket metadata is intentionally scoped to the exact TLH developer identity:
+ * the display name must be `developer` and the discovered config must carry
+ * the TLH-owned marker. Persisted continuation paths use normalized metadata
+ * directly and do not pass through this fresh-dispatch gate.
+ */
+export function resolveDispatchTkTicketMetadata(
+	agent: TkTicketDispatchAgent,
+	ticket: unknown,
+	options: ResolveTkTicketMetadataOptions = {},
+): ExplicitTkTicketResolution {
+	const requiresTkTicket = agent.name === BUNDLED_DEVELOPER_AGENT_NAME && agent.tkTicketRequired === true;
+	if (!requiresTkTicket) {
+		return ticket === undefined
+			? {}
+			: { error: "Explicit ticket fields are only supported for the marked TLH developer agent." };
+	}
+	if (ticket === undefined) {
+		return { error: "The TLH developer agent requires an explicit ticket ID." };
+	}
+	return resolveExplicitTkTicketMetadata(ticket, options);
 }
 
 interface TkTicketMatch {
 	id: string;
 	path: string;
-}
-
-export function detectTkTicketId(task: string | undefined): string | undefined {
-	if (!task) return undefined;
-	const match = task.match(TK_SHOW_PATTERN);
-	return match?.[1];
 }
 
 export function parseTkTicketTitle(output: string): string | undefined {
@@ -44,27 +56,6 @@ export function parseTkTicketTitle(output: string): string | undefined {
 		if (trimmed.startsWith("# ")) return trimmed.slice(2).trim() || undefined;
 	}
 	return undefined;
-}
-
-/**
- * Find the one explicitly ticketed task in a run without resolving ticket
- * files. Multiple ticket references are intentionally ambiguous and fail
- * open, matching the async run metadata behavior.
- */
-export function resolveTkTicketTaskContext(input: {
-	topLevelTask?: string;
-	runnerCwd: string;
-	tasks?: readonly TkTicketTaskContextInput[];
-}): TkTicketTaskContext | undefined {
-	const matches: TkTicketTaskContext[] = [];
-	if (input.topLevelTask && detectTkTicketId(input.topLevelTask)) {
-		matches.push({ task: input.topLevelTask, cwd: input.runnerCwd });
-	}
-	for (const [taskIndex, task] of (input.tasks ?? []).entries()) {
-		if (!task.task || !detectTkTicketId(task.task)) continue;
-		matches.push({ task: task.task, cwd: resolveTkTicketTaskCwd(input.runnerCwd, task.cwd), taskIndex });
-	}
-	return matches.length === 1 ? matches[0] : undefined;
 }
 
 function sanitizeTerminalText(raw: string): string {
@@ -120,29 +111,6 @@ export function normalizeTkTicketMetadata(raw: unknown): TkTicketMetadata | unde
 	return { id, title: sanitizedTitle };
 }
 
-export function resolveTkTicketMetadata(
-	task: string | undefined,
-	options: ResolveTkTicketMetadataOptions = {},
-): TkTicketMetadata | undefined {
-	const requestedId = detectTkTicketId(task);
-	if (!requestedId) return undefined;
-	return resolveTkTicketMetadataById(requestedId, options);
-}
-
-export function resolveTkTicketMetadataById(
-	ticketId: string,
-	options: ResolveTkTicketMetadataOptions = {},
-): TkTicketMetadata | undefined {
-	try {
-		const ticketMatch = (options.findTicketFile ?? findTkTicketFile)(ticketId, options.cwd);
-		if (!ticketMatch) return undefined;
-		const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
-		return normalizeTkTicketMetadata({ id: ticketMatch.id, title: parseTkTicketTitle(content) ?? "" });
-	} catch {
-		return undefined;
-	}
-}
-
 export function resolveExplicitTkTicketMetadata(
 	ticket: unknown,
 	options: ResolveTkTicketMetadataOptions = {},
@@ -189,11 +157,6 @@ function findTkTicketFile(id: string, cwd?: string): TkTicketMatch | undefined {
 	}
 	if (!matchedFile) return undefined;
 	return { id: matchedFile.slice(0, -3), path: path.join(ticketsDir, matchedFile) };
-}
-
-function resolveTkTicketTaskCwd(runnerCwd: string, childCwd: string | undefined): string {
-	if (!childCwd) return runnerCwd;
-	return path.isAbsolute(childCwd) ? childCwd : path.resolve(runnerCwd, childCwd);
 }
 
 function findTicketsDir(cwd?: string): string | undefined {

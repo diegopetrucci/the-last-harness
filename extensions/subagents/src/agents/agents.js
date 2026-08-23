@@ -309,6 +309,15 @@ function parsePositiveIntegerFrontmatter(value, field, label) {
     }
     return parsed;
 }
+function parseBooleanFrontmatter(value, field, label) {
+    if (value === undefined || !value.trim())
+        return undefined;
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    throw new Error(`${label} has invalid ${field} frontmatter; expected 'true' or 'false'.`);
+}
 function cloneOverrideBase(agent) {
     return {
         model: agent.model,
@@ -1015,6 +1024,7 @@ function loadAgentsFromDir(dir, source) {
             toolBudget = parsed;
         }
         const completionGuard = frontmatter.completionGuard === "false" ? false : frontmatter.completionGuard === "true" ? true : undefined;
+        const tkTicketRequired = parseBooleanFrontmatter(frontmatter.tkTicketRequired, "tkTicketRequired", `Agent '${localName}'`);
         const agent = {
             name: runtimeName,
             localName,
@@ -1043,6 +1053,7 @@ function loadAgentsFromDir(dir, source) {
             completionGuard,
             toolBudget,
             maxExecutionTimeMs,
+            tkTicketRequired,
             extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
         };
         agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

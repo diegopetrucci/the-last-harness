@@ -229,7 +229,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				],
 			});
 			mockPi.onCall({ output: "plain parallel done" });
-			const executor = makeExecutor([makeAgent("ticketed"), makeAgent("plain")]);
+			const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true }), makeAgent("plain")]);
 			const updates: Array<{
 				details?: {
 					results?: Array<{ agent?: string; tkTicket?: { id: string; title: string }; progress?: { status?: string } }>;
@@ -239,7 +239,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				"parallel-ticket",
 				{
 					tasks: [
-						{ agent: "ticketed", task: "Run `tk show psr-raw4` first." },
+						{ agent: "developer", task: "Implement the ticketed work.", ticket: "psr-raw4" },
 						{ agent: "plain", task: "Review the result." },
 					],
 				},
@@ -305,7 +305,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 					{ jsonl: [events.assistantMessage("developer B done")] },
 				],
 			});
-			const executor = makeExecutor([makeAgent("developer-a"), makeAgent("developer-b")]);
+			const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
 			const updates: Array<{
 				details?: {
 					results?: Array<{
@@ -319,8 +319,8 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				"parallel-explicit-tickets",
 				{
 					tasks: [
-						{ agent: "developer-a", task: "Work A", ticket: "psr-dev-a" },
-						{ agent: "developer-b", task: "Work B", ticket: "psr-dev-b" },
+						{ agent: "developer", task: "Work A", ticket: "psr-dev-a" },
+						{ agent: "developer", task: "Work B", ticket: "psr-dev-b" },
 					],
 				},
 				new AbortController().signal,
@@ -328,25 +328,29 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 				makeMinimalCtx(tempDir),
 			);
 
-			const runningByAgent = new Map<string, { id: string; title: string }>();
+			const runningByTicket = new Map<string, { id: string; title: string }>();
 			const deadline = Date.now() + 5_000;
-			while (Date.now() < deadline && runningByAgent.size < 2) {
+			while (Date.now() < deadline && runningByTicket.size < 2) {
 				for (const update of updates) {
 					for (const result of update.details?.results ?? []) {
 						if (result.progress?.status === "running" && result.tkTicket) {
-							runningByAgent.set(result.agent ?? "", result.tkTicket);
+							runningByTicket.set(result.tkTicket.id, result.tkTicket);
 						}
 					}
 				}
-				if (runningByAgent.size < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+				if (runningByTicket.size < 2) await new Promise((resolve) => setTimeout(resolve, 10));
 			}
-			assert.deepEqual(runningByAgent.get("developer-a"), { id: "psr-dev-a", title: "Developer A title" });
-			assert.deepEqual(runningByAgent.get("developer-b"), { id: "psr-dev-b", title: "Developer B title" });
+			assert.deepEqual(runningByTicket.get("psr-dev-a"), { id: "psr-dev-a", title: "Developer A title" });
+			assert.deepEqual(runningByTicket.get("psr-dev-b"), { id: "psr-dev-b", title: "Developer B title" });
 
 			const result = await runPromise;
-			const finalByAgent = new Map(result.details?.results.map((child) => [child.agent, child.tkTicket]));
-			assert.deepEqual(finalByAgent.get("developer-a"), { id: "psr-dev-a", title: "Developer A title" });
-			assert.deepEqual(finalByAgent.get("developer-b"), { id: "psr-dev-b", title: "Developer B title" });
+			assert.deepEqual(
+				result.details?.results.map((child) => child.tkTicket),
+				[
+					{ id: "psr-dev-a", title: "Developer A title" },
+					{ id: "psr-dev-b", title: "Developer B title" },
+				],
+			);
 		} finally {
 			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
 			else process.env.TICKETS_DIR = originalTicketsDir;
@@ -367,7 +371,7 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			);
 			mockPi.onCall({ output: "first repeat" });
 			mockPi.onCall({ output: "second repeat" });
-			const executor = makeExecutor([makeAgent("developer")]);
+			const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
 			const result = await executor.execute(
 				"parallel-repeated-ticket",
 				{ tasks: [{ agent: "developer", task: "Repeat work", count: 2, ticket: "psr-repeat" }] },
@@ -398,10 +402,10 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
 		try {
 			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
-			const executor = makeExecutor([makeAgent("developer-a")]);
+			const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
 			const result = await executor.execute(
 				"parallel-missing-ticket",
-				{ tasks: [{ agent: "developer-a", task: "Work A", ticket: "missing-ticket" }] },
+				{ tasks: [{ agent: "developer", task: "Work A", ticket: "missing-ticket" }] },
 				new AbortController().signal,
 				undefined,
 				makeMinimalCtx(tempDir),
@@ -410,6 +414,43 @@ describe("parallel agent execution", { skip: !piAvailable ? "pi packages not ava
 			assert.equal(result.isError, true);
 			assert.match(result.content[0]?.text ?? "", /Invalid ticket for tasks\[0\]/);
 			assert.match(result.content[0]?.text ?? "", /not found/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+			else process.env.TICKETS_DIR = originalTicketsDir;
+		}
+	});
+
+	it("validates every developer task before starting mixed parallel work", {
+		skip: !createSubagentExecutor ? "executor not importable" : undefined,
+	}, async () => {
+		const originalTicketsDir = process.env.TICKETS_DIR;
+		process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+		try {
+			fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".tickets", "psr-valid.md"),
+				"---\nid: psr-valid\n---\n# Valid ticket\n",
+				"utf-8",
+			);
+			const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true }), makeAgent("reviewer")]);
+			const result = await executor.execute(
+				"parallel-mixed-ticket-validation",
+				{
+					tasks: [
+						{ agent: "developer", task: "Work A", ticket: "psr-valid" },
+						{ agent: "developer", task: "Work B" },
+						{ agent: "reviewer", task: "Review the result." },
+					],
+				},
+				new AbortController().signal,
+				undefined,
+				makeMinimalCtx(tempDir),
+			);
+
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /Invalid ticket for tasks\[1\]/);
+			assert.match(result.content[0]?.text ?? "", /requires.*explicit ticket/i);
 			assert.equal(mockPi.callCount(), 0);
 		} finally {
 			if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;

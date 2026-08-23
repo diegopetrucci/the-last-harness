@@ -16,7 +16,11 @@ export const TRACE_POLICY_FIXTURES = [
 				{
 					type: "tool",
 					tool: "subagent",
-					input: { agent: "developer", prompt: "Implement tlhf-qcx4 and run tk show tlhf-qcx4 first." },
+					input: {
+						agent: "developer",
+						prompt: "Implement tlhf-qcx4 and run tk show tlhf-qcx4 first.",
+						ticket: "tlhf-qcx4",
+					},
 				},
 			],
 		},
@@ -49,7 +53,29 @@ export const TRACE_POLICY_FIXTURES = [
 				{ type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
 				{ type: "user", text: "approved" },
 				{ type: "tool", tool: "bash", command: 'tk create "Add deterministic evals" -d "..." --acceptance "..."' },
-				{ type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement tlhf-qcx4." } },
+				{
+					type: "tool",
+					tool: "subagent",
+					input: { agent: "developer", prompt: "Implement tlhf-qcx4.", ticket: "tlhf-qcx4" },
+				},
+			],
+		},
+	},
+	{
+		id: "architect-invalid-fresh-developer-missing-ticket",
+		name: "architect invalid if a fresh developer dispatch omits its explicit ticket",
+		expectedResult: "reject",
+		valid: false,
+		expectedCodes: ["architect.developer_ticket_required"],
+		transcript: {
+			agent: "architect",
+			steps: [
+				{ type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+				{ type: "user", text: "approved" },
+				{ type: "tool", tool: "bash", command: 'tk create "Add deterministic evals" -d "..." --acceptance "..."' },
+				{ type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+				{ type: "user", text: "approved" },
+				{ type: "tool", tool: "subagent", input: { agent: "developer", task: "Implement the approved change." } },
 			],
 		},
 	},
@@ -97,7 +123,11 @@ export const TRACE_POLICY_FIXTURES = [
 				{
 					type: "tool",
 					tool: "subagent",
-					input: { agent: "developer", prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first." },
+					input: {
+						agent: "developer",
+						prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first.",
+						ticket: "tlhf-hsdl",
+					},
 				},
 				{
 					type: "assistant",
@@ -109,7 +139,8 @@ export const TRACE_POLICY_FIXTURES = [
 					tool: "subagent",
 					input: {
 						agent: "developer",
-						prompt: "Resume or re-dispatch tlhf-hsdl without bypassing the ticket boundary.",
+						prompt: "Re-dispatch tlhf-hsdl without bypassing the ticket boundary.",
+						ticket: "tlhf-hsdl",
 					},
 				},
 			],
@@ -133,7 +164,11 @@ export const TRACE_POLICY_FIXTURES = [
 				{
 					type: "tool",
 					tool: "subagent",
-					input: { agent: "developer", prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first." },
+					input: {
+						agent: "developer",
+						prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first.",
+						ticket: "tlhf-hsdl",
+					},
 				},
 				{
 					type: "assistant",
@@ -162,7 +197,11 @@ export const TRACE_POLICY_FIXTURES = [
 				{
 					type: "tool",
 					tool: "subagent",
-					input: { agent: "developer", prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first." },
+					input: {
+						agent: "developer",
+						prompt: "Implement tlhf-hsdl and run tk show tlhf-hsdl first.",
+						ticket: "tlhf-hsdl",
+					},
 				},
 				{
 					type: "assistant",

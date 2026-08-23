@@ -24,6 +24,7 @@ export const KNOWN_FIELDS = new Set([
     "maxSubagentDepth",
     "maxExecutionTimeMs",
     "completionGuard",
+    "tkTicketRequired",
     "toolBudget",
 ]);
 function joinComma(values) {
@@ -95,6 +96,9 @@ export function serializeAgent(config, options = {}) {
     }
     if (config.completionGuard === false || preserve("completionGuard")) {
         lines.push(`completionGuard: ${config.completionGuard === undefined ? "" : config.completionGuard ? "true" : "false"}`);
+    }
+    if (config.tkTicketRequired !== undefined || preserve("tkTicketRequired")) {
+        lines.push(`tkTicketRequired: ${config.tkTicketRequired === undefined ? "" : config.tkTicketRequired ? "true" : "false"}`);
     }
     if (config.toolBudget || preserve("toolBudget")) {
         lines.push(`toolBudget: ${config.toolBudget ? JSON.stringify(config.toolBudget) : ""}`);

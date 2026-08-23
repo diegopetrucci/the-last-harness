@@ -7,12 +7,14 @@ import {
 	clearForegroundMessageInbox,
 	createSubagentExecutor,
 	registerForegroundMessageInbox,
+	resolveNestedResumeTarget,
 } from "../../src/runs/foreground/subagent-executor.ts";
 import {
 	createNestedRoute,
 	NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
 	NESTED_CONTROL_RESULT_TIMEOUT_MS,
 	NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS,
+	findNestedRunMatchesById,
 	projectNestedEvents,
 	readNestedControlRequests,
 	writeNestedControlResult,
@@ -474,6 +476,62 @@ describe("nested control routing", () => {
 			assert.match(text(result), /session file does not exist/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("propagates a nested status-step ticket while preserving legacy no-ticket revival", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-ticket-resume-"));
+		const runId = "nested-ticket-resume";
+		const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+		const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+		try {
+			fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+			fs.writeFileSync(sessionFile, "", "utf-8");
+			fs.mkdirSync(nestedAsyncDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [
+						{
+							agent: "developer",
+							status: "complete",
+							sessionFile,
+							tkTicket: { id: "psr-nested", title: "Nested ticket" },
+						},
+					],
+				}),
+				"utf-8",
+			);
+			const route = createNestedRun(runId, "complete", {
+				agent: "developer",
+				asyncDir: nestedAsyncDir,
+				sessionFile,
+			});
+			const match = findNestedRunMatchesById(runId, { scope: { routes: [route] } })[0];
+			assert.ok(match, "expected nested run match");
+			const ticketedTarget = resolveNestedResumeTarget({ kind: "nested", id: runId, match }, [
+				path.join(root, "parent"),
+			]);
+			assert.deepEqual(ticketedTarget.tkTicket, { id: "psr-nested", title: "Nested ticket" });
+
+			fs.writeFileSync(
+				path.join(nestedAsyncDir, "status.json"),
+				JSON.stringify({
+					runId,
+					mode: "single",
+					state: "complete",
+					steps: [{ agent: "developer", status: "complete", sessionFile }],
+				}),
+				"utf-8",
+			);
+			const legacyTarget = resolveNestedResumeTarget({ kind: "nested", id: runId, match }, [path.join(root, "parent")]);
+			assert.equal(legacyTarget.tkTicket, undefined);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+			fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
 		}
 	});
 

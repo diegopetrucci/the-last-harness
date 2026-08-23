@@ -28,6 +28,27 @@ The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
+### Ticketed developer dispatches
+
+The explicit `ticket` field is reserved for the bundled TLH `developer` agent:
+
+- Every fresh SINGLE developer dispatch must include an approved, live ticket ID, for example `{ agent: "developer", task: "Implement the approved change.", ticket: "tlht-example" }`. The child resolves that ID from its effective task cwd and `TICKETS_DIR`; task text is not a fallback.
+- In PARALLEL mode, every developer task must include its own `ticket` field. Non-developer tasks such as `code-reviewer`, `repo-scout`, or `librarian` must omit `ticket`; supplying it to a non-developer is rejected.
+- If no live ticket exists for the work — including a fix found during `/review` — create the ticket and obtain user approval before making a fresh developer dispatch.
+- A `tk show <id>` command in task text does not provide dispatch metadata. New dispatches do not infer tickets from task text, so always pass the explicit field. The developer can still run `tk show <id>` as its required pre-edit check.
+- `resume` and `steer` continue an existing child using its management action and run reference; those continuations do not take a fresh `ticket` field.
+
+For example, a mixed parallel dispatch keeps ticket metadata on the implementation task only:
+
+```js
+{
+  tasks: [
+    { agent: "developer", task: "Implement the approved change; run `tk show tlht-example` first.", ticket: "tlht-example" },
+    { agent: "code-reviewer", task: "Review the resulting diff." }
+  ]
+}
+```
+
 ## Skills
 
 Skills are named instruction sets injected into a child subagent's system prompt before a run begins. They let you package reusable workflows, coding conventions, or operational runbooks as separate files and attach them to specific agents without hardcoding the text in every agent definition.

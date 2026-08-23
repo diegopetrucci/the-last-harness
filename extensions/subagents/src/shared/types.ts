@@ -982,6 +982,7 @@ export interface AsyncJobState {
 export interface ForegroundResumeChild {
 	agent: string;
 	index: number;
+	tkTicket?: TkTicketMetadata;
 	sessionFile?: string;
 	status: SubagentResultStatus;
 	exitCode?: number;

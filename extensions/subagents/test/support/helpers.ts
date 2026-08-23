@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { AgentConfig } from "../../src/agents/agents.ts";
 import { createMockPi as _createMockPi } from "./mock-pi.ts";
 import type { MockPi } from "./mock-pi.ts";
 
@@ -43,43 +44,15 @@ export function createEventBus() {
 	};
 }
 
-interface AgentConfig {
-	name: string;
-	description?: string;
-	systemPrompt?: string;
-	model?: string;
-	fallbackModels?: string[];
-	tools?: string[];
-	extensions?: string[];
-	subagentOnlyExtensions?: string[];
-	skills?: string[];
-	thinking?: string;
-	systemPromptMode?: string;
-	inheritProjectContext?: boolean;
-	inheritSkills?: boolean;
-	scope?: string;
-	output?: string | false;
-	reads?: string[] | false;
-	progress?: boolean;
-	maxSubagentDepth?: number;
-	completionGuard?: boolean;
-	maxExecutionTimeMs?: number;
-}
-
 export function makeAgentConfigs(names: string[]): AgentConfig[] {
-	return names.map((name) => ({
-		name,
-		description: `Test agent: ${name}`,
-		systemPrompt: "",
-		systemPromptMode: "replace",
-		inheritProjectContext: false,
-		inheritSkills: false,
-	}));
+	return names.map((name) => makeAgent(name));
 }
 
 export function makeAgent(name: string, overrides: Partial<AgentConfig> = {}): AgentConfig {
 	return {
 		name,
+		source: "user",
+		filePath: path.join("/tmp", "pi-subagent-test-agents", `${name}.md`),
 		description: `Test agent: ${name}`,
 		systemPrompt: "",
 		systemPromptMode: "replace",

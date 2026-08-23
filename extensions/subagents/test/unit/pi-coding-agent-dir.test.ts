@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
+import { resolveDispatchTkTicketMetadata } from "../../src/runs/shared/tk-ticket.ts";
 
 import { clearSkillCache, discoverAvailableSkills, resolveSkillPath } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
@@ -197,6 +198,7 @@ Inspect env.
 			`---
 name: developer
 description: TLH developer
+tkTicketRequired: true
 ---
 
 Use TLH developer.
@@ -238,7 +240,12 @@ Legacy skill content.
 			discovered.map((agent) => agent.name),
 			["developer"],
 		);
-		assert.equal(discovered[0]?.filePath, path.join(agentDir, "tlh", "agents", "subagents", "developer.md"));
+		const developer = discovered[0];
+		assert.ok(developer);
+		assert.equal(developer.filePath, path.join(agentDir, "tlh", "agents", "subagents", "developer.md"));
+		assert.equal(developer.source, "user");
+		assert.equal(developer.tkTicketRequired, true);
+		assert.match(resolveDispatchTkTicketMetadata(developer, undefined).error ?? "", /requires.*explicit ticket/i);
 
 		const all = discoverAgentsAll(homeWorkspace);
 		assert.equal(all.projectDir, null);

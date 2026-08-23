@@ -25,7 +25,7 @@ import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBrid
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
-import { resolveExplicitTkTicketMetadata, resolveTkTicketMetadata } from "../shared/tk-ticket.js";
+import { normalizeTkTicketMetadata, resolveDispatchTkTicketMetadata } from "../shared/tk-ticket.js";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, } from "../../shared/utils.js";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.js";
@@ -91,6 +91,7 @@ function persistPausedForegroundCohortRun(input) {
     const steps = input.steps ??
         input.results?.map((result) => ({
             agent: result.agent,
+            ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
             status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
             sessionFile: result.sessionFile,
             transcriptPath: result.transcriptPath,
@@ -176,6 +177,7 @@ function buildPausedStepFromResult(result, now, options = { stage: "paused" }) {
     const status = options.status ?? (options.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result));
     return {
         agent: result.agent,
+        ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
         status,
         sessionFile: result.sessionFile,
         transcriptPath: result.transcriptPath,
@@ -398,6 +400,7 @@ function rememberForegroundRun(state, input) {
             const child = {
                 agent: result.agent,
                 index,
+                ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
                 status: resolveSubagentResultStatus({
                     exitCode: result.exitCode,
                     interrupted: result.interrupted,
@@ -447,6 +450,7 @@ function updateRememberedForegroundChild(state, input) {
             detached: false,
         }),
         updatedAt,
+        ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
         ...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
         ...(input.result.finalOutput ? { finalOutput: input.result.finalOutput } : {}),
         ...(input.result.sessionFile ? { sessionFile: input.result.sessionFile } : {}),
@@ -511,6 +515,7 @@ function resolveForegroundResumeTarget(params, state) {
         index,
         intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index),
         cwd: run.cwd,
+        ...(child.tkTicket ? { tkTicket: child.tkTicket } : {}),
         sessionFile,
         ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
             ? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -1313,7 +1318,7 @@ function resolveNestedContinuationAcceptance(runId, step) {
         throw failClosed();
     return step.acceptance.status === "skipped" ? step.acceptance.effectiveAcceptance : undefined;
 }
-function resolveNestedResumeTarget(match, trustedSessionRoots) {
+export function resolveNestedResumeTarget(match, trustedSessionRoots) {
     const run = match.match.run;
     if (run.state === "running" || run.state === "queued")
         throw new Error(`Nested run '${run.id}' is live; route the follow-up to the owner process instead.`);
@@ -1324,6 +1329,7 @@ function resolveNestedResumeTarget(match, trustedSessionRoots) {
     const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
     const statusStep = readNestedResumeStatusStep(run.id, asyncDir);
     const continuationAcceptance = state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
+    const tkTicket = normalizeTkTicketMetadata(statusStep?.tkTicket);
     return {
         kind: "revive",
         source: "nested",
@@ -1331,6 +1337,7 @@ function resolveNestedResumeTarget(match, trustedSessionRoots) {
         state,
         agent,
         index: 0,
+        ...(tkTicket ? { tkTicket } : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
         ...(statusStep?.activeRuntimeMs !== undefined ? { activeRuntimeMs: statusStep.activeRuntimeMs } : {}),
         ...(run.state === "paused" ? { pauseKind: "cohort_pause" } : {}),
@@ -1863,6 +1870,7 @@ async function resumeAsyncRun(input) {
     try {
         result = executeAsyncSingle(runId, {
             agent: target.agent,
+            continuation: true,
             ...(claimedPause
                 ? {
                     continuationSource: {
@@ -1873,7 +1881,7 @@ async function resumeAsyncRun(input) {
                     },
                 }
                 : {}),
-            ...(target.source === "async" && target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
+            ...(target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
             task: buildRevivedAsyncTask(target, followUp),
             modelOverride: input.params.model,
             agentConfig,
@@ -2091,15 +2099,16 @@ function validateExecutionInput(params, agents, hasTasks, hasSingle, effectiveCw
             details: { mode: getRequestedModeLabel(params), results: [] },
         };
     }
-    if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
-        return {
-            content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-            isError: true,
-            details: { mode: "single", results: [] },
-        };
-    }
-    if (hasSingle && params.ticket !== undefined) {
-        const ticketResolution = resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd });
+    if (hasSingle) {
+        const agentConfig = agents.find((agent) => agent.name === params.agent);
+        if (!agentConfig) {
+            return {
+                content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+                isError: true,
+                details: { mode: "single", results: [] },
+            };
+        }
+        const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: effectiveCwd });
         if (ticketResolution.error) {
             return {
                 content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],
@@ -2111,24 +2120,23 @@ function validateExecutionInput(params, agents, hasTasks, hasSingle, effectiveCw
     if (hasTasks && params.tasks) {
         for (let i = 0; i < params.tasks.length; i++) {
             const task = params.tasks[i];
-            if (!agents.find((agent) => agent.name === task.agent)) {
+            const agentConfig = agents.find((agent) => agent.name === task.agent);
+            if (!agentConfig) {
                 return {
                     content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
                     isError: true,
                     details: { mode: "parallel", results: [] },
                 };
             }
-            if (task.ticket !== undefined) {
-                const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, {
-                    cwd: resolveParallelTaskCwd(task, effectiveCwd),
-                });
-                if (ticketResolution.error) {
-                    return {
-                        content: [{ type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` }],
-                        isError: true,
-                        details: { mode: "parallel", results: [] },
-                    };
-                }
+            const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, {
+                cwd: resolveParallelTaskCwd(task, effectiveCwd),
+            });
+            if (ticketResolution.error) {
+                return {
+                    content: [{ type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` }],
+                    isError: true,
+                    details: { mode: "parallel", results: [] },
+                };
             }
         }
     }
@@ -2784,14 +2792,13 @@ async function runParallelPath(data, deps) {
     for (let index = 0; index < tasks.length; index++) {
         const task = tasks[index];
         const taskCwd = resolveParallelTaskCwd(task, effectiveCwd);
-        if (task.ticket !== undefined) {
-            const ticketResolution = resolveExplicitTkTicketMetadata(task.ticket, { cwd: taskCwd });
-            if (ticketResolution.error)
-                return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
-            tkTickets.push(ticketResolution.metadata);
-            continue;
-        }
-        tkTickets.push(resolveTkTicketMetadata(task.task, { cwd: taskCwd }));
+        const agentConfig = agents.find((agent) => agent.name === task.agent);
+        if (!agentConfig)
+            return buildParallelModeError(`Unknown agent: ${task.agent}`);
+        const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, { cwd: taskCwd });
+        if (ticketResolution.error)
+            return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
+        tkTickets.push(ticketResolution.metadata);
     }
     const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
     const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
@@ -3051,9 +3058,7 @@ async function runSinglePath(data, deps) {
     const currentProvider = ctx.model?.provider;
     const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
     let task = params.task ?? "";
-    const ticketResolution = params.ticket !== undefined
-        ? resolveExplicitTkTicketMetadata(params.ticket, { cwd: effectiveCwd })
-        : { metadata: resolveTkTicketMetadata(params.task, { cwd: effectiveCwd }) };
+    const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: effectiveCwd });
     if (ticketResolution.error) {
         return {
             content: [{ type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` }],

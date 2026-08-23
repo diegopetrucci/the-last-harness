@@ -16,6 +16,7 @@ const userFacingDocs = [
 	"docs/integrations.md",
 	"docs/local-development.md",
 	"docs/releasing.md",
+	"docs/subagents.md",
 ];
 
 const historicalRtkDocs = new Set(["docs/pi-startup-investigation-2026-07-15.md"]);
@@ -78,6 +79,29 @@ test("ticket docs keep titles on demand and out of the footer and model context"
 		assert.match(source, /not add(?:ed)? .*primary footer or model context/i);
 		assert.doesNotMatch(source, /ticket footer status|ticket: <title>/i);
 	}
+});
+
+test("subagent docs require explicit tickets only for fresh developer dispatches", () => {
+	const source = readRepoFile("docs/subagents.md");
+	assert.match(source, /explicit `ticket` field is reserved for the bundled TLH `developer` agent/i);
+	assert.match(source, /Every fresh SINGLE developer dispatch must include/i);
+	assert.match(source, /every developer task must include its own `ticket` field/i);
+	assert.match(source, /Non-developer tasks.*omit `ticket`.*rejected/i);
+	assert.match(source, /New dispatches do not infer tickets from task text/i);
+	assert.match(source, /effective task cwd and `TICKETS_DIR`/i);
+	assert.match(source, /including a fix found during `\/review`/i);
+	assert.match(source, /create the ticket and obtain user approval before making a fresh developer dispatch/i);
+	assert.match(source, /`resume` and `steer`.*do not take a fresh `ticket` field/i);
+	assert.doesNotMatch(source, /task text (?:supplies|provides) dispatch metadata/i);
+	assert.match(source, /agent: "developer".*ticket: "tlht-example"/s);
+});
+
+test("Unreleased changelog records mandatory developer ticket dispatches", () => {
+	const source = readRepoFile("CHANGELOG.md");
+	const unreleased = source.slice(0, source.indexOf("## ["));
+	assert.match(unreleased, /Fresh bundled TLH `developer` dispatches now require an approved explicit `ticket`/i);
+	assert.match(unreleased, /non-developer dispatches reject ticket metadata/i);
+	assert.match(unreleased, /task text no longer supplies ticket inference/i);
 });
 
 test("contributing guide links to the upstream-sync inventory", () => {

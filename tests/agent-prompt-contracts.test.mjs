@@ -174,6 +174,30 @@ test("developer prompt preserves human-owned changes and limits escalation to bl
 	]);
 });
 
+test("architect prompt requires explicit developer ticket dispatch metadata", () => {
+	const agent = readAgentPrompt("primary", "architect");
+
+	assertIncludesAllTerms(agent, "architect developer ticket guidance", [
+		"Every fresh dispatch to the bundled TLH `developer` must pass an approved, live ticket ID in the explicit `ticket` field.",
+		"Resolve that ID from the child’s effective task cwd and `TICKETS_DIR`",
+		"including fixes found during `/review`",
+		"create the ticket and obtain the required user approval before making a fresh developer dispatch.",
+		'SINGLE mode, use `{ agent: "developer", task: "...", ticket: "<ticket-id>" }`.',
+		'every developer task must carry its own `ticket: "<ticket-id>"`',
+		"Ticket metadata is developer-only.",
+		"the runtime rejects ticket fields on those dispatches.",
+		"Resume or steer an existing child",
+		"do not take a fresh `ticket` field.",
+	]);
+	assert.doesNotMatch(agent, /task text (?:supplies|provides) dispatch metadata/i);
+});
+
+test("packaged developer prompt requires an explicit ticket marker", () => {
+	const agent = readAgentPrompt("subagents", "developer");
+
+	assert.match(agent, /^tkTicketRequired: true$/m);
+});
+
 test("developer prompt pins the Luna model and max thinking defaults", () => {
 	const agent = readAgentPrompt("subagents", "developer");
 

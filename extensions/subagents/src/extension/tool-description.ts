@@ -14,9 +14,9 @@ Use exactly one mode per call.
 
 EXECUTION
 • Before execution, call { action: "list" } to inspect available agents. Only run agents listed as executable and not disabled.
-• SINGLE mode: { agent, task?, ticket? }. Use one agent. task is optional for self-contained agents.
-• PARALLEL mode: { tasks:[{ agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }. Use this for concurrent work across multiple agents.
-• ticket is an explicit tk ticket ID for the current child, resolved from its effective cwd/TICKETS_DIR; omit it to retain compatibility with task-text tk show inference.
+• SINGLE mode: { agent, task?, ticket? }. Use one agent; task is optional for self-contained agents. Bundled TLH developer requires ticket; non-developers must omit it.
+• PARALLEL mode: { tasks:[{ agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }. Every developer task requires ticket; non-developers must omit it.
+• ticket is developer-only and resolves from effective cwd/TICKETS_DIR. Fresh developer dispatches must pass it; other agents are rejected if they supply it. New dispatches never infer ticket metadata from task text.
 • Optional context: { context: "fresh" | "fork" }. An explicit value applies to every child in the call. When omitted, each requested agent uses its own defaultContext when available; otherwise fresh is used.
 • Optional async/background execution: { async: true }. This launches background work in detached mode so the parent can continue.
 • Optional runtime controls for execution: { timeoutMs }, { cwd }, { artifacts }, { includeProgress }.
@@ -48,9 +48,9 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
-• SINGLE: { agent, task?, ticket? }.
-• PARALLEL: { tasks:[{ agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }.
-• ticket is an explicit tk ticket ID for the current child, resolved from its effective cwd/TICKETS_DIR; omit it to retain compatibility with task-text tk show inference.
+• SINGLE: { agent, task?, ticket? }. Fresh bundled TLH developer calls require ticket; non-developer calls must omit it.
+• PARALLEL: { tasks:[{ agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }. Every fresh developer task requires its own ticket; non-developer tasks must omit it.
+• ticket is developer-only: other agents are rejected if they supply it, and new dispatches never infer ticket metadata from task text. It resolves from the effective cwd/TICKETS_DIR.
 • Optional execution fields: context:"fresh"|"fork", async:true, timeoutMs, cwd, artifacts, includeProgress.
 
 OUTPUT / MODELS

@@ -77,13 +77,7 @@ import {
 } from "../shared/nested-events.ts";
 import { initialTurnBudgetState } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import {
-	detectTkTicketId,
-	normalizeTkTicketMetadata,
-	resolveExplicitTkTicketMetadata,
-	resolveTkTicketMetadata,
-	resolveTkTicketTaskContext,
-} from "../shared/tk-ticket.ts";
+import { normalizeTkTicketMetadata, resolveDispatchTkTicketMetadata } from "../shared/tk-ticket.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -134,6 +128,8 @@ interface AsyncSingleParams {
 	ctx: AsyncExecutionContext;
 	cwd?: string;
 	continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+	/** True when reviving a persisted child rather than starting a fresh dispatch. */
+	continuation?: boolean;
 	inheritedTkTicket?: TkTicketMetadata;
 	maxOutput?: MaxOutputConfig;
 	artifactsDir?: string;
@@ -469,10 +465,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		);
 		if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
-		const ticketResolution =
-			s.ticket !== undefined
-				? resolveExplicitTkTicketMetadata(s.ticket, { cwd: stepCwd })
-				: { metadata: resolveTkTicketMetadata(s.task, { cwd: stepCwd }) };
+		const ticketResolution = resolveDispatchTkTicketMetadata(a, s.ticket, { cwd: stepCwd });
 		if (ticketResolution.error) {
 			throw new AsyncStartValidationError(`Invalid ticket for async step (${s.agent}): ${ticketResolution.error}`);
 		}
@@ -749,14 +742,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 		return formatAsyncStartError(resultMode, built.error);
 	}
 	const { steps, runnerCwd, workflowGraph, eventChain } = built;
-	const ticketTasks = chain.flatMap((step) => {
-		if (isParallelStep(step)) return step.parallel;
-		return [step as SequentialStep];
-	});
-	const tkTicketContext = resolveTkTicketTaskContext({ topLevelTask: params.task, runnerCwd, tasks: ticketTasks });
-	const tkTicket = tkTicketContext
-		? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
-		: undefined;
 	const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
 	const initialTurnBudget = params.turnBudget ? initialTurnBudgetState(params.turnBudget) : undefined;
 	let childTargetIndex = 0;
@@ -806,7 +791,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 				timeoutMs: params.timeoutMs,
 				deadlineAt,
 				workflowGraph,
-				tkTicket,
 				nestedRoute: nestedRoute ?? inheritedNestedRoute,
 				nestedSelf:
 					inheritedNestedRoute && nestedAddress
@@ -905,7 +889,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
 			...(hasChildTkTickets ? { tkTickets: childTkTickets } : {}),
 			cwd: runnerCwd,
 			asyncDir,
-			...(tkTicket ? { tkTicket } : {}),
 			...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
 			...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
 			nestedRoute,
@@ -1064,14 +1047,9 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
 	}
 	const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, remainingAgentTimeMs);
 	const deadlineAt = effectiveTimeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined;
-	const ticketResolution =
-		params.ticket !== undefined
-			? resolveExplicitTkTicketMetadata(params.ticket, { cwd: runnerCwd })
-			: {
-					metadata:
-						normalizeTkTicketMetadata(params.inheritedTkTicket) ??
-						(detectTkTicketId(task) ? resolveTkTicketMetadata(task, { cwd: runnerCwd }) : undefined),
-				};
+	const ticketResolution = params.continuation
+		? { metadata: normalizeTkTicketMetadata(params.inheritedTkTicket) }
+		: resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: runnerCwd });
 	if (ticketResolution.error)
 		return formatAsyncStartError("single", `Invalid ticket for SINGLE mode: ${ticketResolution.error}`);
 	const tkTicket = ticketResolution.metadata;

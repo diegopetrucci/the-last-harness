@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Fresh bundled TLH `developer` dispatches now require an approved explicit `ticket` resolved from the child task cwd/`TICKETS_DIR`; non-developer dispatches reject ticket metadata, and task text no longer supplies ticket inference.
+
 ## [0.37.0] - 2026-08-11
 
 ### Model defaults

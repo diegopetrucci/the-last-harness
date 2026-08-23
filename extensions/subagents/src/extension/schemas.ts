@@ -57,7 +57,7 @@ const TaskItem = Type.Object(
 			Type.String({
 				minLength: 1,
 				description:
-					"Explicit tk ticket ID for this parallel task, resolved from the effective task cwd/TICKETS_DIR; omit for legacy task-text inference.",
+					"Explicit tk ticket ID for this parallel task, resolved from the effective task cwd/TICKETS_DIR (developer-only). Required for every fresh bundled TLH developer task; non-developer tasks must omit it and are rejected if they supply it. Task text is not used for new ticket inference.",
 			}),
 		),
 		count: Type.Optional(
@@ -80,13 +80,13 @@ const SubagentParamsSchema = Type.Object(
 			Type.String({
 				minLength: 1,
 				description:
-					"Explicit tk ticket ID for SINGLE mode, resolved from the effective task cwd/TICKETS_DIR; omit for legacy task-text inference.",
+					"Explicit tk ticket ID for SINGLE mode, resolved from the effective task cwd/TICKETS_DIR (developer-only). Required for every fresh bundled TLH developer dispatch; non-developer agents must omit it and are rejected if they supply it. Task text is not used for new ticket inference.",
 			}),
 		),
 		tasks: Type.Optional(
 			Type.Array(TaskItem, {
 				description:
-					"PARALLEL mode: [{agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model?}, ...]",
+					"PARALLEL mode: [{agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model?}, ...]. ticket is developer-only and required on every fresh bundled TLH developer task; non-developer tasks must omit it, and new dispatches do not infer tickets from task text.",
 			}),
 		),
 		concurrency: Type.Optional(
