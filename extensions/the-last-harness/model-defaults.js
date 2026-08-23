@@ -209,10 +209,6 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     }
     return undefined;
 }
-function selectProviderAwareAgentModel(agent, availableModels, currentProvider) {
-    return (selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
-        selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider));
-}
 function resolveOpenrouterFollowDefaults(agent, availableModels, currentProvider, currentModel) {
     if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
         return undefined;
@@ -254,10 +250,6 @@ export function selectProviderAwareAgentDefaults(agent, availableModels, current
     const model = oppositeProviderModel ?? standardModel;
     const thinking = resolveProviderThinking(agent, model?.provider ?? currentProvider);
     return { model, thinking };
-}
-export function selectProviderAwareAgentModelId(agent, availableModels, currentProvider) {
-    const model = selectProviderAwareAgentModel(agent, availableModels, currentProvider);
-    return model ? formatProviderModelReference(model) : undefined;
 }
 function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback) {
     const storedThinking = rawThinking === false ? "off" : String(rawThinking);

@@ -10,6 +10,12 @@ Direct dependency, devDependency, and peerDependency specs remain exact. The ref
 
 Two older latest releases are intentional holds: `typebox` stays at `1.3.7` because Pi `0.84.2` declares that exact transitive pin, and `typescript` stays at `6.0.3` because registry latest `7.0.2` does not export `typescript/bin/tsc`, which TLH's runtime TypeScript freshness check resolves, and also removes the `ts.ScriptTarget.Latest` API used by the extension static tests. Both holds are therefore compatibility requirements, not stale version metadata.
 
+## Package compatibility boundary
+
+TLH is a packaged profile for the upstream Pi runtime, not a programmatic library. Shipped extension and script modules are implementation details unless a module, symbol, or path is explicitly documented as a supported API.
+
+Files may be shipped so runtime discovery or installer workflows can find them; that fact does not stabilize every exported symbol or deep-import path. Contributors may change or remove undocumented exports and internal paths without treating that as a compatibility break. This policy does not narrow any separately documented `tlh` CLI, configuration, runtime entrypoint, or durable artifact contract.
+
 ## Run validation
 
 Run the aggregate validation script, which covers the main TypeScript `tsc --noEmit` check, the runtime TypeScript check for `scripts/**/*.mts` and authoritative `extensions/**/*.ts`, the generated-output freshness check for `scripts/**/*.mjs` plus same-layout `extensions/**/*.js`, installer smoke checks, test suite, Oxlint linting, Oxfmt formatting checks, ShellCheck linting, settings merge dry-run, and package dry-run:

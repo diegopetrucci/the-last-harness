@@ -21,7 +21,6 @@ import {
 } from "./tokens-analyzer.js";
 
 const TOKENS_COMMAND_HELP = "Usage: /tokens";
-export const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const REPORT_FILE_NAME = "tokens-report.html";
 const execFileAsync = promisify(execFile);
 const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
@@ -108,16 +107,6 @@ export function createTokensCommandHandler(
       ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
     }
   };
-}
-
-export function registerTokensCommand(
-  pi: ExtensionAPI,
-  dependencies: TokensCommandDependencies = {},
-): void {
-  pi.registerCommand("tokens", {
-    description: TOKENS_COMMAND_DESCRIPTION,
-    handler: createTokensCommandHandler(pi, dependencies),
-  });
 }
 
 export function buildTokensReportHtml(
