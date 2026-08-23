@@ -658,15 +658,6 @@ export function subagentExtensionConfigMissingDefaults(config: { agentDir: strin
   return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
 }
 
-/**
- * Returns true when provisionSubagentExtensionConfig would write to disk,
- * false when it would leave the existing file untouched (all writable defaults
- * are present, the config has a non-object JSON value, or it is unreadable).
- */
-export function subagentExtensionConfigNeedsProvisioning(config: { agentDir: string }): boolean {
-  return subagentExtensionConfigMissingDefaults(config).length > 0;
-}
-
 export function provisionSubagentExtensionConfig(config: { agentDir: string }): void {
   const relativePath = "extensions/subagent/config.json";
   const existing = readExistingSubagentExtensionConfig(config);

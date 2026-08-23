@@ -11,16 +11,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import {
-  formatHomePath,
-  isRecord,
-  pathWithinOrEqual,
-  readText,
-  realpathForCompare,
-} from "./common.js";
+import { isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
 import type { SettingsStorageLike, TlhInstallState, TlhStartupState } from "./types.js";
 
 export function isDefaultPiAgentDir(agentDir: string): boolean {
@@ -408,19 +401,6 @@ export function assertSafeTlhSettingsPath(settingsPath: string): void {
 
   if (isNormalPiConfigPath(resolvedSettingsPath)) {
     throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
-  }
-}
-
-export function assertNotNormalPiSettings(settingsPath: string): void {
-  const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-  const resolvedSettingsPath = realpathForCompare(settingsPath);
-  if (
-    resolvedSettingsPath === normalPiRoot ||
-    resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)
-  ) {
-    throw new Error(
-      `Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`,
-    );
   }
 }
 
