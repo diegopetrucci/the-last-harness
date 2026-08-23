@@ -14,11 +14,11 @@
 // notice in the current pass.
 import { isRecord, readText } from "./common.js";
 import {
-	formatProviderModelReference,
-	parseProviderModelReference,
-	selectProviderAwareAgentDefaults,
-	splitKnownThinkingSuffix,
-	type ProviderModelReference,
+  formatProviderModelReference,
+  parseProviderModelReference,
+  selectProviderAwareAgentDefaults,
+  splitKnownThinkingSuffix,
+  type ProviderModelReference,
 } from "./model-defaults.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";
 import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhSettings } from "./types.js";
@@ -38,7 +38,7 @@ import type { AgentPrompt, SubagentMetadata, ThinkingLevel, TlhSettings } from "
  * means and cannot drift apart again.
  */
 export function isKnownProvider(provider: string | undefined): provider is string {
-	return typeof provider === "string" && provider.length > 0;
+  return typeof provider === "string" && provider.length > 0;
 }
 
 /**
@@ -52,7 +52,7 @@ export function isKnownProvider(provider: string | undefined): provider is strin
  * import a single shared definition rather than a private ad-hoc comparison.
  */
 export function isMeaningfulPrimaryOverride(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.length > 0;
 }
 
 /**
@@ -68,12 +68,12 @@ export function isMeaningfulPrimaryOverride(value: unknown): value is string {
  * could drift out of sync with the drift comparator.
  */
 export function hasMeaningfulSubagentOverride(override: unknown): boolean {
-	if (!isRecord(override)) return false;
-	const model = override.model;
-	const thinking = override.thinking;
-	const hasModel = typeof model === "string" || model === false;
-	const hasThinking = typeof thinking === "string" || thinking === false;
-	return hasModel || hasThinking;
+  if (!isRecord(override)) return false;
+  const model = override.model;
+  const thinking = override.thinking;
+  const hasModel = typeof model === "string" || model === false;
+  const hasThinking = typeof thinking === "string" || thinking === false;
+  return hasModel || hasThinking;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,11 +89,11 @@ export function hasMeaningfulSubagentOverride(override: unknown): boolean {
  * Seeding on override creation ensures drift detection can fire on the very first
  * TLH update, even if /reconcile has never been run.
  */
-export type ProviderAcknowledgment = {
-	/** Packaged model at baseline time (base model without thinking suffix). */
-	model?: string;
-	/** Packaged thinking level at baseline time. */
-	thinking?: string;
+type ProviderAcknowledgment = {
+  /** Packaged model at baseline time (base model without thinking suffix). */
+  model?: string;
+  /** Packaged thinking level at baseline time. */
+  thinking?: string;
 };
 
 /**
@@ -117,57 +117,57 @@ export type ProviderAcknowledgment = {
  * empty-string key is ever written (ts-7w6o).
  */
 export type AcknowledgedRoleSnapshot = {
-	/**
-	 * Keyed by provider string.  Populated on override creation and by /reconcile
-	 * when the session provider is known; read by drift detection to scope
-	 * comparisons to the active provider.
-	 */
-	byProvider?: Record<string, ProviderAcknowledgment>;
+  /**
+   * Keyed by provider string.  Populated on override creation and by /reconcile
+   * when the session provider is known; read by drift detection to scope
+   * comparisons to the active provider.
+   */
+  byProvider?: Record<string, ProviderAcknowledgment>;
 };
 
 /** Persisted reconcile state under tlh/reconcile-state.json. */
-export type ReconcileState = {
-	/**
-	 * Per-role baseline snapshots.  Keyed by agent name (primary and subagent names
-	 * live in separate pools and do not overlap in the bundled catalog).
-	 *
-	 * Entries are established when the user creates an override (via
-	 * primary-agent-runtime.ts or subagent-settings.ts) or updated when they run
-	 * /reconcile.  The drift comparator in `computeModelEffortDrift` reads these to
-	 * determine whether `packagedDefaultsChanged` is true.
-	 */
-	acknowledgedSnapshot?: Record<string, AcknowledgedRoleSnapshot>;
-	/** ISO timestamp of the last user decision, for diagnostics only. */
-	lastDecisionAt?: string;
+type ReconcileState = {
+  /**
+   * Per-role baseline snapshots.  Keyed by agent name (primary and subagent names
+   * live in separate pools and do not overlap in the bundled catalog).
+   *
+   * Entries are established when the user creates an override (via
+   * primary-agent-runtime.ts or subagent-settings.ts) or updated when they run
+   * /reconcile.  The drift comparator in `computeModelEffortDrift` reads these to
+   * determine whether `packagedDefaultsChanged` is true.
+   */
+  acknowledgedSnapshot?: Record<string, AcknowledgedRoleSnapshot>;
+  /** ISO timestamp of the last user decision, for diagnostics only. */
+  lastDecisionAt?: string;
 };
 
 /** Provider-resolved packaged defaults for a single role. */
-export type PackagedRoleDefaults = {
-	/** Base model string (no thinking suffix) resolved for the current provider. */
-	model?: string;
-	/** Packaged thinking level resolved for the current provider. */
-	thinking?: ThinkingLevel;
+type PackagedRoleDefaults = {
+  /** Base model string (no thinking suffix) resolved for the current provider. */
+  model?: string;
+  /** Packaged thinking level resolved for the current provider. */
+  thinking?: ThinkingLevel;
 };
 
 /** One entry per role where the user has an active override. */
 export type RoleDriftEntry = {
-	role: "primary" | "subagent";
-	name: string;
-	/** The user's stored override for this role. */
-	override: {
-		/** For primary: stored model string (may include thinking suffix). For subagents: string | false | undefined. */
-		model?: string | false;
-		/** Only present for subagent overrides. */
-		thinking?: string | false;
-	};
-	/** Current packaged defaults, provider-resolved. */
-	packaged: PackagedRoleDefaults;
-	/**
-	 * True when the user previously acknowledged this role's packaged defaults and
-	 * those defaults have since changed. False when there is no prior acknowledgment
-	 * or the defaults are unchanged.
-	 */
-	packagedDefaultsChanged: boolean;
+  role: "primary" | "subagent";
+  name: string;
+  /** The user's stored override for this role. */
+  override: {
+    /** For primary: stored model string (may include thinking suffix). For subagents: string | false | undefined. */
+    model?: string | false;
+    /** Only present for subagent overrides. */
+    thinking?: string | false;
+  };
+  /** Current packaged defaults, provider-resolved. */
+  packaged: PackagedRoleDefaults;
+  /**
+   * True when the user previously acknowledged this role's packaged defaults and
+   * those defaults have since changed. False when there is no prior acknowledgment
+   * or the defaults are unchanged.
+   */
+  packagedDefaultsChanged: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ export type RoleDriftEntry = {
 // ---------------------------------------------------------------------------
 
 export function tlhReconcileStatePath(): string | undefined {
-	return tlhStatePath("reconcile-state.json");
+  return tlhStatePath("reconcile-state.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -193,84 +193,84 @@ export function tlhReconcileStatePath(): string | undefined {
  * comparator, where `providerEntry.model` would throw a TypeError.
  */
 function sanitizeAcknowledgedSnapshot(
-	raw: Record<string, unknown>,
+  raw: Record<string, unknown>,
 ): Record<string, AcknowledgedRoleSnapshot> | undefined {
-	const rawSnapshot = raw.acknowledgedSnapshot;
-	if (rawSnapshot === undefined) {
-		return undefined;
-	}
-	if (!isRecord(rawSnapshot)) {
-		// acknowledgedSnapshot is not a plain object — drop it.
-		return undefined;
-	}
-	const result: Record<string, AcknowledgedRoleSnapshot> = {};
-	for (const [name, entry] of Object.entries(rawSnapshot)) {
-		if (!isRecord(entry)) {
-			// null, string, number, etc. — drop to prevent crashes on entry?.byProvider.
-			continue;
-		}
-		const rawByProvider = entry.byProvider;
-		if (rawByProvider === undefined) {
-			// No byProvider field — entry carries no provider-keyed acknowledgment data;
-			// drop it so the comparator never sees a stale or empty entry.
-			continue;
-		}
-		if (!isRecord(rawByProvider)) {
-			// byProvider exists but is not a record — strip it, preserve other fields.
-			const { byProvider: _, ...rest } = entry;
-			result[name] = rest as AcknowledgedRoleSnapshot;
-			continue;
-		}
-		// Sanitize each provider entry: drop non-records, drop empty-string provider
-		// keys (treated as unknown per ts-7w6o), and strip consumed fields whose
-		// values are not the expected types.
-		const sanitizedByProvider: Record<string, ProviderAcknowledgment> = {};
-		for (const [provider, ack] of Object.entries(rawByProvider)) {
-			// Empty-string provider is unknown — drop it so the comparator never
-			// reads a byProvider[""] entry and reports spurious drift.
-			if (provider === "") {
-				continue;
-			}
-			if (!isRecord(ack)) {
-				// null or non-object acknowledgment — drop to prevent crash on providerEntry.model.
-				continue;
-			}
-			// Validate consumed fields: model and thinking must be string or undefined.
-			const sanitizedAck: Record<string, unknown> = { ...ack };
-			if (sanitizedAck.model !== undefined && typeof sanitizedAck.model !== "string") {
-				delete sanitizedAck.model;
-			}
-			if (sanitizedAck.thinking !== undefined && typeof sanitizedAck.thinking !== "string") {
-				delete sanitizedAck.thinking;
-			}
-			sanitizedByProvider[provider] = sanitizedAck as ProviderAcknowledgment;
-		}
-		result[name] = { ...entry, byProvider: sanitizedByProvider } as AcknowledgedRoleSnapshot;
-	}
-	return result;
+  const rawSnapshot = raw.acknowledgedSnapshot;
+  if (rawSnapshot === undefined) {
+    return undefined;
+  }
+  if (!isRecord(rawSnapshot)) {
+    // acknowledgedSnapshot is not a plain object — drop it.
+    return undefined;
+  }
+  const result: Record<string, AcknowledgedRoleSnapshot> = {};
+  for (const [name, entry] of Object.entries(rawSnapshot)) {
+    if (!isRecord(entry)) {
+      // null, string, number, etc. — drop to prevent crashes on entry?.byProvider.
+      continue;
+    }
+    const rawByProvider = entry.byProvider;
+    if (rawByProvider === undefined) {
+      // No byProvider field — entry carries no provider-keyed acknowledgment data;
+      // drop it so the comparator never sees a stale or empty entry.
+      continue;
+    }
+    if (!isRecord(rawByProvider)) {
+      // byProvider exists but is not a record — strip it, preserve other fields.
+      const { byProvider: _, ...rest } = entry;
+      result[name] = rest as AcknowledgedRoleSnapshot;
+      continue;
+    }
+    // Sanitize each provider entry: drop non-records, drop empty-string provider
+    // keys (treated as unknown per ts-7w6o), and strip consumed fields whose
+    // values are not the expected types.
+    const sanitizedByProvider: Record<string, ProviderAcknowledgment> = {};
+    for (const [provider, ack] of Object.entries(rawByProvider)) {
+      // Empty-string provider is unknown — drop it so the comparator never
+      // reads a byProvider[""] entry and reports spurious drift.
+      if (provider === "") {
+        continue;
+      }
+      if (!isRecord(ack)) {
+        // null or non-object acknowledgment — drop to prevent crash on providerEntry.model.
+        continue;
+      }
+      // Validate consumed fields: model and thinking must be string or undefined.
+      const sanitizedAck: Record<string, unknown> = { ...ack };
+      if (sanitizedAck.model !== undefined && typeof sanitizedAck.model !== "string") {
+        delete sanitizedAck.model;
+      }
+      if (sanitizedAck.thinking !== undefined && typeof sanitizedAck.thinking !== "string") {
+        delete sanitizedAck.thinking;
+      }
+      sanitizedByProvider[provider] = sanitizedAck as ProviderAcknowledgment;
+    }
+    result[name] = { ...entry, byProvider: sanitizedByProvider } as AcknowledgedRoleSnapshot;
+  }
+  return result;
 }
 
 export function readReconcileState(): ReconcileState {
-	const statePath = tlhReconcileStatePath();
-	const content = statePath ? readText(statePath) : undefined;
-	if (!content) {
-		return {};
-	}
-	try {
-		const parsed = JSON.parse(content) as unknown;
-		if (!isRecord(parsed)) {
-			return {};
-		}
-		// Spread the full object first to preserve any unknown top-level fields, then
-		// replace acknowledgedSnapshot with the sanitized version so downstream
-		// drift computation cannot crash on malformed persisted entries.
-		return {
-			...parsed,
-			acknowledgedSnapshot: sanitizeAcknowledgedSnapshot(parsed),
-		} as ReconcileState;
-	} catch {
-		return {};
-	}
+  const statePath = tlhReconcileStatePath();
+  const content = statePath ? readText(statePath) : undefined;
+  if (!content) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed)) {
+      return {};
+    }
+    // Spread the full object first to preserve any unknown top-level fields, then
+    // replace acknowledgedSnapshot with the sanitized version so downstream
+    // drift computation cannot crash on malformed persisted entries.
+    return {
+      ...parsed,
+      acknowledgedSnapshot: sanitizeAcknowledgedSnapshot(parsed),
+    } as ReconcileState;
+  } catch {
+    return {};
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,17 +291,21 @@ export function readReconcileState(): ReconcileState {
  * failure mode, so it is accepted and documented here instead.
  */
 export function writeReconcileState(state: ReconcileState): boolean {
-	try {
-		const statePath = tlhReconcileStatePath();
-		if (!statePath) {
-			return false;
-		}
-		// Symlink / O_NOFOLLOW / atomic-replacement guards live in profile-state.ts.
-		return writeGuardedTlhStateFile(statePath, `${JSON.stringify(state, null, 2)}\n`, tlhReconcileStatePath);
-	} catch {
-		// Reconcile state is best-effort; never block launch.
-		return false;
-	}
+  try {
+    const statePath = tlhReconcileStatePath();
+    if (!statePath) {
+      return false;
+    }
+    // Symlink / O_NOFOLLOW / atomic-replacement guards live in profile-state.ts.
+    return writeGuardedTlhStateFile(
+      statePath,
+      `${JSON.stringify(state, null, 2)}\n`,
+      tlhReconcileStatePath,
+    );
+  } catch {
+    // Reconcile state is best-effort; never block launch.
+    return false;
+  }
 }
 
 /**
@@ -316,30 +320,32 @@ export function writeReconcileState(state: ReconcileState): boolean {
  * `writeReconcileState` for the accepted concurrency limitation).
  */
 export function updateReconcileAcknowledgedSnapshot(
-	snapshot: Record<string, AcknowledgedRoleSnapshot>,
-	lastDecisionAt?: string,
+  snapshot: Record<string, AcknowledgedRoleSnapshot>,
+  lastDecisionAt?: string,
 ): boolean {
-	const current = readReconcileState();
-	const merged: Record<string, AcknowledgedRoleSnapshot> = { ...(current.acknowledgedSnapshot ?? {}) };
-	for (const [name, incoming] of Object.entries(snapshot)) {
-		const existing = merged[name];
-		if (existing != null && incoming.byProvider != null) {
-			// Deep-merge byProvider so a new-provider acknowledgment does not erase
-			// previous ones recorded under other providers.
-			merged[name] = {
-				...existing,
-				byProvider: { ...(existing.byProvider ?? {}), ...incoming.byProvider },
-			};
-		} else {
-			// No existing entry, or incoming lacks byProvider (old-shape passthrough): replace.
-			merged[name] = incoming;
-		}
-	}
-	return writeReconcileState({
-		...current,
-		acknowledgedSnapshot: merged,
-		...(lastDecisionAt !== undefined ? { lastDecisionAt } : {}),
-	});
+  const current = readReconcileState();
+  const merged: Record<string, AcknowledgedRoleSnapshot> = {
+    ...current.acknowledgedSnapshot,
+  };
+  for (const [name, incoming] of Object.entries(snapshot)) {
+    const existing = merged[name];
+    if (existing != null && incoming.byProvider != null) {
+      // Deep-merge byProvider so a new-provider acknowledgment does not erase
+      // previous ones recorded under other providers.
+      merged[name] = {
+        ...existing,
+        byProvider: { ...existing.byProvider, ...incoming.byProvider },
+      };
+    } else {
+      // No existing entry, or incoming lacks byProvider (old-shape passthrough): replace.
+      merged[name] = incoming;
+    }
+  }
+  return writeReconcileState({
+    ...current,
+    acknowledgedSnapshot: merged,
+    ...(lastDecisionAt !== undefined ? { lastDecisionAt } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -347,9 +353,17 @@ export function updateReconcileAcknowledgedSnapshot(
 // ---------------------------------------------------------------------------
 
 /** Frontmatter fields that declare an agent's packaged model catalog. */
-type PackagedAgent = Pick<AgentPrompt, "name" | "model" | "tlhOpenaiModels" | "tlhAnthropicModels"> &
-	Partial<Pick<AgentPrompt, "thinking" | "tlhOpenaiThinking" | "tlhAnthropicThinking" | "preferOppositeProvider">> &
-	Partial<Pick<AgentPrompt, "preferCurrentOpenaiModel">>;
+type PackagedAgent = Pick<
+  AgentPrompt,
+  "name" | "model" | "tlhOpenaiModels" | "tlhAnthropicModels"
+> &
+  Partial<
+    Pick<
+      AgentPrompt,
+      "thinking" | "tlhOpenaiThinking" | "tlhAnthropicThinking" | "preferOppositeProvider"
+    >
+  > &
+  Partial<Pick<AgentPrompt, "preferCurrentOpenaiModel">>;
 
 /**
  * Every model the agent's frontmatter declares, parsed and de-duplicated.
@@ -358,19 +372,23 @@ type PackagedAgent = Pick<AgentPrompt, "name" | "model" | "tlhOpenaiModels" | "t
  * `packagedCandidateModelsForProvider`; not used directly by `resolvePackagedDefaults`.
  */
 function packagedCandidateModels(agent: PackagedAgent): ProviderModelReference[] {
-	const seen = new Map<string, ProviderModelReference>();
-	for (const raw of [agent.model, ...(agent.tlhOpenaiModels ?? []), ...(agent.tlhAnthropicModels ?? [])]) {
-		// Frontmatter model strings may carry a thinking suffix; the catalog holds base models.
-		const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
-		if (!parsed) {
-			continue;
-		}
-		const key = formatProviderModelReference(parsed);
-		if (!seen.has(key)) {
-			seen.set(key, parsed);
-		}
-	}
-	return [...seen.values()];
+  const seen = new Map<string, ProviderModelReference>();
+  for (const raw of [
+    agent.model,
+    ...(agent.tlhOpenaiModels ?? []),
+    ...(agent.tlhAnthropicModels ?? []),
+  ]) {
+    // Frontmatter model strings may carry a thinking suffix; the catalog holds base models.
+    const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
+    if (!parsed) {
+      continue;
+    }
+    const key = formatProviderModelReference(parsed);
+    if (!seen.has(key)) {
+      seen.set(key, parsed);
+    }
+  }
+  return [...seen.values()];
 }
 
 /**
@@ -388,13 +406,13 @@ function packagedCandidateModels(agent: PackagedAgent): ProviderModelReference[]
  * context where it could produce a spurious drift entry.
  */
 function packagedCandidateModelsForProvider(
-	agent: PackagedAgent,
-	provider: string | undefined,
+  agent: PackagedAgent,
+  provider: string | undefined,
 ): ProviderModelReference[] {
-	if (provider === undefined) {
-		return [];
-	}
-	return packagedCandidateModels(agent).filter((m) => m.provider === provider);
+  if (provider === undefined) {
+    return [];
+  }
+  return packagedCandidateModels(agent).filter((m) => m.provider === provider);
 }
 
 /**
@@ -426,16 +444,19 @@ function packagedCandidateModelsForProvider(
  * available. The alternative — consulting the live registry — would cause spurious
  * drift notices when model availability changes, which is worse.
  */
-function resolvePackagedDefaults(agent: PackagedAgent | undefined, provider: string | undefined): PackagedRoleDefaults {
-	if (!agent) {
-		return {};
-	}
-	const providerCandidates = packagedCandidateModelsForProvider(agent, provider);
-	const defaults = selectProviderAwareAgentDefaults(agent, providerCandidates, provider);
-	return {
-		model: defaults.model ? formatProviderModelReference(defaults.model) : undefined,
-		thinking: defaults.thinking,
-	};
+function resolvePackagedDefaults(
+  agent: PackagedAgent | undefined,
+  provider: string | undefined,
+): PackagedRoleDefaults {
+  if (!agent) {
+    return {};
+  }
+  const providerCandidates = packagedCandidateModelsForProvider(agent, provider);
+  const defaults = selectProviderAwareAgentDefaults(agent, providerCandidates, provider);
+  return {
+    model: defaults.model ? formatProviderModelReference(defaults.model) : undefined,
+    thinking: defaults.thinking,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -469,29 +490,29 @@ function resolvePackagedDefaults(agent: PackagedAgent | undefined, provider: str
  * @param provider   Active provider string.  `undefined` defers the write entirely.
  */
 export function recordOverrideBaseline(
-	agentName: string,
-	agent: AgentPrompt | SubagentMetadata | undefined,
-	provider: string | undefined,
+  agentName: string,
+  agent: AgentPrompt | SubagentMetadata | undefined,
+  provider: string | undefined,
 ): void {
-	try {
-		if (!isKnownProvider(provider)) {
-			// Defer: no baseline is recorded for an unknown or empty-string provider (ts-7w6o).
-			return;
-		}
-		const packaged = resolvePackagedDefaults(agent, provider);
-		const ack: ProviderAcknowledgment = {};
-		if (packaged.model !== undefined) {
-			ack.model = packaged.model;
-		}
-		if (packaged.thinking !== undefined) {
-			ack.thinking = packaged.thinking;
-		}
-		updateReconcileAcknowledgedSnapshot({
-			[agentName]: { byProvider: { [provider]: ack } },
-		});
-	} catch {
-		// Best-effort: never throw into the command path.
-	}
+  try {
+    if (!isKnownProvider(provider)) {
+      // Defer: no baseline is recorded for an unknown or empty-string provider (ts-7w6o).
+      return;
+    }
+    const packaged = resolvePackagedDefaults(agent, provider);
+    const ack: ProviderAcknowledgment = {};
+    if (packaged.model !== undefined) {
+      ack.model = packaged.model;
+    }
+    if (packaged.thinking !== undefined) {
+      ack.thinking = packaged.thinking;
+    }
+    updateReconcileAcknowledgedSnapshot({
+      [agentName]: { byProvider: { [provider]: ack } },
+    });
+  } catch {
+    // Best-effort: never throw into the command path.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -531,94 +552,94 @@ export function recordOverrideBaseline(
  *   produce a notice in this same pass, even if the disk write failed.
  */
 export function backfillMissingBaselines(
-	primaryAgents: ReadonlyMap<string, AgentPrompt>,
-	subagentMetadata: readonly SubagentMetadata[],
-	settings: TlhSettings,
-	currentProvider: string | undefined,
-	existingSnapshot: Record<string, AcknowledgedRoleSnapshot> | undefined,
+  primaryAgents: ReadonlyMap<string, AgentPrompt>,
+  subagentMetadata: readonly SubagentMetadata[],
+  settings: TlhSettings,
+  currentProvider: string | undefined,
+  existingSnapshot: Record<string, AcknowledgedRoleSnapshot> | undefined,
 ): Record<string, AcknowledgedRoleSnapshot> {
-	const snapshot = existingSnapshot ?? {};
-	try {
-		if (!isKnownProvider(currentProvider)) {
-			// Defer: no backfill when provider is unknown or empty string (ts-7w6o).
-			return snapshot;
-		}
-		const toBackfill: Record<string, AcknowledgedRoleSnapshot> = {};
+  const snapshot = existingSnapshot ?? {};
+  try {
+    if (!isKnownProvider(currentProvider)) {
+      // Defer: no backfill when provider is unknown or empty string (ts-7w6o).
+      return snapshot;
+    }
+    const toBackfill: Record<string, AcknowledgedRoleSnapshot> = {};
 
-		// --- Primary agent overrides ---
-		const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-		if (isRecord(primaryModelOverrides)) {
-			for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
-				if (!isMeaningfulPrimaryOverride(overrideValue)) {
-					continue;
-				}
-				// Skip when a baseline for this provider already exists.
-				if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
-					continue;
-				}
-				const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-				const ack: ProviderAcknowledgment = {};
-				if (packaged.model !== undefined) {
-					ack.model = packaged.model;
-				}
-				if (packaged.thinking !== undefined) {
-					ack.thinking = packaged.thinking;
-				}
-				toBackfill[name] = { byProvider: { [currentProvider]: ack } };
-			}
-		}
+    // --- Primary agent overrides ---
+    const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
+    if (isRecord(primaryModelOverrides)) {
+      for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
+        if (!isMeaningfulPrimaryOverride(overrideValue)) {
+          continue;
+        }
+        // Skip when a baseline for this provider already exists.
+        if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
+          continue;
+        }
+        const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
+        const ack: ProviderAcknowledgment = {};
+        if (packaged.model !== undefined) {
+          ack.model = packaged.model;
+        }
+        if (packaged.thinking !== undefined) {
+          ack.thinking = packaged.thinking;
+        }
+        toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+      }
+    }
 
-		// --- Subagent overrides ---
-		const subagentOverrides = settings.subagents?.agentOverrides;
-		if (isRecord(subagentOverrides)) {
-			const subagentMap = new Map(subagentMetadata.map((s) => [s.name, s]));
-			for (const [name, rawOverride] of Object.entries(subagentOverrides)) {
-				// Use shared predicate that mirrors computeModelEffortDrift's acceptance logic.
-				if (!hasMeaningfulSubagentOverride(rawOverride)) {
-					continue;
-				}
-				// Skip when a baseline for this provider already exists.
-				if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
-					continue;
-				}
-				const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
-				const ack: ProviderAcknowledgment = {};
-				if (packaged.model !== undefined) {
-					ack.model = packaged.model;
-				}
-				if (packaged.thinking !== undefined) {
-					ack.thinking = packaged.thinking;
-				}
-				toBackfill[name] = { byProvider: { [currentProvider]: ack } };
-			}
-		}
+    // --- Subagent overrides ---
+    const subagentOverrides = settings.subagents?.agentOverrides;
+    if (isRecord(subagentOverrides)) {
+      const subagentMap = new Map(subagentMetadata.map((s) => [s.name, s]));
+      for (const [name, rawOverride] of Object.entries(subagentOverrides)) {
+        // Use shared predicate that mirrors computeModelEffortDrift's acceptance logic.
+        if (!hasMeaningfulSubagentOverride(rawOverride)) {
+          continue;
+        }
+        // Skip when a baseline for this provider already exists.
+        if (snapshot[name]?.byProvider?.[currentProvider] !== undefined) {
+          continue;
+        }
+        const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
+        const ack: ProviderAcknowledgment = {};
+        if (packaged.model !== undefined) {
+          ack.model = packaged.model;
+        }
+        if (packaged.thinking !== undefined) {
+          ack.thinking = packaged.thinking;
+        }
+        toBackfill[name] = { byProvider: { [currentProvider]: ack } };
+      }
+    }
 
-		if (Object.keys(toBackfill).length === 0) {
-			return snapshot;
-		}
+    if (Object.keys(toBackfill).length === 0) {
+      return snapshot;
+    }
 
-		// Persist best-effort; failure is non-blocking.
-		updateReconcileAcknowledgedSnapshot(toBackfill);
+    // Persist best-effort; failure is non-blocking.
+    updateReconcileAcknowledgedSnapshot(toBackfill);
 
-		// Build merged in-memory snapshot for this notification pass, regardless of
-		// whether the disk write succeeded, so backfilled roles cannot produce a notice.
-		const merged: Record<string, AcknowledgedRoleSnapshot> = { ...snapshot };
-		for (const [name, incoming] of Object.entries(toBackfill)) {
-			const existing = merged[name];
-			if (existing != null && incoming.byProvider != null) {
-				merged[name] = {
-					...existing,
-					byProvider: { ...(existing.byProvider ?? {}), ...incoming.byProvider },
-				};
-			} else {
-				merged[name] = incoming;
-			}
-		}
-		return merged;
-	} catch {
-		// Best-effort: never throw into launch.
-		return snapshot;
-	}
+    // Build merged in-memory snapshot for this notification pass, regardless of
+    // whether the disk write succeeded, so backfilled roles cannot produce a notice.
+    const merged: Record<string, AcknowledgedRoleSnapshot> = { ...snapshot };
+    for (const [name, incoming] of Object.entries(toBackfill)) {
+      const existing = merged[name];
+      if (existing != null && incoming.byProvider != null) {
+        merged[name] = {
+          ...existing,
+          byProvider: { ...existing.byProvider, ...incoming.byProvider },
+        };
+      } else {
+        merged[name] = incoming;
+      }
+    }
+    return merged;
+  } catch {
+    // Best-effort: never throw into launch.
+    return snapshot;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -639,88 +660,88 @@ export function backfillMissingBaselines(
  * @param acknowledgedSnapshot  Previously acknowledged packaged defaults, keyed by agent name
  */
 export function computeModelEffortDrift(
-	primaryAgents: ReadonlyMap<string, AgentPrompt>,
-	subagentMetadata: readonly SubagentMetadata[],
-	settings: TlhSettings,
-	currentProvider?: string,
-	acknowledgedSnapshot?: Record<string, AcknowledgedRoleSnapshot>,
+  primaryAgents: ReadonlyMap<string, AgentPrompt>,
+  subagentMetadata: readonly SubagentMetadata[],
+  settings: TlhSettings,
+  currentProvider?: string,
+  acknowledgedSnapshot?: Record<string, AcknowledgedRoleSnapshot>,
 ): RoleDriftEntry[] {
-	const drift: RoleDriftEntry[] = [];
+  const drift: RoleDriftEntry[] = [];
 
-	// --- Primary agent overrides: settings.tlh.primaryAgent.modelOverrides ---
-	const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
-	if (isRecord(primaryModelOverrides)) {
-		for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
-			if (!isMeaningfulPrimaryOverride(overrideValue)) {
-				continue;
-			}
-			const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
-			// When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
-			const providerEntry = isKnownProvider(currentProvider)
-				? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
-				: undefined;
-			const packagedDefaultsChanged =
-				providerEntry !== undefined &&
-				(providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
-			drift.push({
-				role: "primary",
-				name,
-				override: { model: overrideValue },
-				packaged,
-				packagedDefaultsChanged,
-			});
-		}
-	}
+  // --- Primary agent overrides: settings.tlh.primaryAgent.modelOverrides ---
+  const primaryModelOverrides = settings.tlh?.primaryAgent?.modelOverrides;
+  if (isRecord(primaryModelOverrides)) {
+    for (const [name, overrideValue] of Object.entries(primaryModelOverrides)) {
+      if (!isMeaningfulPrimaryOverride(overrideValue)) {
+        continue;
+      }
+      const packaged = resolvePackagedDefaults(primaryAgents.get(name), currentProvider);
+      // When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
+      const providerEntry = isKnownProvider(currentProvider)
+        ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
+        : undefined;
+      const packagedDefaultsChanged =
+        providerEntry !== undefined &&
+        (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
+      drift.push({
+        role: "primary",
+        name,
+        override: { model: overrideValue },
+        packaged,
+        packagedDefaultsChanged,
+      });
+    }
+  }
 
-	// --- Subagent overrides: settings.subagents.agentOverrides ---
-	const subagentOverrides = settings.subagents?.agentOverrides;
-	if (isRecord(subagentOverrides)) {
-		const subagentMap = new Map(subagentMetadata.map((s) => [s.name, s]));
-		for (const [name, rawOverride] of Object.entries(subagentOverrides)) {
-			if (!isRecord(rawOverride)) {
-				continue;
-			}
-			// Validate fields TLH consumes; preserve unrelated unknown fields by not
-			// dropping the entry outright — only the type-invalid consumed fields are
-			// stripped.  model and thinking must be string, false, or undefined.
-			const rawModel = rawOverride.model;
-			const rawThinking = rawOverride.thinking;
-			const model: string | false | undefined =
-				rawModel === undefined || typeof rawModel === "string" || rawModel === false
-					? (rawModel as string | false | undefined)
-					: undefined;
-			const thinking: string | false | undefined =
-				rawThinking === undefined || typeof rawThinking === "string" || rawThinking === false
-					? (rawThinking as string | false | undefined)
-					: undefined;
-			// Skip entries with no meaningful validated override.
-			if (model === undefined && thinking === undefined) {
-				continue;
-			}
-			const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
-			// When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
-			const providerEntry = isKnownProvider(currentProvider)
-				? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
-				: undefined;
-			const packagedDefaultsChanged =
-				providerEntry !== undefined &&
-				(providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
-			const overrideEntry: RoleDriftEntry["override"] = {};
-			if (model !== undefined) {
-				overrideEntry.model = model;
-			}
-			if (thinking !== undefined) {
-				overrideEntry.thinking = thinking;
-			}
-			drift.push({
-				role: "subagent",
-				name,
-				override: overrideEntry,
-				packaged,
-				packagedDefaultsChanged,
-			});
-		}
-	}
+  // --- Subagent overrides: settings.subagents.agentOverrides ---
+  const subagentOverrides = settings.subagents?.agentOverrides;
+  if (isRecord(subagentOverrides)) {
+    const subagentMap = new Map(subagentMetadata.map((s) => [s.name, s]));
+    for (const [name, rawOverride] of Object.entries(subagentOverrides)) {
+      if (!isRecord(rawOverride)) {
+        continue;
+      }
+      // Validate fields TLH consumes; preserve unrelated unknown fields by not
+      // dropping the entry outright — only the type-invalid consumed fields are
+      // stripped.  model and thinking must be string, false, or undefined.
+      const rawModel = rawOverride.model;
+      const rawThinking = rawOverride.thinking;
+      const model: string | false | undefined =
+        rawModel === undefined || typeof rawModel === "string" || rawModel === false
+          ? (rawModel as string | false | undefined)
+          : undefined;
+      const thinking: string | false | undefined =
+        rawThinking === undefined || typeof rawThinking === "string" || rawThinking === false
+          ? (rawThinking as string | false | undefined)
+          : undefined;
+      // Skip entries with no meaningful validated override.
+      if (model === undefined && thinking === undefined) {
+        continue;
+      }
+      const packaged = resolvePackagedDefaults(subagentMap.get(name), currentProvider);
+      // When provider is unknown or empty, skip comparison — defer semantics (ts-7w6o).
+      const providerEntry = isKnownProvider(currentProvider)
+        ? acknowledgedSnapshot?.[name]?.byProvider?.[currentProvider]
+        : undefined;
+      const packagedDefaultsChanged =
+        providerEntry !== undefined &&
+        (providerEntry.model !== packaged.model || providerEntry.thinking !== packaged.thinking);
+      const overrideEntry: RoleDriftEntry["override"] = {};
+      if (model !== undefined) {
+        overrideEntry.model = model;
+      }
+      if (thinking !== undefined) {
+        overrideEntry.thinking = thinking;
+      }
+      drift.push({
+        role: "subagent",
+        name,
+        override: overrideEntry,
+        packaged,
+        packagedDefaultsChanged,
+      });
+    }
+  }
 
-	return drift;
+  return drift;
 }

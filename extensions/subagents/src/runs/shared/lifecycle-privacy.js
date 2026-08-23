@@ -19,7 +19,9 @@ export function protectedLifecycleText(label) {
 export function formatProtectedLifecycleCleanup(cleanup) {
     if (cleanup.terminated)
         return "confirmed.";
-    if (cleanup.attempted || cleanup.escalatedToSigkill || cleanup.liveProcessesDetected !== undefined)
+    if (cleanup.attempted ||
+        cleanup.escalatedToSigkill ||
+        cleanup.liveProcessesDetected !== undefined)
         return "unconfirmed.";
     return "pending confirmation.";
 }

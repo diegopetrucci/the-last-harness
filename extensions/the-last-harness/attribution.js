@@ -1,5 +1,4 @@
-import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
-import { isRecord } from "./common.js";
+import {} from "@earendil-works/pi-coding-agent";
 import { commandBasename, extractHereDocBodies, getEnvLeadingOptionParseResult, getProcessSubstitutionOutput, getWrappedShellCommand, getWrappedShellCommandFromTokens, isSupportedEnvCommand, MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH, normalizeShellCommandTokens, normalizeShellCommandTokensFromTokens, normalizeTrailingLineEnding, splitShellCommandSegments, stripLeadingOptionTerminator, stripLeadingShellCommandPrefixes, tokenizeShellWords, } from "./shell-parser.js";
 export const TLH_DEFAULT_COMMIT_ATTRIBUTION = `Co-authored-by: The Last Harness <hi@thelastharness.com>`;
 const TLH_GIT_COMMIT_ATTRIBUTION_PROMPT_HEADING = "## TLH Git Commit Attribution";
@@ -13,25 +12,6 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
     "--super-prefix",
     "--work-tree",
 ]);
-function normalizeTlhAttributionConfig(config) {
-    if (!isRecord(config)) {
-        return undefined;
-    }
-    const commit = config.commit;
-    if (commit === undefined) {
-        return {};
-    }
-    return typeof commit === "boolean" ? { commit } : undefined;
-}
-export function getTlhAttributionConfig(cwd) {
-    try {
-        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
-        return normalizeTlhAttributionConfig(settings.tlh?.attribution);
-    }
-    catch {
-        return undefined;
-    }
-}
 export function resolveTlhCommitAttribution(config) {
     if (config?.commit === false) {
         return { enabled: false };
@@ -92,7 +72,10 @@ function gitCommitOptionConsumesFollowingValue(commitArguments, index) {
         return false;
     }
     const lowerToken = token.toLowerCase();
-    if (lowerToken === "-m" || lowerToken === "--message" || lowerToken === "-f" || lowerToken === "--file") {
+    if (lowerToken === "-m" ||
+        lowerToken === "--message" ||
+        lowerToken === "-f" ||
+        lowerToken === "--file") {
         return commitArguments[index + 1] !== undefined;
     }
     if (shortGitCommitMessageOptionConsumesFollowingValue(token)) {
@@ -181,7 +164,8 @@ function getInlineGitCommitFileArgumentValue(commitArguments) {
     return value;
 }
 function hasInlineLikeGitCommitMessageOrFileArgument(commitArguments) {
-    return hasInlineGitCommitMessageArgument(commitArguments) || hasInlineGitCommitFileArgument(commitArguments);
+    return (hasInlineGitCommitMessageArgument(commitArguments) ||
+        hasInlineGitCommitFileArgument(commitArguments));
 }
 function getInlineGitCommitFileArgument(commitArguments) {
     const value = getInlineGitCommitFileArgumentValue(commitArguments);
@@ -214,16 +198,22 @@ function areInlineGitCommitArgumentsAttributed(commitArguments, footer, segment)
             return false;
         }
         const hereDocBody = extractHereDocBodies(segment).at(-1);
-        return hereDocBody !== undefined && commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer);
+        return (hereDocBody !== undefined &&
+            commitMessageEndsWithFooter(normalizeTrailingLineEnding(hereDocBody), footer));
     }
     if (fileArgument === "process-substitution") {
         const fileValue = getInlineGitCommitFileArgumentValue(commitArguments);
-        return fileValue !== undefined && processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer);
+        return (fileValue !== undefined &&
+            processSubstitutionIncludesTlhCommitAttributionFooter(fileValue, footer));
     }
     return false;
 }
 function buildTlhGitCommitAttributionBlockReason(footer) {
-    return [TLH_GIT_COMMIT_BLOCK_REASON, "Retry with this exact footer at the end of the commit message:", footer].join("\n\n");
+    return [
+        TLH_GIT_COMMIT_BLOCK_REASON,
+        "Retry with this exact footer at the end of the commit message:",
+        footer,
+    ].join("\n\n");
 }
 function hasObviousGitCommitInTokens(tokens, depth = 0) {
     if (depth > MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH) {
@@ -385,25 +375,10 @@ export function getTlhGitCommitAttributionBlockReason(command, state) {
     }
     return getWrappedShellGitCommitAttributionBlockReason(command, state.footer);
 }
-function createRetryableLazyImport(loader) {
-    let modulePromise;
-    return () => {
-        if (!modulePromise) {
-            modulePromise = loader().catch((error) => {
-                modulePromise = undefined;
-                throw error;
-            });
-        }
-        return modulePromise;
-    };
-}
-export function registerToggleTlhGitAttributionCommand(pi, options = {}) {
-    const loadModule = createRetryableLazyImport(options.loadModule ?? (() => import("./attribution-command.js")));
+import { handleToggleTlhGitAttributionCommand } from "./attribution-command.js";
+export function registerToggleTlhGitAttributionCommand(pi) {
     pi.registerCommand("toggle-tlh-git-attribution", {
         description: "Toggle TLH git commit attribution",
-        handler: async (args, ctx) => {
-            const module = await loadModule();
-            await module.handleToggleTlhGitAttributionCommand(pi, args, ctx);
-        },
+        handler: (args, ctx) => handleToggleTlhGitAttributionCommand(pi, args, ctx),
     });
 }

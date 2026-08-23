@@ -2,22 +2,30 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
-import { TEMP_ROOT_DIR, type JsonSchemaObject, type ResolvedToolBudget } from "../../shared/types.ts";
 import {
-	findModelInfo,
-	getSupportedThinkingLevels,
-	THINKING_LEVELS,
-	type ModelInfo,
-	type ThinkingLevel,
+  STRUCTURED_OUTPUT_CAPTURE_ENV,
+  STRUCTURED_OUTPUT_SCHEMA_ENV,
+} from "./structured-output.ts";
+import {
+  TEMP_ROOT_DIR,
+  type JsonSchemaObject,
+  type ResolvedToolBudget,
+} from "../../shared/types.ts";
+import {
+  findModelInfo,
+  getSupportedThinkingLevels,
+  THINKING_LEVELS,
+  type ModelInfo,
+  type ThinkingLevel,
 } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const TASK_ARG_LIMIT = 8000;
-const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
+const RUNTIME_EXTENSION_SUFFIX =
+  path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
-	path.dirname(fileURLToPath(import.meta.url)),
-	`subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`,
+  path.dirname(fileURLToPath(import.meta.url)),
+  `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`,
 );
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
@@ -38,76 +46,76 @@ export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
 
 interface BuildPiArgsInput {
-	parentSessionId?: string;
-	baseArgs: string[];
-	task: string;
-	sessionEnabled: boolean;
-	sessionDir?: string;
-	sessionFile?: string;
-	model?: string;
-	thinking?: string | false;
-	availableModels?: ModelInfo[];
-	preferredModelProvider?: string;
-	systemPromptMode?: "append" | "replace";
-	inheritProjectContext: boolean;
-	inheritSkills: boolean;
-	requireReadTool?: boolean;
-	tools?: string[];
-	extensions?: string[];
-	subagentOnlyExtensions?: string[];
-	systemPrompt?: string | null;
-	cwd?: string;
-	promptFileStem?: string;
-	intercomSessionName?: string;
-	orchestratorIntercomTarget?: string;
-	runId?: string;
-	childAgentName?: string;
-	childIndex?: number;
-	steerInboxDir?: string;
-	structuredOutput?: {
-		schema: JsonSchemaObject;
-		schemaPath: string;
-		outputPath: string;
-	};
-	toolBudget?: ResolvedToolBudget;
+  parentSessionId?: string;
+  baseArgs: string[];
+  task: string;
+  sessionEnabled: boolean;
+  sessionDir?: string;
+  sessionFile?: string;
+  model?: string;
+  thinking?: string | false;
+  availableModels?: ModelInfo[];
+  preferredModelProvider?: string;
+  systemPromptMode?: "append" | "replace";
+  inheritProjectContext: boolean;
+  inheritSkills: boolean;
+  requireReadTool?: boolean;
+  tools?: string[];
+  extensions?: string[];
+  subagentOnlyExtensions?: string[];
+  systemPrompt?: string | null;
+  cwd?: string;
+  promptFileStem?: string;
+  intercomSessionName?: string;
+  orchestratorIntercomTarget?: string;
+  runId?: string;
+  childAgentName?: string;
+  childIndex?: number;
+  steerInboxDir?: string;
+  structuredOutput?: {
+    schema: JsonSchemaObject;
+    schemaPath: string;
+    outputPath: string;
+  };
+  toolBudget?: ResolvedToolBudget;
 }
 
 interface BuildPiArgsResult {
-	args: string[];
-	env: Record<string, string | undefined>;
-	tempDir?: string;
+  args: string[];
+  env: Record<string, string | undefined>;
+  tempDir?: string;
 }
 
 function sanitizeSupervisorChannelSegment(value: string): string {
-	return (
-		value
-			.trim()
-			.replace(/[^A-Za-z0-9._-]+/g, "-")
-			.replace(/^-+|-+$/g, "") || "unknown"
-	);
+  return (
+    value
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unknown"
+  );
 }
 
 function supervisorChannelDir(runId: string, agent: string, childIndex: number): string {
-	return path.join(
-		TEMP_ROOT_DIR,
-		"supervisor-channels",
-		`${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`,
-	);
+  return path.join(
+    TEMP_ROOT_DIR,
+    "supervisor-channels",
+    `${sanitizeSupervisorChannelSegment(runId)}-${sanitizeSupervisorChannelSegment(agent)}-${childIndex}`,
+  );
 }
 
-export interface ThinkingSuffixOptions {
-	availableModels?: ModelInfo[];
-	preferredModelProvider?: string;
+interface ThinkingSuffixOptions {
+  availableModels?: ModelInfo[];
+  preferredModelProvider?: string;
 }
 
 function shouldDropThinkingLevel(modelInfo: ModelInfo | undefined, thinking: string): boolean {
-	if (!modelInfo) return false;
-	if (modelInfo.reasoning === false) return thinking !== "off";
+  if (!modelInfo) return false;
+  if (modelInfo.reasoning === false) return thinking !== "off";
 
-	// Do not reuse getSupportedThinkingLevels' no-map default here: settings
-	// validation can be strict, but absent runtime metadata must fail open.
-	if (!modelInfo.thinkingLevelMap) return false;
-	return !getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel);
+  // Do not reuse getSupportedThinkingLevels' no-map default here: settings
+  // validation can be strict, but absent runtime metadata must fail open.
+  if (!modelInfo.thinkingLevelMap) return false;
+  return !getSupportedThinkingLevels(modelInfo).includes(thinking as ThinkingLevel);
 }
 
 /**
@@ -116,179 +124,191 @@ function shouldDropThinkingLevel(modelInfo: ModelInfo | undefined, thinking: str
  * without changing the value that function returns.
  */
 export function getThinkingLevelDropNote(
-	model: string | undefined,
-	thinking: string | false | undefined,
-	replaceExisting = false,
-	options?: ThinkingSuffixOptions,
+  model: string | undefined,
+  thinking: string | false | undefined,
+  replaceExisting = false,
+  options?: ThinkingSuffixOptions,
 ): string | undefined {
-	if (!model || !thinking || replaceExisting) return undefined;
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) return undefined;
-	const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
-	if (!shouldDropThinkingLevel(modelInfo, thinking)) return undefined;
-	return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
+  if (!model || !thinking || replaceExisting) return undefined;
+  const colonIdx = model.lastIndexOf(":");
+  if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1)))
+    return undefined;
+  const modelInfo = findModelInfo(model, options?.availableModels, options?.preferredModelProvider);
+  if (!shouldDropThinkingLevel(modelInfo, thinking)) return undefined;
+  return `Notice: Thinking level "${thinking}" was dropped for model "${model}" because the model registry does not advertise support.`;
 }
 
 export function applyThinkingSuffix(
-	model: string | undefined,
-	thinking: string | false | undefined,
-	replaceExisting = false,
-	options?: ThinkingSuffixOptions,
+  model: string | undefined,
+  thinking: string | false | undefined,
+  replaceExisting = false,
+  options?: ThinkingSuffixOptions,
 ): string | undefined {
-	if (!model || !thinking) return model;
-	const colonIdx = model.lastIndexOf(":");
-	if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
-		return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
-	}
-	// replaceExisting is reserved for explicit caller overrides; preserve that deliberate instruction.
-	if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options)) return model;
-	return `${model}:${thinking}`;
+  if (!model || !thinking) return model;
+  const colonIdx = model.lastIndexOf(":");
+  if (colonIdx !== -1 && THINKING_LEVELS.some((level) => level === model.substring(colonIdx + 1))) {
+    return replaceExisting ? `${model.slice(0, colonIdx)}:${thinking}` : model;
+  }
+  // replaceExisting is reserved for explicit caller overrides; preserve that deliberate instruction.
+  if (!replaceExisting && getThinkingLevelDropNote(model, thinking, false, options)) return model;
+  return `${model}:${thinking}`;
 }
 
 export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
-	const args = [...input.baseArgs];
+  const args = [...input.baseArgs];
 
-	if (input.sessionFile) {
-		fs.mkdirSync(path.dirname(input.sessionFile), { recursive: true });
-		args.push("--session", input.sessionFile);
-	} else {
-		if (!input.sessionEnabled) {
-			args.push("--no-session");
-		}
-		if (input.sessionDir) {
-			fs.mkdirSync(input.sessionDir, { recursive: true });
-			args.push("--session-dir", input.sessionDir);
-		}
-	}
+  if (input.sessionFile) {
+    fs.mkdirSync(path.dirname(input.sessionFile), { recursive: true });
+    args.push("--session", input.sessionFile);
+  } else {
+    if (!input.sessionEnabled) {
+      args.push("--no-session");
+    }
+    if (input.sessionDir) {
+      fs.mkdirSync(input.sessionDir, { recursive: true });
+      args.push("--session-dir", input.sessionDir);
+    }
+  }
 
-	const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
-		availableModels: input.availableModels,
-		preferredModelProvider: input.preferredModelProvider,
-	});
-	if (modelArg) {
-		args.push("--model", modelArg);
-	}
+  const modelArg = applyThinkingSuffix(input.model, input.thinking, false, {
+    availableModels: input.availableModels,
+    preferredModelProvider: input.preferredModelProvider,
+  });
+  if (modelArg) {
+    args.push("--model", modelArg);
+  }
 
-	const declaredBuiltinToolsBase =
-		input.tools?.filter((tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) ?? [];
-	const declaredBuiltinTools =
-		input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
-			? ["read", ...declaredBuiltinToolsBase]
-			: declaredBuiltinToolsBase;
-	const toolExtensionPaths: string[] = [];
-	if (input.tools?.length) {
-		const builtinTools = [...declaredBuiltinTools];
-		for (const tool of input.tools) {
-			if (
-				!declaredBuiltinTools.includes(tool) &&
-				(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))
-			) {
-				toolExtensionPaths.push(tool);
-			}
-		}
-		if (builtinTools.length > 0) {
-			args.push("--tools", builtinTools.join(","));
-		}
-	}
+  const declaredBuiltinToolsBase =
+    input.tools?.filter(
+      (tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
+    ) ?? [];
+  const declaredBuiltinTools =
+    input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
+      ? ["read", ...declaredBuiltinToolsBase]
+      : declaredBuiltinToolsBase;
+  const toolExtensionPaths: string[] = [];
+  if (input.tools?.length) {
+    const builtinTools = [...declaredBuiltinTools];
+    for (const tool of input.tools) {
+      if (
+        !declaredBuiltinTools.includes(tool) &&
+        (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))
+      ) {
+        toolExtensionPaths.push(tool);
+      }
+    }
+    if (builtinTools.length > 0) {
+      args.push("--tools", builtinTools.join(","));
+    }
+  }
 
-	const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
-	if (input.extensions !== undefined) {
-		args.push("--no-extensions");
-		for (const extPath of [
-			...new Set([
-				...runtimeExtensions,
-				...toolExtensionPaths,
-				...input.extensions,
-				...(input.subagentOnlyExtensions ?? []),
-			]),
-		]) {
-			args.push("--extension", extPath);
-		}
-	} else {
-		for (const extPath of [
-			...new Set([...runtimeExtensions, ...toolExtensionPaths, ...(input.subagentOnlyExtensions ?? [])]),
-		]) {
-			args.push("--extension", extPath);
-		}
-	}
+  const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
+  if (input.extensions !== undefined) {
+    args.push("--no-extensions");
+    for (const extPath of new Set([
+      ...runtimeExtensions,
+      ...toolExtensionPaths,
+      ...input.extensions,
+      ...(input.subagentOnlyExtensions ?? []),
+    ])) {
+      args.push("--extension", extPath);
+    }
+  } else {
+    for (const extPath of new Set([
+      ...runtimeExtensions,
+      ...toolExtensionPaths,
+      ...(input.subagentOnlyExtensions ?? []),
+    ])) {
+      args.push("--extension", extPath);
+    }
+  }
 
-	if (!input.inheritSkills) {
-		args.push("--no-skills");
-	}
+  if (!input.inheritSkills) {
+    args.push("--no-skills");
+  }
 
-	let tempDir: string | undefined;
-	if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-		const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
-		const promptPath = path.join(tempDir, `${stem}.md`);
-		fs.writeFileSync(promptPath, input.systemPrompt, { mode: 0o600 });
-		args.push(input.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt", promptPath);
-	}
+  let tempDir: string | undefined;
+  if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+    const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
+    const promptPath = path.join(tempDir, `${stem}.md`);
+    fs.writeFileSync(promptPath, input.systemPrompt, { mode: 0o600 });
+    args.push(
+      input.systemPromptMode === "replace" ? "--system-prompt" : "--append-system-prompt",
+      promptPath,
+    );
+  }
 
-	if (input.task.length > TASK_ARG_LIMIT) {
-		if (!tempDir) {
-			tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-		}
-		const taskFilePath = path.join(tempDir, "task.md");
-		fs.writeFileSync(taskFilePath, `Task: ${input.task}`, { mode: 0o600 });
-		args.push(`@${taskFilePath}`);
-	} else {
-		args.push(`Task: ${input.task}`);
-	}
+  if (input.task.length > TASK_ARG_LIMIT) {
+    if (!tempDir) {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+    }
+    const taskFilePath = path.join(tempDir, "task.md");
+    fs.writeFileSync(taskFilePath, `Task: ${input.task}`, { mode: 0o600 });
+    args.push(`@${taskFilePath}`);
+  } else {
+    args.push(`Task: ${input.task}`);
+  }
 
-	const env: Record<string, string | undefined> = {};
-	env[SUBAGENT_CHILD_ENV] = "1";
-	env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
-	env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
-	if (input.intercomSessionName) {
-		env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
-	}
-	if (input.orchestratorIntercomTarget) {
-		env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
-	}
-	if (input.parentSessionId) {
-		env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
-	}
-	if (input.orchestratorIntercomTarget && input.parentSessionId && input.runId && input.childAgentName) {
-		const childIndex = input.childIndex ?? 0;
-		const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
-		fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
-		env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
-	}
-	if (input.runId) {
-		env[SUBAGENT_RUN_ID_ENV] = input.runId;
-	}
-	if (input.childAgentName) {
-		env[SUBAGENT_CHILD_AGENT_ENV] = input.childAgentName;
-	}
-	if (input.childIndex !== undefined) {
-		env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
-	}
-	// Sentinel required by @diegopetrucci/pi-mcp-adapter (bundled in TLH):
-	// the adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
-	// An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
-	// widen every child subagent's tool surface. This assignment must not be removed.
-	env.MCP_DIRECT_TOOLS = "__none__";
-	if (input.structuredOutput) {
-		env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
-		env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
-	}
-	if (input.steerInboxDir) {
-		env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
-	}
-	const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
-	if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
+  const env: Record<string, string | undefined> = {};
+  env[SUBAGENT_CHILD_ENV] = "1";
+  env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
+  env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
+  if (input.intercomSessionName) {
+    env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
+  }
+  if (input.orchestratorIntercomTarget) {
+    env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
+  }
+  if (input.parentSessionId) {
+    env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
+  }
+  if (
+    input.orchestratorIntercomTarget &&
+    input.parentSessionId &&
+    input.runId &&
+    input.childAgentName
+  ) {
+    const childIndex = input.childIndex ?? 0;
+    const channelDir = supervisorChannelDir(input.runId, input.childAgentName, childIndex);
+    fs.mkdirSync(path.join(channelDir, "requests"), { recursive: true });
+    env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+  }
+  if (input.runId) {
+    env[SUBAGENT_RUN_ID_ENV] = input.runId;
+  }
+  if (input.childAgentName) {
+    env[SUBAGENT_CHILD_AGENT_ENV] = input.childAgentName;
+  }
+  if (input.childIndex !== undefined) {
+    env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
+  }
+  // Sentinel required by @diegopetrucci/pi-mcp-adapter (bundled in TLH):
+  // the adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
+  // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
+  // widen every child subagent's tool surface. This assignment must not be removed.
+  env.MCP_DIRECT_TOOLS = "__none__";
+  if (input.structuredOutput) {
+    env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
+    env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
+  }
+  if (input.steerInboxDir) {
+    env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
+  }
+  const encodedToolBudget = encodeToolBudgetEnv(input.toolBudget);
+  if (encodedToolBudget) env[TOOL_BUDGET_ENV] = encodedToolBudget;
 
-	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
+  env[SUBAGENT_PARENT_SESSION_ENV] =
+    input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 
-	return { args, env, tempDir };
+  return { args, env, tempDir };
 }
 
 export function cleanupTempDir(tempDir: string | null | undefined): void {
-	if (!tempDir) return;
-	try {
-		fs.rmSync(tempDir, { recursive: true, force: true });
-	} catch {
-		// Temp cleanup is best effort.
-	}
+  if (!tempDir) return;
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {
+    // Temp cleanup is best effort.
+  }
 }

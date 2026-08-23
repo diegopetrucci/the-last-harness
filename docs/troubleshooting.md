@@ -425,4 +425,5 @@ Use `--dry-run` first if you are unsure which uninstall plan you want.
 
 - [Install, update, and uninstall](install.md)
 - [Slash commands and bundled command surface](commands.md)
+- [Provider auth-health warning (⚠ reauth)](subagents.md#provider-auth-health-warning)
 - [Project overview](../README.md)

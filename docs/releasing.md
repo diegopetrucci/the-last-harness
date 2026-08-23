@@ -27,7 +27,7 @@ Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
 
 Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
 
-- `docs/install.md`: pinned-tag install examples and the non-stable-track warning examples should use `v$version`.
+- `docs/install.md`: pinned-tag install examples and the non-stable footer-label examples should use `v$version`.
 - `README.md` and `docs/install.md`: any pinned Pi runtime version, minimum Node.js version, managed Gnosis version, managed `tk` version, or bundled default-extension behavior should match the release metadata and installer constants.
 - `docs/releasing.md`: keep this checklist aligned when release validation adds or removes required documentation checks.
 

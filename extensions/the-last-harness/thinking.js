@@ -1,4 +1,4 @@
-import { FALLBACK_THINKING_LEVELS, THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
+import { FALLBACK_THINKING_LEVELS, THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS, } from "./constants.js";
 export function getAvailableThinkingLevels(model) {
     if (!model) {
         return FALLBACK_THINKING_LEVELS;

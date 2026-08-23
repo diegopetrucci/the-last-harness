@@ -15,7 +15,6 @@ export function installTlhPackageUpdateNotificationOverride() {
     if (interactiveModePrototype[TLH_PACKAGE_UPDATE_NOTICE_PATCHED]) {
         return;
     }
-    interactiveModePrototype.showPackageUpdateNotification =
-        showTlhPackageUpdateNotification;
+    interactiveModePrototype.showPackageUpdateNotification = showTlhPackageUpdateNotification;
     interactiveModePrototype[TLH_PACKAGE_UPDATE_NOTICE_PATCHED] = true;
 }

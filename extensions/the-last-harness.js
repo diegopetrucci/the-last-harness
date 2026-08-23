@@ -1,25 +1,32 @@
+import { getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerClaudeSkillsDiscovery } from "./the-last-harness/claude-skills.js";
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
 import { createTlhFooter } from "./the-last-harness/footer.js";
 import { FooterGitCache } from "./the-last-harness/footer-git-cache.js";
+import { createProviderAuthHealthStore, } from "./the-last-harness/provider-auth-health.js";
 import { createTlhHeader } from "./the-last-harness/header.js";
 import { readTlhInstallNotice } from "./the-last-harness/install-state.js";
+import { estimateTlhLaunchContextAllocation } from "./the-last-harness/launch-context.js";
 import { installTlhModelVisibilityFilter } from "./the-last-harness/model-visibility.js";
 import { installTlhNewVersionNotificationOverride } from "./the-last-harness/new-version-notice.js";
 import { installTlhPackageUpdateNotificationOverride } from "./the-last-harness/package-update-notice.js";
 import { registerTlhPrimaryAgentRuntime } from "./the-last-harness/primary-agent-runtime.js";
-import { collectStartupResources } from "./the-last-harness/resources.js";
+import { collectStartupResourceSnapshot } from "./the-last-harness/resources.js";
 import { getTlhStartupTip } from "./the-last-harness/startup-tip.js";
 import { maybeNotifyModelEffortDrift } from "./the-last-harness/model-effort-notice.js";
 import { registerReconcileCommand } from "./the-last-harness/reconcile-command.js";
 import { registerSubagentSettingsCommand } from "./the-last-harness/subagent-settings.js";
 import { createLazyTlhSubscriptionUsageService } from "./the-last-harness/subscription-usage-facade.js";
+import { handleTlhChangelogCommand } from "./the-last-harness/changelog.js";
+import { scheduleTlhLaunchTelemetry } from "./the-last-harness/launch-telemetry.js";
+import { createReviewCommandHandler } from "./the-last-harness/review.js";
 import { registerLazyTlhTicketWorkflowUi } from "./the-last-harness/ticket-workflow-ui-facade.js";
 import { getCachedTlhUsageWeeklyVisibility, refreshCachedTlhUsageWeeklyVisibility, registerUsageCommand, } from "./the-last-harness/usage-limits.js";
 import { getTlhHeaderUpdate, maybeNotifyAvailableTlhUpdate, persistTlhLastSeenVersion, } from "./the-last-harness/update-check.js";
@@ -45,11 +52,17 @@ function createRetryableLazyImport(loader) {
         return modulePromise;
     };
 }
-const EMPTY_STARTUP_RESOURCES = { context: [], skills: [], prompts: [], extensions: [], themes: [] };
+const EMPTY_STARTUP_RESOURCES = {
+    context: [],
+    skills: [],
+    prompts: [],
+    extensions: [],
+    themes: [],
+};
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
 };
-let startupResourceCollector = collectStartupResources;
+let startupResourceCollector = collectStartupResourceSnapshot;
 export const __testing = {
     setDeferredStartupTaskSchedulerForTests(scheduler) {
         scheduleDeferredStartupTask = scheduler;
@@ -61,7 +74,7 @@ export const __testing = {
         scheduleDeferredStartupTask = (task) => {
             setImmediate(task);
         };
-        startupResourceCollector = collectStartupResources;
+        startupResourceCollector = collectStartupResourceSnapshot;
     },
 };
 export default function theLastHarness(pi) {
@@ -75,41 +88,37 @@ export default function theLastHarness(pi) {
         activeTlhHeaderComponentId = 0;
         return activeTlhHeaderSessionToken;
     };
+    let activeProviderAuthHealthStore;
+    let activeProviderAuthHealthUnsubscribe;
     pi.on("session_shutdown", () => {
         invalidateActiveTlhHeaderSession();
+        activeProviderAuthHealthUnsubscribe?.();
+        activeProviderAuthHealthUnsubscribe = undefined;
+        activeProviderAuthHealthStore?.dispose();
+        activeProviderAuthHealthStore = undefined;
     });
     installTlhModelVisibilityFilter();
+    registerClaudeSkillsDiscovery(pi);
     registerContextCap(pi);
     const activityTracker = registerTlhEffectiveActivityTracker(pi);
     registerTlhActivityReporters(pi, activityTracker);
-    const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, { env: process.env });
+    const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, {
+        env: process.env,
+        getProviderAuthHealthStore: () => activeProviderAuthHealthStore,
+    });
     if (!primaryAgentRuntime) {
         return;
     }
     installTlhPackageUpdateNotificationOverride();
     installTlhNewVersionNotificationOverride();
     registerToggleTlhGitAttributionCommand(pi);
-    const loadReviewModule = createRetryableLazyImport(() => import("./the-last-harness/review.js"));
+    const reviewCommandHandler = createReviewCommandHandler(pi);
     const loadTokensModule = createRetryableLazyImport(() => import("./the-last-harness/tokens.js"));
     const loadSessionLimitReportModule = createRetryableLazyImport(() => import("./the-last-harness/session-limit-report.js"));
     const loadAnnotateLastMessageModule = createRetryableLazyImport(() => import("./the-last-harness/annotate-last-message.js"));
-    const loadTlhChangelogModule = createRetryableLazyImport(() => import("./the-last-harness/changelog.js"));
-    let reviewCommandHandlerPromise;
     let tokensCommandHandlerPromise;
     let sessionLimitReportCommandHandlerPromise;
     let annotateLastMessageCommandPromise;
-    let tlhChangelogCommandHandlerPromise;
-    const getReviewCommandHandler = () => {
-        if (!reviewCommandHandlerPromise) {
-            reviewCommandHandlerPromise = loadReviewModule()
-                .then((module) => module.createReviewCommandHandler(pi))
-                .catch((error) => {
-                reviewCommandHandlerPromise = undefined;
-                throw error;
-            });
-        }
-        return reviewCommandHandlerPromise;
-    };
     const getTokensCommandHandler = () => {
         if (!tokensCommandHandlerPromise) {
             tokensCommandHandlerPromise = loadTokensModule()
@@ -141,6 +150,7 @@ export default function theLastHarness(pi) {
             annotateLastMessageCommandPromise = loadAnnotateLastMessageModule()
                 .then((module) => module.buildAnnotateLastMessageCommand({
                 sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
+                getTheme: { getMarkdownTheme, getSelectListTheme, getSettingsListTheme },
             }))
                 .catch((error) => {
                 annotateLastMessageCommandPromise = undefined;
@@ -148,17 +158,6 @@ export default function theLastHarness(pi) {
             });
         }
         return annotateLastMessageCommandPromise;
-    };
-    const getTlhChangelogCommandHandler = () => {
-        if (!tlhChangelogCommandHandlerPromise) {
-            tlhChangelogCommandHandlerPromise = loadTlhChangelogModule()
-                .then((module) => module.handleTlhChangelogCommand)
-                .catch((error) => {
-                tlhChangelogCommandHandlerPromise = undefined;
-                throw error;
-            });
-        }
-        return tlhChangelogCommandHandlerPromise;
     };
     pi.registerCommand("annotate-last-message", {
         description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
@@ -186,17 +185,11 @@ export default function theLastHarness(pi) {
     pi.registerCommand("review", {
         description: REVIEW_COMMAND_DESCRIPTION,
         getArgumentCompletions: () => null,
-        handler: async (args, ctx) => {
-            const handler = await getReviewCommandHandler();
-            await handler(args, ctx);
-        },
+        handler: reviewCommandHandler,
     });
     pi.registerCommand("tlh-changelog", {
         description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
-        handler: async (args, ctx) => {
-            const handler = await getTlhChangelogCommandHandler();
-            await handler(pi, args, ctx);
-        },
+        handler: (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
     });
     pi.registerCommand("tokens", {
         description: TOKENS_COMMAND_DESCRIPTION,
@@ -244,43 +237,50 @@ export default function theLastHarness(pi) {
             return;
         }
         if (event.reason === "startup") {
-            void import("./the-last-harness/launch-telemetry.js")
-                .then(({ scheduleTlhLaunchTelemetry }) => {
+            try {
                 scheduleTlhLaunchTelemetry(ctx, primaryAgentRuntime.activePrimaryAgentPrompt()?.name);
-            })
-                .catch(() => undefined);
+            }
+            catch {
+            }
         }
         ctx.ui.addAutocompleteProvider(createTlhAutocompleteProvider);
         const sessionState = { resources: EMPTY_STARTUP_RESOURCES };
         const headerUpdate = getTlhHeaderUpdate();
         const startupTip = event.reason === "startup" ? getTlhStartupTip() : undefined;
         const installNotice = readTlhInstallNotice();
+        const providerAuthHealthStore = createProviderAuthHealthStore();
+        activeProviderAuthHealthStore = providerAuthHealthStore;
         if (typeof ctx.ui.setFooter === "function") {
             ctx.ui.setFooter((tui, theme, footerData) => {
                 subscriptionUsageService.registerFooterRenderRequest(ctx, () => tui.requestRender());
                 const gitCache = new FooterGitCache({
                     cwd: () => ctx.sessionManager.getCwd(),
                     onChange: () => tui.requestRender(),
-                    onBranchChangeSource: typeof footerData?.onBranchChange === "function" ? (cb) => footerData.onBranchChange(cb) : undefined,
+                    onBranchChangeSource: typeof footerData?.onBranchChange === "function"
+                        ? (cb) => footerData.onBranchChange(cb)
+                        : undefined,
                 });
+                activeProviderAuthHealthUnsubscribe = providerAuthHealthStore.subscribe(() => tui.requestRender());
                 return createTlhFooter(pi, ctx, theme, () => primaryAgentRuntime.currentPrimaryAgentLabel(), footerData, {
                     subscriptionUsage: subscriptionUsageService,
                     shouldShowWeekly: getCachedTlhUsageWeeklyVisibility,
-                }, gitCache, installNotice);
+                }, gitCache, installNotice, providerAuthHealthStore);
             });
         }
         if (typeof ctx.ui.setHeader === "function") {
             ctx.ui.setHeader((tui, theme) => {
                 const componentId = ++tlhHeaderComponentGeneration;
                 const requestRender = () => {
-                    if (activeTlhHeaderSessionToken !== sessionToken || activeTlhHeaderComponentId !== componentId) {
+                    if (activeTlhHeaderSessionToken !== sessionToken ||
+                        activeTlhHeaderComponentId !== componentId) {
                         return;
                     }
                     tui.requestRender();
                 };
-                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
+                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, {
                     requestRender,
                     startupTip,
+                    launchContextAllocation: sessionState.launchContextAllocation,
                 });
                 sessionState.header = header;
                 sessionState.requestRender = requestRender;
@@ -297,15 +297,43 @@ export default function theLastHarness(pi) {
             void maybeNotifyAvailableTlhUpdate(ctx, {
                 canNotify: () => activeTlhHeaderSessionToken === sessionToken,
             }).catch(() => undefined);
+            const launchContextInputs = (() => {
+                try {
+                    const baseSystemPrompt = ctx.getSystemPrompt();
+                    return {
+                        contextWindow: ctx.model?.contextWindow,
+                        baseSystemPrompt,
+                        launchSystemPrompt: primaryAgentRuntime.buildLaunchSystemPrompt(ctx, baseSystemPrompt),
+                        activeToolNames: pi.getActiveTools(),
+                        allTools: pi.getAllTools(),
+                    };
+                }
+                catch {
+                    return undefined;
+                }
+            })();
             void startupResourceCollector(ctx.cwd, {
                 projectTrusted: getActiveProjectTrustDecision(ctx),
             })
-                .then((resources) => {
+                .then((snapshot) => {
                 if (activeTlhHeaderSessionToken !== sessionToken) {
                     return;
                 }
-                sessionState.resources = resources;
-                sessionState.header?.setResources(resources);
+                let launchContextAllocation;
+                try {
+                    launchContextAllocation = launchContextInputs
+                        ? estimateTlhLaunchContextAllocation({
+                            ...launchContextInputs,
+                            promptMetadata: snapshot.promptMetadata,
+                        })
+                        : undefined;
+                }
+                catch {
+                }
+                sessionState.resources = snapshot.resources;
+                sessionState.launchContextAllocation = launchContextAllocation;
+                sessionState.header?.setResources(snapshot.resources);
+                sessionState.header?.setLaunchContextAllocation(launchContextAllocation);
                 sessionState.requestRender?.();
             })
                 .catch(() => {

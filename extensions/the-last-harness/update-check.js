@@ -1,6 +1,6 @@
-import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { TLH_LATEST_RELEASE_API_URL, TLH_NAME, TLH_RELEASES_URL, TLH_UPDATE_CHECK_INTERVAL_MS, TLH_UPDATE_CHECK_TIMEOUT_MS, } from "./constants.js";
-import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion } from "./package-version.js";
+import { compareTlhVersions, getTlhVersion, isNewerTlhVersion, normalizeTlhVersion, } from "./package-version.js";
 import { readTlhInstallState, readTlhStartupState, tlhStartupStatePath, updateTlhStartupState, } from "./profile-state.js";
 import { isRecord } from "./common.js";
 const defaultTlhUpdateCheckHooks = {
@@ -19,7 +19,9 @@ export function getTlhHeaderUpdate() {
     checkedTlhHeaderUpdate = true;
     const currentVersion = getTlhVersion();
     const lastSeenVersion = readTlhStartupState().lastSeenVersion;
-    if (typeof lastSeenVersion === "string" && lastSeenVersion.length > 0 && lastSeenVersion !== currentVersion) {
+    if (typeof lastSeenVersion === "string" &&
+        lastSeenVersion.length > 0 &&
+        lastSeenVersion !== currentVersion) {
         cachedTlhHeaderUpdate = { version: currentVersion, releasesUrl: TLH_RELEASES_URL };
     }
     return cachedTlhHeaderUpdate;
@@ -50,7 +52,9 @@ function getCachedTlhLatestRelease(state) {
         (typeof updateCheck.latestReleaseUrl !== "string" || !updateCheck.latestReleaseUrl.trim())) {
         return undefined;
     }
-    const tagName = typeof updateCheck.latestTagName === "string" ? updateCheck.latestTagName.trim() : `v${version}`;
+    const tagName = typeof updateCheck.latestTagName === "string"
+        ? updateCheck.latestTagName.trim()
+        : `v${version}`;
     const releaseUrl = typeof updateCheck.latestReleaseUrl === "string"
         ? updateCheck.latestReleaseUrl.trim()
         : `${TLH_RELEASES_URL}/tag/${tagName}`;
@@ -60,7 +64,9 @@ function shouldRefreshTlhLatestRelease(state) {
     const checkedAt = getTlhUpdateCheckState(state).checkedAt;
     const checkedAtMs = typeof checkedAt === "string" ? Date.parse(checkedAt) : Number.NaN;
     const now = tlhUpdateCheckHooks.now();
-    return !Number.isFinite(checkedAtMs) || checkedAtMs > now || now - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS;
+    return (!Number.isFinite(checkedAtMs) ||
+        checkedAtMs > now ||
+        now - checkedAtMs >= TLH_UPDATE_CHECK_INTERVAL_MS);
 }
 function shouldSkipTlhUpdateCheck(cwd) {
     if (!tlhStartupStatePath() ||
@@ -101,7 +107,9 @@ function normalizeInstallStateValue(value) {
     return normalized ? normalized : undefined;
 }
 export function buildTlhUpdateNotificationMessage(latestRelease, installState = readTlhInstallState()) {
-    const latestLabel = latestRelease.tagName.startsWith("v") ? latestRelease.tagName : `v${latestRelease.version}`;
+    const latestLabel = latestRelease.tagName.startsWith("v")
+        ? latestRelease.tagName
+        : `v${latestRelease.version}`;
     const installTrack = normalizeInstallStateValue(installState.track);
     if (installTrack === "latest-release") {
         return `The Last Harness update available. Run \`tlh update\` to get on version ${latestLabel}.\nRelease notes: ${latestRelease.releaseUrl}`;
@@ -135,9 +143,7 @@ function maybeNotifyCachedTlhUpdate(ctx, currentVersion, state, options = {}) {
     }
     const updateCheck = getTlhUpdateCheckState(state);
     const notificationKey = notifiedTlhUpdateKey(latestRelease.version);
-    if (updateCheck.lastNotifiedVersion === latestRelease.version ||
-        notifiedTlhUpdateVersions.has(notificationKey) ||
-        !canNotifyTlhUpdate(options)) {
+    if (notifiedTlhUpdateVersions.has(notificationKey) || !canNotifyTlhUpdate(options)) {
         return false;
     }
     notifyTlhUpdate(ctx, latestRelease);

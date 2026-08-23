@@ -2,7 +2,7 @@
 
 ## Install
 
-Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.84.1 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
+Requires Node.js >=22.19.0 on `PATH`. TLH always installs its own pinned Pi 0.84.2 into a private runtime at `~/.the-last-harness/runtime` — a sibling of the isolated agent dir. A global or pre-installed `pi` on your PATH is never used or modified; tlh and any existing `pi` are fully decoupled. Install or repair failures stop with an actionable error.
 
 Run the one-liner:
 
@@ -21,7 +21,7 @@ The installer is split into a stage-0 Bash bootstrapper (`install.sh`) and a sta
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.37.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH shows a header warning only for those installs. It appears above `Context:` and reads `Warning: running TLH from {name} track` (for example `Warning: running TLH from v0.37.0 track`, `Warning: running TLH from main track`, `Warning: running TLH from local track`, or `Warning: running TLH from unknown track`). Official latest-release installs skip that warning, though interactive starts may still show a quiet startup tip.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.38.1`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
@@ -69,18 +69,18 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.37.0/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update
 
 You can just run `tlh update`.
 
-This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.84.1 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
+This refreshes the isolated checkout according to your update track and re-merges installer defaults. Latest-release installs move to the newest GitHub Release, pinned-tag installs stay on their pinned tag, and `main`/ref installs keep following that ref. `tlh update` also repairs the private Pi runtime at `~/.the-last-harness/runtime` back to the pinned 0.84.2 when needed. If you are updating from an older install without `tlh update`, rerun the latest-release installer once.
 
 If TLH starts with the notice ``TLH extension updates are available. Run `tlh update --extensions` to update them.``, that notice refers to isolated extension/package updates only. `tlh update --extensions` runs the upstream package refresh against the TLH profile without changing installer-managed checkout state, wrapper files, or update-track metadata. Installer-track and installer-owned options such as `--track`, `--ref`, `--repo`, `--package-source`, `--force`, `--no-settings`, and `--no-wrapper` require plain `tlh update` instead.
 
-At launch, TLH also shows that `Warning: running TLH from {name} track` header warning above `Context:` when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The warning is informational only; it does not change your isolated install or auto-update anything.
+At launch, TLH keeps the install-track label in the footer when your install metadata says you are not on the official latest stable path, or when it cannot verify that metadata. The footer label is informational only; it does not change your isolated install or auto-update anything.
 
 - If you installed from a pinned release tag, a non-stable git ref, or another custom update track while still using the default TLH repo/package source, return to the official latest stable release track with:
 
@@ -112,7 +112,7 @@ If a recognized external npm/git subagent entry remains in user or project setti
 
 There is no `tlh defaults disable subagents` path. For a one-run diagnostic, `tlh --no-extensions` disables **all** extensions without changing settings. The upstream resource selector exposed by `tlh config` can persistently disable the root-package resource `./extensions/subagents/src/extension/index.js`, but doing so breaks architect delegation and is not a supported steady state; reopen `tlh config` and re-enable that same resource to recover. Use the full uninstall flow below to remove TLH persistently. See [subagents.md](subagents.md) for runtime behavior and diagnostic details.
 
-At launch, TLH checks GitHub Releases in the background at most once per day and warns once when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
+At launch, TLH checks GitHub Releases in the background at most once per day and warns once per interactive TLH process launch when a newer release is available. It never auto-updates. Set `PI_OFFLINE=1`, `PI_SKIP_VERSION_CHECK=1`, `TLH_SKIP_UPDATE_CHECK=1`, or `"tlh": { "updateCheck": { "enabled": false } }` in the isolated settings to disable the check.
 
 Release builds with TelemetryDeck identifiers configured send pseudonymous telemetry from interactive `tlh` runs. `Tlh.launched` is sent at most once per interactive process start. The hashed random install ID means TelemetryDeck unique-user aggregation continues to represent installations rather than people or individual runs. Runtime provider and model values are privacy-filtered, only registered TLH experimental feature IDs are reported, and sensitive fields such as prompts, cwd, command arguments, repo names, file contents, settings contents, API keys, provider base URLs, auth state, headers, and account identifiers are omitted. See [`docs/telemetry.md`](telemetry.md) for the exact signal names, dimensions, filters, and semantics.
 
@@ -205,7 +205,7 @@ Backup files at the isolated-profile root (`settings.json.backup-*`, `keybinding
 
 ## First-party subagent configuration
 
-The installer provisions the first-party runtime's isolated config at `~/.the-last-harness/agent/extensions/subagent/config.json` with missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). To override the notice checkpoint, edit that file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores the runtime's four-minute baseline and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration. See [subagents.md](subagents.md) for dispatch, control, artifact, and acceptance semantics.
+The installer provisions the first-party runtime's isolated config at `~/.the-last-harness/agent/extensions/subagent/config.json` with the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30). The runtime always registers the compact parent-facing subagent tool description. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. To override the notice checkpoint, edit the config file and set `control.activeNoticeAfterMs` to your preferred number of milliseconds; existing values and unrelated top-level or nested keys are preserved on later installs and updates. Setting `control.activeNoticeAfterMs` to `240000` restores the runtime's four-minute baseline and is preserved. Removing that key and rerunning `tlh update` (or the installer) restores TLH's managed `270000`/4m30 default. This only changes the isolated TLH profile and never the normal `~/.pi/agent` configuration. See [subagents.md](subagents.md) for dispatch, control, artifact, and acceptance semantics.
 
 ### Scout run timeout cap
 

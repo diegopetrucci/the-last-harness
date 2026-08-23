@@ -2,20 +2,22 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getLegacyGlobalAgentsDir, hasCustomPiAgentDir, isGlobalAgentsDir } from "../shared/profile.js";
+import { getLegacyGlobalAgentsDir, hasCustomPiAgentDir, isGlobalAgentsDir, } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 const skillCache = new Map();
 const MAX_CACHE_SIZE = 50;
 let loadSkillsCache = null;
 const LOAD_SKILLS_CACHE_TTL_MS = 5000;
 const SUBAGENT_ORCHESTRATION_SKILL = "pi-subagents";
-const SOURCE_PRIORITY = {
+export const SOURCE_PRIORITY = {
     project: 700,
     "project-settings": 650,
     "project-package": 600,
     user: 300,
     "user-settings": 250,
     "user-package": 200,
+    "project-claude": 180,
+    "user-claude": 170,
     extension: 150,
     builtin: 100,
     unknown: 0,
@@ -33,12 +35,26 @@ function isWithinPath(filePath, dir) {
     const relative = path.relative(dir, filePath);
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function readOptionalJsonFile(filePath, label) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+        const code = typeof error === "object" && error !== null && "code" in error
+            ? error.code
+            : undefined;
         if (code === "ENOENT")
             return null;
         const message = error instanceof Error ? error.message : String(error);
@@ -49,7 +65,8 @@ function readOptionalJsonFile(filePath, label) {
 }
 function readJsonFileBestEffort(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch {
         return null;
@@ -140,8 +157,16 @@ function collectSettingsSkillPaths(cwd, agentDir) {
     const results = [];
     const projectConfigDir = getProjectConfigDir(cwd);
     const settingsFiles = [
-        { file: path.join(projectConfigDir, "settings.json"), base: projectConfigDir, source: "project-settings" },
-        { file: path.join(agentDir, "settings.json"), base: agentDir, source: "user-settings" },
+        {
+            file: path.join(projectConfigDir, "settings.json"),
+            base: projectConfigDir,
+            source: "project-settings",
+        },
+        {
+            file: path.join(agentDir, "settings.json"),
+            base: agentDir,
+            source: "user-settings",
+        },
     ];
     for (const { file, base, source } of settingsFiles) {
         const settings = readOptionalJsonFile(file, "skills settings file");
@@ -242,7 +267,10 @@ function resolveSettingsPackageRoot(source, baseDir) {
         return path.join(os.homedir(), normalized.slice(2));
     if (path.isAbsolute(normalized))
         return normalized;
-    if (normalized === "." || normalized === ".." || normalized.startsWith("./") || normalized.startsWith("../")) {
+    if (normalized === "." ||
+        normalized === ".." ||
+        normalized.startsWith("./") ||
+        normalized.startsWith("../")) {
         return path.resolve(baseDir, normalized);
     }
     return undefined;
@@ -250,7 +278,11 @@ function resolveSettingsPackageRoot(source, baseDir) {
 function collectSettingsPackageSkillPaths(cwd, agentDir) {
     const projectConfigDir = getProjectConfigDir(cwd);
     const settingsFiles = [
-        { file: path.join(projectConfigDir, "settings.json"), base: projectConfigDir, source: "project-package" },
+        {
+            file: path.join(projectConfigDir, "settings.json"),
+            base: projectConfigDir,
+            source: "project-package",
+        },
         { file: path.join(agentDir, "settings.json"), base: agentDir, source: "user-package" },
     ];
     const results = [];
@@ -264,7 +296,9 @@ function collectSettingsPackageSkillPaths(cwd, agentDir) {
         for (const entry of packages) {
             const packageSource = typeof entry === "string"
                 ? entry
-                : typeof entry === "object" && entry !== null && typeof entry.source === "string"
+                : typeof entry === "object" &&
+                    entry !== null &&
+                    typeof entry.source === "string"
                     ? entry.source
                     : undefined;
             if (!packageSource)
@@ -277,27 +311,54 @@ function collectSettingsPackageSkillPaths(cwd, agentDir) {
     }
     return results;
 }
+function isClaudeSkillsDisabled(agentDir) {
+    try {
+        const settings = readOptionalJsonFile(path.join(agentDir, "settings.json"), "user settings");
+        if (!settings || typeof settings !== "object" || Array.isArray(settings))
+            return false;
+        const tlh = settings.tlh;
+        if (!tlh || typeof tlh !== "object" || Array.isArray(tlh))
+            return false;
+        const claudeSkills = tlh.claudeSkills;
+        if (!claudeSkills || typeof claudeSkills !== "object" || Array.isArray(claudeSkills))
+            return false;
+        return claudeSkills.disabled === true;
+    }
+    catch {
+        return false;
+    }
+}
 function buildSkillPaths(cwd, agentDir) {
     const projectConfigDir = getProjectConfigDir(cwd);
     const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
     const projectLegacyAgentsDir = path.join(cwd, ".agents");
+    const claudeDisabled = isClaudeSkillsDisabled(agentDir);
     const skillPaths = [
         { path: path.join(projectConfigDir, "skills"), source: "project" },
         ...(hasCustomPiAgentDir() && isGlobalAgentsDir(projectLegacyAgentsDir)
             ? []
             : [{ path: path.join(projectLegacyAgentsDir, "skills"), source: "project" }]),
         { path: path.join(agentDir, "skills"), source: "user" },
-        ...(legacyGlobalAgentsDir ? [{ path: path.join(legacyGlobalAgentsDir, "skills"), source: "user" }] : []),
+        ...(legacyGlobalAgentsDir
+            ? [{ path: path.join(legacyGlobalAgentsDir, "skills"), source: "user" }]
+            : []),
         ...collectInstalledPackageSkillPaths(cwd, agentDir),
         ...collectSettingsPackageSkillPaths(cwd, agentDir),
         ...extractSkillPathsFromPackageRoot(cwd, "project-package"),
         ...collectSettingsSkillPaths(cwd, agentDir),
+        ...(claudeDisabled
+            ? []
+            : [
+                { path: path.join(cwd, ".claude", "skills"), source: "project-claude" },
+                { path: path.join(os.homedir(), ".claude", "skills"), source: "user-claude" },
+            ]),
     ];
     const deduped = new Map();
     for (const entry of skillPaths) {
         const resolvedPath = path.resolve(entry.path);
         const existing = deduped.get(resolvedPath);
-        if (!existing || (SOURCE_PRIORITY[entry.source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
+        if (!existing ||
+            (SOURCE_PRIORITY[entry.source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
             deduped.set(resolvedPath, { path: resolvedPath, source: entry.source });
         }
     }
@@ -310,21 +371,31 @@ function inferSkillSource(filePath, cwd, agentDir, sourceHint) {
     const projectSkillsRoot = path.resolve(projectConfigRoot, "skills");
     const projectPackagesRoot = path.resolve(projectConfigRoot, "npm", "node_modules");
     const rawProjectAgentsRoot = path.resolve(cwd, ".agents");
-    const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot) ? undefined : rawProjectAgentsRoot;
+    const projectAgentsRoot = hasCustomPiAgentDir() && isGlobalAgentsDir(rawProjectAgentsRoot)
+        ? undefined
+        : rawProjectAgentsRoot;
+    const projectClaudeSkillsRoot = path.resolve(cwd, ".claude", "skills");
     const userSkillsRoot = path.resolve(agentDir, "skills");
     const userPackagesRoot = path.resolve(agentDir, "npm", "node_modules");
     const userAgentRoot = path.resolve(agentDir);
     const legacyGlobalAgentsDir = getLegacyGlobalAgentsDir();
     const userAgentsRoot = legacyGlobalAgentsDir ? path.resolve(legacyGlobalAgentsDir) : undefined;
+    const userClaudeSkillsRoot = path.resolve(os.homedir(), ".claude", "skills");
     if (isWithinPath(filePath, projectPackagesRoot))
         return "project-package";
-    if (isWithinPath(filePath, projectSkillsRoot) || (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
+    if (isWithinPath(filePath, projectClaudeSkillsRoot))
+        return "project-claude";
+    if (isWithinPath(filePath, projectSkillsRoot) ||
+        (projectAgentsRoot && isWithinPath(filePath, projectAgentsRoot)))
         return "project";
     if (isWithinPath(filePath, projectConfigRoot))
         return "project-settings";
     if (isWithinPath(filePath, userPackagesRoot))
         return "user-package";
-    if (isWithinPath(filePath, userSkillsRoot) || (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
+    if (isWithinPath(filePath, userClaudeSkillsRoot))
+        return "user-claude";
+    if (isWithinPath(filePath, userSkillsRoot) ||
+        (userAgentsRoot && isWithinPath(filePath, userAgentsRoot)))
         return "user";
     if (isWithinPath(filePath, userAgentRoot))
         return "user-settings";

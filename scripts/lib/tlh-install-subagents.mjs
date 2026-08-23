@@ -54,7 +54,7 @@ function sourceInstallPath(agentDir, source) {
 function pathWithin(root, target) {
     const normalizedRoot = resolve(root);
     const normalizedTarget = resolve(target);
-    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`);
+    return (normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${sep}`));
 }
 function hasSymlinkedParent(root, target) {
     let current = dirname(target);
@@ -77,7 +77,8 @@ function gitInstallationIsOwned(path) {
 function configuredNpmCommand(settings) {
     if (!isPlainObject(settings) || settings.npmCommand === undefined)
         return undefined;
-    if (!Array.isArray(settings.npmCommand) || settings.npmCommand.some((value) => typeof value !== "string")) {
+    if (!Array.isArray(settings.npmCommand) ||
+        settings.npmCommand.some((value) => typeof value !== "string")) {
         throw new Error("invalid npmCommand in isolated settings: expected an array of strings");
     }
     if (settings.npmCommand.length === 0)
@@ -101,14 +102,17 @@ export function captureRetiredSubagentNpmCommand(settingsPath) {
     }
 }
 function packageManagerCommand(config) {
-    const configured = config.npmCommand ?? (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
+    const configured = config.npmCommand ??
+        (config.settingsPath ? captureRetiredSubagentNpmCommand(config.settingsPath) : undefined);
     const values = configured && configured.length > 0 ? [...configured] : ["npm"];
     const [command, ...args] = values;
     if (!command)
         throw new Error("invalid npmCommand: first entry must be a non-empty command");
     const separatorIndex = values.lastIndexOf("--");
     const packageManagerExecutable = separatorIndex >= 0 ? values[separatorIndex + 1] : command;
-    const name = packageManagerExecutable ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "") : "";
+    const name = packageManagerExecutable
+        ? basename(packageManagerExecutable).replace(/\.(cmd|exe)$/i, "")
+        : "";
     return { command, args, name };
 }
 function packageManagerUninstallArgs(packageName, installRoot, packageManagerName) {
@@ -342,7 +346,8 @@ export function defaultExtensionsRequireCriticalInstall(defaultExtensionsFile, {
         return false;
     try {
         const defaults = readJsonFile(defaultExtensionsFile);
-        return (Array.isArray(defaults) && defaults.some((extension) => isPlainObject(extension) && extension.critical === true));
+        return (Array.isArray(defaults) &&
+            defaults.some((extension) => isPlainObject(extension) && extension.critical === true));
     }
     catch {
         return false;
@@ -369,24 +374,32 @@ export function restoreNeededTlhSubagentPrompts(sourceDir, targetDir, { prompts 
 function tlhSubagentPromptsComplete(dir, options = {}) {
     return existsSync(dir) && missingTlhSubagentPrompts(dir, options).length === 0;
 }
-export function findTlhSubagentsDir(config, { localRepoDir = "", prompts = TLH_SUBAGENT_PROMPTS } = {}) {
+export function findTlhSubagentsDir(config, { localRepoDir = "", prompts = TLH_SUBAGENT_PROMPTS, } = {}) {
     const options = { prompts };
     if (!config.packageSourceIsDefault) {
-        const packageRoot = packageSourceInstallDir(config.packageSource, { agentDir: config.agentDir });
-        if (packageRoot && tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
+        const packageRoot = packageSourceInstallDir(config.packageSource, {
+            agentDir: config.agentDir,
+        });
+        if (packageRoot &&
+            tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
             return join(packageRoot, "agents", "subagents");
         }
     }
-    if (localRepoDir && tlhSubagentPromptsComplete(join(localRepoDir, "agents", "subagents"), options)) {
+    if (localRepoDir &&
+        tlhSubagentPromptsComplete(join(localRepoDir, "agents", "subagents"), options)) {
         return join(localRepoDir, "agents", "subagents");
     }
     if (config.packageSourceIsDefault) {
-        const packageRoot = packageSourceInstallDir(config.packageSource, { agentDir: config.agentDir });
-        if (packageRoot && tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
+        const packageRoot = packageSourceInstallDir(config.packageSource, {
+            agentDir: config.agentDir,
+        });
+        if (packageRoot &&
+            tlhSubagentPromptsComplete(join(packageRoot, "agents", "subagents"), options)) {
             return join(packageRoot, "agents", "subagents");
         }
     }
-    if (config.tmpDir && tlhSubagentPromptsComplete(join(config.tmpDir, "agents", "subagents"), options)) {
+    if (config.tmpDir &&
+        tlhSubagentPromptsComplete(join(config.tmpDir, "agents", "subagents"), options)) {
         return join(config.tmpDir, "agents", "subagents");
     }
     const fallbackPackageRoot = join(config.agentDir, "git", "github.com", config.repo);
@@ -404,25 +417,20 @@ export function copyTlhSubagentPrompts(config, sourceDir, { prompts = TLH_SUBAGE
 }
 /**
  * Provision the subagent extension config at extensions/subagent/config.json
- * with TLH-preferred defaults: compact tool descriptions and a first active
- * long-running notice after 270000ms (4m30).
+ * with the TLH-preferred first active long-running notice after 270000ms
+ * (4m30).
  *
- * Each default is added independently when its setting is missing. Existing
- * user values, including a user-chosen toolDescriptionMode such as "full" or
- * an activeNoticeAfterMs override, are left untouched. Re-running the
- * installer is therefore safe and will not clobber user edits.
+ * The default is added only when its setting is missing. Existing user values
+ * and unrelated keys are left untouched. Re-running the installer is therefore
+ * safe and will not clobber user edits.
  *
- * Revert path: open <agentDir>/extensions/subagent/config.json and set either
- * "toolDescriptionMode" or "control.activeNoticeAfterMs" to the value you
- * want. Existing values are preserved on subsequent installer runs. To return
- * a setting to the managed default, remove that key and rerun install or
- * update; missing defaults are re-provisioned. Valid non-object or unreadable
- * config files are preserved untouched.
- *
- * Runtime note: toolDescriptionMode is consumed by TLH's first-party
- * subagent runtime. Retired external builds may ignore the unknown key.
+ * Revert path: open <agentDir>/extensions/subagent/config.json and set
+ * "control.activeNoticeAfterMs" to the value you want. Existing values are
+ * preserved on subsequent installer runs. To return the setting to the managed
+ * default, remove that key and rerun install or update; the missing default is
+ * re-provisioned. Valid non-object or unreadable config files are preserved
+ * untouched.
  */
-const TLH_TOOL_DESCRIPTION_MODE = "compact";
 const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;
 function activeNoticeCanBeProvisioned(existing) {
     return !("control" in existing) || isPlainObject(existing.control);
@@ -445,8 +453,6 @@ function readExistingSubagentExtensionConfig(config) {
 }
 function missingSubagentExtensionDefaultLabels(existing) {
     const missingDefaults = [];
-    if (!("toolDescriptionMode" in existing))
-        missingDefaults.push(`toolDescriptionMode: ${TLH_TOOL_DESCRIPTION_MODE}`);
     if (activeNoticeIsMissing(existing)) {
         missingDefaults.push(`control.activeNoticeAfterMs: ${TLH_ACTIVE_NOTICE_AFTER_MS} (4m30)`);
     }
@@ -474,17 +480,12 @@ export function provisionSubagentExtensionConfig(config) {
     const existing = readExistingSubagentExtensionConfig(config);
     if (!existing)
         return;
-    const missingToolDescriptionMode = !("toolDescriptionMode" in existing);
     const missingActiveNotice = activeNoticeIsMissing(existing);
-    if (!missingToolDescriptionMode && !missingActiveNotice)
+    if (!missingActiveNotice)
         return;
     ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
     const updated = { ...existing };
-    if (missingToolDescriptionMode)
-        updated.toolDescriptionMode = TLH_TOOL_DESCRIPTION_MODE;
-    if (missingActiveNotice) {
-        const existingControl = isPlainObject(existing.control) ? existing.control : {};
-        updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
-    }
+    const existingControl = isPlainObject(existing.control) ? existing.control : {};
+    updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
     writeSafeProfileFile(config, relativePath, JSON.stringify(updated, null, 2) + "\n", "TLH subagent extension config");
 }

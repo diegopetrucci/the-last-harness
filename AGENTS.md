@@ -7,9 +7,9 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 ## Project Structure
 
 - Installer entrypoints: `install.sh` performs install/update bootstrap work and creates the `tlh` wrapper; `uninstall.sh` removes the isolated profile and managed wrapper artifacts.
-- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, ticket helpers, and legacy-profile cleanup support; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, and `scripts/check-startup-performance.mjs` are contributor-facing validation checks.
+- Installer/runtime scripts: `scripts/` contains installer, update, doctor, wrapper, merge, runtime-TypeScript, release-notes, ticket helpers, and legacy-profile cleanup support; `scripts/lib/` holds shared installer modules; `scripts/installer-smoke/` contains staged smoke-test helpers; `scripts/check-installer-smoke.sh`, `scripts/check-package-versions.mjs`, `scripts/check-startup-performance.mjs`, and `scripts/check-lazy-import-boundaries.mjs` are contributor-facing validation checks.
 - Packaged profile defaults: `config/` contains installer-owned settings, keybindings, librarian defaults, bundled extension manifests, and appended system prompt text for the isolated profile.
-- Packaged resources: `extensions/`, `prompts/`, and `themes/` are published package resources. First-party subagent orchestration lives under `extensions/subagents/`; its `.ts` files are authoritative and same-layout `.js` files are generated, while imported tests stay in the repository/CI and are excluded from publication. `skills/` is an intentional future package placeholder and is not currently present in this repository (per Gnosis `zeqwga`).
+- Packaged resources: `extensions/`, `prompts/`, `skills/`, and `themes/` are published package resources. First-party subagent orchestration lives under `extensions/subagents/`; its `.ts` files are authoritative and same-layout `.js` files are generated, while imported tests stay in the repository/CI and are excluded from publication. `skills/` contains the pinned Herdr, cmux-cli, and tmux runtime closures; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded, and the consolidated terminal-skill notice lives in `licenses/terminal-skills.txt`.
 - Agent definitions: `agents/primary/` and `agents/subagents/` hold packaged primary-agent and subagent prompt specs used by tlh.
 - Tests and evals: `tests/` contains the automated test suite and fixture helpers, while `tests/evals/` contains deterministic workflow/trace-policy checks plus opt-in live-eval tooling.
 - Contributor automation: `.github/workflows/` defines CI, release, startup-performance, and Claude automation; `.github/PULL_REQUEST_TEMPLATE.md` provides PR guidance.
@@ -17,7 +17,7 @@ This repository packages **The Last Harness** as an isolated profile for the ups
 - Repository illustrations: `assets/` stores documentation and workflow illustrations used in the repository and is not shipped in the npm package.
 - Contributor docs: `README.md` covers install/update/uninstall and security, `CONTRIBUTING.md` explains contribution workflow, `VALIDATING.md` and `npm run validate` define the standard validation pass, `CHANGELOG.md` tracks releases, and `VISION.md` captures product direction.
 - Extended docs: `docs/` contains install, integration, MCP, telemetry, local-development, release, workflow-eval, and web-search reference material. `docs/subagents.md` documents the first-party runtime; `docs/subagents-history/` preserves its provenance, including an immutable archive whose directories must never be used as a task working directory.
-- Package/tooling manifests: `package.json`, `package-lock.json`, `biome.json`, `tsconfig.json`, and `tsconfig.runtime-scripts.json` define the Node package, linting/formatting, and TypeScript settings used by contributors and validation.
+- Package/tooling manifests: `package.json`, `package-lock.json`, `.oxfmtrc.json`, `tsconfig.json`, and `tsconfig.runtime-scripts.json` define the Node package, Oxlint/Oxfmt linting and formatting, and TypeScript settings used by contributors and validation.
 
 ## Safety Requirements
 
@@ -75,10 +75,15 @@ git diff --cached
 - Every GitHub issue should carry a type label (`bug`/`enhancement`/`documentation`) plus an `area/*` label, and be tracked in the TLH Roadmap project.
 - If a Github issue is picked up, move it to `In Progress` in the [TLH Roadmap](https://github.com/users/diegopetrucci/projects/1/views/1?layout=board). Once work is merged, move it to `Ready for release`. If released, tag it with the release it went out with, and move it to `Done`.
 
-## Miscellaneous
+## Memory
 
 - At the start of any task, run `gn help plan` and follow its instructions.
 - After finishing a task, run `gn help review`.
+- Always commit gnosis entries with the relevant work.
+- Always merge gnosis conflicts as a union, keeping both sides.
+
+## Miscellaneous
+
 - Before final handoff or review for TLH repository work, load and apply the repo-local hygiene skill at `.pi/skills/tlh-dev-hygiene/SKILL.md`.
 - The `tlh-dev-hygiene` checklist is for TLH repository contributors only; it is not part of the packaged end-user tlh workflow.
 - For TypeScript boundary parsing or open-object decisions, load `.pi/skills/tlh-typescript-boundaries/SKILL.md`.

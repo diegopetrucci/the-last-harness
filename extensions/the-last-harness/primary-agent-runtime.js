@@ -1,15 +1,16 @@
 import { join } from "node:path";
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
-import { createPrimaryToolState, filterAvailableTools } from "../the-last-harness-primary-tools.mjs";
+import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, isExperimentalFeatureEnabled, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
-import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME } from "./constants.js";
+import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { EMBEDDED_SUBAGENTS_FEATURE, buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt, } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, selectProviderAwareAgentDefaults } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
+import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
@@ -218,7 +219,12 @@ function subagentCallTargetsMatching(input, predicate) {
     return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
-const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set(["librarian", "web-scout", "repo-scout", "diff-summarizer"]);
+const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set([
+    "librarian",
+    "web-scout",
+    "repo-scout",
+    "diff-summarizer",
+]);
 function isOpaqueSubagentManagementActionInput(input) {
     return isRecord(input) && typeof input.action === "string" && input.action.trim().length > 0;
 }
@@ -230,7 +236,9 @@ function capScoutSubagentTimeout(input) {
         return;
     }
     const { timeoutMs } = input;
-    if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
+    if (typeof timeoutMs === "number" &&
+        Number.isFinite(timeoutMs) &&
+        timeoutMs <= SCOUT_RUN_MAX_TIMEOUT_MS) {
         return;
     }
     input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
@@ -284,13 +292,153 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         return reason ? { block: true, reason } : undefined;
     });
 }
-function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
+const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
+export function isHighConfidenceAuthSignatureInAttemptError(error) {
+    const lower = error.toLowerCase();
+    return (lower.includes("invalid_grant") ||
+        lower.includes("token-refresh unauthorized") ||
+        lower.includes("token refresh unauthorized") ||
+        lower.includes("status 401") ||
+        lower.includes("status 403") ||
+        lower.includes("(status 401)") ||
+        lower.includes("(status 403)") ||
+        lower.includes("http 401") ||
+        lower.includes("http 403"));
+}
+export function processSubagentRunDetails(details, authStore) {
+    if (!isRecord(details))
+        return;
+    const { results } = details;
+    if (!Array.isArray(results))
+        return;
+    for (const result of results) {
+        if (!isRecord(result))
+            continue;
+        const { modelAttempts } = result;
+        if (!Array.isArray(modelAttempts)) {
+            continue;
+        }
+        for (const attempt of modelAttempts) {
+            if (!isRecord(attempt))
+                continue;
+            const { model, success, error } = attempt;
+            if (typeof model !== "string" || typeof success !== "boolean")
+                continue;
+            if (success === true)
+                continue;
+            if (typeof error !== "string" || error.length === 0)
+                continue;
+            const parsed = parseProviderModelReference(model);
+            if (!parsed?.provider)
+                continue;
+            if (isHighConfidenceAuthSignatureInAttemptError(error)) {
+                authStore.recordRunLevelAuthObservation(parsed.provider);
+            }
+        }
+    }
+}
+function dispatchPreflightBackoffMs(failures) {
+    if (failures <= 1)
+        return 60_000;
+    if (failures === 2)
+        return 120_000;
+    return 300_000;
+}
+export function extractDispatchProviders(input) {
+    if (typeof input !== "object" || input === null)
+        return [];
+    const obj = input;
+    const seen = new Set();
+    function addModel(model) {
+        if (typeof model !== "string")
+            return;
+        const parsed = parseProviderModelReference(model);
+        if (parsed?.provider)
+            seen.add(parsed.provider);
+    }
+    addModel(obj["model"]);
+    if (Array.isArray(obj["tasks"])) {
+        for (const task of obj["tasks"]) {
+            if (typeof task === "object" && task !== null) {
+                addModel(task["model"]);
+            }
+        }
+    }
+    return [...seen];
+}
+function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runtimeOptions = {}) {
+    const { getProviderAuthHealthStore, now: nowFn = Date.now } = runtimeOptions;
     const warned = new Set();
     const primaryToolState = createPrimaryToolState();
     const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
     let sessionExperimentalSnapshot;
+    const preflightThrottle = new Map();
+    const notifiedForReauth = new Set();
+    const pendingReauthNotifications = new Set();
+    function shouldPreflightAtDispatch(provider, store, now) {
+        const entry = store.getEntry(provider);
+        if (!entry)
+            return true;
+        if (entry.status === "healthy")
+            return false;
+        const throttle = preflightThrottle.get(provider);
+        if (!throttle)
+            return true;
+        return now >= throttle.nextAllowedAt;
+    }
+    function shouldPreflightForClearing(provider, store, now) {
+        const entry = store.getEntry(provider);
+        if (!entry || entry.status === "healthy")
+            return false;
+        const throttle = preflightThrottle.get(provider);
+        if (!throttle)
+            return true;
+        return now >= throttle.nextAllowedAt;
+    }
+    function emitReauthNotificationIfNew(provider, ctx, message) {
+        if (notifiedForReauth.has(provider))
+            return true;
+        try {
+            ctx.ui.notify(message, "warning");
+            notifiedForReauth.add(provider);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    function scheduleProviderPreflight(provider, store, modelRegistry, currentNow, ctx) {
+        const existing = preflightThrottle.get(provider);
+        preflightThrottle.set(provider, {
+            failures: existing?.failures ?? 0,
+            nextAllowedAt: currentNow + 300_000,
+        });
+        void store
+            .probeProvider(modelRegistry, provider)
+            .then((status) => {
+            const t = nowFn();
+            if (status === "healthy") {
+                preflightThrottle.delete(provider);
+                notifiedForReauth.delete(provider);
+            }
+            else {
+                const prev = preflightThrottle.get(provider);
+                const newFailures = (prev?.failures ?? 0) + 1;
+                preflightThrottle.set(provider, {
+                    failures: newFailures,
+                    nextAllowedAt: t + dispatchPreflightBackoffMs(newFailures),
+                });
+                if (status === "reauth-required" && ctx !== undefined) {
+                    emitReauthNotificationIfNew(provider, ctx, `Provider ${provider} requires re-authentication. Run /login to reconfigure. ` +
+                        `Opposite-provider independence for code-reviewer, oracle, and contrarian is affected.`);
+                }
+            }
+        })
+            .catch(() => {
+        });
+    }
     function warnOnce(ctx, key, message) {
         if (warned.has(key)) {
             return;
@@ -306,7 +454,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             return selection;
         }
         warnOnce(ctx, `missing-primary-agent-${source}-${selection}`, `TLH primary agent "${selection}" is not available; falling back to ${DEFAULT_PRIMARY_AGENT}.`);
-        return primaryAgents.has(DEFAULT_PRIMARY_AGENT) ? DEFAULT_PRIMARY_AGENT : DISABLED_PRIMARY_AGENT;
+        return primaryAgents.has(DEFAULT_PRIMARY_AGENT)
+            ? DEFAULT_PRIMARY_AGENT
+            : DISABLED_PRIMARY_AGENT;
     }
     function syncPrimaryAgentState(ctx) {
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
@@ -333,13 +483,33 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
     function currentPrimaryAgentLabel() {
         return primaryAgentLabel(currentPrimaryAgentSelection());
     }
+    function buildActivePrimarySystemPrompt(baseSystemPrompt, cwd, settings) {
+        const primary = activePrimaryAgent();
+        const primaryEnabled = isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection());
+        const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
+        const prompts = [
+            baseSystemPrompt,
+            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+            buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
+            buildTlhCommitAttributionPrompt(commitAttributionState),
+        ];
+        if (shouldAppendGnosisPrompt(cwd)) {
+            prompts.push(GNOSIS_PROMPT);
+        }
+        return prompts.filter(Boolean).join("\n\n");
+    }
+    function buildLaunchSystemPrompt(ctx, baseSystemPrompt) {
+        return buildActivePrimarySystemPrompt(baseSystemPrompt, ctx.cwd, getTlhGlobalSettings(ctx.cwd));
+    }
     function primaryAgentStatusMessage(ctx) {
         syncPrimaryAgentState(ctx);
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
         const override = sessionPrimaryAgentOverride;
         const effective = currentPrimaryAgentSelection();
         const settingsPath = tlhSettingsPathForWrite();
-        const settingsLabel = settingsPath ? formatHomePath(settingsPath) : "unavailable outside isolated TLH profile";
+        const settingsLabel = settingsPath
+            ? formatHomePath(settingsPath)
+            : "unavailable outside isolated TLH profile";
         const activePrimary = effective !== DISABLED_PRIMARY_AGENT ? primaryAgents.get(effective) : undefined;
         const rawModelOverrides = primaryConfig?.modelOverrides;
         const modelOverride = activePrimary &&
@@ -395,9 +565,17 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         }
     }
     let tlhApplyingModel = false;
+    let tlhRestoringCancelledModel = false;
+    let sessionOnlyModel;
+    function updateSessionOnlyModel(model) {
+        sessionOnlyModel = model;
+        setTlhSessionOnlyModel(model);
+    }
     async function applyPrimaryModel(ctx, primary, model) {
         if (!model) {
-            const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])].filter(Boolean).join(", ");
+            const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])]
+                .filter(Boolean)
+                .join(", ");
             warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
             return undefined;
         }
@@ -429,10 +607,46 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             return;
         }
         const currentThinking = pi.getThinkingLevel();
-        if (currentThinking === thinking || currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
+        if (currentThinking === thinking ||
+            currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
             return;
         }
         setExtensionThinkingLevel(pi, thinking);
+    }
+    async function restoreCancelledModel(ctx, previousModel) {
+        if (!previousModel) {
+            return;
+        }
+        const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
+        tlhRestoringCancelledModel = true;
+        tlhApplyingModel = true;
+        try {
+            const restored = await pi.setModel(previousModel);
+            if (restored) {
+                setImmediate(() => {
+                    try {
+                        if (ctx.model?.provider === previousModel.provider &&
+                            ctx.model.id === previousModel.id) {
+                            ctx.ui.notify(`Kept ${previousModel.provider}/${previousModel.id} after cancelling model selection.`, "info");
+                        }
+                    }
+                    catch {
+                    }
+                });
+            }
+            else {
+                ctx.ui.notify(`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`, "warning");
+            }
+        }
+        catch {
+            ctx.ui.notify(`TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`, "warning");
+        }
+        finally {
+            releaseDefaultSuppression();
+            discardTlhModelSelectionDefaults();
+            tlhApplyingModel = false;
+            tlhRestoringCancelledModel = false;
+        }
     }
     async function applyPrimaryDefaults(ctx, options = {}) {
         const { warnOnMissing = true } = options;
@@ -452,8 +666,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
         const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
         const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
-        const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider);
-        const currentProviderDefaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
+        const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider, ctx.model);
         let resolvedModel = primaryDefaults.model;
         if (!forceApply) {
             const storedOverride = primaryConfig?.modelOverrides?.[selection];
@@ -464,12 +677,24 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 }
             }
         }
-        const activePrimaryModel = shouldApplyModel ? await applyPrimaryModel(ctx, primary, resolvedModel) : undefined;
+        const preservesSessionOnlyModel = !forceApply &&
+            sessionOnlyModel !== undefined &&
+            ctx.model?.provider === sessionOnlyModel.provider &&
+            ctx.model.id === sessionOnlyModel.id;
+        if (sessionOnlyModel && !preservesSessionOnlyModel) {
+            updateSessionOnlyModel(undefined);
+        }
+        const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel
+            ? await applyPrimaryModel(ctx, primary, resolvedModel)
+            : undefined;
         if (shouldApplyThinking) {
-            applyPrimaryThinking(primary, activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking);
+            const effectiveModel = activePrimaryModel ?? ctx.model;
+            applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
         }
     }
     async function applyPrimaryModeChange(ctx) {
+        replayTlhUnmatchedModelSelectionDefaults();
+        updateSessionOnlyModel(undefined);
         await applyPrimaryDefaults(ctx);
     }
     async function resetPrimaryAgentModelOverride(ctx, agentName) {
@@ -508,17 +733,30 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             { value: "disabled", description: "Disable TLH primary agents for this session" },
             { value: "reset", description: "Clear the session primary-agent override" },
             { value: "model reset", description: "Clear the active primary's persisted model override" },
-            { value: "default architect", description: "Persistently select architect for future sessions" },
+            {
+                value: "default architect",
+                description: "Persistently select architect for future sessions",
+            },
             { value: "default rush", description: "Persistently select Rush for future sessions" },
             { value: "default product", description: "Persistently select product for future sessions" },
-            { value: "default bug-hunter", description: "Persistently select bug-hunter for future sessions" },
-            { value: "default disabled", description: "Persistently disable TLH primaries for future sessions" },
+            {
+                value: "default bug-hunter",
+                description: "Persistently select bug-hunter for future sessions",
+            },
+            {
+                value: "default disabled",
+                description: "Persistently disable TLH primaries for future sessions",
+            },
             { value: "default reset", description: "Remove the persistent primary-agent setting" },
         ];
         const normalizedPrefix = prefix.trim().toLowerCase();
         const completions = options
             .filter((option) => option.value.startsWith(normalizedPrefix))
-            .map((option) => ({ value: option.value, label: option.value, description: option.description }));
+            .map((option) => ({
+            value: option.value,
+            label: option.value,
+            description: option.description,
+        }));
         return completions.length > 0 ? completions : null;
     }
     function registerCommands() {
@@ -564,7 +802,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                     try {
                         const result = writeTlhPrimaryAgentModelOverride(ctx.cwd, selection, undefined);
                         await applyPrimaryModeChange(ctx);
-                        const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                        const backupLabel = result.backupPath
+                            ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                            : "";
                         const message = primary && shouldForceApplyForLock(primary)
                             ? `Cleared stale ignored model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()} uses fixed model defaults.${backupLabel}`
                             : `${result.changed ? "Cleared" : "No override to clear for"} model override for ${primaryAgentLabel(selection)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`;
@@ -602,7 +842,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                         syncPrimaryAgentState(ctx);
                         await applyPrimaryModeChange(ctx);
                         const changedLabel = result.changed ? "Updated" : "No change to";
-                        const backupLabel = result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+                        const backupLabel = result.backupPath
+                            ? ` Backup: ${formatHomePath(result.backupPath)}.`
+                            : "";
                         ctx.ui.notify(`${changedLabel} TLH primary-agent persistent default at ${formatHomePath(result.settingsPath)}. Primary agent: ${currentPrimaryAgentLabel()}.${backupLabel}`, "info");
                     }
                     catch (error) {
@@ -622,17 +864,56 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
         });
     }
     async function applySessionStart(ctx) {
+        replayAllTlhUnclaimedModelSelectionDefaults();
+        setTlhModelSelectionActiveModelResolver(() => ctx.model);
+        updateSessionOnlyModel(undefined);
         activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
     function registerLifecycleHooks() {
+        pi.on("thinking_level_select", async () => {
+            await persistTlhStandaloneThinkingDefaults();
+        });
         pi.on("model_select", async (event, ctx) => {
-            if (tlhApplyingModel) {
+            const defaultsClaim = claimTlhModelSelectionDefaults(event.model);
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
+            if (tlhRestoringCancelledModel) {
+                discardTlhModelSelectionDefaults(defaultsClaim);
                 return;
             }
-            if (event.source !== "set") {
+            if (tlhApplyingModel) {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                return;
+            }
+            if (event.source === "set") {
+                if (isTlhNativeModelSelectorClaim(defaultsClaim)) {
+                    const scope = await chooseTlhModelSelectionScope(ctx);
+                    if (scope === "cancel") {
+                        discardTlhModelSelectionDefaults(defaultsClaim);
+                        await restoreCancelledModel(ctx, event.previousModel);
+                        return;
+                    }
+                    if (scope === "session-only") {
+                        updateSessionOnlyModel(event.model);
+                        discardTlhModelSelectionDefaults(defaultsClaim);
+                        return;
+                    }
+                }
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+            }
+            else if (event.source === "cycle") {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                return;
+            }
+            else {
+                updateSessionOnlyModel(undefined);
+                await persistTlhModelSelectionDefaults(defaultsClaim, ctx.cwd, event.model).catch(() => false);
+                replayTlhUnmatchedModelSelectionDefaults();
                 return;
             }
             syncPrimaryAgentState(ctx);
@@ -648,7 +929,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 return;
             }
             const chosenKey = `${event.model.provider}/${event.model.id}`;
-            const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider);
+            const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider, event.model);
             const bundledKey = primaryDefaults.model
                 ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
                 : undefined;
@@ -668,30 +949,49 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
             }
         });
         pi.on("session_tree", async (_event, ctx) => {
+            replayTlhUnmatchedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
             syncPrimaryAgentState(ctx);
             await applyPrimaryDefaults(ctx);
+        });
+        pi.on("turn_end", (_event, ctx) => {
+            const authStore = getProviderAuthHealthStore?.();
+            if (!authStore)
+                return;
+            for (const provider of pendingReauthNotifications) {
+                const notified = emitReauthNotificationIfNew(provider, ctx, `A subagent run was rejected by ${provider} for credentials. ` +
+                    `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+                    `was affected for that run. Run /login if this recurs.`);
+                if (notified) {
+                    pendingReauthNotifications.delete(provider);
+                }
+            }
+            const currentNow = nowFn();
+            for (const provider of authStore.getNonHealthyProviders()) {
+                if (shouldPreflightForClearing(provider, authStore, currentNow)) {
+                    scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+                }
+            }
         });
         pi.on("session_shutdown", async (_event, _ctx) => {
+            replayAllTlhUnclaimedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(undefined);
+            updateSessionOnlyModel(undefined);
             restorePrimaryToolsIfAppropriate();
+            notifiedForReauth.clear();
+            pendingReauthNotifications.clear();
+            preflightThrottle.clear();
         });
         pi.on("before_agent_start", async (event, ctx) => {
+            replayTlhUnmatchedModelSelectionDefaults();
+            setTlhModelSelectionActiveModelResolver(() => ctx.model);
             const settings = getTlhGlobalSettings(ctx.cwd);
-            const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
             syncPrimaryAgentState(ctx);
-            const selection = currentPrimaryAgentSelection();
-            const primaryEnabled = isEnabledPrimaryAgentSelection(selection);
             activateTlhTicketRuntime(settings, getAgentDir(), ctx.cwd);
             await applyPrimaryDefaults(ctx);
-            const prompts = [
-                event.systemPrompt,
-                buildTlhSystemPrompt(activePrimaryAgent(), subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-                buildPrimaryExperimentalPrompt(activePrimaryAgent(), settings.tlh?.experimental),
-                buildTlhCommitAttributionPrompt(commitAttributionState),
-            ];
-            if (shouldAppendGnosisPrompt(ctx.cwd)) {
-                prompts.push(GNOSIS_PROMPT);
-            }
-            return { systemPrompt: prompts.filter(Boolean).join("\n\n") };
+            return {
+                systemPrompt: buildActivePrimarySystemPrompt(event.systemPrompt, ctx.cwd, settings),
+            };
         });
         pi.on("tool_call", async (event, ctx) => {
             if (event.toolName === "bash") {
@@ -738,7 +1038,10 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                 }
             }
             const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
-            const reason = validateSubagentToolInput(event.input, { allowedSubagents, allowEmbeddedTargets });
+            const reason = validateSubagentToolInput(event.input, {
+                allowedSubagents,
+                allowEmbeddedTargets,
+            });
             if (reason) {
                 return { block: true, reason };
             }
@@ -755,13 +1058,55 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata) {
                     }
                 }
             }
+            const authStore = getProviderAuthHealthStore?.();
+            if (authStore) {
+                const currentNow = nowFn();
+                const providers = extractDispatchProviders(event.input);
+                for (const provider of providers) {
+                    if (shouldPreflightAtDispatch(provider, authStore, currentNow)) {
+                        scheduleProviderPreflight(provider, authStore, ctx.modelRegistry, currentNow, ctx);
+                    }
+                }
+            }
             return undefined;
         });
+        pi.on("tool_result", (_event, _ctx) => {
+            const event = _event;
+            if (event.toolName !== "subagent")
+                return;
+            const authStore = getProviderAuthHealthStore?.();
+            if (!authStore)
+                return;
+            const prevReauthProviders = new Set(authStore.getReauthProviders());
+            processSubagentRunDetails(event.details, authStore);
+            for (const provider of authStore.getReauthProviders()) {
+                if (!prevReauthProviders.has(provider)) {
+                    emitReauthNotificationIfNew(provider, _ctx, `A subagent run was rejected by ${provider} for credentials. ` +
+                        `Opposite-provider independence for code-reviewer, oracle, and contrarian ` +
+                        `was affected for that run. Run /login if this recurs.`);
+                }
+            }
+        });
+        if (typeof pi.events?.on === "function") {
+            void pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => {
+                const authStore = getProviderAuthHealthStore?.();
+                if (!authStore)
+                    return;
+                const prevReauthProviders = new Set(authStore.getReauthProviders());
+                processSubagentRunDetails(data, authStore);
+                for (const provider of authStore.getReauthProviders()) {
+                    if (!prevReauthProviders.has(provider)) {
+                        pendingReauthNotifications.add(provider);
+                    }
+                }
+            });
+        }
     }
     return {
         applySessionStart,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
+        buildLaunchSystemPrompt,
         resetPrimaryAgentModelOverride,
         registerCommands,
         registerLifecycleHooks,
@@ -779,12 +1124,16 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     }) === "child") {
         return undefined;
     }
-    const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata());
+    installTlhModelSelectionPersistenceOverride();
+    const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata(), {
+        getProviderAuthHealthStore: options.getProviderAuthHealthStore,
+        now: options.now,
+    });
     runtime.registerCommands();
     runtime.registerLifecycleHooks();
     return runtime;
 }
-export function isTlhPrimaryAgentSelection(value) {
+function isTlhPrimaryAgentSelection(value) {
     return PRIMARY_AGENT_CYCLE.includes(value);
 }
 export function clearPrimaryAgentModelOverrideByName(cwd, agentName) {

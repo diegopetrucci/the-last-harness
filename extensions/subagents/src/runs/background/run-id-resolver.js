@@ -17,7 +17,9 @@ function exactAsyncLocation(id, asyncDirRoot, resultsDir) {
 function foregroundIds(state) {
     if (!state)
         return [];
-    return [...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])])];
+    return [
+        ...new Set([...state.foregroundControls.keys(), ...(state.foregroundRuns?.keys() ?? [])]),
+    ];
 }
 function nestedScopeFromState(state) {
     if (!state)

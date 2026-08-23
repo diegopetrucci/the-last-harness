@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-class QuietGlimpseWindowImpl extends EventEmitter {
+export class QuietGlimpseWindowImpl extends EventEmitter {
     #proc;
     #closed = false;
     #pendingHTML;
@@ -17,14 +17,17 @@ class QuietGlimpseWindowImpl extends EventEmitter {
         });
         const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
         rl.on("line", (line) => {
-            let message;
+            let parsed;
             try {
-                message = JSON.parse(line);
+                parsed = JSON.parse(line);
             }
             catch {
                 this.emit("error", new Error(`Malformed glimpse protocol line: ${line}`));
                 return;
             }
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+                return;
+            const message = parsed;
             switch (message.type) {
                 case "ready":
                     if (this.#pendingHTML != null) {
@@ -74,9 +77,40 @@ class QuietGlimpseWindowImpl extends EventEmitter {
         this.#write({ type: "html", html: Buffer.from(html).toString("base64") });
     }
 }
+function isNativeHostInfo(value) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return false;
+    }
+    if (!("path" in value) || typeof value.path !== "string") {
+        return false;
+    }
+    if ("extraArgs" in value &&
+        value.extraArgs !== undefined &&
+        (!Array.isArray(value.extraArgs) ||
+            !value.extraArgs.every((entry) => typeof entry === "string"))) {
+        return false;
+    }
+    return !("buildHint" in value &&
+        value.buildHint !== undefined &&
+        typeof value.buildHint !== "string");
+}
+function readNativeHostInfo(module) {
+    if (module === null ||
+        typeof module !== "object" ||
+        Array.isArray(module) ||
+        !("getNativeHostInfo" in module) ||
+        typeof module.getNativeHostInfo !== "function") {
+        throw new Error("Glimpse module does not expose getNativeHostInfo().");
+    }
+    const host = module.getNativeHostInfo();
+    if (!isNativeHostInfo(host)) {
+        throw new Error("Glimpse module returned an invalid native host description.");
+    }
+    return host;
+}
 async function getNativeHostInfo() {
-    const glimpseModule = (await import("glimpseui"));
-    return glimpseModule.getNativeHostInfo();
+    const glimpseModule = await import("glimpseui");
+    return readNativeHostInfo(glimpseModule);
 }
 export async function openQuietGlimpse(html, options = {}) {
     const host = await getNativeHostInfo();

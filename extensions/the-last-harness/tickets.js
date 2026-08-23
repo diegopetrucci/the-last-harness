@@ -36,8 +36,11 @@ function ticketCommandCandidates(settings, agentDir) {
 function hasTkCommandName(candidate) {
     return candidate === "tk" || basename(candidate) === "tk";
 }
-export function validateTlhTicketCommand(command) {
-    const result = spawnSync(command, ["help"], { encoding: "utf8", timeout: TK_VALIDATION_TIMEOUT_MS });
+function validateTlhTicketCommand(command) {
+    const result = spawnSync(command, ["help"], {
+        encoding: "utf8",
+        timeout: TK_VALIDATION_TIMEOUT_MS,
+    });
     if (result.error || result.status !== 0)
         return false;
     const output = `${result.stdout || ""}\n${result.stderr || ""}`;

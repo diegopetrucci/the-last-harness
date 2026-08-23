@@ -65,9 +65,10 @@ export function sanitizeTkTicketTitle(raw) {
     return cleaned || undefined;
 }
 export function normalizeTkTicketMetadata(raw) {
-    if (!raw || typeof raw !== "object")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return undefined;
-    const { id, title } = raw;
+    const id = "id" in raw ? raw.id : undefined;
+    const title = "title" in raw ? raw.title : undefined;
     if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id))
         return undefined;
     if (typeof title !== "string")
@@ -93,19 +94,25 @@ export function resolveExplicitTkTicketMetadata(ticket, options = {}) {
             };
         }
         const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
-        const metadata = normalizeTkTicketMetadata({ id: ticketMatch.id, title: parseTkTicketTitle(content) ?? "" });
+        const metadata = normalizeTkTicketMetadata({
+            id: ticketMatch.id,
+            title: parseTkTicketTitle(content) ?? "",
+        });
         if (!metadata)
             return { error: `ticket '${requestedId}' has no readable title.` };
         return { metadata };
     }
     catch {
-        return { error: `ticket '${requestedId}' could not be resolved. Check TICKETS_DIR and the ticket file.` };
+        return {
+            error: `ticket '${requestedId}' could not be resolved. Check TICKETS_DIR and the ticket file.`,
+        };
     }
 }
 function findTkTicketFile(id, cwd) {
     const ticketsDir = findTicketsDir(cwd);
-    if (!ticketsDir || !fs.existsSync(ticketsDir) || !fs.statSync(ticketsDir).isDirectory())
+    if (!ticketsDir || !fs.existsSync(ticketsDir) || !fs.statSync(ticketsDir).isDirectory()) {
         return undefined;
+    }
     const exactPath = path.join(ticketsDir, `${id}.md`);
     if (fs.existsSync(exactPath) && fs.statSync(exactPath).isFile()) {
         return { id, path: exactPath };

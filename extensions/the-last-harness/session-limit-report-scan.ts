@@ -18,9 +18,9 @@ const SUBAGENT_ARTIFACTS_DIR = "subagent-artifacts";
  *   Callers should caveat results when source is "fallback".
  */
 export type SessionLimitWindow = {
-	startMs: number;
-	endMs: number;
-	source: "snapshot" | "fallback";
+  startMs: number;
+  endMs: number;
+  source: "snapshot" | "fallback";
 };
 
 /**
@@ -33,21 +33,21 @@ export type RawSessionEntry = Record<string, unknown> & { type: string };
 /**
  * Result of parsing a session JSONL file.
  */
-export type ParsedSessionFile = {
-	/** Entries that parsed successfully (all have a `type` string field). */
-	entries: RawSessionEntry[];
-	/** Number of lines that could not be parsed (empty lines excluded from count). */
-	malformedLineCount: number;
+type ParsedSessionFile = {
+  /** Entries that parsed successfully (all have a `type` string field). */
+  entries: RawSessionEntry[];
+  /** Number of lines that could not be parsed (empty lines excluded from count). */
+  malformedLineCount: number;
 };
 
 /**
  * Result of enumerating candidate session files.
  */
-export type SessionFileScanResult = {
-	/** Absolute paths to .jsonl files whose mtime is at or after `windowStartMs`. */
-	files: string[];
-	/** Non-fatal observations recorded during the scan. */
-	caveats: string[];
+type SessionFileScanResult = {
+  /** Absolute paths to .jsonl files whose mtime is at or after `windowStartMs`. */
+  files: string[];
+  /** Non-fatal observations recorded during the scan. */
+  caveats: string[];
 };
 
 /**
@@ -66,28 +66,28 @@ export type SessionFileScanResult = {
  * @param nowMs     Current time in ms since epoch (defaults to Date.now()).
  */
 export function resolveSessionLimitWindow(
-	snapshot: TlhSubscriptionUsageSnapshot | undefined,
-	nowMs: number = Date.now(),
+  snapshot: TlhSubscriptionUsageSnapshot | undefined,
+  nowMs: number = Date.now(),
 ): SessionLimitWindow {
-	const sessionWindow = snapshot?.windows?.session;
-	if (sessionWindow) {
-		const resetsAtMs = sessionWindow.resetsAt ? Date.parse(sessionWindow.resetsAt) : NaN;
-		if (Number.isFinite(resetsAtMs)) {
-			const durationMs = sessionWindow.durationMs ?? DEFAULT_WINDOW_DURATION_MS;
-			return {
-				startMs: resetsAtMs - durationMs,
-				endMs: resetsAtMs,
-				source: "snapshot",
-			};
-		}
-	}
+  const sessionWindow = snapshot?.windows?.session;
+  if (sessionWindow) {
+    const resetsAtMs = sessionWindow.resetsAt ? Date.parse(sessionWindow.resetsAt) : NaN;
+    if (Number.isFinite(resetsAtMs)) {
+      const durationMs = sessionWindow.durationMs ?? DEFAULT_WINDOW_DURATION_MS;
+      return {
+        startMs: resetsAtMs - durationMs,
+        endMs: resetsAtMs,
+        source: "snapshot",
+      };
+    }
+  }
 
-	// Fallback: trailing 5h ending now.
-	return {
-		startMs: nowMs - DEFAULT_WINDOW_DURATION_MS,
-		endMs: nowMs,
-		source: "fallback",
-	};
+  // Fallback: trailing 5h ending now.
+  return {
+    startMs: nowMs - DEFAULT_WINDOW_DURATION_MS,
+    endMs: nowMs,
+    source: "fallback",
+  };
 }
 
 /**
@@ -106,26 +106,29 @@ export function resolveSessionLimitWindow(
  * @param sessionsRoot  Absolute path to the sessions root directory.
  * @param windowStartMs  Window start timestamp in ms since epoch; files older than this are pruned.
  */
-export function discoverSessionFiles(sessionsRoot: string, windowStartMs: number): SessionFileScanResult {
-	const files: string[] = [];
-	const caveats: string[] = [];
+export function discoverSessionFiles(
+  sessionsRoot: string,
+  windowStartMs: number,
+): SessionFileScanResult {
+  const files: string[] = [];
+  const caveats: string[] = [];
 
-	let projectDirs: string[];
-	try {
-		projectDirs = readdirSync(sessionsRoot, { withFileTypes: true, encoding: "utf8" })
-			.filter((entry) => entry.isDirectory())
-			.map((entry) => join(sessionsRoot, entry.name));
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		caveats.push(`Could not read sessions root: ${message}`);
-		return { files, caveats };
-	}
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(sessionsRoot, { withFileTypes: true, encoding: "utf8" })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(sessionsRoot, entry.name));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    caveats.push(`Could not read sessions root: ${message}`);
+    return { files, caveats };
+  }
 
-	for (const projectDir of projectDirs) {
-		collectSessionFilesFromProjectDir(projectDir, windowStartMs, files, caveats);
-	}
+  for (const projectDir of projectDirs) {
+    collectSessionFilesFromProjectDir(projectDir, windowStartMs, files, caveats);
+  }
 
-	return { files, caveats };
+  return { files, caveats };
 }
 
 /**
@@ -133,82 +136,92 @@ export function discoverSessionFiles(sessionsRoot: string, windowStartMs: number
  * the subagent-artifacts exclusion and mtime pruning.
  */
 function collectSessionFilesFromProjectDir(
-	projectDir: string,
-	windowStartMs: number,
-	files: string[],
-	caveats: string[],
+  projectDir: string,
+  windowStartMs: number,
+  files: string[],
+  caveats: string[],
 ): void {
-	let entries: Dirent<string>[];
-	try {
-		entries = readdirSync(projectDir, { withFileTypes: true, encoding: "utf8" });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		caveats.push(`Could not read project directory: ${message}`);
-		return;
-	}
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(projectDir, { withFileTypes: true, encoding: "utf8" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    caveats.push(`Could not read project directory: ${message}`);
+    return;
+  }
 
-	for (const entry of entries) {
-		const entryPath = join(projectDir, entry.name);
+  for (const entry of entries) {
+    const entryPath = join(projectDir, entry.name);
 
-		if (entry.isDirectory()) {
-			// Never descend into subagent-artifacts.
-			if (entry.name === SUBAGENT_ARTIFACTS_DIR) {
-				continue;
-			}
-			collectSessionFilesRecursive(entryPath, windowStartMs, files, caveats);
-			continue;
-		}
+    if (entry.isDirectory()) {
+      // Never descend into subagent-artifacts.
+      if (entry.name === SUBAGENT_ARTIFACTS_DIR) {
+        continue;
+      }
+      collectSessionFilesRecursive(entryPath, windowStartMs, files, caveats);
+      continue;
+    }
 
-		if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-			collectIfFresh(entryPath, windowStartMs, files, caveats);
-		}
-	}
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      collectIfFresh(entryPath, windowStartMs, files, caveats);
+    }
+  }
 }
 
 /**
  * Recursively collect .jsonl files from a subdirectory (used for subagent child sessions).
  * Excludes subagent-artifacts at every level.
  */
-function collectSessionFilesRecursive(dir: string, windowStartMs: number, files: string[], caveats: string[]): void {
-	let entries: Dirent<string>[];
-	try {
-		entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		caveats.push(`Could not read directory: ${message}`);
-		return;
-	}
+function collectSessionFilesRecursive(
+  dir: string,
+  windowStartMs: number,
+  files: string[],
+  caveats: string[],
+): void {
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    caveats.push(`Could not read directory: ${message}`);
+    return;
+  }
 
-	for (const entry of entries) {
-		const entryPath = join(dir, entry.name);
+  for (const entry of entries) {
+    const entryPath = join(dir, entry.name);
 
-		if (entry.isDirectory()) {
-			if (entry.name === SUBAGENT_ARTIFACTS_DIR) {
-				continue;
-			}
-			collectSessionFilesRecursive(entryPath, windowStartMs, files, caveats);
-			continue;
-		}
+    if (entry.isDirectory()) {
+      if (entry.name === SUBAGENT_ARTIFACTS_DIR) {
+        continue;
+      }
+      collectSessionFilesRecursive(entryPath, windowStartMs, files, caveats);
+      continue;
+    }
 
-		if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-			collectIfFresh(entryPath, windowStartMs, files, caveats);
-		}
-	}
+    if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      collectIfFresh(entryPath, windowStartMs, files, caveats);
+    }
+  }
 }
 
 /**
  * Stat a file and add it to `files` only if its mtime is at or after `windowStartMs`.
  */
-function collectIfFresh(filePath: string, windowStartMs: number, files: string[], caveats: string[]): void {
-	try {
-		const st = statSync(filePath);
-		if (st.mtimeMs >= windowStartMs) {
-			files.push(filePath);
-		}
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		caveats.push(`Could not stat file ${filePath}: ${message}`);
-	}
+function collectIfFresh(
+  filePath: string,
+  windowStartMs: number,
+  files: string[],
+  caveats: string[],
+): void {
+  try {
+    const st = statSync(filePath);
+    if (st.mtimeMs >= windowStartMs) {
+      files.push(filePath);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    caveats.push(`Could not stat file ${filePath}: ${message}`);
+  }
 }
 
 /**
@@ -225,39 +238,39 @@ function collectIfFresh(filePath: string, windowStartMs: number, files: string[]
  * @param filePath  Absolute path to the `.jsonl` session file.
  */
 export async function parseSessionJsonl(filePath: string): Promise<ParsedSessionFile> {
-	let raw: string;
-	try {
-		raw = await readFile(filePath, "utf8");
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Could not read session file ${filePath}: ${message}`, { cause: error });
-	}
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not read session file ${filePath}: ${message}`, { cause: error });
+  }
 
-	const entries: RawSessionEntry[] = [];
-	let malformedLineCount = 0;
+  const entries: RawSessionEntry[] = [];
+  let malformedLineCount = 0;
 
-	for (const line of raw.split("\n")) {
-		const trimmed = line.trim();
-		if (trimmed.length === 0) {
-			// Empty lines are not counted as malformed.
-			continue;
-		}
-		try {
-			const parsed: unknown = JSON.parse(trimmed);
-			if (
-				parsed !== null &&
-				typeof parsed === "object" &&
-				!Array.isArray(parsed) &&
-				typeof (parsed as Record<string, unknown>).type === "string"
-			) {
-				entries.push(parsed as RawSessionEntry);
-			} else {
-				malformedLineCount += 1;
-			}
-		} catch {
-			malformedLineCount += 1;
-		}
-	}
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      // Empty lines are not counted as malformed.
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        typeof (parsed as Record<string, unknown>).type === "string"
+      ) {
+        entries.push(parsed as RawSessionEntry);
+      } else {
+        malformedLineCount += 1;
+      }
+    } catch {
+      malformedLineCount += 1;
+    }
+  }
 
-	return { entries, malformedLineCount };
+  return { entries, malformedLineCount };
 }

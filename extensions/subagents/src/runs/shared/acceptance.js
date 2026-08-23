@@ -9,7 +9,14 @@ const LEVEL_RANK = {
     verified: 3,
     reviewed: 4,
 };
-const VALID_LEVELS = new Set(["auto", "none", "attested", "checked", "verified", "reviewed"]);
+const VALID_LEVELS = new Set([
+    "auto",
+    "none",
+    "attested",
+    "checked",
+    "verified",
+    "reviewed",
+]);
 const VALID_EVIDENCE = new Set([
     "changed-files",
     "tests-added",
@@ -21,9 +28,24 @@ const VALID_EVIDENCE = new Set([
     "review-findings",
     "manual-notes",
 ]);
-const ACCEPTANCE_CONFIG_KEYS = new Set(["level", "criteria", "evidence", "verify", "review", "stopRules", "reason"]);
+const ACCEPTANCE_CONFIG_KEYS = new Set([
+    "level",
+    "criteria",
+    "evidence",
+    "verify",
+    "review",
+    "stopRules",
+    "reason",
+]);
 const ACCEPTANCE_GATE_KEYS = new Set(["id", "must", "evidence", "severity"]);
-const ACCEPTANCE_VERIFY_KEYS = new Set(["id", "command", "timeoutMs", "cwd", "env", "allowFailure"]);
+const ACCEPTANCE_VERIFY_KEYS = new Set([
+    "id",
+    "command",
+    "timeoutMs",
+    "cwd",
+    "env",
+    "allowFailure",
+]);
 const ACCEPTANCE_REVIEW_KEYS = new Set(["agent", "focus", "required"]);
 function normalizeLevel(level) {
     return level ?? "auto";
@@ -41,7 +63,14 @@ function requiredEvidenceForLevel(level) {
             return ["changed-files", "tests-added", "commands-run", "residual-risks", "no-staged-files"];
         case "verified":
         case "reviewed":
-            return ["changed-files", "tests-added", "commands-run", "validation-output", "residual-risks", "no-staged-files"];
+            return [
+                "changed-files",
+                "tests-added",
+                "commands-run",
+                "validation-output",
+                "residual-risks",
+                "no-staged-files",
+            ];
     }
 }
 function inferLegacyLevel(input) {
@@ -155,7 +184,7 @@ function inferLevel(input) {
             async: input.async,
         });
 }
-export function normalizeAcceptanceInput(input) {
+function normalizeAcceptanceInput(input) {
     if (input === undefined || input === "auto")
         return { level: "auto" };
     if (input === false)
@@ -165,7 +194,9 @@ export function normalizeAcceptanceInput(input) {
     return { ...input };
 }
 function explicitAcceptanceCanDisable(explicit) {
-    return explicit.level === "none" && typeof explicit.reason === "string" && explicit.reason.trim().length > 0;
+    return (explicit.level === "none" &&
+        typeof explicit.reason === "string" &&
+        explicit.reason.trim().length > 0);
 }
 export function validateAcceptanceInput(input, pathLabel = "acceptance") {
     const errors = [];
@@ -225,7 +256,9 @@ export function validateAcceptanceInput(input, pathLabel = "acceptance") {
                     }
                 }
             }
-            if (gate.severity !== undefined && gate.severity !== "required" && gate.severity !== "recommended") {
+            if (gate.severity !== undefined &&
+                gate.severity !== "required" &&
+                gate.severity !== "recommended") {
                 errors.push(`${criterionPath}.severity must be required or recommended.`);
             }
         }
@@ -381,7 +414,9 @@ function mergeAcceptanceCriteria(base, extra) {
             ...merged[index],
             must: merged[index]?.must || criterion.must,
             evidence: unique([...(merged[index]?.evidence ?? []), ...criterion.evidence]),
-            severity: merged[index]?.severity === "required" || criterion.severity === "required" ? "required" : "recommended",
+            severity: merged[index]?.severity === "required" || criterion.severity === "required"
+                ? "required"
+                : "recommended",
         };
     }
     return merged;
@@ -400,7 +435,11 @@ export function mergeContinuationAcceptance(base, override) {
         : LEVEL_RANK[overrideLevel] >= LEVEL_RANK[base.level]
             ? overrideLevel
             : base.level;
-    const evidence = unique([...requiredEvidenceForLevel(level), ...base.evidence, ...(explicit.evidence ?? [])]);
+    const evidence = unique([
+        ...requiredEvidenceForLevel(level),
+        ...base.evidence,
+        ...(explicit.evidence ?? []),
+    ]);
     const overrideCriteria = normalizeCriteria(explicit.criteria, evidence);
     const criteria = mergeAcceptanceCriteria(base.criteria, overrideCriteria);
     const verify = mergeVerifyCommands(base.verify, explicit.verify ?? []);
@@ -530,14 +569,15 @@ function extractBalancedJson(text, start) {
     return undefined;
 }
 function unwrapAcceptanceReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return value;
-    const record = value;
-    if ("acceptance" in record)
-        return record.acceptance;
-    if ("acceptance-report" in record)
-        return record["acceptance-report"];
-    return value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return { value, wrapper: "" };
+    }
+    if ("acceptance" in value)
+        return { value: value.acceptance, wrapper: "acceptance" };
+    if ("acceptance-report" in value) {
+        return { value: value["acceptance-report"], wrapper: "acceptance-report" };
+    }
+    return { value, wrapper: "" };
 }
 function isCommandsRunArray(value) {
     return (Array.isArray(value) &&
@@ -546,7 +586,9 @@ function isCommandsRunArray(value) {
                 return false;
             const command = item;
             return (typeof command.command === "string" &&
-                (command.result === "passed" || command.result === "failed" || command.result === "not-run") &&
+                (command.result === "passed" ||
+                    command.result === "failed" ||
+                    command.result === "not-run") &&
                 typeof command.summary === "string");
         }));
 }
@@ -565,45 +607,50 @@ function hasGenericAcceptanceReportSignal(value) {
             isStringArray(record.reviewFindings) ||
             typeof record.manualNotes === "string"));
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function parseReportJson(body) {
     const trimmed = body.trim();
     try {
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        if (isJsonValue(parsed))
+            return parsed;
     }
     catch (error) {
         const jsonStart = trimmed.indexOf("{");
         if (jsonStart > 0) {
             const json = extractBalancedJson(trimmed, jsonStart);
-            if (json)
-                return JSON.parse(json);
+            if (json) {
+                const parsed = JSON.parse(json);
+                if (isJsonValue(parsed))
+                    return parsed;
+            }
         }
         throw error;
     }
+    throw new Error("Acceptance report JSON must contain a JSON value.");
 }
 function fencedBlocks(output, tag) {
     return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
         .map((match) => match[1]?.trim())
         .filter((value) => Boolean(value));
 }
-function validationPathLabelForWrapper(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return "";
-    const record = value;
-    if ("acceptance" in record)
-        return "acceptance";
-    if ("acceptance-report" in record)
-        return "acceptance-report";
-    return "";
-}
 function parseAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    return validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    return validateAcceptanceReport(parsed.value, parsed.wrapper);
 }
 function parseGenericJsonAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    const validation = validateAcceptanceReport(report);
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    const validation = validateAcceptanceReport(parsed.value);
     if (!validation.report)
         return undefined;
     return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
@@ -640,9 +687,8 @@ export function parseAcceptanceReport(output) {
             const json = extractBalancedJson(output, jsonStart);
             if (json) {
                 try {
-                    const parsed = JSON.parse(json);
-                    const report = unwrapAcceptanceReport(parsed);
-                    const validation = validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+                    const parsed = unwrapAcceptanceReport(parseReportJson(json));
+                    const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
                     if (validation.report)
                         return { report: validation.report };
                     return {
@@ -789,7 +835,9 @@ function validateAcceptanceReport(value, pathLabel = "") {
                 const command = item;
                 if (typeof command.command !== "string" || !command.command.trim())
                     pushTypeError(errors, `${itemPath}.command`, "non-empty string", command.command);
-                if (command.result !== "passed" && command.result !== "failed" && command.result !== "not-run") {
+                if (command.result !== "passed" &&
+                    command.result !== "failed" &&
+                    command.result !== "not-run") {
                     pushTypeError(errors, `${itemPath}.result`, 'one of "passed", "failed", "not-run"', command.result);
                 }
                 if (typeof command.summary !== "string")
@@ -826,7 +874,11 @@ function validateAcceptanceReport(value, pathLabel = "") {
         report.reviewFindings !== undefined;
     return hasReportField
         ? { report, errors }
-        : { errors: [`${pathLabel || "acceptance-report"}: expected at least one acceptance report field`] };
+        : {
+            errors: [
+                `${pathLabel || "acceptance-report"}: expected at least one acceptance report field`,
+            ],
+        };
 }
 function checkCriteriaSatisfied(criteria, report) {
     const reports = new Map((report.criteriaSatisfied ?? []).filter((item) => item.id).map((item) => [item.id, item]));
@@ -884,10 +936,16 @@ function checkNoStagedFiles(cwd) {
             message: "git status unavailable; no staged-files check skipped",
         };
     }
-    const staged = result.stdout.split(/\r?\n/).filter((line) => line.length >= 2 && line[0] !== " " && line[0] !== "?");
+    const staged = result.stdout
+        .split(/\r?\n/)
+        .filter((line) => line.length >= 2 && line[0] !== " " && line[0] !== "?");
     return staged.length === 0
         ? { id: "no-staged-files", status: "passed", message: "No staged files detected." }
-        : { id: "no-staged-files", status: "failed", message: `Staged files present: ${staged.join(", ")}` };
+        : {
+            id: "no-staged-files",
+            status: "failed",
+            message: `Staged files present: ${staged.join(", ")}`,
+        };
 }
 function runStructuralChecks(acceptance, report, cwd) {
     const checks = [];
@@ -896,7 +954,9 @@ function runStructuralChecks(acceptance, report, cwd) {
         checks.push({
             id: `evidence:${kind}`,
             status: present ? "passed" : "failed",
-            message: present ? `${kind} evidence present.` : `${kind} evidence missing from child report.`,
+            message: present
+                ? `${kind} evidence present.`
+                : `${kind} evidence missing from child report.`,
         });
     }
     if (acceptance.evidence.includes("no-staged-files"))
@@ -923,7 +983,7 @@ function runVerifyCommand(command, defaultCwd, options = {}) {
         let hardKill;
         const child = spawn(command.command, {
             cwd,
-            env: { ...process.env, ...(command.env ?? {}) },
+            env: { ...process.env, ...command.env },
             shell: true,
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
@@ -976,7 +1036,13 @@ function runVerifyCommand(command, defaultCwd, options = {}) {
             const passed = exitCode === 0 && !timedOut;
             finish({
                 exitCode,
-                status: timedOut ? "timed-out" : passed ? "passed" : command.allowFailure ? "allowed-failure" : "failed",
+                status: timedOut
+                    ? "timed-out"
+                    : passed
+                        ? "passed"
+                        : command.allowFailure
+                            ? "allowed-failure"
+                            : "failed",
                 stdout: trimOutput(stdout),
                 stderr: trimOutput(stderr || (timedOut ? (options.abortMessage ?? "") : "")),
             });
@@ -1059,7 +1125,10 @@ export async function evaluateAcceptance(input) {
         }
         ledger.verifyRuns = [];
         for (const command of acceptance.verify) {
-            ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd, { signal: input.signal, abortMessage: input.abortMessage }));
+            ledger.verifyRuns.push(await runVerifyCommand(command, input.cwd, {
+                signal: input.signal,
+                abortMessage: input.abortMessage,
+            }));
             if (input.signal?.aborted)
                 break;
         }

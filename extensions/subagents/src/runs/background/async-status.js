@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.js";
+import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
 import {} from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
@@ -12,11 +12,15 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
 function isNotFoundError(error) {
-    return (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT");
+    return (typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT");
 }
 function isAsyncRunDir(root, entry) {
     const entryPath = path.join(root, entry);
@@ -92,12 +96,17 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         }
         const step = rawStep;
         const rawTicket = step.tkTicket;
-        if (rawTicket === undefined)
-            continue;
-        const normalizedTkTicket = normalizeTkTicketMetadata(rawTicket);
-        if (!normalizedTkTicket)
-            invalid(`steps[${index}].tkTicket must include a valid id and terminal-safe title.`);
-        step.tkTicket = normalizedTkTicket;
+        if (rawTicket !== undefined) {
+            const normalizedTkTicket = normalizeTkTicketMetadata(rawTicket);
+            if (!normalizedTkTicket) {
+                invalid(`steps[${index}].tkTicket must include a valid id and terminal-safe title.`);
+            }
+            step.tkTicket = normalizedTkTicket;
+        }
+        step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
+        step.contextPressure = parseContextPressureProjection(step.contextPressure);
+        step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
+        step.terminationReason = parseSubagentTerminationReason(step.terminationReason);
     }
 }
 function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
@@ -134,7 +143,9 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.currentToolArgs ? { currentToolArgs: step.currentToolArgs } : {}),
             ...(step.currentToolStartedAt ? { currentToolStartedAt: step.currentToolStartedAt } : {}),
             ...(step.currentPath ? { currentPath: step.currentPath } : {}),
-            ...(interruptRequestedAt !== undefined && step.status === "running" ? { interruptRequestedAt } : {}),
+            ...(interruptRequestedAt !== undefined && step.status === "running"
+                ? { interruptRequestedAt }
+                : {}),
             ...(step.recentTools ? { recentTools: step.recentTools.map((tool) => ({ ...tool })) } : {}),
             ...(step.recentOutput ? { recentOutput: [...step.recentOutput] } : {}),
             ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
@@ -150,12 +161,22 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.skills ? { skills: step.skills } : {}),
             ...(step.model ? { model: step.model } : {}),
             ...(step.thinking ? { thinking: step.thinking } : {}),
+            ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
+            ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
+            ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+            ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
+            ...(step.contextPressureCrossedThresholds
+                ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+                : {}),
+            ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
             ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
             ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
             ...(step.error ? { error: step.error } : {}),
             ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
             ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-            ...(step.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: step.turnBudgetExceeded } : {}),
+            ...(step.turnBudgetExceeded !== undefined
+                ? { turnBudgetExceeded: step.turnBudgetExceeded }
+                : {}),
             ...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
             ...(step.children?.length ? { children: step.children } : {}),
         };
@@ -187,7 +208,9 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
         ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-        ...(status.turnBudgetExceeded !== undefined ? { turnBudgetExceeded: status.turnBudgetExceeded } : {}),
+        ...(status.turnBudgetExceeded !== undefined
+            ? { turnBudgetExceeded: status.turnBudgetExceeded }
+            : {}),
         ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
         currentStep: status.currentStep,
         ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
@@ -260,7 +283,11 @@ function buildRunCollector(asyncDirRoot, options = {}, validationOrder = "strict
         const asyncDir = path.join(asyncDirRoot, entry);
         const reconciliation = options.reconcile === false
             ? undefined
-            : reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+            : reconcileAsyncRun(asyncDir, {
+                resultsDir: options.resultsDir,
+                kill: options.kill,
+                now: options.now,
+            });
         const status = (reconciliation?.status ?? readStatus(asyncDir));
         if (!status)
             return;
@@ -364,6 +391,8 @@ function formatStepLine(step, privacySafe = false) {
     const modelThinking = formatModelThinking(step.model, step.thinking);
     if (modelThinking)
         parts.push(modelThinking);
+    if (step.modelResolution?.reason)
+        parts.push(`model decision: ${step.modelResolution.reason}`);
     if (step.durationMs !== undefined)
         parts.push(formatDuration(step.durationMs));
     if (step.tokens)
@@ -392,7 +421,9 @@ export function formatAsyncRunProgressLabel(run) {
                 ? groupLabel
                 : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
         }
-        const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, { showRunning: run.state === "running" });
+        const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, {
+            showRunning: run.state === "running",
+        });
         if (run.mode === "parallel")
             return groupLabel;
         return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
@@ -409,7 +440,9 @@ export function formatAsyncRunProgressLabel(run) {
         const logicalStep = flatToLogicalStepIndex(run.currentStep, chainStepCount, groups);
         return `step ${logicalStep + 1}/${chainStepCount}`;
     }
-    return run.currentStep !== undefined ? `step ${run.currentStep + 1}/${stepCount}` : `steps ${stepCount}`;
+    return run.currentStep !== undefined
+        ? `step ${run.currentStep + 1}/${stepCount}`
+        : `steps ${stepCount}`;
 }
 function formatRunHeader(run) {
     const privacySafe = isProtectedPausedLifecycle(run);
@@ -443,7 +476,11 @@ export function formatAsyncRunList(runs, heading = "Active async runs") {
         }
         const attached = new Set(run.steps.flatMap((step) => step.children?.map((child) => child.id) ?? []));
         const unattached = run.nestedChildren?.filter((child) => !attached.has(child.id)) ?? [];
-        lines.push(...formatNestedRunStatusLines(unattached, { indent: "  ", maxLines: 12, redactSensitiveDetails: privacySafe }));
+        lines.push(...formatNestedRunStatusLines(unattached, {
+            indent: "  ",
+            maxLines: 12,
+            redactSensitiveDetails: privacySafe,
+        }));
         if (run.error)
             lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : run.error}`);
         for (const warning of run.nestedWarnings ?? [])

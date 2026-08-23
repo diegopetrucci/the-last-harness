@@ -15,329 +15,428 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
-	NATIVE_SUPERVISOR_TOOL_NAME,
-	createNativeSupervisorChannel,
-	ensureSupervisorChannelDir,
-	registerNativeSupervisorClient,
-	resolveSupervisorChannelDir,
+  NATIVE_SUPERVISOR_TOOL_NAME,
+  createNativeSupervisorChannel,
+  ensureSupervisorChannelDir,
+  registerNativeSupervisorClient,
+  resolveSupervisorChannelDir,
 } from "../../src/intercom/native-supervisor-channel.ts";
 import { handleSubagentControlNotice } from "../../src/extension/control-notices.ts";
 import {
-	SUBAGENT_CHILD_AGENT_ENV,
-	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-	SUBAGENT_RUN_ID_ENV,
-	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_CHILD_INDEX_ENV,
+  SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
+  SUBAGENT_RUN_ID_ENV,
+  SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import { SUBAGENT_CONTROL_INTERCOM_EVENT, SUBAGENT_RESULT_INTERCOM_EVENT } from "../../src/shared/types.ts";
+import { SUBAGENT_CONTROL_INTERCOM_EVENT } from "../../src/shared/types.ts";
+// Legacy event name kept as a test-local literal for the no-emission regression guard.
+// Do not re-add this constant to production types or result-intercom — the delivery/receipt
+// pipeline it belonged to has been permanently removed.
+const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
+
+type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
+
+interface ContactSupervisorFixtureParams {
+  reason: SupervisorReason;
+  message?: string;
+  interview?: unknown;
+}
+
+interface SupervisorRequestFixtureDetails {
+  delivered: boolean;
+  requestId: string;
+  reason: SupervisorReason;
+}
+
+interface PendingSupervisorFixture {
+  id: string;
+  runId: string;
+  agent: string;
+  childIndex: number;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+}
+
+type SupervisorChannelFixtureDetails =
+  | { active: true; pending: number; root: string }
+  | { pending: PendingSupervisorFixture[] };
+
+type SupervisorRequestToolResult = AgentToolResult<SupervisorRequestFixtureDetails>;
+type SupervisorChannelToolResult = AgentToolResult<SupervisorChannelFixtureDetails>;
+
+interface RequestFileInspection {
+  type: string;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+  runId: string;
+}
+
+function parseRequestFileInspection(value: unknown): RequestFileInspection | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const type = Object.getOwnPropertyDescriptor(value, "type")?.value;
+  const reason = Object.getOwnPropertyDescriptor(value, "reason")?.value;
+  const expectsReply = Object.getOwnPropertyDescriptor(value, "expectsReply")?.value;
+  const runId = Object.getOwnPropertyDescriptor(value, "runId")?.value;
+  if (
+    typeof type !== "string" ||
+    (reason !== "need_decision" &&
+      reason !== "interview_request" &&
+      reason !== "progress_update") ||
+    typeof expectsReply !== "boolean" ||
+    typeof runId !== "string"
+  )
+    return undefined;
+  return { type, reason, expectsReply, runId };
+}
+
+function resultText(result: SupervisorChannelToolResult): string {
+  const content = result.content[0];
+  return content?.type === "text" ? content.text : "";
+}
 
 // ─── env save/restore ────────────────────────────────────────────────────────
 
 const ENV_KEYS = [
-	SUBAGENT_CHILD_AGENT_ENV,
-	SUBAGENT_CHILD_INDEX_ENV,
-	SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-	SUBAGENT_RUN_ID_ENV,
-	SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_CHILD_INDEX_ENV,
+  SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
+  SUBAGENT_RUN_ID_ENV,
+  SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 ] as const;
 
 type SavedEnv = Record<(typeof ENV_KEYS)[number], string | undefined>;
 
 function saveEnv(): SavedEnv {
-	return Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as SavedEnv;
+  return Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as SavedEnv;
 }
 
 function restoreEnv(saved: SavedEnv): void {
-	for (const key of ENV_KEYS) {
-		if (saved[key] === undefined) {
-			delete process.env[key];
-		} else {
-			process.env[key] = saved[key];
-		}
-	}
+  for (const key of ENV_KEYS) {
+    if (saved[key] === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = saved[key];
+    }
+  }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function wait(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function pollUntil(predicate: () => boolean, timeoutMs = 3000, intervalMs = 50): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (!predicate()) {
-		if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
-		await wait(intervalMs);
-	}
+async function pollUntil(
+  predicate: () => boolean,
+  timeoutMs = 3000,
+  intervalMs = 50,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
+    await wait(intervalMs);
+  }
 }
 
 function makeParentState(sessionId: string | null, ctx: unknown): SubagentState {
-	return {
-		baseCwd: process.cwd(),
-		currentSessionId: sessionId,
-		asyncJobs: new Map(),
-		foregroundControls: new Map(),
-		lastForegroundControlId: null,
-		cleanupTimers: new Map(),
-		lastUiContext: ctx as SubagentState["lastUiContext"],
-		poller: null,
-		completionSeen: new Map(),
-		watcher: null,
-		watcherRestartTimer: null,
-		resultFileCoalescer: { schedule: () => false, clear: () => {} },
-	};
+  return {
+    baseCwd: process.cwd(),
+    currentSessionId: sessionId,
+    asyncJobs: new Map(),
+    foregroundControls: new Map(),
+    lastForegroundControlId: null,
+    cleanupTimers: new Map(),
+    lastUiContext: ctx as SubagentState["lastUiContext"],
+    poller: null,
+    completionSeen: new Map(),
+    watcher: null,
+    watcherRestartTimer: null,
+    resultFileCoalescer: { schedule: () => false, clear: () => {} },
+  };
 }
 
 function makeControlState(): SubagentState {
-	return {
-		baseCwd: "/tmp/project",
-		currentSessionId: null,
-		asyncJobs: new Map(),
-		foregroundControls: new Map(),
-		lastForegroundControlId: null,
-		pendingForegroundControlNotices: new Map(),
-		cleanupTimers: new Map(),
-		lastUiContext: null,
-		poller: null,
-		completionSeen: new Map(),
-		watcher: null,
-		watcherRestartTimer: null,
-		resultFileCoalescer: { schedule: () => false, clear: () => {} },
-	};
+  return {
+    baseCwd: "/tmp/project",
+    currentSessionId: null,
+    asyncJobs: new Map(),
+    foregroundControls: new Map(),
+    lastForegroundControlId: null,
+    pendingForegroundControlNotices: new Map(),
+    cleanupTimers: new Map(),
+    lastUiContext: null,
+    poller: null,
+    completionSeen: new Map(),
+    watcher: null,
+    watcherRestartTimer: null,
+    resultFileCoalescer: { schedule: () => false, clear: () => {} },
+  };
 }
 
 function needsAttentionEvent(overrides: Partial<ControlEvent> = {}): ControlEvent {
-	return {
-		type: "needs_attention",
-		to: "needs_attention",
-		ts: 1,
-		runId: "run-nointercom-1",
-		agent: "worker",
-		index: 0,
-		message: "worker needs attention",
-		reason: "idle",
-		...overrides,
-	};
+  return {
+    type: "needs_attention",
+    to: "needs_attention",
+    ts: 1,
+    runId: "run-nointercom-1",
+    agent: "worker",
+    index: 0,
+    message: "worker needs attention",
+    reason: "idle",
+    ...overrides,
+  };
 }
 
 // ─── describe ────────────────────────────────────────────────────────────────
 
 describe("no-pi-intercom regression guard", () => {
-	// ── (a) contact_supervisor pending/status without intercom ────────────────
+  // ── (a) contact_supervisor pending/status without intercom ────────────────
 
-	describe("contact_supervisor pending/status with no intercom tool installed", () => {
-		let savedEnv: SavedEnv;
+  describe("contact_supervisor pending/status with no intercom tool installed", () => {
+    let savedEnv: SavedEnv;
 
-		afterEach(() => {
-			if (savedEnv) restoreEnv(savedEnv);
-		});
+    afterEach(() => {
+      if (savedEnv) restoreEnv(savedEnv);
+    });
 
-		it("surfaces a need_decision request through the native pending/status channel", async () => {
-			savedEnv = saveEnv();
+    it("surfaces a need_decision request through the native pending/status channel", async () => {
+      savedEnv = saveEnv();
 
-			const runId = `run-${randomUUID()}`;
-			const agent = "worker";
-			const childIndex = 0;
-			const orchestratorSessionId = `session-${randomUUID()}`;
-			const channelDir = resolveSupervisorChannelDir(runId, agent, childIndex);
+      const runId = `run-${randomUUID()}`;
+      const agent = "worker";
+      const childIndex = 0;
+      const orchestratorSessionId = `session-${randomUUID()}`;
+      const channelDir = resolveSupervisorChannelDir(runId, agent, childIndex);
 
-			ensureSupervisorChannelDir(channelDir);
+      ensureSupervisorChannelDir(channelDir);
 
-			// Wire env so readChildMetadata() resolves
-			process.env[SUBAGENT_RUN_ID_ENV] = runId;
-			process.env[SUBAGENT_CHILD_AGENT_ENV] = agent;
-			process.env[SUBAGENT_CHILD_INDEX_ENV] = String(childIndex);
-			process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = orchestratorSessionId;
-			process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+      // Wire env so readChildMetadata() resolves
+      process.env[SUBAGENT_RUN_ID_ENV] = runId;
+      process.env[SUBAGENT_CHILD_AGENT_ENV] = agent;
+      process.env[SUBAGENT_CHILD_INDEX_ENV] = String(childIndex);
+      process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = orchestratorSessionId;
+      process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
 
-			// Child side: mock pi with NO 'intercom' tool pre-installed
-			const childTools = new Map<
-				string,
-				{ execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }
-			>();
-			const childPi = {
-				getAllTools: () => [...childTools.keys()].map((name) => ({ name })),
-				registerTool: (tool: {
-					name: string;
-					execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown>;
-				}) => {
-					childTools.set(tool.name, tool);
-				},
-				sendMessage: () => {},
-				getSessionName: () => "child-session",
-			};
+      // Child side: mock pi with NO 'intercom' tool pre-installed
+      const childTools = new Map<
+        string,
+        {
+          execute: (
+            _id: string,
+            params: ContactSupervisorFixtureParams,
+            signal?: AbortSignal,
+          ) => Promise<SupervisorRequestToolResult>;
+        }
+      >();
+      const childPi = {
+        getAllTools: () => [...childTools.keys()].map((name) => ({ name })),
+        registerTool: (tool: {
+          name: string;
+          execute: (
+            _id: string,
+            params: ContactSupervisorFixtureParams,
+            signal?: AbortSignal,
+          ) => Promise<SupervisorRequestToolResult>;
+        }) => {
+          childTools.set(tool.name, tool);
+        },
+        sendMessage: () => {},
+        getSessionName: () => "child-session",
+      };
 
-			// Register native supervisor client — no intercom tool present
-			registerNativeSupervisorClient(childPi as never);
+      // Register native supervisor client — no intercom tool present
+      registerNativeSupervisorClient(childPi as never);
 
-			assert.deepEqual([...childTools.keys()], ["contact_supervisor"]);
+      assert.deepEqual([...childTools.keys()], ["contact_supervisor"]);
 
-			// Parent side: real native supervisor channel scoped to the SAME
-			// orchestrator session id the child env points at. No intercom tool
-			// pre-installed here either; sendMessage is a recorder no-op for the
-			// proactive parent notice channel.start()/polling may deliver.
-			const parentTools = new Map<string, { execute: (_id: string, params: { action: string }) => Promise<unknown> }>();
-			const parentCtx = {
-				cwd: process.cwd(),
-				hasUI: false,
-				sessionManager: {
-					getSessionId: () => orchestratorSessionId,
-					getSessionFile: () => null,
-					getEntries: () => [],
-				},
-			};
-			const parentPi = {
-				getAllTools: () => [...parentTools.keys()].map((name) => ({ name })),
-				registerTool: (tool: {
-					name: string;
-					execute: (_id: string, params: { action: string }) => Promise<unknown>;
-				}) => {
-					parentTools.set(tool.name, tool);
-				},
-				sendMessage: () => {},
-				getSessionName: () => "parent-session",
-			};
-			const parentChannel = createNativeSupervisorChannel(
-				parentPi as never,
-				makeParentState(orchestratorSessionId, parentCtx),
-			);
+      // Parent side: real native supervisor channel scoped to the SAME
+      // orchestrator session id the child env points at. No intercom tool
+      // pre-installed here either; sendMessage is a recorder no-op for the
+      // proactive parent notice channel.start()/polling may deliver.
+      const parentTools = new Map<
+        string,
+        {
+          execute: (
+            _id: string,
+            params: { action: "pending" | "status" },
+          ) => Promise<SupervisorChannelToolResult>;
+        }
+      >();
+      const parentCtx = {
+        cwd: process.cwd(),
+        hasUI: false,
+        sessionManager: {
+          getSessionId: () => orchestratorSessionId,
+          getSessionFile: () => null,
+          getEntries: () => [],
+        },
+      };
+      const parentPi = {
+        getAllTools: () => [...parentTools.keys()].map((name) => ({ name })),
+        registerTool: (tool: {
+          name: string;
+          execute: (
+            _id: string,
+            params: { action: "pending" | "status" },
+          ) => Promise<SupervisorChannelToolResult>;
+        }) => {
+          parentTools.set(tool.name, tool);
+        },
+        sendMessage: () => {},
+        getSessionName: () => "parent-session",
+      };
+      const parentChannel = createNativeSupervisorChannel(
+        parentPi as never,
+        makeParentState(orchestratorSessionId, parentCtx),
+      );
 
-			try {
-				parentChannel.start();
-				assert.ok(parentTools.has(NATIVE_SUPERVISOR_TOOL_NAME), "parent subagent_supervisor tool should be registered");
+      try {
+        parentChannel.start();
+        assert.ok(
+          parentTools.has(NATIVE_SUPERVISOR_TOOL_NAME),
+          "parent subagent_supervisor tool should be registered",
+        );
 
-				// Kick off the child-side request in the background.
-				const contactSupervisorTool = childTools.get("contact_supervisor")!;
-				const controller = new AbortController();
-				const resultPromise = contactSupervisorTool.execute(
-					"req-id",
-					{
-						reason: "need_decision",
-						message: "Should I proceed with option A?",
-					},
-					controller.signal,
-				);
+        // Kick off the child-side request in the background.
+        const contactSupervisorTool = childTools.get("contact_supervisor")!;
+        const controller = new AbortController();
+        const resultPromise = contactSupervisorTool.execute(
+          "req-id",
+          {
+            reason: "need_decision",
+            message: "Should I proceed with option A?",
+          },
+          controller.signal,
+        );
 
-				// Wait for the request file to appear in the channel dir
-				const requestsDir = path.join(channelDir, "requests");
-				let requestId: string | undefined;
-				await pollUntil(() => {
-					const entries = fs.readdirSync(requestsDir).filter((f) => f.endsWith(".json"));
-					if (entries.length > 0) {
-						requestId = entries[0]!.replace(/\.json$/, "");
-						return true;
-					}
-					return false;
-				}, 4000);
+        // Wait for the request file to appear in the channel dir
+        const requestsDir = path.join(channelDir, "requests");
+        let requestId: string | undefined;
+        await pollUntil(() => {
+          const entries = fs.readdirSync(requestsDir).filter((f) => f.endsWith(".json"));
+          if (entries.length > 0) {
+            requestId = entries[0]!.replace(/\.json$/, "");
+            return true;
+          }
+          return false;
+        }, 4000);
 
-				assert.ok(requestId, "Request file should have appeared in the channel dir");
+        assert.ok(requestId, "Request file should have appeared in the channel dir");
 
-				// Verify the request content
-				const requestFile = path.join(requestsDir, `${requestId}.json`);
-				const request = JSON.parse(fs.readFileSync(requestFile, "utf-8")) as {
-					type?: string;
-					reason?: string;
-					expectsReply?: boolean;
-					runId?: string;
-				};
-				assert.equal(request.type, "subagent.supervisor.request");
-				assert.equal(request.reason, "need_decision");
-				assert.equal(request.expectsReply, true);
-				assert.equal(request.runId, runId);
+        // Verify the request content
+        const requestFile = path.join(requestsDir, `${requestId}.json`);
+        const parsedRequest: unknown = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
+        const request = parseRequestFileInspection(parsedRequest);
+        assert.ok(request, "Request file should contain the native supervisor shape");
+        assert.equal(request.type, "subagent.supervisor.request");
+        assert.equal(request.reason, "need_decision");
+        assert.equal(request.expectsReply, true);
+        assert.equal(request.runId, runId);
 
-				// Wait for the parent channel poller to discover the request
-				// (new request files are picked up by the poll loop, ≤500ms).
-				await pollUntil(() => parentChannel.pending.has(requestId!), 4000);
+        // Wait for the parent channel poller to discover the request
+        // (new request files are picked up by the poll loop, ≤500ms).
+        await pollUntil(
+          () => requestId !== undefined && parentChannel.pending.has(requestId),
+          4000,
+        );
 
-				const status = (await parentTools
-					.get(NATIVE_SUPERVISOR_TOOL_NAME)!
-					.execute("status", { action: "status" })) as {
-					content?: Array<{ text?: string }>;
-				};
-				assert.match(status.content?.[0]?.text ?? "", /Native supervisor channel active/);
-				const pending = (await parentTools
-					.get(NATIVE_SUPERVISOR_TOOL_NAME)!
-					.execute("pending", { action: "pending" })) as {
-					details?: { pending?: Array<{ id?: string }> };
-				};
-				assert.deepEqual(
-					pending.details?.pending?.map((request) => request.id),
-					[requestId],
-				);
+        const status = await parentTools
+          .get(NATIVE_SUPERVISOR_TOOL_NAME)!
+          .execute("status", { action: "status" });
+        assert.match(resultText(status), /Native supervisor channel active/);
+        const pending = await parentTools
+          .get(NATIVE_SUPERVISOR_TOOL_NAME)!
+          .execute("pending", { action: "pending" });
+        const pendingRequests = pending.details.pending;
+        assert.ok(Array.isArray(pendingRequests));
+        assert.deepEqual(
+          pendingRequests.map((request) => request.id),
+          [requestId],
+        );
 
-				// The canonical durable path aborts this live wait before a later resume or interrupt.
-				controller.abort();
-				await assert.rejects(resultPromise, /Supervisor request cancelled/);
-				assert.equal(fs.existsSync(requestFile), false);
-				assert.deepEqual(fs.readdirSync(channelDir), ["requests"]);
-			} finally {
-				parentChannel.dispose();
-				fs.rmSync(channelDir, { recursive: true, force: true });
-			}
-		});
-	});
+        // The canonical durable path aborts this live wait before a later resume or interrupt.
+        controller.abort();
+        await assert.rejects(resultPromise, /Supervisor request cancelled/);
+        assert.equal(fs.existsSync(requestFile), false);
+        assert.deepEqual(fs.readdirSync(channelDir), ["requests"]);
+      } finally {
+        parentChannel.dispose();
+        fs.rmSync(channelDir, { recursive: true, force: true });
+      }
+    });
+  });
 
-	// ── (b) needs_attention notice emits no intercom events ──────────────────
+  // ── (b) needs_attention notice emits no intercom events ──────────────────
 
-	describe("needs_attention notice intercom-independence", () => {
-		it("delivers notice via pi.sendMessage without emitting any *-intercom events on the event bus", () => {
-			const state = makeControlState();
+  describe("needs_attention notice intercom-independence", () => {
+    it("delivers notice via pi.sendMessage without emitting any *-intercom events on the event bus", () => {
+      const state = makeControlState();
 
-			// Event bus that records emitted events
-			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			const listeners = new Map<string, Set<(payload: unknown) => void>>();
-			const sent: Array<{ message: unknown; options: unknown }> = [];
+      // Event bus that records emitted events
+      const emittedEvents: Array<{ event: string; data: unknown }> = [];
+      const listeners = new Map<string, Set<(payload: unknown) => void>>();
+      const sent: Array<{ message: unknown; options: unknown }> = [];
 
-			const nudges: Array<{ text: string; options: unknown }> = [];
-			const mockPi = {
-				sendMessage(message: unknown, options?: unknown) {
-					// Delivery goes here — not to the event bus
-					sent.push({ message, options });
-				},
-				sendUserMessage(text: string, options?: unknown) {
-					nudges.push({ text, options });
-				},
-				events: {
-					on(event: string, handler: (payload: unknown) => void) {
-						const handlers = listeners.get(event) ?? new Set();
-						handlers.add(handler);
-						listeners.set(event, handlers);
-						return () => handlers.delete(handler);
-					},
-					emit(event: string, data: unknown) {
-						emittedEvents.push({ event, data });
-						for (const handler of listeners.get(event) ?? []) handler(data);
-					},
-				},
-			};
+      const nudges: Array<{ text: string; options: unknown }> = [];
+      const mockPi = {
+        sendMessage(message: unknown, options?: unknown) {
+          // Delivery goes here — not to the event bus
+          sent.push({ message, options });
+        },
+        sendUserMessage(text: string, options?: unknown) {
+          nudges.push({ text, options });
+        },
+        events: {
+          on(event: string, handler: (payload: unknown) => void) {
+            const handlers = listeners.get(event) ?? new Set();
+            handlers.add(handler);
+            listeners.set(event, handlers);
+            return () => handlers.delete(handler);
+          },
+          emit(event: string, data: unknown) {
+            emittedEvents.push({ event, data });
+            for (const handler of listeners.get(event) ?? []) handler(data);
+          },
+        },
+      };
 
-			handleSubagentControlNotice({
-				pi: mockPi as never,
-				state,
-				visibleControlNotices: new Set(),
-				details: { source: "async", event: needsAttentionEvent() },
-				foregroundDelayMs: 20,
-			});
+      handleSubagentControlNotice({
+        pi: mockPi as never,
+        state,
+        visibleControlNotices: new Set(),
+        details: { source: "async", event: needsAttentionEvent() },
+        foregroundDelayMs: 20,
+      });
 
-			// The control notice must have been delivered via sendMessage…
-			assert.equal(sent.length, 1, `Expected exactly one delivered control notice; got ${sent.length}`);
+      // The control notice must have been delivered via sendMessage…
+      assert.equal(
+        sent.length,
+        1,
+        `Expected exactly one delivered control notice; got ${sent.length}`,
+      );
 
-			// …but must NOT have produced any intercom event-bus emissions.
-			const controlIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_CONTROL_INTERCOM_EVENT);
-			const resultIntercomEmissions = emittedEvents.filter((e) => e.event === SUBAGENT_RESULT_INTERCOM_EVENT);
+      // …but must NOT have produced any intercom event-bus emissions.
+      const controlIntercomEmissions = emittedEvents.filter(
+        (e) => e.event === SUBAGENT_CONTROL_INTERCOM_EVENT,
+      );
+      const resultIntercomEmissions = emittedEvents.filter(
+        (e) => e.event === LEGACY_RESULT_INTERCOM_EVENT,
+      );
 
-			assert.equal(
-				controlIntercomEmissions.length,
-				0,
-				`Expected zero ${SUBAGENT_CONTROL_INTERCOM_EVENT} emissions; got ${controlIntercomEmissions.length}`,
-			);
-			assert.equal(
-				resultIntercomEmissions.length,
-				0,
-				`Expected zero ${SUBAGENT_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
-			);
-		});
-	});
+      assert.equal(
+        controlIntercomEmissions.length,
+        0,
+        `Expected zero ${SUBAGENT_CONTROL_INTERCOM_EVENT} emissions; got ${controlIntercomEmissions.length}`,
+      );
+      assert.equal(
+        resultIntercomEmissions.length,
+        0,
+        `Expected zero ${LEGACY_RESULT_INTERCOM_EVENT} emissions; got ${resultIntercomEmissions.length}`,
+      );
+    });
+  });
 });

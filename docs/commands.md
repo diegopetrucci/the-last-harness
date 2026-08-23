@@ -17,7 +17,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries — **hidden from TLH autocomplete**; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position — **hidden from TLH autocomplete** |
+| `/clone` | Duplicate the current session at the current position |
 | `/compact` | Manually compact the session context |
 | `/copy` | Copy the last agent message to the clipboard |
 | `/export` | Export the session (HTML by default; pass a `.html` or `.jsonl` path to specify format) |
@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens a selector UI) |
+| `/model` | Select the active model (opens the native selector; see [model selection scope](models.md#model-selection-scope)) |
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
@@ -66,6 +66,8 @@ These commands are registered by the TLH extension bundled with this profile.
 ### `/thinking` and `/effort`
 
 Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
+
+With no level argument in the interactive TUI, a changed selection opens a second `Thinking selection scope` picker: `This session only — default` keeps the new level active without changing the isolated profile's `defaultThinkingLevel`, while `All sessions` persists it for future sessions. Cancel restores the level that was active before the picker and leaves the persistent default unchanged. Selecting the current level still reports the active level but does not open the scope picker; dismissing the level picker or making a rejected selection also does not open it. Typed levels and thinking cycling/shortcuts retain their existing persistent behavior. To replace a persistent default, run `/thinking <level>` or `/effort <level>` with the desired value. Pi writes that default only when the active level changes, so to persist a session-only level that is already active, first change to another allowed level and then type the desired level. A session-only level is not a lock: it remains active until a later model or thinking-level operation changes it; a new session also returns to its resolved default.
 
 ### `/experimental`
 
@@ -129,7 +131,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `/subagents-fleet` shows active dispatch status; neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", view: "fleet" })` shows active dispatch status; neither command changes these overrides.
 
 ### `/reconcile`
 
@@ -164,7 +166,7 @@ For each role you have two choices:
 
 When resetting all, per-role failures are isolated — errors and unrecognised overrides are reported as a distinct category so a single failed clear does not abort the rest.
 
-**Reset is also undoable**: restore the value at any time with `/model` (primary-agent overrides) or `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` (subagent overrides), or copy back the `settings.json.bak-*` backup shown in the notification.
+**Reset is also undoable**: restore the value through the native `/model` picker and choose `All sessions` (the default `This session only — default` choice is session-only) for primary-agent overrides; use `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` for subagent overrides, or copy back the `settings.json.bak-*` backup shown in the notification.
 
 #### Outside the TUI
 
@@ -176,7 +178,7 @@ The packaged default shown is the canonical value for the active provider, resol
 
 #### Reconcile state
 
-Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create an override (via `/model` or `/subagent-settings`), on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
+Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create a persistent override via `/model` (the native picker requires the `All sessions` choice; its default `This session only — default` choice does not write an override; direct exact-name `/model` selections retain their existing persistent path) or via `/subagent-settings`, on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
 
 ### `/tickets`
 
@@ -213,7 +215,6 @@ These commands ship inside the TLH package itself rather than through separately
 | `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
 | `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 | `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
-| `/subagents-fleet` | `subagents` | Show active subagent fleet status and transcript commands |
 
 ### `/annotate-last-message`
 
@@ -287,6 +288,8 @@ These slash commands come from prompt templates bundled inside TLH. They insert 
 
 | Command | Description |
 |---------|-------------|
+| `/analyse-tlh-sessions` | Analyse the past week of tlh sessions for notable issues without changing files. |
+| `/investigate-pr-comments` | Check PR comments and verify whether each one is valid. |
 | `/merge-origin-main-into-this-branch` | Merge `origin/main` into this branch. |
 | `/rebase-this-branch-onto-origin-main` | Rebase this branch onto `origin/main`. |
 
@@ -299,9 +302,27 @@ These commands are provided by bundled default extensions and are visible in TLH
 | Command | Extension | Description |
 |---------|-----------|-------------|
 | `/context` | `pi-context-inspector` | Open a local HTML breakdown of where this session's context is going |
-| `/fast` | `pi-openai-fast` | Toggle OpenAI Codex Fast mode (ChatGPT-auth GPT-5.4/GPT-5.5 only) |
+| `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
+| `/transcribe` | `pi-transcribe` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
+
+### `/transcribe` and `Ctrl+Alt+Z`
+
+Run `/transcribe` once to choose and confirm a local model; pi-transcribe downloads the model after confirmation. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
+
+---
+
+## Bundled skill commands
+
+These bundled skills ship with TLH and remain visible in TLH autocomplete.
+
+| Command | Description |
+|---------|-------------|
+| `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows |
+| `/skill:herdr` | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control |
+| `/skill:show-me` | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts |
+| `/skill:tmux` | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring |
 
 ---
 
@@ -314,7 +335,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/changelog` | Show upstream Pi changelog entries; use `/tlh-changelog` for TLH release notes |
-| `/clone` | Duplicate the current session at the current position |
 | `/import` | Import and resume a session from a JSONL file |
 | `/scoped-models` | Enable or disable models for Ctrl+P cycling |
 
@@ -323,12 +343,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-
-### Hidden first-party extension commands
-
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/subagent-cost` | `subagents` | Show parent and child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 
 ### Hidden bundled extension commands
 
@@ -357,8 +371,35 @@ Individual bundled extensions can be disabled without affecting the others. Use 
 
 ```sh
 tlh defaults list        # show installed defaults and opt-out status
-tlh defaults disable <id>  # disable a bundled extension (e.g. tlh defaults disable notify)
+tlh defaults disable <id>  # disable a separately managed default extension (e.g. tlh defaults disable context-inspector)
 tlh defaults enable <id>   # re-enable a disabled extension
 ```
 
-Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions, not first-party packaged commands like `/annotate-last-message` or `/annotate-git-diff`.
+Disabling an extension removes it from the installed packages list on the next `tlh update` run. Its slash commands will no longer be available in new sessions after the extension is unloaded. This opt-out flow applies to separately managed default extensions only (those in `config/default-extensions.json`), not first-party packaged extensions like `notify`, `/annotate-last-message`, or `/annotate-git-diff`.
+
+### Configuring the notify extension
+
+The `notify` extension is first-party and ships bundled with TLH. It cannot be managed with `tlh defaults disable`; instead, disable it by setting `"enabled": false` in its config file.
+
+Config files are merged at runtime — project config overrides global config:
+
+- `~/.the-last-harness/agent/extensions/notify.json` (default path; may differ if you used `--agent-dir` during install)
+- `<project>/.pi/notify.json` (only when the project is trusted)
+
+Example to disable notifications entirely:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Key config fields (see [`extensions/notify/README.md`](../extensions/notify/README.md) for the full list):
+
+| Field | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Master on/off switch |
+| `onlyWhenInteractive` | `true` | Skip notifications in non-UI (print) mode |
+| `suppressWhileActive` | `true` | Hold all notification channels while background subagent work is still running; a notification fires only once the session is genuinely waiting on you, not merely between turns. Set to `false` to notify on every turn completion regardless. Has no effect when the TLH activity tracker is absent. |
+| `title` | `"tlh"` | Notification title |
+| `body` | `"Ready for input"` | Notification body |

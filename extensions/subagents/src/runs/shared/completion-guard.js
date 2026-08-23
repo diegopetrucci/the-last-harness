@@ -72,7 +72,9 @@ export function hasMutationToolCall(messages) {
                 return true;
             if (part.name !== "bash")
                 continue;
-            const args = typeof part.arguments === "object" && part.arguments !== null && !Array.isArray(part.arguments)
+            const args = typeof part.arguments === "object" &&
+                part.arguments !== null &&
+                !Array.isArray(part.arguments)
                 ? part.arguments
                 : {};
             if (typeof args.command === "string" && isMutatingBashCommand(args.command))

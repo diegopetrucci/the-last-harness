@@ -1,7 +1,7 @@
 export function isGhGraphqlQuotaFailure(stderr) {
     return /graphql/i.test(stderr) && /(rate limit|quota|submitted too quickly)/i.test(stderr);
 }
-export function parseGitHubPrUrl(value) {
+function parseGitHubPrUrl(value) {
     try {
         const url = new URL(value);
         if (url.hostname !== "github.com") {
@@ -17,14 +17,14 @@ export function parseGitHubPrUrl(value) {
         return undefined;
     }
 }
-export function parseGitHubRepoSlug(value) {
+function parseGitHubRepoSlug(value) {
     const match = value.trim().match(/^([^/\s]+)\/([^/\s]+)$/u);
     if (!match) {
         return undefined;
     }
     return { owner: match[1], repo: match[2] };
 }
-export function parseGitHubRemoteUrl(value) {
+function parseGitHubRemoteUrl(value) {
     const trimmed = value.trim();
     const sshMatch = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
     if (sshMatch) {
@@ -45,7 +45,7 @@ export function parseGitHubRemoteUrl(value) {
         return undefined;
     }
 }
-export async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
+async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
     const defaultRepoResult = await pi.exec("gh", ["repo", "set-default", "--view"], { cwd });
     if (defaultRepoResult.code !== 0) {
         return undefined;
@@ -58,7 +58,7 @@ export async function resolveGitHubRepoRefFromGhDefault(pi, cwd) {
     }
     return undefined;
 }
-export async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
+async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
     const remoteListResult = await pi.exec("git", ["remote"], { cwd });
     if (remoteListResult.code !== 0) {
         const firstLine = remoteListResult.stderr.split("\n")[0]?.trim() || "git remote failed";
@@ -69,7 +69,10 @@ export async function resolveGitHubRepoRefFromLocalRemotes(pi, cwd) {
         .map((name) => name.trim())
         .filter(Boolean);
     if (remoteNames.length === 0) {
-        return { ok: false, message: "could not resolve GitHub repository because this repo has no git remotes" };
+        return {
+            ok: false,
+            message: "could not resolve GitHub repository because this repo has no git remotes",
+        };
     }
     const orderedRemoteNames = Array.from(new Set(["origin", ...remoteNames]));
     const remoteFailures = [];
@@ -129,7 +132,8 @@ export async function fetchPrMetadataViaRest(pi, cwd, prRef) {
                 number,
                 headRefName,
                 baseRefName,
-                isCrossRepository: typeof payload.head?.repo?.full_name === "string" && typeof payload.base?.repo?.full_name === "string"
+                isCrossRepository: typeof payload.head?.repo?.full_name === "string" &&
+                    typeof payload.base?.repo?.full_name === "string"
                     ? payload.head.repo.full_name !== payload.base.repo.full_name
                     : false,
             },
@@ -140,7 +144,12 @@ export async function fetchPrMetadataViaRest(pi, cwd, prRef) {
     }
 }
 export async function fetchPrDiffViaRest(pi, cwd, prRef) {
-    const result = await pi.exec("gh", ["api", "-H", "Accept: application/vnd.github.v3.diff", `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`], { cwd });
+    const result = await pi.exec("gh", [
+        "api",
+        "-H",
+        "Accept: application/vnd.github.v3.diff",
+        `repos/${prRef.owner}/${prRef.repo}/pulls/${prRef.number}`,
+    ], { cwd });
     if (result.code !== 0) {
         const firstLine = result.stderr.split("\n")[0]?.trim() || "gh api failed";
         return { ok: false, message: firstLine };

@@ -10,9 +10,6 @@ export function getProjectSubagentsDir(cwd) {
 export function getProjectArtifactsDir(cwd) {
     return path.join(getProjectSubagentsDir(cwd), "artifacts");
 }
-export function getProjectChainRunsDir(cwd) {
-    return path.join(getProjectSubagentsDir(cwd), "chain-runs");
-}
 export function getArtifactsDir(sessionFile, projectCwd) {
     if (projectCwd)
         return getProjectArtifactsDir(projectCwd);

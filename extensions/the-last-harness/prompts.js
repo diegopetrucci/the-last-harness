@@ -64,6 +64,7 @@ function parseAgentPrompt(filePath) {
         thinking: parseThinkingLevelValue(frontmatter.thinking),
         tlhOpenaiThinking: parseThinkingLevelValue(frontmatter.tlhOpenaiThinking),
         tlhAnthropicThinking: parseThinkingLevelValue(frontmatter.tlhAnthropicThinking),
+        tlhOpenrouterThinking: parseThinkingLevelValue(frontmatter.tlhOpenrouterThinking),
         preferCurrentOpenaiModel: parseBooleanValue(frontmatter.preferCurrentOpenaiModel),
         preferOppositeProvider: parseBooleanValue(frontmatter.preferOppositeProvider),
         applyModel: parseBooleanValue(frontmatter.applyModel),
@@ -95,6 +96,7 @@ export function loadSubagentMetadata() {
         thinking: agent.thinking,
         tlhOpenaiThinking: agent.tlhOpenaiThinking,
         tlhAnthropicThinking: agent.tlhAnthropicThinking,
+        tlhOpenrouterThinking: agent.tlhOpenrouterThinking,
         preferOppositeProvider: agent.preferOppositeProvider,
     }))
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -119,7 +121,9 @@ function parseSubagentDiscoveryFrontmatter(content) {
         const rawBlock = currentBlockLines.join("\n");
         const prefix = rawBlock.match(/^([ \t]+)/m)?.[1] ?? "";
         frontmatter[currentKey] = prefix
-            ? rawBlock.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "").replace(/^\n/, "")
+            ? rawBlock
+                .replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "")
+                .replace(/^\n/, "")
             : rawBlock;
         currentKey = undefined;
         currentBlockLines = undefined;
@@ -127,7 +131,9 @@ function parseSubagentDiscoveryFrontmatter(content) {
     };
     for (const line of normalized.slice(4, endIndex).split("\n")) {
         const indent = line.search(/\S|$/);
-        if (currentKey !== undefined && currentBlockLines !== undefined && indent > (currentIndent ?? 0)) {
+        if (currentKey !== undefined &&
+            currentBlockLines !== undefined &&
+            indent > (currentIndent ?? 0)) {
             currentBlockLines.push(line);
             continue;
         }
@@ -137,7 +143,8 @@ function parseSubagentDiscoveryFrontmatter(content) {
             continue;
         }
         let value = match[2].trim();
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        if ((value.startsWith('"') && value.endsWith('"')) ||
+            (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
         }
         if (value === "") {

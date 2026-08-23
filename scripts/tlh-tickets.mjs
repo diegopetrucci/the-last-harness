@@ -147,7 +147,9 @@ function ensureMutableSettings(settings) {
     settings.tlh.tickets ??= {};
 }
 function loadSettings(settingsPath) {
-    const previousRaw = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "") : "";
+    const previousRaw = existsSync(settingsPath)
+        ? readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, "")
+        : "";
     const settings = readJsonFile(settingsPath, { missingValue: {} });
     validateSettings(settings);
     return { settings, previousRaw };
@@ -196,7 +198,11 @@ function managedTkTargetPath(args, agentDir) {
     return resolve(expandedTargetPath);
 }
 function candidateCommands(args, settings, agentDir) {
-    const candidates = [configuredInstallPath(settings), managedTkTargetPath(args, agentDir), "tk"].filter((candidate) => Boolean(candidate));
+    const candidates = [
+        configuredInstallPath(settings),
+        managedTkTargetPath(args, agentDir),
+        "tk",
+    ].filter((candidate) => Boolean(candidate));
     const seen = new Set();
     const unique = [];
     for (const candidate of candidates) {
@@ -507,7 +513,10 @@ function managedTkTargetPlan(args, agentDir) {
         throw new Error(`Refusing to install managed tk because the target basename must be exactly "tk": ${target}`);
     }
     const intendedAgentDir = captureIntendedManagedAgentDir(agentRoot);
-    const planBase = { agentRoot, intendedAgentDir };
+    const planBase = {
+        agentRoot,
+        intendedAgentDir,
+    };
     assertManagedTkAgentRootSafe(planBase);
     const targetStats = lstatIfExists(target);
     if (targetStats?.isSymbolicLink()) {
@@ -727,7 +736,7 @@ function cleanupCreatedEmptyFile(fd, path) {
     }
     return true;
 }
-function writeDirectValidated(path, content, { mode, intendedRoot, label, exclusive = false, replace = false, validateParent }) {
+function writeDirectValidated(path, content, { mode, intendedRoot, label, exclusive = false, replace = false, validateParent, }) {
     let fd;
     let createdByUs = false;
     let validationComplete = false;
@@ -762,7 +771,10 @@ function writeDirectValidated(path, content, { mode, intendedRoot, label, exclus
         fchmodSync(fd, mode);
     }
     catch (error) {
-        if (createdByUs && !validationComplete && fd !== undefined && cleanupCreatedEmptyFile(fd, path)) {
+        if (createdByUs &&
+            !validationComplete &&
+            fd !== undefined &&
+            cleanupCreatedEmptyFile(fd, path)) {
             fd = undefined;
         }
         throw error;
@@ -794,7 +806,9 @@ function validateTicketSourceConfig(args) {
     }
     if (!args.ticketSourceUrl.startsWith("https://")) {
         const schemeEnd = args.ticketSourceUrl.indexOf("://");
-        const prefix = schemeEnd >= 0 ? args.ticketSourceUrl.slice(0, schemeEnd + 3) : args.ticketSourceUrl.slice(0, 32);
+        const prefix = schemeEnd >= 0
+            ? args.ticketSourceUrl.slice(0, schemeEnd + 3)
+            : args.ticketSourceUrl.slice(0, 32);
         throw new Error(`Ticket source URL must use https:// (got: ${prefix})`);
     }
     if (!/^[a-f0-9]{64}$/i.test(args.ticketSourceSha256 || "")) {
@@ -809,7 +823,7 @@ async function fetchWithTimeout(url, options = {}) {
         ...options,
         headers: {
             "User-Agent": "tlh-tickets-installer",
-            ...(options.headers || {}),
+            ...options.headers,
         },
         signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
@@ -964,7 +978,7 @@ function settingsWritePlan(settingsPath) {
     assertSettingsDirSafe(plan);
     return plan;
 }
-function assertSettingsDirSafe({ settingsPath, settingsDir, intendedSettingsDir }) {
+function assertSettingsDirSafe({ settingsPath, settingsDir, intendedSettingsDir, }) {
     assertNotNormalPiSettings(settingsPath);
     const dirStats = lstatIfExists(settingsDir);
     let resolvedSettingsDir;
@@ -1098,7 +1112,9 @@ async function commandConfigureInstall(args, settingsPath, settings, previousRaw
     const validPath = findValidTkForConfigure(args, settings, agentDir);
     if (validPath) {
         detailLog(args, `Found valid tk command: ${validPath}`);
-        const sha = samePathForCompare(validPath, managedTarget) && managedPinIsFresh ? args.ticketSourceSha256 : undefined;
+        const sha = samePathForCompare(validPath, managedTarget) && managedPinIsFresh
+            ? args.ticketSourceSha256
+            : undefined;
         setTicketsEnabled(args, settingsPath, settings, previousRaw, validPath, sha);
         log(args, `Ticket CLI integration: enabled (${validPath})`);
         return;

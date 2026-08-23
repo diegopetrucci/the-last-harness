@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { isRecord } from "./common.js";
 import { activateTlhTicketSessionScope, findValidTlhTicketCommand } from "./tickets.js";
 const TK_STATUS_COMMAND = "tickets";
 const TK_COMMAND_TIMEOUT_MS = 4000;
 const TK_TITLE_RESOLUTION_BUDGET_MS = TK_COMMAND_TIMEOUT_MS;
-function defaultAgentDir() {
-    return process.env.PI_CODING_AGENT_DIR ?? "";
+function getTlhGlobalSettings(cwd) {
+    try {
+        const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
+        return isRecord(settings) ? settings : {};
+    }
+    catch {
+        return {};
+    }
 }
 function firstOutputLine(result) {
     return `${result.stdout || ""}\n${result.stderr || ""}`
@@ -15,7 +23,8 @@ function firstOutputLine(result) {
 }
 function isNoRepoMessage(message) {
     return (typeof message === "string" &&
-        (/no \.tickets directory found/i.test(message) || /tickets directory ['"].+['"] does not exist/i.test(message)));
+        (/no \.tickets directory found/i.test(message) ||
+            /tickets directory ['"].+['"] does not exist/i.test(message)));
 }
 function runTkCommand(command, cwd, args, timeoutMs) {
     return spawnSync(command, args, {
@@ -75,14 +84,16 @@ function resolveInProgressTickets(command, cwd, ticketIds, runner, now) {
     const deadlineMs = now() + TK_TITLE_RESOLUTION_BUDGET_MS;
     return ticketIds.map((ticketId) => {
         const timeoutMs = Math.floor(deadlineMs - now());
-        const title = timeoutMs > 0 ? getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner) : undefined;
+        const title = timeoutMs > 0
+            ? getInProgressTicketTitle(command, cwd, ticketId, timeoutMs, runner)
+            : undefined;
         return { id: ticketId, title };
     });
 }
 function getTkWorkflowSnapshot(cwd, options) {
     activateTlhTicketSessionScope(cwd);
-    const settings = (options.getSettings ?? (() => ({})))(cwd);
-    const command = findValidTlhTicketCommand(settings, (options.getAgentDir ?? defaultAgentDir)());
+    const settings = getTlhGlobalSettings(cwd);
+    const command = findValidTlhTicketCommand(settings, getAgentDir());
     if (!command) {
         return { kind: "unavailable", message: "tk is unavailable for this TLH profile." };
     }
@@ -247,13 +258,14 @@ export function createTlhTicketWorkflowUiRuntime(pi, options = {}) {
         });
         commandRegistered = true;
     };
-    const applyCurrentSettings = (ctx) => {
-        if (!ctx.hasUI) {
-            return;
-        }
-        ensureCommandRegistered();
+    return {
+        applyCurrentSettings(ctx) {
+            if (!ctx.hasUI) {
+                return;
+            }
+            ensureCommandRegistered();
+        },
     };
-    return { applyCurrentSettings };
 }
 export function registerTlhTicketWorkflowUi(pi) {
     const runtime = createTlhTicketWorkflowUiRuntime(pi);

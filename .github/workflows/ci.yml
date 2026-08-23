@@ -14,6 +14,39 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  lint:
+    name: Linting and formatting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.19.0'
+          cache: 'npm'
+
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-22.19.0-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Run linting and formatting checks
+        env:
+          HOME: ${{ runner.temp }}/tlh-home
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${HOME}"
+          node scripts/run-ci-validation.mjs --lanes=lint
+
   validation:
     name: Non-test validation (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -34,7 +67,15 @@ jobs:
           node-version: '22.19.0'
           cache: 'npm'
 
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-22.19.0-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Run non-test validation checks
@@ -43,17 +84,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "${HOME}"
-          npm run check:package-versions
-          npm run check:package-contents
-          npm run typecheck
-          npm run typecheck:subagents-test-support
-          npm run typecheck:runtime
-          npm run check:runtime
-          bash scripts/check-installer-smoke.sh
-          npm run lint
-          npm run lint:sh
-          node scripts/merge-settings.mjs --dry-run
-          npm pack --dry-run
+          node scripts/run-ci-validation.mjs --exclude=lint
 
   tests:
     name: Tests (${{ matrix.os }}, shard ${{ matrix.shard }}/2)
@@ -78,7 +109,15 @@ jobs:
           node-version: '22.19.0'
           cache: 'npm'
 
+      - name: Restore node_modules cache
+        id: cache-node-modules
+        uses: actions/cache@v6
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-22.19.0-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Run test shard
@@ -87,9 +126,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "${HOME}"
-          node --test --test-reporter=dot --test-shard=${{ matrix.shard }}/2 "tests/**/*.test.mjs"
-          node scripts/run-subagents-tests.mjs unit --test-shard=${{ matrix.shard }}/2
-          node scripts/run-subagents-tests.mjs integration --test-shard=${{ matrix.shard }}/2
-          if [ "${{ matrix.shard }}" = "1" ]; then
-            node scripts/run-subagents-tests.mjs e2e
-          fi
+          node scripts/run-ci-test-shard.mjs ${{ matrix.shard }}/2

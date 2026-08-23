@@ -1,15 +1,40 @@
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { TLH_HEADER_TOGGLE_SHORTCUT_LABEL, TLH_NAME } from "./constants.js";
-import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-export function createTlhHeader(theme, resources, headerUpdate, installNotice, options = {}) {
+import { TLH_NAME } from "./constants.js";
+function formatLaunchContextPercent(tokens, contextWindow) {
+    if (!Number.isFinite(tokens) ||
+        tokens <= 0 ||
+        !Number.isFinite(contextWindow) ||
+        contextWindow <= 0) {
+        return "0%";
+    }
+    const percent = (tokens / contextWindow) * 100;
+    if (percent < 1) {
+        return "<1%";
+    }
+    return `~${Math.round(percent)}%`;
+}
+export function formatTlhLaunchContextAllocation(allocation) {
+    const { contextWindow, estimatedTokens } = allocation;
+    const segments = [
+        `Context at launch: TLH ${formatLaunchContextPercent(estimatedTokens.tlh, contextWindow)}`,
+        `AGENTS/CLAUDE.md ${formatLaunchContextPercent(estimatedTokens.agentsClaude, contextWindow)}`,
+        `Skills ${formatLaunchContextPercent(estimatedTokens.skills, contextWindow)}`,
+    ];
+    if (estimatedTokens.mcp > 0) {
+        segments.push(`MCP ${formatLaunchContextPercent(estimatedTokens.mcp, contextWindow)}`);
+    }
+    segments.push(`Tools ${formatLaunchContextPercent(estimatedTokens.tools, contextWindow)}`, `Other ${formatLaunchContextPercent(estimatedTokens.other, contextWindow)}`);
+    return segments.join(" • ") + " (run /context to see a breakdown)";
+}
+export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
     let expanded = false;
     let startupResources = resources;
+    let launchContextAllocation = options.launchContextAllocation;
     const color = {
         heading: (text) => theme.fg("mdHeading", text),
         dim: (text) => theme.fg("dim", text),
         muted: (text) => theme.fg("muted", text),
         accent: (text) => theme.fg("accent", text),
-        warning: (text) => theme.fg("warning", text),
     };
     const logo = headerUpdate
         ? `${theme.bold(color.accent(TLH_NAME))}${color.dim(` v${headerUpdate.version}`)} ${color.accent(headerUpdate.releasesUrl)}`
@@ -41,14 +66,6 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
         wrappedLines.push(color.dim(currentLine));
         return [heading, ...wrappedLines];
     };
-    const installWarningLine = (width) => {
-        if (!installNotice) {
-            return [];
-        }
-        const label = formatTlhInstallNoticeTrackLabel(installNotice);
-        const warningLine = `${color.warning("Warning")}${color.dim(`: running TLH from ${label} track`)}`;
-        return [truncateToWidth(warningLine, width, color.dim("..."))];
-    };
     const contextLine = (items, width) => {
         if (items.length === 0) {
             return [];
@@ -75,23 +92,29 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
             ? `${color.muted(label)}${color.dim(`${separator}${line}`)}`
             : color.dim(`${continuationIndent}${line}`));
     };
-    const collapsedContextHintLines = (width) => {
-        const hint = `Press ${TLH_HEADER_TOGGLE_SHORTCUT_LABEL} to show loaded skills, prompts, and extensions`;
-        const plainText = startupResources.context.length === 0 ? hint : `Context: ${startupResources.context.join(", ")}. ${hint}`;
-        return wrapTextWithAnsi(plainText, width).map((line) => color.dim(line));
+    const launchContextLines = (width) => {
+        if (!launchContextAllocation) {
+            return [];
+        }
+        if (width <= 0) {
+            return [""];
+        }
+        return wrapTextWithAnsi(formatTlhLaunchContextAllocation(launchContextAllocation), width).map((line) => color.dim(line));
     };
     const headerDetails = (width) => [
-        ...installWarningLine(width),
+        ...launchContextLines(width),
         ...contextLine(startupResources.context, width),
     ];
     const renderCollapsed = (width) => {
-        const lines = [
-            logo,
-            "",
-            ...installWarningLine(width),
-            ...collapsedContextHintLines(width),
-            ...startupTipLine(width),
-        ];
+        const lines = [logo];
+        const details = [...launchContextLines(width)];
+        if (details.length > 0) {
+            lines.push("", ...details);
+        }
+        const startupTip = startupTipLine(width);
+        if (startupTip.length > 0) {
+            lines.push("", ...startupTip);
+        }
         return lines;
     };
     const renderExpanded = (width) => {
@@ -124,6 +147,9 @@ export function createTlhHeader(theme, resources, headerUpdate, installNotice, o
         },
         setResources(nextResources) {
             startupResources = nextResources;
+        },
+        setLaunchContextAllocation(nextAllocation) {
+            launchContextAllocation = nextAllocation;
         },
         toggleExpanded() {
             expanded = !expanded;
