@@ -552,10 +552,6 @@ async function dispatchReviewMode(pi, cmdCtx, parsed) {
     const envelope = buildReviewEnvelope(parsed, result.ctx);
     pi.sendUserMessage(envelope);
 }
-export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
-function getReviewArgumentCompletions() {
-    return null;
-}
 export function createReviewCommandHandler(pi) {
     return async (args, ctx) => {
         const activePrimary = currentReviewPrimaryAgentSelection(ctx);
@@ -583,11 +579,4 @@ export function createReviewCommandHandler(pi) {
         }
         await dispatchReviewMode(pi, ctx, completedArgs);
     };
-}
-export function registerReviewCommand(pi) {
-    pi.registerCommand("review", {
-        description: REVIEW_COMMAND_DESCRIPTION,
-        getArgumentCompletions: getReviewArgumentCompletions,
-        handler: createReviewCommandHandler(pi),
-    });
 }

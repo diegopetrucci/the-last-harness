@@ -9,7 +9,7 @@ import { createJiti } from "jiti";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { collectStartupResources, collectStartupResourceSnapshot } = await jiti.import(
+const { collectStartupResourceSnapshot } = await jiti.import(
   "../extensions/the-last-harness/resources.ts",
 );
 
@@ -42,7 +42,7 @@ test("startup resources hide project-local skills when trust is unresolved", asy
   writeSkill(fixture.cwd, "ancestor-skill", ".agents/skills");
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const resources = await collectStartupResources(childCwd);
+    const resources = (await collectStartupResourceSnapshot(childCwd)).resources;
 
     assert.deepEqual(resources.context, []);
     assert.deepEqual(resources.skills, []);
@@ -88,7 +88,7 @@ test("startup resources inherit the nearest parent saved trust decision", async 
   });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const resources = await collectStartupResources(childCwd);
+    const resources = (await collectStartupResourceSnapshot(childCwd)).resources;
 
     assert.deepEqual(resources.context, ["AGENTS.md"]);
     assert.deepEqual(resources.skills, ["project-skill"]);
@@ -110,7 +110,7 @@ test("startup resources let a nearer false trust override a parent true", async 
   });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const resources = await collectStartupResources(childCwd);
+    const resources = (await collectStartupResourceSnapshot(childCwd)).resources;
 
     assert.deepEqual(resources.context, ["AGENTS.md"]);
     assert.deepEqual(resources.skills, []);
@@ -129,7 +129,7 @@ test("startup resources keep AGENTS.md and CLAUDE.md context visible when trust 
   writeSkill(childCwd, "project-skill");
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const resources = await collectStartupResources(childCwd);
+    const resources = (await collectStartupResourceSnapshot(childCwd)).resources;
 
     assert.deepEqual(resources.context, [join(fixture.cwd, "AGENTS.md"), "CLAUDE.md"]);
     assert.deepEqual(resources.skills, []);
@@ -158,7 +158,8 @@ test("startup resources use AGENTS.override.md for the nearest context and retai
       ],
     );
 
-    const resources = await collectStartupResources(childCwd, { projectTrusted: true });
+    const resources = (await collectStartupResourceSnapshot(childCwd, { projectTrusted: true }))
+      .resources;
     assert.deepEqual(resources.context, [join(fixture.cwd, "AGENTS.md"), "AGENTS.override.md"]);
   });
 });

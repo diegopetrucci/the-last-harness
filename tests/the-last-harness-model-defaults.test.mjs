@@ -6,10 +6,10 @@ const jiti = createJiti(import.meta.url);
 const {
   applyProviderAwareSubagentModels,
   findAvailableProviderModel,
+  formatProviderModelReference,
   resolveProviderAwareSubagentResolution,
   resolveProviderThinking,
   selectProviderAwareAgentDefaults,
-  selectProviderAwareAgentModelId,
   splitKnownThinkingSuffix,
 } = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
 const { applyThinkingSuffix: applyRuntimeThinkingSuffix } = await jiti.import(
@@ -90,9 +90,14 @@ const openaiAvailable = [{ provider: "openai", id: "gpt-5.6" }];
 const reducedIndependenceNotice =
   "TLH fell back to a same-provider review model; review independence is reduced.";
 
+function selectedProviderModelId(agent, availableModels, currentProvider) {
+  const model = selectProviderAwareAgentDefaults(agent, availableModels, currentProvider).model;
+  return model ? formatProviderModelReference(model) : undefined;
+}
+
 test("provider-aware model resolver follows active Anthropic provider for non-review subagents", () => {
   assert.equal(
-    selectProviderAwareAgentModelId(developer, anthropicAvailable, "anthropic"),
+    selectedProviderModelId(developer, anthropicAvailable, "anthropic"),
     "anthropic/claude-sonnet-4-6",
   );
 
@@ -106,7 +111,7 @@ test("provider-aware model resolver follows active provider for non-review subag
 
   // OpenAI-Codex is active → picks codex model, not Anthropic (the key fix)
   assert.equal(
-    selectProviderAwareAgentModelId(developer, available, "openai-codex"),
+    selectedProviderModelId(developer, available, "openai-codex"),
     "openai-codex/gpt-5.6-luna",
   );
   const codexInput = { agent: "developer", task: "Implement the ticket" };
@@ -116,7 +121,7 @@ test("provider-aware model resolver follows active provider for non-review subag
 
   // Anthropic is active → picks Anthropic model
   assert.equal(
-    selectProviderAwareAgentModelId(developer, available, "anthropic"),
+    selectedProviderModelId(developer, available, "anthropic"),
     "anthropic/claude-sonnet-4-6",
   );
   const anthropicInput = { agent: "developer", task: "Implement the ticket" };
@@ -127,7 +132,7 @@ test("provider-aware model resolver follows active provider for non-review subag
 
 test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavailable", () => {
   assert.equal(
-    selectProviderAwareAgentModelId(developer, codexAvailable, "openai-codex"),
+    selectedProviderModelId(developer, codexAvailable, "openai-codex"),
     "openai-codex/gpt-5.6-luna",
   );
 
@@ -139,7 +144,7 @@ test("provider-aware model resolver picks OpenAI Codex when Anthropic is unavail
 
 test("provider-aware model resolver does not auto-inject OpenAI API models", () => {
   const input = { agent: "code-reviewer", task: "Review the diff" };
-  assert.equal(selectProviderAwareAgentModelId(codeReviewer, openaiAvailable, "openai"), undefined);
+  assert.equal(selectedProviderModelId(codeReviewer, openaiAvailable, "openai"), undefined);
   assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "openai"), 0);
   assert.equal(input.model, undefined);
 });
@@ -147,11 +152,11 @@ test("provider-aware model resolver does not auto-inject OpenAI API models", () 
 test("provider-aware model resolver keeps Codex defaults even when regular OpenAI models are also available", () => {
   const available = [...codexAvailable, ...openaiAvailable];
   assert.equal(
-    selectProviderAwareAgentModelId(developer, available, "openai"),
+    selectedProviderModelId(developer, available, "openai"),
     "openai-codex/gpt-5.6-luna",
   );
   assert.equal(
-    selectProviderAwareAgentModelId(developer, available, "openai-codex"),
+    selectedProviderModelId(developer, available, "openai-codex"),
     "openai-codex/gpt-5.6-luna",
   );
 });
@@ -163,7 +168,7 @@ test("provider-aware opposite-provider preference picks Codex for opted-in Anthr
   ]);
 
   assert.equal(
-    selectProviderAwareAgentModelId(anthropicParentPrefersCodexReviewer, available, "anthropic"),
+    selectedProviderModelId(anthropicParentPrefersCodexReviewer, available, "anthropic"),
     "openai-codex/gpt-5.6-sol",
   );
 
@@ -181,15 +186,11 @@ test("provider-aware opposite-provider preference picks Anthropic for opted-in O
   ]);
 
   assert.equal(
-    selectProviderAwareAgentModelId(openaiParentPrefersAnthropicReviewer, available, "openai"),
+    selectedProviderModelId(openaiParentPrefersAnthropicReviewer, available, "openai"),
     "anthropic/claude-opus-5",
   );
   assert.equal(
-    selectProviderAwareAgentModelId(
-      openaiParentPrefersAnthropicReviewer,
-      available,
-      "openai-codex",
-    ),
+    selectedProviderModelId(openaiParentPrefersAnthropicReviewer, available, "openai-codex"),
     "anthropic/claude-opus-5",
   );
 
@@ -207,11 +208,7 @@ test("provider-aware opposite-provider preference does not inject regular OpenAI
   const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
 
   assert.equal(
-    selectProviderAwareAgentModelId(
-      anthropicParentPrefersCodexReviewer,
-      openaiAvailable,
-      "anthropic",
-    ),
+    selectedProviderModelId(anthropicParentPrefersCodexReviewer, openaiAvailable, "anthropic"),
     undefined,
   );
   assert.equal(applyProviderAwareSubagentModels(input, agents, openaiAvailable, "anthropic"), 0);
@@ -523,12 +520,12 @@ test("tlhAnthropicModels: selects Anthropic fallback when primary OpenAI model i
   };
   // No currentProvider given — iterates tlhAnthropicModels and finds the Anthropic model
   assert.equal(
-    selectProviderAwareAgentModelId(agentWithAnthropicFallback, anthropicAvailable, undefined),
+    selectedProviderModelId(agentWithAnthropicFallback, anthropicAvailable, undefined),
     "anthropic/claude-sonnet-4-6",
   );
   // Same result when currentProvider is explicitly "anthropic"
   assert.equal(
-    selectProviderAwareAgentModelId(agentWithAnthropicFallback, anthropicAvailable, "anthropic"),
+    selectedProviderModelId(agentWithAnthropicFallback, anthropicAvailable, "anthropic"),
     "anthropic/claude-sonnet-4-6",
   );
 });
@@ -542,13 +539,13 @@ test("tlhAnthropicModels: current-provider Anthropic candidate preferred on Anth
   };
   // currentProvider="anthropic": step-2 current-provider check picks first matching entry
   assert.equal(
-    selectProviderAwareAgentModelId(agentWithBothFallbacks, anthropicAvailable, "anthropic"),
+    selectedProviderModelId(agentWithBothFallbacks, anthropicAvailable, "anthropic"),
     "anthropic/claude-opus-5",
   );
   // When only the second candidate is available the fallback iteration finds it
   const sonetOnly = [{ provider: "anthropic", id: "claude-sonnet-4-6" }];
   assert.equal(
-    selectProviderAwareAgentModelId(agentWithBothFallbacks, sonetOnly, "anthropic"),
+    selectedProviderModelId(agentWithBothFallbacks, sonetOnly, "anthropic"),
     "anthropic/claude-sonnet-4-6",
   );
 });
@@ -562,12 +559,12 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
   };
   // Codex available: selects the OpenAI fallback
   assert.equal(
-    selectProviderAwareAgentModelId(agentOpenaiOnly, codexAvailable, "openai-codex"),
+    selectedProviderModelId(agentOpenaiOnly, codexAvailable, "openai-codex"),
     "openai-codex/gpt-5.6-luna",
   );
   // Anthropic-only environment: no tlhAnthropicModels declared → returns undefined
   assert.equal(
-    selectProviderAwareAgentModelId(agentOpenaiOnly, anthropicAvailable, "anthropic"),
+    selectedProviderModelId(agentOpenaiOnly, anthropicAvailable, "anthropic"),
     undefined,
   );
   // applyProviderAwareSubagentModels: developer still gets the provider-aware Codex default.

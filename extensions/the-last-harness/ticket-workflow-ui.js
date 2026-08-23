@@ -267,10 +267,3 @@ export function createTlhTicketWorkflowUiRuntime(pi, options = {}) {
         },
     };
 }
-export function registerTlhTicketWorkflowUi(pi) {
-    const runtime = createTlhTicketWorkflowUiRuntime(pi);
-    pi.on("session_start", async (_event, ctx) => {
-        activateTlhTicketSessionScope(ctx.cwd);
-        runtime.applyCurrentSettings(ctx);
-    });
-}
