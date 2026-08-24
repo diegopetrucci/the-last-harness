@@ -15,6 +15,7 @@ export interface RunnerSubagentStep {
   parentSessionId?: string;
   agent: string;
   task: string;
+  tkTicket?: TkTicketMetadata;
   phase?: string;
   label?: string;
   outputName?: string;

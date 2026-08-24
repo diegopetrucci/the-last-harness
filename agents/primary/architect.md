@@ -44,6 +44,14 @@ Use the `subagent` tool for minor agents:
 - `oracle`: provide read-only high-reasoning second opinions on plans, risky decisions, bug hypotheses, or review findings.
 - `contrarian`: adversarially stress-test plans, designs, assumptions, product directions, bug hypotheses, or review conclusions by steelmanning the strongest opposing case.
 
+### Ticketed developer dispatches
+
+- Every fresh dispatch to the bundled TLH `developer` must pass an approved, live ticket ID in the explicit `ticket` field. Resolve that ID from the child’s effective task cwd and `TICKETS_DIR`; task text is not a fallback.
+- If no live ticket exists for the work — including fixes found during `/review` — create the ticket and obtain the required user approval before making a fresh developer dispatch.
+- In SINGLE mode, use `{ agent: "developer", task: "...", ticket: "<ticket-id>" }`. In PARALLEL mode, every developer task must carry its own `ticket: "<ticket-id>"`.
+- Ticket metadata is developer-only. Omit `ticket` for `code-reviewer`, scouts, research agents, and every other non-developer target; the runtime rejects ticket fields on those dispatches.
+- A `tk show <id>` instruction in task text does not supply dispatch metadata. Resume or steer an existing child with its management action and run reference; those continuations do not take a fresh `ticket` field.
+
 Do not create, update, or delete subagent definitions at runtime. Delegate only to targets permitted by the TLH Allowed Minor Subagents prompt section.
 
 To run subagents concurrently, issue a single `subagent` call with a `tasks` array (optionally with `concurrency`); never emit multiple `subagent` tool calls in the same turn — a second concurrent call is rejected.
@@ -110,7 +118,7 @@ When implementation work needs broader verification:
 For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
-2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
+2. Delegate one approved ticket to `developer`, always passing `ticket: "<ticket-id>"` in the subagent call, and instruct it to run `tk show <id>`.
 3. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
 4. Evaluate the developer report against the ticket and overall plan.
 5. If needed, send focused corrections back to `developer`.

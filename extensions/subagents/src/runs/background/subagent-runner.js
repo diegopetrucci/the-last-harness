@@ -1339,6 +1339,7 @@ async function runSingleStep(step, ctx) {
     parentRegisterTimeout?.(undefined);
     return {
         agent: step.agent,
+        ...(step.tkTicket ? { tkTicket: step.tkTicket } : {}),
         output: outputForSummary,
         exitCode: effectiveFinalExitCode,
         exitSignal: finalResult?.exitSignal,
@@ -1478,6 +1479,7 @@ async function runSubagent(config) {
                     label: task.label,
                     outputName: task.outputName,
                     structured: task.structured,
+                    ...(task.tkTicket ? { tkTicket: task.tkTicket } : {}),
                     status: "pending",
                     ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
                     ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
@@ -1523,6 +1525,7 @@ async function runSubagent(config) {
                 label: step.label,
                 outputName: step.outputName,
                 structured: step.structured,
+                ...(step.tkTicket ? { tkTicket: step.tkTicket } : {}),
                 status: "pending",
                 ...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
                 ...(step.timeoutMs !== undefined || config.timeoutMs !== undefined
@@ -2980,6 +2983,7 @@ async function runSubagent(config) {
                 const fi = groupStartFlatIndex + t;
                 results.push({
                     agent: pr.agent,
+                    tkTicket: pr.tkTicket ?? statusPayload.steps[fi]?.tkTicket,
                     output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
                     error: pr.error,
                     success: pr.interrupted !== true && pr.exitCode === 0,
@@ -3123,6 +3127,7 @@ async function runSubagent(config) {
             previousOutput = singleResult.output;
             results.push({
                 agent: singleResult.agent,
+                tkTicket: singleResult.tkTicket ?? statusPayload.steps[flatIndex]?.tkTicket,
                 output: timedOut
                     ? (timeoutMessage ?? "Subagent timed out.")
                     : singleResult.interrupted
@@ -3627,6 +3632,7 @@ async function runSubagent(config) {
             mode: resultMode,
             success: resultSuccess,
             state: resultState,
+            ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
             summary: resultSummary,
             ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
             ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
@@ -3645,6 +3651,7 @@ async function runSubagent(config) {
             ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
             results: results.map((r) => ({
                 agent: r.agent,
+                tkTicket: r.tkTicket,
                 output: r.output,
                 error: r.error,
                 success: r.success,

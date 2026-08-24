@@ -1,12 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-const TK_SHOW_PATTERN = /\btk\s+show\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/;
 const TK_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
-export function detectTkTicketId(task) {
-    if (!task)
-        return undefined;
-    const match = task.match(TK_SHOW_PATTERN);
-    return match?.[1];
+export const BUNDLED_DEVELOPER_AGENT_NAME = "developer";
+export function resolveDispatchTkTicketMetadata(agent, ticket, options = {}) {
+    const requiresTkTicket = agent.name === BUNDLED_DEVELOPER_AGENT_NAME && agent.tkTicketRequired === true;
+    if (!requiresTkTicket) {
+        return ticket === undefined
+            ? {}
+            : { error: "Explicit ticket fields are only supported for the marked TLH developer agent." };
+    }
+    if (ticket === undefined) {
+        return { error: "The TLH developer agent requires an explicit ticket ID." };
+    }
+    return resolveExplicitTkTicketMetadata(ticket, options);
 }
 export function parseTkTicketTitle(output) {
     for (const line of output.split(/\r?\n/)) {
@@ -15,22 +21,6 @@ export function parseTkTicketTitle(output) {
             return trimmed.slice(2).trim() || undefined;
     }
     return undefined;
-}
-export function resolveTkTicketTaskContext(input) {
-    const matches = [];
-    if (input.topLevelTask && detectTkTicketId(input.topLevelTask)) {
-        matches.push({ task: input.topLevelTask, cwd: input.runnerCwd });
-    }
-    for (const [taskIndex, task] of (input.tasks ?? []).entries()) {
-        if (!task.task || !detectTkTicketId(task.task))
-            continue;
-        matches.push({
-            task: task.task,
-            cwd: resolveTkTicketTaskCwd(input.runnerCwd, task.cwd),
-            taskIndex,
-        });
-    }
-    return matches.length === 1 ? matches[0] : undefined;
 }
 function sanitizeTerminalText(raw) {
     let cleaned = "";
@@ -75,9 +65,10 @@ export function sanitizeTkTicketTitle(raw) {
     return cleaned || undefined;
 }
 export function normalizeTkTicketMetadata(raw) {
-    if (!raw || typeof raw !== "object")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return undefined;
-    const { id, title } = raw;
+    const id = "id" in raw ? raw.id : undefined;
+    const title = "title" in raw ? raw.title : undefined;
     if (typeof id !== "string" || !TK_TICKET_ID_PATTERN.test(id))
         return undefined;
     if (typeof title !== "string")
@@ -87,28 +78,41 @@ export function normalizeTkTicketMetadata(raw) {
         return undefined;
     return { id, title: sanitizedTitle };
 }
-export function resolveTkTicketMetadata(task, options = {}) {
-    const requestedId = detectTkTicketId(task);
-    if (!requestedId)
-        return undefined;
+export function resolveExplicitTkTicketMetadata(ticket, options = {}) {
+    if (typeof ticket !== "string" || ticket.trim().length === 0) {
+        return { error: "ticket must be a non-empty ticket ID." };
+    }
+    const requestedId = ticket.trim();
+    if (!TK_TICKET_ID_PATTERN.test(requestedId)) {
+        return { error: "ticket must contain only letters, numbers, and hyphens." };
+    }
     try {
         const ticketMatch = (options.findTicketFile ?? findTkTicketFile)(requestedId, options.cwd);
-        if (!ticketMatch)
-            return undefined;
+        if (!ticketMatch) {
+            return {
+                error: `ticket '${requestedId}' was not found from '${options.cwd ?? process.cwd()}'. Check TICKETS_DIR and the task cwd.`,
+            };
+        }
         const content = (options.readFileSync ?? fs.readFileSync)(ticketMatch.path, "utf-8");
-        return normalizeTkTicketMetadata({
+        const metadata = normalizeTkTicketMetadata({
             id: ticketMatch.id,
             title: parseTkTicketTitle(content) ?? "",
         });
+        if (!metadata)
+            return { error: `ticket '${requestedId}' has no readable title.` };
+        return { metadata };
     }
     catch {
-        return undefined;
+        return {
+            error: `ticket '${requestedId}' could not be resolved. Check TICKETS_DIR and the ticket file.`,
+        };
     }
 }
 function findTkTicketFile(id, cwd) {
     const ticketsDir = findTicketsDir(cwd);
-    if (!ticketsDir || !fs.existsSync(ticketsDir) || !fs.statSync(ticketsDir).isDirectory())
+    if (!ticketsDir || !fs.existsSync(ticketsDir) || !fs.statSync(ticketsDir).isDirectory()) {
         return undefined;
+    }
     const exactPath = path.join(ticketsDir, `${id}.md`);
     if (fs.existsSync(exactPath) && fs.statSync(exactPath).isFile()) {
         return { id, path: exactPath };
@@ -124,11 +128,6 @@ function findTkTicketFile(id, cwd) {
     if (!matchedFile)
         return undefined;
     return { id: matchedFile.slice(0, -3), path: path.join(ticketsDir, matchedFile) };
-}
-function resolveTkTicketTaskCwd(runnerCwd, childCwd) {
-    if (!childCwd)
-        return runnerCwd;
-    return path.isAbsolute(childCwd) ? childCwd : path.resolve(runnerCwd, childCwd);
 }
 function findTicketsDir(cwd) {
     const configuredDir = process.env.TICKETS_DIR;

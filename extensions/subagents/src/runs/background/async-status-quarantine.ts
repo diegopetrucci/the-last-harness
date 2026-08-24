@@ -88,7 +88,8 @@ function confirmCorruption(
 
   let parsed: AsyncStatus;
   try {
-    parsed = normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
+    const value: unknown = JSON.parse(content);
+    parsed = normalizeAsyncLifecycleStatus(value);
   } catch {
     return "changed";
   }

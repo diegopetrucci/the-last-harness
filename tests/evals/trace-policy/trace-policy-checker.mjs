@@ -1418,10 +1418,91 @@ function subagentTargets(step) {
   if (toolName(step) !== "subagent") {
     return [];
   }
+  if (isSubagentContinuation(step) || isSubagentContinuation(step.input)) {
+    return [];
+  }
   if (Array.isArray(step.targets)) {
     return [...new Set(step.targets.map((target) => normalizeText(target)).filter(Boolean))];
   }
   return collectSubagentTargets(isRecord(step.input) ? step.input : step);
+}
+
+function isSubagentContinuation(value) {
+  const action = normalizeText(value?.action).toLowerCase();
+  return action === "resume" || action === "steer";
+}
+
+function collectSubagentDispatches(value, { includeRoot = true } = {}) {
+  if (!isRecord(value) || isSubagentContinuation(value)) {
+    return [];
+  }
+
+  const dispatches = [];
+  const push = (candidate) => {
+    if (!isRecord(candidate) || isSubagentContinuation(candidate)) {
+      return;
+    }
+    const agent = normalizeText(candidate.agent);
+    if (agent) {
+      dispatches.push({ agent, ticket: candidate.ticket });
+    }
+  };
+
+  if (includeRoot) push(value);
+  if (Array.isArray(value.tasks)) {
+    for (const task of value.tasks) push(task);
+  }
+  if (Array.isArray(value.chain)) {
+    for (const chainStep of value.chain) {
+      push(chainStep);
+      if (Array.isArray(chainStep?.parallel)) {
+        for (const task of chainStep.parallel) push(task);
+      }
+    }
+  }
+  return dispatches;
+}
+
+function hasStructuredSubagentDispatches(value) {
+  return (
+    isRecord(value) &&
+    ((Array.isArray(value.tasks) && value.tasks.length > 0) ||
+      (Array.isArray(value.chain) && value.chain.length > 0))
+  );
+}
+
+function subagentDispatches(step) {
+  if (toolName(step) !== "subagent") {
+    return [];
+  }
+  if (isSubagentContinuation(step) || isSubagentContinuation(step.input)) {
+    return [];
+  }
+  if (Array.isArray(step.targets)) {
+    const normalizedTargets = step.targets.map((target) => normalizeText(target)).filter(Boolean);
+    const input = isRecord(step.input) ? step.input : undefined;
+    const structuredInput = hasStructuredSubagentDispatches(input);
+    const canUseRootInput =
+      normalizedTargets.length === 1 &&
+      !structuredInput &&
+      normalizeText(input?.agent) === normalizedTargets[0];
+    const inputDispatches = collectSubagentDispatches(input, {
+      includeRoot: canUseRootInput,
+    });
+    const consumedInputIndexes = new Set();
+
+    return normalizedTargets.map((agent) => {
+      const inputIndex = inputDispatches.findIndex(
+        (dispatch, index) => !consumedInputIndexes.has(index) && dispatch.agent === agent,
+      );
+      if (inputIndex < 0) {
+        return { agent, ticket: undefined };
+      }
+      consumedInputIndexes.add(inputIndex);
+      return { agent, ticket: inputDispatches[inputIndex].ticket };
+    });
+  }
+  return collectSubagentDispatches(isRecord(step.input) ? step.input : step);
 }
 
 const RESEARCH_SUBAGENT_TARGETS = new Set(["librarian", "repo-scout", "web-scout"]);
@@ -1522,6 +1603,16 @@ function evaluateArchitect(transcript, addViolation) {
     }
     if (requiredResearchTarget && researchTargets.includes(requiredResearchTarget)) {
       sawRequiredResearchTarget = true;
+    }
+    for (const dispatch of subagentDispatches(step)) {
+      if (dispatch.agent !== "developer") continue;
+      if (typeof dispatch.ticket !== "string" || dispatch.ticket.trim().length === 0) {
+        addViolation(
+          "architect.developer_ticket_required",
+          index,
+          "Every fresh developer dispatch must include an explicit ticket field; resume and steer continuations are exempt.",
+        );
+      }
     }
     if (targets.includes("developer") && !ticketsApproved) {
       addViolation(

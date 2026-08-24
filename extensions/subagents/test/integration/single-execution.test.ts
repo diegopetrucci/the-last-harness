@@ -13,6 +13,8 @@ import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import type { MockPi } from "../support/helpers.ts";
 import {
   createMockPi,
@@ -239,6 +241,7 @@ const available = !!(execution && utils);
 const runSync = execution?.runSync;
 const getFinalOutput = utils?.getFinalOutput;
 const createSubagentExecutor = executorMod?.createSubagentExecutor;
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1043,7 +1046,7 @@ describe(
               { jsonl: [events.assistantMessage("single ticket done")] },
             ],
           });
-          const executor = makeExecutor([makeAgent("echo")]);
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
           const updates: Array<{
             details?: {
               results?: Array<{
@@ -1054,7 +1057,7 @@ describe(
           }> = [];
           const runPromise = executor.execute(
             "single-ticket",
-            { agent: "echo", task: "Run `tk show psr-raw4` first." },
+            { agent: "developer", task: "Implement the ticketed work.", ticket: "psr-raw4" },
             new AbortController().signal,
             (update: unknown) => updates.push(update as (typeof updates)[number]),
             makeMinimalCtx(tempDir),
@@ -1088,6 +1091,206 @@ describe(
         }
       },
     );
+
+    it(
+      "resolves an explicit single ticket without changing the child task text",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          fs.writeFileSync(
+            path.join(tempDir, ".tickets", "psr-explicit.md"),
+            "---\nid: psr-explicit\n---\n# Explicit single title\n",
+            "utf-8",
+          );
+          mockPi.onCall({ output: "explicit ticket done" });
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+          const result = await executor.execute(
+            "single-explicit-ticket",
+            {
+              agent: "developer",
+              task: "Do the work; legacy text says `tk show missing`",
+              ticket: "psr-explicit",
+            },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.deepEqual(result.details?.results?.[0]?.tkTicket, {
+            id: "psr-explicit",
+            title: "Explicit single title",
+          });
+          const callFile = fs
+            .readdirSync(mockPi.dir)
+            .find((name) => name.startsWith("call-") && name.endsWith(".json"));
+          assert.ok(callFile, "expected a recorded child call");
+          const payload = JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as {
+            args?: unknown;
+          };
+          assert.ok(Array.isArray(payload.args));
+          const childArgs = (payload.args as string[]).join("\n");
+          assert.match(childArgs, /^Task: Do the work; legacy text says `tk show missing`/m);
+          assert.doesNotMatch(childArgs, /Explicit single title/);
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it(
+      "rejects a missing explicit single ticket before starting a child",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+          const result = await executor.execute(
+            "single-missing-ticket",
+            { agent: "developer", task: "Do the work", ticket: "missing-ticket" },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /Invalid ticket for SINGLE mode/);
+          assert.match(result.content[0]?.text ?? "", /not found/);
+          assert.equal(mockPi.callCount(), 0);
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it("enforces the shipped developer marker through dispatch discovery", async () => {
+      const shippedAgentsDir = path.join(repositoryRoot, "agents", "subagents");
+      const shippedDeveloperPath = path.join(shippedAgentsDir, "developer.md");
+      fs.mkdirSync(path.join(tempDir, ".git"), { recursive: true });
+      fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tempDir, ".pi", "settings.json"),
+        JSON.stringify({ subagents: { agentDirs: [shippedAgentsDir] } }),
+        "utf-8",
+      );
+      try {
+        const discovered = discoverAgents(tempDir, "project").agents.find(
+          (agent) => agent.filePath === shippedDeveloperPath,
+        );
+        assert.ok(discovered, "expected the shipped developer agent to be discovered");
+        assert.equal(discovered.tkTicketRequired, true);
+
+        const executor = makeExecutor([discovered]);
+        const result = await executor.execute(
+          "shipped-developer-no-ticket",
+          { agent: "developer", task: "Implement the work" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true);
+        assert.match(result.content[0]?.text ?? "", /requires.*explicit ticket/i);
+        assert.equal(mockPi.callCount(), 0);
+      } finally {
+        fs.rmSync(path.join(tempDir, ".git"), { recursive: true, force: true });
+        fs.rmSync(path.join(tempDir, ".pi"), { recursive: true, force: true });
+      }
+    });
+
+    it("rejects a developer dispatch without a ticket before starting a child", async () => {
+      const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+      const result = await executor.execute(
+        "single-no-ticket",
+        { agent: "developer", task: "Implement the work" },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+
+      assert.equal(result.isError, true);
+      assert.match(result.content[0]?.text ?? "", /requires.*explicit ticket/i);
+      assert.equal(mockPi.callCount(), 0);
+
+      const malformed = await executor.execute(
+        "single-malformed-ticket",
+        { agent: "developer", task: "Implement the work", ticket: "bad/id" },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+      assert.equal(malformed.isError, true);
+      assert.match(malformed.content[0]?.text ?? "", /only letters/);
+      assert.equal(mockPi.callCount(), 0);
+    });
+
+    it("does not require tickets for a custom agent named developer", async () => {
+      mockPi.onCall({ output: "Custom developer completed" });
+      const executor = makeExecutor([
+        makeAgent("developer", { source: "user", completionGuard: false }),
+      ]);
+      const result = await executor.execute(
+        "custom-developer-no-ticket",
+        { agent: "developer", task: "Implement the custom work" },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+
+      assert.equal(result.isError, undefined, result.content[0]?.text ?? "");
+      assert.equal(result.details?.results?.[0]?.tkTicket, undefined);
+      assert.equal(mockPi.callCount(), 1);
+    });
+
+    it("rejects task-text inference and explicit tickets for non-developer dispatches", async () => {
+      const originalTicketsDir = process.env.TICKETS_DIR;
+      process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+      try {
+        fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+        fs.writeFileSync(
+          path.join(tempDir, ".tickets", "psr-non-developer.md"),
+          "---\nid: psr-non-developer\n---\n# Non-developer ticket\n",
+          "utf-8",
+        );
+        const executor = makeExecutor([makeAgent("reviewer")]);
+        const inferred = await executor.execute(
+          "single-non-developer-inferred-ticket",
+          {
+            agent: "reviewer",
+            task: "Review `tk show psr-non-developer` without editing.",
+          },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(inferred.isError, undefined);
+        assert.equal(inferred.details?.results?.[0]?.tkTicket, undefined);
+
+        const explicit = await executor.execute(
+          "single-non-developer-explicit-ticket",
+          { agent: "reviewer", task: "Review the work", ticket: "psr-non-developer" },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        assert.equal(explicit.isError, true);
+        assert.match(explicit.content[0]?.text ?? "", /only supported.*marked TLH developer/i);
+      } finally {
+        if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+        else process.env.TICKETS_DIR = originalTicketsDir;
+      }
+    });
 
     it("fails implementation runs that complete without mutation attempts", async () => {
       mockPi.onCall({ output: "Validation:\nlet rawFilename = params.filename.trim();" });

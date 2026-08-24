@@ -28,6 +28,7 @@ import {
 import { consumeChildMessageRequests } from "../../src/runs/background/control-channel.ts";
 import {
   RESULTS_DIR,
+  SUBAGENT_ASYNC_STARTED_EVENT,
   TEMP_ROOT_DIR,
   type SubagentState,
   type ForegroundRunControl,
@@ -586,6 +587,108 @@ describe("nested run control behavior", () => {
       assert.match(text(result), /session file does not exist/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates a nested status-step ticket while preserving legacy no-ticket revival", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-ticket-resume-"));
+    const parentSessionFile = path.join(root, "parent.jsonl");
+    const runId = "nested-ticket-resume";
+    const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+    const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+    const emitted: Array<{ name: string; payload: unknown }> = [];
+    const events = {
+      emit(name: string, payload: unknown) {
+        emitted.push({ name, payload });
+      },
+      on() {
+        return () => {};
+      },
+    };
+    try {
+      fs.writeFileSync(parentSessionFile, "", "utf-8");
+      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      fs.mkdirSync(nestedAsyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(nestedAsyncDir, "status.json"),
+        JSON.stringify({
+          runId,
+          mode: "single",
+          state: "complete",
+          steps: [
+            {
+              agent: "worker",
+              status: "complete",
+              sessionFile,
+              tkTicket: { id: "psr-nested", title: "Nested ticket" },
+            },
+          ],
+        }),
+        "utf-8",
+      );
+      const route = createNestedRun(runId, "complete", {
+        agent: "worker",
+        asyncDir: nestedAsyncDir,
+        sessionFile,
+      });
+      const executor = createExecutor(
+        stateWithNestedRoute(route),
+        [{ name: "worker", description: "Worker", prompt: "Do work" }],
+        events,
+      );
+
+      const ticketedResult = await executor.execute(
+        "resume-ticketed",
+        { action: "resume", id: runId, message: "continue" },
+        new AbortController().signal,
+        undefined,
+        ctx(root, parentSessionFile),
+      );
+      assert.equal(ticketedResult.isError, undefined, text(ticketedResult));
+      const ticketedStart = emitted.find((event) => event.name === SUBAGENT_ASYNC_STARTED_EVENT);
+      assert.ok(ticketedStart, "expected nested revival to emit an async-started event");
+      const ticketedPayload = ticketedStart.payload as {
+        tkTicket?: unknown;
+        tkTickets?: unknown;
+      };
+      assert.deepEqual(ticketedPayload.tkTicket, {
+        id: "psr-nested",
+        title: "Nested ticket",
+      });
+      assert.deepEqual(ticketedPayload.tkTickets, [{ id: "psr-nested", title: "Nested ticket" }]);
+
+      emitted.length = 0;
+      fs.writeFileSync(
+        path.join(nestedAsyncDir, "status.json"),
+        JSON.stringify({
+          runId,
+          mode: "single",
+          state: "complete",
+          steps: [{ agent: "worker", status: "complete", sessionFile }],
+        }),
+        "utf-8",
+      );
+      const legacyResult = await createExecutor(
+        stateWithNestedRoute(route),
+        [{ name: "worker", description: "Worker", prompt: "Do work" }],
+        events,
+      ).execute(
+        "resume-legacy",
+        { action: "resume", id: runId, message: "continue" },
+        new AbortController().signal,
+        undefined,
+        ctx(root, parentSessionFile),
+      );
+      assert.equal(legacyResult.isError, undefined, text(legacyResult));
+      const legacyStart = emitted.find((event) => event.name === SUBAGENT_ASYNC_STARTED_EVENT);
+      assert.ok(legacyStart, "expected legacy nested revival to emit an async-started event");
+      const legacyPayload = legacyStart.payload as { tkTicket?: unknown; tkTickets?: unknown };
+      assert.equal(legacyPayload.tkTicket, undefined);
+      assert.equal(legacyPayload.tkTickets, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
     }
   });
 

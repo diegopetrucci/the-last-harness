@@ -140,7 +140,8 @@ function readStatusFile(asyncDir: string): AsyncStatus | null {
     });
   }
   try {
-    return normalizeAsyncLifecycleStatus(JSON.parse(content) as AsyncStatus);
+    const parsed: unknown = JSON.parse(content);
+    return normalizeAsyncLifecycleStatus(parsed);
   } catch (error) {
     throw createAsyncStatusJsonParseError({
       asyncDir,

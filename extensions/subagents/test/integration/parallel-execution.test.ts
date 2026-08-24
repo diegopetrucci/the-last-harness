@@ -236,7 +236,10 @@ describe(
             ],
           });
           mockPi.onCall({ output: "plain parallel done" });
-          const executor = makeExecutor([makeAgent("ticketed"), makeAgent("plain")]);
+          const executor = makeExecutor([
+            makeAgent("developer", { tkTicketRequired: true }),
+            makeAgent("plain"),
+          ]);
           const updates: Array<{
             details?: {
               results?: Array<{
@@ -250,7 +253,7 @@ describe(
             "parallel-ticket",
             {
               tasks: [
-                { agent: "ticketed", task: "Run `tk show psr-raw4` first." },
+                { agent: "developer", task: "Implement the ticketed work.", ticket: "psr-raw4" },
                 { agent: "plain", task: "Review the result." },
               ],
             },
@@ -288,6 +291,180 @@ describe(
             title: "Show active tk title",
           });
           assert.equal(result.details?.results?.[1]?.tkTicket, undefined);
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it(
+      "carries independently resolved explicit tickets through parallel children",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          fs.writeFileSync(
+            path.join(tempDir, ".tickets", "psr-dev-a.md"),
+            "---\nid: psr-dev-a\n---\n# Developer A title\n",
+            "utf-8",
+          );
+          fs.writeFileSync(
+            path.join(tempDir, ".tickets", "psr-dev-b.md"),
+            "---\nid: psr-dev-b\n---\n# Developer B title\n",
+            "utf-8",
+          );
+          mockPi.onCall({ output: "developer A done" });
+          mockPi.onCall({ output: "developer B done" });
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+
+          const result = await executor.execute(
+            "parallel-explicit-tickets",
+            {
+              tasks: [
+                { agent: "developer", task: "Work A", ticket: "psr-dev-a" },
+                { agent: "developer", task: "Work B", ticket: "psr-dev-b" },
+              ],
+            },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.deepEqual(
+            result.details?.results.map(
+              (child: { tkTicket?: { id: string; title: string } }) => child.tkTicket,
+            ),
+            [
+              { id: "psr-dev-a", title: "Developer A title" },
+              { id: "psr-dev-b", title: "Developer B title" },
+            ],
+          );
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it(
+      "repeated parallel tasks inherit their explicit ticket",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          fs.writeFileSync(
+            path.join(tempDir, ".tickets", "psr-repeat.md"),
+            "---\nid: psr-repeat\n---\n# Repeated ticket title\n",
+            "utf-8",
+          );
+          mockPi.onCall({ output: "first repeat" });
+          mockPi.onCall({ output: "second repeat" });
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+
+          const result = await executor.execute(
+            "parallel-repeated-ticket",
+            {
+              tasks: [{ agent: "developer", task: "Repeat work", count: 2, ticket: "psr-repeat" }],
+            },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, undefined);
+          assert.deepEqual(
+            result.details?.results.map(
+              (child: { tkTicket?: { id: string; title: string } }) => child.tkTicket,
+            ),
+            [
+              { id: "psr-repeat", title: "Repeated ticket title" },
+              { id: "psr-repeat", title: "Repeated ticket title" },
+            ],
+          );
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it(
+      "rejects a missing explicit parallel ticket before starting any child",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          const executor = makeExecutor([makeAgent("developer", { tkTicketRequired: true })]);
+          const result = await executor.execute(
+            "parallel-missing-ticket",
+            { tasks: [{ agent: "developer", task: "Work", ticket: "missing-ticket" }] },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /Invalid ticket for tasks\[0\]/);
+          assert.match(result.content[0]?.text ?? "", /not found/);
+          assert.equal(mockPi.callCount(), 0);
+        } finally {
+          if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
+          else process.env.TICKETS_DIR = originalTicketsDir;
+        }
+      },
+    );
+
+    it(
+      "validates every developer task before starting mixed parallel work",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const originalTicketsDir = process.env.TICKETS_DIR;
+        process.env.TICKETS_DIR = path.join(tempDir, ".tickets");
+        try {
+          fs.mkdirSync(path.join(tempDir, ".tickets"), { recursive: true });
+          fs.writeFileSync(
+            path.join(tempDir, ".tickets", "psr-valid.md"),
+            "---\nid: psr-valid\n---\n# Valid ticket\n",
+            "utf-8",
+          );
+          const executor = makeExecutor([
+            makeAgent("developer", { tkTicketRequired: true }),
+            makeAgent("reviewer"),
+          ]);
+          const result = await executor.execute(
+            "parallel-mixed-ticket-validation",
+            {
+              tasks: [
+                { agent: "developer", task: "Work A", ticket: "psr-valid" },
+                { agent: "developer", task: "Work B" },
+                { agent: "reviewer", task: "Review the result." },
+              ],
+            },
+            new AbortController().signal,
+            undefined,
+            makeMinimalCtx(tempDir),
+          );
+
+          assert.equal(result.isError, true);
+          assert.match(result.content[0]?.text ?? "", /Invalid ticket for tasks\[1\]/);
+          assert.match(result.content[0]?.text ?? "", /requires.*explicit ticket/i);
+          assert.equal(mockPi.callCount(), 0);
         } finally {
           if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
           else process.env.TICKETS_DIR = originalTicketsDir;

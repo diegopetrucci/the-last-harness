@@ -4,20 +4,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import {
-  detectTkTicketId,
+  BUNDLED_DEVELOPER_AGENT_NAME,
   normalizeTkTicketMetadata,
   parseTkTicketTitle,
-  resolveTkTicketMetadata,
-  resolveTkTicketTaskContext,
+  resolveDispatchTkTicketMetadata,
+  resolveExplicitTkTicketMetadata,
   sanitizeTkTicketTitle,
 } from "../../src/runs/shared/tk-ticket.ts";
 
 describe("tk ticket helpers", () => {
-  it("detects explicit tk show commands from delegated tasks", () => {
-    assert.equal(detectTkTicketId("First run `tk show psr-raw4` and follow it."), "psr-raw4");
-    assert.equal(detectTkTicketId("No ticket here."), undefined);
-  });
-
   it("parses and sanitizes terminal-safe ticket titles without clipping", () => {
     assert.equal(
       parseTkTicketTitle("---\nid: psr-raw4\n---\n# Show active tk title\n"),
@@ -30,39 +25,59 @@ describe("tk ticket helpers", () => {
     assert.equal(sanitizeTkTicketTitle("x".repeat(100)), "x".repeat(100));
   });
 
-  it("resolves exactly one ticketed task with its effective child cwd", () => {
-    assert.deepEqual(
-      resolveTkTicketTaskContext({
-        runnerCwd: "/repo",
-        tasks: [
-          { task: "Review the result." },
-          { task: "Run `tk show psr-raw4` first.", cwd: "nested" },
-        ],
-      }),
-      { task: "Run `tk show psr-raw4` first.", cwd: "/repo/nested", taskIndex: 1 },
+  it("requires explicit tickets only for the marked TLH developer dispatch", () => {
+    assert.equal(BUNDLED_DEVELOPER_AGENT_NAME, "developer");
+    assert.match(
+      resolveDispatchTkTicketMetadata({ name: "developer", tkTicketRequired: true }, undefined)
+        .error ?? "",
+      /requires.*explicit ticket/i,
     );
     assert.equal(
-      resolveTkTicketTaskContext({
-        runnerCwd: "/repo",
-        tasks: [
-          { task: "Run `tk show psr-raw4` first." },
-          { task: "Run `tk show psr-raw9` first." },
-        ],
-      }),
+      resolveDispatchTkTicketMetadata({ name: "developer" }, undefined).error,
       undefined,
+    );
+    assert.equal(
+      resolveDispatchTkTicketMetadata({ name: "developer", tkTicketRequired: false }, undefined)
+        .error,
+      undefined,
+    );
+    assert.match(
+      resolveDispatchTkTicketMetadata({ name: "reviewer", tkTicketRequired: true }, "psr-raw4")
+        .error ?? "",
+      /only supported.*TLH developer/i,
+    );
+    assert.deepEqual(
+      resolveDispatchTkTicketMetadata({ name: "developer", tkTicketRequired: true }, "psr-raw4", {
+        cwd: "/repo",
+        findTicketFile: () => ({ id: "psr-raw4", path: "/repo/.tickets/psr-raw4.md" }),
+        readFileSync: () => "---\nid: psr-raw4\n---\n# Explicit ticket title\n",
+      }),
+      { metadata: { id: "psr-raw4", title: "Explicit ticket title" } },
     );
   });
 
-  it("normalizes runtime tk ticket metadata", () => {
-    assert.deepEqual(normalizeTkTicketMetadata({ id: "psr-raw4", title: "Unsafe\u009b title" }), {
-      id: "psr-raw4",
-      title: "Unsafe title",
-    });
-    assert.equal(normalizeTkTicketMetadata({ id: "bad id", title: "Unsafe title" }), undefined);
-    assert.equal(normalizeTkTicketMetadata({ id: "psr-raw4", title: "\u009b\u0007" }), undefined);
+  it("resolves explicit ticket IDs and rejects invalid or missing tickets", () => {
+    assert.deepEqual(
+      resolveExplicitTkTicketMetadata("psr-raw4", {
+        cwd: "/repo",
+        findTicketFile: () => ({ id: "psr-raw4", path: "/repo/.tickets/psr-raw4.md" }),
+        readFileSync: () => "---\nid: psr-raw4\n---\n# Explicit ticket title\n",
+      }),
+      { metadata: { id: "psr-raw4", title: "Explicit ticket title" } },
+    );
+    assert.match(
+      resolveExplicitTkTicketMetadata("missing", { cwd: "/repo", findTicketFile: () => undefined })
+        .error ?? "",
+      /not found/,
+    );
+    assert.match(
+      resolveExplicitTkTicketMetadata("bad/id", { cwd: "/repo" }).error ?? "",
+      /only letters/,
+    );
+    assert.match(resolveExplicitTkTicketMetadata("", { cwd: "/repo" }).error ?? "", /non-empty/);
   });
 
-  it("resolves metadata from a TICKETS_DIR root relative to the task cwd", () => {
+  it("resolves metadata from a relative TICKETS_DIR rooted at the task cwd", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tk-ticket-env-"));
     const originalTicketsDir = process.env.TICKETS_DIR;
     try {
@@ -75,9 +90,8 @@ describe("tk ticket helpers", () => {
         "utf-8",
       );
       process.env.TICKETS_DIR = "./custom-tickets";
-      assert.deepEqual(resolveTkTicketMetadata("Run `tk show psr-raw4` first.", { cwd: taskCwd }), {
-        id: "psr-raw4",
-        title: "Show active tk title",
+      assert.deepEqual(resolveExplicitTkTicketMetadata("psr-raw4", { cwd: taskCwd }), {
+        metadata: { id: "psr-raw4", title: "Show active tk title" },
       });
     } finally {
       if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
@@ -105,9 +119,8 @@ describe("tk ticket helpers", () => {
         "---\nid: psr-raw4\n---\n# Partial match title\n",
         "utf-8",
       );
-      assert.deepEqual(resolveTkTicketMetadata("Run `tk show psr-raw` first.", { cwd: taskCwd }), {
-        id: "psr-raw",
-        title: "Exact match title",
+      assert.deepEqual(resolveExplicitTkTicketMetadata("psr-raw", { cwd: taskCwd }), {
+        metadata: { id: "psr-raw", title: "Exact match title" },
       });
     } finally {
       if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
@@ -116,7 +129,7 @@ describe("tk ticket helpers", () => {
     }
   });
 
-  it("supports unique partial ID matches and returns the canonical ticket ID", () => {
+  it("supports a unique partial ID match and returns the canonical ticket ID", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tk-ticket-partial-"));
     const originalTicketsDir = process.env.TICKETS_DIR;
     try {
@@ -130,9 +143,8 @@ describe("tk ticket helpers", () => {
         "---\nid: psr-raw4\n---\n# Canonical partial title\n",
         "utf-8",
       );
-      assert.deepEqual(resolveTkTicketMetadata("Run `tk show raw4` first.", { cwd: taskCwd }), {
-        id: "psr-raw4",
-        title: "Canonical partial title",
+      assert.deepEqual(resolveExplicitTkTicketMetadata("raw4", { cwd: taskCwd }), {
+        metadata: { id: "psr-raw4", title: "Canonical partial title" },
       });
     } finally {
       if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
@@ -141,7 +153,7 @@ describe("tk ticket helpers", () => {
     }
   });
 
-  it("fails open when a partial ticket ID is missing or ambiguous", () => {
+  it("rejects missing and ambiguous partial ticket IDs", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-tk-ticket-ambiguous-"));
     const originalTicketsDir = process.env.TICKETS_DIR;
     try {
@@ -160,13 +172,13 @@ describe("tk ticket helpers", () => {
         "---\nid: psr-raw9\n---\n# Second title\n",
         "utf-8",
       );
-      assert.equal(
-        resolveTkTicketMetadata("Run `tk show raw` first.", { cwd: taskCwd }),
-        undefined,
+      assert.match(
+        resolveExplicitTkTicketMetadata("raw", { cwd: taskCwd }).error ?? "",
+        /not found/,
       );
-      assert.equal(
-        resolveTkTicketMetadata("Run `tk show missing` first.", { cwd: taskCwd }),
-        undefined,
+      assert.match(
+        resolveExplicitTkTicketMetadata("missing", { cwd: taskCwd }).error ?? "",
+        /not found/,
       );
     } finally {
       if (originalTicketsDir === undefined) delete process.env.TICKETS_DIR;
@@ -175,14 +187,12 @@ describe("tk ticket helpers", () => {
     }
   });
 
-  it("fails open when local ticket discovery throws before reading metadata", () => {
-    assert.equal(
-      resolveTkTicketMetadata("Run `tk show psr-raw4` first.", {
-        findTicketFile: () => {
-          throw new Error("boom");
-        },
-      }),
-      undefined,
-    );
+  it("normalizes runtime tk ticket metadata", () => {
+    assert.deepEqual(normalizeTkTicketMetadata({ id: "psr-raw4", title: "Unsafe\u009b title" }), {
+      id: "psr-raw4",
+      title: "Unsafe title",
+    });
+    assert.equal(normalizeTkTicketMetadata({ id: "bad id", title: "Unsafe title" }), undefined);
+    assert.equal(normalizeTkTicketMetadata({ id: "psr-raw4", title: "\u009b\u0007" }), undefined);
   });
 });

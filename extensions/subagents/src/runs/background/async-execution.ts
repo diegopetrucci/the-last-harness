@@ -96,12 +96,7 @@ import {
   parseContextUsageDiagnostics,
 } from "../../shared/context-diagnostics.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
-import {
-  detectTkTicketId,
-  normalizeTkTicketMetadata,
-  resolveTkTicketMetadata,
-  resolveTkTicketTaskContext,
-} from "../shared/tk-ticket.ts";
+import { normalizeTkTicketMetadata, resolveDispatchTkTicketMetadata } from "../shared/tk-ticket.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -147,10 +142,13 @@ interface AsyncChainParams {
 interface AsyncSingleParams {
   agent: string;
   task?: string;
+  ticket?: string;
   agentConfig: AgentConfig;
   ctx: AsyncExecutionContext;
   cwd?: string;
   continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+  /** True when reviving a persisted child rather than starting a fresh dispatch. */
+  continuation?: boolean;
   inheritedTkTicket?: TkTicketMetadata;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
@@ -541,6 +539,12 @@ export function buildAsyncRunnerSteps(
     );
     if (resolvedToolBudget.error) throw new AsyncStartValidationError(resolvedToolBudget.error);
     const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
+    const ticketResolution = resolveDispatchTkTicketMetadata(a, s.ticket, { cwd: stepCwd });
+    if (ticketResolution.error) {
+      throw new AsyncStartValidationError(
+        `Invalid ticket for async step (${s.agent}): ${ticketResolution.error}`,
+      );
+    }
     const instructionCwd = behaviorCwd ?? stepCwd;
     const behavior = suppressProgressForReadOnlyTask(
       resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)),
@@ -672,6 +676,7 @@ export function buildAsyncRunnerSteps(
       outputName: s.as,
       structured: Boolean(s.outputSchema),
       cwd: stepCwd,
+      ...(ticketResolution.metadata ? { tkTicket: ticketResolution.metadata } : {}),
       model,
       thinking: modelThinking,
       ...(modelIdentity ? { modelIdentity } : {}),
@@ -879,18 +884,10 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
     return formatAsyncStartError(resultMode, built.error);
   }
   const { steps, runnerCwd, workflowGraph, eventChain } = built;
-  const ticketTasks = chain.flatMap((step) => {
-    if (isParallelStep(step)) return step.parallel;
-    return [step as SequentialStep];
-  });
-  const tkTicketContext = resolveTkTicketTaskContext({
-    topLevelTask: params.task,
-    runnerCwd,
-    tasks: ticketTasks,
-  });
-  const tkTicket = tkTicketContext
-    ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
-    : undefined;
+  const childTkTickets = steps
+    .flatMap((step) => ("parallel" in step ? step.parallel : [step]))
+    .map((step) => step.tkTicket);
+  const hasChildTkTickets = childTkTickets.some((ticket) => ticket !== undefined);
   const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
   const initialTurnBudget = params.turnBudget
     ? initialTurnBudgetState(params.turnBudget)
@@ -938,7 +935,6 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
         timeoutMs: params.timeoutMs,
         deadlineAt,
         workflowGraph,
-        tkTicket,
         nestedRoute: nestedRoute ?? inheritedNestedRoute,
         nestedSelf:
           inheritedNestedRoute && nestedAddress
@@ -1042,9 +1038,9 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
       chainStepCount: eventChain.length,
       parallelGroups,
       workflowGraph,
+      ...(hasChildTkTickets ? { tkTickets: childTkTickets } : {}),
       cwd: runnerCwd,
       asyncDir,
-      ...(tkTicket ? { tkTicket } : {}),
       ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,
@@ -1285,9 +1281,16 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
   }
   const effectiveTimeoutMs = resolveEffectiveSingleTimeout(params.timeoutMs, remainingAgentTimeMs);
   const deadlineAt = effectiveTimeoutMs !== undefined ? Date.now() + effectiveTimeoutMs : undefined;
-  const tkTicket = detectTkTicketId(task)
-    ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
-    : normalizeTkTicketMetadata(params.inheritedTkTicket);
+  const ticketResolution = params.continuation
+    ? { metadata: normalizeTkTicketMetadata(params.inheritedTkTicket) }
+    : resolveDispatchTkTicketMetadata(agentConfig, params.ticket, { cwd: runnerCwd });
+  if (ticketResolution.error) {
+    return formatAsyncStartError(
+      "single",
+      `Invalid ticket for SINGLE mode: ${ticketResolution.error}`,
+    );
+  }
+  const tkTicket = ticketResolution.metadata;
   const initialTurnBudget = params.turnBudget
     ? initialTurnBudgetState(params.turnBudget)
     : undefined;
@@ -1302,6 +1305,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
             agent,
             task: taskWithOutputInstruction,
             cwd: runnerCwd,
+            ...(tkTicket ? { tkTicket } : {}),
             model,
             thinking: modelThinking,
             ...(modelIdentity ? { modelIdentity } : {}),
@@ -1463,7 +1467,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
       task: task?.slice(0, 50),
       cwd: runnerCwd,
       asyncDir,
-      ...(tkTicket ? { tkTicket } : {}),
+      ...(tkTicket ? { tkTickets: [tkTicket], tkTicket } : {}),
       ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,

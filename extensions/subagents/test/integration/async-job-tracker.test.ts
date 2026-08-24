@@ -937,6 +937,37 @@ describe(
       }
     });
 
+    it("projects and sanitizes per-child tickets from async-start before polling", () => {
+      const asyncRoot = createTempDir("pi-async-job-tracker-step-tickets-");
+      try {
+        const state = createState();
+        const recorder = createEventRecorder();
+        const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot);
+
+        tracker.handleStarted({
+          id: "run-step-tickets-start",
+          asyncDir: path.join(asyncRoot, "run-step-tickets-start"),
+          mode: "parallel",
+          agents: ["developer-a", "developer-b", "developer-c"],
+          parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
+          tkTickets: [
+            { id: "psr-a", title: "A\u001b[31m ticket\u001b[0m" },
+            { id: "bad/id", title: "Rejected ticket" },
+            { id: "psr-c", title: "C ticket" },
+          ],
+        });
+
+        assert.deepEqual(
+          state.asyncJobs
+            .get("run-step-tickets-start")
+            ?.steps?.map((step: { tkTicket?: unknown }) => step.tkTicket),
+          [{ id: "psr-a", title: "A ticket" }, undefined, { id: "psr-c", title: "C ticket" }],
+        );
+      } finally {
+        removeTempDir(asyncRoot);
+      }
+    });
+
     it("adds flat step indexes to polled active parallel group steps", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {

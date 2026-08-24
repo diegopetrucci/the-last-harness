@@ -1929,6 +1929,82 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("selects a child ticket instead of leaking an aggregate ticket to a sibling", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-step-ticket-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionA = path.join(root, "a.jsonl");
+      const sessionB = path.join(root, "b.jsonl");
+      fs.writeFileSync(sessionA, "", "utf-8");
+      fs.writeFileSync(sessionB, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-step-tickets", "status.json"), {
+        runId: "run-step-tickets",
+        mode: "parallel",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        tkTicket: { id: "psr-aggregate", title: "Aggregate ticket" },
+        steps: [
+          {
+            agent: "ticketed-child",
+            status: "complete",
+            sessionFile: sessionA,
+            tkTicket: { id: "psr-child", title: "Child ticket" },
+          },
+          { agent: "unticketed-child", status: "complete", sessionFile: sessionB },
+        ],
+      });
+
+      const ticketed = resolveAsyncResumeTarget(
+        { id: "run-step-tickets", index: 0 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      const unticketed = resolveAsyncResumeTarget(
+        { id: "run-step-tickets", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      assert.deepEqual(ticketed.tkTicket, { id: "psr-child", title: "Child ticket" });
+      assert.equal(unticketed.tkTicket, undefined);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a root ticket for legacy multi-child artifacts without step tickets", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-legacy-ticket-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionA = path.join(root, "a.jsonl");
+      const sessionB = path.join(root, "b.jsonl");
+      fs.writeFileSync(sessionA, "", "utf-8");
+      fs.writeFileSync(sessionB, "", "utf-8");
+      writeJson(path.join(asyncRoot, "run-legacy", "status.json"), {
+        runId: "run-legacy",
+        mode: "parallel",
+        state: "complete",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        tkTicket: { id: "psr-root", title: "Root ticket" },
+        steps: [
+          { agent: "worker-a", status: "complete", sessionFile: sessionA },
+          { agent: "worker-b", status: "complete", sessionFile: sessionB },
+        ],
+      });
+
+      const target = resolveAsyncResumeTarget(
+        { id: "run-legacy", index: 1 },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+      );
+      assert.deepEqual(target.tkTicket, { id: "psr-root", title: "Root ticket" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("frames the revived follow-up with original run context", () => {
     const task = buildRevivedAsyncTask(
       {

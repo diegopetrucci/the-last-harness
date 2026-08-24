@@ -820,14 +820,43 @@ function widgetTkTicketText(job: AsyncJobState): string | undefined {
   return normalizedTkTicket ? `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}` : undefined;
 }
 
+function widgetActiveStepTkTicketText(job: AsyncJobState): string | undefined {
+  if (job.status !== "running" && job.status !== "queued") return undefined;
+  const titles = (job.steps ?? [])
+    .filter((step) => step.status === "running" || step.status === "pending")
+    .map((step) => normalizeTkTicketMetadata(step.tkTicket)?.title)
+    .filter((title): title is string => Boolean(title));
+  const distinctTitles = [...new Set(titles)];
+  return distinctTitles.length > 0
+    ? `${TK_TICKET_WIDGET_PREFIX}${distinctTitles.join(" · ")}`
+    : undefined;
+}
+
+function widgetJobTicketText(job: AsyncJobState): string | undefined {
+  return widgetActiveStepTkTicketText(job) ?? widgetTkTicketText(job);
+}
+
 function widgetTkTicketLine(job: AsyncJobState, theme: Theme, indent = "  "): string | undefined {
   const ticket = widgetTkTicketText(job);
   return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 
 function widgetTkTicketLines(job: AsyncJobState, theme: Theme, indent = "  "): string[] {
+  if (job.steps?.some((step) => step.tkTicket)) return [];
   const line = widgetTkTicketLine(job, theme, indent);
   return line ? [line] : [];
+}
+
+function widgetStepTkTicketLine(
+  step: NonNullable<AsyncJobState["steps"]>[number],
+  theme: Theme,
+  indent = "  ",
+): string | undefined {
+  if (step.status !== "running" && step.status !== "pending") return undefined;
+  const normalizedTkTicket = normalizeTkTicketMetadata(step.tkTicket);
+  return normalizedTkTicket
+    ? `${indent}${theme.fg("dim", `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}`)}`
+    : undefined;
 }
 
 function foregroundTkTicketText(result: Details["results"][number]): string | undefined {
@@ -903,6 +932,10 @@ function widgetChainDetails(
       lines.push(
         `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(aggregationSteps, span.count, { showRunning: false }))}`,
       );
+      for (const step of steps) {
+        const ticketLine = widgetStepTkTicketLine(step, theme);
+        if (ticketLine) lines.push(`    ${ticketLine}`);
+      }
       continue;
     }
     const step = sourceSteps[0];
@@ -980,6 +1013,8 @@ function widgetParallelAgentDetails(
     } else {
       lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
     }
+    const ticketLine = widgetStepTkTicketLine(displayStep, theme);
+    if (ticketLine) lines.push(`    ${ticketLine}`);
     for (const nestedLine of formatNestedWidgetLines(
       step.children,
       theme,
@@ -1672,6 +1707,11 @@ function foregroundStyleWidgetStepLines(
   const lines = [
     `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
   ];
+  const ticketLine =
+    resolvedDisplayStatus === displayStep.status
+      ? widgetStepTkTicketLine(displayStep, theme)
+      : undefined;
+  if (ticketLine) lines.push(`    ${ticketLine}`);
   const activityLines =
     resolvedDisplayStatus === displayStep.status
       ? widgetStepActivityLines(
@@ -2077,6 +2117,8 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
     } else {
       lines.push(`${rowPrefix}${activitySuffix}`);
     }
+    const ticketLine = widgetStepTkTicketLine(displayStep, theme);
+    if (ticketLine) lines.push(`    ${ticketLine}`);
     for (const nestedLine of formatNestedWidgetLines(
       step.children,
       theme,
@@ -2306,7 +2348,7 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number): st
   const stats = widgetSummaryStats(job, theme);
   const activity = widgetActivity(job);
   const status = job.status === "running" ? "" : job.status === "complete" ? "done" : job.status;
-  const ticket = widgetTkTicketText(job);
+  const ticket = widgetJobTicketText(job);
   const prefixParts = [
     themeBold(theme, widgetJobName(job)),
     status ? theme.fg("dim", status) : "",

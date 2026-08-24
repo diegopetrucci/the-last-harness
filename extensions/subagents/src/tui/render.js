@@ -584,13 +584,38 @@ function widgetTkTicketText(job) {
     const normalizedTkTicket = normalizeTkTicketMetadata(job.tkTicket);
     return normalizedTkTicket ? `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}` : undefined;
 }
+function widgetActiveStepTkTicketText(job) {
+    if (job.status !== "running" && job.status !== "queued")
+        return undefined;
+    const titles = (job.steps ?? [])
+        .filter((step) => step.status === "running" || step.status === "pending")
+        .map((step) => normalizeTkTicketMetadata(step.tkTicket)?.title)
+        .filter((title) => Boolean(title));
+    const distinctTitles = [...new Set(titles)];
+    return distinctTitles.length > 0
+        ? `${TK_TICKET_WIDGET_PREFIX}${distinctTitles.join(" · ")}`
+        : undefined;
+}
+function widgetJobTicketText(job) {
+    return widgetActiveStepTkTicketText(job) ?? widgetTkTicketText(job);
+}
 function widgetTkTicketLine(job, theme, indent = "  ") {
     const ticket = widgetTkTicketText(job);
     return ticket ? `${indent}${theme.fg("dim", ticket)}` : undefined;
 }
 function widgetTkTicketLines(job, theme, indent = "  ") {
+    if (job.steps?.some((step) => step.tkTicket))
+        return [];
     const line = widgetTkTicketLine(job, theme, indent);
     return line ? [line] : [];
+}
+function widgetStepTkTicketLine(step, theme, indent = "  ") {
+    if (step.status !== "running" && step.status !== "pending")
+        return undefined;
+    const normalizedTkTicket = normalizeTkTicketMetadata(step.tkTicket);
+    return normalizedTkTicket
+        ? `${indent}${theme.fg("dim", `${TK_TICKET_WIDGET_PREFIX}${normalizedTkTicket.title}`)}`
+        : undefined;
 }
 function foregroundTkTicketText(result) {
     const normalizedTkTicket = normalizeTkTicketMetadata(result.tkTicket);
@@ -655,6 +680,11 @@ function widgetChainDetails(job, theme, expanded = false, width = getTermWidth()
             const aggregationSteps = steps.map((step) => step.status === "continued" ? { ...step, status: "complete" } : step);
             const status = aggregateStepStatus(aggregationSteps);
             lines.push(`  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(aggregationSteps, span.count, { showRunning: false }))}`);
+            for (const step of steps) {
+                const ticketLine = widgetStepTkTicketLine(step, theme);
+                if (ticketLine)
+                    lines.push(`    ${ticketLine}`);
+            }
             continue;
         }
         const step = sourceSteps[0];
@@ -705,6 +735,9 @@ function widgetParallelAgentDetails(job, theme, expanded = false, width = getTer
         else {
             lines.push(`${prefix}${activity ? ` · ${theme.fg("dim", activity)}` : ""}`);
         }
+        const ticketLine = widgetStepTkTicketLine(displayStep, theme);
+        if (ticketLine)
+            lines.push(`    ${ticketLine}`);
         for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
             lines.push(`    ${nestedLine}`);
     }
@@ -1223,6 +1256,11 @@ function foregroundStyleWidgetStepLines(job, theme, step, itemTitle, index, tota
     const lines = [
         `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
     ];
+    const ticketLine = resolvedDisplayStatus === displayStep.status
+        ? widgetStepTkTicketLine(displayStep, theme)
+        : undefined;
+    if (ticketLine)
+        lines.push(`    ${ticketLine}`);
     const activityLines = resolvedDisplayStatus === displayStep.status
         ? widgetStepActivityLines(displayStep, width - visibleWidth(WIDGET_ACTIVITY_PREFIX), width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX), expanded, job.updatedAt)
         : [];
@@ -1446,6 +1484,9 @@ function compactSingleWidgetLines(job, theme, width) {
         else {
             lines.push(`${rowPrefix}${activitySuffix}`);
         }
+        const ticketLine = widgetStepTkTicketLine(displayStep, theme);
+        if (ticketLine)
+            lines.push(`    ${ticketLine}`);
         for (const nestedLine of formatNestedWidgetLines(step.children, theme, contentWidth, false, job.updatedAt, 1, isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt)))
             lines.push(`    ${nestedLine}`);
     }
@@ -1634,7 +1675,7 @@ function progressiveJobLine(job, theme, width) {
     const stats = widgetSummaryStats(job, theme);
     const activity = widgetActivity(job);
     const status = job.status === "running" ? "" : job.status === "complete" ? "done" : job.status;
-    const ticket = widgetTkTicketText(job);
+    const ticket = widgetJobTicketText(job);
     const prefixParts = [
         themeBold(theme, widgetJobName(job)),
         status ? theme.fg("dim", status) : "",

@@ -45,6 +45,7 @@ const plainForegrounds: ConstructorParameters<typeof Theme>[0] = {
   thinkingMedium: "",
   thinkingHigh: "",
   thinkingXhigh: "",
+  thinkingMax: "",
   bashMode: "",
 };
 

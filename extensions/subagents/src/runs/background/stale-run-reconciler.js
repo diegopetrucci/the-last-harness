@@ -68,7 +68,8 @@ function readStatusFile(asyncDir) {
         });
     }
     try {
-        return normalizeAsyncLifecycleStatus(JSON.parse(content));
+        const parsed = JSON.parse(content);
+        return normalizeAsyncLifecycleStatus(parsed);
     }
     catch (error) {
         throw createAsyncStatusJsonParseError({

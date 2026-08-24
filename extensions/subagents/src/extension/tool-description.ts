@@ -2,8 +2,9 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
-• SINGLE: { agent, task? }.
-• PARALLEL: { tasks:[{ agent, task, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }.
+• SINGLE: { agent, task?, ticket? }. Fresh bundled TLH developer calls require ticket; non-developers must omit it.
+• PARALLEL: { tasks:[{ agent, task, ticket?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }. Every fresh developer task requires its own ticket; non-developer tasks must omit ticket.
+• ticket is developer-only: other agents are rejected if they supply it, and new dispatches never infer ticket metadata from task text. It resolves from the effective cwd/TICKETS_DIR.
 • Optional execution fields: context:"fresh"|"fork", async:true, timeoutMs, cwd, artifacts, includeProgress.
 
 OUTPUT / MODELS

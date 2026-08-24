@@ -82,7 +82,17 @@ describe("SubagentParams schema", () => {
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      ["agent", "task", "count", "output", "outputMode", "reads", "progress", "model"].sort(),
+      [
+        "agent",
+        "task",
+        "ticket",
+        "count",
+        "output",
+        "outputMode",
+        "reads",
+        "progress",
+        "model",
+      ].sort(),
       "tasks[] allowlist mismatch",
     );
     assert.equal(taskSchema?.cwd, undefined, "tasks[] must not expose cwd");
@@ -101,6 +111,30 @@ describe("SubagentParams schema", () => {
     assert.ok(concurrencySchema, "concurrency schema should exist");
     assert.equal(concurrencySchema.minimum, 1);
     assert.match(String(concurrencySchema.description ?? ""), /parallel/i);
+  });
+
+  it("requires explicit ticket metadata for bundled developer dispatches", () => {
+    const taskSchemaOwner = getPropertySchema(SubagentParams, ["tasks"]);
+    const taskItemsSchema = isSchemaObject(taskSchemaOwner?.items)
+      ? taskSchemaOwner.items
+      : undefined;
+    const taskProperties = isSchemaObject(taskItemsSchema?.properties)
+      ? taskItemsSchema.properties
+      : undefined;
+    const taskTicketSchema = isSchemaObject(taskProperties?.ticket)
+      ? taskProperties.ticket
+      : undefined;
+    assert.ok(taskTicketSchema, "tasks[].ticket schema should exist");
+    assert.equal(taskTicketSchema.type, "string");
+    assert.equal(taskTicketSchema.minLength, 1);
+    const topLevelTicketSchema = getPropertySchema(SubagentParams, ["ticket"]);
+    assert.ok(topLevelTicketSchema, "top-level ticket schema should exist");
+    assert.equal(topLevelTicketSchema.type, "string");
+    assert.equal(topLevelTicketSchema.minLength, 1);
+    const description = String(topLevelTicketSchema.description ?? "");
+    assert.match(description, /developer-only/i);
+    assert.match(description, /required.*bundled TLH developer/i);
+    assert.match(description, /task text.*not used.*infer/i);
   });
 
   it("action is a closed enum with exactly the TLH-minimal management values", () => {
@@ -425,6 +459,7 @@ describe("SubagentParams schema", () => {
       "agent",
       "task",
       "tasks",
+      "ticket",
       "concurrency",
       "context",
       "async",

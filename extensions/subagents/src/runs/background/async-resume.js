@@ -55,6 +55,11 @@ function resolvePausedContinuationAcceptance(runId, acceptance) {
     const persistedStatus = typeof ledger.status === "string" ? ledger.status : "unknown";
     throw new Error(`Async run '${runId}' is paused but its persisted acceptance ledger status '${persistedStatus}' is incompatible with continuation resume; expected 'skipped' or 'not-required'.`);
 }
+function resolveSelectedTkTicket(statusStep, resultStep, rootTkTicket, allowRootTkTicketFallback) {
+    return (normalizeTkTicketMetadata(statusStep?.tkTicket) ??
+        normalizeTkTicketMetadata(resultStep?.tkTicket) ??
+        (allowRootTkTicketFallback ? rootTkTicket : undefined));
+}
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -115,6 +120,11 @@ function validateResultFile(value, resultPath) {
             throw new Error(`Invalid async result file '${resultPath}': results must be an array.`);
         results = resultsValue.map((entry, index) => {
             const child = ensureObject(entry, `${resultPath} results[${index}]`);
+            const rawTkTicket = child.tkTicket;
+            const tkTicket = normalizeTkTicketMetadata(rawTkTicket);
+            if (rawTkTicket !== undefined && !tkTicket) {
+                throw new Error(`Invalid async result file '${resultPath}': results[${index}].tkTicket must include a valid id and terminal-safe title.`);
+            }
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
             const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
@@ -146,6 +156,7 @@ function validateResultFile(value, resultPath) {
                 : undefined;
             return {
                 agent,
+                ...(tkTicket ? { tkTicket } : {}),
                 sessionFile,
                 intercomTarget,
                 ...(typeof success === "boolean" ? { success } : {}),
@@ -166,11 +177,17 @@ function validateResultFile(value, resultPath) {
     const success = data.success;
     if (success !== undefined && typeof success !== "boolean")
         throw new Error(`Invalid async result file '${resultPath}': success must be a boolean.`);
+    const rawTkTicket = data.tkTicket;
+    const tkTicket = normalizeTkTicketMetadata(rawTkTicket);
+    if (rawTkTicket !== undefined && !tkTicket) {
+        throw new Error(`Invalid async result file '${resultPath}': tkTicket must include a valid id and terminal-safe title.`);
+    }
     return {
         id: validateOptionalString(data, "id", resultPath),
         runId: validateOptionalString(data, "runId", resultPath),
         agent: validateOptionalString(data, "agent", resultPath),
         mode: validateOptionalString(data, "mode", resultPath),
+        ...(tkTicket ? { tkTicket } : {}),
         state: validateOptionalString(data, "state", resultPath),
         cwd: validateOptionalString(data, "cwd", resultPath),
         sessionFile: validateOptionalString(data, "sessionFile", resultPath),
@@ -333,6 +350,12 @@ function validateStatusForResume(status, source) {
         throw new Error(`Invalid async status '${source}': cwd must be a string.`);
     if (status.sessionFile !== undefined && typeof status.sessionFile !== "string")
         throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+    if (status.tkTicket !== undefined) {
+        const normalizedTkTicket = normalizeTkTicketMetadata(status.tkTicket);
+        if (!normalizedTkTicket)
+            throw new Error(`Invalid async status '${source}': tkTicket must include a valid id and terminal-safe title.`);
+        status.tkTicket = normalizedTkTicket;
+    }
     if (status.steps !== undefined) {
         if (!Array.isArray(status.steps))
             throw new Error(`Invalid async status '${source}': steps must be an array.`);
@@ -343,6 +366,12 @@ function validateStatusForResume(status, source) {
                 throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
             if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
                 throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+            if (step.tkTicket !== undefined) {
+                const normalizedTkTicket = normalizeTkTicketMetadata(step.tkTicket);
+                if (!normalizedTkTicket)
+                    throw new Error(`Invalid async status '${source}': steps[${index}].tkTicket must include a valid id and terminal-safe title.`);
+                step.tkTicket = normalizedTkTicket;
+            }
             if (step.model !== undefined && typeof step.model !== "string")
                 throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
             if (step.thinking !== undefined && typeof step.thinking !== "string")
@@ -395,7 +424,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         location.resolvedId ??
         (location.asyncDir ? path.basename(location.asyncDir) : "unknown");
     const state = status?.state ?? (result ? resultState(result) : undefined);
-    const tkTicket = normalizeTkTicketMetadata(status?.tkTicket);
+    const rootTkTicket = normalizeTkTicketMetadata(status?.tkTicket) ?? normalizeTkTicketMetadata(result?.tkTicket);
     if (!state)
         throw new Error(`Status file not found for async run '${runId}'.`);
     if (state === "cancelled")
@@ -405,6 +434,9 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     let statusSteps = status?.steps ?? [];
     const resultSteps = result?.results ?? [];
     const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
+    const allowRootTkTicketFallback = stepCount === 1 ||
+        (!statusSteps.some((step) => step.tkTicket !== undefined) &&
+            !resultSteps.some((step) => step.tkTicket !== undefined));
     const requestedIndex = params.index;
     if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
         throw new Error(`Async run '${runId}' index must be an integer.`);
@@ -446,6 +478,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 throw new Error(`Async run '${runId}' has ${stepCount} children. Index ${requestedIndex} is out of range.`);
             const selectedStep = statusSteps[requestedIndex];
             if (selectedStep?.status === "running") {
+                const selectedTkTicket = resolveSelectedTkTicket(selectedStep, resultSteps[requestedIndex], rootTkTicket, allowRootTkTicketFallback);
                 return {
                     kind: "live",
                     runId,
@@ -462,7 +495,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                     ...(modelResolutionForStep(requestedIndex, selectedStep)
                         ? { modelResolution: modelResolutionForStep(requestedIndex, selectedStep) }
                         : {}),
-                    ...(tkTicket ? { tkTicket } : {}),
+                    ...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
                 };
             }
             if (selectedStep?.status === "pending")
@@ -478,6 +511,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
             if (!selected) {
                 throw new Error(`Async run '${runId}' has ${running.length} running children. Provide index to choose one.`);
             }
+            const selectedTkTicket = resolveSelectedTkTicket(selected.step, resultSteps[selected.index], rootTkTicket, allowRootTkTicketFallback);
             return {
                 kind: "live",
                 runId,
@@ -494,7 +528,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 ...(modelResolutionForStep(selected.index, selected.step)
                     ? { modelResolution: modelResolutionForStep(selected.index, selected.step) }
                     : {}),
-                ...(tkTicket ? { tkTicket } : {}),
+                ...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
             };
         }
     }
@@ -544,6 +578,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
     const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
     if (!agent)
         throw new Error(`Could not determine child agent for async run '${runId}'.`);
+    const selectedTkTicket = resolveSelectedTkTicket(selectedStatusStep, resultSteps[index], rootTkTicket, allowRootTkTicketFallback);
     const sessionFile = statusSteps[index]?.sessionFile ??
         resultSteps[index]?.sessionFile ??
         (stepCount === 1 ? (status?.sessionFile ?? result?.sessionFile) : undefined);
@@ -577,7 +612,7 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         ...(modelResolutionForStep(index, selectedStatusStep)
             ? { modelResolution: modelResolutionForStep(index, selectedStatusStep) }
             : {}),
-        ...(tkTicket ? { tkTicket } : {}),
+        ...(selectedTkTicket ? { tkTicket: selectedTkTicket } : {}),
         ...(selectedStatusStep?.pause?.kind
             ? { pauseKind: selectedStatusStep.pause.kind }
             : status?.pause?.kind

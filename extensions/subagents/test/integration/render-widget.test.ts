@@ -356,6 +356,103 @@ describe("subagent async widget rendering", () => {
     assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
   });
 
+  it("keeps each child ticket in compact parallel widget rows", () => {
+    const jobs: AsyncJobState[] = [
+      {
+        asyncId: "run-compact-step-tickets",
+        asyncDir: "/tmp/compact-step-tickets",
+        status: "running",
+        mode: "parallel",
+        activeParallelGroup: true,
+        agents: ["developer-a", "developer-b", "developer-c", "developer-d"],
+        runningSteps: 2,
+        completedSteps: 0,
+        stepsTotal: 4,
+        steps: [
+          {
+            index: 0,
+            agent: "developer-a",
+            status: "running",
+            tkTicket: { id: "psr-a", title: "Developer A ticket" },
+          },
+          {
+            index: 1,
+            agent: "developer-b",
+            status: "pending",
+            tkTicket: { id: "psr-b", title: "Developer B ticket" },
+          },
+          {
+            index: 2,
+            agent: "developer-c",
+            status: "running",
+            tkTicket: { id: "psr-c", title: "Developer C ticket" },
+          },
+          {
+            index: 3,
+            agent: "developer-d",
+            status: "pending",
+            tkTicket: { id: "psr-d", title: "Developer D ticket" },
+          },
+        ],
+      },
+    ];
+
+    withStdoutSize(40, 160, () => {
+      const ui = createUiContext();
+      renderWidget(ui.ctx as never, jobs);
+      const text = renderWidgetLines(ui.widgets.at(-1), 160).join("\n");
+      for (const title of [
+        "Developer A ticket",
+        "Developer B ticket",
+        "Developer C ticket",
+        "Developer D ticket",
+      ]) {
+        assert.equal(text.match(new RegExp(`ticket: ${escapeRegExp(title)}`, "g"))?.length, 1);
+      }
+    });
+  });
+
+  it("renders each active child ticket in chain parallel-group widget details", () => {
+    const text = buildWidgetLines(
+      [
+        {
+          asyncId: "run-chain-step-tickets",
+          asyncDir: "/tmp/chain-step-tickets",
+          status: "running",
+          mode: "chain",
+          activeParallelGroup: false,
+          agents: ["developer-a", "developer-b", "writer"],
+          currentStep: 0,
+          chainStepCount: 2,
+          parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
+          stepsTotal: 3,
+          steps: [
+            {
+              index: 0,
+              agent: "developer-a",
+              status: "running",
+              tkTicket: { id: "psr-a", title: "Developer A ticket" },
+            },
+            {
+              index: 1,
+              agent: "developer-b",
+              status: "pending",
+              tkTicket: { id: "psr-b", title: "Developer B ticket" },
+            },
+            { index: 2, agent: "writer", status: "pending" },
+          ],
+        },
+      ],
+      theme,
+      180,
+    ).join("\n");
+
+    assert.match(text, /Step 1\/2: parallel group/);
+    assert.equal(text.match(/ticket: Developer A ticket/g)?.length, 1);
+    assert.equal(text.match(/ticket: Developer B ticket/g)?.length, 1);
+    assert.ok(text.indexOf("parallel group") < text.indexOf("ticket: Developer A ticket"));
+  });
+
   it("shows tk ticket titles once in active multi-job rows before live detail", () => {
     const text = buildWidgetLines(
       [

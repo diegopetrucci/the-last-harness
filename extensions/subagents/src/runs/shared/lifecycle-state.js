@@ -257,7 +257,11 @@ export function lifecycleGeneration(status) {
         ? generation
         : 0;
 }
-export function normalizeAsyncLifecycleStatus(status) {
+export function normalizeAsyncLifecycleStatus(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new TypeError("Persisted async status must be a JSON object.");
+    }
+    const status = value;
     const pause = normalizePauseMetadata(status.pause);
     const cancel = normalizeCancellationMetadata(status.cancel);
     const continuation = normalizeContinuationMetadata(status.lifecycle?.continuation);
@@ -284,7 +288,8 @@ function statusPath(asyncDir) {
 }
 function readLifecycleStatus(asyncDir) {
     try {
-        return normalizeAsyncLifecycleStatus(JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8")));
+        const parsed = JSON.parse(fs.readFileSync(statusPath(asyncDir), "utf-8"));
+        return normalizeAsyncLifecycleStatus(parsed);
     }
     catch (error) {
         const code = typeof error === "object" && error !== null && "code" in error

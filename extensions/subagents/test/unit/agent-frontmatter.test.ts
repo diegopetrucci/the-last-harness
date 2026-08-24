@@ -199,6 +199,67 @@ Explore the codebase
   });
 });
 
+describe("agent tkTicketRequired frontmatter", () => {
+  it("parses the TLH marker while preserving unknown fields", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tk-ticket-required-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, ".pi", "agents", "developer.md");
+    writeAgent(
+      filePath,
+      `---
+name: developer
+description: Developer
+tkTicketRequired: true
+permission: allow
+---
+
+Implement the work.
+`,
+    );
+
+    const developer = discoverAgents(dir, "project").agents.find(
+      (agent) => agent.name === "developer",
+    );
+    assert.ok(developer);
+    assert.equal(developer.tkTicketRequired, true);
+    assert.equal(developer.extraFields?.permission, "allow");
+    assert.equal(developer.extraFields?.tkTicketRequired, undefined);
+
+    writeAgent(
+      filePath,
+      `---
+name: developer
+description: Developer
+tkTicketRequired: false
+---
+
+Implement the work.
+`,
+    );
+    const unmarkedDeveloper = discoverAgents(dir, "project").agents.find(
+      (agent) => agent.name === "developer",
+    );
+    assert.ok(unmarkedDeveloper);
+    assert.equal(unmarkedDeveloper.tkTicketRequired, false);
+
+    writeAgent(
+      filePath,
+      `---
+name: developer
+description: Developer
+tkTicketRequired: yes
+---
+
+Implement the work.
+`,
+    );
+    assert.throws(
+      () => discoverAgents(dir, "project"),
+      /Agent 'developer' has invalid tkTicketRequired frontmatter; expected 'true' or 'false'/,
+    );
+  });
+});
+
 describe("saved-chain non-discovery", () => {
   it("does not discover saved chain files", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-chain-format-precedence-"));

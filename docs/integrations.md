@@ -30,7 +30,7 @@ Legacy `settings.tlh.tickets.enabled=false` values are re-enabled during install
 
 At TLH session start, TLH also scopes `tk` to one ticket store for that session by exporting `TICKETS_DIR` before the ticket UI or agent prompts run. If `TICKETS_DIR` is already set, TLH preserves it. Otherwise TLH points `tk` at `<git-worktree-root>/.tickets`; outside Git it falls back to `<session-cwd>/.tickets`. This keeps architect sessions, child sessions, `/tickets`, and Bash-launched `tk` commands on the same repo-local ticket store without touching ancestor stores such as `~/Developer/.tickets`.
 
-`/tickets` shows the workflow counts plus one ID/title detail line for a single in-progress ticket or an `In progress:` list for multiple tickets. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
+`/tickets` is the on-demand primary-session ticket view. It shows the workflow counts plus one ID/title detail line for a single in-progress ticket or an `In progress:` list for multiple tickets. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization. Ticket titles are not added to the primary footer or model context.
 
 If TLH cannot validate a configured/existing `tk` and cannot install the managed copy, install or update fails with an actionable error instead of starting with an incomplete workflow. To recover, provide a valid `tk` command and run `tlh tickets enable --install-path /path/to/tk`, or rerun the installer/update once the managed download can succeed.
 

@@ -43,6 +43,7 @@ const KNOWN_FIELDS = new Set([
     "maxSubagentDepth",
     "maxExecutionTimeMs",
     "completionGuard",
+    "tkTicketRequired",
     "toolBudget",
 ]);
 const EMPTY_SUBAGENT_SETTINGS = { overrides: {} };
@@ -340,6 +341,15 @@ function parsePositiveIntegerFrontmatter(value, field, label) {
         throw new Error(`${label} has invalid ${field} frontmatter; expected a positive safe integer.`);
     }
     return parsed;
+}
+function parseBooleanFrontmatter(value, field, label) {
+    if (value === undefined || !value.trim())
+        return undefined;
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    throw new Error(`${label} has invalid ${field} frontmatter; expected 'true' or 'false'.`);
 }
 function cloneOverrideBase(agent) {
     return {
@@ -887,6 +897,7 @@ function loadAgentsFromDir(dir, source) {
             : frontmatter.completionGuard === "true"
                 ? true
                 : undefined;
+        const tkTicketRequired = parseBooleanFrontmatter(frontmatter.tkTicketRequired, "tkTicketRequired", `Agent '${localName}'`);
         const agent = {
             name: runtimeName,
             localName,
@@ -917,6 +928,7 @@ function loadAgentsFromDir(dir, source) {
             completionGuard,
             toolBudget,
             maxExecutionTimeMs,
+            tkTicketRequired,
             extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
         };
         agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));

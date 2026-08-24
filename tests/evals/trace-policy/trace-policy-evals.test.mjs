@@ -95,6 +95,115 @@ test("architect approved env split-string pure tk create stays allowed", () => {
   assert.deepEqual(result.violations, []);
 });
 
+test("architect requires an explicit ticket on fresh developer dispatches", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "architect",
+      steps: [
+        { type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+        { type: "user", text: "approved" },
+        { type: "tool", tool: "bash", command: 'tk create "x" -d "..." --acceptance "..."' },
+        { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+        { type: "user", text: "approved" },
+        { type: "tool", tool: "subagent", input: { agent: "developer", task: "Implement x." } },
+      ],
+    }),
+    ["architect.developer_ticket_required"],
+  );
+});
+
+test("architect accepts a ticketed developer dispatch with normalized targets", () => {
+  const result = evaluateTracePolicy({
+    agent: "architect",
+    steps: [
+      { type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+      { type: "user", text: "approved" },
+      { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+      { type: "user", text: "approved" },
+      {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer"],
+        input: { agent: "developer", ticket: "tlhf-normalized-target" },
+      },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("architect rejects incoherent normalized developer ticket dispatches", () => {
+  const approvalPrefix = [
+    { type: "assistant", action: "ask_plan_approval", text: "Plan is ready." },
+    { type: "user", text: "approved" },
+    { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
+    { type: "user", text: "approved" },
+  ];
+  const cases = [
+    {
+      name: "normalized developer target without a ticket",
+      dispatch: {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer"],
+        input: { agent: "developer", task: "Implement the approved change." },
+      },
+    },
+    {
+      name: "repeated developers where only one task is ticketed",
+      dispatch: {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer", "developer"],
+        input: {
+          tasks: [
+            { agent: "developer", task: "Implement the first change.", ticket: "tlhf-first" },
+            { agent: "developer", task: "Implement the second change." },
+          ],
+        },
+      },
+    },
+    {
+      name: "root ticket whose input agent differs from the normalized target",
+      dispatch: {
+        type: "tool",
+        tool: "subagent",
+        targets: ["developer"],
+        input: { agent: "librarian", task: "Research the change.", ticket: "tlhf-research" },
+      },
+    },
+  ];
+
+  for (const { name, dispatch } of cases) {
+    const result = evaluateTracePolicy({
+      agent: "architect",
+      steps: [...approvalPrefix, dispatch],
+    });
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      ["architect.developer_ticket_required"],
+      name,
+    );
+  }
+});
+
+test("architect resume and steer continuations do not require a fresh ticket", () => {
+  for (const action of ["resume", "steer"]) {
+    const result = evaluateTracePolicy({
+      agent: "architect",
+      steps: [
+        {
+          type: "tool",
+          tool: "subagent",
+          input: { action, id: "run-123", message: "Continue the existing child." },
+        },
+      ],
+    });
+    assert.deepEqual(result.violations, [], action);
+  }
+});
+
 test("architect paused developer runs do not authorize direct source edits", () => {
   assert.deepEqual(
     violationCodes({
@@ -105,7 +214,11 @@ test("architect paused developer runs do not authorize direct source edits", () 
         { type: "tool", tool: "bash", command: 'tk create "x" -d "..." --acceptance "..."' },
         { type: "assistant", action: "ask_ticket_approval", text: "Ticket is ready." },
         { type: "user", text: "approved" },
-        { type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Implement x." } },
+        {
+          type: "tool",
+          tool: "subagent",
+          input: { agent: "developer", prompt: "Implement x.", ticket: "tlhf-x" },
+        },
         { type: "assistant", action: "subagent_paused", text: "The developer run paused." },
         { type: "tool", tool: "edit", path: "src/app.ts" },
       ],

@@ -24,7 +24,7 @@ import { applyIntercomBridgeToAgent, INTERCOM_BRIDGE_MARKER, resolveIntercomBrid
 import { formatControlIntercomMessage, formatControlNoticeMessage, resolveControlConfig, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
-import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.js";
+import { normalizeTkTicketMetadata, resolveDispatchTkTicketMetadata } from "../shared/tk-ticket.js";
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, } from "../../shared/utils.js";
 import { DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore } from "../shared/parallel-utils.js";
@@ -100,6 +100,7 @@ function persistPausedForegroundCohortRun(input) {
     const steps = (input.steps ??
         input.results?.map((result) => ({
             agent: result.agent,
+            ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
             status: input.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result),
             sessionFile: result.sessionFile,
             transcriptPath: result.transcriptPath,
@@ -208,6 +209,7 @@ function buildPausedStepFromResult(result, now, options = { stage: "paused" }) {
         (options.stage === "pausing" && result.pause ? "pausing" : pausedForegroundStepStatus(result));
     return {
         agent: result.agent,
+        ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
         status,
         sessionFile: result.sessionFile,
         transcriptPath: result.transcriptPath,
@@ -322,10 +324,12 @@ function persistPausedForegroundSingleRun(input) {
                 : now,
             lastUpdate: now,
             cwd: input.cwd,
+            ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
             ...(pause ? { pause } : {}),
             steps: [
                 {
                     agent: input.result.agent,
+                    ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
                     status: input.stage,
                     sessionFile: input.result.sessionFile,
                     transcriptPath: input.result.transcriptPath,
@@ -371,12 +375,14 @@ function persistPausedForegroundSingleRun(input) {
             lastUpdate: now,
             ...(input.stage === "paused" ? { endedAt: now } : {}),
             cwd: input.cwd,
+            ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
             ...(pause ? { pause } : {}),
             sessionFile: input.result.sessionFile ?? status.sessionFile,
             steps: status.steps?.map((step, index) => index === 0
                 ? {
                     ...step,
                     agent: input.result.agent,
+                    ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
                     status: input.stage,
                     sessionFile: input.result.sessionFile ?? step.sessionFile,
                     transcriptPath: input.result.transcriptPath ?? step.transcriptPath,
@@ -514,6 +520,7 @@ function rememberForegroundRun(state, input) {
             const child = {
                 agent: result.agent,
                 index,
+                ...(result.tkTicket ? { tkTicket: result.tkTicket } : {}),
                 status: resolveSubagentResultStatus({
                     exitCode: result.exitCode,
                     interrupted: result.interrupted,
@@ -577,6 +584,7 @@ function updateRememberedForegroundChild(state, input) {
             detached: false,
         }),
         updatedAt,
+        ...(input.result.tkTicket ? { tkTicket: input.result.tkTicket } : {}),
         ...(input.result.exitCode !== undefined ? { exitCode: input.result.exitCode } : {}),
         ...(input.result.model ? { model: input.result.model } : {}),
         ...(input.result.thinking ? { thinking: input.result.thinking } : {}),
@@ -656,6 +664,7 @@ function resolveForegroundResumeTarget(params, state) {
         index,
         intercomTarget: resolveSubagentIntercomTarget(run.runId, child.agent, index),
         cwd: run.cwd,
+        ...(child.tkTicket ? { tkTicket: child.tkTicket } : {}),
         sessionFile,
         ...(fs.existsSync(pausedForegroundStatusPath(run.runId))
             ? { asyncDir: pausedForegroundStatusPath(run.runId) }
@@ -1566,8 +1575,10 @@ function readNestedResumeStatusStep(runId, asyncDir) {
     const contextUsage = parseContextUsageDiagnostics(raw.contextUsage);
     const contextPressure = parseContextPressureProjection(raw.contextPressure);
     const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(raw.contextPressureCrossedThresholds);
+    const tkTicket = normalizeTkTicketMetadata(raw.tkTicket);
     return {
         ...(typeof raw.status === "string" ? { status: raw.status } : {}),
+        ...(tkTicket ? { tkTicket } : {}),
         ...(modelIdentity ? { modelIdentity } : {}),
         ...(modelResolution ? { modelResolution } : {}),
         ...(contextUsage ? { contextUsage } : {}),
@@ -1602,6 +1613,7 @@ function resolveNestedResumeTarget(match, trustedSessionRoots) {
     const contextUsage = statusStep?.contextUsage;
     const contextPressure = statusStep?.contextPressure;
     const contextPressureCrossedThresholds = statusStep?.contextPressureCrossedThresholds;
+    const tkTicket = normalizeTkTicketMetadata(statusStep?.tkTicket);
     const continuationAcceptance = state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
     return {
         kind: "revive",
@@ -1610,6 +1622,7 @@ function resolveNestedResumeTarget(match, trustedSessionRoots) {
         state,
         agent,
         index: 0,
+        ...(tkTicket ? { tkTicket } : {}),
         ...(continuationAcceptance ? { continuationAcceptance } : {}),
         ...(statusModelIdentity ? { modelIdentity: statusModelIdentity } : {}),
         ...(statusModelResolution ? { modelResolution: statusModelResolution } : {}),
@@ -2207,6 +2220,7 @@ async function resumeAsyncRun(input) {
     try {
         result = executeAsyncSingle(runId, {
             agent: target.agent,
+            continuation: true,
             ...(claimedPause
                 ? {
                     continuationSource: {
@@ -2217,9 +2231,7 @@ async function resumeAsyncRun(input) {
                     },
                 }
                 : {}),
-            ...(target.source === "async" && target.tkTicket
-                ? { inheritedTkTicket: target.tkTicket }
-                : {}),
+            ...(target.tkTicket ? { inheritedTkTicket: target.tkTicket } : {}),
             task: buildRevivedAsyncTask(target, followUp),
             modelOverride: input.params.model,
             ...(restoredModelIdentity ? { restoredModelIdentity } : {}),
@@ -2452,7 +2464,7 @@ function buildForegroundNativeResult(input) {
         details: input.details,
     };
 }
-function validateExecutionInput(params, agents, hasTasks, hasSingle) {
+function validateExecutionInput(params, agents, hasTasks, hasSingle, effectiveCwd) {
     if (Number(hasTasks) + Number(hasSingle) !== 1) {
         return {
             content: [
@@ -2473,19 +2485,47 @@ function validateExecutionInput(params, agents, hasTasks, hasSingle) {
             details: { mode: getRequestedModeLabel(params), results: [] },
         };
     }
-    if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
-        return {
-            content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
-            isError: true,
-            details: { mode: "single", results: [] },
-        };
+    if (hasSingle) {
+        const agentConfig = agents.find((agent) => agent.name === params.agent);
+        if (!agentConfig) {
+            return {
+                content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+                isError: true,
+                details: { mode: "single", results: [] },
+            };
+        }
+        const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, {
+            cwd: effectiveCwd,
+        });
+        if (ticketResolution.error) {
+            return {
+                content: [
+                    { type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` },
+                ],
+                isError: true,
+                details: { mode: "single", results: [] },
+            };
+        }
     }
     if (hasTasks && params.tasks) {
         for (let i = 0; i < params.tasks.length; i++) {
             const task = params.tasks[i];
-            if (!agents.find((agent) => agent.name === task.agent)) {
+            const agentConfig = agents.find((agent) => agent.name === task.agent);
+            if (!agentConfig) {
                 return {
                     content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
+                    isError: true,
+                    details: { mode: "parallel", results: [] },
+                };
+            }
+            const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, {
+                cwd: resolveParallelTaskCwd(task, effectiveCwd),
+            });
+            if (ticketResolution.error) {
+                return {
+                    content: [
+                        { type: "text", text: `Invalid ticket for tasks[${i}]: ${ticketResolution.error}` },
+                    ],
                     isError: true,
                     details: { mode: "parallel", results: [] },
                 };
@@ -2767,6 +2807,7 @@ function runAsyncPath(data, deps) {
         const parallelTasks = params.tasks.map((task, index) => ({
             agent: task.agent,
             task: shouldForkAgent(contextPolicy, task.agent) ? wrapForkTask(task.task) : task.task,
+            ...(task.ticket !== undefined ? { ticket: task.ticket } : {}),
             cwd: task.cwd,
             ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
             ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
@@ -2838,6 +2879,7 @@ function runAsyncPath(data, deps) {
             task: shouldForkAgent(contextPolicy, params.agent)
                 ? wrapForkTask(params.task ?? "")
                 : (params.task ?? ""),
+            ...(params.ticket !== undefined ? { ticket: params.ticket } : {}),
             agentConfig: a,
             ctx: asyncCtx,
             availableModels,
@@ -3088,7 +3130,7 @@ async function runForegroundParallelTasks(input) {
             availableModels: input.availableModels,
             preferredModelProvider: input.ctx.model?.provider,
             modelScope: input.modelScope,
-            ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
+            ...(input.tkTickets[index] ? { tkTicket: input.tkTickets[index] } : {}),
             skills: effectiveSkills === false ? [] : effectiveSkills,
             acceptance: task.acceptance,
             acceptanceContext: { mode: "parallel" },
@@ -3173,11 +3215,20 @@ async function runParallelPath(data, deps) {
     const allProgress = [];
     const allArtifactPaths = [];
     const tasks = params.tasks;
-    const tkTicketContext = resolveTkTicketTaskContext({ runnerCwd: effectiveCwd, tasks });
-    const tkTicket = tkTicketContext
-        ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
-        : undefined;
-    const tkTicketIndex = tkTicketContext?.taskIndex;
+    const tkTickets = [];
+    for (let index = 0; index < tasks.length; index++) {
+        const task = tasks[index];
+        const agentConfig = agents.find((agent) => agent.name === task.agent);
+        if (!agentConfig)
+            return buildParallelModeError(`Unknown agent: ${task.agent}`);
+        const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, task.ticket, {
+            cwd: resolveParallelTaskCwd(task, effectiveCwd),
+        });
+        if (ticketResolution.error) {
+            return buildParallelModeError(`Invalid ticket for tasks[${index}]: ${ticketResolution.error}`);
+        }
+        tkTickets.push(ticketResolution.metadata);
+    }
     const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
     const parallelConcurrency = resolveTopLevelParallelConcurrency(params.concurrency, deps.config.parallel?.concurrency);
     if (tasks.length > maxParallelTasks)
@@ -3301,8 +3352,7 @@ async function runParallelPath(data, deps) {
         deadlineAt,
         turnBudget: data.turnBudget,
         toolBudgets,
-        ...(tkTicket ? { tkTicket } : {}),
-        ...(tkTicketIndex !== undefined && tkTicketIndex >= 0 ? { tkTicketIndex } : {}),
+        tkTickets,
     });
     for (const result of results) {
         if (result.progress)
@@ -3444,7 +3494,19 @@ async function runSinglePath(data, deps) {
     const currentProvider = ctx.model?.provider;
     const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
     let task = params.task ?? "";
-    const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
+    const ticketResolution = resolveDispatchTkTicketMetadata(agentConfig, params.ticket, {
+        cwd: effectiveCwd,
+    });
+    if (ticketResolution.error) {
+        return {
+            content: [
+                { type: "text", text: `Invalid ticket for SINGLE mode: ${ticketResolution.error}` },
+            ],
+            isError: true,
+            details: { mode: "single", results: [] },
+        };
+    }
+    const tkTicket = ticketResolution.metadata;
     const modelOverride = resolveSubagentModelOverride(params.model ?? agentConfig.model, ctx.model, availableModels, currentProvider, {
         scope: data.modelScope,
         source: params.model ? "explicit" : "inherited",
@@ -4109,7 +4171,7 @@ export function createSubagentExecutor(deps) {
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
         const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
-        const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle);
+        const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle, effectiveCwd);
         if (validationError)
             return validationError;
         let forkSessionFileForIndex = () => undefined;

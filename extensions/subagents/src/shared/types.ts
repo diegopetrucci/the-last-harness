@@ -876,6 +876,7 @@ export interface AsyncStartedEvent {
   chainStepCount?: number;
   parallelGroups?: AsyncParallelGroupStatus[];
   workflowGraph?: WorkflowGraphSnapshot;
+  tkTickets?: Array<TkTicketMetadata | undefined>;
   timeoutMs?: number;
   deadlineAt?: number;
   turnBudget?: TurnBudgetState;
@@ -926,6 +927,7 @@ export interface AsyncStatus {
     label?: string;
     outputName?: string;
     structured?: boolean;
+    tkTicket?: TkTicketMetadata;
     status:
       | "pending"
       | "running"
@@ -1047,6 +1049,7 @@ export interface AsyncResultArtifactResultItem {
   structuredOutput?: unknown;
   structuredOutputPath?: string;
   structuredOutputSchemaPath?: string;
+  tkTicket?: TkTicketMetadata;
   acceptance?: AcceptanceLedger;
   pause?: AsyncPauseMetadata;
   activeRuntimeMs?: number;
@@ -1070,6 +1073,7 @@ export interface AsyncResultArtifact {
   mode: SubagentRunMode;
   success: boolean;
   state: AsyncLifecycleState;
+  tkTicket?: TkTicketMetadata;
   summary?: string;
   error?: string;
   timeoutMs?: number;
@@ -1157,6 +1161,7 @@ export interface AsyncJobState {
 export interface ForegroundResumeChild {
   agent: string;
   index: number;
+  tkTicket?: TkTicketMetadata;
   sessionFile?: string;
   status: SubagentResultStatus;
   exitCode?: number;

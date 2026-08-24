@@ -79,6 +79,10 @@ describe("registered subagent tool description", () => {
     assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
     assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
     assert.match(description, /affects inferred acceptance only, never tools?/i);
+    assert.match(description, /SINGLE:.*ticket\?/i);
+    assert.match(description, /PARALLEL:.*ticket\?/i);
+    assert.match(description, /ticket is developer-only/i);
+    assert.match(description, /never infer ticket metadata from task text/i);
 
     assert.match(description, /status\.json/);
     assert.match(description, /events\.jsonl/);
