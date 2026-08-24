@@ -11,6 +11,7 @@ export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-u
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
+const FAST_STATUS_KEY = "fast";
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -202,6 +203,8 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 fallbackBranch: footerData?.getGitBranch?.(),
             });
             const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+            const extensionStatuses = footerData?.getExtensionStatuses?.();
+            const hasFastStatus = extensionStatuses?.has(FAST_STATUS_KEY) ?? false;
             const modelOrNoModel = model?.id ?? "no-model";
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
@@ -232,7 +235,11 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
                 agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
             }
-            const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
+            const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
+            const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
+            const agentLine2 = fastLine2SuffixWidth <= width
+                ? `${truncateToWidth(agentLine2Str, width - fastLine2SuffixWidth, theme.fg("dim", "..."))}${fastLine2Suffix}`
+                : truncateToWidth(agentLine2Str + fastLine2Suffix, width, theme.fg("dim", "..."));
             const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
             const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost
                 ? formatCost(totals.cost)
@@ -250,7 +257,6 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 if (warningLine !== undefined)
                     lines.push(warningLine);
             }
-            const extensionStatuses = footerData?.getExtensionStatuses?.();
             const hasMcpStatus = extensionStatuses
                 ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))
                 : false;
@@ -269,7 +275,9 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 lines.push(truncateToWidth(`${steeringHint}${theme.fg("muted", " · ")}${queueHint}`, width, theme.fg("dim", "...")));
             }
             if (extensionStatuses && extensionStatuses.size > 0) {
-                const visibleStatuses = Array.from(extensionStatuses.entries()).sort(([a], [b]) => a.localeCompare(b));
+                const visibleStatuses = Array.from(extensionStatuses.entries())
+                    .filter(([key]) => key !== FAST_STATUS_KEY)
+                    .sort(([a], [b]) => a.localeCompare(b));
                 const statusLine = visibleStatuses
                     .map(([, text]) => appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix))
                     .filter(Boolean)

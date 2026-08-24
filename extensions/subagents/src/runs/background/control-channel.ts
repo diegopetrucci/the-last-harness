@@ -135,10 +135,6 @@ export function writeChildMessageRequestToDir(dir: string, request: ChildMessage
   return requestPath;
 }
 
-export function writeSteerRequestToDir(dir: string, request: SteerRequest): string {
-  return writeChildMessageRequestToDir(dir, request);
-}
-
 /**
  * Parent side: drop a portable interrupt request the runner's inbox watcher will
  * pick up regardless of OS. Written atomically (temp + rename), dir auto-created.
@@ -255,10 +251,6 @@ export function enqueueStepChildMessage(
     ...request,
     targetIndex: index,
   });
-}
-
-export function enqueueStepSteer(asyncDir: string, index: number, request: SteerRequest): string {
-  return enqueueStepChildMessage(asyncDir, index, { ...request, type: "steer" });
 }
 
 export function acceptChildMessageRequest(input: {
@@ -472,24 +464,6 @@ export function consumeChildMessageRequestsFromDir(
       request.type === "steer" || request.type === "resume",
     fsImpl,
   );
-}
-
-function consumeSteerRequestsFromDir(
-  dir: string,
-  fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
-): SteerRequest[] {
-  return consumeMatchingChildMessageRequestsFromDir(
-    dir,
-    (request): request is SteerRequest => request.type === "steer",
-    fsImpl,
-  );
-}
-
-export function consumeSteerRequests(
-  asyncDir: string,
-  fsImpl: Pick<typeof fs, "existsSync" | "rmSync" | "readdirSync" | "readFileSync"> = fs,
-): SteerRequest[] {
-  return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 
 export function consumeChildMessageRequests(

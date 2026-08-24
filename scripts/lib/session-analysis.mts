@@ -31,26 +31,6 @@ export interface SessionHeader {
   cwd: string;
 }
 
-/** Cost breakdown from an assistant message's usage object. */
-export interface MessageUsageCost {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-
-/** Token/cost usage from an assistant message. */
-export interface MessageUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  reasoning: number;
-  cost: MessageUsageCost;
-}
-
 // Re-export pairing types so this module's public API is unchanged.
 export type {
   SubagentDetails,

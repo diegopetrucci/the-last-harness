@@ -7,7 +7,7 @@ import { createJiti } from "jiti";
 import { makeTempDir } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
-const { buildTokensReportHtml, registerTokensCommand } = await jiti.import(
+const { buildTokensReportHtml, createTokensCommandHandler } = await jiti.import(
   "../extensions/the-last-harness/tokens.ts",
 );
 const { analyzeSessionEntries } = await jiti.import(
@@ -131,22 +131,20 @@ function createCommandContext({ sessionDir, entries }) {
   };
 }
 
-test("/tokens rejects arguments and preserves the exact single-command surface", async (t) => {
+test("/tokens rejects arguments through its executable handler", async (t) => {
   const pi = createPiHarness();
   let opened = false;
-  registerTokensCommand(pi, {
+  const handler = createTokensCommandHandler(pi, {
     openReport: async () => {
       opened = true;
     },
   });
-  const command = pi.commands.get("tokens");
-  assert.ok(command, "registers /tokens");
 
   const { notifications, ctx } = createCommandContext({
     sessionDir: makeTempDir("tlh-tokens-args-", t),
     entries: [],
   });
-  await command.handler("status now", ctx);
+  await handler("status now", ctx);
 
   assert.equal(opened, false);
   assert.deepEqual(notifications, [{ message: "Usage: /tokens", type: "error" }]);
@@ -271,17 +269,15 @@ test("/tokens writes a private local HTML report from sanitized analyzer output 
   ];
   const pi = createPiHarness(toolCatalog);
   let openedPath;
-  registerTokensCommand(pi, {
+  const handler = createTokensCommandHandler(pi, {
     openReport: async (path) => {
       openedPath = path;
     },
     now: () => new Date("2026-06-15T12:34:56Z"),
   });
-  const command = pi.commands.get("tokens");
-  assert.ok(command, "registers /tokens");
 
   const { notifications, ctx } = createCommandContext({ sessionDir, entries });
-  await command.handler("", ctx);
+  await handler("", ctx);
 
   assert.ok(openedPath, "opens the generated report by default");
   const html = readFileSync(openedPath, "utf8");
@@ -1237,16 +1233,15 @@ test("createTokensCommandHandler passes getPrimaryAgentLabel to the report (inte
   const sessionDir = makeTempDir("tlh-tokens-label-", t);
   const pi = createPiHarness();
   let openedPath;
-  registerTokensCommand(pi, {
+  const handler = createTokensCommandHandler(pi, {
     openReport: async (path) => {
       openedPath = path;
     },
     now: () => new Date("2026-07-12T00:00:00Z"),
     getPrimaryAgentLabel: () => "architect",
   });
-  const command = pi.commands.get("tokens");
   const { ctx } = createCommandContext({ sessionDir, entries: [] });
-  await command.handler("", ctx);
+  await handler("", ctx);
   assert.ok(openedPath, "report was opened");
   const html = readFileSync(openedPath, "utf8");
   assert.match(html, /<p class="card-label">architect<\/p>/, "metric card uses provided label");

@@ -3,14 +3,12 @@ import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
-import { deliverInterruptRequest } from "./control-channel.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
 import { readStatus } from "../../shared/utils.js";
-export const ASYNC_RESUME_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 function isStringArray(x) {
     return Array.isArray(x) && x.every((el) => typeof el === "string");
 }
@@ -56,46 +54,6 @@ function resolvePausedContinuationAcceptance(runId, acceptance) {
     }
     const persistedStatus = typeof ledger.status === "string" ? ledger.status : "unknown";
     throw new Error(`Async run '${runId}' is paused but its persisted acceptance ledger status '${persistedStatus}' is incompatible with continuation resume; expected 'skipped' or 'not-required'.`);
-}
-export function interruptLiveAsyncResumeTarget(input) {
-    const asyncId = input.target.runId;
-    if (!input.target.asyncDir) {
-        return {
-            ok: false,
-            message: `Async run ${asyncId} is live but does not have an async directory to interrupt.`,
-        };
-    }
-    const status = reconcileAsyncRun(input.target.asyncDir, {
-        resultsDir: input.resultsDir,
-        kill: input.kill,
-        now: input.now,
-    }).status;
-    if (!status || status.state !== "running" || typeof status.pid !== "number") {
-        return {
-            ok: false,
-            message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.`,
-        };
-    }
-    try {
-        deliverInterruptRequest({
-            asyncDir: input.target.asyncDir,
-            pid: status.pid,
-            kill: input.kill,
-            signal: ASYNC_RESUME_INTERRUPT_SIGNAL,
-            now: input.now,
-            source: "async-resume",
-        });
-        const tracked = input.state?.asyncJobs.get(asyncId);
-        if (tracked) {
-            tracked.activityState = undefined;
-            tracked.updatedAt = input.now?.() ?? Date.now();
-        }
-        return { ok: true, asyncId };
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return { ok: false, message: `Failed to interrupt async run ${asyncId}: ${message}` };
-    }
 }
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);

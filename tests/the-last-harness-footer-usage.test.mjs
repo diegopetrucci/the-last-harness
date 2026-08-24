@@ -842,6 +842,61 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 // NEW: extension status line rendering
 // ---------------------------------------------------------------------------
 
+test("fast extension status renders as a dim line-2 segment without generic duplication", () => {
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    getGitBranch: () => undefined,
+    getAvailableProviderCount: () => 1,
+    getExtensionStatuses: () => new Map([["fast", "Fast on"]]),
+  };
+  const lines = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {}).render(
+    COLOR_WIDTH,
+  );
+
+  assert.equal(lines.length, 2, "fast should not create a separate extension-status line");
+  assert.match(lines[1] ?? "", /<dim> • <\/dim><dim>fast<\/dim>$/);
+  assert.doesNotMatch(lines[1] ?? "", /Fast on/);
+});
+
+test("fast extension status coexists with MCP and unrelated extension statuses", () => {
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    getGitBranch: () => undefined,
+    getAvailableProviderCount: () => 1,
+    getExtensionStatuses: () =>
+      new Map([
+        ["fast", "Fast on"],
+        ["mcp", "MCP: 1/1 servers"],
+        ["my-ext", "my-ext: active"],
+      ]),
+  };
+  const lines = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {}).render(
+    COLOR_WIDTH,
+  );
+
+  assert.match(lines[1] ?? "", /<dim> • <\/dim><dim>fast<\/dim>$/);
+  assert.equal(lines.length, 3, "MCP and unrelated statuses should share one generic line");
+  assert.match(lines[2] ?? "", /MCP: 1\/1 servers/);
+  assert.match(lines[2] ?? "", /my-ext: active/);
+  assert.doesNotMatch(lines[2] ?? "", /fast|Fast on/);
+});
+
+test("fast extension status remains visible when line 2 is truncated", () => {
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    getGitBranch: () => undefined,
+    getAvailableProviderCount: () => 1,
+    getExtensionStatuses: () => new Map([["fast", "Fast on"]]),
+  };
+  const width = 60;
+  const line =
+    createTlhFooter(pi, ctx, theme, () => "architect", footerData, {}).render(width)[1] ?? "";
+
+  assert.ok(visibleWidth(line) <= width);
+  assert.match(line, /\.\.\./);
+  assert.match(line, / • fast$/);
+});
+
 test("non-context-cap extension statuses are still rendered in the footer", () => {
   // An unrelated extension status must not be affected by the tk workflow status filter.
   const ctx = createCtx({ entries: [] });

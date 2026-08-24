@@ -1612,7 +1612,7 @@ function cleanupNpmStage(config, stagePath) {
         warn(`could not clean npm staging root ${stagePath}: ${String(error)}`);
     }
 }
-function promoteNpmStage(config, stagePath, npmRoot) {
+function promoteNpmStage(stagePath, npmRoot) {
     if (npmDestinationExists(npmRoot)) {
         warn(`npm pre-install destination appeared during staging; leaving the existing npm root untouched: ${npmRoot}`);
         return false;
@@ -1752,7 +1752,7 @@ function preInstallNpmDefaultExtensions(config) {
         ];
         runCommand(config, commandArgs);
         assertNpmStageDirectory(config, stagePath, "after npm install");
-        if (promoteNpmStage(config, stagePath, npmRoot))
+        if (promoteNpmStage(stagePath, npmRoot))
             stagePath = undefined;
     }
     catch (error) {

@@ -36,9 +36,6 @@ export function writeChildMessageRequestToDir(dir, request) {
     writeAtomicJson(requestPath, request);
     return requestPath;
 }
-export function writeSteerRequestToDir(dir, request) {
-    return writeChildMessageRequestToDir(dir, request);
-}
 export function requestAsyncInterrupt(asyncDir, payload = {}, deps = {}) {
     const requestPath = interruptRequestPath(asyncDir);
     const request = {
@@ -97,9 +94,6 @@ export function enqueueStepChildMessage(asyncDir, index, request) {
         ...request,
         targetIndex: index,
     });
-}
-export function enqueueStepSteer(asyncDir, index, request) {
-    return enqueueStepChildMessage(asyncDir, index, { ...request, type: "steer" });
 }
 export function acceptChildMessageRequest(input) {
     const runningIndexes = input.steps
@@ -269,12 +263,6 @@ function consumeMatchingChildMessageRequestsFromDir(dir, matches, fsImpl = fs) {
 }
 export function consumeChildMessageRequestsFromDir(dir, fsImpl = fs) {
     return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer" || request.type === "resume", fsImpl);
-}
-function consumeSteerRequestsFromDir(dir, fsImpl = fs) {
-    return consumeMatchingChildMessageRequestsFromDir(dir, (request) => request.type === "steer", fsImpl);
-}
-export function consumeSteerRequests(asyncDir, fsImpl = fs) {
-    return consumeSteerRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);
 }
 export function consumeChildMessageRequests(asyncDir, fsImpl = fs) {
     return consumeChildMessageRequestsFromDir(steerRequestsDir(asyncDir), fsImpl);

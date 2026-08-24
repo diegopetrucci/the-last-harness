@@ -378,17 +378,6 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
   return undefined;
 }
 
-function selectProviderAwareAgentModel<T extends ProviderModelReference>(
-  agent: AgentModelDefaults | undefined,
-  availableModels: readonly T[],
-  currentProvider?: string,
-): T | undefined {
-  return (
-    selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
-    selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
-  );
-}
-
 /**
  * When the active provider is "openrouter" (literal string only), agents without
  * preferOppositeProvider follow the current session model instead of falling
@@ -484,15 +473,6 @@ export function selectProviderAwareAgentDefaults<T extends ProviderModelReferenc
   const model = oppositeProviderModel ?? standardModel;
   const thinking = resolveProviderThinking(agent, model?.provider ?? currentProvider);
   return { model, thinking };
-}
-
-export function selectProviderAwareAgentModelId(
-  agent: AgentModelDefaults | undefined,
-  availableModels: readonly ProviderModelReference[],
-  currentProvider?: string,
-): string | undefined {
-  const model = selectProviderAwareAgentModel(agent, availableModels, currentProvider);
-  return model ? formatProviderModelReference(model) : undefined;
 }
 
 /**
