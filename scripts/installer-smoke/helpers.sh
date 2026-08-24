@@ -517,7 +517,6 @@ make_fake_remote_stage1_support_root() {
   local -a compatibility_paths=(
     "config/librarian.defaults.json"
     "scripts/tlh-install-query.mjs"
-    "scripts/lib/tlh-profile-writes.mjs"
   )
 
   mkdir -p "${root}"
@@ -548,7 +547,6 @@ const repoRoot = join(scriptDir, "..");
 for (const [label, targetPath] of [
   ["compat_librarian_present", join(repoRoot, "config", "librarian.defaults.json")],
   ["compat_query_present", join(scriptDir, "tlh-install-query.mjs")],
-  ["compat_profile_writes_present", join(scriptDir, "lib", "tlh-profile-writes.mjs")],
   ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
 ]) {
   console.log(`${label}=${existsSync(targetPath)}`);

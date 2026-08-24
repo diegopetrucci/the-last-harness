@@ -33,7 +33,7 @@ import { buildRevivedAsyncTask, resolveAsyncResumeTarget, resolveAsyncRunLocatio
 import { lifecycleContinuationForIndex, lifecycleGeneration, markLifecycleContinuationSpawned, recoverStaleLifecycleContinuationClaim, recoverStaleLifecycleContinuationStatus, transitionLifecycleStatus, withLifecycleContinuation, withLifecycleStatusLock, writeNormalizedLifecycleStatus, } from "../shared/lifecycle-state.js";
 import { childMessageAckPath, deliverInterruptRequest, requestAsyncResume, requestAsyncSteer, waitForChildMessageAcceptance, } from "../background/control-channel.js";
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
-import { attachRootChildrenToSteps, createNestedRoute, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedEvent, } from "../shared/nested-events.js";
+import { attachRootChildrenToSteps, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedEvent, } from "../shared/nested-events.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { assessDurableResumeContext, formatDurableResumeContextBlock, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, resolveEffectiveContextWindow, } from "../../shared/context-diagnostics.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
@@ -4105,7 +4105,7 @@ export function createSubagentExecutor(deps) {
         const nestedParentAddress = inheritedNestedRoute
             ? resolveNestedParentAddressFromEnv()
             : undefined;
-        const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
+        const nestedRoute = inheritedNestedRoute;
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
         const hasSingle = !hasTasks && Boolean(effectiveParams.agent);

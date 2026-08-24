@@ -10,6 +10,16 @@ Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.gith
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
+## Installer compatibility boundary
+
+Only the generated GitHub Release `install.sh` asset is immutable and self-contained with its tag’s stage-1/support files: the release workflow bakes the matching tag into that stage-0 asset, so later changes on `main` do not change or invalidate that released asset. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; only generated GitHub Release installer assets are baked/pinned to their tag. The v0.27 boundary is the canonical stage-0 handoff: remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
+
+Through **2026-09-29**, compatibility is retained only for locally saved **pre-v0.27 raw source installers from published/tagged releases whose baked manifests requested the retained query/librarian assets**. It excludes arbitrary snapshots of `main` or unreleased intermediate states, including the never-released profile-writer manifest window; this compatibility window does not extend support for every older TLH runtime. After **2026-09-29**, the supported recovery is to download and run the current installer rather than continuing to use the saved file:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
+```
+
 For pin-PR title and body conventions (PRs updating `config/default-extensions.json` fork tags), see [CONTRIBUTING.md — Pull requests and CI](../CONTRIBUTING.md#pull-requests-and-ci).
 
 ## Prepare a release
