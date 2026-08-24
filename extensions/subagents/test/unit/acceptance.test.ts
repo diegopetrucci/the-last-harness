@@ -11,8 +11,9 @@ import {
   formatAcceptancePrompt,
   mergeContinuationAcceptance,
   parseAcceptanceReport,
+  parseAndStripAcceptanceReport,
+  isEffectivelyEmpty,
   resolveEffectiveAcceptance,
-  stripAcceptanceReport,
   validateAcceptanceInput,
   validateDispatchAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
@@ -349,7 +350,7 @@ describe("acceptance gates", () => {
       genericJsonWithInvalidSignal.error ?? "",
       /Structured acceptance report not found/,
     );
-    assert.equal(stripAcceptanceReport(invalidSignalJson), invalidSignalJson);
+    assert.equal(parseAndStripAcceptanceReport(invalidSignalJson).stripped, invalidSignalJson);
 
     const partialWrapperJson = `done\n\
 \
@@ -360,7 +361,7 @@ describe("acceptance gates", () => {
       genericJsonWithPartialWrapper.error ?? "",
       /Structured acceptance report not found/,
     );
-    assert.equal(stripAcceptanceReport(partialWrapperJson), partialWrapperJson);
+    assert.equal(parseAndStripAcceptanceReport(partialWrapperJson).stripped, partialWrapperJson);
 
     const reportPayloadJson = `done\n\
 \
@@ -368,7 +369,7 @@ describe("acceptance gates", () => {
     const genericReportPayloadJson = parseAcceptanceReport(reportPayloadJson);
     assert.equal(genericReportPayloadJson.report, undefined);
     assert.match(genericReportPayloadJson.error ?? "", /Structured acceptance report not found/);
-    assert.equal(stripAcceptanceReport(reportPayloadJson), reportPayloadJson);
+    assert.equal(parseAndStripAcceptanceReport(reportPayloadJson).stripped, reportPayloadJson);
 
     const malformed = parseAcceptanceReport("```acceptance-report\n{bad-json\n```");
     assert.equal(malformed.report, undefined);
@@ -383,7 +384,7 @@ describe("acceptance gates", () => {
       assert.ok(parsed.report);
       assert.deepEqual(parsed.report.changedFiles, ["src/file.ts"]);
       assert.equal(parsed.error, undefined);
-      assert.equal(stripAcceptanceReport(output), "done");
+      assert.equal(parseAndStripAcceptanceReport(output).stripped, "done");
     }
   });
 
@@ -402,7 +403,7 @@ describe("acceptance gates", () => {
 
     assert.ok(parsed.report);
     assert.equal(
-      stripAcceptanceReport(output),
+      parseAndStripAcceptanceReport(output).stripped,
       [
         "metadata",
         "```json",
@@ -424,7 +425,7 @@ describe("acceptance gates", () => {
 
     assert.ok(parsed.report);
     assert.deepEqual(parsed.report.testsAddedOrUpdated, ["test/file.test.ts"]);
-    assert.equal(stripAcceptanceReport(output), "done");
+    assert.equal(parseAndStripAcceptanceReport(output).stripped, "done");
   });
 
   it("reports field-level validation errors for malformed acceptance-report fields", () => {
@@ -447,7 +448,7 @@ describe("acceptance gates", () => {
     assert.equal(invalidCommandReport.report, undefined);
     assert.match(
       invalidCommandReport.error ?? "",
-      /commandsRun\[0\]\.result: expected one of "passed", "failed", "not-run"; got missing/,
+      /commandsRun\[0\]\.result: expected string; got missing/,
     );
     assert.match(
       invalidCommandReport.error ?? "",
@@ -471,6 +472,83 @@ describe("acceptance gates", () => {
     assert.match(
       invalidCriteriaReport.error ?? "",
       /criteriaSatisfied\[0\]\.evidence: expected non-empty string; got ""/,
+    );
+  });
+
+  it('commandsRun[].result accepts annotated strings like "failed as expected"', () => {
+    // Regression: the field was previously a closed enum that rejected correct
+    // work when agents wrote honest annotations. Validate the incident value.
+    const parsed = parseAcceptanceReport(
+      report({
+        commandsRun: [
+          { command: "npm test", result: "failed as expected", summary: "negative control" },
+        ],
+      }),
+    );
+    assert.notEqual(parsed.report, undefined);
+    assert.equal(parsed.error, undefined);
+    assert.equal(parsed.report?.commandsRun?.[0]?.result, "failed as expected");
+  });
+
+  it("commandsRun[].result rejects non-string values (number, null, object)", () => {
+    for (const badResult of [42, null, { status: "ok" }]) {
+      const parsed = parseAcceptanceReport(
+        report({ commandsRun: [{ command: "npm test", result: badResult, summary: "x" }] }),
+      );
+      assert.equal(
+        parsed.report,
+        undefined,
+        `expected failure for result=${JSON.stringify(badResult)}`,
+      );
+      assert.match(
+        parsed.error ?? "",
+        /commandsRun\[0\]\.result: expected string/,
+        `expected type error for result=${JSON.stringify(badResult)}`,
+      );
+    }
+  });
+
+  it("untagged-JSON shape sniffing requires strict literals while tagged validation accepts any string", () => {
+    // The strict/permissive split is intentional: isCommandsRunArray uses
+    // exact literals to detect probable acceptance reports in generic JSON
+    // fences; validateAcceptanceReport is permissive so annotated results
+    // don't reject correct work. Keep these two behaviours distinct.
+    const annotatedResult = "failed as expected";
+
+    // Tagged fence: permissive validation — must succeed.
+    const tagged = parseAcceptanceReport(
+      report({ commandsRun: [{ command: "cmd", result: annotatedResult, summary: "ok" }] }),
+    );
+    assert.notEqual(tagged.report, undefined, "tagged fence with annotated result must parse");
+
+    // Untagged JSON fence whose sole non-criteriaSatisfied signal is commandsRun
+    // with a non-literal result — isCommandsRunArray should not match it.
+    const untaggedOnly = [
+      "done",
+      "```json",
+      JSON.stringify({
+        criteriaSatisfied: [{ id: "c1", status: "satisfied", evidence: "ok" }],
+        commandsRun: [{ command: "cmd", result: annotatedResult, summary: "ok" }],
+      }),
+      "```",
+    ].join("\n");
+    const untagged = parseAcceptanceReport(untaggedOnly);
+    // No tagged fence present, so falls through to untagged detection;
+    // commandsRun with annotated result is the only signal → not detected.
+    assert.equal(
+      untagged.report,
+      undefined,
+      "untagged fence with only annotated commandsRun must not be detected as acceptance report",
+    );
+
+    // Positive control: the same shape with a strict literal IS detected.
+    const untaggedLiteral = parseAcceptanceReport(
+      untaggedOnly.replace(`"result":"${annotatedResult}"`, '"result":"passed"'),
+    );
+    assert.notEqual(
+      untaggedLiteral.report,
+      undefined,
+      "untagged fence with strict literal result must be detected",
     );
   });
 
@@ -789,6 +867,91 @@ describe("acceptance gates", () => {
       /acceptance\.surprise is not supported/,
     );
   });
+
+  it("gate and strip act on the same trailing candidate (system-level)", async () => {
+    // Case 1: both fences valid — gate and strip must both pick the trailing one.
+    // Case 2: first fence valid, trailing fence INVALID — gate must reject with the
+    //   trailing fence's parse error, never accept on the earlier valid fence.
+    //   (Previously: evaluateAcceptance fell back to first-valid, producing a false accept.)
+    const cwd = tempRepo();
+    try {
+      const firstContent = reportData({ notes: "FENCE-1-EXAMPLE" });
+      const secondContent = reportData({ notes: "FENCE-2-REAL" });
+
+      // --- Case 1: valid trailing fence ---
+      const validOutput = [
+        "prose with an illustrative example",
+        "```acceptance-report",
+        JSON.stringify(firstContent),
+        "```",
+        "the real report follows",
+        "```acceptance-report",
+        JSON.stringify(secondContent),
+        "```",
+      ].join("\n");
+
+      const { stripped, report: trailingReport } = parseAndStripAcceptanceReport(validOutput);
+      assert.equal(trailingReport?.notes, "FENCE-2-REAL", "strip must pick the trailing fence");
+      assert.ok(!stripped.includes("FENCE-2-REAL"), "trailing fence must be removed");
+      assert.ok(stripped.includes("FENCE-1-EXAMPLE"), "first fence must remain");
+
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement the fix",
+        explicit: { level: "attested" },
+      });
+      const ledger = await evaluateAcceptance({ acceptance, output: validOutput, cwd });
+      assert.equal(
+        ledger.childReport?.notes,
+        "FENCE-2-REAL",
+        "gate must evaluate the trailing candidate, not the first fence",
+      );
+      assert.notEqual(ledger.status, "rejected", "valid trailing fence must not be rejected");
+
+      // --- Case 2: INVALID trailing fence — must reject, never accept on the earlier fence ---
+      // criteriaSatisfied must be an array; passing an object triggers a validation error.
+      const invalidTrailingJson = JSON.stringify(reportData({ criteriaSatisfied: "not-an-array" }));
+      const invalidOutput = [
+        "prose with an illustrative example",
+        "```acceptance-report",
+        JSON.stringify(firstContent),
+        "```",
+        "the real report follows (malformed)",
+        "```acceptance-report",
+        invalidTrailingJson,
+        "```",
+      ].join("\n");
+
+      const { report: noReport, error: parseErr } = parseAndStripAcceptanceReport(invalidOutput);
+      assert.equal(noReport, undefined, "invalid trailing fence must not produce a report");
+      assert.ok(parseErr, "must carry a parse error for the trailing fence");
+      assert.match(parseErr ?? "", /criteriaSatisfied/, "error must name the failing field");
+
+      const invalidLedger = await evaluateAcceptance({ acceptance, output: invalidOutput, cwd });
+      assert.equal(
+        invalidLedger.status,
+        "rejected",
+        "gate must reject when the trailing fence is invalid — not accept on the earlier valid fence",
+      );
+      assert.ok(
+        invalidLedger.childReportParseError,
+        "gate must surface the trailing fence's parse error",
+      );
+      assert.match(
+        invalidLedger.childReportParseError ?? "",
+        /criteriaSatisfied/,
+        "gate error must identify the invalid field in the trailing fence",
+      );
+      // Confirm the earlier valid fence did NOT cause a false accept.
+      assert.equal(
+        invalidLedger.childReport,
+        undefined,
+        "gate must not populate childReport from the earlier illustrative fence",
+      );
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildAcceptanceReportDigest", () => {
@@ -838,15 +1001,108 @@ describe("buildAcceptanceReportDigest", () => {
     assert.match(digest, /Validation evidence/);
   });
 
-  it("stripAcceptanceReport remains remove-only — does not inject digest", () => {
-    // The progress/step-tail path (appendRecentStepOutput) and
-    // stripAcceptanceReportsFromMessages both call stripAcceptanceReport directly.
-    // It must stay a pure remove-only function so progress tails do not bloat.
+  it("parseAndStripAcceptanceReport is remove-only — does not inject digest", () => {
+    // parseAndStripAcceptanceReport must stay a pure remove-only function;
+    // appendAcceptanceReportDigest is the only sanctioned way to inject digest
+    // content onto the supervisor-facing surface.
     const output = ["done", "```acceptance-report", JSON.stringify(reportData()), "```"].join("\n");
-    const stripped = stripAcceptanceReport(output);
+    const { stripped } = parseAndStripAcceptanceReport(output);
     assert.equal(stripped, "done");
     assert.doesNotMatch(stripped, /Validation evidence/);
     assert.doesNotMatch(stripped, /commandsRun/);
+  });
+
+  it("leaves a present-but-invalid acceptance-report fence intact", () => {
+    // Regression guard: an unvalidated strip previously deleted present-but-invalid
+    // reports while the compensating digest was appended only on the valid path.
+    const invalid = [
+      "some prose",
+      "```acceptance-report",
+      JSON.stringify({ changedFiles: "wrong-type" }), // changedFiles must be string[]
+      "```",
+    ].join("\n");
+    const { stripped, report, error } = parseAndStripAcceptanceReport(invalid);
+    // Must NOT strip — the fence must remain intact.
+    assert.equal(stripped, invalid);
+    assert.equal(report, undefined);
+    assert.ok(error, "error must describe the validation failure");
+    assert.match(error ?? "", /changedFiles/);
+
+    // Positive control: a valid report IS stripped.
+    const valid = ["some prose", "```acceptance-report", JSON.stringify(reportData()), "```"].join(
+      "\n",
+    );
+    const { stripped: validStripped, report: validReport } = parseAndStripAcceptanceReport(valid);
+    assert.notEqual(validStripped, valid, "valid report must be stripped");
+    assert.equal(validStripped, "some prose");
+    assert.ok(validReport, "valid report must be returned");
+  });
+
+  it("parse and strip agree on the trailing candidate — they cannot diverge by construction", () => {
+    // When two valid acceptance-report fences are present, the old unpaired
+    // parseAcceptanceReport (first-valid rule) + stripAcceptanceReport (trailing
+    // rule) would act on DIFFERENT fences. parseAndStripAcceptanceReport uses the
+    // trailing rule for both, so parse and strip always agree.
+    const firstReport = reportData({ notes: "first" });
+    const secondReport = reportData({ notes: "second" });
+    const output = [
+      "prose",
+      "```acceptance-report",
+      JSON.stringify(firstReport),
+      "```",
+      "middle text",
+      "```acceptance-report",
+      JSON.stringify(secondReport),
+      "```",
+    ].join("\n");
+
+    const { stripped, report } = parseAndStripAcceptanceReport(output);
+
+    // Trailing (second) fence was stripped; first fence is still present.
+    assert.ok(stripped.includes(JSON.stringify(firstReport)), "first fence must survive");
+    assert.ok(!stripped.includes(JSON.stringify(secondReport)), "second fence must be stripped");
+    // The returned report matches the trailing (second) fence.
+    assert.equal(report?.notes, "second");
+  });
+
+  it("ACCEPTANCE_REPORT marker: only strips when truly trailing; preserves suffix prose", () => {
+    // Regression: the previous implementation used output.search() (first occurrence)
+    // and output.slice(0, markerIndex) (discards everything after the marker),
+    // meaning a non-trailing marker stripped all following prose.
+    const validJson = JSON.stringify(reportData());
+
+    // Non-trailing marker — suffix prose must survive untouched.
+    const withSuffix = `Work done.\nACCEPTANCE_REPORT: ${validJson}\nIMPORTANT SUFFIX that must survive.`;
+    const { stripped: suffixStripped, report: suffixReport } =
+      parseAndStripAcceptanceReport(withSuffix);
+    assert.equal(suffixReport, undefined, "non-trailing marker must not be the candidate");
+    assert.equal(
+      suffixStripped,
+      withSuffix,
+      "output must be returned unchanged when marker is not trailing",
+    );
+    assert.ok(suffixStripped.includes("IMPORTANT SUFFIX"), "suffix prose must survive");
+
+    // Positive control: genuinely trailing marker IS stripped.
+    const trailing = `Work done.\nACCEPTANCE_REPORT: ${validJson}`;
+    const { stripped: trailingStripped, report: trailingReport } =
+      parseAndStripAcceptanceReport(trailing);
+    assert.ok(trailingReport, "trailing marker must produce a report");
+    assert.equal(trailingStripped, "Work done.", "trailing marker must be stripped");
+  });
+
+  it("ACCEPTANCE_REPORT marker mentioned in prose is not the candidate when trailing fence exists", () => {
+    // A marker in prose must not supersede a genuine trailing acceptance-report fence.
+    // Regression: output.search() found the first occurrence regardless of position.
+    const proseMarker =
+      "See the ACCEPTANCE_REPORT: format for details.\n" +
+      "```acceptance-report\n" +
+      JSON.stringify(reportData({ notes: "real-report" })) +
+      "\n```";
+    const { stripped, report } = parseAndStripAcceptanceReport(proseMarker);
+    assert.equal(report?.notes, "real-report", "trailing fence must be the candidate");
+    assert.ok(!stripped.includes("real-report"), "trailing fence must be stripped");
+    assert.ok(stripped.includes("ACCEPTANCE_REPORT"), "prose mention must survive");
   });
 });
 
@@ -858,7 +1114,7 @@ describe("appendAcceptanceReportDigest", () => {
   }
 
   it("appends the digest after the already-stripped output", () => {
-    const stripped = stripAcceptanceReport(report());
+    const stripped = parseAndStripAcceptanceReport(report()).stripped;
     const joined = appendAcceptanceReportDigest(stripped, parsedReport());
 
     assert.equal(stripped, "done");
@@ -892,5 +1148,64 @@ describe("appendAcceptanceReportDigest", () => {
     const joined = appendAcceptanceReportDigest(original, parsedReport());
 
     assert.ok(joined.startsWith(original), "append-only");
+  });
+});
+
+describe("isEffectivelyEmpty", () => {
+  // Positive cases: strings that should be treated as effectively empty.
+  it("returns true for an empty string", () => {
+    assert.equal(isEffectivelyEmpty(""), true);
+  });
+
+  it("returns true for whitespace-only strings", () => {
+    assert.equal(isEffectivelyEmpty("   "), true);
+    assert.equal(isEffectivelyEmpty("\n\n"), true);
+    assert.equal(isEffectivelyEmpty("  \t  \n  "), true);
+  });
+
+  it("returns true for a bare horizontal rule (the observed incident value)", () => {
+    assert.equal(isEffectivelyEmpty("---"), true);
+  });
+
+  it("returns true for horizontal rules with surrounding whitespace", () => {
+    assert.equal(isEffectivelyEmpty("\n---\n"), true);
+    assert.equal(isEffectivelyEmpty("  ---  "), true);
+    assert.equal(isEffectivelyEmpty("---\n\n---"), true);
+  });
+
+  it("returns true for all three Markdown horizontal-rule forms", () => {
+    assert.equal(isEffectivelyEmpty("---"), true);
+    assert.equal(isEffectivelyEmpty("***"), true);
+    assert.equal(isEffectivelyEmpty("___"), true);
+    assert.equal(isEffectivelyEmpty("----"), true);
+    assert.equal(isEffectivelyEmpty("****"), true);
+    assert.equal(isEffectivelyEmpty("____"), true);
+  });
+
+  // Negative (control) cases: strings with real content that must NOT be treated
+  // as effectively empty.  Deleting the predicate or making it always return true
+  // causes these to fail.
+  it("returns false for a string with real content", () => {
+    assert.equal(isEffectivelyEmpty("some output"), false);
+  });
+
+  it("returns false when a horizontal rule is followed by content", () => {
+    assert.equal(isEffectivelyEmpty("---\nValidation evidence (from acceptance report):"), false);
+  });
+
+  it("returns false for an acceptance-report digest (starts and ends with --- but has content)", () => {
+    const digest =
+      "---\nValidation evidence (from acceptance report):\n\n  [passed] npm test \u2014 passed\n---";
+    assert.equal(isEffectivelyEmpty(digest), false);
+  });
+
+  it("returns false for a string that mixes a rule line with content lines", () => {
+    assert.equal(isEffectivelyEmpty("---\nactual findings here"), false);
+    assert.equal(isEffectivelyEmpty("Implementation complete.\n\n---"), false);
+  });
+
+  it("returns false for single-dash or double-dash (not a valid hr)", () => {
+    assert.equal(isEffectivelyEmpty("-"), false);
+    assert.equal(isEffectivelyEmpty("--"), false);
   });
 });

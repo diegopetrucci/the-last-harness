@@ -16,6 +16,8 @@ import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegis
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { lifecycleContinuationForIndex } from "../shared/lifecycle-state.js";
 import { formatProtectedLifecycleCleanup, isProtectedPausedLifecycle, protectedLifecycleText, } from "../shared/lifecycle-privacy.js";
+import { acceptanceRejectionReason } from "../shared/acceptance.js";
+import { formatRejectionReason } from "../../shared/string-utils.js";
 function hasExistingSessionFile(value) {
     return typeof value === "string" && fs.existsSync(value);
 }
@@ -564,6 +566,11 @@ export function inspectSubagentStatus(params, deps = {}) {
                 const display = step.label ? `${step.label} (${step.agent})` : step.agent;
                 const phase = step.phase ? `[${step.phase}] ` : "";
                 lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+                if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
+                    const reason = acceptanceRejectionReason(step.acceptance);
+                    if (reason)
+                        lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
+                }
                 const stepContinuation = lifecycleContinuationForIndex(status, index);
                 const stepClaimed = typeof stepContinuation?.claimToken === "string" &&
                     stepContinuation.claimToken.length > 0;

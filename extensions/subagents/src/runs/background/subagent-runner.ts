@@ -19,7 +19,11 @@ import {
   writeChildMessageAcceptanceForRequest,
   type ChildMessageRequest,
 } from "./control-channel.ts";
-import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
+import {
+  appendJsonl as appendRawJsonl,
+  getArtifactPaths,
+  writeArtifactWithFloor,
+} from "../../shared/artifacts.ts";
 import {
   buildSubagentSpawnEnv,
   PI_CODING_AGENT_PACKAGE,
@@ -136,8 +140,7 @@ import {
   buildSkippedAcceptanceLedger,
   evaluateAcceptance,
   formatAcceptancePrompt,
-  parseAcceptanceReport,
-  stripAcceptanceReport,
+  parseAndStripAcceptanceReport,
 } from "../shared/acceptance.ts";
 import {
   cleanupOwnedProcessGroup,
@@ -1605,8 +1608,8 @@ async function runSingleStep(
       attemptNotes.push(resolutionNotice);
   }
   const rawOutput = finalResult?.finalOutput ?? "";
-  const outputForPersistence = stripAcceptanceReport(rawOutput);
-  const { report: rawAcceptanceReport } = parseAcceptanceReport(rawOutput);
+  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
+    parseAndStripAcceptanceReport(rawOutput);
   const resolvedOutput =
     step.outputPath && finalResult?.exitCode === 0
       ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
@@ -1677,6 +1680,7 @@ async function runSingleStep(
       ? await evaluateAcceptance({
           acceptance: step.effectiveAcceptance,
           output: outputForAcceptance,
+          report: rawAcceptanceReport,
           cwd: step.cwd ?? ctx.cwd,
           signal: acceptanceAbortController.signal,
           abortMessage: interruptedDuringAcceptance
@@ -1794,7 +1798,12 @@ async function runSingleStep(
         rawAcceptanceReport && !resolvedOutput.savedPath
           ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
           : artifactBaseOutput;
-      fs.writeFileSync(artifactPaths.outputPath, artifactOutput, "utf-8");
+      writeArtifactWithFloor(
+        artifactPaths.outputPath,
+        artifactOutput,
+        rawOutput,
+        !!resolvedOutput.savedPath,
+      );
     }
     if (ctx.artifactConfig?.includeMetadata !== false) {
       fs.writeFileSync(
@@ -3222,7 +3231,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
       appendRecentStepOutput(
         step,
-        stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10),
+        parseAndStripAcceptanceReport(extractTextFromContent(event.message.content))
+          .stripped.split("\n")
+          .slice(-10),
       );
       step.turnCount = (step.turnCount ?? 0) + 1;
       const configuredModel = activeConfiguredModels[flatIndex];

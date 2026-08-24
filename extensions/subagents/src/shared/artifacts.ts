@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isEffectivelyEmpty } from "../runs/shared/acceptance.ts";
 import { TEMP_ARTIFACTS_DIR, type ArtifactPaths, type SingleResult } from "./types.ts";
 import { getAgentDir } from "./utils.ts";
 const CLEANUP_MARKER_FILE = ".last-cleanup";
@@ -45,6 +46,33 @@ export function ensureArtifactsDir(dir: string): void {
 }
 
 export function writeArtifact(filePath: string, content: string): void {
+  fs.writeFileSync(filePath, content, "utf-8");
+}
+
+/**
+ * Write a supervisor-facing artifact file, applying a non-destruction floor as
+ * part of the write: if computedContent is effectively empty (whitespace or
+ * Markdown horizontal rules only) but rawOutput is non-empty, rawOutput is
+ * preserved on disk instead of the degenerate computed value.
+ *
+ * This is the single enforcement point for the non-destruction invariant; both
+ * the async background writer and the foreground writer route through here so
+ * the floor cannot be bypassed without also removing the write.
+ *
+ * @param isArchive When true the file is a byte-exact archive of a user-requested
+ *   deliverable; the floor is skipped and computedContent is written as-is.
+ *   An empty deliverable is empty by the user's own request.
+ */
+export function writeArtifactWithFloor(
+  filePath: string,
+  computedContent: string,
+  rawOutput: string,
+  isArchive: boolean,
+): void {
+  const content =
+    !isArchive && rawOutput.trim() && isEffectivelyEmpty(computedContent)
+      ? rawOutput
+      : computedContent;
   fs.writeFileSync(filePath, content, "utf-8");
 }
 
