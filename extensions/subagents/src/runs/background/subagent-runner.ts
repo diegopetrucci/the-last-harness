@@ -2220,6 +2220,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       //   intercomTarget — none are load-bearing for delivery or failure surfacing.
       const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
       try {
+        // summary, timestamp, and results[].output are required on AsyncResultArtifact.
+        // They are satisfied here because TypeScript control-flow analysis narrows
+        // statusPayload.error (assigned above) and statusPayload.endedAt (assigned
+        // above) to non-undefined at this write site. Do not extract this block
+        // into a helper that accepts statusPayload — doing so would lose that
+        // narrowing and require explicit non-null assertions or guards.
         writeAtomicJson(resultPath, {
           lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
           id,
