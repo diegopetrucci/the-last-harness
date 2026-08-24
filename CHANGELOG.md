@@ -19,6 +19,13 @@ All notable changes to The Last Harness will be documented in this file.
 - Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
 - Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
 
+### Fixed
+
+- Acceptance reports were rejected when a recorded command result carried text such as "failed as expected"; that field is now treated as free text and correct completed work is no longer reported as rejected.
+- When a run's acceptance was rejected, the reason was computed but then discarded, so run status and completion notifications showed only a bare rejection. The specific reason is now shown, truncated to a readable length.
+- The acceptance gate and the report-removal step could evaluate different blocks from the same output, making it possible for work to pass acceptance via an example block while the real report block was simultaneously removed. Both steps now operate on the same candidate, invalid blocks are left intact in the output, and a near-empty computed artifact is no longer written when report processing fails.
+- Run status could crash when rendering a rejection reason due to malformed acceptance-ledger fields. Those fields are now parsed defensively.
+
 ## [0.38.1] - 2026-08-18
 
 ### Fixed

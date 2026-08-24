@@ -223,6 +223,71 @@ describe("async artifact digest surfacing (ps-il5m)", () => {
     );
   });
 
+  it("preserves healthy artifact content through the async digest-surfacing path", async () => {
+    // Verifies that real content is written byte-exact through the background
+    // artifact write site. The raw and computed values are identical here, so
+    // this is a positive-control for the write path — not a floor discriminator.
+    // Discriminating coverage for the non-destruction floor lives in the
+    // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
+    mockPi.onCall({ jsonl: [events.assistantMessage("async concrete findings")] });
+    const id = `async-floor-real-content-${Date.now().toString(36)}`;
+
+    const launch = executeAsyncSingle!(id, {
+      agent: "reviewer",
+      task: "Summarize findings",
+      agentConfig: makeAgent("reviewer"),
+      ctx: {
+        pi: { events: { emit() {} } },
+        cwd: tempDir,
+        currentSessionId: "session-async-floor",
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+      acceptance: { level: "none", reason: "exercising floor positive-control async path" },
+      ...artifactOptions(id),
+    });
+    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+    const payload = await readAsyncPayload(id);
+    assert.equal(payload.success, true);
+    assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
+    const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
+    assert.equal(artifact, "async concrete findings");
+  });
+
+  it("preserves horizontal-rule-only output intact through the async digest-surfacing path", async () => {
+    // Verifies that horizontal-rule-only content survives the background artifact
+    // write site unchanged. The raw and computed values are identical here, so
+    // this confirms the write path does not drop the content — it does not
+    // exercise the non-destruction floor. Floor discrimination lives in the
+    // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
+    mockPi.onCall({ jsonl: [events.assistantMessage("---")] });
+    const id = `async-floor-hr-output-${Date.now().toString(36)}`;
+
+    const launch = executeAsyncSingle!(id, {
+      agent: "reviewer",
+      task: "Summarize findings",
+      agentConfig: makeAgent("reviewer"),
+      ctx: {
+        pi: { events: { emit() {} } },
+        cwd: tempDir,
+        currentSessionId: "session-async-floor",
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+      acceptance: { level: "none", reason: "exercising floor hr-only async path" },
+      ...artifactOptions(id),
+    });
+    assert.equal(launch.isError, undefined, "async launch must not be an immediate error");
+
+    const payload = await readAsyncPayload(id);
+    assert.equal(payload.success, true);
+    assert.ok(payload.results[0]?.artifactPaths, "expected artifactPaths in async result");
+    const artifact = fs.readFileSync(payload.results[0]!.artifactPaths!.outputPath, "utf-8");
+    assert.notEqual(artifact, "", "artifact must not be empty when raw output was non-empty");
+    assert.equal(artifact.trim(), "---");
+  });
+
   it("does not add a digest when the async run produced no acceptance report", async () => {
     // Acceptance disabled → no ## Acceptance Contract in the prompt → mock emits
     // no block → parseAcceptanceReport returns null → artifact stays bare.

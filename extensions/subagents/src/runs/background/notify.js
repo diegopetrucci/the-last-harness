@@ -2,10 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { buildCompletionKey, getGlobalSeenMap, markSeenWithTtl } from "./completion-dedupe.js";
 import { createCompletionBatcher, resolveCompletionBatchConfig, } from "./completion-batcher.js";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT } from "../../shared/types.js";
+import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.js";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.js";
-import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
+import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.js";
+import { acceptanceRejectionReason } from "../shared/acceptance.js";
 export const MAX_COMPLETION_MESSAGE_CHARS = 32_000;
 const MAX_DISPLAYED_CHILDREN = 8;
 const MAX_GROUPED_ENTRIES = 8;
@@ -236,7 +237,18 @@ function formatNestedChildren(children, indent = "   ", budget = { remaining: MA
 function formatChildReferences(child, privacySafe = false) {
     if (privacySafe)
         return [];
+    const acceptanceLine = (() => {
+        if (!child.acceptance)
+            return undefined;
+        if (child.acceptance.status !== "rejected")
+            return undefined;
+        const reason = acceptanceRejectionReason(child.acceptance);
+        return reason
+            ? `Acceptance: rejected — ${formatRejectionReason(reason)}`
+            : "Acceptance: rejected";
+    })();
     return [
+        acceptanceLine,
         child.artifactPath ? `Output artifact: ${boundedReference(child.artifactPath)}` : undefined,
         child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
     ].filter((line) => Boolean(line));

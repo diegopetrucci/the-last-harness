@@ -30,3 +30,43 @@ export function truncateWithMarker(value: string, maxChars: number, marker: stri
   if (marker.length >= maxChars) return sliceSafe(marker, maxChars);
   return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
+
+/**
+ * Maximum UTF-16 code units allowed for a rendered rejection reason.
+ * Shared between run-status.ts and notify.ts so both render sites stay in sync.
+ */
+export const REJECTION_REASON_MAX_LENGTH = 200;
+
+/**
+ * Collapse whitespace characters in a child-controlled reason string so it
+ * cannot forge additional status or notification lines. Specifically:
+ * - replaces runs of whitespace control characters (\r, \n, \t, \v, \f) with a
+ *   single space,
+ * - then collapses runs of two or more ordinary spaces to a single space,
+ * - then trims leading/trailing whitespace.
+ *
+ * Normalization MUST precede truncation so a newline cannot survive inside
+ * the truncated result.
+ */
+export function normalizeRejectionReason(reason: string): string {
+  return reason
+    .replace(/[\r\n\t\v\f]+/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Normalize then truncate a rejection reason to at most
+ * REJECTION_REASON_MAX_LENGTH UTF-16 code units, appending a Unicode
+ * ellipsis (U+2026) when truncation is necessary.
+ *
+ * Callers own display budget decisions. This helper is intentionally
+ * side-effect-free and may be called multiple times.
+ */
+export function formatRejectionReason(reason: string): string {
+  return truncateWithMarker(
+    normalizeRejectionReason(reason),
+    REJECTION_REASON_MAX_LENGTH,
+    "\u2026",
+  );
+}

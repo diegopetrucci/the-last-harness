@@ -176,6 +176,47 @@ describe(
       assert.doesNotMatch(artifact, /Validation evidence/);
     });
 
+    it("preserves healthy artifact content through the digest-surfacing path", async () => {
+      // Verifies that real content is written byte-exact through the foreground
+      // artifact write site. The raw and computed values are identical here, so
+      // this is a positive-control for the write path — not a floor discriminator.
+      // Discriminating coverage for the non-destruction floor lives in the
+      // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
+      mockPi.onCall({ jsonl: [events.assistantMessage("concrete findings")] });
+      const agents = makeAgentConfigs(["reviewer"]);
+
+      const result = await runSync!(tempDir, agents, "reviewer", "Summarize findings", {
+        ...artifactOptions("floor-real-content"),
+        acceptance: { level: "none", reason: "exercising floor positive-control path" },
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.ok(result.artifactPaths, "expected artifact paths");
+      const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+      assert.equal(artifact, "concrete findings");
+    });
+
+    it("preserves horizontal-rule-only output intact through the digest-surfacing path", async () => {
+      // Verifies that horizontal-rule-only content survives the foreground artifact
+      // write site unchanged. The raw and computed values are identical here, so
+      // this confirms the write path does not drop the content — it does not
+      // exercise the non-destruction floor. Floor discrimination lives in the
+      // writeArtifactWithFloor unit tests (test/unit/artifacts.test.ts).
+      mockPi.onCall({ jsonl: [events.assistantMessage("---")] });
+      const agents = makeAgentConfigs(["reviewer"]);
+
+      const result = await runSync!(tempDir, agents, "reviewer", "Summarize findings", {
+        ...artifactOptions("floor-hr-output"),
+        acceptance: { level: "none", reason: "exercising floor hr-only path" },
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.ok(result.artifactPaths, "expected artifact paths");
+      const artifact = fs.readFileSync(result.artifactPaths.outputPath, "utf-8");
+      assert.notEqual(artifact, "", "artifact must not be empty when raw output was non-empty");
+      assert.equal(artifact.trim(), "---");
+    });
+
     it("does not inject the digest into the progress step tail", async () => {
       // stripAcceptanceReport is also used for progress/step tails, and it must stay
       // remove-only so tails do not bloat with digest text.

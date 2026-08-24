@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
-import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeMetadata, } from "../../shared/artifacts.js";
+import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithFloor, writeMetadata, } from "../../shared/artifacts.js";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
@@ -18,7 +18,7 @@ import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, resolveEffectiveAcceptance, stripAcceptanceReport, } from "../shared/acceptance.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
@@ -165,7 +165,7 @@ function stripAcceptanceReportsFromMessages(messages) {
             continue;
         for (const part of message.content) {
             if (part.type === "text" && "text" in part && typeof part.text === "string") {
-                part.text = stripAcceptanceReport(part.text);
+                part.text = parseAndStripAcceptanceReport(part.text).stripped;
             }
         }
     }
@@ -1124,7 +1124,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                         options.artifactConfig?.enabled !== false &&
                         options.artifactConfig?.includeOutput !== false) {
                         try {
-                            writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+                            writeArtifactWithFloor(result.artifactPaths.outputPath, result.finalOutput, finalOutput, !!result.savedOutputPath);
                         }
                         catch {
                         }
@@ -1331,8 +1331,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         durationMs: progress.durationMs,
     };
     const acceptanceOutput = getFinalOutput(result.messages ?? []);
-    const { report: finalAcceptanceReport } = parseAcceptanceReport(acceptanceOutput);
-    let fullOutput = stripAcceptanceReport(acceptanceOutput);
+    const acceptanceParsed = parseAndStripAcceptanceReport(acceptanceOutput);
+    const { report: finalAcceptanceReport } = acceptanceParsed;
+    let fullOutput = acceptanceParsed.stripped;
     if (result.timedOut) {
         const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
         fullOutput = fullOutput.trim()
@@ -1373,7 +1374,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     }
     if (options.outputPath && result.exitCode === 0) {
         const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
-        fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+        fullOutput = parseAndStripAcceptanceReport(resolvedOutput.fullOutput).stripped;
         result.savedOutputPath = resolvedOutput.savedPath;
         result.outputSaveError = resolvedOutput.saveError;
         if (resolvedOutput.savedPath) {
@@ -1634,9 +1635,9 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         const timeoutDiagnostics = formatTimeoutDiagnostics(result, options, artifactPathsResult ?? result.artifactPaths);
         result.finalOutput = timeoutDiagnostics;
         const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
-        const { report: timeoutReport } = storedAcceptanceOutput
-            ? parseAcceptanceReport(storedAcceptanceOutput)
-            : { report: undefined };
+        const timeoutReport = storedAcceptanceOutput
+            ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
+            : undefined;
         artifactOutputByResult.set(result, timeoutReport && !result.savedOutputPath
             ? appendAcceptanceReportDigest(timeoutDiagnostics, timeoutReport)
             : timeoutDiagnostics);
@@ -1728,7 +1729,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
         result.artifactPaths = artifactPathsResult;
         if (options.artifactConfig?.includeOutput !== false) {
-            writeArtifact(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "");
+            writeArtifactWithFloor(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "", acceptanceOutputByResult.get(result) ?? "", !!result.savedOutputPath);
         }
         if (options.maxOutput) {
             const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };

@@ -674,6 +674,8 @@ export function formatAcceptancePrompt(acceptance: ResolvedAcceptanceConfig): st
   }
   lines.push(
     "",
+    "Write a one-line prose summary of what you completed immediately before the fenced block.",
+    'For commandsRun[].result, "passed" or "failed" are preferred, but honest annotations such as "failed as expected" are also accepted.',
     "Finish with a fenced JSON block tagged `acceptance-report` in this shape:",
     "Use empty arrays when no items apply; array fields contain strings unless object entries are shown.",
     "```acceptance-report",
@@ -867,7 +869,29 @@ export function parseAcceptanceReport(output: string): {
   return { error: "Structured acceptance report not found." };
 }
 
-export function stripAcceptanceReport(output: string): string {
+/**
+ * Identify the trailing acceptance-report fence, validate it, and strip it only
+ * if validation succeeds. Parse and strip act on the same candidate by
+ * construction — they cannot select different fences.
+ *
+ * On validation failure the raw fence is left in the output so the caller can
+ * surface the error (rendered by run-status.ts). Never strip what could not be
+ * validated.
+ *
+ * Design note — no ungated strip variant exists by design: a previous ungated
+ * primitive deleted present-but-invalid acceptance-report fences while the
+ * compensating digest was appended only on the valid path, destroying ~15 KB
+ * across 4 durable artefacts (incident doc:
+ * docs/acceptance-report-rejection-observability-2026-08-20.md §8 D1).
+ * The caller must always pass the report returned here into evaluateAcceptance
+ * so the gate evaluates the same candidate the strip acted on.
+ */
+export function parseAndStripAcceptanceReport(output: string): {
+  stripped: string;
+  report?: AcceptanceReport;
+  error?: string;
+} {
+  // Find the trailing fence candidate: the last fence that has only whitespace after it.
   const trailingFencePattern = /\n?```(acceptance-report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;
   let trailingFence: { index: number; tag: string; body: string } | undefined;
   for (const match of output.matchAll(trailingFencePattern)) {
@@ -876,20 +900,96 @@ export function stripAcceptanceReport(output: string): string {
       trailingFence = { index: match.index ?? 0, tag: match[1].toLowerCase(), body: match[2] };
     }
   }
+
   if (trailingFence) {
-    if (trailingFence.tag === "acceptance-report")
-      return output.slice(0, trailingFence.index).trimEnd();
+    const stripped = output.slice(0, trailingFence.index).trimEnd();
+    if (trailingFence.tag === "acceptance-report") {
+      try {
+        const validation = parseAcceptanceReportBody(trailingFence.body);
+        if (validation.report) return { stripped, report: validation.report };
+        // Validation failed — leave the fence intact so the caller can surface the error.
+        return {
+          stripped: output,
+          error: `Failed to parse acceptance-report: ${validation.errors.join("; ")}`,
+        };
+      } catch (err) {
+        return {
+          stripped: output,
+          error: `Failed to parse acceptance-report: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        };
+      }
+    }
+    // JSON-family fence: only strip if it validates as an acceptance report.
     try {
-      if (parseGenericJsonAcceptanceReportBody(trailingFence.body))
-        return output.slice(0, trailingFence.index).trimEnd();
+      const report = parseGenericJsonAcceptanceReportBody(trailingFence.body);
+      if (report) return { stripped, report };
     } catch {
-      // Leave unrelated or malformed generic JSON fences visible.
+      // Not a recognisable acceptance report; leave it visible.
     }
   }
-  return output
-    .replace(/\n?```acceptance-report\s*\n[\s\S]*?```\s*$/i, "")
-    .replace(/\n?ACCEPTANCE_REPORT\s*:\s*\{[\s\S]*\}\s*$/i, "")
-    .trimEnd();
+
+  // ACCEPTANCE_REPORT: marker form (legacy fallback — same trailing rule as fences).
+  // Only a candidate when nothing but whitespace follows the balanced JSON's closing
+  // brace. Scan all occurrences so a marker mentioned in prose never supersedes a
+  // genuinely trailing one.
+  const markerPattern = /ACCEPTANCE_REPORT\s*:/gi;
+  let markerMatch: RegExpExecArray | null;
+  let trailingMarker: { markerStart: number; json: string } | undefined;
+  while ((markerMatch = markerPattern.exec(output)) !== null) {
+    const jsonStart = output.indexOf("{", markerMatch.index + markerMatch[0].length);
+    if (jsonStart === -1) continue;
+    const json = extractBalancedJson(output, jsonStart);
+    if (!json) continue;
+    if (output.slice(jsonStart + json.length).trim().length === 0) {
+      // Last trailing occurrence wins (consistent with fence rule).
+      trailingMarker = { markerStart: markerMatch.index, json };
+    }
+  }
+  if (trailingMarker) {
+    try {
+      const parsed = unwrapAcceptanceReport(parseReportJson(trailingMarker.json));
+      const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
+      if (validation.report) {
+        // Strip exactly the span: everything from the marker start to end-of-output
+        // (only whitespace follows, enforced by the trailing check above).
+        return {
+          stripped: output.slice(0, trailingMarker.markerStart).trimEnd(),
+          report: validation.report,
+        };
+      }
+      return {
+        stripped: output,
+        error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`,
+      };
+    } catch (err) {
+      return {
+        stripped: output,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  return { stripped: output, error: "Structured acceptance report not found." };
+}
+
+/**
+ * Returns true when a string is effectively empty: it contains nothing but
+ * whitespace, or nothing but Markdown horizontal rules (---, ***, ___) and
+ * blank lines. Used by the non-destruction floor at each artifact writer.
+ *
+ * The observed failure mode was an artifact that collapsed to exactly "---";
+ * this predicate identifies that degenerate state so the writer can fall back
+ * to the raw output instead.
+ */
+export function isEffectivelyEmpty(s: string): boolean {
+  const trimmed = s.trim();
+  if (trimmed.length === 0) return true;
+  return trimmed.split(/\r?\n/).every((line) => {
+    const l = line.trim();
+    return l.length === 0 || /^(-{3,}|\*{3,}|_{3,})$/.test(l);
+  });
 }
 
 /**
@@ -1043,18 +1143,13 @@ function validateAcceptanceReport(
         const command = item as { command?: unknown; result?: unknown; summary?: unknown };
         if (typeof command.command !== "string" || !command.command.trim())
           pushTypeError(errors, `${itemPath}.command`, "non-empty string", command.command);
-        if (
-          command.result !== "passed" &&
-          command.result !== "failed" &&
-          command.result !== "not-run"
-        ) {
-          pushTypeError(
-            errors,
-            `${itemPath}.result`,
-            'one of "passed", "failed", "not-run"',
-            command.result,
-          );
-        }
+        // result is display-only: it is interpolated into a digest line and used
+        // in the untagged-JSON shape-sniffing guard. The evidence gate never
+        // branches on it. Keeping this as a closed enum previously rejected correct
+        // 45-minute runs (6 of 11 observed rejections) and destroyed 4 output
+        // artifacts when agents wrote values like "failed as expected".
+        if (typeof command.result !== "string")
+          pushTypeError(errors, `${itemPath}.result`, "string", command.result);
         if (typeof command.summary !== "string")
           pushTypeError(errors, `${itemPath}.summary`, "string", command.summary);
       }
@@ -1339,7 +1434,14 @@ export async function evaluateAcceptance(input: {
   };
   if (acceptance.level === "none") return ledger;
 
-  const parsed = input.report ? { report: input.report } : parseAcceptanceReport(input.output);
+  // Always use the trailing-fence rule so gate and strip agree on the same candidate.
+  // When the caller already has the validated report (from parseAndStripAcceptanceReport)
+  // it may pass it directly to avoid double-parsing; otherwise the trailing rule is
+  // applied here. This eliminates the first-valid fallback that previously let an
+  // earlier valid illustrative fence beat a newer invalid real one.
+  const parsed = input.report
+    ? { report: input.report, error: undefined }
+    : parseAndStripAcceptanceReport(input.output);
   if (parsed.report) {
     ledger.childReport = parsed.report;
     ledger.status = "attested";
@@ -1418,6 +1520,46 @@ export async function evaluateAcceptance(input: {
   }
 
   return ledger;
+}
+
+/**
+ * Return a short diagnosable reason string for a rejected acceptance ledger,
+ * or undefined when no cause can be determined.
+ *
+ * Priority order:
+ *   1. childReportParseError
+ *   2. first runtimeChecks entry with status "failed" (its message)
+ *   3. first verifyRuns entry with status "failed" or "timed-out"
+ *      (formatted as "Verification '<id>' <status>.")
+ *
+ * Callers own display budget and truncation. Do not truncate here.
+ */
+export function acceptanceRejectionReason(ledger: AcceptanceLedger): string | undefined {
+  if (ledger.status !== "rejected") return undefined;
+  // Guard: childReportParseError is declared string but disk-parsed ledgers are a
+  // trust boundary — the value may be a number or other non-string type from a
+  // malformed or legacy status.json. Callers pass the result to formatRejectionReason
+  // which calls .replace(); a non-string would throw there.
+  if (typeof ledger.childReportParseError === "string" && ledger.childReportParseError)
+    return ledger.childReportParseError;
+  // Guard against disk-parsed ledgers where required arrays may be absent or
+  // contain non-object members (e.g. null) from a malformed or legacy status.json.
+  const checks = Array.isArray(ledger.runtimeChecks) ? ledger.runtimeChecks : [];
+  for (const check of checks) {
+    if (!check || typeof check !== "object") continue;
+    if (check.status === "failed" && typeof check.message === "string") return check.message;
+  }
+  const verifyRuns = Array.isArray(ledger.verifyRuns) ? ledger.verifyRuns : [];
+  for (const run of verifyRuns) {
+    if (!run || typeof run !== "object") continue;
+    if (
+      (run.status === "failed" || run.status === "timed-out") &&
+      typeof run.id === "string" &&
+      typeof run.status === "string"
+    )
+      return `Verification '${run.id}' ${run.status}.`;
+  }
+  return undefined;
 }
 
 export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | undefined {
