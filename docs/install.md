@@ -31,7 +31,7 @@ curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/dow
 - Pinned to a release tag for future updates:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.39.0/install.sh | bash -s -- --track pinned-tag
 ```
 - Any remote branch, eg `main`:
 
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/diegopetrucci/the-last-harness/main
     TLH_WRAPPER_NAME=tlh TLH_AGENT_DIR=~/.the-last-harness/agent bash -s -- --ref main --track ref
   ```
 
-These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.38.1`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
+These alternatives keep TLH isolated, but they are not the official latest stable install path. On interactive startup, TLH identifies those installs with a footer track label such as `TLH v0.39.0`, `TLH main`, `TLH local`, or `TLH unknown`. Official latest-release installs omit that footer label, though interactive starts may still show a quiet startup tip.
 
 ## Installer options
 
@@ -79,7 +79,7 @@ These alternatives keep TLH isolated, but they are not the official latest stabl
 Example pinned-tag install:
 
 ```sh
-curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.38.1/install.sh | bash -s -- --track pinned-tag
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/download/v0.39.0/install.sh | bash -s -- --track pinned-tag
 ```
 
 ## Update

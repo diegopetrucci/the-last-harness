@@ -4,11 +4,14 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+## [0.39.0] - 2026-08-24
+
 ### Added
 
 - [pi-transcribe](https://github.com/earendil-works/pi-transcribe) is now bundled by default.
 - TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
 - TLH now bundles the show-me skill for visual explanations with diagrams, code-shape sketches, and focused HTML artifacts.
+- TLH now supports OpenRouter as a primary provider.
 
 ### Changed
 
