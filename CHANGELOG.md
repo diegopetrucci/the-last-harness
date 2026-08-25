@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Experimental, default-off prompt-cache heartbeat: while async subagent runs are live and the parent session is idle, TLH can replay the last provider request and abort it early to keep the provider prompt cache warm at cache-read prices. Enable via `heartbeat.enabled` in the subagent extension config; per-beat accounting is written to `<agent-dir>/subagents/heartbeat.jsonl`, each beat-bearing gap emits a session-visible summary entry, and `/subagents-doctor` reports totals. See the "Prompt-cache heartbeat" section in `docs/subagents.md`.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added
