@@ -2014,6 +2014,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   const overallStartTime = Date.now();
   const shareEnabled = config.share === true;
   const asyncDir = config.asyncDir;
+  // Install this route before publishing the running PID. The control inbox is
+  // authoritative, so the early trampoline deliberately does not act on the
+  // signal until the graceful handler below is initialized; it only prevents
+  // the platform default from terminating the runner in that startup window.
+  let interruptRunner: (() => void) | undefined;
+  const interruptSignalTrampoline = (): void => {
+    interruptRunner?.();
+  };
+  process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
   const statusPath = path.join(asyncDir, "status.json");
   const eventsPath = path.join(asyncDir, "events.jsonl");
   const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
@@ -3417,7 +3426,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     activityTimer.unref?.();
   }
 
-  const interruptRunner = () => {
+  interruptRunner = () => {
     consumeInterruptRequest(asyncDir);
     if (interrupted || statusPayload.state !== "running") return;
     interrupted = true;
@@ -3501,7 +3510,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     timeoutNestedAsyncDescendants();
     timeoutActiveChildren();
   };
-  process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
   // Portable control inbox: the parent drops control request files here when
   // it cannot deliver OS signals (e.g. ENOSYS on Windows) or when steering a
   // live child. Interrupts still route into the same graceful interruptRunner().

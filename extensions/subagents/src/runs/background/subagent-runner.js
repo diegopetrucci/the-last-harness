@@ -1430,6 +1430,11 @@ async function runSubagent(config) {
     const overallStartTime = Date.now();
     const shareEnabled = config.share === true;
     const asyncDir = config.asyncDir;
+    let interruptRunner;
+    const interruptSignalTrampoline = () => {
+        interruptRunner?.();
+    };
+    process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
     const statusPath = path.join(asyncDir, "status.json");
     const eventsPath = path.join(asyncDir, "events.jsonl");
     const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
@@ -2603,7 +2608,7 @@ async function runSubagent(config) {
         }, 1000);
         activityTimer.unref?.();
     }
-    const interruptRunner = () => {
+    interruptRunner = () => {
         consumeInterruptRequest(asyncDir);
         if (interrupted || statusPayload.state !== "running")
             return;
@@ -2675,7 +2680,6 @@ async function runSubagent(config) {
         timeoutNestedAsyncDescendants();
         timeoutActiveChildren();
     };
-    process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
     const disposeControlInbox = watchAsyncControlInbox(asyncDir, {
         onInterrupt: interruptRunner,
         onTimeout: timeoutRunner,
