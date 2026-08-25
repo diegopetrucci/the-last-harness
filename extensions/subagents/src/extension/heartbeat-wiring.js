@@ -33,7 +33,7 @@ function verdictFrom(acc) {
         return "saved";
     if (acc.executedBeats > 0)
         return "wasted";
-    return "lost";
+    return "unneeded";
 }
 function appendGapSummaryRecord(acc, logPath, appendFile, mkdir) {
     const verdict = verdictFrom(acc);
@@ -83,6 +83,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
                     gapsSaved: 0,
                     gapsWasted: 0,
                     gapsLost: 0,
+                    gapsUnneeded: 0,
                     breakerDisabled: false,
                 };
             },
@@ -100,6 +101,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
     let sessionGapsSaved = 0;
     let sessionGapsWasted = 0;
     let sessionGapsLost = 0;
+    let sessionGapsUnneeded = 0;
     let sessionBreakerDisabled = false;
     let currentGap = null;
     let isIdleState = false;
@@ -196,8 +198,10 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             sessionGapsSaved++;
         else if (verdict === "wasted")
             sessionGapsWasted++;
-        else
+        else if (verdict === "lost")
             sessionGapsLost++;
+        else
+            sessionGapsUnneeded++;
         if (emitSessionEntry && acc.executedBeats > 0) {
             try {
                 pi.appendEntry("heartbeat-gap-summary", {
@@ -267,8 +271,10 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
                     sessionGapsSaved++;
                 else if (verdict === "wasted")
                     sessionGapsWasted++;
-                else
+                else if (verdict === "lost")
                     sessionGapsLost++;
+                else
+                    sessionGapsUnneeded++;
             }
             controller.destroy();
         },
@@ -285,6 +291,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             sessionGapsSaved = 0;
             sessionGapsWasted = 0;
             sessionGapsLost = 0;
+            sessionGapsUnneeded = 0;
             sessionBreakerDisabled = false;
             controller.resetSession();
         },
@@ -297,6 +304,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
                 gapsSaved: sessionGapsSaved,
                 gapsWasted: sessionGapsWasted,
                 gapsLost: sessionGapsLost,
+                gapsUnneeded: sessionGapsUnneeded,
                 breakerDisabled: sessionBreakerDisabled,
             };
         },

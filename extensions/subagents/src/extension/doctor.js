@@ -121,6 +121,7 @@ function formatHeartbeatSection(summary) {
         summary.gapsSaved > 0 ? `${summary.gapsSaved} saved` : null,
         summary.gapsWasted > 0 ? `${summary.gapsWasted} wasted` : null,
         summary.gapsLost > 0 ? `${summary.gapsLost} lost` : null,
+        summary.gapsUnneeded > 0 ? `${summary.gapsUnneeded} unneeded` : null,
     ]
         .filter(Boolean)
         .join(", ");

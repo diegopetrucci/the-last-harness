@@ -284,7 +284,7 @@ Outcome values:
 | `beats` | Total ghost-stream requests sent in this gap. |
 | `beatCostUsd` | Total estimated USD spent on beats. |
 | `avoidedCostUsd` | Estimated USD avoided on cache miss, computed from cache-read tokens × (input rate − cache-read rate). |
-| `verdict` | `saved`, `wasted`, or `lost` — see below. |
+| `verdict` | `saved`, `wasted`, `lost`, or `unneeded` — see below. |
 
 Verdict meanings:
 
@@ -292,7 +292,8 @@ Verdict meanings:
 |---|---|
 | `saved` | At least one beat resulted in `cache_read`; the TTL was refreshed at least once. |
 | `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
-| `lost` | The cache is considered/likely expired for this gap (290 s is a conservative client-side threshold, not proof of expiry): either no beat fired before the threshold, or prior beats were sent but the gap later reached the late-beat threshold (290 s since the last provider request) before the gap closed. |
+| `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
+| `unneeded` | No beats were sent and no terminal-lost signal was received. The async run finished faster than the heartbeat interval; the gap closed before the first beat timer fired. The `gap_summary` record is still written (gap frequency and duration are useful trial signal). |
 
 ### Circuit breakers
 
@@ -310,7 +311,7 @@ Two automatic circuit breakers limit runaway spending:
 - beats this session: 7
 - cache-read tokens: 84000
 - $0.00012 total beat cost
-- gaps: 3 saved, 1 wasted
+- gaps: 3 saved, 1 wasted, 12 unneeded
 - circuit breaker: closed
 ```
 

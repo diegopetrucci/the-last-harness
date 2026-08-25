@@ -344,6 +344,7 @@ describe("buildDoctorReport — heartbeat section", () => {
         gapsSaved: 0,
         gapsWasted: 0,
         gapsLost: 0,
+        gapsUnneeded: 0,
         breakerDisabled: false,
       };
       const report = buildDoctorReport({
@@ -376,6 +377,7 @@ describe("buildDoctorReport — heartbeat section", () => {
         gapsSaved: 2,
         gapsWasted: 1,
         gapsLost: 0,
+        gapsUnneeded: 0,
         breakerDisabled: false,
       };
       const report = buildDoctorReport({
@@ -412,6 +414,7 @@ describe("buildDoctorReport — heartbeat section", () => {
         gapsSaved: 0,
         gapsWasted: 1,
         gapsLost: 0,
+        gapsUnneeded: 0,
         breakerDisabled: true,
       };
       const report = buildDoctorReport({
@@ -428,6 +431,39 @@ describe("buildDoctorReport — heartbeat section", () => {
         deps: minimalDeps,
       });
       assert.match(report, /circuit breaker: open/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows unneeded gap count in gaps line", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-unneeded-"));
+    try {
+      const summary: HeartbeatSessionSummary = {
+        enabled: true,
+        totalBeats: 3,
+        totalCacheReadTokens: 15000,
+        totalBeatCostUsd: 0.00009,
+        gapsSaved: 1,
+        gapsWasted: 0,
+        gapsLost: 0,
+        gapsUnneeded: 12,
+        breakerDisabled: false,
+      };
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        heartbeat: summary,
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /gaps:.*1 saved.*12 unneeded/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

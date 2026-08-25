@@ -288,7 +288,10 @@ describe("createHeartbeatWiring — disabled (default)", () => {
     const summary = wiring.getSessionSummary();
     assert.equal(summary.enabled, false);
     assert.equal(summary.totalBeats, 0);
-    assert.equal(summary.gapsSaved + summary.gapsWasted + summary.gapsLost, 0);
+    assert.equal(
+      summary.gapsSaved + summary.gapsWasted + summary.gapsLost + summary.gapsUnneeded,
+      0,
+    );
     assert.equal(summary.breakerDisabled, false);
   });
 });
@@ -520,7 +523,7 @@ describe("createHeartbeatWiring — enabled: destroy()", () => {
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatWiring — enabled: per-gap summary content", () => {
-  it("verdict 'lost' for a gap with zero beats", () => {
+  it("verdict 'unneeded' for a gap with zero beats (benign short run)", () => {
     const written: string[] = [];
     const pi = makeFakePi();
     const wiring = createHeartbeatWiring(
@@ -529,15 +532,71 @@ describe("createHeartbeatWiring — enabled: per-gap summary content", () => {
       makeTestDeps({ written }),
     );
 
-    wiring.notifyAsyncStarted(0, "session-lost");
+    wiring.notifyAsyncStarted(0, "session-unneeded");
     wiring.disarm();
 
     const summaries = parseSummaryLines(written);
     assert.ok(summaries.length > 0, "summary must be written");
-    assert.equal(summaries[0]!.verdict, "lost");
+    // Zero-beat gap without terminatedLost: benign short run, not a 'lost' cache.
+    assert.equal(summaries[0]!.verdict, "unneeded");
     assert.equal(summaries[0]!.beats, 0);
     // No session entry for zero-beat gap
     assert.equal(pi.entries.length, 0);
+  });
+
+  it("verdict 'lost' for a zero-beat gap when terminatedLost is set", () => {
+    // terminatedLost overrides even a zero-beat gap: the cache-expired signal
+    // from onGapLost takes precedence.
+    // We exercise the public wiring path by simulating the controller callback
+    // indirectly: open a gap, advance time past LATE_BEAT_THRESHOLD_MS, fire
+    // the timer so the controller fires onGapLost, then disarm.
+    const written: string[] = [];
+    const pi = makeFakePi();
+    const capturedFns: Array<() => void> = [];
+    let t = 0;
+
+    const deps: HeartbeatWiringDeps = {
+      logPath: FAKE_LOG_PATH,
+      appendFileSync: (_file, data) => written.push(data),
+      mkdirSync: () => {},
+      now: () => t,
+      setTimeout: ((fn, _ms) => {
+        capturedFns.push(fn);
+        return makeFakeHandle();
+      }) as HeartbeatWiringDeps["setTimeout"],
+      clearTimeout: () => {},
+      // No streamProvider: the controller will record 'lost' via decideBeat
+      // without launching a stream (timer fires past LATE_BEAT_THRESHOLD_MS).
+    };
+
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true, intervalMs: 255_000 } },
+      deps,
+    );
+
+    // Open gap at t=0, no provider request captured → lastRequestAt is null.
+    // Advance to 290001 ms → elapsed past threshold → decideBeat returns 'lost'
+    // → controller calls onGapLost → terminatedLost=true.
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "session-zero-beat-lost");
+
+    assert.ok(capturedFns.length > 0, "timer must be scheduled");
+    t = 290_001;
+    capturedFns[0]!();
+    // No stream to await — decideBeat short-circuits synchronously for 'lost'.
+
+    wiring.disarm();
+
+    const summaries = parseSummaryLines(written);
+    assert.ok(summaries.length > 0, "summary must be written");
+    assert.equal(
+      summaries[0]!.verdict,
+      "lost",
+      "terminatedLost must override zero-beat gap to 'lost'",
+    );
+    assert.equal(summaries[0]!.beats, 0);
+    assert.equal(pi.entries.length, 0, "no session entry for zero-beat gap");
   });
 
   it("emits session entry with correct shape after beats fire", async () => {
@@ -646,7 +705,7 @@ describe("createHeartbeatWiring — enabled: per-gap summary content", () => {
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatWiring — enabled: getSessionSummary", () => {
-  it("accumulates lost gaps across multiple disarm cycles", () => {
+  it("accumulates unneeded gaps across multiple disarm cycles (zero-beat, no terminatedLost)", () => {
     const pi = makeFakePi();
     const wiring = createHeartbeatWiring(pi, { heartbeat: { enabled: true } }, makeTestDeps());
 
@@ -661,7 +720,9 @@ describe("createHeartbeatWiring — enabled: getSessionSummary", () => {
     const summary = wiring.getSessionSummary();
     assert.equal(summary.enabled, true);
     assert.equal(summary.totalBeats, 0);
-    assert.equal(summary.gapsLost, 2, "both gaps counted as lost");
+    // Zero-beat gaps without terminatedLost are 'unneeded', not 'lost'.
+    assert.equal(summary.gapsUnneeded, 2, "both benign zero-beat gaps counted as unneeded");
+    assert.equal(summary.gapsLost, 0, "no lost gaps when terminatedLost was never set");
     assert.equal(summary.gapsSaved + summary.gapsWasted, 0);
   });
 
@@ -1406,12 +1467,12 @@ describe("createHeartbeatWiring — resetSession", () => {
     // Fire the timer (stream produces a cache_read beat via fake streamProvider).
     // Since makeTestDeps doesn't inject a streamProvider, we just close the gap
     // directly to accumulate session totals.
-    wiring.disarm(); // closes gap, increments session totals (lost verdict, 0 beats)
+    wiring.disarm(); // closes gap, increments session totals (unneeded verdict, 0 beats, no terminatedLost)
 
     const summary1 = wiring.getSessionSummary();
-    // gapsLost should be 1 (no beats fired).
+    // gapsUnneeded should be 1 (no beats fired, no terminatedLost).
     assert.equal(summary1.enabled, true);
-    assert.equal(summary1.gapsLost, 1, "should have one gap before reset");
+    assert.equal(summary1.gapsUnneeded, 1, "should have one unneeded gap before reset");
 
     // Reset session — totals should be cleared.
     wiring.resetSession();
@@ -1421,6 +1482,7 @@ describe("createHeartbeatWiring — resetSession", () => {
     assert.equal(summary2.gapsSaved, 0, "gapsSaved must be 0 after resetSession");
     assert.equal(summary2.gapsWasted, 0, "gapsWasted must be 0 after resetSession");
     assert.equal(summary2.gapsLost, 0, "gapsLost must be 0 after resetSession");
+    assert.equal(summary2.gapsUnneeded, 0, "gapsUnneeded must be 0 after resetSession");
     assert.equal(
       summary2.breakerDisabled,
       false,
