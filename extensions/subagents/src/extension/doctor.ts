@@ -16,6 +16,7 @@ import {
   type SubagentState,
 } from "../shared/types.ts";
 import { inspectRuntimeDirs } from "./runtime-cleanup.ts";
+import type { HeartbeatSessionSummary } from "./heartbeat-wiring.ts";
 
 interface DoctorPaths {
   tempRootDir: string;
@@ -44,6 +45,8 @@ interface DoctorReportInput {
   expandTilde?: (value: string) => string;
   paths?: DoctorPaths;
   deps?: Partial<DoctorDeps>;
+  /** Current-session heartbeat totals. Omitted when heartbeat is not wired. */
+  heartbeat?: HeartbeatSessionSummary;
 }
 
 const DEFAULT_PATHS: DoctorPaths = {
@@ -179,6 +182,30 @@ function formatIntercomDiagnostic(
   return lines;
 }
 
+function formatHeartbeatSection(summary: HeartbeatSessionSummary | undefined): string[] {
+  if (!summary) return [`- heartbeat: not available`];
+  if (!summary.enabled) return [`- heartbeat: disabled (enabled: false in config)`];
+  const costStr =
+    summary.totalBeatCostUsd > 0
+      ? `$${summary.totalBeatCostUsd.toFixed(5)} total beat cost`
+      : "$0 beat cost";
+  const gapsStr = [
+    summary.gapsSaved > 0 ? `${summary.gapsSaved} saved` : null,
+    summary.gapsWasted > 0 ? `${summary.gapsWasted} wasted` : null,
+    summary.gapsLost > 0 ? `${summary.gapsLost} lost` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return [
+    `- heartbeat: enabled`,
+    `- beats this session: ${summary.totalBeats}`,
+    `- cache-read tokens: ${summary.totalCacheReadTokens}`,
+    `- ${costStr}`,
+    `- gaps: ${gapsStr || "none yet"}`,
+    `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after errors)" : "closed"}`,
+  ];
+}
+
 function formatPermissionSystemSection(): string[] {
   const lines: string[] = [];
   const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
@@ -236,6 +263,9 @@ export function buildDoctorReport(input: DoctorReportInput): string {
         input.context,
       ).join("\n"),
     ).split("\n"),
+    "",
+    "Heartbeat",
+    ...formatHeartbeatSection(input.heartbeat),
   ];
   return lines.join("\n");
 }

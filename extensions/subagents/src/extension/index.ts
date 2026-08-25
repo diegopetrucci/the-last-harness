@@ -58,6 +58,8 @@ import {
   renderSubagentResult,
 } from "../tui/render.ts";
 import { SubagentParams } from "./schemas.ts";
+import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.ts";
+import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.ts";
 import {
   createSubagentExecutor,
   type SubagentParamsLike,
@@ -347,6 +349,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   cleanupRuntimeDirs();
 
   const config = loadConfig();
+  const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
+  // Lazily captured session context for modelRegistry access.
+  // ctx is not available at extension setup; we capture it from the session_start
+  // event handler and hold a reference so the heartbeat controller can resolve
+  // the live registry at beat time — the same pattern used for control notices.
+  let heartbeatSessionCtx: Pick<
+    import("@earendil-works/pi-coding-agent").ExtensionContext,
+    "modelRegistry"
+  > | null = null;
+  const hbWiring = createHeartbeatWiring(pi, config, {
+    getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
+  });
   const tempArtifactsDir = getArtifactsDir(null);
   cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
   const liveDetailController = createSubagentLiveDetailController();
@@ -413,6 +427,12 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   primeExistingResults();
 
   const runtimeCleanup = () => {
+    // Disarm heartbeat gap (with summary) on extension reload so any active gap is
+    // closed before the new extension instance takes over.  The session is still
+    // active at this point so the session entry CAN be emitted.
+    // Then destroy to abort any in-flight beat and fully tear down the controller.
+    hbWiring.disarm();
+    hbWiring.destroy();
     removeLiveDetailTerminalInput();
     liveDetailController.clearToolRows();
     toolResultBridge.clear();
@@ -436,6 +456,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     getSubagentSessionRoot,
     expandTilde,
     discoverAgents,
+    getHeartbeatSummary: () => hbWiring.getSessionSummary(),
   });
 
   pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
@@ -629,7 +650,43 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     },
   });
 
-  registerSlashCommands(pi, state, config);
+  registerSlashCommands(pi, state, config, () => hbWiring.getSessionSummary());
+
+  // Heartbeat-specific Pi event hooks: only register when heartbeat is enabled.
+  // When disabled, no before_provider_request payload capture (memory/PII risk)
+  // and no idle-state or model-change hooks.  The wiring is already a no-op
+  // when disabled, but not registering these hooks avoids any unnecessary
+  // callbacks and satisfies the zero-hook requirement.
+  if (resolvedHbConfig.enabled) {
+    // Capture provider payload for ghost-stream replay.
+    pi.on("before_provider_request", (event, ctx) => {
+      if (ctx.model) {
+        hbWiring.onProviderRequest(event.payload, ctx.model);
+      }
+    });
+
+    // Disarm on real turn start (before_agent_start) and notify the
+    // controller of idle-state transitions.
+    pi.on("before_agent_start", () => {
+      hbWiring.onIdle(false);
+      hbWiring.disarm();
+    });
+    pi.on("agent_settled", () => {
+      hbWiring.onIdle(true);
+      // Re-arm if live async runs are still active — the gap was disarmed during
+      // the parent turn and must resume once the parent is idle again.
+      hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
+    });
+
+    // Disarm on model or thinking-level changes (prompt-cache state
+    // may shift when provider/parameters change).
+    pi.on("model_select", () => {
+      hbWiring.disarm();
+    });
+    pi.on("thinking_level_select", () => {
+      hbWiring.disarm();
+    });
+  }
 
   const eventUnsubscribeStoreKey = "__piSubagentEventUnsubscribes";
   const controlNoticeSeenStoreKey = "__piSubagentVisibleControlNotices";
@@ -644,6 +701,28 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
       }
     }
   }
+  // Register heartbeat async-lifecycle handlers BEFORE registerSubagentNotify so
+  // that disarm fires synchronously before the wake nudge in notify.ts.
+  // Only subscribe when heartbeat is enabled: when disabled, the wiring is a
+  // no-op but these subscriptions still add live callbacks for every async event.
+  const hbCompleteHandler = (data: unknown) => {
+    const result = data as { id?: string };
+    hbWiring.notifyAsyncComplete(result.id, state.asyncJobs);
+  };
+  const hbStartedHandler = (data: unknown) => {
+    const info = data as { id?: string };
+    void info; // id unused; what matters is the live-run count before this job
+    const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
+    hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
+  };
+  const noop = () => {};
+  const hbCompleteUnsub = resolvedHbConfig.enabled
+    ? pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, hbCompleteHandler)
+    : noop;
+  const hbStartedUnsub = resolvedHbConfig.enabled
+    ? pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, hbStartedHandler)
+    : noop;
+
   registerSubagentNotify(pi, state, {});
 
   const existingVisibleControlNotices = globalStore[controlNoticeSeenStoreKey];
@@ -668,6 +747,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     });
   };
   const eventUnsubscribes = [
+    hbCompleteUnsub,
+    hbStartedUnsub,
     pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, handleStarted),
     pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, handleComplete),
     pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
@@ -723,23 +804,54 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", (_event, ctx) => {
+    if (resolvedHbConfig.enabled) {
+      // Heartbeat: capture live session ctx so the controller can resolve the
+      // model registry lazily at beat time (same captured-ctx pattern as control
+      // notices; ctx is not available at extension setup time).
+      heartbeatSessionCtx = ctx;
+      // Forward initial idle state. Use optional call in case the ctx is a
+      // minimal stub in tests.
+      hbWiring.onIdle((ctx as { isIdle?: () => boolean }).isIdle?.() ?? true);
+    }
     controlNoticeSessionContext = ctx;
     removeLiveDetailTerminalInput();
     resetSessionState(ctx);
+    if (resolvedHbConfig.enabled) {
+      // Re-arm heartbeat for any live async jobs restored by resetSessionState.
+      hbWiring.tryRearm(countLiveAsyncRuns(state.asyncJobs), state.currentSessionId);
+    }
     installLiveDetailTerminalInput(ctx);
     supervisorChannel.start();
   });
 
+  // Heartbeat: synchronously disarm (with session-entry disclosure) before
+  // session replacement or fork so beat-bearing gaps are never silently lost.
+  // Only register when enabled: these are heartbeat-specific hooks.
+  if (resolvedHbConfig.enabled) {
+    pi.on("session_before_switch", () => {
+      hbWiring.disarm();
+    });
+    pi.on("session_before_fork", () => {
+      hbWiring.disarm();
+    });
+  }
+
   // Tree navigation and compaction rebuild ToolExecutionComponents with fresh
   // renderer state. Release old row identities before Pi renders the new chat.
+  // Heartbeat: disarm on tree/compact since prompt-cache state may have changed.
   pi.on("session_tree", () => {
+    hbWiring.disarm();
     liveDetailController.clearToolRows();
   });
   pi.on("session_compact", () => {
+    hbWiring.disarm();
     liveDetailController.clearToolRows();
   });
 
   pi.on("session_shutdown", () => {
+    // Heartbeat: destroy (cancel timers, abort in-flight, close gap without
+    // session entry since session is going away).
+    hbWiring.destroy();
     removeLiveDetailTerminalInput();
     toolResultBridge.clear();
     delete process.env[SUBAGENT_PARENT_SESSION_ENV];

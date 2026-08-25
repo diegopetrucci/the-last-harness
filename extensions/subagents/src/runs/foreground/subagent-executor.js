@@ -3810,6 +3810,7 @@ export function createSubagentExecutor(deps) {
                                 orchestratorTarget,
                                 sessionError,
                                 expandTilde: deps.expandTilde,
+                                ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
                             }),
                         },
                     ],

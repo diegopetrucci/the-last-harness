@@ -196,6 +196,136 @@ Paused/interrupted runs record acceptance as skipped rather than rejected. A con
 
 A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. The native child runtime does not register or advertise an `intercom` fallback, and the parent supervisor tool has no legacy list/send/ask/reply actions. Separately installed external intercom tools remain user-owned and are not overridden when TLH primary-agent filtering is disabled.
 
+## Prompt-cache heartbeat
+
+When one or more async subagent runs are live and the parent session is idle, the heartbeat silently replays the last captured provider payload through the provider stream. Each replay is a ghost request — it costs only cache-read tokens but resets the provider's prompt-cache TTL before it can expire. Without it, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
+
+### Why default-off
+
+Heartbeat sends real provider requests that spend tokens even when the parent's next turn never benefits from them. During the current trial phase the default is `enabled: false`; you opt in knowing that beats cost money and the break-even depends on your gap length and context size.
+
+### How to enable
+
+Add a `heartbeat` block to the subagent extension config in the isolated profile:
+
+File: `~/.the-last-harness/agent/extensions/subagent/config.json`
+
+```json
+{
+  "heartbeat": {
+    "enabled": true,
+    "intervalMs": 255000,
+    "maxDurationMs": 3600000,
+    "maxBeatsPerGap": 11
+  }
+}
+```
+
+Only `enabled: true` is required; the other three knobs default to the values shown. Their meanings:
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Master switch. Must be set to `true` to activate. |
+| `intervalMs` | `255000` | Beat interval in ms (~4m15s). |
+| `maxDurationMs` | `3600000` | Hard ceiling per gap (1h). |
+| `maxBeatsPerGap` | `11` | Maximum beats per gap (~break-even limit). |
+
+Install and update do **not** provision `heartbeat` keys. A `heartbeat` block added manually is preserved untouched on subsequent installs and updates.
+
+### Cost model
+
+Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The break-even is roughly 11 beats: at that point the accumulated beat cost equals approximately one full cache rewrite at input-token prices. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
+
+A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
+
+### How to read `heartbeat.jsonl`
+
+The heartbeat log is at:
+
+```
+~/.the-last-harness/agent/subagents/heartbeat.jsonl
+```
+
+Each line is a JSON record. There are two record shapes:
+
+**Per-beat records** (one per ghost request or loggable skip):
+
+| Field | Description |
+|---|---|
+| `ts` | Unix timestamp (ms) when the beat started. |
+| `sessionId` | Parent session ID. |
+| `gapId` | Identifier for the current gap (one gap = one continuous stretch of live async runs). |
+| `beatIndex` | Zero-based beat count within the gap. |
+| `model` | Model ID used for the ghost request. |
+| `provider` | Provider name. |
+| `outcome` | See outcome table below. |
+| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present for executed beats. |
+| `estCostUsd` | Estimated USD cost — present when usage and model cost rates are available. |
+| `latencyMs` | Round-trip latency for the ghost stream request. |
+
+Outcome values:
+
+| Outcome | Meaning |
+|---|---|
+| `cache_read` | The beat succeeded; the cache TTL was refreshed at read prices. |
+| `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
+| `error` | Stream or auth error. Three consecutive errors disable heartbeat for the session. |
+| `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
+| `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
+| `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |
+
+**Per-gap summary records** (one per closed gap, identified by `"type": "gap_summary"`):
+
+| Field | Description |
+|---|---|
+| `type` | Always `"gap_summary"`. |
+| `ts` | Unix timestamp when the gap closed. |
+| `sessionId`, `gapId` | Same as per-beat records. |
+| `beats` | Total ghost-stream requests sent in this gap. |
+| `beatCostUsd` | Total estimated USD spent on beats. |
+| `avoidedCostUsd` | Estimated USD avoided on cache miss, computed from cache-read tokens × (input rate − cache-read rate). |
+| `verdict` | `saved`, `wasted`, or `lost` — see below. |
+
+Verdict meanings:
+
+| Verdict | Meaning |
+|---|---|
+| `saved` | At least one beat resulted in `cache_read`; the TTL was refreshed at least once. |
+| `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
+| `lost` | The cache is considered/likely expired for this gap (290 s is a conservative client-side threshold, not proof of expiry): either no beat fired before the threshold, or prior beats were sent but the gap later reached the late-beat threshold (290 s since the last provider request) before the gap closed. |
+
+### Circuit breakers
+
+Two automatic circuit breakers limit runaway spending:
+
+1. **Error breaker**: Three consecutive `error` outcomes permanently disable heartbeat for the session (`disabled` state). The error count resets on any successful `cache_read`.
+2. **Mismatch breaker**: A single `cache_write_mismatch` outcome closes the current gap. The session continues and the next gap (if one opens) starts fresh.
+
+### Doctor output
+
+`/subagents-doctor` includes a heartbeat section. When enabled:
+
+```text
+- heartbeat: enabled
+- beats this session: 7
+- cache-read tokens: 84000
+- $0.00012 total beat cost
+- gaps: 3 saved, 1 wasted
+- circuit breaker: closed
+```
+
+When disabled:
+
+```text
+- heartbeat: disabled (enabled: false in config)
+```
+
+### How to undo
+
+Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect on the next session start (restart the Pi session so the extension picks up the new value).
+
+To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
+
 ## Acceptance and artifacts
 
 TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.

@@ -7,6 +7,7 @@ import { buildDoctorReport } from "../../src/extension/doctor.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
 import { SOURCE_PRIORITY, type SkillSource } from "../../src/agents/skills.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+import type { HeartbeatSessionSummary } from "../../src/extension/heartbeat-wiring.ts";
 
 function makeState(cwd: string): SubagentState {
   return {
@@ -235,6 +236,198 @@ describe("buildDoctorReport", () => {
           `expected source '${source}' to appear in the skills line of the doctor report`,
         );
       }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heartbeat section
+// ---------------------------------------------------------------------------
+
+describe("buildDoctorReport — heartbeat section", () => {
+  const minimalDeps = {
+    isAsyncAvailable: () => false,
+    discoverAgentsAll: () => ({
+      builtin: [],
+      package: [],
+      user: [],
+      project: [],
+      chains: [],
+      chainDiagnostics: [],
+      userDir: "",
+      projectDir: "",
+      userChainDir: "",
+      projectChainDir: "",
+      userSettingsPath: "",
+      projectSettingsPath: "",
+    }),
+    discoverAvailableSkills: () => [],
+    diagnoseIntercomBridge: () => ({
+      active: false,
+      mode: "off" as const,
+      wantsIntercom: false,
+      supervisorChannelAvailable: false,
+      extensionDir: "test",
+      orchestratorTarget: undefined,
+    }),
+  };
+
+  function makeMinimalState(): SubagentState {
+    return {
+      baseCwd: "/tmp",
+      currentSessionId: "session-hb",
+      asyncJobs: new Map(),
+      foregroundControls: new Map(),
+      lastForegroundControlId: null,
+      cleanupTimers: new Map(),
+      lastUiContext: null,
+      poller: null,
+      completionSeen: new Map(),
+      watcher: null,
+      watcherRestartTimer: null,
+      resultFileCoalescer: { schedule: () => false, clear: () => {} },
+    };
+  }
+
+  it("includes 'Heartbeat' section header in report", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-"));
+    try {
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /Heartbeat/, "report must contain a Heartbeat section");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows 'disabled' when no heartbeat summary provided", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-dis-"));
+    try {
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /heartbeat: not available|heartbeat: disabled/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows 'disabled' when heartbeat.enabled is false", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-dis2-"));
+    try {
+      const summary: HeartbeatSessionSummary = {
+        enabled: false,
+        totalBeats: 0,
+        totalCacheReadTokens: 0,
+        totalBeatCostUsd: 0,
+        gapsSaved: 0,
+        gapsWasted: 0,
+        gapsLost: 0,
+        breakerDisabled: false,
+      };
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        heartbeat: summary,
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /heartbeat: disabled/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows enabled heartbeat totals when enabled", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-en-"));
+    try {
+      const summary: HeartbeatSessionSummary = {
+        enabled: true,
+        totalBeats: 5,
+        totalCacheReadTokens: 25000,
+        totalBeatCostUsd: 0.00075,
+        gapsSaved: 2,
+        gapsWasted: 1,
+        gapsLost: 0,
+        breakerDisabled: false,
+      };
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        heartbeat: summary,
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /heartbeat: enabled/);
+      assert.match(report, /beats this session: 5/);
+      assert.match(report, /cache-read tokens: 25000/);
+      assert.match(report, /gaps:.*saved.*wasted/);
+      assert.match(report, /circuit breaker: closed/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows circuit breaker open when disabled", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-brk-"));
+    try {
+      const summary: HeartbeatSessionSummary = {
+        enabled: true,
+        totalBeats: 3,
+        totalCacheReadTokens: 0,
+        totalBeatCostUsd: 0,
+        gapsSaved: 0,
+        gapsWasted: 1,
+        gapsLost: 0,
+        breakerDisabled: true,
+      };
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        heartbeat: summary,
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /circuit breaker: open/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
