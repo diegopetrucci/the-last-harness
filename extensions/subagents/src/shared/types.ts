@@ -1014,7 +1014,7 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface AsyncResultArtifactResultItem {
   agent: string;
   success: boolean;
-  output?: string;
+  output: string;
   error?: string;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals;
@@ -1060,7 +1060,6 @@ export interface AsyncResultArtifactResultItem {
  *
  * Fields are optional when any writer legitimately omits them:
  * - `lifecycleArtifactVersion` — omitted by the stale-run repair writer
- * - `summary`/`timestamp` — may be `undefined` in the gate-rejection writer
  * - Most top-level fields — omitted by gate-rejection and repair writers
  */
 export interface AsyncResultArtifact {
@@ -1070,7 +1069,7 @@ export interface AsyncResultArtifact {
   mode: SubagentRunMode;
   success: boolean;
   state: AsyncLifecycleState;
-  summary?: string;
+  summary: string;
   error?: string;
   timeoutMs?: number;
   deadlineAt?: number;
@@ -1085,7 +1084,7 @@ export interface AsyncResultArtifact {
   outputs?: ChainOutputMap;
   workflowGraph?: WorkflowGraphSnapshot;
   exitCode: number;
-  timestamp?: number;
+  timestamp: number;
   durationMs: number;
   totalTokens?: TokenUsage;
   totalCost?: CostSummary;
