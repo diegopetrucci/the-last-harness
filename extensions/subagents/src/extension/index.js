@@ -568,6 +568,7 @@ export default function registerSubagentExtension(pi) {
     };
     pi.on("session_start", (_event, ctx) => {
         if (resolvedHbConfig.enabled) {
+            hbWiring.resetSession();
             heartbeatSessionCtx = ctx;
             hbWiring.onIdle(ctx.isIdle?.() ?? true);
         }

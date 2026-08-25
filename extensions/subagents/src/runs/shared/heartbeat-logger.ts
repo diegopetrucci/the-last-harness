@@ -18,7 +18,7 @@ import type { HeartbeatOutcome, HeartbeatUsage } from "./heartbeat-state.ts";
 // ---------------------------------------------------------------------------
 
 export interface HeartbeatLogRecord {
-  /** ISO-8601 wall-clock timestamp at beat completion. */
+  /** Epoch milliseconds at beat start. */
   ts: number;
   /** Session ID of the parent Pi session. */
   sessionId: string;

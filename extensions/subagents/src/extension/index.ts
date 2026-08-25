@@ -805,6 +805,10 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     if (resolvedHbConfig.enabled) {
+      // Reset session-scoped state (error breaker, consecutive errors, session
+      // totals) for the new session.  Must run before capturing ctx so stale
+      // state from the previous session does not persist into this one.
+      hbWiring.resetSession();
       // Heartbeat: capture live session ctx so the controller can resolve the
       // model registry lazily at beat time (same captured-ctx pattern as control
       // notices; ctx is not available at extension setup time).

@@ -148,7 +148,7 @@ describe("decideBeat — skip conditions", () => {
     assert.equal(d.fire, true);
   });
 
-  it("does not fire just before the late threshold", () => {
+  it("still fires one ms before the late threshold", () => {
     const state = createHeartbeatState();
     openGap(state, "g", 0);
     // One ms before the threshold

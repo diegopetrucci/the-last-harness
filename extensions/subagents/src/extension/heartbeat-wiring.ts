@@ -230,6 +230,14 @@ export interface HeartbeatWiring {
    * async runs when the parent becomes idle again.
    */
   tryRearm(liveRunCount: number, sessionId: string | null): void;
+  /**
+   * Reset session-scoped state for a new session (session_start).
+   *
+   * Clears the error-breaker, consecutive-error count, session totals, and any
+   * open gap state.  Does NOT reset the resolved config.  Safe to call when a
+   * gap is somehow still open — discards it without emitting a duplicate entry.
+   */
+  resetSession(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +304,7 @@ export function createHeartbeatWiring(
       disarm() {},
       destroy() {},
       tryRearm() {},
+      resetSession() {},
       getSessionSummary(): HeartbeatSessionSummary {
         return {
           enabled: false,
@@ -573,6 +582,24 @@ export function createHeartbeatWiring(
       // currently active (e.g. after a parent turn disarmed the gap).
       if (!isIdleState || liveRunCount <= 0 || currentGap) return;
       openGapIfNeeded(sessionId);
+    },
+
+    resetSession(): void {
+      // Discard any open gap without emitting a duplicate summary.
+      // (session_before_switch/fork already called disarm() which emits a
+      // summary; this guard handles the rare case where a gap is still open.)
+      currentGap = null;
+      // Reset session totals for the new session.
+      sessionTotalBeats = 0;
+      sessionTotalCacheReadTokens = 0;
+      sessionTotalBeatCostUsd = 0;
+      sessionGapsSaved = 0;
+      sessionGapsWasted = 0;
+      sessionGapsLost = 0;
+      sessionBreakerDisabled = false;
+      // Reset controller state (disabled flag, consecutive errors, in-flight,
+      // open gap state) without emitting a log entry.
+      controller.resetSession();
     },
 
     getSessionSummary(): HeartbeatSessionSummary {

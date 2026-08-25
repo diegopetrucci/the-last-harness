@@ -68,6 +68,13 @@ export interface HeartbeatMachineState {
 /** If elapsed since lastRequestAt >= this value, the cache TTL is likely expired. */
 export const LATE_BEAT_THRESHOLD_MS = 290_000;
 
+/**
+ * Minimum re-arm delay applied on skip paths (not_idle, in_flight, no-capture).
+ * Prevents a busy-loop of setTimeout(0) when elapsed >= intervalMs and the
+ * skip does not advance lastRequestAt.
+ */
+export const MIN_REARM_DELAY_MS = 1_000;
+
 /** If cacheWrite tokens exceed this in a ghost request, stop the gap. */
 export const CACHE_WRITE_MISMATCH_THRESHOLD = 256;
 

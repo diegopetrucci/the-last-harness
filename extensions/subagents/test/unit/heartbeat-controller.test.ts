@@ -1691,3 +1691,183 @@ describe("createHeartbeatController — stale-generation in-flight guard", () =>
     ctrl.destroy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: MIN_REARM_DELAY_MS — no busy-loop on skip paths (finding 1 — PR review)
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatController — MIN_REARM_DELAY_MS floor on skip re-arm", () => {
+  it("not_idle skip past intervalMs re-arms with >=1s delay, not 0", () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const scheduledDelays: number[] = [];
+
+    // Wrap the fake setTimeout to capture delays.
+    const trackingSetTimeout = (fn: () => void, ms: number): FakeHandle => {
+      scheduledDelays.push(ms);
+      return timer.setTimeout(fn, ms);
+    };
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: trackingSetTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: null,
+      ...sink,
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(false); // not idle — every timer fire will be a not_idle skip
+    ctrl.startGap("g-spin", "sess-spin");
+
+    // startGap arms the timer (delay = intervalMs - 0 = 10000 from capturedAt=0).
+    // Advance well past intervalMs so elapsed >= intervalMs at fire time.
+    timer.advance(BASE_CONFIG.intervalMs + 5_000);
+    timer.firePending();
+
+    // The skip re-arm delay must be >= MIN_REARM_DELAY_MS (1000 ms), not 0.
+    // The first delay is from startGap (initial arm), the second is from the skip re-arm.
+    const rearmDelays = scheduledDelays.slice(1); // skip the initial arm
+    assert.ok(rearmDelays.length >= 1, "skip must re-arm the timer");
+    for (const d of rearmDelays) {
+      assert.ok(d >= 1_000, `re-arm delay must be >=1000 ms, got ${d}`);
+    }
+    ctrl.destroy();
+  });
+
+  it("no-capture skip past intervalMs re-arms with >=1s delay, not 0", () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const scheduledDelays: number[] = [];
+
+    const trackingSetTimeout = (fn: () => void, ms: number): FakeHandle => {
+      scheduledDelays.push(ms);
+      return timer.setTimeout(fn, ms);
+    };
+
+    // No capture ever provided; beat will fire as "no capture" skip.
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: trackingSetTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: null,
+      ...sink,
+    });
+
+    // Open gap without any provider request capture.
+    ctrl.onIdle(true);
+    ctrl.startGap("g-nocapture", "sess-nocapture");
+
+    // Advance past intervalMs so elapsed >= intervalMs at fire time.
+    timer.advance(BASE_CONFIG.intervalMs + 5_000);
+    timer.firePending();
+
+    const rearmDelays = scheduledDelays.slice(1);
+    assert.ok(rearmDelays.length >= 1, "no-capture skip must re-arm the timer");
+    for (const d of rearmDelays) {
+      assert.ok(d >= 1_000, `re-arm delay must be >=1000 ms, got ${d}`);
+    }
+    ctrl.destroy();
+  });
+
+  it("first beat scheduling (initial arm) is unaffected by MIN_REARM_DELAY_MS", () => {
+    // The initial armTimer() (on startGap or onProviderRequest) must still use
+    // max(0, intervalMs - elapsed), so a genuinely-due first beat fires promptly.
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const scheduledDelays: number[] = [];
+
+    const trackingSetTimeout = (fn: () => void, ms: number): FakeHandle => {
+      scheduledDelays.push(ms);
+      return timer.setTimeout(fn, ms);
+    };
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: trackingSetTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: null,
+      ...sink,
+      streamProvider() {
+        return makeStream([makeStartEvent(), makeTextStartEvent()]);
+      },
+    });
+
+    // Capture at t=0, advance 5s (well within intervalMs), open gap.
+    ctrl.onProviderRequest({}, makeModel());
+    timer.advance(5_000);
+    ctrl.onIdle(true);
+    ctrl.startGap("g-first", "sess-first");
+
+    // Initial arm delay must be intervalMs - 5000 = 5000 (not floored to 1000).
+    assert.ok(scheduledDelays.length >= 1, "initial arm must schedule a timer");
+    const initialDelay = scheduledDelays[scheduledDelays.length - 1]!;
+    assert.ok(
+      initialDelay > 1_000,
+      `initial arm delay must be >1000 ms when elapsed is small, got ${initialDelay}`,
+    );
+    ctrl.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: resetSession — session state cleared across session switch (finding 2 — PR review)
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatController — resetSession", () => {
+  it("resetSession re-enables a breaker-tripped session so startGap works again", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    let streamCalls = 0;
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: null,
+      ...sink,
+      streamProvider() {
+        streamCalls++;
+        return (async function* () {
+          throw new Error("always fails");
+          /* eslint-disable no-unreachable */
+          yield makeStartEvent();
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("g-breaker", "sess-1");
+
+    // Trip the error breaker (3 consecutive errors).
+    for (let i = 0; i < 3; i++) {
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const beforeReset = streamCalls;
+
+    // Verify breaker is tripped: no more stream calls.
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(streamCalls, beforeReset, "session must be disabled after 3 errors");
+
+    // Reset session — should clear the breaker.
+    ctrl.resetSession();
+
+    // Now startGap a new session and verify the stream fires again.
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.startGap("g-new", "sess-2");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.ok(
+      streamCalls > beforeReset,
+      "resetSession must re-enable heartbeat after breaker trip",
+    );
+    ctrl.destroy();
+  });
+});

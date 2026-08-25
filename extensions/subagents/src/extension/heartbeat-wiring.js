@@ -73,6 +73,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             disarm() { },
             destroy() { },
             tryRearm() { },
+            resetSession() { },
             getSessionSummary() {
                 return {
                     enabled: false,
@@ -275,6 +276,17 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             if (!isIdleState || liveRunCount <= 0 || currentGap)
                 return;
             openGapIfNeeded(sessionId);
+        },
+        resetSession() {
+            currentGap = null;
+            sessionTotalBeats = 0;
+            sessionTotalCacheReadTokens = 0;
+            sessionTotalBeatCostUsd = 0;
+            sessionGapsSaved = 0;
+            sessionGapsWasted = 0;
+            sessionGapsLost = 0;
+            sessionBreakerDisabled = false;
+            controller.resetSession();
         },
         getSessionSummary() {
             return {

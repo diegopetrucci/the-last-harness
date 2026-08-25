@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {} from "./heartbeat-config.js";
-import { beginBeat, CACHE_WRITE_MISMATCH_THRESHOLD, closeGap, completeBeat, createHeartbeatState, decideBeat, openGap, recordProviderRequest, } from "./heartbeat-state.js";
+import { beginBeat, CACHE_WRITE_MISMATCH_THRESHOLD, closeGap, completeBeat, createHeartbeatState, decideBeat, MIN_REARM_DELAY_MS, openGap, recordProviderRequest, } from "./heartbeat-state.js";
 import { createHeartbeatLogger, } from "./heartbeat-logger.js";
 import { getAgentDir } from "../../shared/utils.js";
 const MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
@@ -45,6 +45,7 @@ export function createHeartbeatController(config, deps = {}) {
             startGap() { },
             endGap() { },
             destroy() { },
+            resetSession() { },
         };
     }
     const now = deps.now ?? Date.now;
@@ -81,6 +82,17 @@ export function createHeartbeatController(config, deps = {}) {
             cancel(timerHandle);
             timerHandle = undefined;
         }
+    }
+    function rearmAfterSkip() {
+        if (timerHandle !== undefined) {
+            cancel(timerHandle);
+            timerHandle = undefined;
+        }
+        if (destroyed || !state.gap)
+            return;
+        const elapsed = Math.max(0, now() - state.gap.lastRequestAt);
+        const delay = Math.max(MIN_REARM_DELAY_MS, Math.max(0, config.intervalMs - elapsed));
+        timerHandle = schedule(onTimerFire, delay);
     }
     function abortInFlight() {
         if (beatAbortController) {
@@ -246,7 +258,7 @@ export function createHeartbeatController(config, deps = {}) {
         const decision = decideBeat(config, state, isIdle, now());
         if (decision.fire) {
             if (!capture) {
-                armTimer();
+                rearmAfterSkip();
                 return;
             }
             beginBeat(state);
@@ -279,7 +291,7 @@ export function createHeartbeatController(config, deps = {}) {
             cancelTimer();
             return;
         }
-        armTimer();
+        rearmAfterSkip();
     }
     return {
         onProviderRequest(payload, model) {
@@ -337,6 +349,14 @@ export function createHeartbeatController(config, deps = {}) {
             destroyed = true;
             cancelTimer();
             abortInFlight();
+        },
+        resetSession() {
+            cancelTimer();
+            abortInFlight();
+            state.disabled = false;
+            state.consecutiveErrors = 0;
+            state.inFlight = false;
+            state.gap = null;
         },
     };
 }

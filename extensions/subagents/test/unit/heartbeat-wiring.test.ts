@@ -1382,3 +1382,141 @@ describe("createHeartbeatWiring — disabled: zero hook registration (finding E)
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: resetSession — session state cleared on session switch (finding 2 — PR review)
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatWiring — resetSession", () => {
+  it("session totals are zeroed after resetSession", async () => {
+    const pi = makeFakePi();
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    let clock = 0;
+    const nowFn = () => (clock += 1000);
+
+    const deps = makeTestDeps({ written, timers, nowFn });
+    const wiring = createHeartbeatWiring(pi, { heartbeat: { enabled: true } }, deps);
+
+    // Open a gap, fire a beat (cache_read), and close the gap.
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "sess-1");
+
+    // Fire the timer (stream produces a cache_read beat via fake streamProvider).
+    // Since makeTestDeps doesn't inject a streamProvider, we just close the gap
+    // directly to accumulate session totals.
+    wiring.disarm(); // closes gap, increments session totals (lost verdict, 0 beats)
+
+    const summary1 = wiring.getSessionSummary();
+    // gapsLost should be 1 (no beats fired).
+    assert.equal(summary1.enabled, true);
+    assert.equal(summary1.gapsLost, 1, "should have one gap before reset");
+
+    // Reset session — totals should be cleared.
+    wiring.resetSession();
+
+    const summary2 = wiring.getSessionSummary();
+    assert.equal(summary2.totalBeats, 0, "totalBeats must be 0 after resetSession");
+    assert.equal(summary2.gapsSaved, 0, "gapsSaved must be 0 after resetSession");
+    assert.equal(summary2.gapsWasted, 0, "gapsWasted must be 0 after resetSession");
+    assert.equal(summary2.gapsLost, 0, "gapsLost must be 0 after resetSession");
+    assert.equal(
+      summary2.breakerDisabled,
+      false,
+      "breakerDisabled must be false after resetSession",
+    );
+
+    wiring.destroy();
+  });
+
+  it("resetSession is idempotent and safe when no gap is active", () => {
+    const pi = makeFakePi();
+    const wiring = createHeartbeatWiring(pi, { heartbeat: { enabled: true } }, makeTestDeps());
+    // Should not throw even when no gap is open.
+    assert.doesNotThrow(() => {
+      wiring.resetSession();
+      wiring.resetSession();
+    });
+    wiring.destroy();
+  });
+
+  it("after resetSession breaker-tripped controller allows new gaps", async () => {
+    const pi = makeFakePi();
+    const written: string[] = [];
+    let clock = 0;
+    const nowFn = () => (clock += 1);
+
+    // Use a streamProvider that always errors to trip the breaker.
+    let streamCalls = 0;
+    const timerQueue: Array<{ fn: () => void; at: number }> = [];
+    const wiringDeps: HeartbeatWiringDeps = {
+      logPath: FAKE_LOG_PATH,
+      appendFileSync: (_file, data) => written.push(data),
+      mkdirSync: () => {},
+      now: nowFn,
+      setTimeout: ((fn, ms) => {
+        timerQueue.push({ fn, at: clock + ms });
+        return makeFakeHandle();
+      }) as HeartbeatWiringDeps["setTimeout"],
+      clearTimeout: () => {},
+      streamProvider: () =>
+        (async function* () {
+          streamCalls++;
+          throw new Error("always errors");
+          /* eslint-disable no-unreachable */
+          yield {
+            type: "text_start",
+            contentIndex: 0,
+            partial: {
+              role: "assistant",
+              content: [],
+              api: "anthropic-messages" as Api,
+              provider: "anthropic",
+              model: "claude-sonnet-4-20250514",
+              usage: makeUsage({ cacheRead: 0 }),
+              stopReason: "pending",
+              timestamp: 0,
+            },
+          } as AssistantMessageEvent;
+        })(),
+    };
+
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true, intervalMs: 10 } },
+      wiringDeps,
+    );
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "sess-breaker");
+
+    // Fire timers 3 times to trip the breaker (3 consecutive errors).
+    for (let i = 0; i < 3; i++) {
+      const pending = timerQueue.splice(0);
+      for (const { fn } of pending) fn();
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    const beforeReset = streamCalls;
+    // Trip confirmed: no more stream calls after breaker.
+    const leftover = timerQueue.splice(0);
+    for (const { fn } of leftover) fn();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(streamCalls, beforeReset, "breaker must prevent stream calls");
+
+    // Reset session and open a new gap.
+    wiring.resetSession();
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "sess-after-reset");
+
+    const pending2 = timerQueue.splice(0);
+    for (const { fn } of pending2) fn();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.ok(streamCalls > beforeReset, "resetSession must allow new beats after breaker trip");
+
+    wiring.destroy();
+  });
+});

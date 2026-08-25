@@ -1,4 +1,5 @@
 export const LATE_BEAT_THRESHOLD_MS = 290_000;
+export const MIN_REARM_DELAY_MS = 1_000;
 export const CACHE_WRITE_MISMATCH_THRESHOLD = 256;
 export const MAX_CONSECUTIVE_ERRORS = 3;
 export function createHeartbeatState() {

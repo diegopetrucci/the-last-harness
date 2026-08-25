@@ -31,6 +31,7 @@ import {
   completeBeat,
   createHeartbeatState,
   decideBeat,
+  MIN_REARM_DELAY_MS,
   openGap,
   recordProviderRequest,
   type HeartbeatMachineState,
@@ -190,6 +191,15 @@ export interface HeartbeatController {
   endGap(): void;
   /** Cancel the pending timer and abort any in-flight beat. */
   destroy(): void;
+  /**
+   * Reset session-scoped state for a new session.
+   *
+   * Clears the error-breaker (disabled flag), consecutive-error count, and
+   * any open gap state.  Does NOT reset the resolved config.
+   * Safe to call when a gap is somehow still open — closes it without
+   * emitting a duplicate log entry.
+   */
+  resetSession(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +274,7 @@ export function createHeartbeatController(
       startGap() {},
       endGap() {},
       destroy() {},
+      resetSession() {},
     };
   }
 
@@ -323,6 +334,24 @@ export function createHeartbeatController(
       cancel(timerHandle);
       timerHandle = undefined;
     }
+  }
+
+  /**
+   * Re-arm the timer after a skip (not_idle, in_flight, or no-capture).
+   *
+   * Applies MIN_REARM_DELAY_MS as a floor so the controller never spins on
+   * setTimeout(0) when elapsed >= intervalMs and the skip did not advance
+   * lastRequestAt.  The initial-scheduling path (armTimer) is unchanged.
+   */
+  function rearmAfterSkip(): void {
+    if (timerHandle !== undefined) {
+      cancel(timerHandle);
+      timerHandle = undefined;
+    }
+    if (destroyed || !state.gap) return;
+    const elapsed = Math.max(0, now() - state.gap.lastRequestAt);
+    const delay = Math.max(MIN_REARM_DELAY_MS, Math.max(0, config.intervalMs - elapsed));
+    timerHandle = schedule(onTimerFire, delay);
   }
 
   function abortInFlight(): void {
@@ -583,8 +612,9 @@ export function createHeartbeatController(
 
     if (decision.fire) {
       if (!capture) {
-        // No captured payload yet — skip silently, re-arm.
-        armTimer();
+        // No captured payload yet — skip silently, re-arm with minimum delay
+        // so elapsed >= intervalMs does not cause a busy-loop on setTimeout(0).
+        rearmAfterSkip();
         return;
       }
       beginBeat(state);
@@ -626,8 +656,9 @@ export function createHeartbeatController(
       return;
     }
 
-    // Non-terminal skip (not_idle, in_flight, etc.) — re-arm.
-    armTimer();
+    // Non-terminal skip (not_idle, in_flight, etc.) — re-arm with minimum
+    // delay so elapsed >= intervalMs does not cause a busy-loop on setTimeout(0).
+    rearmAfterSkip();
   }
 
   // -------------------------------------------------------------------------
@@ -708,6 +739,19 @@ export function createHeartbeatController(
       destroyed = true;
       cancelTimer();
       abortInFlight();
+    },
+
+    resetSession(): void {
+      // Cancel any pending timer and abort any in-flight beat.
+      cancelTimer();
+      abortInFlight();
+      // Reset all session-scoped state without emitting a log entry.
+      // (The wiring is responsible for discarding the gap accumulator
+      // and resetting session totals before calling this.)
+      state.disabled = false;
+      state.consecutiveErrors = 0;
+      state.inFlight = false;
+      state.gap = null;
     },
   };
 }
