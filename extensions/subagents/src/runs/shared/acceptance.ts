@@ -20,6 +20,7 @@ import type {
   ResolvedAcceptanceGate,
   SubagentRunMode,
 } from "../../shared/types.ts";
+import { boundChildError, MAX_CHILD_ERROR_BYTES } from "./child-protocol.ts";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.ts";
 
 const LEVEL_RANK: Record<Exclude<AcceptanceLevel, "auto">, number> = {
@@ -102,6 +103,12 @@ function requiredEvidenceForLevel(
   }
 }
 
+// Keep legacy acceptance inference's historical write regex unchanged except
+// for the known non-imperative fix compounds.
+function neutralizeLegacyFixCompounds(task: string): string {
+  return task.replace(/\b(?:must|no)-fix\b/g, "compound");
+}
+
 function inferLegacyLevel(input: {
   agentName: string;
   task?: string;
@@ -122,9 +129,10 @@ function inferLegacyLevel(input: {
     /\b(?:read[- ]only|review[- ]only|do not edit|don't edit|no edits|without edits|inspect|summari[sz]e)\b/.test(
       task,
     );
+  const writeTaskText = neutralizeLegacyFixCompounds(task);
   const writeTask =
     /\b(?:fix|implement|update|write|edit|modify|migrate|release|security|delete|remove|refactor|commit)\b/.test(
-      task,
+      writeTaskText,
     ) || /\bworker\b/.test(agent);
   const risky =
     Boolean(input.async && writeTask) ||
@@ -1077,6 +1085,27 @@ function validateStringArrayField(errors: string[], value: unknown, pathLabel: s
   }
 }
 
+/**
+ * Normalize report string arrays at the parse boundary: empty and
+ * whitespace-only entries do not count as evidence. Non-string entries are
+ * rejected by validation before this function runs.
+ */
+function normalizeAcceptanceReportStringArrays(report: AcceptanceReport): AcceptanceReport {
+  const normalizeArray = (items: string[] | undefined): string[] | undefined => {
+    if (!Array.isArray(items) || items.length === 0) return items;
+    const filtered = items.filter((item) => item.trim().length > 0);
+    return filtered.length > 0 ? filtered : undefined;
+  };
+  return {
+    ...report,
+    changedFiles: normalizeArray(report.changedFiles),
+    testsAddedOrUpdated: normalizeArray(report.testsAddedOrUpdated),
+    validationOutput: normalizeArray(report.validationOutput),
+    residualRisks: normalizeArray(report.residualRisks),
+    reviewFindings: normalizeArray(report.reviewFindings),
+  };
+}
+
 function validateAcceptanceReport(
   value: unknown,
   pathLabel = "",
@@ -1174,20 +1203,23 @@ function validateAcceptanceReport(
   if (report.notes !== undefined && typeof report.notes !== "string")
     pushTypeError(errors, pathFor(pathLabel, "notes"), "string", report.notes);
   if (errors.length > 0) return { errors };
+  // Empty string-array entries are not evidence. Normalize them before the
+  // field-presence check so a report containing only blank entries is rejected.
+  const normalizedReport = normalizeAcceptanceReportStringArrays(report);
   const hasReportField =
-    report.criteriaSatisfied !== undefined ||
-    report.changedFiles !== undefined ||
-    report.testsAddedOrUpdated !== undefined ||
-    report.commandsRun !== undefined ||
-    report.validationOutput !== undefined ||
-    report.residualRisks !== undefined ||
-    report.noStagedFiles !== undefined ||
-    report.diffSummary !== undefined ||
-    report.manualNotes !== undefined ||
-    report.notes !== undefined ||
-    report.reviewFindings !== undefined;
+    normalizedReport.criteriaSatisfied !== undefined ||
+    normalizedReport.changedFiles !== undefined ||
+    normalizedReport.testsAddedOrUpdated !== undefined ||
+    normalizedReport.commandsRun !== undefined ||
+    normalizedReport.validationOutput !== undefined ||
+    normalizedReport.residualRisks !== undefined ||
+    normalizedReport.noStagedFiles !== undefined ||
+    normalizedReport.diffSummary !== undefined ||
+    normalizedReport.manualNotes !== undefined ||
+    normalizedReport.notes !== undefined ||
+    normalizedReport.reviewFindings !== undefined;
   return hasReportField
-    ? { report, errors }
+    ? { report: normalizedReport, errors }
     : {
         errors: [
           `${pathLabel || "acceptance-report"}: expected at least one acceptance report field`,
@@ -1574,4 +1606,24 @@ export function acceptanceFailureMessage(ledger: AcceptanceLedger): string | und
     return "Acceptance review required but no automatic reviewer result is available.";
   if (ledger.reviewResult?.status === "blockers") return "Acceptance review found blockers.";
   return "Acceptance rejected.";
+}
+
+/**
+ * Keep an acceptance failure visible when a child error already consumed the
+ * surfaced error budget. The acceptance message is intentionally retained as
+ * the suffix; child diagnostics are bounded to the remaining UTF-8 budget.
+ */
+export function composeAcceptanceFailureError(
+  childError: string | undefined,
+  acceptanceFailure: string,
+): string {
+  const boundedAcceptance =
+    boundChildError(acceptanceFailure, MAX_CHILD_ERROR_BYTES) ?? "Acceptance rejected.";
+  if (!childError) return boundedAcceptance;
+
+  const acceptanceSuffix = `\n${boundedAcceptance}`;
+  const suffixBytes = Buffer.byteLength(acceptanceSuffix, "utf-8");
+  if (suffixBytes >= MAX_CHILD_ERROR_BYTES) return boundedAcceptance;
+  const boundedChild = boundChildError(childError, MAX_CHILD_ERROR_BYTES - suffixBytes);
+  return boundedChild ? `${boundedChild}${acceptanceSuffix}` : boundedAcceptance;
 }

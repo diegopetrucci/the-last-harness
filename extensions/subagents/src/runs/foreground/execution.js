@@ -7,6 +7,7 @@ import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESP
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, extractToolArgsPreview, extractTextFromContent, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
+import { CHILD_PROTOCOL_HARD_KILL_GRACE_MS, appendBoundedChildMessage, boundChildError, boundChildStderrError, claimChildTerminalReason, childUsageNumber, createBoundedByteTail, createBoundedLineReader, formatBoundedStderr, formatProtocolOutputLimit, parseChildProtocolInput, } from "../shared/child-protocol.js";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { buildSubagentSpawnEnv, getPiSpawnCommand } from "../shared/pi-spawn.js";
 import { createJsonlWriter } from "../../shared/jsonl-writer.js";
@@ -16,9 +17,9 @@ import { scheduleDeadline } from "../shared/deadline-timer.js";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropNote, } from "../shared/pi-args.js";
 import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
-import { buildFallbackModelList, buildModelCandidates, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
+import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
@@ -49,6 +50,10 @@ function finalAssistantStopReason(messages) {
     return undefined;
 }
 function finalizeTerminationReason(result) {
+    if (result.protocolOutputLimit) {
+        result.terminationReason = "output_limit";
+        return;
+    }
     result.terminationReason = resolveSubagentTerminationReason({
         cancelled: Boolean(result.cancel),
         paused: Boolean(result.pause),
@@ -297,36 +302,85 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         shared.attemptNotes.push(thinkingDropNote);
     const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
     const modelIdentity = canonicalSubagentModelIdentity(modelArg, thinkingDropNote || typeof effectiveThinking !== "string" ? undefined : effectiveThinking);
-    const { args, env: sharedEnv, tempDir, } = buildPiArgs({
-        baseArgs: ["--mode", "json", "-p"],
-        task,
-        sessionEnabled: shared.sessionEnabled,
-        sessionDir: options.sessionDir,
-        sessionFile: options.sessionFile,
-        model: modelArg,
-        thinking: effectiveThinking,
-        availableModels: options.availableModels,
-        preferredModelProvider: options.preferredModelProvider,
-        systemPromptMode: agent.systemPromptMode,
-        inheritProjectContext: agent.inheritProjectContext,
-        inheritSkills: agent.inheritSkills,
-        requireReadTool: Boolean(shared.resolvedSkillNames?.length),
-        tools: agent.tools,
-        extensions: agent.extensions,
-        subagentOnlyExtensions: agent.subagentOnlyExtensions,
-        systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
-        cwd: options.cwd ?? runtimeCwd,
-        promptFileStem: agent.name,
-        intercomSessionName: options.intercomSessionName,
-        orchestratorIntercomTarget: options.orchestratorIntercomTarget,
-        runId: options.runId,
-        childAgentName: agent.name,
-        childIndex: options.index ?? 0,
-        parentSessionId: options.parentSessionId,
-        structuredOutput: options.structuredOutput,
-        steerInboxDir: options.steerInboxDir,
-        toolBudget: options.toolBudget,
-    });
+    let args;
+    let sharedEnv;
+    let tempDir;
+    try {
+        ({
+            args,
+            env: sharedEnv,
+            tempDir,
+        } = buildPiArgs({
+            baseArgs: ["--mode", "json", "-p"],
+            task,
+            sessionEnabled: shared.sessionEnabled,
+            sessionDir: options.sessionDir,
+            sessionFile: options.sessionFile,
+            model: modelArg,
+            thinking: effectiveThinking,
+            availableModels: options.availableModels,
+            preferredModelProvider: options.preferredModelProvider,
+            systemPromptMode: agent.systemPromptMode,
+            inheritProjectContext: agent.inheritProjectContext,
+            inheritSkills: agent.inheritSkills,
+            requireReadTool: Boolean(shared.resolvedSkillNames?.length),
+            tools: agent.tools,
+            extensions: agent.extensions,
+            subagentOnlyExtensions: agent.subagentOnlyExtensions,
+            systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
+            cwd: options.cwd ?? runtimeCwd,
+            promptFileStem: agent.name,
+            intercomSessionName: options.intercomSessionName,
+            orchestratorIntercomTarget: options.orchestratorIntercomTarget,
+            runId: options.runId,
+            childAgentName: agent.name,
+            childIndex: options.index ?? 0,
+            parentSessionId: options.parentSessionId,
+            structuredOutput: options.structuredOutput,
+            steerInboxDir: options.steerInboxDir,
+            toolBudget: options.toolBudget,
+        }));
+    }
+    catch (error) {
+        const message = boundChildError(error instanceof Error ? error.message : String(error)) ??
+            "Unknown child setup error.";
+        const now = Date.now();
+        const progress = {
+            index: options.index ?? 0,
+            agent: agent.name,
+            status: "failed",
+            task,
+            skills: shared.resolvedSkillNames,
+            recentTools: [],
+            recentOutput: [...shared.attemptNotes, message],
+            toolCount: 0,
+            tokens: 0,
+            durationMs: 0,
+            lastActivityAt: now,
+            error: message,
+        };
+        return {
+            agent: agent.name,
+            task: shared.originalTask ?? task,
+            exitCode: 1,
+            ...(options.tkTicket ? { tkTicket: options.tkTicket } : {}),
+            messages: [],
+            usage: emptyUsage(),
+            model: modelArg,
+            ...(modelIdentity ? { thinking: modelIdentity.thinking, modelIdentity } : {}),
+            artifactPaths: shared.artifactPaths,
+            transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
+            skills: shared.resolvedSkillNames,
+            skillsWarning: shared.skillsWarning,
+            ...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
+            ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
+            error: message,
+            finalOutput: message,
+            outputMode: options.outputMode ?? "inline",
+            progress,
+            progressSummary: { toolCount: 0, tokens: 0, durationMs: 0 },
+        };
+    }
     const result = {
         agent: agent.name,
         task: shared.originalTask ?? task,
@@ -397,6 +451,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     }
     const spawnEnv = buildSubagentSpawnEnv(process.env, sharedEnv, getSubagentDepthEnv(options.maxSubagentDepth));
     let observedMutationAttempt = false;
+    const messageLedger = { bytes: 0, sizes: [] };
     let supervisorPauseRequested = false;
     const exitCode = await new Promise((resolve) => {
         const spawnSpec = getPiSpawnCommand(args);
@@ -410,7 +465,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         });
         const processGroupId = ownsProcessGroup && typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : undefined;
         const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
-        let buf = "";
         let processClosed = false;
         let settled = false;
         let detached = false;
@@ -424,6 +478,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         let timeoutTimer;
         let timeoutTerminationTimer;
         let timeoutHardKillTimer;
+        let protocolLimitHardKillTimer;
+        let protocolOutputLimit;
+        const terminalReason = {};
         let turnBudgetSoftReached = false;
         let turnBudgetTerminationTimer;
         let turnBudgetHardKillTimer;
@@ -450,6 +507,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 clearTimeout(timeoutHardKillTimer);
                 timeoutHardKillTimer = undefined;
             }
+        };
+        const clearProtocolLimitHardKillTimer = () => {
+            if (!protocolLimitHardKillTimer)
+                return;
+            clearTimeout(protocolLimitHardKillTimer);
+            protocolLimitHardKillTimer = undefined;
         };
         const detachForIntercom = () => {
             detached = true;
@@ -487,6 +550,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         };
         const pauseForSupervisor = (pause) => {
             if (supervisorPauseRequested || detached || processClosed || settled)
+                return;
+            if (!claimChildTerminalReason(terminalReason, "paused"))
                 return;
             const ownerPid = processGroupId;
             result.pause = {
@@ -588,6 +653,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 return;
             settled = true;
             clearFinalDrainTimers();
+            clearProtocolLimitHardKillTimer();
             clearStdioGuard();
             clearTimeoutTimers();
             clearTurnBudgetTimers();
@@ -675,9 +741,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 result.timedOut ||
                 result.turnBudgetExceeded ||
                 interruptedByControl ||
+                protocolOutputLimit ||
                 processClosed ||
                 settled ||
                 detached)
+                return;
+            if (!claimChildTerminalReason(terminalReason, "turn_budget_exceeded"))
                 return;
             const message = turnBudgetExceededMessage(budget, turnCount);
             result.turnBudgetExceeded = true;
@@ -771,28 +840,23 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (!line.trim())
                 return;
             jsonlWriter.writeLine(line);
-            let parsed;
-            try {
-                parsed = JSON.parse(line);
-            }
-            catch {
+            const parsed = parseChildProtocolInput(line);
+            if (parsed.kind === "raw") {
                 shared.transcriptWriter?.writeStdoutLine(line);
                 return;
             }
-            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+            if (parsed.kind === "unknown") {
                 shared.transcriptWriter?.writeStdoutLine(line);
                 return;
             }
-            const evt = parsed;
+            const evt = parsed.event;
             shared.transcriptWriter?.writeChildEvent(evt);
             const now = Date.now();
             progress.durationMs = now - startTime;
             progress.lastActivityAt = now;
             updateActivityState(now);
             if (evt.type === "tool_execution_start") {
-                const toolArgs = evt.args && typeof evt.args === "object" && !Array.isArray(evt.args)
-                    ? evt.args
-                    : {};
+                const toolArgs = evt.args ?? {};
                 let shouldDetachForBlockingIntercom = false;
                 let supervisorPause;
                 if (options.allowIntercomDetach &&
@@ -859,7 +923,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 fireUpdate();
             }
             if (evt.type === "message_end" && evt.message) {
-                (result.messages ??= []).push(evt.message);
+                result.messages ??= [];
+                appendBoundedChildMessage(result.messages, evt.message, Buffer.byteLength(line, "utf8"), messageLedger);
                 if (evt.message.role === "assistant") {
                     result.usage.turns++;
                     progress.turnCount = result.usage.turns;
@@ -889,17 +954,17 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     }
                     const u = evt.message.usage;
                     if (u) {
-                        result.usage.input += u.input || 0;
-                        result.usage.output += u.output || 0;
-                        result.usage.cacheRead += u.cacheRead || 0;
-                        result.usage.cacheWrite += u.cacheWrite || 0;
-                        result.usage.cost += u.cost?.total || 0;
+                        result.usage.input += childUsageNumber(u, "input", "inputTokens");
+                        result.usage.output += childUsageNumber(u, "output", "outputTokens");
+                        result.usage.cacheRead += childUsageNumber(u, "cacheRead");
+                        result.usage.cacheWrite += childUsageNumber(u, "cacheWrite");
+                        result.usage.cost += childUsageNumber(u.cost, "total");
                         progress.tokens = result.usage.input + result.usage.output;
                     }
                     if (!result.model && evt.message.model)
                         result.model = evt.message.model;
                     if (evt.message.errorMessage)
-                        assistantError = evt.message.errorMessage;
+                        assistantError = boundChildError(evt.message.errorMessage);
                     const assistantText = extractTextFromContent(evt.message.content);
                     appendRecentOutput(progress, assistantText.split("\n").slice(-10));
                     if (terminalAssistantStop) {
@@ -913,7 +978,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 fireUpdate();
             }
             if (evt.type === "tool_result_end" && evt.message) {
-                (result.messages ??= []).push(evt.message);
+                result.messages ??= [];
+                appendBoundedChildMessage(result.messages, evt.message, Buffer.byteLength(line, "utf8"), messageLedger);
                 const resultText = extractTextFromContent(evt.message.content);
                 if (options.toolBudget &&
                     pendingToolResult &&
@@ -968,11 +1034,13 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
         if (attemptTimeout) {
             timeoutTimer = scheduleDeadline(attemptTimeout.deadlineAt, () => {
-                if (processClosed || settled || detached || interruptedByControl)
+                if (processClosed || settled || detached || interruptedByControl || protocolOutputLimit)
+                    return;
+                if (!claimChildTerminalReason(terminalReason, "timed_out"))
                     return;
                 result.timedOut = true;
-                result.error = attemptTimeout.message;
-                result.finalOutput = attemptTimeout.message;
+                result.error = boundChildError(attemptTimeout.message);
+                result.finalOutput = result.error;
                 progress.status = "failed";
                 progress.error = attemptTimeout.message;
                 progress.durationMs = Date.now() - startTime;
@@ -992,45 +1060,91 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 timeoutHardKillTimer.unref?.();
             });
         }
-        let stderrBuf = "";
+        const stderrTail = createBoundedByteTail();
+        const stdoutReader = createBoundedLineReader({
+            stream: "stdout",
+            onLine: processLine,
+            onLimit: (limit) => {
+                if (protocolOutputLimit)
+                    return;
+                if (!claimChildTerminalReason(terminalReason, "output_limit"))
+                    return;
+                protocolOutputLimit = limit;
+                const message = boundChildError(formatProtocolOutputLimit(limit));
+                result.protocolOutputLimit = limit;
+                result.error = message;
+                result.finalOutput = result.error;
+                result.terminationReason = "output_limit";
+                result.interrupted = false;
+                progress.status = "failed";
+                progress.error = message;
+                progress.durationMs = Date.now() - startTime;
+                emitUpdateSnapshot(message);
+                if (settled || childExited || detached)
+                    return;
+                trySignalChild(proc, "SIGTERM");
+                protocolLimitHardKillTimer = setTimeout(() => {
+                    protocolLimitHardKillTimer = undefined;
+                    if (!settled && !childExited && !detached)
+                        trySignalChild(proc, "SIGKILL");
+                }, CHILD_PROTOCOL_HARD_KILL_GRACE_MS);
+                protocolLimitHardKillTimer.unref?.();
+            },
+        });
         const clearStdioGuard = attachPostExitStdioGuard(proc, { idleMs: 2000, hardMs: 8000 });
         proc.stdout.on("data", (d) => {
-            buf += d.toString();
-            const lines = buf.split("\n");
-            buf = lines.pop() || "";
-            lines.forEach(processLine);
+            stdoutReader.push(d);
         });
         proc.stderr.on("data", (d) => {
-            stderrBuf += d.toString();
+            stderrTail.push(d);
+            shared.transcriptWriter?.writeStderrChunk(d);
         });
         proc.on("exit", () => {
             childExited = true;
             clearFinalDrainTimers();
+            clearProtocolLimitHardKillTimer();
         });
         proc.on("close", (code, signal) => {
             clearFinalDrainTimers();
+            clearProtocolLimitHardKillTimer();
             clearStdioGuard();
             result.exitSignal = signal ?? undefined;
-            if (buf.trim())
-                processLine(buf);
-            if (stderrBuf.trim())
-                shared.transcriptWriter?.writeStderrText(stderrBuf);
+            stdoutReader.end();
+            shared.transcriptWriter?.finishStderr();
+            const stderrText = formatBoundedStderr(stderrTail);
+            result.stderr = stderrText;
+            result.stderrTruncated = stderrTail.wasTruncated();
             processClosed = true;
             void (async () => {
                 await jsonlWriter.close().catch(() => {
                 });
                 cleanupTempDir(tempDir);
                 if (!result.error && assistantError)
-                    result.error = assistantError;
+                    result.error = boundChildError(assistantError);
                 const forcedDrainAfterFinalSuccess = forcedTerminationSignal && cleanTerminalAssistantStopReceived && !result.error;
-                if (code !== 0 && stderrBuf.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
-                    result.error = stderrBuf.trim();
+                if (code !== 0 && stderrText.trim() && !result.error && !forcedDrainAfterFinalSuccess) {
+                    result.error = boundChildStderrError(stderrText.trim(), stderrTail.wasTruncated());
                 }
-                const finalCode = forcedDrainAfterFinalSuccess
-                    ? 0
-                    : forcedTerminationSignal || signal
-                        ? (code ?? 1)
-                        : (code ?? 0);
+                const finalCode = protocolOutputLimit
+                    ? 1
+                    : forcedDrainAfterFinalSuccess
+                        ? 0
+                        : forcedTerminationSignal || signal
+                            ? (code ?? 1)
+                            : (code ?? 0);
+                if (protocolOutputLimit) {
+                    supervisorPauseRequested = false;
+                    interruptedByControl = false;
+                    result.pause = undefined;
+                    result.interrupted = false;
+                    result.exitCode = 1;
+                    result.error = boundChildError(formatProtocolOutputLimit(protocolOutputLimit));
+                    result.finalOutput = result.error;
+                    progress.status = "failed";
+                    progress.error = result.error;
+                    finish(1);
+                    return;
+                }
                 if (supervisorPauseRequested) {
                     void (async () => {
                         const cleanup = await beginSupervisorPauseCleanup();
@@ -1138,11 +1252,15 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         });
         proc.on("error", (error) => {
             clearFinalDrainTimers();
+            clearProtocolLimitHardKillTimer();
             clearStdioGuard();
-            if (stderrBuf.trim())
-                shared.transcriptWriter?.writeStderrText(stderrBuf);
+            stdoutReader.end();
+            shared.transcriptWriter?.finishStderr();
+            const stderrText = formatBoundedStderr(stderrTail);
+            result.stderr = stderrText;
+            result.stderrTruncated = stderrTail.wasTruncated();
             if (!result.error) {
-                result.error = error instanceof Error ? error.message : String(error);
+                result.error = boundChildError(error instanceof Error ? error.message : String(error));
             }
             processClosed = true;
             void (async () => {
@@ -1177,9 +1295,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
         if (options.interruptSignal) {
             const interrupt = () => {
-                if (processClosed || detached || settled)
+                if (processClosed || detached || settled || protocolOutputLimit)
                     return;
                 if (result.timedOut)
+                    return;
+                if (!claimChildTerminalReason(terminalReason, "interrupted"))
                     return;
                 interruptedByControl = true;
                 clearTimeoutTimers();
@@ -1200,7 +1320,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
     });
     result.exitCode = exitCode;
-    if (supervisorPauseRequested) {
+    if (!result.protocolOutputLimit && supervisorPauseRequested) {
         resolveResultSessionFile(result, options, shared.sessionEnabled);
         result.exitCode = 0;
         result.interrupted = true;
@@ -1225,7 +1345,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         };
         return result;
     }
-    if (interruptedByControl) {
+    if (!result.protocolOutputLimit && interruptedByControl) {
         resolveResultSessionFile(result, options, shared.sessionEnabled);
         result.exitCode = 0;
         result.interrupted = true;
@@ -1268,20 +1388,22 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         const errInfo = detectSubagentError(result.messages ?? []);
         if (errInfo.hasError) {
             result.exitCode = errInfo.exitCode ?? 1;
-            result.error = errInfo.details
+            result.error = boundChildError(errInfo.details
                 ? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
-                : `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`;
+                : `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`);
         }
     }
-    const preNormalizationTerminationReason = result.timedOut
-        ? "timed_out"
-        : result.turnBudgetExceeded
-            ? "turn_budget_exceeded"
-            : result.toolBudgetBlocked
-                ? "tool_budget_blocked"
-                : result.interrupted
-                    ? "interrupted"
-                    : "completed";
+    const preNormalizationTerminationReason = result.protocolOutputLimit
+        ? "output_limit"
+        : result.timedOut
+            ? "timed_out"
+            : result.turnBudgetExceeded
+                ? "turn_budget_exceeded"
+                : result.toolBudgetBlocked
+                    ? "tool_budget_blocked"
+                    : result.interrupted
+                        ? "interrupted"
+                        : "completed";
     const contextExhaustedSignature = classifyContextExhaustedTermination({
         messages: result.messages,
         contextUsage: result.contextUsage,
@@ -1333,7 +1455,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
     const acceptanceOutput = getFinalOutput(result.messages ?? []);
     const acceptanceParsed = parseAndStripAcceptanceReport(acceptanceOutput);
     const { report: finalAcceptanceReport } = acceptanceParsed;
-    let fullOutput = acceptanceParsed.stripped;
+    let fullOutput = result.protocolOutputLimit
+        ? boundChildError(formatProtocolOutputLimit(result.protocolOutputLimit))
+        : acceptanceParsed.stripped;
     if (result.timedOut) {
         const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
         fullOutput = fullOutput.trim()
@@ -1401,6 +1525,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         typeof preservedFinalOutput === "string" &&
         preservedFinalOutput.trim()) {
         result.finalOutput = preservedFinalOutput;
+    }
+    if (result.error) {
+        result.error = boundChildError(result.error);
+        progress.error = result.error;
     }
     result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
     finalizeTerminationReason(result);
@@ -1484,8 +1612,10 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     }
     systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
     const fallbackModels = buildFallbackModelList(options.fallbackModels, agent.fallbackModels);
-    const candidates = buildModelCandidates(options.modelOverride ?? agent.model, fallbackModels, options.availableModels, options.preferredModelProvider, { scope: options.modelScope });
-    const modelFallbackNotice = sanitizeModelFallbackNotice(options.modelFallbackNotice);
+    const candidatePlan = buildModelCandidatePlan(options.modelOverride ?? agent.model, fallbackModels, options.availableModels, options.preferredModelProvider, { scope: options.modelScope, registry: options.modelRegistry });
+    const candidates = candidatePlan.candidates;
+    const filteringNotice = candidatePlan.filteringNotice;
+    const configuredFallbackNotice = sanitizeModelFallbackNotice(options.modelFallbackNotice);
     const attemptedModels = [];
     const modelAttempts = [];
     const aggregateUsage = emptyUsage();
@@ -1572,7 +1702,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             usage: { ...result.usage },
         };
         modelAttempts.push(attempt);
-        if (result.timedOut || result.turnBudgetExceeded) {
+        if (result.protocolOutputLimit || result.timedOut || result.turnBudgetExceeded) {
             break;
         }
         if (attemptSucceeded) {
@@ -1612,7 +1742,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         : undefined;
     result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
     result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
-    if (modelFallbackNotice && modelAttempts.length > 1)
+    const modelFallbackNotice = combineModelFallbackNotices(modelAttempts.length > 1 ? configuredFallbackNotice : undefined, filteringNotice);
+    if (modelFallbackNotice)
         result.modelFallbackNotice = modelFallbackNotice;
     result.progressSummary = {
         toolCount: totalToolCount,
@@ -1654,7 +1785,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         id: "paused",
         message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
     });
-    const interruptedBeforeAcceptance = result.interrupted || options.interruptSignal?.aborted === true;
+    const interruptedBeforeAcceptance = !result.protocolOutputLimit &&
+        (result.interrupted || options.interruptSignal?.aborted === true);
     result.acceptance = result.timedOut
         ? buildSkippedAcceptanceLedger({
             acceptance: effectiveAcceptance,
@@ -1680,7 +1812,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
                     signal: options.interruptSignal,
                     abortMessage: "Interrupted. Waiting for explicit next action.",
                 });
-    if (!result.timedOut &&
+    if (!result.protocolOutputLimit &&
+        !result.timedOut &&
         !result.turnBudgetExceeded &&
         !result.interrupted &&
         options.interruptSignal?.aborted) {
@@ -1700,22 +1833,25 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         result.exitCode === 0 &&
         !result.detached &&
         !result.interrupted &&
-        !result.timedOut) {
+        !result.timedOut &&
+        !result.protocolOutputLimit) {
         result.exitCode = 1;
-        result.error = result.error ? `${result.error}\n${acceptanceFailure}` : acceptanceFailure;
+        result.error = composeAcceptanceFailureError(result.error, acceptanceFailure);
         if (result.progress) {
             result.progress.status = "failed";
             result.progress.error = result.error;
         }
     }
     finalizeTerminationReason(result);
-    const contextExhaustedReason = classifyContextExhaustedTermination({
-        messages: result.messages,
-        contextUsage: finalAttemptContextUsage,
-        exitCode: result.exitCode,
-        error: result.error,
-        terminationReason: result.terminationReason,
-    });
+    const contextExhaustedReason = result.protocolOutputLimit
+        ? undefined
+        : classifyContextExhaustedTermination({
+            messages: result.messages,
+            contextUsage: finalAttemptContextUsage,
+            exitCode: result.exitCode,
+            error: result.error,
+            terminationReason: result.terminationReason,
+        });
     if (contextExhaustedReason) {
         result.exitCode = 1;
         result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
@@ -1725,6 +1861,11 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             result.progress.error = result.error;
         }
         artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
+    }
+    if (result.error) {
+        result.error = boundChildError(result.error);
+        if (result.progress)
+            result.progress.error = result.error;
     }
     if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
         result.artifactPaths = artifactPathsResult;
@@ -1776,6 +1917,9 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             deadlineAt: options.deadlineAt,
             toolCount: result.progressSummary?.toolCount,
             error: result.error,
+            stderr: result.stderr,
+            stderrTruncated: result.stderrTruncated,
+            protocolOutputLimit: result.protocolOutputLimit,
             ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
             transcriptError: result.transcriptError,
             skills: result.skills,

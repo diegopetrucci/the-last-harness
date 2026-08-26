@@ -151,10 +151,15 @@ maxExecutionTimeMs: ${Number.MAX_SAFE_INTEGER + 1}
 Explore the codebase
 `,
     );
-    assert.throws(
-      () => discoverAgents(dir, "project"),
-      /Agent 'explorer' has invalid maxExecutionTimeMs frontmatter; expected a positive safe integer/,
+    const discovered = discoverAgentsAll(dir);
+    assert.equal(
+      discovered.project.some((agent) => agent.name === "explorer"),
+      false,
+      "malformed agent must be skipped",
     );
+    const diagnostic = discovered.agentDiagnostics?.find((entry) => entry.filePath === filePath);
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /maxExecutionTimeMs/);
   });
 });
 
@@ -192,10 +197,104 @@ acceptanceRole: observer
 Explore the codebase
 `,
     );
-    assert.throws(
-      () => discoverAgents(dir, "project"),
-      /Agent 'explorer' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'/,
+    const discovered = discoverAgentsAll(dir);
+    assert.equal(
+      discovered.project.some((agent) => agent.name === "explorer"),
+      false,
+      "malformed agent must be skipped",
     );
+    const diagnostic = discovered.agentDiagnostics?.find((entry) => entry.filePath === filePath);
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /acceptanceRole/);
+  });
+});
+
+describe("agent frontmatter malformed-file isolation", () => {
+  it("skips malformed toolBudget while retaining valid peers and a diagnostic", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-invalid-"));
+    tempDirs.push(dir);
+    const agentsDir = path.join(dir, ".pi", "agents");
+    writeAgent(
+      path.join(agentsDir, "broken.md"),
+      `---
+name: broken
+description: Broken
+toolBudget: {not-json
+---
+
+Broken
+`,
+    );
+    writeAgent(
+      path.join(agentsDir, "valid.md"),
+      `---
+name: valid
+description: Valid
+---
+
+Valid
+`,
+    );
+
+    const result = discoverAgentsAll(dir);
+    assert.ok(result.project.some((agent) => agent.name === "valid"));
+    assert.equal(
+      result.project.some((agent) => agent.name === "broken"),
+      false,
+    );
+    const diagnostic = result.agentDiagnostics?.find((entry) =>
+      entry.filePath.endsWith("broken.md"),
+    );
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /broken/);
+    assert.match(diagnostic.error, /toolBudget/);
+  });
+
+  it("silently skips README.md and empty frontmatter files", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-no-frontmatter-"));
+    tempDirs.push(dir);
+    const agentsDir = path.join(dir, ".pi", "agents");
+    writeAgent(
+      path.join(agentsDir, "README.md"),
+      "# Agent notes\n\nThis is not an agent definition.\n",
+    );
+    writeAgent(path.join(agentsDir, "empty.md"), "---\n---\n\nNotes only.\n");
+    writeAgent(
+      path.join(agentsDir, "valid.md"),
+      "---\nname: valid\ndescription: Valid\n---\n\nValid\n",
+    );
+
+    const result = discoverAgentsAll(dir);
+    assert.ok(result.project.some((agent) => agent.name === "valid"));
+    assert.equal(
+      result.agentDiagnostics?.some((entry) => entry.filePath.endsWith("README.md")),
+      false,
+    );
+    assert.equal(
+      result.agentDiagnostics?.some((entry) => entry.filePath.endsWith("empty.md")),
+      false,
+    );
+  });
+
+  it("aggregates missing required fields into one per-file diagnostic", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-missing-fields-"));
+    tempDirs.push(dir);
+    const filePath = path.join(dir, ".pi", "agents", "candidate.md");
+    writeAgent(
+      filePath,
+      "---\nmodel: mock/candidate\n---\n\nThis looks like an agent but is incomplete.\n",
+    );
+
+    const result = discoverAgentsAll(dir);
+    assert.equal(
+      result.project.some((agent) => agent.filePath === filePath),
+      false,
+    );
+    const diagnostics =
+      result.agentDiagnostics?.filter((entry) => entry.filePath === filePath) ?? [];
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0]?.error ?? "", /name/);
+    assert.match(diagnostics[0]?.error ?? "", /description/);
   });
 });
 
@@ -848,6 +947,64 @@ Project chain.
     }));
 });
 
+describe("agent frontmatter tools policy", () => {
+  it("distinguishes omitted, explicit-empty, MCP-only, and named declarations", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tools-policy-"));
+    tempDirs.push(dir);
+    const agentsDir = path.join(dir, ".pi", "agents");
+
+    writeAgent(
+      path.join(agentsDir, "omitted.md"),
+      `---
+name: omitted
+description: Omitted tools
+---
+
+No tools field.
+`,
+    );
+    writeAgent(
+      path.join(agentsDir, "empty.md"),
+      `---
+name: empty
+description: Explicit empty tools
+tools:
+---
+
+Empty tools field.
+`,
+    );
+    writeAgent(
+      path.join(agentsDir, "mcp-only.md"),
+      `---
+name: mcp-only
+description: MCP-only tools
+tools: mcp:server/lookup, mcp:other/search
+---
+
+MCP-only tools field.
+`,
+    );
+    writeAgent(
+      path.join(agentsDir, "named.md"),
+      `---
+name: named
+description: Named tools
+tools: read, bash, mcp:server/lookup
+---
+
+Named tools field.
+`,
+    );
+
+    const agents = discoverAgents(dir, "project").agents;
+    assert.equal(agents.find((agent) => agent.name === "omitted")?.tools, undefined);
+    assert.equal(agents.find((agent) => agent.name === "empty")?.tools, null);
+    assert.equal(agents.find((agent) => agent.name === "mcp-only")?.tools, null);
+    assert.deepEqual(agents.find((agent) => agent.name === "named")?.tools, ["read", "bash"]);
+  });
+});
+
 describe("agent frontmatter completionGuard", () => {
   it("parses completionGuard from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
@@ -1342,6 +1499,11 @@ Review
       result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")),
       false,
     );
+    const diagnostic = result.agentDiagnostics?.find((entry) =>
+      entry.filePath.endsWith("scout.md"),
+    );
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /package/);
   });
 });
 

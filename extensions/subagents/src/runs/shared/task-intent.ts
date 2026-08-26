@@ -144,12 +144,22 @@ function taskHasReadOnlyDeliverable(taskText: string): boolean {
   return READ_ONLY_DELIVERABLE_PATTERNS.some((pattern) => pattern.test(taskText));
 }
 
+// `must-fix` describes severity and `no-fix` describes a negative finding;
+// neither `fix` suffix is an implementation imperative. Normalize only these
+// known compounds before testing task intent.
+const NON_IMPERATIVE_FIX_COMPOUND_PATTERN = /\b(?:must|no)-fix\b/gi;
+
+function stripNonImperativeFixCompounds(text: string): string {
+  return text.replace(NON_IMPERATIVE_FIX_COMPOUND_PATTERN, "compound");
+}
+
 function hasImplementationIntent(agent: string, taskText: string): boolean {
+  const normalizedText = stripNonImperativeFixCompounds(taskText);
   if (/\breviewer\b/i.test(agent))
-    return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(taskText));
+    return REVIEWER_REQUIRED_EDIT_PATTERNS.some((pattern) => pattern.test(normalizedText));
   if (agent === "worker")
-    return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
-  return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(taskText));
+    return WORKER_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(normalizedText));
+  return GENERAL_IMPLEMENTATION_PATTERNS.some((pattern) => pattern.test(normalizedText));
 }
 
 export function classifyTaskMutationIntent(agent: string, task: string): TaskMutationIntent {
@@ -199,7 +209,7 @@ export function expectsImplementationMutation(agent: string, task: string): bool
 }
 
 const MAY_MUTATE_VERB_PATTERN =
-  /\b(?:fix|implement|update|write|edit|modify|migrate|delete|remove|refactor|commit)\b/i;
+  /(?<!no-)\b(?:fix|implement|update|write|edit|modify|migrate|delete|remove|refactor|commit)\b/i;
 
 export function taskMayMutate(task: string): boolean {
   const taskText = stripPatterns(
@@ -209,6 +219,8 @@ export function taskMayMutate(task: string): boolean {
   const prohibitions = analyzeNoEditProhibitions(taskText);
   if (prohibitions.blanket) return false;
   return MAY_MUTATE_VERB_PATTERN.test(
-    stripPatterns(prohibitions.strippedText, READ_ONLY_DELIVERABLE_PATTERNS),
+    stripNonImperativeFixCompounds(
+      stripPatterns(prohibitions.strippedText, READ_ONLY_DELIVERABLE_PATTERNS),
+    ),
   );
 }

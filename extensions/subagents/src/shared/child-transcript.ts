@@ -1,10 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { Message } from "@earendil-works/pi-ai";
+import { boundChildError } from "../runs/shared/child-protocol.ts";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.ts";
 
 export const CHILD_TRANSCRIPT_ARTIFACT_VERSION = 1;
 const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+const MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES = 64 * 1024;
 const MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS = 32 * 1024;
 const CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER = " … [truncated for child transcript storage]";
 
@@ -48,11 +51,15 @@ export interface ChildTranscriptWriter {
   writeStdoutLine(line: string): void;
   writeStderrLine(line: string): void;
   writeStderrText(text: string): void;
+  /** Stream raw stderr in bounded records while preserving split UTF-8 sequences. */
+  writeStderrChunk(chunk: Buffer | string): void;
+  /** Flush the decoder after the child stderr stream closes or errors. */
+  finishStderr(): void;
   getError(): string | undefined;
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return boundChildError(error instanceof Error ? error.message : String(error)) ?? "unknown error";
 }
 
 function finiteNumber(value: unknown): number | undefined {
@@ -102,6 +109,8 @@ export function createChildTranscriptWriter(
   let bytesWritten = 0;
   let writeError: string | undefined;
   let truncated = false;
+  let stderrFinished = false;
+  const stderrDecoder = new StringDecoder("utf8");
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES;
 
   const baseRecord = (recordType: ChildTranscriptRecordType) => {
@@ -170,6 +179,30 @@ export function createChildTranscriptWriter(
     writeError = `Failed to initialize child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
   }
 
+  const writeStderrDecodedText = (text: string): void => {
+    if (!text || writeError || truncated) return;
+    writeRecord({ ...baseRecord("stderr"), text });
+  };
+
+  const writeStderrChunk = (chunk: Buffer | string): void => {
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    for (
+      let start = 0;
+      start < bytes.length && !writeError && !truncated;
+      start += MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES
+    ) {
+      writeStderrDecodedText(
+        stderrDecoder.write(bytes.subarray(start, start + MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES)),
+      );
+    }
+  };
+
+  const finishStderr = (): void => {
+    if (stderrFinished) return;
+    stderrFinished = true;
+    writeStderrDecodedText(stderrDecoder.end());
+  };
+
   const writeMessage = (sourceEventType: string, message: ChildTranscriptMessage) => {
     const text = extractTextFromContent(message.content);
     writeRecord({
@@ -232,6 +265,8 @@ export function createChildTranscriptWriter(
     writeStderrText(text: string) {
       for (const line of text.split(/\r?\n/)) this.writeStderrLine(line);
     },
+    writeStderrChunk,
+    finishStderr,
     getError() {
       return writeError;
     },

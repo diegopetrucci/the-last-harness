@@ -19,6 +19,7 @@ import {
   type SubagentState,
   type SubagentToolResult,
 } from "../../shared/types.ts";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import {
@@ -205,11 +206,12 @@ function stringifyJsonPreview(value: unknown, maxLength = 240): string {
   let raw: string;
   if (typeof value === "string") raw = value;
   else raw = JSON.stringify(value);
-  return raw.length > maxLength ? `${raw.slice(0, maxLength)}…` : raw;
+  const safe = safeTerminalText(raw);
+  return safe.length > maxLength ? `${safe.slice(0, maxLength)}…` : safe;
 }
 
 function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return safeTerminalText(content);
   if (!Array.isArray(content)) return "";
   return content
     .map((part) => {
@@ -223,13 +225,13 @@ function contentText(content: unknown): string {
         result?: unknown;
         content?: unknown;
       };
-      if (typeof entry.text === "string") return entry.text;
+      if (typeof entry.text === "string") return safeTerminalText(entry.text);
       if (entry.type === "toolCall" || entry.type === "tool_call") {
         const name =
           typeof entry.name === "string"
-            ? entry.name
+            ? safeTerminalText(entry.name)
             : typeof entry.toolName === "string"
-              ? entry.toolName
+              ? safeTerminalText(entry.toolName)
               : "tool";
         return `[tool: ${name}${entry.args === undefined ? "" : ` ${stringifyJsonPreview(entry.args)}`}]`;
       }
@@ -254,7 +256,7 @@ function sessionMessageLine(record: unknown): string | undefined {
   if (!role) return undefined;
   const text = contentText(message.content).trim();
   if (!text) return undefined;
-  return `${role}: ${text}`;
+  return `${safeTerminalText(role)}: ${text}`;
 }
 
 function readSessionTranscriptTail(
@@ -298,12 +300,13 @@ function formatActivityFacts(input: {
   tokens?: { total: number };
 }): string | undefined {
   const facts: string[] = [];
-  if (input.currentTool && input.currentToolStartedAt !== undefined)
+  const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
+  if (currentTool && input.currentToolStartedAt !== undefined)
     facts.push(
-      `tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`,
+      `tool ${currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`,
     );
-  else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
-  if (input.currentPath) facts.push(shortenPath(input.currentPath));
+  else if (currentTool) facts.push(`tool ${currentTool}`);
+  if (input.currentPath) facts.push(safeTerminalText(shortenPath(input.currentPath)));
   if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
   if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
   if (input.tokens?.total) facts.push(`${formatTokens(input.tokens.total)} tok`);
@@ -312,8 +315,9 @@ function formatActivityFacts(input: {
 }
 
 function foregroundModeName(control: ForegroundControl): string {
-  if (control.mode === "single" && control.currentAgent) return control.currentAgent;
-  return control.mode;
+  if (control.mode === "single" && control.currentAgent)
+    return safeTerminalText(control.currentAgent);
+  return safeTerminalText(control.mode);
 }
 
 function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
@@ -331,13 +335,15 @@ function formatForegroundFleetLines(controls: ForegroundControl[]): string[] {
       toolCount: control.toolCount,
       ...(control.tokens !== undefined ? { tokens: { total: control.tokens } } : {}),
     });
-    const current = control.currentAgent
-      ? ` | ${control.currentAgent}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}`
+    const runId = safeTerminalText(control.runId);
+    const currentAgent = control.currentAgent ? safeTerminalText(control.currentAgent) : undefined;
+    const current = currentAgent
+      ? ` | ${currentAgent}${control.currentIndex !== undefined ? ` #${control.currentIndex}` : ""}`
       : "";
     lines.push(
-      `- ${control.runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`,
+      `- ${runId} | running | ${foregroundModeName(control)}${current}${activity ? ` | ${activity}` : ""}`,
     );
-    lines.push(`  status: subagent({ action: "status", id: "${control.runId}" })`);
+    lines.push(`  status: subagent({ action: "status", id: "${runId}" })`);
     lines.push(
       "  transcript: live in the expanded foreground result; persisted session transcript appears after completion when sessions are enabled.",
     );
@@ -362,29 +368,36 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
     const pending = run.pendingAppends
       ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
       : "";
+    const runId = safeTerminalText(run.id);
+    const mode = safeTerminalText(run.mode);
+    const safeProgress = safeTerminalText(progress);
+    const safeCwd = safeTerminalText(cwd);
     lines.push(
-      `- ${run.id} | ${run.state}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${progress}${pending} | ${cwd}`,
+      `- ${runId} | ${safeTerminalText(run.state)}${activity ? ` | ${activity}` : ""} | ${mode} | ${safeProgress}${pending} | ${safeCwd}`,
     );
-    lines.push(`  status: subagent({ action: "status", id: "${run.id}" })`);
-    lines.push(`  transcript: subagent({ action: "status", id: "${run.id}", view: "transcript" })`);
+    lines.push(`  status: subagent({ action: "status", id: "${runId}" })`);
+    lines.push(`  transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
     for (const step of run.steps) {
-      const display = step.label ? `${step.label} (${step.agent})` : step.agent;
-      const phase = step.phase ? `[${step.phase}] ` : "";
+      const agent = safeTerminalText(step.agent);
+      const label = step.label ? safeTerminalText(step.label) : undefined;
+      const display = label ? `${label} (${agent})` : agent;
+      const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
       const stepActivity = formatActivityFacts(step);
-      const modelThinking = formatModelThinking(step.model, step.thinking);
+      const modelThinking = safeTerminalText(formatModelThinking(step.model, step.thinking));
       const parts = [
         `${step.index}. ${phase}${display}`,
-        step.status,
+        safeTerminalText(step.status),
         stepActivity,
         modelThinking,
       ].filter(Boolean);
       lines.push(`  ${parts.join(" | ")}`);
       const output = path.join(run.asyncDir, `output-${step.index}.log`);
-      if (fs.existsSync(output)) lines.push(`    output: ${shortenPath(output)}`);
-      if (step.sessionFile) lines.push(`    session: ${shortenPath(step.sessionFile)}`);
+      if (fs.existsSync(output)) lines.push(`    output: ${safeTerminalText(shortenPath(output))}`);
+      if (step.sessionFile)
+        lines.push(`    session: ${safeTerminalText(shortenPath(step.sessionFile))}`);
       if (step.status === "running" || step.recentOutput?.length || fs.existsSync(output)) {
         lines.push(
-          `    transcript: subagent({ action: "status", id: "${run.id}", index: ${step.index}, view: "transcript" })`,
+          `    transcript: subagent({ action: "status", id: "${runId}", index: ${step.index}, view: "transcript" })`,
         );
       }
       lines.push(
@@ -402,11 +415,12 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
     lines.push(
       ...formatNestedRunStatusLines(unattached, { indent: "  ", commandHints: true, maxLines: 12 }),
     );
-    if (run.error) lines.push(`  error: ${run.error}`);
-    for (const warning of run.nestedWarnings ?? []) lines.push(`  warning: ${warning}`);
+    if (run.error) lines.push(`  error: ${safeTerminalText(run.error)}`);
+    for (const warning of run.nestedWarnings ?? [])
+      lines.push(`  warning: ${safeTerminalText(warning)}`);
     const outputPath = formatAsyncRunOutputPath(run);
-    if (outputPath) lines.push(`  output: ${shortenPath(outputPath)}`);
-    if (run.sessionFile) lines.push(`  session: ${shortenPath(run.sessionFile)}`);
+    if (outputPath) lines.push(`  output: ${safeTerminalText(shortenPath(outputPath))}`);
+    if (run.sessionFile) lines.push(`  session: ${safeTerminalText(shortenPath(run.sessionFile))}`);
   }
   return lines;
 }
@@ -438,7 +452,7 @@ export function inspectSubagentFleet(
       now: deps.now,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = safeTerminalText(error instanceof Error ? error.message : String(error));
     return {
       content: [{ type: "text", text: message }],
       isError: true,
@@ -475,7 +489,7 @@ export function inspectSubagentFleet(
   );
 
   return {
-    content: [{ type: "text", text: lines.join("\n").trimEnd() }],
+    content: [{ type: "text", text: safeTerminalDocument(lines.join("\n").trimEnd()) }],
     details: { mode: "management", results: [] },
   };
 }
@@ -554,7 +568,7 @@ function appendKnownArtifacts(
   if (input.resultPath) artifacts.push(`Result: ${input.resultPath}`);
   if (!artifacts.length) return;
   lines.push("Artifacts:");
-  for (const artifact of artifacts) lines.push(`  ${artifact}`);
+  for (const artifact of artifacts) lines.push(`  ${safeTerminalText(artifact)}`);
 }
 
 function appendTranscriptBody(
@@ -563,12 +577,12 @@ function appendTranscriptBody(
   sourceLines: string[],
   truncated: boolean,
 ): void {
-  lines.push(`${sourceLabel}${truncated ? " (tail truncated)" : ""}:`);
+  lines.push(`${safeTerminalText(sourceLabel)}${truncated ? " (tail truncated)" : ""}:`);
   if (sourceLines.length === 0) {
     lines.push("  (no transcript lines available yet)");
     return;
   }
-  for (const line of sourceLines) lines.push(`  ${line}`);
+  for (const line of sourceLines) lines.push(`  ${safeTerminalText(line)}`);
 }
 
 export function formatAsyncRunTranscript(
@@ -598,9 +612,9 @@ export function formatAsyncRunTranscript(
   const eventsPath = path.join(asyncDir, "events.jsonl");
 
   const lines = [
-    `Run: ${status.runId}`,
-    `State: ${status.state}`,
-    `Mode: ${status.mode}`,
+    `Run: ${safeTerminalText(status.runId)}`,
+    `State: ${safeTerminalText(status.state)}`,
+    `Mode: ${safeTerminalText(status.mode)}`,
     stepStateLine(status.mode, selected.index, selected.step),
     selected.hint,
   ].filter((line): line is string => Boolean(line));
@@ -642,10 +656,10 @@ export function formatAsyncRunTranscript(
 
   if (warnings.length) {
     lines.push("Warnings:");
-    for (const warning of warnings) lines.push(`  ${warning}`);
+    for (const warning of warnings) lines.push(`  ${safeTerminalText(warning)}`);
   }
   appendTranscriptBody(lines, transcriptSource, transcriptLines, truncated);
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 export function formatNestedRunTranscript(
@@ -658,19 +672,19 @@ export function formatNestedRunTranscript(
   }
   const lineLimit = transcriptLineLimit(options.lines);
   const lines = [
-    `Nested run: ${run.id}`,
-    `State: ${run.state}`,
-    run.mode ? `Mode: ${run.mode}` : undefined,
+    `Nested run: ${safeTerminalText(run.id)}`,
+    `State: ${safeTerminalText(run.state)}`,
+    run.mode ? `Mode: ${safeTerminalText(run.mode)}` : undefined,
     run.agent
-      ? `Agent: ${run.agent}`
+      ? `Agent: ${safeTerminalText(run.agent)}`
       : run.agents?.length
-        ? `Agents: ${run.agents.join(", ")}`
+        ? `Agents: ${safeTerminalText(run.agents.join(", "))}`
         : undefined,
   ].filter((line): line is string => Boolean(line));
   appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
   if (!run.sessionFile) {
     appendTranscriptBody(lines, "Transcript tail", [], false);
-    return lines.join("\n");
+    return safeTerminalDocument(lines.join("\n"));
   }
   const sessionTail = readSessionTranscriptTail(
     run.sessionFile,
@@ -679,7 +693,7 @@ export function formatNestedRunTranscript(
   );
   if (sessionTail.warnings.length) {
     lines.push("Warnings:");
-    for (const warning of sessionTail.warnings) lines.push(`  ${warning}`);
+    for (const warning of sessionTail.warnings) lines.push(`  ${safeTerminalText(warning)}`);
   }
   appendTranscriptBody(
     lines,
@@ -687,7 +701,7 @@ export function formatNestedRunTranscript(
     sessionTail.lines,
     false,
   );
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 export function formatAsyncResultTranscript(
@@ -750,11 +764,13 @@ export function formatAsyncResultTranscript(
   const transcriptLines = output.split(/\r?\n/).slice(-lineLimit);
   const sessionFile = child?.sessionFile ?? data.sessionFile;
   const lines = [
-    `Run: ${runId}`,
-    `State: ${data.state ?? (data.success ? "complete" : "failed")}`,
-    index !== undefined && child ? `Child: ${index} (${child.agent ?? "subagent"})` : undefined,
+    `Run: ${safeTerminalText(runId)}`,
+    `State: ${safeTerminalText(data.state ?? (data.success ? "complete" : "failed"))}`,
+    index !== undefined && child
+      ? `Child: ${index} (${safeTerminalText(child.agent ?? "subagent")})`
+      : undefined,
     index === undefined && children.length > 1
-      ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${candidate.agent ?? "subagent"}`).join(", ")}).`
+      ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${safeTerminalText(candidate.agent ?? "subagent")}`).join(", ")}).`
       : undefined,
   ].filter((line): line is string => Boolean(line));
   appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
@@ -764,5 +780,5 @@ export function formatAsyncResultTranscript(
     transcriptLines.filter((line) => line.trim()),
     output.split(/\r?\n/).length > lineLimit,
   );
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }

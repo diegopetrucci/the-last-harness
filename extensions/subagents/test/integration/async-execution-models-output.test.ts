@@ -547,6 +547,65 @@ describe("async execution utilities", () => {
     assert.equal(mockPi.callCount(), 2);
   });
 
+  it("propagates conservative registry filtering notices in background results", async () => {
+    mockPi.onCall({ output: "Primary completed" });
+    const primary = {
+      provider: "openai",
+      id: "gpt-5-mini",
+      fullId: "openai/gpt-5-mini",
+    };
+    const backup = {
+      provider: "anthropic",
+      id: "claude-sonnet-4",
+      fullId: "anthropic/claude-sonnet-4",
+    };
+    const id = `async-registry-filter-notice-${Date.now().toString(36)}`;
+    executeAsyncSingle(id, {
+      agent: "worker",
+      task: "Do work",
+      agentConfig: makeAgent("worker", {
+        model: primary.fullId,
+        fallbackModels: [backup.fullId],
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-filter" },
+      availableModels: [primary],
+      modelRegistry: { allModels: [primary, backup] },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+
+    const payload = JSON.parse(
+      fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+    ) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+    assert.deepEqual(payload.results[0]?.attemptedModels, [primary.fullId]);
+    assert.match(
+      payload.results[0]?.modelFallbackNotice ?? "",
+      /Skipped.*unavailable fallback model/,
+    );
+    assert.match(
+      payload.results[0]?.modelFallbackNotice ?? "",
+      /provider credentials|fallbackModels/,
+    );
+    assert.ok((payload.results[0]?.modelFallbackNotice ?? "").length <= 240);
+    const status = JSON.parse(
+      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.match(
+      status.steps?.[0]?.modelFallbackNotice ?? "",
+      /Skipped.*unavailable fallback model/,
+    );
+    assert.equal(mockPi.callCount(), 1);
+  });
+
   it("persists cached-token-heavy context diagnostics and termination reason", async () => {
     mockPi.onCall({
       jsonl: [
@@ -2968,16 +3027,19 @@ describe("async execution utilities", () => {
 
     const id = `async-json-guards-${Date.now().toString(36)}`;
     const asyncDir = path.join(ASYNC_DIR, id);
+    const artifactsDir = path.join(tempDir, "json-guard-artifacts");
     executeAsyncSingle(id, {
       agent: "worker",
       task: "Handle child JSON protocol lines",
       agentConfig: makeAgent("worker"),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactsDir,
       artifactConfig: {
-        enabled: false,
+        enabled: true,
         includeInput: false,
         includeOutput: false,
         includeJsonl: false,
+        includeTranscript: true,
         includeMetadata: false,
         cleanupDays: 7,
       },
@@ -3000,6 +3062,19 @@ describe("async execution utilities", () => {
       .filter((event) => event.type === "subagent.child.stdout")
       .map((event) => event.line);
     assert.deepEqual(rawLines, ["null", '[1,"two"]', '"primitive"', "42"]);
+    const transcriptPath = payload.results[0]?.transcriptPath;
+    assert.ok(transcriptPath, "expected transcript artifact");
+    const transcriptRecords = fs
+      .readFileSync(transcriptPath, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { recordType?: string; text?: string });
+    assert.deepEqual(
+      transcriptRecords
+        .filter((record) => record.recordType === "stdout")
+        .map((record) => record.text),
+      [...rawLines, JSON.stringify(unknownEvent)],
+    );
     const preservedEvent = eventRecords.find((event) => event.type === unknownEvent.type);
     assert.deepEqual(preservedEvent?.extraField, unknownEvent.extraField);
     assert.deepEqual(preservedEvent?.anotherField, unknownEvent.anotherField);

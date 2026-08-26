@@ -4,6 +4,15 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Child `tools` policies now preserve three states: omitted inherits Pi defaults; explicit empty/MCP-only disables tools (while runtime-required tools are added); named and extension-path entries are translated to exact allowlists or `--no-builtin-tools`, and lazy-skill path-only declarations fail early with guidance.
+- Malformed custom-agent markdown is isolated from discovery: invalid definitions are skipped without hiding valid agents, and list/unknown-agent diagnostics identify the source path and validation error.
+- Child-derived terminal text is sanitized only at display boundaries (including terminal controls and binary-looking content); durable transcripts, output artifacts, metadata, and logs retain unsanitized values subject to their existing retention limits.
+- Child protocol input is validated and bounded; oversized protocol lines terminate deterministically with `protocol_output_limit` using SIGTERM followed by bounded SIGKILL escalation, while stderr diagnostics remain bounded and raw transcript bytes are retained.
+- Acceptance parsing now ignores blank evidence entries and preserves saved-output references when an otherwise successful run is rejected; acceptance failures remain visible alongside bounded child diagnostics.
+- Fallback selection now filters only positively unavailable known models with complete registry evidence, keeps uncertain or unknown fallbacks, and retries only classified provider/transient failures rather than deterministic child-tool failures.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

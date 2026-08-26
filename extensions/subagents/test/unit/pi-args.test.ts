@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
+import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import {
   SUBAGENT_PARENT_SESSION_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
@@ -12,6 +13,7 @@ import {
   applyThinkingSuffix,
   buildPiArgs,
   getThinkingLevelDropNote,
+  INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
 
 const originalEnv = {
@@ -33,6 +35,56 @@ afterEach(() => {
 });
 
 describe("buildPiArgs session wiring", () => {
+  it("cleans prompt temp files when later supervisor setup fails", () => {
+    const runId = `pi-args-cleanup-${Date.now().toString(36)}-${process.pid}`;
+    const childAgentName = "cleanup-agent";
+    const channelDir = path.join(
+      TEMP_ROOT_DIR,
+      "supervisor-channels",
+      `${runId}-${childAgentName}-0`,
+    );
+    fs.mkdirSync(path.dirname(channelDir), { recursive: true });
+    fs.writeFileSync(channelDir, "blocker", "utf-8");
+    const tempEnvKeys = ["TMPDIR", "TMP", "TEMP"] as const;
+    const originalTempEnv = Object.fromEntries(
+      tempEnvKeys.map((key) => [key, process.env[key]]),
+    ) as Record<(typeof tempEnvKeys)[number], string | undefined>;
+    const isolatedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-cleanup-root-"));
+    for (const key of tempEnvKeys) process.env[key] = isolatedTmpDir;
+
+    try {
+      assert.throws(
+        () =>
+          buildPiArgs({
+            baseArgs: ["-p"],
+            task: "hello",
+            sessionEnabled: false,
+            inheritProjectContext: false,
+            inheritSkills: false,
+            systemPrompt: "prompt",
+            parentSessionId: "parent-session",
+            orchestratorIntercomTarget: "supervisor",
+            runId,
+            childAgentName,
+          }),
+        /ENOTDIR|not a directory/i,
+      );
+      assert.deepEqual(
+        fs.readdirSync(isolatedTmpDir),
+        [],
+        "buildPiArgs should remove its prompt temp directory before rethrowing",
+      );
+    } finally {
+      for (const key of tempEnvKeys) {
+        const value = originalTempEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(isolatedTmpDir, { recursive: true, force: true });
+      fs.rmSync(channelDir, { force: true });
+    }
+  });
+
   it("uses --session when sessionFile is provided", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-args-session-"));
     try {
@@ -662,5 +714,147 @@ describe("buildPiArgs system prompt mode wiring", () => {
     });
 
     assert.ok(args.includes("--system-prompt"));
+  });
+});
+
+describe("buildPiArgs explicit child tool-policy wiring", () => {
+  const structuredOutput = {
+    schema: { type: "object" as const },
+    schemaPath: "/tmp/schema.json",
+    outputPath: "/tmp/output.json",
+  };
+
+  function toolsFlag(args: string[]): string | undefined {
+    const index = args.indexOf("--tools");
+    return index === -1 ? undefined : args[index + 1];
+  }
+
+  function extensionArgs(args: string[]): string[] {
+    return args.filter((_arg, index) => args[index - 1] === "--extension");
+  }
+
+  it("leaves omitted policies unrestricted, including required runtime tools", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      requireReadTool: true,
+      structuredOutput,
+      orchestratorIntercomTarget: "subagent-chat-parent",
+    });
+
+    assert.equal(toolsFlag(args), undefined);
+    assert.ok(!args.includes("--no-tools"));
+    assert.ok(!args.includes("--no-builtin-tools"));
+  });
+
+  it("fails closed for explicit empty and MCP-only policies", () => {
+    for (const tools of [null, [], ["mcp:server/lookup"]] as Array<string[] | null>) {
+      const { args } = buildPiArgs({
+        baseArgs: ["-p"],
+        task: "hello",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: false,
+        tools,
+      });
+
+      assert.equal(toolsFlag(args), undefined);
+      assert.ok(args.includes("--no-tools"));
+      assert.ok(!args.includes("--no-builtin-tools"));
+    }
+  });
+
+  it("adds only required runtime tools to restricted allowlists", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: [],
+      requireReadTool: true,
+      structuredOutput,
+      orchestratorIntercomTarget: "subagent-chat-parent",
+    });
+
+    assert.equal(toolsFlag(args), "read,contact_supervisor,structured_output");
+    assert.ok(!args.includes("--no-tools"));
+    assert.ok(!args.includes("--no-builtin-tools"));
+  });
+
+  it("uses --no-builtin-tools for extension-path-only policies", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["./my-custom-tool.ts"],
+      structuredOutput,
+      orchestratorIntercomTarget: "subagent-chat-parent",
+    });
+
+    assert.equal(toolsFlag(args), undefined);
+    assert.ok(args.includes("--no-builtin-tools"));
+    assert.ok(!args.includes("--no-tools"));
+    assert.ok(extensionArgs(args).includes("./my-custom-tool.ts"));
+  });
+
+  it("preserves named tools and extension paths in mixed policies", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["read", "./my-custom-tool.ts"],
+    });
+
+    assert.equal(toolsFlag(args), "read");
+    assert.ok(extensionArgs(args).includes("./my-custom-tool.ts"));
+    assert.ok(!args.includes("--no-tools"));
+    assert.ok(!args.includes("--no-builtin-tools"));
+  });
+
+  it("rejects extension-path-only policies when lazy skills require read", () => {
+    assert.throws(
+      () =>
+        buildPiArgs({
+          baseArgs: ["-p"],
+          task: "hello",
+          sessionEnabled: false,
+          inheritProjectContext: false,
+          inheritSkills: false,
+          requireReadTool: true,
+          tools: ["./my-custom-tool.ts"],
+        }),
+      (error: unknown) =>
+        error instanceof Error && error.message === INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
+    );
+  });
+
+  it("dedupes named tools and appends runtime requirements in stable order", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["bash", "./my-custom-tool.ts", "bash", "read"],
+      requireReadTool: true,
+      structuredOutput,
+      orchestratorIntercomTarget: "subagent-chat-parent",
+    });
+
+    assert.equal(toolsFlag(args), "bash,read,contact_supervisor,structured_output");
+    assert.ok(!args.includes("--no-tools"));
+    assert.ok(!args.includes("--no-builtin-tools"));
+    assert.deepEqual(
+      extensionArgs(args).filter((arg) => arg === "./my-custom-tool.ts"),
+      ["./my-custom-tool.ts"],
+    );
   });
 });

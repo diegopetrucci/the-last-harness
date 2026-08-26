@@ -5,6 +5,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  CONTACT_SUPERVISOR_TOOL_NAME,
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
@@ -318,9 +319,9 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 
 export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
   if (!readChildMetadata()) return;
-  if (!hasTool(pi, "contact_supervisor")) {
+  if (!hasTool(pi, CONTACT_SUPERVISOR_TOOL_NAME)) {
     pi.registerTool({
-      name: "contact_supervisor",
+      name: CONTACT_SUPERVISOR_TOOL_NAME,
       label: "Contact Supervisor",
       description:
         "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",

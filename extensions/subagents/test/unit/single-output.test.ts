@@ -248,4 +248,33 @@ describe("finalizeSingleOutput", () => {
 
     assert.equal(result.displayOutput, "truncated output");
   });
+
+  it("preserves a saved-output reference for explicit acceptance rejection", () => {
+    const result = finalizeSingleOutput({
+      fullOutput: "saved deliverable",
+      outputPath: "/tmp/review.md",
+      savedPath: "/tmp/review.md",
+      exitCode: 1,
+      acceptanceRejected: true,
+    });
+
+    assert.equal(result.savedPath, "/tmp/review.md");
+    assert.ok(result.outputReference);
+    assert.match(result.displayOutput, /Output saved to: \/tmp\/review\.md/);
+  });
+
+  it("returns only the saved-output reference in file-only acceptance rejection", () => {
+    const result = finalizeSingleOutput({
+      fullOutput: "saved deliverable",
+      outputPath: "/tmp/review.md",
+      savedPath: "/tmp/review.md",
+      outputMode: "file-only",
+      exitCode: 1,
+      acceptanceRejected: true,
+    });
+
+    assert.equal(result.savedPath, "/tmp/review.md");
+    assert.match(result.displayOutput, /^Output saved to:/);
+    assert.doesNotMatch(result.displayOutput, /saved deliverable/);
+  });
 });

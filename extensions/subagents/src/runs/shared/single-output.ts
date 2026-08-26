@@ -200,6 +200,12 @@ export function finalizeSingleOutput(params: {
   savedPath?: string;
   outputReference?: SavedOutputReference;
   saveError?: string;
+  /**
+   * Set only when an otherwise-successful run was rejected by a post-run
+   * acceptance gate. This keeps the saved deliverable reference visible while
+   * ordinary failures, timeouts, and interruptions stay unsaved.
+   */
+  acceptanceRejected?: boolean;
 }): {
   displayOutput: string;
   savedPath?: string;
@@ -207,18 +213,22 @@ export function finalizeSingleOutput(params: {
   saveError?: string;
 } {
   let displayOutput = params.truncatedOutput || params.fullOutput;
-  if (params.exitCode === 0 && params.savedPath) {
+  const savedPath = params.savedPath;
+  if (savedPath && (params.exitCode === 0 || params.acceptanceRejected)) {
     const outputReference =
-      params.outputReference ?? formatSavedOutputReference(params.savedPath, params.fullOutput);
+      params.outputReference ?? formatSavedOutputReference(savedPath, params.fullOutput);
     if (params.outputMode === "file-only") {
       return {
         displayOutput: outputReference.message,
-        savedPath: params.savedPath,
+        savedPath,
         outputReference,
       };
     }
-    displayOutput += `\n\n${outputReference.message}`;
-    return { displayOutput, savedPath: params.savedPath, outputReference };
+    const absoluteSavedPath = path.resolve(savedPath);
+    if (!displayOutput.includes(`Output saved to: ${absoluteSavedPath}`)) {
+      displayOutput += `\n\n${outputReference.message}`;
+    }
+    return { displayOutput, savedPath, outputReference };
   }
   if (params.exitCode === 0 && params.saveError && params.outputPath) {
     displayOutput += `\n\nOutput file error: ${params.outputPath}\n${params.saveError}`;
