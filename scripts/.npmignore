@@ -17,4 +17,6 @@ run-subagents-tests.mjs
 run-lane.mjs
 run-ci-test-shard.mjs
 run-ci-validation.mjs
+run-validation.mjs
 runtime-typescript.mjs
+validation-checks.mjs
