@@ -12,86 +12,29 @@
  *   --exclude=<a,b,...>  comma-separated list of lanes to skip
  *   Both flags also accept the space form: --lanes lint,pkg or --exclude smoke
  *
- * Runs all 11 non-test validation checks in concurrent lanes.
- * This is the CI-only parallel runner; 'npm run validate' stays sequential for contributors.
+ * Runs all non-test validation checks in concurrent lanes projected from the canonical
+ * manifest. Commands within each selected lane remain sequential; lanes run concurrently.
+ * Contributor `npm run validate` remains sequential and fail-fast.
  *
- * Lane grouping:
- *   - smoke:        bash scripts/check-installer-smoke.sh (~15s)
- *   - typecheck-rt: npm run typecheck:runtime (~10s)
- *   - check-rt:     npm run check:runtime (~10s)
- *   - typecheck:    npm run typecheck (~8s)
- *   - lint:         npm run lint → npm run format:check → npm run lint:sh (~6.5s)
- *   - pkg:          npm run check:package-versions → npm run check:package-contents →
- *                   node scripts/merge-settings.mjs --dry-run → npm pack --dry-run (~5s)
- *
- * Sequential within "lint": lint:sh downloads the shellcheck binary into node_modules/;
- * keeping the Oxlint, Oxfmt, and ShellCheck checks sequential prevents that write from
- * overlapping either tool run.
- *
- * Sequential within "pkg": check:package-contents and npm pack --dry-run both inspect
- * packaging metadata; sequential ordering avoids any shared-state hazard between them.
- *
- * typecheck:runtime and check:runtime run in separate lanes (each compiles to its own
- * mkdtempSync directory and never writes into the repo), as noted in the design.
- *
- * Lane split usage in CI: pass --lanes or --exclude to a job so that only the relevant
- * subset of checks runs in that job, while LANES stays the single source of truth.
+ * CI selects the lint lane for the lint job and excludes it for the non-lint validation job;
+ * the latter therefore includes the lazy-import-boundary check from the manifest.
  */
 
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { projectConcurrentLanes } from "./validation-checks.mjs";
 import { runLanes } from "./run-lane.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "..");
 
-const mergeSettingsScript = join(repoRoot, "scripts", "merge-settings.mjs");
-
 /**
- * All validation checks, organized as concurrent lanes.
+ * Concurrent CI projection of the canonical validation manifest.
  * Commands within a lane run sequentially; lanes run concurrently.
  *
  * @type {import("./run-lane.mjs").Lane[]}
  */
-export const LANES = [
-  {
-    name: "smoke",
-    commands: [["bash", "scripts/check-installer-smoke.sh"]],
-  },
-  {
-    name: "typecheck-rt",
-    commands: [["npm", "run", "typecheck:runtime"]],
-  },
-  {
-    name: "check-rt",
-    commands: [["npm", "run", "check:runtime"]],
-  },
-  {
-    name: "typecheck",
-    commands: [["npm", "run", "typecheck"]],
-  },
-  {
-    name: "lint",
-    commands: [
-      // lint:sh downloads shellcheck into node_modules/; keep sequential with lint to
-      // avoid concurrent writes to node_modules while the Oxlint/Oxfmt checks are running.
-      ["npm", "run", "lint"],
-      ["npm", "run", "format:check"],
-      ["npm", "run", "lint:sh"],
-    ],
-  },
-  {
-    name: "pkg",
-    commands: [
-      ["npm", "run", "check:package-versions"],
-      // check:package-contents and npm pack --dry-run both inspect packaging metadata;
-      // run them sequentially to avoid any shared-state hazard.
-      ["npm", "run", "check:package-contents"],
-      [process.execPath, mergeSettingsScript, "--dry-run"],
-      ["npm", "pack", "--dry-run"],
-    ],
-  },
-];
+export const LANES = projectConcurrentLanes();
 
 /**
  * Parse argv for --lanes and --exclude flags and return the selected subset of lanes.
