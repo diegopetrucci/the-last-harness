@@ -558,7 +558,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
   };
 }
 
-export function findNearestProjectRoot(cwd: string): string | null {
+function findNearestProjectRoot(cwd: string): string | null {
   const ignoredProjectConfigDirs = new Set([
     path.resolve(path.dirname(getAgentDir())),
     path.resolve(getProjectConfigDir(os.homedir())),

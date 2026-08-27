@@ -4,6 +4,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+- TLH now warns in the footer when no providers are available and points to `/login`.
+- Promoted trusted user-owned custom subagents to a stable, always-available architect extension point. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, architect-only initiation, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

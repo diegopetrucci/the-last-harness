@@ -26,7 +26,6 @@ import {
   allowedSubagentsForExperimentalConfig,
   collectSubagentTargets,
   isEmbeddedSubagentTarget,
-  isExperimentalFeatureEnabled,
   registerTlhStartupMode,
   validateSubagentToolInput,
 } from "../the-last-harness-subagent-safety.mjs";
@@ -42,11 +41,7 @@ import {
   TLH_NAME,
   TLH_PACKAGE_NAME,
 } from "./constants.js";
-import {
-  EMBEDDED_SUBAGENTS_FEATURE,
-  buildChildExperimentalPrompt,
-  buildPrimaryExperimentalPrompt,
-} from "./experimental.js";
+import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
@@ -86,7 +81,6 @@ import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-s
 import type {
   AgentPrompt,
   SubagentMetadata,
-  TlhExperimentalConfig,
   TlhPrimaryAgentConfig,
   TlhPrimaryAgentSelection,
   TlhPrimaryAgentSessionState,
@@ -641,7 +635,6 @@ function createTlhPrimaryAgentRuntime(
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
-  let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
 
   // Per-provider throttle for credential preflights.
   // Key: provider string. Value: { failures, nextAllowedAt (ms timestamp) }.
@@ -889,10 +882,8 @@ function createTlhPrimaryAgentRuntime(
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
-      // Embedded-subagent guidance uses the once-per-session snapshot so it matches the
-      // session-start delegation gate and keeps its documented next-session-only semantics.
-      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-      // Other experimental guidance reads settings fresh to preserve its existing mid-session behavior.
+      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled),
+      // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
       buildTlhCommitAttributionPrompt(commitAttributionState),
     ];
@@ -1422,7 +1413,6 @@ function createTlhPrimaryAgentRuntime(
     setTlhModelSelectionActiveModelResolver(() => ctx.model);
     updateSessionOnlyModel(undefined);
     activateTlhTicketSessionScope(ctx.cwd);
-    sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
     syncPrimaryAgentState(ctx);
     await applyPrimaryDefaults(ctx, { warnOnMissing: false });
   }
@@ -1673,9 +1663,7 @@ function createTlhPrimaryAgentRuntime(
       capScoutSubagentTimeout(event.input);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
-      const allowedSubagents = allowedSubagentsForExperimentalConfig(
-        getTlhGlobalSettings(ctx.cwd).tlh?.experimental,
-      );
+      const allowedSubagents = allowedSubagentsForExperimentalConfig();
       if (!isEnabledPrimaryAgentSelection(selection)) {
         if (!isSubagentResumeAction(event.input)) {
           return undefined;
@@ -1692,17 +1680,11 @@ function createTlhPrimaryAgentRuntime(
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const embeddedFeatureEnabled = isExperimentalFeatureEnabled(
-        sessionExperimentalSnapshot,
-        EMBEDDED_SUBAGENTS_FEATURE,
-      );
-      if (embeddedFeatureEnabled) {
-        const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-        if (embeddedBlockReason) {
-          return { block: true, reason: embeddedBlockReason };
-        }
+      const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
+      if (embeddedBlockReason) {
+        return { block: true, reason: embeddedBlockReason };
       }
-      const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
+      const allowEmbeddedTargets = selection === "architect";
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
         allowEmbeddedTargets,

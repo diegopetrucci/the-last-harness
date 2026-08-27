@@ -141,7 +141,7 @@ interface AsyncResumeOptions {
   readOnly?: boolean;
 }
 
-export type AsyncResumeTarget = {
+type AsyncResumeTarget = {
   kind: "live" | "revive";
   runId: string;
   asyncDir?: string;

@@ -451,8 +451,8 @@ test("before_agent_start gates ci failure investigation guidance behind isolated
 
 test("before_agent_start ci-failure-investigation guidance stays per-turn: enabling mid-session takes effect on the next turn", async (t) => {
   // Guards against regressing prompt-only experimental features to session-start semantics.
-  // Unlike the embedded-subagents gate (once-per-session snapshot), delta-follow-up-reviews and
-  // ci-failure-investigation guidance must read settings fresh each turn, matching pre-feature main.
+  // Delta-follow-up-reviews and ci-failure-investigation guidance must read settings fresh each
+  // turn, matching pre-feature main; embedded-agent guidance is stable and not experimental.
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

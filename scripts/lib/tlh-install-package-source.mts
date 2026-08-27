@@ -2,30 +2,30 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export interface SplitGitRefResult {
+interface SplitGitRefResult {
   repo: string;
   ref?: string;
 }
 
-export interface ParsedGitSource {
+interface ParsedGitSource {
   repo: string;
   host: string;
   path: string;
   ref?: string;
 }
 
-export interface CriticalGitSourceSpec {
+interface CriticalGitSourceSpec {
   targetDir: string;
   repo: string;
   ref: string;
 }
 
-export interface PackageSourceOptions {
+interface PackageSourceOptions {
   agentDir?: string;
   homeDir?: string;
 }
 
-export function splitGitRef(url: string): SplitGitRefResult {
+function splitGitRef(url: string): SplitGitRefResult {
   const hashSeparator = url.lastIndexOf("#");
   if (hashSeparator >= 0) {
     const repo = url.slice(0, hashSeparator);
@@ -175,7 +175,7 @@ export function packageSourcePiSource(source: unknown, options: PackageSourceOpt
   return gitSourceInstallSource(text, options);
 }
 
-export function resolveLocalPackageSource(
+function resolveLocalPackageSource(
   source: unknown,
   { agentDir = "", homeDir = homedir() }: PackageSourceOptions = {},
 ): string {

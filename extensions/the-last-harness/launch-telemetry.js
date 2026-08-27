@@ -395,7 +395,7 @@ async function getTlhOsMetadata() {
         return { osName: "unknown", osVersion: "unknown", osArch: architecture };
     }
 }
-export async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
+async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
     if (envelopes.length === 0) {
         return;
     }

@@ -35,6 +35,7 @@ const files = new Set(packResult.flatMap((entry) => entry.files ?? []).map((entr
 // package.json files negations) when adding or removing a public doc.
 const PUBLIC_DOCS = [
   "docs/commands.md",
+  "docs/custom-subagents.md",
   "docs/embedded-subagents.md",
   "docs/git-attribution.md",
   "docs/install.md",

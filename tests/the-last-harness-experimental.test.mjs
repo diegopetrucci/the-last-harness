@@ -14,7 +14,6 @@ const jiti = createJiti(import.meta.url);
 const {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
-  EMBEDDED_SUBAGENTS_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -75,7 +74,7 @@ function registeredExperimentalCommand() {
 }
 
 test(
-  "experimental command registers delta follow-up review, architect-only ci failure investigation, and embedded subagents flags as default-off",
+  "experimental command registers only the active delta follow-up review and ci failure investigation flags",
   SERIAL_TEST,
   async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
@@ -84,11 +83,7 @@ test(
       const command = registeredExperimentalCommand();
       assert.deepEqual(
         (await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-        [
-          `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
-          `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-          `enable ${EMBEDDED_SUBAGENTS_FEATURE}`,
-        ],
+        [`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
       );
       assert.deepEqual(
         (await command.getArgumentCompletions("status ")).map((completion) => completion.value),
@@ -96,7 +91,6 @@ test(
           "status",
           `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
-          `status ${EMBEDDED_SUBAGENTS_FEATURE}`,
         ],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -119,10 +113,15 @@ test(
         notifications.at(-1)?.message ?? "",
         /\/experimental enable ci-failure-investigation/,
       );
-      assert.match(notifications.at(-1)?.message ?? "", /embedded-subagents/);
-      assert.match(notifications.at(-1)?.message ?? "", /embedded\.<slug> subagents/);
-      assert.match(notifications.at(-1)?.message ?? "", /\/experimental enable embedded-subagents/);
+      assert.doesNotMatch(notifications.at(-1)?.message ?? "", /embedded-subagents/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
+
+      const staleStatus = createCommandContext(fixture.dir);
+      await command.handler("status embedded-subagents", staleStatus.ctx);
+      assert.match(
+        staleStatus.notifications.at(-1)?.message ?? "",
+        /unknown tlh experimental feature/i,
+      );
     });
   },
 );

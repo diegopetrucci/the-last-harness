@@ -11,6 +11,7 @@ installer-smoke/uninstall-runtime.sh
 check-lazy-import-boundaries.mjs
 check-package-contents.mjs
 check-package-versions.mjs
+check-release-tag-ancestry.mjs
 check-startup-performance.mjs
 release-notes.mjs
 run-subagents-tests.mjs

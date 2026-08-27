@@ -19,7 +19,6 @@ Custom dimensions sent on this event:
 - `Tlh.Device.osArch`
 - `Tlh.Experimental.delta-follow-up-reviews`
 - `Tlh.Experimental.ci-failure-investigation`
-- `Tlh.Experimental.embedded-subagents`
 - `Tlh.Subagent.code-reviewer.modelEffort`
 - `Tlh.Subagent.contrarian.modelEffort`
 - `Tlh.Subagent.developer.modelEffort`

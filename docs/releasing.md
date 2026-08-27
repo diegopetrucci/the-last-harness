@@ -2,11 +2,12 @@
 
 Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.github/workflows/release.yml`, which:
 
-1. verifies the tag matches `package.json`;
-2. runs the release checks;
-3. builds an npm-style package tarball;
-4. generates a pinned stage-0 `install.sh` asset with the tag baked in for support-file fetches and the `latest-release` update track baked in for future updates;
-5. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
+1. verifies the tag commit is reachable from `origin/main`;
+2. verifies the tag matches `package.json`;
+3. runs the release checks;
+4. builds an npm-style package tarball;
+5. generates a pinned stage-0 `install.sh` asset with the tag baked in for support-file fetches and the `latest-release` update track baked in for future updates;
+6. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
 
@@ -69,6 +70,8 @@ git commit -m "Release v$version"
 ```
 
 ## Tag and publish
+
+Push `main` before pushing the tag: the release gate requires the tag commit to be reachable from `origin/main`.
 
 ```sh
 git tag -a "v$version" -m "v$version"

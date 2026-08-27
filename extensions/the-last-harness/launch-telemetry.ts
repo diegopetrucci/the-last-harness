@@ -550,7 +550,7 @@ async function getTlhOsMetadata(): Promise<TlhOsMetadata> {
   }
 }
 
-export async function sendTlhTelemetry(
+async function sendTlhTelemetry(
   envelopes: readonly TlhTelemetryEnvelope[],
   version: string,
   /**
