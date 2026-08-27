@@ -3389,14 +3389,11 @@ describe("subagent async widget rendering", () => {
 
     const expanded = buildWidgetLines([job], theme, 180, true);
     const expandedText = expanded.join("\n");
-    assert.match(
-      expandedText,
-      new RegExp(`${escapeRegExp(oscOpen)}foo ${"x".repeat(30)}${escapeRegExp(oscClose)}`),
-    );
-    assert.match(
-      expandedText,
-      new RegExp(`${escapeRegExp(ansiOpen)}${"y".repeat(10)}${escapeRegExp(ansiClose)}`),
-    );
+    assert.doesNotMatch(expandedText, new RegExp(escapeRegExp(oscOpen)));
+    assert.doesNotMatch(expandedText, new RegExp(escapeRegExp(oscClose)));
+    assert.doesNotMatch(expandedText, new RegExp(escapeRegExp(ansiOpen)));
+    assert.doesNotMatch(expandedText, new RegExp(escapeRegExp(ansiClose)));
+    assertWrappedSource(expanded, stripTerminalSequences(command));
     const expandedCommandStart = expanded.findIndex((line) => line.includes("bash:"));
     const expandedSecondLine = expanded.findIndex(
       (line, lineIndex) => lineIndex > expandedCommandStart && line.includes("echo multiline"),
@@ -3408,7 +3405,7 @@ describe("subagent async widget rendering", () => {
     );
   });
 
-  it("removes bare C0/C1 controls from collapsed previews while preserving expanded source", () => {
+  it("removes bare C0/C1 controls from collapsed and expanded previews", () => {
     const c0 = "\u0001";
     const c1 = "\u0090";
     const tab = "\t";
@@ -3445,8 +3442,10 @@ describe("subagent async widget rendering", () => {
 
     const expanded = buildWidgetLines([job], theme, 120, true);
     const expandedText = expanded.join("\n");
-    assert.ok(expandedText.includes(c0), "expanded detail should preserve C0 source");
-    assert.ok(expandedText.includes(c1), "expanded detail should preserve C1 source");
+    assert.equal(expandedText.includes(c0), false, "expanded detail should strip C0 source");
+    assert.equal(expandedText.includes(c1), false, "expanded detail should strip C1 source");
+    assert.equal(expandedText.includes("\u007f"), false);
+    assert.equal(expandedText.includes("\u009f"), false);
     assert.ok(expandedText.includes(tab), "expanded detail should preserve tab source");
     const expandedCommandStart = expanded.findIndex((line) => line.includes("bash:"));
     const expandedSecondLine = expanded.findIndex(

@@ -64,12 +64,7 @@ export function appendRuntimeFallbackResolution(input: {
 }
 
 function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
-  const colonIdx = model.lastIndexOf(":");
-  if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };
-  return {
-    baseModel: model.substring(0, colonIdx),
-    thinkingSuffix: model.substring(colonIdx),
-  };
+  return splitKnownThinkingSuffix(model);
 }
 
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
@@ -248,7 +243,7 @@ function stripTrailingDateStamp(segment: string): string {
 
 function resolveBaseModelCandidate(
   baseModel: string,
-  availableModels: AvailableModelInfo[],
+  availableModels: readonly AvailableModelInfo[],
   preferredProvider?: string,
 ): string | undefined {
   if (baseModel.includes("/")) {
@@ -277,7 +272,7 @@ function resolveBaseModelCandidate(
  */
 export function fuzzyResolveModel(
   baseModel: string,
-  availableModels: AvailableModelInfo[],
+  availableModels: readonly AvailableModelInfo[],
   preferredProvider?: string,
 ): string | undefined {
   let queryProvider: string | undefined;
@@ -330,7 +325,7 @@ export function fuzzyResolveModel(
  */
 export function resolveModelCandidate(
   model: string | undefined,
-  availableModels: AvailableModelInfo[] | undefined,
+  availableModels: readonly AvailableModelInfo[] | undefined,
   preferredProvider?: string,
 ): string | undefined {
   if (!model) return undefined;
@@ -379,7 +374,7 @@ function defaultScopeWarn(violation: ModelScopeViolation): void {
 export function resolveSubagentModelOverride(
   requestedModel: string | boolean | undefined,
   parentModel: ParentModel | undefined,
-  availableModels: AvailableModelInfo[] | undefined,
+  availableModels: readonly AvailableModelInfo[] | undefined,
   preferredProvider?: string,
   options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
@@ -403,10 +398,27 @@ export function resolveSubagentModelOverride(
   return resolved;
 }
 
+export interface ModelRegistryEvidence {
+  /** Complete model catalog returned by the current ModelRegistry.getAll() view. */
+  allModels?: readonly AvailableModelInfo[];
+  /** Any registry/availability error makes the snapshot too stale to filter with. */
+  error?: string;
+}
+
 interface BuildModelCandidatesOptions {
   /** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
   scope?: ModelScopeConfig;
   onWarn?: (violation: ModelScopeViolation) => void;
+  /** Optional catalog/availability evidence used only for conservative fallback filtering. */
+  registry?: ModelRegistryEvidence;
+}
+
+export interface ModelCandidatePlan {
+  candidates: string[];
+  /** Raw fallback entries removed because the registry positively reported them unavailable. */
+  filteredFallbackModels: string[];
+  /** Bounded, actionable notice for a non-empty filteredFallbackModels list. */
+  filteringNotice?: string;
 }
 
 export function buildFallbackModelList(
@@ -424,21 +436,115 @@ export function buildFallbackModelList(
   return fallbackModels.length > 0 ? fallbackModels : undefined;
 }
 
-export function buildModelCandidates(
+/**
+ * Find a catalog entry for a requested fallback without treating absence as
+ * evidence. The availability list is intentionally not used for this lookup:
+ * ModelRegistry.getAvailable() is auth-filtered, while getAll() is the complete
+ * known catalog. Qualified ids resolve only to an exact/fuzzy match within the
+ * requested provider; bare ids require the normal unique/preferred-provider
+ * resolution rules.
+ */
+function findCatalogModel(
+  model: string,
+  allModels: readonly AvailableModelInfo[],
+  preferredProvider?: string,
+): AvailableModelInfo | undefined {
+  // Check the unsplit id first: providers such as Ollama may legitimately use
+  // a model id ending in ":high", even though that is also a TLH thinking suffix.
+  const exactWhole = allModels.find((entry) => entry.fullId === model);
+  if (exactWhole) return exactWhole;
+  const baseModel = splitKnownThinkingSuffix(model).baseModel;
+  const exact = allModels.find((entry) => entry.fullId === baseModel);
+  if (exact) return exact;
+  const resolved = resolveModelCandidate(baseModel, allModels, preferredProvider);
+  if (!resolved) return undefined;
+  return allModels.find((entry) => entry.fullId === resolved);
+}
+
+function isAuthoritativelyUnavailableFallback(
+  normalizedCandidate: string,
+  availableModels: readonly AvailableModelInfo[] | undefined,
+  preferredProvider: string | undefined,
+  registry: ModelRegistryEvidence | undefined,
+): boolean {
+  // No catalog, no availability snapshot, an empty availability view, or an
+  // availability refresh error is uncertainty. In all of those cases the
+  // configured fallback remains a candidate rather than being silently erased.
+  if (
+    !registry?.allModels ||
+    registry.allModels.length === 0 ||
+    registry.error?.trim() ||
+    !availableModels ||
+    availableModels.length === 0
+  )
+    return false;
+
+  // The candidate that will actually be dispatched is authoritative when the
+  // availability view contains it. This must happen before catalog resolution:
+  // aliases (including dated ids) and preferred-provider bare ids may resolve
+  // to a canonical fullId that differs from the persisted fallback spelling.
+  if (availableModels.some((entry) => entry.fullId === normalizedCandidate)) return false;
+
+  // Only a catalog match plus absence from the non-empty availability view is
+  // positive evidence of unavailability. Unknown candidates remain intact.
+  const catalogModel = findCatalogModel(normalizedCandidate, registry.allModels, preferredProvider);
+  if (!catalogModel) return false;
+  return !availableModels.some((entry) => entry.fullId === catalogModel.fullId);
+}
+
+function formatFilteredFallbackNotice(filteredFallbackModels: string[]): string {
+  const names: string[] = [];
+  let remaining = filteredFallbackModels.length;
+  for (const model of filteredFallbackModels) {
+    const safeName = sanitizeModelFallbackNotice(model)?.slice(0, 48) ?? "(unnamed)";
+    const separator = names.length > 0 ? ", " : "";
+    if (names.join(", ").length + separator.length + safeName.length > 96) break;
+    names.push(safeName);
+    remaining--;
+  }
+  if (remaining > 0) names.push(`+${remaining} more`);
+  const modelLabel = filteredFallbackModels.length === 1 ? "model" : "models";
+  return (
+    sanitizeModelFallbackNotice(
+      `Skipped ${filteredFallbackModels.length} unavailable fallback ${modelLabel}${
+        names.length > 0 ? ` (${names.join(", ")})` : ""
+      }. Check provider credentials or update fallbackModels; the primary model was retained.`,
+    ) ??
+    "Unavailable fallback models were skipped; check provider credentials or update fallbackModels."
+  );
+}
+
+export function buildModelCandidatePlan(
   primaryModel: string | undefined,
   fallbackModels: string[] | undefined,
-  availableModels: AvailableModelInfo[] | undefined,
+  availableModels: readonly AvailableModelInfo[] | undefined,
   preferredProvider?: string,
   options?: BuildModelCandidatesOptions,
-): string[] {
+): ModelCandidatePlan {
   const seen = new Set<string>();
   const candidates: string[] = [];
+  const filteredFallbackModels: string[] = [];
   const rawCandidates = [primaryModel, ...(fallbackModels ?? [])];
   for (let index = 0; index < rawCandidates.length; index++) {
     const raw = rawCandidates[index];
     if (!raw) continue;
-    const normalized = resolveModelCandidate(raw.trim(), availableModels, preferredProvider);
+    const model = raw.trim();
+    if (!model) continue;
+    const normalized = resolveModelCandidate(model, availableModels, preferredProvider);
     if (!normalized || seen.has(normalized)) continue;
+    if (
+      index > 0 &&
+      isAuthoritativelyUnavailableFallback(
+        normalized,
+        availableModels,
+        preferredProvider,
+        options?.registry,
+      )
+    ) {
+      seen.add(normalized);
+      filteredFallbackModels.push(model);
+      continue;
+    }
     if (index > 0 && options?.scope?.enforce) {
       const violation = checkModelScope(normalized, options.scope, "inherited");
       if (violation) (options.onWarn ?? defaultScopeWarn)(violation);
@@ -446,7 +552,29 @@ export function buildModelCandidates(
     seen.add(normalized);
     candidates.push(normalized);
   }
-  return candidates;
+  return {
+    candidates,
+    filteredFallbackModels,
+    ...(filteredFallbackModels.length > 0
+      ? { filteringNotice: formatFilteredFallbackNotice(filteredFallbackModels) }
+      : {}),
+  };
+}
+
+export function buildModelCandidates(
+  primaryModel: string | undefined,
+  fallbackModels: string[] | undefined,
+  availableModels: readonly AvailableModelInfo[] | undefined,
+  preferredProvider?: string,
+  options?: BuildModelCandidatesOptions,
+): string[] {
+  return buildModelCandidatePlan(
+    primaryModel,
+    fallbackModels,
+    availableModels,
+    preferredProvider,
+    options,
+  ).candidates;
 }
 
 function replaceModelNoticeControlCharacters(value: string): string {
@@ -464,8 +592,42 @@ export function sanitizeModelFallbackNotice(notice: string | undefined): string 
   return sanitized ? sanitized.slice(0, 240) : undefined;
 }
 
+const MAX_MODEL_FALLBACK_NOTICE_LENGTH = 240;
+const MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH = 24;
+
+/**
+ * Combine notices while preserving the same one-line/240-character boundary.
+ * The final notice is the highest-priority one so a registry-filtering action
+ * remains visible even when an inherited notice is unusually long. Truncated
+ * lower-priority notices end at a word boundary; a too-short fragment is
+ * dropped rather than displayed as an unreadable partial message.
+ */
+export function combineModelFallbackNotices(
+  ...notices: Array<string | undefined>
+): string | undefined {
+  const unique = [...new Set(notices.map(sanitizeModelFallbackNotice).filter(Boolean))];
+  if (unique.length === 0) return undefined;
+  const joined = unique.join(" ");
+  if (joined.length <= MAX_MODEL_FALLBACK_NOTICE_LENGTH) return joined;
+  const priority = unique.at(-1)!;
+  if (priority.length >= MAX_MODEL_FALLBACK_NOTICE_LENGTH)
+    return priority.slice(0, MAX_MODEL_FALLBACK_NOTICE_LENGTH);
+
+  const prefixBudget = MAX_MODEL_FALLBACK_NOTICE_LENGTH - priority.length - 1;
+  if (prefixBudget < MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH) return priority;
+  const prefixSource = unique.slice(0, -1).join(" ");
+  const truncatedPrefix = prefixSource.slice(0, prefixBudget).trimEnd();
+  const wordBoundary = truncatedPrefix.lastIndexOf(" ");
+  if (wordBoundary < MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH) return priority;
+  const prefix = truncatedPrefix.slice(0, wordBoundary).trimEnd();
+  return prefix.length >= MIN_MEANINGFUL_MODEL_FALLBACK_PREFIX_LENGTH
+    ? `${prefix} ${priority}`
+    : priority;
+}
+
 const RETRYABLE_MODEL_FAILURE_PATTERNS = [
   /rate\s*limit/i,
+  /usage\s*limit/i,
   /too many requests/i,
   /\b429\b/,
   /quota/i,
@@ -489,6 +651,7 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
   /fetch failed/i,
   /network error/i,
   /socket hang up/i,
+  /stream ended without finish_reason/i,
   /upstream/i,
   /timed? out/i,
   /timeout/i,
@@ -501,8 +664,16 @@ const RETRYABLE_MODEL_FAILURE_PATTERNS = [
   /model.*(?:load|fail|error)/i,
 ];
 
+/**
+ * Child tool errors can contain network/provider words, but rerunning the
+ * whole task under another model cannot repair a failed tool invocation.
+ */
+const TOOL_FAILURE_PREFIX =
+  /^[\w.:@/-]+ failed (?:(?:\(exit \d+\):)|(?:with exit code \d+))(?:\s|$)/i;
+
 export function isRetryableModelFailure(error: string | undefined): boolean {
   if (!error) return false;
+  if (TOOL_FAILURE_PREFIX.test(error.trim())) return false;
   return RETRYABLE_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(error));
 }
 

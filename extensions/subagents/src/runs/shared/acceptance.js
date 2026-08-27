@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
+import { boundChildError, MAX_CHILD_ERROR_BYTES } from "./child-protocol.js";
 import { classifyTaskMutationIntent, taskMayMutate } from "./task-intent.js";
 const LEVEL_RANK = {
     none: 0,
@@ -73,13 +74,17 @@ function requiredEvidenceForLevel(level) {
             ];
     }
 }
+function neutralizeLegacyFixCompounds(task) {
+    return task.replace(/\b(?:must|no)-fix\b/g, "compound");
+}
 function inferLegacyLevel(input) {
     const agent = input.agentName.toLowerCase();
     const task = input.task?.toLowerCase() ?? "";
     const reasons = [];
     const readOnlyAgent = /\b(?:reviewer|scout|context-builder|researcher|analyst)\b/.test(agent);
     const readOnlyTask = /\b(?:read[- ]only|review[- ]only|do not edit|don't edit|no edits|without edits|inspect|summari[sz]e)\b/.test(task);
-    const writeTask = /\b(?:fix|implement|update|write|edit|modify|migrate|release|security|delete|remove|refactor|commit)\b/.test(task) || /\bworker\b/.test(agent);
+    const writeTaskText = neutralizeLegacyFixCompounds(task);
+    const writeTask = /\b(?:fix|implement|update|write|edit|modify|migrate|release|security|delete|remove|refactor|commit)\b/.test(writeTaskText) || /\bworker\b/.test(agent);
     const risky = Boolean(input.async && writeTask) ||
         /\b(?:release|migration|migrate|security|data[- ]loss|destructive|post-review|fix pass)\b/.test(task);
     if (readOnlyAgent || readOnlyTask) {
@@ -845,6 +850,22 @@ function validateStringArrayField(errors, value, pathLabel) {
             pushTypeError(errors, `${pathLabel}[${index}]`, "string", item);
     }
 }
+function normalizeAcceptanceReportStringArrays(report) {
+    const normalizeArray = (items) => {
+        if (!Array.isArray(items) || items.length === 0)
+            return items;
+        const filtered = items.filter((item) => item.trim().length > 0);
+        return filtered.length > 0 ? filtered : undefined;
+    };
+    return {
+        ...report,
+        changedFiles: normalizeArray(report.changedFiles),
+        testsAddedOrUpdated: normalizeArray(report.testsAddedOrUpdated),
+        validationOutput: normalizeArray(report.validationOutput),
+        residualRisks: normalizeArray(report.residualRisks),
+        reviewFindings: normalizeArray(report.reviewFindings),
+    };
+}
 function validateAcceptanceReport(value, pathLabel = "") {
     const errors = [];
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -917,19 +938,20 @@ function validateAcceptanceReport(value, pathLabel = "") {
         pushTypeError(errors, pathFor(pathLabel, "notes"), "string", report.notes);
     if (errors.length > 0)
         return { errors };
-    const hasReportField = report.criteriaSatisfied !== undefined ||
-        report.changedFiles !== undefined ||
-        report.testsAddedOrUpdated !== undefined ||
-        report.commandsRun !== undefined ||
-        report.validationOutput !== undefined ||
-        report.residualRisks !== undefined ||
-        report.noStagedFiles !== undefined ||
-        report.diffSummary !== undefined ||
-        report.manualNotes !== undefined ||
-        report.notes !== undefined ||
-        report.reviewFindings !== undefined;
+    const normalizedReport = normalizeAcceptanceReportStringArrays(report);
+    const hasReportField = normalizedReport.criteriaSatisfied !== undefined ||
+        normalizedReport.changedFiles !== undefined ||
+        normalizedReport.testsAddedOrUpdated !== undefined ||
+        normalizedReport.commandsRun !== undefined ||
+        normalizedReport.validationOutput !== undefined ||
+        normalizedReport.residualRisks !== undefined ||
+        normalizedReport.noStagedFiles !== undefined ||
+        normalizedReport.diffSummary !== undefined ||
+        normalizedReport.manualNotes !== undefined ||
+        normalizedReport.notes !== undefined ||
+        normalizedReport.reviewFindings !== undefined;
     return hasReportField
-        ? { report, errors }
+        ? { report: normalizedReport, errors }
         : {
             errors: [
                 `${pathLabel || "acceptance-report"}: expected at least one acceptance report field`,
@@ -1256,4 +1278,15 @@ export function acceptanceFailureMessage(ledger) {
     if (ledger.reviewResult?.status === "blockers")
         return "Acceptance review found blockers.";
     return "Acceptance rejected.";
+}
+export function composeAcceptanceFailureError(childError, acceptanceFailure) {
+    const boundedAcceptance = boundChildError(acceptanceFailure, MAX_CHILD_ERROR_BYTES) ?? "Acceptance rejected.";
+    if (!childError)
+        return boundedAcceptance;
+    const acceptanceSuffix = `\n${boundedAcceptance}`;
+    const suffixBytes = Buffer.byteLength(acceptanceSuffix, "utf-8");
+    if (suffixBytes >= MAX_CHILD_ERROR_BYTES)
+        return boundedAcceptance;
+    const boundedChild = boundChildError(childError, MAX_CHILD_ERROR_BYTES - suffixBytes);
+    return boundedChild ? `${boundedChild}${acceptanceSuffix}` : boundedAcceptance;
 }

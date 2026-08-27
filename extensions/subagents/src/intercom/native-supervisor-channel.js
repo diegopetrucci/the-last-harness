@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
-import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_ORCHESTRATOR_TARGET_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "../runs/shared/pi-args.js";
+import { CONTACT_SUPERVISOR_TOOL_NAME, SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_ORCHESTRATOR_TARGET_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "../runs/shared/pi-args.js";
 import { POLL_INTERVAL_MS, TEMP_ROOT_DIR } from "../shared/types.js";
 import { writeAtomicJson } from "../shared/atomic-json.js";
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
@@ -188,9 +188,9 @@ function hasTool(pi, name) {
 export function registerNativeSupervisorClient(pi) {
     if (!readChildMetadata())
         return;
-    if (!hasTool(pi, "contact_supervisor")) {
+    if (!hasTool(pi, CONTACT_SUPERVISOR_TOOL_NAME)) {
         pi.registerTool({
-            name: "contact_supervisor",
+            name: CONTACT_SUPERVISOR_TOOL_NAME,
             label: "Contact Supervisor",
             description: "Contact the parent/supervisor session for a blocking decision, structured interview, or progress update. Blocking decision requests durably pause the child until the parent resumes or cancels it; no child process keeps running while paused.",
             parameters: ContactSupervisorParamsSchema,
