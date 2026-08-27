@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import {
   consumeChildMessageRequestsFromDir,
@@ -13,6 +15,7 @@ import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import {
   STRUCTURED_OUTPUT_CAPTURE_ENV,
   STRUCTURED_OUTPUT_SCHEMA_ENV,
+  assertJsonSchemaObject,
   validateStructuredOutputValue,
 } from "./structured-output.ts";
 import {
@@ -45,6 +48,7 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
 
 const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
   "subagent-orchestration-instructions",
+  // Retained solely for child-context safety, not rendering compatibility.
   "subagent-slash-result",
   "subagent-slash-text-result",
   "subagent-notify",
@@ -58,6 +62,10 @@ const PROJECT_CONTEXT_HEADER =
 const SKILLS_HEADER =
   "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
+
+interface StructuredOutputToolDetails {
+  path: string;
+}
 
 function readBooleanEnv(name: string): boolean | undefined {
   const value = process.env[name];
@@ -168,18 +176,17 @@ function isSubagentToolCallBlock(block: unknown): boolean {
   return b?.type === "toolCall" && b.name === "subagent";
 }
 
-function stripAssistantSubagentToolCallBlocks(message: unknown): unknown | undefined {
-  const m = message as { role?: string; content?: unknown };
-  if (m?.role !== "assistant" || !Array.isArray(m.content)) return message;
-  const filteredContent = m.content.filter((block) => !isSubagentToolCallBlock(block));
-  if (filteredContent.length === m.content.length) return message;
+function stripAssistantSubagentToolCallBlocks(message: AgentMessage): AgentMessage | undefined {
+  if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+  const filteredContent = message.content.filter((block) => !isSubagentToolCallBlock(block));
+  if (filteredContent.length === message.content.length) return message;
   if (filteredContent.length === 0) return undefined;
-  return { ...m, content: filteredContent };
+  return { ...message, content: filteredContent };
 }
 
-export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] {
+export function stripParentOnlySubagentMessages(messages: AgentMessage[]): AgentMessage[] {
   let changed = false;
-  const filtered: unknown[] = [];
+  const filtered: AgentMessage[] = [];
   for (const message of messages) {
     if (isParentOnlySubagentMessage(message) || isSubagentToolResultMessage(message)) {
       changed = true;
@@ -196,7 +203,7 @@ export function stripParentOnlySubagentMessages(messages: unknown[]): unknown[] 
   return changed ? filtered : messages;
 }
 
-export function formatSteerMessage(request: SteerRequest): string {
+function formatSteerMessage(request: SteerRequest): string {
   return [
     "Mid-run steering from the parent orchestrator:",
     "",
@@ -206,7 +213,7 @@ export function formatSteerMessage(request: SteerRequest): string {
   ].join("\n");
 }
 
-export function formatResumeMessage(request: ResumeRequest): string {
+function formatResumeMessage(request: ResumeRequest): string {
   return [
     "Resume follow-up from the parent orchestrator:",
     "",
@@ -224,14 +231,9 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
   if (!budget) return;
   let toolCount = 0;
   let softNudged = false;
-  const sendUserMessage = (
-    pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }
-  ).sendUserMessage;
-  const onRuntimeEvent = pi.on as unknown as (
-    event: string,
-    handler: (event: { toolName?: string }) => unknown,
-  ) => void;
-  onRuntimeEvent("tool_call", (event) => {
+  const sendUserMessage =
+    typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
+  pi.on("tool_call", (event) => {
     const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
     toolCount++;
     if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
@@ -250,10 +252,9 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 function registerSteeringInbox(pi: ExtensionAPI): void {
   const steerInbox = process.env[SUBAGENT_STEER_INBOX_ENV]?.trim();
   if (!steerInbox) return;
-  const sendUserMessage = (
-    pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }
-  ).sendUserMessage;
-  if (typeof sendUserMessage !== "function") return;
+  const sendUserMessage =
+    typeof pi.sendUserMessage === "function" ? pi.sendUserMessage.bind(pi) : undefined;
+  if (!sendUserMessage) return;
 
   let canSteer = false;
   let disposed = false;
@@ -297,34 +298,25 @@ function registerSteeringInbox(pi: ExtensionAPI): void {
     interval = setInterval(flush, 250);
     interval.unref?.();
   };
-  const activate = (): undefined => {
+  const activate = (): void => {
     start();
     canSteer = true;
     flush();
-    return undefined;
   };
 
-  const onRuntimeEvent = pi.on as unknown as (
-    event: string,
-    handler: (event: unknown) => unknown,
-  ) => void;
-  onRuntimeEvent("session_start", () => start());
-  for (const eventName of [
-    "message_start",
-    "message_update",
-    "message_end",
-    "tool_execution_start",
-    "tool_execution_end",
-    "turn_end",
-  ] as const) {
-    onRuntimeEvent(eventName, activate);
-  }
-  onRuntimeEvent("session_shutdown", () => {
+  pi.on("session_start", () => start());
+  pi.on("message_start", activate);
+  pi.on("message_update", activate);
+  pi.on("message_end", activate);
+  pi.on("tool_execution_start", activate);
+  pi.on("tool_execution_end", activate);
+  pi.on("turn_end", activate);
+  pi.on("session_shutdown", () => {
     disposed = true;
     try {
       watcher?.close();
     } catch {
-      void 0;
+      // Watcher shutdown is best-effort.
     }
     if (interval) clearInterval(interval);
   });
@@ -339,35 +331,29 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
     nativeSupervisorClientRegistered = true;
     registerNativeSupervisorClient(pi);
   };
-  const onRuntimeEvent = pi.on as unknown as (
-    event: string,
-    handler: (event: unknown) => unknown,
-  ) => void;
-  onRuntimeEvent("session_start", registerNativeSupervisorClientOnce);
+  pi.on("session_start", registerNativeSupervisorClientOnce);
   const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
   const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
   if (structuredOutputPath && structuredSchemaPath) {
-    const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as JsonSchemaObject;
-    const parameters = {
+    const parsedSchema: unknown = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8"));
+    assertJsonSchemaObject(parsedSchema, "structured output schema");
+    const schema: JsonSchemaObject = parsedSchema;
+    const parameters = Type.Unsafe<{ value: unknown }>({
       type: "object",
       properties: { value: schema },
       required: ["value"],
       additionalProperties: false,
-    };
-    const registerTool = pi.registerTool as unknown as (tool: {
-      name: string;
-      label: string;
-      description: string;
-      parameters: unknown;
-      execute: (_id: string, params: { value: unknown }) => Promise<unknown>;
-    }) => void;
-    registerTool({
+    });
+    pi.registerTool({
       name: "structured_output",
       label: "Structured Output",
       description:
         "Submit the required final structured output for this subagent step. This terminates the step.",
-      parameters: parameters as never,
-      async execute(_id: string, params: { value: unknown }) {
+      parameters,
+      async execute(
+        _id: string,
+        params: { value: unknown },
+      ): Promise<AgentToolResult<StructuredOutputToolDetails>> {
         const validation = validateStructuredOutputValue(schema, params.value);
         if (validation.status === "invalid") {
           throw new Error(`Structured output validation failed: ${validation.message}`);
@@ -383,27 +369,13 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
     });
   }
 
-  onRuntimeEvent("context", (event: unknown) => {
-    if (
-      !event ||
-      typeof event !== "object" ||
-      !Array.isArray((event as { messages?: unknown }).messages)
-    )
-      return undefined;
-    const contextEvent = event as { messages: unknown[] };
-    const messages = stripParentOnlySubagentMessages(contextEvent.messages);
-    if (messages === contextEvent.messages) return undefined;
+  pi.on("context", (event) => {
+    const messages = stripParentOnlySubagentMessages(event.messages);
+    if (messages === event.messages) return undefined;
     return { messages };
   });
 
-  onRuntimeEvent("before_agent_start", async (event: unknown) => {
-    if (
-      !event ||
-      typeof event !== "object" ||
-      typeof (event as { systemPrompt?: unknown }).systemPrompt !== "string"
-    )
-      return undefined;
-    const startEvent = event as { systemPrompt: string };
+  pi.on("before_agent_start", (event) => {
     const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
     if (intercomSessionName && typeof pi.setSessionName === "function") {
       pi.setSessionName(intercomSessionName);
@@ -411,12 +383,12 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 
     const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
     const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-    if (inheritProjectContext === undefined && inheritSkills === undefined) return;
-    const rewritten = rewriteSubagentPrompt(startEvent.systemPrompt, {
+    if (inheritProjectContext === undefined && inheritSkills === undefined) return undefined;
+    const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
       inheritProjectContext: inheritProjectContext ?? true,
       inheritSkills: inheritSkills ?? true,
     });
-    if (rewritten === startEvent.systemPrompt) return;
+    if (rewritten === event.systemPrompt) return undefined;
     return { systemPrompt: rewritten };
   });
 }

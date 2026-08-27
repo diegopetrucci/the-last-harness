@@ -2,13 +2,24 @@
 
 Releases are GitHub tag based. Pushing a semver tag such as `v0.1.0` runs `.github/workflows/release.yml`, which:
 
-1. verifies the tag matches `package.json`;
-2. runs the release checks;
-3. builds an npm-style package tarball;
-4. generates a pinned stage-0 `install.sh` asset with the tag baked in for support-file fetches and the `latest-release` update track baked in for future updates;
-5. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
+1. verifies the tag commit is reachable from `origin/main`;
+2. verifies the tag matches `package.json`;
+3. runs the release checks;
+4. builds an npm-style package tarball;
+5. generates a pinned stage-0 `install.sh` asset with the tag baked in for support-file fetches and the `latest-release` update track baked in for future updates;
+6. creates a GitHub Release whose body is the matching `CHANGELOG.md` section, plus release assets.
 
 There is no `stable` branch. A release is the immutable Git tag plus its GitHub Release assets. The stage-1 installer (`scripts/tlh-install.mjs`) and `scripts/lib/` helpers must be present in both the tag and package tarball.
+
+## Installer compatibility boundary
+
+Only the generated GitHub Release `install.sh` asset is immutable and self-contained with its tag’s stage-1/support files: the release workflow bakes the matching tag into that stage-0 asset, so later changes on `main` do not change or invalidate that released asset. Every raw source `install.sh`, including current and tag copies, defaults `REF` to `main` unless the caller passes the matching `--ref`; only generated GitHub Release installer assets are baked/pinned to their tag. The v0.27 boundary is the canonical stage-0 handoff: remote/stale stage-0 installers self-refresh from the requested ref before any manifest-driven support-file downloads. This policy does not promise support for arbitrary old TLH runtimes.
+
+Through **2026-09-29**, compatibility is retained only for locally saved **pre-v0.27 raw source installers from published/tagged releases whose baked manifests requested the retained query/librarian assets**. It excludes arbitrary snapshots of `main` or unreleased intermediate states, including the never-released profile-writer manifest window; this compatibility window does not extend support for every older TLH runtime. After **2026-09-29**, the supported recovery is to download and run the current installer rather than continuing to use the saved file:
+
+```sh
+curl -fsSL https://github.com/diegopetrucci/the-last-harness/releases/latest/download/install.sh | bash -s --
+```
 
 For pin-PR title and body conventions (PRs updating `config/default-extensions.json` fork tags), see [CONTRIBUTING.md — Pull requests and CI](../CONTRIBUTING.md#pull-requests-and-ci).
 
@@ -27,7 +38,7 @@ Update `CHANGELOG.md` with a `## [$version] - YYYY-MM-DD` section.
 
 Before validation, update release-sensitive docs that include concrete versioned install guidance or runtime pins:
 
-- `docs/install.md`: pinned-tag install examples and the non-stable-track warning examples should use `v$version`.
+- `docs/install.md`: pinned-tag install examples and the non-stable footer-label examples should use `v$version`.
 - `README.md` and `docs/install.md`: any pinned Pi runtime version, minimum Node.js version, managed Gnosis version, managed `tk` version, or bundled default-extension behavior should match the release metadata and installer constants.
 - `docs/releasing.md`: keep this checklist aligned when release validation adds or removes required documentation checks.
 
@@ -59,6 +70,8 @@ git commit -m "Release v$version"
 ```
 
 ## Tag and publish
+
+Push `main` before pushing the tag: the release gate requires the tag commit to be reachable from `origin/main`.
 
 ```sh
 git tag -a "v$version" -m "v$version"

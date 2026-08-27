@@ -11,11 +11,9 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 const jiti = createJiti(import.meta.url);
 const { TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_STATE_SCHEMA_VERSION } =
   await jiti.import("../extensions/the-last-harness/constants.ts");
-const {
-  CI_FAILURE_INVESTIGATION_FEATURE,
-  DELTA_FOLLOW_UP_REVIEWS_FEATURE,
-  EMBEDDED_SUBAGENTS_FEATURE,
-} = await jiti.import("../extensions/the-last-harness/experimental.ts");
+const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
+  "../extensions/the-last-harness/experimental.ts",
+);
 const { THINKING_LEVELS } = await jiti.import("../extensions/the-last-harness/constants.ts");
 const {
   privacySafeTlhTelemetryProviderId,
@@ -44,7 +42,13 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
   writeFileSync(
     join(fixture.agent, "settings.json"),
     `${JSON.stringify(
-      { tlh: { experimental: { enabledFeatures: [" delta-follow-up-reviews ", "legacy-flag"] } } },
+      {
+        tlh: {
+          experimental: {
+            enabledFeatures: [" delta-follow-up-reviews ", "embedded-subagents", "legacy-flag"],
+          },
+        },
+      },
       null,
       2,
     )}\n`,
@@ -99,7 +103,7 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
   assert.equal(event.payload["Tlh.PrimaryAgent.name"], "architect");
   assert.equal(event.payload[`Tlh.Experimental.${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`], "on");
   assert.equal(event.payload[`Tlh.Experimental.${CI_FAILURE_INVESTIGATION_FEATURE}`], "off");
-  assert.equal(event.payload[`Tlh.Experimental.${EMBEDDED_SUBAGENTS_FEATURE}`], "off");
+  assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.embedded-subagents"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);
   assert.equal(readFileSync(telemetryStatePath(fixture), "utf8"), originalState);
 
@@ -1647,12 +1651,21 @@ const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi
  *   - string         → written verbatim (used for malformed JSON)
  *   - object         → JSON-stringified
  */
-async function captureSubagentPayload(t, { userSettings, projectSettings } = {}) {
+async function captureSubagentPayload(
+  t,
+  { userSettings, projectSettings, snapshot = {}, frontmatter } = {},
+) {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-precedence-", {
     test: t,
     cwd: true,
   });
   writeTelemetryState(fixture);
+
+  if (frontmatter !== undefined) {
+    const subagentsDir = join(fixture.agent, "tlh", "agents", "subagents");
+    mkdirSync(subagentsDir, { recursive: true });
+    writeFileSync(join(subagentsDir, "developer.md"), frontmatter);
+  }
 
   if (userSettings !== undefined) {
     writeFileSync(
@@ -1694,7 +1707,11 @@ async function captureSubagentPayload(t, { userSettings, projectSettings } = {})
         PI_TELEMETRY: undefined,
       },
       async () => {
-        await sendTlhLaunchTelemetry({ version: "1.2.3", cwd: fixture.cwd });
+        await sendTlhLaunchTelemetry({
+          version: "1.2.3",
+          cwd: fixture.cwd,
+          ...snapshot,
+        });
       },
     );
   } finally {
@@ -1706,6 +1723,42 @@ async function captureSubagentPayload(t, { userSettings, projectSettings } = {})
   assert.ok(event, "expected a telemetry event");
   return event.payload;
 }
+
+test("launch telemetry follows a registry-missing OpenRouter session model and effort", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    snapshot: {
+      providerId: "openrouter",
+      modelId: "anthropic/claude-sonnet-4-5",
+      availableModels: [],
+    },
+    frontmatter: [
+      "---",
+      "name: developer",
+      "description: Developer",
+      "tlhOpenrouterThinking: high",
+      "---",
+      "Prompt",
+      "",
+    ].join("\n"),
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "claude-sonnet-4-5:high");
+});
+
+test("launch telemetry ignores invalid tlhOpenrouterThinking", async (t) => {
+  const payload = await captureSubagentPayload(t, {
+    snapshot: { providerId: "openrouter", modelId: "gpt-5.6-luna", availableModels: [] },
+    frontmatter: [
+      "---",
+      "name: developer",
+      "description: Developer",
+      "tlhOpenrouterThinking: invalid",
+      "---",
+      "Prompt",
+      "",
+    ].join("\n"),
+  });
+  assert.equal(payload["Tlh.Subagent.developer.modelEffort"], "gpt-5.6-luna:unknown");
+});
 
 test("launch telemetry reports project-scope agentOverrides in preference to user scope", async (t) => {
   const payload = await captureSubagentPayload(t, {

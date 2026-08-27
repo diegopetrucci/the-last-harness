@@ -91,10 +91,7 @@ const GENERAL_IMPLEMENTATION_PATTERNS = [
   /\b(?:update|add|remove|replace|delete|create)\s+(?:the\s+)?(?:file|files|code|source|implementation|test|tests|component|function|module|class|method|logic|import|imports|readme|docs?|changelog|package(?:\.json)?|config|manifest|extension|prompt|command)\b/i,
 ];
 
-export type TaskMutationIntent =
-  | { kind: "implementation" }
-  | { kind: "read-only" }
-  | { kind: "unknown" };
+type TaskMutationIntent = { kind: "implementation" } | { kind: "read-only" } | { kind: "unknown" };
 
 function stripFrameworkInstructions(task: string): string {
   return task

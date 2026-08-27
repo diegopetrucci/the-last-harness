@@ -1,5 +1,5 @@
 import { formatTlhGitFooterSegments } from "./footer-git.js";
-export const FOOTER_FIRST_LINE_SEPARATOR = " • ";
+const FOOTER_FIRST_LINE_SEPARATOR = " • ";
 export function composeTlhFooterFirstLine(input) {
     const segments = [input.cwd];
     if (input.status !== undefined) {

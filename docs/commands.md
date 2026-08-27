@@ -49,7 +49,7 @@ These commands are registered by the TLH extension bundled with this profile.
 |---------|-------------|
 | `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
-| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews`, `ci-failure-investigation`, and `embedded-subagents` are currently registered) |
+| `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews` and `ci-failure-investigation` are currently registered) |
 | `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
 | `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
@@ -71,7 +71,7 @@ With no level argument in the interactive TUI, a changed selection opens a secon
 
 ### `/experimental`
 
-`/experimental` currently registers `delta-follow-up-reviews`, `ci-failure-investigation`, and `embedded-subagents`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. `embedded-subagents` is a default-off flag that gates architect-initiated delegation to trusted user-owned `embedded.<slug>` subagents placed in the isolated TLH profile. A new session or explicit `/reload` recaptures flag state; enabling or disabling the flag does not affect the active runtime until one of those activation boundaries. Enable it with `/experimental enable embedded-subagents` and undo it with `/experimental disable embedded-subagents`, then start a new session or run `/reload`. Only valid regular non-symlink `.md` agent definitions with `package: embedded`, a valid `name`, and a non-empty `description` authorize; `.chain.md` files do not. See [embedded-subagents.md](embedded-subagents.md) for the full setup guide. All three flags are disabled by default. Stale `run-tests-last` values in `tlh.experimental.enabledFeatures` do not re-enable retired behavior.
+`/experimental` currently registers `delta-follow-up-reviews` and `ci-failure-investigation`. In the interactive TLH TUI, running `/experimental` with no arguments opens a picker that shows current feature state and lets you toggle flags; outside the TUI it falls back to the status list. Typed subcommands remain available: `/experimental list`, `/experimental status [feature]`, `/experimental enable <feature>`, `/experimental disable <feature>`, and `/experimental toggle <feature>`. `contrarian` is a bundled default minor subagent for sparing pre-ticket planning stress-tests when a proposed change genuinely warrants an adversarial brief; it is not part of the `/experimental` toggle surface, not the routine `code-reviewer` diff pass, and not the broader `oracle` second-opinion path. `delta-follow-up-reviews` is an opt-in flag that adds architect and `code-reviewer` guidance for delta-scoped follow-up reviews after fixes. `ci-failure-investigation` is an opt-in flag that lets the architect primary agent do read-only failed CI/status-check investigation after TLH opens a PR, then summarize and ask whether to proceed before any edits, commits, pushes, reruns, PR changes, or other follow-up changes. Both flags are disabled by default. These prompt-only flags are re-read from settings on each agent turn, so enabling or disabling one applies on the next agent turn; no new session or `/reload` is required. Stable trusted custom subagents use active-profile authorization rather than an `/experimental` flag; see [custom-subagents.md](custom-subagents.md). Stale `run-tests-last` and `embedded-subagents` values in `tlh.experimental.enabledFeatures` are inert and do not re-enable retired behavior. Users upgrading to stable custom subagents do not need to edit the stale `embedded-subagents` value; if you choose to clean it up manually, remove only that value and preserve every other `enabledFeatures` entry.
 
 ### `/subagent-settings`
 
@@ -131,7 +131,7 @@ To undo a persistent change:
 - use `/subagent-settings reset-all` to clear only `model` and `thinking` for bundled roles. It preserves other keys on those role entries and leaves unknown/non-TLH entries under `subagents.agentOverrides` untouched; or
 - restore the `settings.json.bak-*` file shown after a write by copying it back over the active `settings.json`.
 
-The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `/subagents-fleet` shows active dispatch status; neither command changes these overrides.
+The reset commands clean up empty role and override containers but do not remove unrelated settings. When diagnosing whether a saved setting took effect, `/subagents-doctor` shows first-party runtime diagnostics and `subagent({ action: "status", view: "fleet" })` shows active dispatch status; neither command changes these overrides.
 
 ### `/reconcile`
 
@@ -182,7 +182,7 @@ Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-stat
 
 ### `/tickets`
 
-`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. The footer status is on by default and renders one `ticket: <title> (/tickets)` line per in-progress ticket. In both views, TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
+`/tickets` shows the current repo/worktree's read-only ticket workflow details from `tk`: ready, blocked, in-progress, active, and total counts, followed by one in-progress detail line or an `In progress:` list when multiple tickets are in progress. Each detail includes the ticket ID and its title when available. TLH strips terminal control sequences from titles and falls back to the ticket ID when a title cannot be resolved or is empty after sanitization.
 
 ### `/tokens`
 
@@ -215,7 +215,6 @@ These commands ship inside the TLH package itself rather than through separately
 | `/annotate-last-message` | `the-last-harness` | Open a native annotation window for the latest assistant message and send submitted feedback to the agent |
 | `/annotate-git-diff` | `annotate-git-diff` | Open a native git-diff review window; clicking Submit sends review feedback to the agent, closing with unsent comments pastes a draft to the editor |
 | `/subagents-doctor` | `subagents` | Show first-party subagent runtime diagnostics |
-| `/subagents-fleet` | `subagents` | Show active subagent fleet status and transcript commands |
 
 ### `/annotate-last-message`
 
@@ -306,17 +305,23 @@ These commands are provided by bundled default extensions and are visible in TLH
 | `/fast` | `pi-fast` | Toggle OpenAI Codex Fast mode for eligible ChatGPT-auth GPT-5.4, GPT-5.5, and GPT-5.6 sessions |
 | `/mcp` | `pi-mcp-adapter` | Show MCP server status |
 | `/mcp-auth` | `pi-mcp-adapter` | Authenticate with an MCP server (OAuth) |
+| `/transcribe` | `pi-transcribe` | Configure local speech-to-text model, languages, microphone, and shortcut settings |
+
+### `/transcribe` and `Ctrl+Alt+Z`
+
+Run `/transcribe` once to choose and confirm a local model; pi-transcribe downloads the model after confirmation. While TLH has terminal focus, press `Ctrl+Alt+Z` to start and stop microphone recording. The transcription is inserted at the editor cursor, and `Esc` cancels recording. This is a terminal shortcut, not a global OS hotkey. The extension also provides the `transcribe_file` tool for local audio or video; file transcription requires `ffmpeg`.
 
 ---
 
 ## Bundled skill commands
 
-These terminal-integration skills ship with TLH and remain visible in TLH autocomplete.
+These bundled skills ship with TLH and remain visible in TLH autocomplete.
 
 | Command | Description |
 |---------|-------------|
 | `/skill:cmux-cli` | Load the bundled cmux CLI skill for socket, workspace, pane, browser, and automation workflows |
 | `/skill:herdr` | Load the bundled Herdr skill for explicitly requested pane, tab, workspace, and agent control |
+| `/skill:show-me` | Load the bundled show-me skill for visual explanations with diagrams, sketches, and focused HTML artifacts |
 | `/skill:tmux` | Load the bundled tmux skill for session/pane control, output capture, key sending, and prompt monitoring |
 
 ---
@@ -338,12 +343,6 @@ These commands are registered and fully functional, but deliberately excluded fr
 | Command | Description |
 |---------|-------------|
 | `/skill:librarian` | Load the bundled librarian skill by name without surfacing it in TLH autocomplete |
-
-### Hidden first-party extension commands
-
-| Command | Extension | Description |
-|---------|-----------|-------------|
-| `/subagent-cost` | `subagents` | Show parent and child usage cost for this session; hidden because `/tokens` provides the TLH-native token report |
 
 ### Hidden bundled extension commands
 

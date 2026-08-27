@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
 import { acceptChildMessageRequest, consumeInterruptRequest, deliverInterruptRequest, deliverTimeoutRequest, enqueueStepChildMessage, stepSteerInboxDir, watchAsyncControlInbox, writeChildMessageAcceptanceForRequest, } from "./control-channel.js";
-import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.js";
+import { appendJsonl as appendRawJsonl, getArtifactPaths, writeArtifactWithFloor, } from "../../shared/artifacts.js";
 import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, resolveInstalledPiPackageRoot, } from "../shared/pi-spawn.js";
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
@@ -32,7 +32,7 @@ import { evaluateCompletionMutationGuard } from "../shared/completion-guard.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { parseSessionTokens } from "../../shared/session-tokens.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
-import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAcceptanceReport, stripAcceptanceReport, } from "../shared/acceptance.js";
+import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, } from "../shared/acceptance.js";
 import { cleanupOwnedProcessGroup, formatOwnedProcessGroupCleanup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
@@ -1138,8 +1138,7 @@ async function runSingleStep(step, ctx) {
             attemptNotes.push(resolutionNotice);
     }
     const rawOutput = finalResult?.finalOutput ?? "";
-    const outputForPersistence = stripAcceptanceReport(rawOutput);
-    const { report: rawAcceptanceReport } = parseAcceptanceReport(rawOutput);
+    const { stripped: outputForPersistence, report: rawAcceptanceReport } = parseAndStripAcceptanceReport(rawOutput);
     const resolvedOutput = step.outputPath && finalResult?.exitCode === 0
         ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
         : { fullOutput: outputForPersistence };
@@ -1204,6 +1203,7 @@ async function runSingleStep(step, ctx) {
         ? await evaluateAcceptance({
             acceptance: step.effectiveAcceptance,
             output: outputForAcceptance,
+            report: rawAcceptanceReport,
             cwd: step.cwd ?? ctx.cwd,
             signal: acceptanceAbortController.signal,
             abortMessage: interruptedDuringAcceptance
@@ -1303,7 +1303,7 @@ async function runSingleStep(step, ctx) {
             const artifactOutput = rawAcceptanceReport && !resolvedOutput.savedPath
                 ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
                 : artifactBaseOutput;
-            fs.writeFileSync(artifactPaths.outputPath, artifactOutput, "utf-8");
+            writeArtifactWithFloor(artifactPaths.outputPath, artifactOutput, rawOutput, !!resolvedOutput.savedPath);
         }
         if (ctx.artifactConfig?.includeMetadata !== false) {
             fs.writeFileSync(artifactPaths.metadataPath, JSON.stringify({
@@ -1430,6 +1430,11 @@ async function runSubagent(config) {
     const overallStartTime = Date.now();
     const shareEnabled = config.share === true;
     const asyncDir = config.asyncDir;
+    let interruptRunner;
+    const interruptSignalTrampoline = () => {
+        interruptRunner?.();
+    };
+    process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
     const statusPath = path.join(asyncDir, "status.json");
     const eventsPath = path.join(asyncDir, "events.jsonl");
     const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
@@ -2443,7 +2448,9 @@ async function runSubagent(config) {
             }
         }
         else if (event.type === "message_end" && event.message?.role === "assistant") {
-            appendRecentStepOutput(step, stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10));
+            appendRecentStepOutput(step, parseAndStripAcceptanceReport(extractTextFromContent(event.message.content))
+                .stripped.split("\n")
+                .slice(-10));
             step.turnCount = (step.turnCount ?? 0) + 1;
             const configuredModel = activeConfiguredModels[flatIndex];
             const configuredContextWindow = contextWindowForModel(configuredModel, flatSteps[flatIndex]?.contextWindows);
@@ -2601,7 +2608,7 @@ async function runSubagent(config) {
         }, 1000);
         activityTimer.unref?.();
     }
-    const interruptRunner = () => {
+    interruptRunner = () => {
         consumeInterruptRequest(asyncDir);
         if (interrupted || statusPayload.state !== "running")
             return;
@@ -2673,7 +2680,6 @@ async function runSubagent(config) {
         timeoutNestedAsyncDescendants();
         timeoutActiveChildren();
     };
-    process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
     const disposeControlInbox = watchAsyncControlInbox(asyncDir, {
         onInterrupt: interruptRunner,
         onTimeout: timeoutRunner,

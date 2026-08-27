@@ -888,13 +888,7 @@ async function dispatchReviewMode(
   pi.sendUserMessage(envelope);
 }
 
-// --- Argument completions ---
-
-export const REVIEW_COMMAND_DESCRIPTION = "Review code changes via an interactive mode picker";
-
-export function getReviewArgumentCompletions() {
-  return null;
-}
+// --- Command handler ---
 
 export function createReviewCommandHandler(pi: ExtensionAPI) {
   return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
@@ -929,14 +923,4 @@ export function createReviewCommandHandler(pi: ExtensionAPI) {
     }
     await dispatchReviewMode(pi, ctx, completedArgs);
   };
-}
-
-// --- Command registration ---
-
-export function registerReviewCommand(pi: ExtensionAPI): void {
-  pi.registerCommand("review", {
-    description: REVIEW_COMMAND_DESCRIPTION,
-    getArgumentCompletions: getReviewArgumentCompletions,
-    handler: createReviewCommandHandler(pi),
-  });
 }

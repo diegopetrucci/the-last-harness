@@ -11,7 +11,7 @@ export interface DeadlineTimer {
   cancel(): void;
 }
 
-export interface DeadlineTimerOptions {
+interface DeadlineTimerOptions {
   now?: () => number;
   setTimeout?: (handler: () => void, delayMs: number) => TimeoutHandle;
   clearTimeout?: (handle: TimeoutHandle) => void;

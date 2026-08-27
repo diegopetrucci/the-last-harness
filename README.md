@@ -41,7 +41,7 @@ The architect has access to a few subagents, which can be divided in three big c
 - Core: as the agent does not write code, 1+ developer(s) are tasked to. Same for the reviewer, which avoids you having to run tools like `/review` yourself.
 - Optional, second-opinions: the oracle, and the contrarian. The architect might suggest using them, but it will always be up to you whether to actually invoke them.
 
-Notably, the oracle, contrarian, and reviewer all run on the opposite provider from your active session — Anthropic primary sessions get OpenAI, and OpenAI/Codex primary sessions get Anthropic — so that their second opinion truly is a second opinion, and not just Claude with a moustache and shades. See [docs/models.md](docs/models.md) for the full detail.
+Notably, the oracle, contrarian, and reviewer prefer an opposite provider for independent second opinions. Anthropic sessions get OpenAI/Codex and OpenAI/Codex sessions get Anthropic; OpenRouter sessions use vendor-aware direct-provider selection with the session model as a retry fallback. See [docs/models.md](docs/models.md) for the full detail.
 
 Again, the core idea: explore and plan with the architect. Double check with the oracle/contrarian. Go back and forth. This is where you, as a human, are required. Once happy, the implementation follows, until ready for your review.
 
@@ -64,7 +64,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-User-owned embedded subagents are supported behind the default-off `embedded-subagents` experimental flag; see [docs/embedded-subagents.md](docs/embedded-subagents.md).
+Stable, always-available user-owned trusted custom subagents are available to the architect when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 
@@ -77,56 +77,6 @@ All bundled subagents:
 - `oracle` for a deeper second opinion
 - `contrarian` as a bundled default minor subagent for sparing adversarial stress-tests
 
-### Minor-agent model and effort overrides
-
-Use `/subagent-settings` to persist model or effort choices for the bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`.
-
-- `/subagent-settings` opens a picker in the interactive TLH TUI; outside the TUI it reports status.
-- `/subagent-settings status [role]` shows all roles or one role.
-- `/subagent-settings set <role> [model <provider/id>] [effort <off|minimal|low|medium|high|xhigh|max>]` sets one or both fields; the `model` and `effort` pairs may be given in either order.
-- `/subagent-settings reset <role> [model|effort]` clears one field or both, and `/subagent-settings reset-all` clears the saved model/effort fields for bundled roles only.
-
-Values are stored under `subagents.agentOverrides` in the active isolated profile's `settings.json` (normally `~/.the-last-harness/agent/settings.json`, or the profile selected by `PI_CODING_AGENT_DIR`). A caller-supplied dispatch model takes precedence; otherwise stored role overrides are resolved before bundled provider-aware defaults. A fixed model can reduce provider independence for `code-reviewer`, `oracle`, and `contrarian`, so TLH warns and requires confirmation in UI sessions and refuses those writes in headless mode.
-
-The valid effort values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Stored effort is applied when the resolved model advertises support (`max` requires `thinkingLevelMap` support); if a saved value is no longer supported, TLH warns and neutralizes it with the bundled effort or explicit `off` when possible. If neither is supported, the subagents runtime drops the unsupported value for a known model; unknown or unresolvable models fail open and still receive the suffix. `max` is also a live bundled default where configured, not a hypothetical value.
-
-When existing settings content is replaced, TLH creates a `settings.json.bak-*` backup and shows its path. To undo a change, use the matching `reset` command, use `reset-all` for bundled roles, or restore the desired `settings.json.bak-*` backup over the active profile's `settings.json`.
-
-See [`docs/commands.md`](docs/commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
-
-### Reconciling overrides with TLH packaged defaults
-
-When TLH ships an update that changes the packaged model or effort default for a role you have overridden, it shows a one-line startup notice: `TLH default model/effort changed for <role> — run /reconcile to review`. The notice is non-blocking and reappears each launch until you act.
-
-Run `/reconcile` to review and resolve the drift:
-
-- **Keep** — acknowledges the new TLH default and preserves your override unchanged. Non-destructive: your setting is untouched.
-- **Reset** — clears your override so the role falls back to TLH packaged defaults. For primary agents, the packaged default is also applied to the active session immediately (subject to your `tlh.primaryAgent.applyModel` setting). Undoable: restore the value through the native `/model` picker and choose `All sessions` (the default `This session only — default` option is session-only); for subagents, use `/subagent-settings set <role> ...`. Settings writes always create a `settings.json.bak-*` backup shown in the notification.
-
-The **only trigger** is TLH changing a packaged default for a role you have overridden. There is no periodic or scheduled reminder.
-
-Acknowledgments are per-provider. A Keep or Reset under one provider does not suppress the notice if you later switch providers and that provider's packaged default has since changed.
-
-When the session provider is unknown, TLH defers all comparison — no notice appears and Keep is unavailable until a provider is active. Overrides that pre-date this release are silently backfilled on your first startup with a known provider; the notice then fires on the next packaged-default change after that point, not for any changes that occurred before the backfill.
-
-The reported value is the canonical packaged default for the active provider, resolved from TLH's own bundled catalog. It may name a model your current environment cannot reach, and it may differ from the model Reset produces in a live session (for example, roles that prefer an opposite-provider model will show a same-provider fallback here). That does not block the decision; Keep and Reset work regardless.
-
-Outside the TUI, `/reconcile` prints a read-only drift summary. See [`docs/commands.md`](docs/commands.md) for full details.
-
-### Provider auth-health warning
-
-When TLH dispatches a subagent and the provider's credential fails, a sticky footer warning appears:
-
-```text
-⚠ reauth: anthropic
-```
-
-The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and **outlives the run that revealed it** — it does not disappear when the failing run finishes. It clears automatically once the credential works again, checked at each dispatch and turn boundary, so no restart is needed. A new session starts clean and re-flags on the next failed dispatch. A toast notification pointing at `/login` appears the first time a provider is flagged within a session.
-
-Credential failures are detected at dispatch time and also from completed runs, including async ones — so a silently degraded `code-reviewer`, `oracle`, or `contrarian` is surfaced even when the failure happened after the tool call returned.
-
-Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
-
 ### Customisation
 
 You can add your own skills, prompts, extensions, and packages to TLH.
@@ -136,12 +86,14 @@ User-level:
 - `~/.the-last-harness/agent/skills/`
 - `~/.the-last-harness/agent/prompts/`
 - `~/.the-last-harness/agent/extensions/` (or via `tlh install github-user/repo`)
+- `~/.claude/skills/` — TLH also discovers skills from the Anthropic Claude Code user directory
 
 Repo settings:
 
 - `.pi/skills/`
 - `.pi/prompts/`
 - `.pi/extensions/`
+- `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
@@ -149,6 +101,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
+- User-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
@@ -160,17 +113,3 @@ After adding files, installing a package, or saving project trust, run `/reload`
 - Local testing and development: [`docs/local-development.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/local-development.md)
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 - Maintainer release process: [`docs/releasing.md`](https://github.com/diegopetrucci/the-last-harness/blob/main/docs/releasing.md)
-
-## Third-party attribution
-
-The compact live-progress display shows whimsical thinking phrases while a subagent is reasoning. The phrase pool is adapted from [`mitsuhiko/agent-stuff`](https://github.com/mitsuhiko/agent-stuff) under the Apache-2.0 license. The full license text is at [`licenses/agent-stuff-Apache-2.0.txt`](licenses/agent-stuff-Apache-2.0.txt).
-
-### Bundled terminal skills
-
-TLH packages three upstream terminal-integration skills from reproducible commit pins. Their consolidated license texts and attribution notices are in [`licenses/terminal-skills.txt`](licenses/terminal-skills.txt).
-
-- **Herdr** — [`herdrdev/herdr`](https://github.com/herdrdev/herdr/tree/346411fa21afd297f5ed3b3fa56f9e3fbf7654b7/skills/herdr), pinned to commit `346411fa21afd297f5ed3b3fa56f9e3fbf7654b7` (`v0.8.0`, Apache-2.0). Runtime prerequisite: the `herdr` binary must be on `PATH`, and the agent must be inside a Herdr-managed pane with `HERDR_ENV=1`.
-- **cmux CLI** — [`manaflow-ai/cmux-skills`](https://github.com/manaflow-ai/cmux-skills/tree/c669666f8607529a39a1f74ac0e8462e922dd13f/skills/cmux-cli), pinned to commit `c669666f8607529a39a1f74ac0e8462e922dd13f` (MIT). Runtime prerequisite: the `cmux` binary must be on `PATH` and able to reach the cmux app/socket for the requested workflow. Its `scripts/cmux-debug-cli.sh` reference is only for a tagged cmux source checkout and is intentionally not part of the packaged runtime closure.
-- **tmux** — [`openclaw/openclaw`](https://github.com/openclaw/openclaw/tree/793669c8f6ddfad07b40009068f532832685b7d6/skills/tmux), pinned to commit `793669c8f6ddfad07b40009068f532832685b7d6` (MIT). Runtime prerequisite: `tmux` must be on `PATH`; the upstream skill targets Darwin and Linux, and its helper scripts require Bash and standard `grep`, `date`, and `sleep` utilities.
-
-Only the runtime files directly referenced by these skills are bundled; upstream README files, `AGENTS.md`, and agent metadata are intentionally excluded. The optional related cmux skills named by the upstream guide are source-repository references, not runtime dependencies, and are not bundled.

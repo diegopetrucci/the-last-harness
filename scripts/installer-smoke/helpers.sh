@@ -287,6 +287,95 @@ EOF_SUPPORT_COPY_CURL
   chmod +x "${fakebin}/curl"
 }
 
+make_tracking_support_curl() {
+  local fakebin="$1"
+  mkdir -p "${fakebin}"
+  cat >"${fakebin}/curl" <<'EOF_TRACKING_SUPPORT_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+original_args="$*"
+url=""
+out=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o)
+      out="${2:-}"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+if [[ -z "${url}" || -z "${out}" || -z "${FAKE_RAW_BASE:-}" || -z "${FAKE_SUPPORT_ROOT:-}" ]]; then
+  printf 'tracking curl missing url, output, or support env\n' >&2
+  exit 2
+fi
+base="${FAKE_RAW_BASE%/}/"
+if [[ "${url}" != "${base}"* ]]; then
+  printf 'tracking curl received unexpected url: %s\n' "${url}" >&2
+  exit 2
+fi
+relative="${url#"${base}"}"
+source_path="${FAKE_SUPPORT_ROOT}/${relative}"
+track_dir="${FAKE_CURL_TRACK_DIR:-}"
+if [[ -n "${track_dir}" ]]; then
+  mkdir -p "${track_dir}"
+  printf '%s\n' "${original_args}" >>"${track_dir}/args.log"
+  printf '%s\n' "${out}" >>"${track_dir}/started.log"
+
+  lock_dir="${track_dir}/lock"
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    sleep 0.001
+  done
+  active=0
+  if [[ -f "${track_dir}/active" ]]; then
+    active="$(cat "${track_dir}/active")"
+  fi
+  active=$((active + 1))
+  printf '%s\n' "${active}" >"${track_dir}/active"
+  max_active=0
+  if [[ -f "${track_dir}/max-active" ]]; then
+    max_active="$(cat "${track_dir}/max-active")"
+  fi
+  if [[ "${active}" -gt "${max_active}" ]]; then
+    printf '%s\n' "${active}" >"${track_dir}/max-active"
+  fi
+  rmdir "${lock_dir}"
+
+  if [[ -n "${FAKE_CURL_DELAY:-}" ]]; then
+    sleep "${FAKE_CURL_DELAY}"
+  fi
+
+  while ! mkdir "${lock_dir}" 2>/dev/null; do
+    sleep 0.001
+  done
+  active="$(cat "${track_dir}/active")"
+  active=$((active - 1))
+  printf '%s\n' "${active}" >"${track_dir}/active"
+  rmdir "${lock_dir}"
+fi
+
+if [[ ! -f "${source_path}" ]]; then
+  if [[ -n "${track_dir}" ]]; then
+    printf '%s\n' "${relative}" >>"${track_dir}/completed.log"
+  fi
+  printf 'tracking curl missing source: %s\n' "${relative}" >&2
+  exit 22
+fi
+mkdir -p "$(dirname "${out}")"
+cp "${source_path}" "${out}"
+if [[ -n "${track_dir}" ]]; then
+  printf '%s\n' "${relative}" >>"${track_dir}/completed.log"
+fi
+EOF_TRACKING_SUPPORT_CURL
+  chmod +x "${fakebin}/curl"
+}
+
 make_legacy_support_curl() {
   local fakebin="$1"
   mkdir -p "${fakebin}"
@@ -428,7 +517,6 @@ make_fake_remote_stage1_support_root() {
   local -a compatibility_paths=(
     "config/librarian.defaults.json"
     "scripts/tlh-install-query.mjs"
-    "scripts/lib/tlh-profile-writes.mjs"
   )
 
   mkdir -p "${root}"
@@ -459,7 +547,6 @@ const repoRoot = join(scriptDir, "..");
 for (const [label, targetPath] of [
   ["compat_librarian_present", join(repoRoot, "config", "librarian.defaults.json")],
   ["compat_query_present", join(scriptDir, "tlh-install-query.mjs")],
-  ["compat_profile_writes_present", join(scriptDir, "lib", "tlh-profile-writes.mjs")],
   ["stale_poison_present", join(repoRoot, "poison", "stale-stage0-only.txt")],
 ]) {
   console.log(`${label}=${existsSync(targetPath)}`);

@@ -67,7 +67,23 @@ const TLH_MODEL_VISIBILITY_FIND_EXACT_MODEL_MATCH_ORIGINAL = Symbol.for(
   "tlh.modelVisibilityFindExactModelMatchOriginal",
 );
 
-export const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
+function isInteractiveModePrototype(value: unknown): value is InteractiveModePrototype {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "findExactModelMatch" in value &&
+    typeof value.findExactModelMatch === "function"
+  );
+}
+
+function isModelRuntimeSnapshotSource(
+  value: unknown,
+): value is Pick<ModelRuntime, "getAvailableSnapshot"> {
+  return isRecord(value) && typeof value.getAvailableSnapshot === "function";
+}
+
+const TLH_HIDDEN_MODEL_DEFAULTS = Object.freeze([
   "anthropic/claude-3-5-haiku-20241022",
   "anthropic/claude-3-5-haiku-latest",
   "anthropic/claude-3-5-sonnet-20240620",
@@ -247,7 +263,7 @@ export function isTlhModelHidden(
   );
 }
 
-export function filterTlhVisibleModels<T extends ProviderModelReference>(
+function filterTlhVisibleModels<T extends ProviderModelReference>(
   models: readonly T[],
   config: ResolvedTlhModelVisibilityConfig = getTlhModelVisibilityConfig(),
 ): T[] {
@@ -294,7 +310,11 @@ export function installTlhModelVisibilityFilter(): void {
     modelRegistryPrototype[TLH_MODEL_VISIBILITY_PATCHED] = true;
   }
 
-  const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrototype;
+  const interactiveModePrototypeCandidate: unknown = InteractiveMode.prototype;
+  if (!isInteractiveModePrototype(interactiveModePrototypeCandidate)) {
+    return;
+  }
+  const interactiveModePrototype = interactiveModePrototypeCandidate;
   if (
     interactiveModePrototype[TLH_MODEL_VISIBILITY_EXACT_LOOKUP_PATCHED] ||
     typeof interactiveModePrototype.findExactModelMatch !== "function"
@@ -393,10 +413,9 @@ export function getUnfilteredAvailableModels(
   if ("modelRegistry" in modelSource && modelSource.modelRegistry) {
     return getUnfilteredAvailableModels(modelSource.modelRegistry);
   }
-  const compatibilityRuntime = (
-    modelSource as unknown as { runtime?: Pick<ModelRuntime, "getAvailableSnapshot"> }
-  ).runtime;
-  if (compatibilityRuntime) {
+  const compatibilityRuntime =
+    isRecord(modelSource) && "runtime" in modelSource ? modelSource.runtime : undefined;
+  if (isModelRuntimeSnapshotSource(compatibilityRuntime)) {
     return getUnfilteredRuntimeAvailableSnapshot(compatibilityRuntime);
   }
   if ("getAvailable" in modelSource && typeof modelSource.getAvailable === "function") {
@@ -406,7 +425,7 @@ export function getUnfilteredAvailableModels(
     const originalGetAvailable =
       modelRegistryPrototype?.[TLH_MODEL_VISIBILITY_GET_AVAILABLE_ORIGINAL];
     return originalGetAvailable
-      ? originalGetAvailable.call(modelSource as unknown as ModelRegistry)
+      ? originalGetAvailable.call(modelSource)
       : modelSource.getAvailable();
   }
   return [];

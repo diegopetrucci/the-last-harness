@@ -242,7 +242,7 @@ describe("async execution utilities", () => {
         (status) => status.state === "paused",
         "paused checkpoint before buffered pressure message",
       );
-      const pausedStatus = pausedPayload as unknown as AsyncStatus;
+      const pausedStatus = pausedPayload;
       const claimToken = "tlht-az3z-pressure-claim";
       transitionLifecycleStatus({
         asyncDir,
@@ -264,7 +264,7 @@ describe("async execution utilities", () => {
       // writer could use to erase the reservation.
       fs.writeFileSync(releaseMarker, "", "utf-8");
       const observed = await waitForAsyncControlCondition(asyncDir, (statusPayload, eventText) => {
-        const status = statusPayload as unknown as AsyncStatus;
+        const status = statusPayload;
         const hasPressureNotice = eventText.split("\n").some((line) => {
           try {
             const record = JSON.parse(line) as { type?: string; event?: { reason?: string } };
@@ -283,7 +283,7 @@ describe("async execution utilities", () => {
           status.steps?.[0]?.contextPressureCrossedThresholds?.[0] === "warning"
         );
       });
-      const observedStatus = observed.status as unknown as AsyncStatus;
+      const observedStatus = observed.status;
       const pressureNotice = observed.eventText
         .split("\n")
         .map((line) => {

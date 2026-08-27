@@ -19,7 +19,11 @@ import {
   writeChildMessageAcceptanceForRequest,
   type ChildMessageRequest,
 } from "./control-channel.ts";
-import { appendJsonl as appendRawJsonl, getArtifactPaths } from "../../shared/artifacts.ts";
+import {
+  appendJsonl as appendRawJsonl,
+  getArtifactPaths,
+  writeArtifactWithFloor,
+} from "../../shared/artifacts.ts";
 import {
   buildSubagentSpawnEnv,
   PI_CODING_AGENT_PACKAGE,
@@ -136,8 +140,7 @@ import {
   buildSkippedAcceptanceLedger,
   evaluateAcceptance,
   formatAcceptancePrompt,
-  parseAcceptanceReport,
-  stripAcceptanceReport,
+  parseAndStripAcceptanceReport,
 } from "../shared/acceptance.ts";
 import {
   cleanupOwnedProcessGroup,
@@ -1605,8 +1608,8 @@ async function runSingleStep(
       attemptNotes.push(resolutionNotice);
   }
   const rawOutput = finalResult?.finalOutput ?? "";
-  const outputForPersistence = stripAcceptanceReport(rawOutput);
-  const { report: rawAcceptanceReport } = parseAcceptanceReport(rawOutput);
+  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
+    parseAndStripAcceptanceReport(rawOutput);
   const resolvedOutput =
     step.outputPath && finalResult?.exitCode === 0
       ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
@@ -1677,6 +1680,7 @@ async function runSingleStep(
       ? await evaluateAcceptance({
           acceptance: step.effectiveAcceptance,
           output: outputForAcceptance,
+          report: rawAcceptanceReport,
           cwd: step.cwd ?? ctx.cwd,
           signal: acceptanceAbortController.signal,
           abortMessage: interruptedDuringAcceptance
@@ -1794,7 +1798,12 @@ async function runSingleStep(
         rawAcceptanceReport && !resolvedOutput.savedPath
           ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
           : artifactBaseOutput;
-      fs.writeFileSync(artifactPaths.outputPath, artifactOutput, "utf-8");
+      writeArtifactWithFloor(
+        artifactPaths.outputPath,
+        artifactOutput,
+        rawOutput,
+        !!resolvedOutput.savedPath,
+      );
     }
     if (ctx.artifactConfig?.includeMetadata !== false) {
       fs.writeFileSync(
@@ -2005,6 +2014,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   const overallStartTime = Date.now();
   const shareEnabled = config.share === true;
   const asyncDir = config.asyncDir;
+  // Install this route before publishing the running PID. The control inbox is
+  // authoritative, so the early trampoline deliberately does not act on the
+  // signal until the graceful handler below is initialized; it only prevents
+  // the platform default from terminating the runner in that startup window.
+  let interruptRunner: (() => void) | undefined;
+  const interruptSignalTrampoline = (): void => {
+    interruptRunner?.();
+  };
+  process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
   const statusPath = path.join(asyncDir, "status.json");
   const eventsPath = path.join(asyncDir, "events.jsonl");
   const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
@@ -2211,6 +2229,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       //   intercomTarget — none are load-bearing for delivery or failure surfacing.
       const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
       try {
+        // summary, timestamp, and results[].output are required on AsyncResultArtifact.
+        // They are satisfied here because TypeScript control-flow analysis narrows
+        // statusPayload.error (assigned above) and statusPayload.endedAt (assigned
+        // above) to non-undefined at this write site. Do not extract this block
+        // into a helper that accepts statusPayload — doing so would lose that
+        // narrowing and require explicit non-null assertions or guards.
         writeAtomicJson(resultPath, {
           lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
           id,
@@ -3222,7 +3246,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     } else if (event.type === "message_end" && event.message?.role === "assistant") {
       appendRecentStepOutput(
         step,
-        stripAcceptanceReport(extractTextFromContent(event.message.content)).split("\n").slice(-10),
+        parseAndStripAcceptanceReport(extractTextFromContent(event.message.content))
+          .stripped.split("\n")
+          .slice(-10),
       );
       step.turnCount = (step.turnCount ?? 0) + 1;
       const configuredModel = activeConfiguredModels[flatIndex];
@@ -3400,7 +3426,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     activityTimer.unref?.();
   }
 
-  const interruptRunner = () => {
+  interruptRunner = () => {
     consumeInterruptRequest(asyncDir);
     if (interrupted || statusPayload.state !== "running") return;
     interrupted = true;
@@ -3484,7 +3510,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     timeoutNestedAsyncDescendants();
     timeoutActiveChildren();
   };
-  process.on(ASYNC_INTERRUPT_SIGNAL, interruptRunner);
   // Portable control inbox: the parent drops control request files here when
   // it cannot deliver OS signals (e.g. ENOSYS on Windows) or when steering a
   // live child. Interrupts still route into the same graceful interruptRunner().

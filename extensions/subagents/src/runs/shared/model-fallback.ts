@@ -63,7 +63,7 @@ export function appendRuntimeFallbackResolution(input: {
   };
 }
 
-export function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
+function splitThinkingSuffix(model: string): { baseModel: string; thinkingSuffix: string } {
   const colonIdx = model.lastIndexOf(":");
   if (colonIdx === -1) return { baseModel: model, thinkingSuffix: "" };
   return {
@@ -73,7 +73,7 @@ export function splitThinkingSuffix(model: string): { baseModel: string; thinkin
 }
 
 /** Sentinel model value requesting that a subagent inherit the parent session's model. */
-export const INHERIT_MODEL = "inherit";
+const INHERIT_MODEL = "inherit";
 
 /**
  * Convert a canonical provider/model argument and effective thinking level into
@@ -149,7 +149,7 @@ export function modelReferenceFromIdentity(identity: SubagentModelIdentity): str
   return `${identity.provider}/${identity.model}`;
 }
 
-export interface RuntimeModelContextResolution {
+interface RuntimeModelContextResolution {
   identity: SubagentModelIdentity;
   contextWindow: number;
 }
@@ -346,7 +346,7 @@ export function resolveModelCandidate(
   return model;
 }
 
-export interface ResolveSubagentModelOverrideOptions {
+interface ResolveSubagentModelOverrideOptions {
   /** When set with `enforce: true`, out-of-scope models are rejected. */
   scope?: ModelScopeConfig;
   /** Origin of the requested model: explicit caller-supplied (hard error) vs inherited (warn). Defaults to `"inherited"`. */
@@ -403,7 +403,7 @@ export function resolveSubagentModelOverride(
   return resolved;
 }
 
-export interface BuildModelCandidatesOptions {
+interface BuildModelCandidatesOptions {
   /** Fallback models are inherited agent config and warn, rather than error, when out of scope. */
   scope?: ModelScopeConfig;
   onWarn?: (violation: ModelScopeViolation) => void;

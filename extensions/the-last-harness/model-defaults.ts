@@ -17,26 +17,22 @@ export type AgentModelDefaults = {
   thinking?: ThinkingLevel;
   tlhOpenaiThinking?: ThinkingLevel;
   tlhAnthropicThinking?: ThinkingLevel;
+  tlhOpenrouterThinking?: ThinkingLevel;
   preferCurrentOpenaiModel?: boolean;
   preferOppositeProvider?: boolean;
 };
 
-export type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> =
-  {
-    model?: T;
-    thinking?: ThinkingLevel;
-  };
+type ProviderAwareAgentDefaults<T extends ProviderModelReference = ProviderModelReference> = {
+  model?: T;
+  thinking?: ThinkingLevel;
+};
 
-export type ProviderAwareSubagentFallback<
-  T extends ProviderModelReference = ProviderModelReference,
-> = {
+type ProviderAwareSubagentFallback<T extends ProviderModelReference = ProviderModelReference> = {
   model: T;
   thinking?: ThinkingLevel;
 };
 
-export type ProviderAwareSubagentResolution<
-  T extends ProviderModelReference = ProviderModelReference,
-> = {
+type ProviderAwareSubagentResolution<T extends ProviderModelReference = ProviderModelReference> = {
   model?: T;
   unavailableModel?: string;
   fallbackModels?: ProviderAwareSubagentFallback<T>[];
@@ -47,7 +43,7 @@ export type ProviderAwareSubagentResolution<
   fallbackWarning?: string;
 };
 
-export type ApplyProviderAwareSubagentModelOptions = {
+type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
   onWarning?: (warning: { agent: string; message: string }) => void;
 };
@@ -56,8 +52,11 @@ type ReasoningProviderModelReference = ProviderModelReference & Partial<Reasonin
 
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
+const OPENROUTER_PROVIDERS = new Set(["openrouter"]);
 const OPPOSITE_PROVIDER_FALLBACK_NOTICE =
   "TLH fell back to a same-provider review model; review independence is reduced.";
+const OPENROUTER_OPPOSITE_FALLBACK_NOTICE =
+  "TLH fell back to the session model; review independence is reduced.";
 
 export function parseProviderModelReference(
   model: string | undefined,
@@ -136,12 +135,27 @@ function isAnthropicProvider(provider: string | undefined): boolean {
   return Boolean(provider && ANTHROPIC_PROVIDERS.has(provider));
 }
 
-function providerFamily(provider: string | undefined): "openai" | "anthropic" | undefined {
+function isOpenrouterProvider(provider: string | undefined): boolean {
+  return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
+}
+
+type ProviderFamily = "openai" | "anthropic";
+
+function providerFamily(
+  provider: string | undefined,
+  modelId?: string,
+): ProviderFamily | undefined {
   if (isOpenaiProvider(provider)) {
     return "openai";
   }
   if (isAnthropicProvider(provider)) {
     return "anthropic";
+  }
+  if (isOpenrouterProvider(provider)) {
+    const underlyingVendor = modelId?.split("/", 1)[0];
+    if (underlyingVendor === "openai" || underlyingVendor === "anthropic") {
+      return underlyingVendor;
+    }
   }
   return undefined;
 }
@@ -241,8 +255,32 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
   currentProvider?: string,
+  currentModel?: ProviderModelReference,
 ): T | undefined {
   if (!agent?.preferOppositeProvider) {
+    return undefined;
+  }
+
+  if (isOpenrouterProvider(currentProvider)) {
+    const currentFamily = providerFamily(currentProvider, currentModel?.id);
+    const families: ProviderFamily[] =
+      currentFamily === "anthropic"
+        ? ["openai", "anthropic"]
+        : currentFamily === "openai"
+          ? ["anthropic", "openai"]
+          : ["openai", "anthropic"];
+    for (const family of families) {
+      const candidates = family === "openai" ? agent.tlhOpenaiModels : agent.tlhAnthropicModels;
+      for (const candidate of candidates ?? []) {
+        const model =
+          family === "openai"
+            ? availableOpenaiCandidate(availableModels, candidate)
+            : availableAnthropicCandidate(availableModels, candidate);
+        if (model) {
+          return model;
+        }
+      }
+    }
     return undefined;
   }
 
@@ -276,6 +314,14 @@ function selectOppositeProviderFallbackModel<T extends ProviderModelReference>(
 ): T | undefined {
   if (!agent?.preferOppositeProvider) {
     return undefined;
+  }
+
+  if (isOpenrouterProvider(currentProvider) && currentModel?.provider === currentProvider) {
+    // OpenRouter models are runtime session values; retain a valid current model even
+    // when this dispatch's registry snapshot omitted it.
+    return (
+      findAvailableProviderModelReference(availableModels, currentModel) ?? (currentModel as T)
+    );
   }
 
   if (currentModel?.provider === currentProvider) {
@@ -332,15 +378,39 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
   return undefined;
 }
 
-export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
+/**
+ * When the active provider is "openrouter" (literal string only), agents without
+ * preferOppositeProvider follow the current session model instead of falling
+ * through to bundled codex/anthropic candidates.
+ *
+ * Thinking comes exclusively from tlhOpenrouterThinking; the generic `thinking`
+ * key does NOT leak through on this path. Returns undefined when the rule does
+ * not apply (provider is not openrouter or agent prefers opposite provider).
+ *
+ * The current model is a session identity, not necessarily a registry entry. Keep
+ * that identity separate from optional reasoning metadata: capability checks must
+ * fail open when the registry omitted the active model.
+ */
+function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
-  currentProvider?: string,
-): T | undefined {
-  return (
-    selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider) ??
-    selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider)
-  );
+  currentProvider: string | undefined,
+  currentModel: ProviderModelReference | undefined,
+): ProviderAwareAgentDefaults<T> | undefined {
+  if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
+    return undefined;
+  }
+  // Prefer registry metadata when present, but follow a valid session identity even
+  // when the registry snapshot omitted it. This cast adapts identity-only data to
+  // the generic return type; it is never used for capability checks as-is.
+  const followedModel =
+    findAvailableProviderModelReference(availableModels, currentModel) ??
+    (currentModel ? (currentModel as T) : undefined);
+  if (!followedModel) {
+    return undefined;
+  }
+  // Explicitly use tlhOpenrouterThinking only — do not fall through to agent.thinking.
+  return { model: followedModel, thinking: agent?.tlhOpenrouterThinking };
 }
 
 /**
@@ -348,7 +418,7 @@ export function selectProviderAwareAgentModel<T extends ProviderModelReference>(
  * Checks provider-specific overrides (`tlhOpenaiThinking`, `tlhAnthropicThinking`)
  * before falling back to the generic `thinking` field.
  */
-function resolveThinkingForProvider(
+export function resolveProviderThinking(
   agent: AgentModelDefaults | undefined,
   provider: string | undefined,
 ): ThinkingLevel | undefined {
@@ -359,35 +429,50 @@ function resolveThinkingForProvider(
   if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
     return agent.tlhAnthropicThinking;
   }
+  if (isOpenrouterProvider(provider)) {
+    return agent.tlhOpenrouterThinking;
+  }
   return agent.thinking;
+}
+
+// Keep the internal name for model-default resolution paths; primary runtime
+// callers use the explicitly provider-scoped exported helper above.
+function resolveThinkingForProvider(
+  agent: AgentModelDefaults | undefined,
+  provider: string | undefined,
+): ThinkingLevel | undefined {
+  return resolveProviderThinking(agent, provider);
 }
 
 export function selectProviderAwareAgentDefaults<T extends ProviderModelReference>(
   agent: AgentModelDefaults | undefined,
   availableModels: readonly T[],
   currentProvider?: string,
+  currentModel?: ProviderModelReference,
 ): ProviderAwareAgentDefaults<T> {
+  // OpenRouter follow rule: non-opposite-role agents follow the session model.
+  const openrouterFollow = resolveOpenrouterFollowDefaults(
+    agent,
+    availableModels,
+    currentProvider,
+    currentModel,
+  );
+  if (openrouterFollow) {
+    return openrouterFollow;
+  }
   const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(
     agent,
     availableModels,
     currentProvider,
+    currentModel,
   );
   const standardModel = agent?.preferCurrentOpenaiModel
     ? (currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
       selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider))
     : selectStandardProviderAwareAgentModel(agent, availableModels, currentProvider);
   const model = oppositeProviderModel ?? standardModel;
-  const thinking = resolveThinkingForProvider(agent, model?.provider ?? currentProvider);
+  const thinking = resolveProviderThinking(agent, model?.provider ?? currentProvider);
   return { model, thinking };
-}
-
-export function selectProviderAwareAgentModelId(
-  agent: AgentModelDefaults | undefined,
-  availableModels: readonly ProviderModelReference[],
-  currentProvider?: string,
-): string | undefined {
-  const model = selectProviderAwareAgentModel(agent, availableModels, currentProvider);
-  return model ? formatProviderModelReference(model) : undefined;
 }
 
 /**
@@ -479,6 +564,11 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
     if (!model) {
       return { thinking: bundledThinking };
     }
+    // Identity without reasoning metadata means capability is unknown (the
+    // registry omitted this active model), not explicitly non-reasoning.
+    if (!Object.hasOwn(model, "reasoning")) {
+      return { thinking: bundledThinking };
+    }
     const supportedLevels = getAvailableThinkingLevels(model);
     if (supportedLevels.includes(bundledThinking)) {
       return { thinking: bundledThinking };
@@ -493,6 +583,12 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
     return {
       warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking)),
     };
+  }
+
+  // Fail open for a valid stored effort when the active model's capability is
+  // unknown; absent `reasoning` must not be interpreted as `off`.
+  if (!Object.hasOwn(model, "reasoning")) {
+    return requestedThinking !== undefined ? { thinking: requestedThinking } : {};
   }
 
   const supportedLevels = getAvailableThinkingLevels(model);
@@ -525,6 +621,7 @@ function resolveIndependence(
   agent: AgentModelDefaults | undefined,
   model: ProviderModelReference | undefined,
   currentProvider?: string,
+  currentModel?: ProviderModelReference,
 ): ProviderAwareSubagentResolution["independence"] {
   if (!agent?.preferOppositeProvider) {
     return "not-applicable";
@@ -532,8 +629,8 @@ function resolveIndependence(
   if (!model) {
     return "unknown";
   }
-  const currentFamily = providerFamily(currentProvider);
-  const modelFamily = providerFamily(model.provider);
+  const currentFamily = providerFamily(currentProvider, currentModel?.id);
+  const modelFamily = providerFamily(model.provider, model.id);
   if (!currentFamily || !modelFamily) {
     return "unknown";
   }
@@ -580,7 +677,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     return {
       model: overrideModel,
       thinking: thinkingResolution.thinking,
-      independence: resolveIndependence(agent, overrideModel, currentProvider),
+      independence: resolveIndependence(agent, overrideModel, currentProvider, currentModel),
       warning: thinkingResolution.warning,
     };
   }
@@ -593,7 +690,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override);
     return {
       unavailableModel: override.model,
-      independence: resolveIndependence(agent, parsedOverrideModel, currentProvider),
+      independence: resolveIndependence(agent, parsedOverrideModel, currentProvider, currentModel),
       warning: thinkingResolution.warning,
     };
   }
@@ -605,16 +702,46 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     return {
       model: inheritedModel,
       thinking: thinkingResolution.thinking,
-      independence: resolveIndependence(agent, inheritedModel, currentProvider),
+      independence: resolveIndependence(agent, inheritedModel, currentProvider, currentModel),
       warning: thinkingResolution.warning,
     };
   }
 
   // 4. No stored model override — use bundled provider-aware defaults.
+
+  // OpenRouter follow rule (non-opposite-role agents only): follow the session model.
+  // Thinking-only overrides are capability-gated; the pure no-override path uses
+  // tlhOpenrouterThinking exclusively — the generic thinking key does not leak.
+  const openrouterFollow = resolveOpenrouterFollowDefaults(
+    agent,
+    availableModels,
+    currentProvider,
+    currentModel,
+  );
+  if (openrouterFollow?.model) {
+    const thinkingResolution =
+      override === undefined
+        ? { thinking: openrouterFollow.thinking }
+        : resolveStoredSubagentThinking(agent, openrouterFollow.model, override);
+    return {
+      model: openrouterFollow.model,
+      fallbackModels: [],
+      thinking: thinkingResolution.thinking,
+      independence: resolveIndependence(
+        agent,
+        openrouterFollow.model,
+        currentProvider,
+        currentModel,
+      ),
+      warning: thinkingResolution.warning,
+    };
+  }
+
   const oppositeProviderModel = selectOppositeProviderPreferredAgentModel(
     agent,
     availableModels,
     currentProvider,
+    currentModel,
   );
   let selectedModel: T | undefined =
     oppositeProviderModel ??
@@ -691,9 +818,13 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     model: selectedModel,
     fallbackModels: resolvedFallbackModels,
     modelFallbackNotice:
-      resolvedFallbackModels.length > 0 ? OPPOSITE_PROVIDER_FALLBACK_NOTICE : undefined,
+      resolvedFallbackModels.length > 0
+        ? isOpenrouterProvider(currentProvider)
+          ? OPENROUTER_OPPOSITE_FALLBACK_NOTICE
+          : OPPOSITE_PROVIDER_FALLBACK_NOTICE
+        : undefined,
     thinking: primaryThinkingResolution.thinking,
-    independence: resolveIndependence(agent, selectedModel, currentProvider),
+    independence: resolveIndependence(agent, selectedModel, currentProvider, currentModel),
     warning: primaryThinkingResolution.warning,
     fallbackWarning: !primaryThinkingResolution.warning ? fallbackWarning : undefined,
   };
@@ -765,7 +896,12 @@ function applyModelToRunnableTarget(
   // resolveThinkingForProvider's result is appended directly without
   // model-capability gating.
   if (override === undefined) {
-    const defaults = selectProviderAwareAgentDefaults(agent, availableModels, currentProvider);
+    const defaults = selectProviderAwareAgentDefaults(
+      agent,
+      availableModels,
+      currentProvider,
+      currentModel,
+    );
     const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
     if (!selectedModel || selectedModel === agent?.model) {
       return 0;
@@ -777,6 +913,7 @@ function applyModelToRunnableTarget(
       agent,
       availableModels,
       currentProvider,
+      currentModel,
     );
     if (oppositeProviderModel) {
       const fallbackModel = selectOppositeProviderFallbackModel(
@@ -800,7 +937,9 @@ function applyModelToRunnableTarget(
           !Object.hasOwn(target, "modelFallbackNotice") ||
           target.modelFallbackNotice === undefined
         ) {
-          target.modelFallbackNotice = OPPOSITE_PROVIDER_FALLBACK_NOTICE;
+          target.modelFallbackNotice = isOpenrouterProvider(currentProvider)
+            ? OPENROUTER_OPPOSITE_FALLBACK_NOTICE
+            : OPPOSITE_PROVIDER_FALLBACK_NOTICE;
         }
       }
     }

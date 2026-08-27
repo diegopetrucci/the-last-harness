@@ -22,7 +22,6 @@ export const DUMB_ZONE_LABEL = "DUMB ZONE";
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
-export const TLH_HEADER_TOGGLE_SHORTCUT_LABEL = "Ctrl+Shift+E";
 
 export const HARNESS_PROMPT = `
 ## The Last Harness Defaults

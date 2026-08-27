@@ -37,7 +37,6 @@ function isSubmitPayload(value) {
 function isCancelPayload(value) {
     return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
-export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION = "Open a native annotation window for the latest assistant message";
 export function buildAnnotateLastMessageCommand(dependencies) {
     const openAnnotationWindow = dependencies.openAnnotationWindow ?? openQuietGlimpse;
     const setTimer = dependencies.setTimeoutFn ?? setTimeout;
@@ -198,16 +197,4 @@ export function buildAnnotateLastMessageCommand(dependencies) {
             closeActiveWindow({ suppressResults: true });
         },
     };
-}
-export function registerAnnotateLastMessageCommand(pi) {
-    const command = buildAnnotateLastMessageCommand({
-        sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
-    });
-    pi.registerCommand("annotate-last-message", {
-        description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
-        handler: command.handler,
-    });
-    pi.on("session_shutdown", async () => {
-        command.handleSessionShutdown();
-    });
 }

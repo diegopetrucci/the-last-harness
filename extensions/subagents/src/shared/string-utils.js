@@ -10,3 +10,13 @@ export function truncateWithMarker(value, maxChars, marker) {
         return sliceSafe(marker, maxChars);
     return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
+const REJECTION_REASON_MAX_LENGTH = 200;
+function normalizeRejectionReason(reason) {
+    return reason
+        .replace(/[\r\n\t\v\f]+/g, " ")
+        .replace(/ {2,}/g, " ")
+        .trim();
+}
+export function formatRejectionReason(reason) {
+    return truncateWithMarker(normalizeRejectionReason(reason), REJECTION_REASON_MAX_LENGTH, "\u2026");
+}

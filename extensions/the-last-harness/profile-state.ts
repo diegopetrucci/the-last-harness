@@ -11,19 +11,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
-import {
-  formatHomePath,
-  isRecord,
-  pathWithinOrEqual,
-  readText,
-  realpathForCompare,
-} from "./common.js";
+import { isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
 import type { SettingsStorageLike, TlhInstallState, TlhStartupState } from "./types.js";
 
-export function isDefaultPiAgentDir(agentDir: string): boolean {
+function isDefaultPiAgentDir(agentDir: string): boolean {
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) return false;
   try {
@@ -33,7 +26,7 @@ export function isDefaultPiAgentDir(agentDir: string): boolean {
   }
 }
 
-export function isNormalPiConfigPath(resolvedPath: string): boolean {
+function isNormalPiConfigPath(resolvedPath: string): boolean {
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) {
     return false;
@@ -97,7 +90,7 @@ export function readTlhStartupState(): TlhStartupState {
   }
 }
 
-export function tlhInstallStatePath(): string | undefined {
+function tlhInstallStatePath(): string | undefined {
   return safeTlhProfileFilePath(join("tlh", "install-state.json"));
 }
 
@@ -277,7 +270,7 @@ export function writeGuardedTlhStateFile(
   return writeTlhStateFileAtomically(statePath, content);
 }
 
-export function writeTlhStartupState(state: TlhStartupState): void {
+function writeTlhStartupState(state: TlhStartupState): void {
   try {
     const statePath = tlhStartupStatePath();
     if (!statePath) {
@@ -328,14 +321,17 @@ function writeCollisionSafeSettingsBackup(settingsPath: string, current: string)
   );
 }
 
+function isSettingsStorageLike(value: unknown): value is SettingsStorageLike {
+  return isRecord(value) && typeof value.withLock === "function";
+}
+
 function getSettingsStorageForWrite(cwd: string): SettingsStorageLike {
-  const manager = SettingsManager.create(cwd, getAgentDir()) as unknown as {
-    storage?: SettingsStorageLike;
-  };
-  if (!manager.storage || typeof manager.storage.withLock !== "function") {
+  const manager: unknown = SettingsManager.create(cwd, getAgentDir());
+  const storage = isRecord(manager) ? manager.storage : undefined;
+  if (!isSettingsStorageLike(storage)) {
     throw new Error("Pi settings storage is unavailable.");
   }
-  return manager.storage;
+  return storage;
 }
 
 export function withLockedTlhSettingsWrite<
@@ -405,19 +401,6 @@ export function assertSafeTlhSettingsPath(settingsPath: string): void {
 
   if (isNormalPiConfigPath(resolvedSettingsPath)) {
     throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
-  }
-}
-
-export function assertNotNormalPiSettings(settingsPath: string): void {
-  const normalPiRoot = realpathForCompare(join(homedir(), ".pi"));
-  const resolvedSettingsPath = realpathForCompare(settingsPath);
-  if (
-    resolvedSettingsPath === normalPiRoot ||
-    resolvedSettingsPath.startsWith(`${normalPiRoot}${sep}`)
-  ) {
-    throw new Error(
-      `Refusing to modify normal Pi config from tlh: ${formatHomePath(settingsPath)}`,
-    );
   }
 }
 

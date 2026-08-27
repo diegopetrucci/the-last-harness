@@ -14,7 +14,6 @@ import type {
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
   "ci-failure-investigation";
-export const EMBEDDED_SUBAGENTS_FEATURE: TlhExperimentalFeatureId = "embedded-subagents";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -93,10 +92,6 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
     primaryAgentPrompts: {
       architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
     },
-  },
-  {
-    id: EMBEDDED_SUBAGENTS_FEATURE,
-    description: "Gates architect-only delegation to trusted user-owned embedded.<slug> subagents.",
   },
 ];
 
@@ -213,7 +208,7 @@ export function parseExperimentalSlashAction(args: string): TlhExperimentalSlash
   return undefined;
 }
 
-export const EXPERIMENTAL_COMMAND_COMPLETIONS = [
+const EXPERIMENTAL_COMMAND_COMPLETIONS = [
   { value: "list", description: "List TLH experimental features" },
   { value: "status", description: "Show TLH experimental feature status" },
   ...TLH_EXPERIMENTAL_FEATURES.flatMap((feature) => [

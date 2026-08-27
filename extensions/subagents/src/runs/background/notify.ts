@@ -18,10 +18,15 @@ import {
   createCompletionBatcher,
   resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
-import { SUBAGENT_ASYNC_COMPLETE_EVENT, type SubagentState } from "../../shared/types.ts";
+import {
+  SUBAGENT_ASYNC_COMPLETE_EVENT,
+  type AcceptanceLedger,
+  type SubagentState,
+} from "../../shared/types.ts";
 import { isProtectedPausedLifecycle } from "../shared/lifecycle-privacy.ts";
 import { BACKGROUND_COMPLETION_NUDGE_TEXT } from "../shared/nudge-texts.ts";
-import { sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
+import { formatRejectionReason, sliceSafe, truncateWithMarker } from "../../shared/string-utils.ts";
+import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 
 // --- Injection / context bounds on child-controlled text ---
 // These constants limit text that originates from child subagents and enters
@@ -88,6 +93,7 @@ interface ChainStepResult {
   sessionPath?: string;
   index?: number;
   children?: NestedNotifyChild[];
+  acceptance?: AcceptanceLedger;
 }
 
 interface ResumeTarget {
@@ -138,9 +144,11 @@ interface SubagentResult {
   sessionId?: string | null;
 }
 
+type NotifyTimerHandle = ReturnType<typeof setTimeout> | number;
+
 interface NotifyTimerApi {
-  setTimeout(handler: () => void, delayMs: number): unknown;
-  clearTimeout(handle: unknown): void;
+  setTimeout(handler: () => void, delayMs: number): NotifyTimerHandle;
+  clearTimeout(handle: NotifyTimerHandle): void;
 }
 
 export interface RegisterSubagentNotifyOptions {
@@ -478,7 +486,16 @@ function formatNestedChildren(
 
 function formatChildReferences(child: ChainStepResult, privacySafe = false): string[] {
   if (privacySafe) return [];
+  const acceptanceLine = (() => {
+    if (!child.acceptance) return undefined;
+    if (child.acceptance.status !== "rejected") return undefined;
+    const reason = acceptanceRejectionReason(child.acceptance);
+    return reason
+      ? `Acceptance: rejected — ${formatRejectionReason(reason)}`
+      : "Acceptance: rejected";
+  })();
   return [
+    acceptanceLine,
     child.artifactPath ? `Output artifact: ${boundedReference(child.artifactPath)}` : undefined,
     child.sessionPath ? `Session: ${boundedReference(child.sessionPath)}` : undefined,
   ].filter((line): line is string => Boolean(line));

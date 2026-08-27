@@ -484,6 +484,53 @@ test("fresh cached release data is reused without a network fetch", async (t) =>
   );
 });
 
+test("persisted lastNotifiedVersion does not suppress a new process launch", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
+  writeSettings(fixture.agent, {});
+  const now = Date.parse("2026-07-17T12:00:00.000Z");
+  const freshCheckedAt = new Date(now - TLH_UPDATE_CHECK_INTERVAL_MS + 1).toISOString();
+  writeStartupState(fixture.agent, {
+    updateCheck: {
+      checkedAt: freshCheckedAt,
+      latestVersion: LATEST_RELEASE.version,
+      latestTagName: LATEST_RELEASE.tagName,
+      latestReleaseUrl: LATEST_RELEASE.releaseUrl,
+      lastNotifiedVersion: LATEST_RELEASE.version,
+    },
+  });
+
+  const firstProcessNotifications = [];
+  const secondProcessNotifications = [];
+  let fetchCalls = 0;
+  const hooks = {
+    now: () => now,
+    fetchLatestRelease: async () => {
+      fetchCalls += 1;
+      return LATEST_RELEASE;
+    },
+  };
+  installUpdateCheckHooks(t, hooks);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, firstProcessNotifications));
+
+    // A fresh process has a fresh in-memory dedupe set but reads the same
+    // persisted startup state.
+    __resetTlhUpdateCheckForTests();
+    __setTlhUpdateCheckTestHooks(hooks);
+    await maybeNotifyAvailableTlhUpdate(createCtx(fixture.cwd, secondProcessNotifications));
+  });
+
+  assert.equal(fetchCalls, 0, "fresh cached release data must not fetch in either process");
+  assert.equal(firstProcessNotifications.length, 1);
+  assert.equal(secondProcessNotifications.length, 1);
+  assert.equal(
+    readStartupState(fixture.agent).updateCheck?.lastNotifiedVersion,
+    LATEST_RELEASE.version,
+    "the legacy persisted field must remain intact",
+  );
+});
+
 test("in-process dedupe suppresses repeat notifications for the same version even if persisted state regresses", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-update-check-test-", { cwd: true, test: t });
   writeSettings(fixture.agent, {});

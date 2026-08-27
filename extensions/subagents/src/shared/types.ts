@@ -117,7 +117,7 @@ export interface ResolvedToolBudget {
   block: string[] | "*";
 }
 
-export type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
+type ToolBudgetOutcome = "within-budget" | "soft-reached" | "hard-blocked";
 
 export interface ToolBudgetState extends ResolvedToolBudget {
   outcome: ToolBudgetOutcome;
@@ -127,7 +127,7 @@ export interface ToolBudgetState extends ResolvedToolBudget {
   blockedTool?: string;
 }
 
-export type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
+type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
 
 export interface TurnBudgetState extends ResolvedTurnBudget {
   outcome: TurnBudgetOutcome;
@@ -266,8 +266,8 @@ export interface ContextUsageDiagnostics {
   contextPercent?: number;
 }
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
-export type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
-export type AsyncLifecycleState =
+type SubagentLifecycleArtifactVersion = typeof SUBAGENT_LIFECYCLE_ARTIFACT_VERSION;
+type AsyncLifecycleState =
   | "queued"
   | "running"
   | "pausing"
@@ -300,7 +300,7 @@ export interface ForegroundSupervisorRequestMetadata {
   summary?: string;
 }
 
-export interface ForegroundPauseMetadata extends AsyncPauseMetadata {
+interface ForegroundPauseMetadata extends AsyncPauseMetadata {
   request?: ForegroundSupervisorRequestMetadata;
 }
 
@@ -316,13 +316,13 @@ export interface AsyncLifecycleContinuationMetadata {
   continuationRunId?: string;
 }
 
-export interface AsyncLifecycleMetadata {
+interface AsyncLifecycleMetadata {
   generation?: number;
   continuation?: AsyncLifecycleContinuationMetadata;
   continuationsByIndex?: Record<string, AsyncLifecycleContinuationMetadata>;
 }
 
-export type PublicNestedStepSummary = Pick<
+type PublicNestedStepSummary = Pick<
   NestedStepSummary,
   | "agent"
   | "status"
@@ -494,7 +494,7 @@ export type AcceptanceEvidenceKind =
   | "review-findings"
   | "manual-notes";
 
-export interface AcceptanceGate {
+interface AcceptanceGate {
   id: string;
   must: string;
   evidence?: AcceptanceEvidenceKind[];
@@ -510,7 +510,7 @@ export interface AcceptanceVerifyCommand {
   allowFailure?: boolean;
 }
 
-export interface AcceptanceReviewGate {
+interface AcceptanceReviewGate {
   agent?: string;
   focus?: string;
   required?: boolean;
@@ -557,7 +557,7 @@ export interface AcceptanceReport {
   testsAddedOrUpdated?: string[];
   commandsRun?: Array<{
     command: string;
-    result: "passed" | "failed" | "not-run";
+    result: string;
     summary: string;
   }>;
   validationOutput?: string[];
@@ -753,9 +753,9 @@ export interface AsyncParallelGroupStatus {
 }
 
 export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
-export type NestedOwnerState = "live" | "gone" | "unknown";
+type NestedOwnerState = "live" | "gone" | "unknown";
 
-export interface NestedRunAddress {
+interface NestedRunAddress {
   id: string;
   parentRunId: string;
   parentStepIndex?: number;
@@ -1014,7 +1014,7 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
 export interface AsyncResultArtifactResultItem {
   agent: string;
   success: boolean;
-  output?: string;
+  output: string;
   error?: string;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals;
@@ -1060,7 +1060,6 @@ export interface AsyncResultArtifactResultItem {
  *
  * Fields are optional when any writer legitimately omits them:
  * - `lifecycleArtifactVersion` — omitted by the stale-run repair writer
- * - `summary`/`timestamp` — may be `undefined` in the gate-rejection writer
  * - Most top-level fields — omitted by gate-rejection and repair writers
  */
 export interface AsyncResultArtifact {
@@ -1070,7 +1069,7 @@ export interface AsyncResultArtifact {
   mode: SubagentRunMode;
   success: boolean;
   state: AsyncLifecycleState;
-  summary?: string;
+  summary: string;
   error?: string;
   timeoutMs?: number;
   deadlineAt?: number;
@@ -1085,7 +1084,7 @@ export interface AsyncResultArtifact {
   outputs?: ChainOutputMap;
   workflowGraph?: WorkflowGraphSnapshot;
   exitCode: number;
-  timestamp?: number;
+  timestamp: number;
   durationMs: number;
   totalTokens?: TokenUsage;
   totalCost?: CostSummary;
@@ -1352,11 +1351,7 @@ interface TopLevelParallelConfig {
   concurrency?: number;
 }
 
-export type ToolDescriptionMode = "full" | "compact";
-
 export interface ExtensionConfig {
-  /** Tool description variant registered for the parent-facing subagent tool. Defaults to full. */
-  toolDescriptionMode?: ToolDescriptionMode;
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
@@ -1432,7 +1427,7 @@ function resolveTempScopeId(options?: {
 }
 
 const MAX_PARALLEL = 8;
-export const MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 4;
 
 /**
  * Resolve the temp root directory used for async run state.
@@ -1465,13 +1460,7 @@ export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
 export const WIDGET_KEY = "subagent-async";
-export const SLASH_RESULT_TYPE = "subagent-slash-result";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";
-export const SLASH_SUBAGENT_REQUEST_EVENT = "subagent:slash:request";
-export const SLASH_SUBAGENT_STARTED_EVENT = "subagent:slash:started";
-export const SLASH_SUBAGENT_RESPONSE_EVENT = "subagent:slash:response";
-export const SLASH_SUBAGENT_UPDATE_EVENT = "subagent:slash:update";
-export const SLASH_SUBAGENT_CANCEL_EVENT = "subagent:slash:cancel";
 export const POLL_INTERVAL_MS = 250;
 export const MAX_WIDGET_JOBS = 4;
 export const DEFAULT_SUBAGENT_MAX_DEPTH = 2;

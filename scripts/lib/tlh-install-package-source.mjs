@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-export function splitGitRef(url) {
+function splitGitRef(url) {
     const hashSeparator = url.lastIndexOf("#");
     if (hashSeparator >= 0) {
         const repo = url.slice(0, hashSeparator);
@@ -154,7 +154,7 @@ export function packageSourcePiSource(source, options = {}) {
         return supportedFilePath;
     return gitSourceInstallSource(text, options);
 }
-export function resolveLocalPackageSource(source, { agentDir = "", homeDir = homedir() } = {}) {
+function resolveLocalPackageSource(source, { agentDir = "", homeDir = homedir() } = {}) {
     const text = String(source ?? "");
     const supportedFilePath = resolveSupportedFilePackageSource(text);
     if (supportedFilePath)

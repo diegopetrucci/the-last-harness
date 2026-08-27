@@ -9,6 +9,7 @@ import {
   Markdown,
   Spacer,
   Text,
+  stripTerminalSequences,
   visibleWidth,
   wrapTextWithAnsi,
   type Component,
@@ -105,30 +106,58 @@ function collapsedForegroundSummaryLines(
   return firstLines;
 }
 
-function fitCollapsedForegroundLines(lines: string[], theme: Theme, width: number): string[] {
+function fitCollapsedForegroundLines(
+  contentLines: string[],
+  theme: Theme,
+  width: number,
+  footerLines: readonly string[] = [],
+): string[] {
   const budget = collapsedForegroundLineBudget();
-  if (lines.length <= budget) return lines;
+  if (footerLines.length > budget) {
+    const summaryLines = collapsedForegroundSummaryLines(contentLines.length, theme, width, budget);
+    return summaryLines.slice(0, budget);
+  }
+  if (contentLines.length + footerLines.length <= budget) {
+    return [...contentLines, ...footerLines];
+  }
 
-  for (let visibleCount = Math.min(lines.length, budget - 1); visibleCount >= 0; visibleCount--) {
-    const hiddenCount = lines.length - visibleCount;
+  const contentBudget = budget - footerLines.length;
+  for (
+    let visibleCount = Math.min(contentLines.length, contentBudget - 1);
+    visibleCount >= 0;
+    visibleCount--
+  ) {
+    const hiddenCount = contentLines.length - visibleCount;
     const summaryLines = wrapDisplayLine(
       theme.fg("dim", `… ${hiddenCount} lines hidden · ${liveDetailKeyText()} expands`),
       width,
     );
-    if (visibleCount + summaryLines.length <= budget) {
-      return [...lines.slice(0, visibleCount), ...summaryLines];
+    if (visibleCount + summaryLines.length <= contentBudget) {
+      return [...contentLines.slice(0, visibleCount), ...summaryLines, ...footerLines];
     }
   }
 
-  return collapsedForegroundSummaryLines(lines.length, theme, width, budget);
+  const summaryLines =
+    contentBudget > 0
+      ? collapsedForegroundSummaryLines(contentLines.length, theme, width, contentBudget)
+      : [];
+  return [...summaryLines.slice(0, contentBudget), ...footerLines];
 }
 
 function collapsedForegroundComponent(logicalLines: readonly string[], theme: Theme): Component {
   return {
     render(width: number): string[] {
       const contentWidth = Math.max(1, width);
-      const physicalLines = wrapDisplayLines(logicalLines, contentWidth);
-      return fitCollapsedForegroundLines(physicalLines, theme, contentWidth);
+      const trailingLiveDetailFooter = logicalLines.at(-1);
+      const hasLiveDetailFooter =
+        trailingLiveDetailFooter !== undefined &&
+        stripTerminalSequences(trailingLiveDetailFooter).trim() === liveDetailHintText();
+      const contentLogicalLines = hasLiveDetailFooter ? logicalLines.slice(0, -1) : logicalLines;
+      const contentLines = wrapDisplayLines(contentLogicalLines, contentWidth);
+      const footerLines = hasLiveDetailFooter
+        ? wrapDisplayLine(trailingLiveDetailFooter!, contentWidth)
+        : [];
+      return fitCollapsedForegroundLines(contentLines, theme, contentWidth, footerLines);
     },
     invalidate(): void {},
   };
@@ -252,21 +281,115 @@ function snapshotNowForProgress(
   return progress.lastActivityAt;
 }
 
-function formatCurrentToolLine(
+const COLLAPSED_COMMAND_PREVIEW_ROWS = 3;
+const WIDGET_ACTIVITY_PREFIX = "    ⎿  ";
+const WIDGET_ACTIVITY_CONTINUATION_PREFIX = "       ";
+const FOREGROUND_ACTIVITY_PREFIX = "  ⎿  ";
+const FOREGROUND_ACTIVITY_CONTINUATION_PREFIX = "     ";
+
+function fitCompactToolStatus(
+  toolLines: string[],
+  liveStatus: string | undefined,
+  firstWidth: number,
+  continuationWidth: number,
+): string[] {
+  if (!liveStatus || toolLines.includes(liveStatus)) return toolLines;
+  const finalLineIndex = toolLines.length - 1;
+  const finalWidth = finalLineIndex === 0 ? firstWidth : continuationWidth;
+  const finalLine = `${toolLines[finalLineIndex]!} · ${liveStatus}`;
+  if (visibleWidth(finalLine) <= Math.max(1, finalWidth)) {
+    return [...toolLines.slice(0, finalLineIndex), finalLine];
+  }
+  return [...toolLines, liveStatus];
+}
+
+function isDisplayWhitespace(character: string): boolean {
+  return character.trim().length === 0;
+}
+
+function stripBareTerminalControls(text: string): string {
+  let sanitized = "";
+  let pendingControlSpace = false;
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if ((code >= 0x00 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f)) {
+      pendingControlSpace = true;
+      continue;
+    }
+    if (pendingControlSpace) {
+      const previous = sanitized.at(-1);
+      if (
+        previous !== undefined &&
+        !isDisplayWhitespace(previous) &&
+        !isDisplayWhitespace(character)
+      ) {
+        sanitized += " ";
+      }
+      pendingControlSpace = false;
+    }
+    sanitized += character;
+  }
+  return sanitized;
+}
+
+function wrapCommandPreview(text: string, firstWidth: number, continuationWidth: number): string[] {
+  const firstLines = wrapDisplayLine(text, Math.max(1, firstWidth));
+  if (firstLines.length <= 1) return firstLines;
+  const firstLine = firstLines[0]!;
+  const continuationSource = text.slice(firstLine.length).trimStart();
+  return [firstLine, ...wrapDisplayLine(continuationSource, Math.max(1, continuationWidth))];
+}
+
+function fitCollapsedCommandPreview(
+  commandText: string,
+  durationSuffix: string,
+  firstWidth: number,
+  continuationWidth: number,
+): string[] {
+  const reflowed = stripBareTerminalControls(
+    stripTerminalSequences(commandText).replace(/\r\n|\r|\n/g, " "),
+  );
+  const lines = wrapCommandPreview(`${reflowed}${durationSuffix}`, firstWidth, continuationWidth);
+  if (lines.length <= COLLAPSED_COMMAND_PREVIEW_ROWS) return lines;
+
+  const ellipsis = "…";
+  const truncationSuffix = `${ellipsis}${durationSuffix}`;
+  const truncationSuffixWidth = visibleWidth(truncationSuffix);
+  if (truncationSuffixWidth >= Math.max(1, continuationWidth)) {
+    return [...lines.slice(0, COLLAPSED_COMMAND_PREVIEW_ROWS - 1), ellipsis];
+  }
+  const commandLines = wrapCommandPreview(reflowed, firstWidth, continuationWidth);
+  const finalLine = wrapDisplayLine(
+    commandLines[COLLAPSED_COMMAND_PREVIEW_ROWS - 1] ?? "",
+    Math.max(1, continuationWidth - truncationSuffixWidth),
+  )[0];
+  return [
+    ...commandLines.slice(0, COLLAPSED_COMMAND_PREVIEW_ROWS - 1),
+    `${finalLine ?? ""}${truncationSuffix}`,
+  ];
+}
+
+function formatCurrentToolLines(
   progress: Pick<AgentProgress, "currentTool" | "currentToolArgs" | "currentToolStartedAt">,
-  _availableWidth: number,
-  _expanded: boolean,
+  firstWidth: number,
+  continuationWidth: number,
+  expanded: boolean,
   snapshotNow?: number,
-): string | undefined {
+): string[] | undefined {
   if (!progress.currentTool) return undefined;
   const toolArgsPreview = progress.currentToolArgs ?? "";
   const durationSuffix =
     progress.currentToolStartedAt !== undefined && snapshotNow !== undefined
       ? ` | ${formatDuration(Math.max(0, snapshotNow - progress.currentToolStartedAt))}`
       : "";
-  return toolArgsPreview
+  const toolLine = toolArgsPreview
     ? `${progress.currentTool}: ${toolArgsPreview}${durationSuffix}`
     : `${progress.currentTool}${durationSuffix}`;
+  if (expanded) return toolLine.split(/\r\n|\r|\n/);
+  const commandText = toolArgsPreview
+    ? `${progress.currentTool}: ${toolArgsPreview}`
+    : progress.currentTool;
+  return fitCollapsedCommandPreview(commandText, durationSuffix, firstWidth, continuationWidth);
 }
 
 function buildLiveStatusLine(
@@ -389,12 +512,27 @@ function resultGlyph(
 
 function compactProgressActivityLines(
   progress: AgentProgress,
-  width = getTermWidth() - 4,
+  width: number,
+  firstPrefix: string,
+  continuationPrefix: string,
 ): string[] {
   const snapshotNow = snapshotNowForProgress(progress);
-  const toolLine = formatCurrentToolLine(progress, width, false, snapshotNow);
+  const toolLines = formatCurrentToolLines(
+    progress,
+    width - visibleWidth(firstPrefix),
+    width - visibleWidth(continuationPrefix),
+    false,
+    snapshotNow,
+  );
   const liveStatus = buildLiveStatusLine(progress, snapshotNow);
-  if (toolLine) return [toolLine, ...(liveStatus && liveStatus !== toolLine ? [liveStatus] : [])];
+  if (toolLines) {
+    return fitCompactToolStatus(
+      toolLines,
+      liveStatus,
+      width - visibleWidth(firstPrefix),
+      width - visibleWidth(continuationPrefix),
+    );
+  }
   const phrase = compactThinkingPhrase(progress.activityState, progress.turnCount);
   return [phrase, liveStatus].filter((line): line is string => Boolean(line));
 }
@@ -450,6 +588,32 @@ function isProtectedWidgetLifecycle(state: string, interruptRequestedAt?: number
       state: state === "running" && interruptRequestedAt !== undefined ? "pausing" : state,
     })
   );
+}
+
+function isCompletedWidgetStepStatus(status: AsyncJobStep["status"]): boolean {
+  return status === "complete" || status === "completed" || status === "continued";
+}
+
+function projectContinuedWidgetStep(
+  job: Pick<AsyncJobState, "status">,
+  step: AsyncJobStep,
+): AsyncJobStep {
+  if (job.status !== "continued") return step;
+  const status =
+    step.status === "running" || step.status === "pausing" || step.status === "paused"
+      ? ("continued" as const)
+      : step.status;
+  return {
+    ...step,
+    status,
+    activityState: undefined,
+    lastActivityAt: undefined,
+    currentTool: undefined,
+    currentToolArgs: undefined,
+    currentToolStartedAt: undefined,
+    currentPath: undefined,
+    interruptRequestedAt: undefined,
+  };
 }
 
 function widgetRunningStep(job: AsyncJobState): AsyncJobStep | undefined {
@@ -509,6 +673,7 @@ function widgetInlineThinkingActivity(
 }
 
 function widgetActivityLines(job: AsyncJobState, expanded = false): string[] {
+  if (job.status === "continued") return ["continued"];
   const privacySafe = isProtectedWidgetLifecycle(job.status, job.interruptRequestedAt);
   const runningStep = widgetRunningStep(job);
   if (job.interruptRequestedAt !== undefined && job.status === "running") {
@@ -618,14 +783,15 @@ function widgetJobsRunningSeed(jobs: AsyncJobState[]): number | undefined {
 function widgetStatusGlyph(job: AsyncJobState, theme: Theme): string {
   if (job.status === "running") return theme.fg("accent", runningGlyph(widgetJobRunningSeed(job)));
   if (job.status === "queued") return theme.fg("muted", "◦");
-  if (job.status === "complete") return theme.fg("success", "✓");
+  if (job.status === "complete" || job.status === "continued") return theme.fg("success", "✓");
   if (job.status === "paused") return theme.fg("warning", "■");
   return theme.fg("error", "✗");
 }
 
 function widgetStepGlyph(status: AsyncJobStep["status"], theme: Theme, seed?: number): string {
   if (status === "running") return theme.fg("accent", runningGlyph(seed));
-  if (status === "complete" || status === "completed") return theme.fg("success", "✓");
+  if (status === "complete" || status === "completed" || status === "continued")
+    return theme.fg("success", "✓");
   if (status === "failed") return theme.fg("error", "✗");
   if (status === "paused") return theme.fg("warning", "■");
   return theme.fg("muted", "◦");
@@ -640,6 +806,7 @@ function widgetStepStatus(
     return theme.fg("accent", "pausing");
   if (status === "running") return "";
   if (status === "complete" || status === "completed") return theme.fg("success", "complete");
+  if (status === "continued") return theme.fg("success", "continued");
   if (status === "failed") return theme.fg("error", "failed");
   if (status === "paused") return theme.fg("warning", "paused");
   return theme.fg("dim", status);
@@ -684,6 +851,7 @@ function widgetStepActivity(
   snapshotNow?: number,
   expanded = false,
 ): string {
+  if (step.status === "continued") return "";
   const privacySafe = isProtectedWidgetLifecycle(step.status, step.interruptRequestedAt);
   if (step.interruptRequestedAt !== undefined) return "pausing…";
   const facts: string[] = [];
@@ -725,15 +893,19 @@ function widgetChainDetails(
   const total = job.chainStepCount ?? job.steps.length;
   const lines: string[] = [];
   for (const span of buildAsyncChainStepSpans(total, job.steps.length, job.parallelGroups)) {
-    const steps = job.steps.slice(span.start, span.start + span.count);
+    const sourceSteps = job.steps.slice(span.start, span.start + span.count);
+    const steps = sourceSteps.map((step) => projectContinuedWidgetStep(job, step));
     if (span.isParallel) {
-      const status = aggregateStepStatus(steps);
+      const aggregationSteps = steps.map((step) =>
+        step.status === "continued" ? { ...step, status: "complete" as const } : step,
+      );
+      const status = aggregateStepStatus(aggregationSteps);
       lines.push(
-        `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(steps, span.count, { showRunning: false }))}`,
+        `  ${widgetStepGlyph(status, theme, widgetStepsRunningSeed(steps))} Step ${span.stepIndex + 1}/${total}: ${themeBold(theme, "parallel group")} ${theme.fg("dim", "·")} ${theme.fg("dim", formatParallelOutcome(aggregationSteps, span.count, { showRunning: false }))}`,
       );
       continue;
     }
-    const step = steps[0];
+    const step = sourceSteps[0];
     if (!step) {
       lines.push(`  ${theme.fg("dim", `◦ Step ${span.stepIndex + 1}/${total}: pending`)}`);
       continue;
@@ -767,34 +939,39 @@ function widgetParallelAgentDetails(
   const total = job.stepsTotal ?? job.steps.length;
   const lines: string[] = [];
   for (const [index, step] of job.steps.entries()) {
+    const displayStep = projectContinuedWidgetStep(job, step);
     const marker = index === job.steps.length - 1 ? "└" : "├";
-    const activity = widgetStepActivity(step, job.updatedAt, expanded);
+    const activity = widgetStepActivity(displayStep, job.updatedAt, expanded);
     const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
-    const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+    const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
     const healthWarning =
-      step.interruptRequestedAt === undefined &&
-      !step.currentTool &&
-      isHealthActivityState(step.activityState)
-        ? buildLiveStatusLine(step, job.updatedAt)
+      displayStep.interruptRequestedAt === undefined &&
+      !displayStep.currentTool &&
+      isHealthActivityState(displayStep.activityState)
+        ? buildLiveStatusLine(displayStep, job.updatedAt)
         : undefined;
     const freshness =
       !expanded &&
-      step.status === "running" &&
-      step.interruptRequestedAt === undefined &&
-      !step.currentTool &&
+      displayStep.status === "running" &&
+      displayStep.interruptRequestedAt === undefined &&
+      !displayStep.currentTool &&
       !healthWarning
-        ? buildLiveStatusLine(step, job.updatedAt)
+        ? buildLiveStatusLine(displayStep, job.updatedAt)
         : undefined;
-    const stepStatus = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+    const stepStatus = widgetStepStatus(
+      displayStep.status,
+      theme,
+      displayStep.interruptRequestedAt,
+    );
     const statusSuffix = stepStatus ? ` ${theme.fg("dim", "·")} ${stepStatus}` : "";
-    const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent}${statusSuffix}${modelDisplay}`)}`;
+    const prefix = `  ${theme.fg("dim", `${marker} ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${displayStep.agent}${statusSuffix}${modelDisplay}`)}`;
     if (!expanded && healthWarning) {
       lines.push(...fitInlineActivity(prefix, healthWarning, theme, Math.max(1, width - 6)));
     } else if (freshness) {
       lines.push(
         ...fitInlineThinkingActivity(
           prefix,
-          compactThinkingPhrase(step.activityState, step.turnCount)!,
+          compactThinkingPhrase(displayStep.activityState, displayStep.turnCount)!,
           freshness,
           theme,
           Math.max(1, width - 6),
@@ -1155,9 +1332,18 @@ function widgetStats(
 ): string {
   const parts: string[] = [];
   const stepsTotal = job.stepsTotal ?? job.agents?.length ?? 1;
+  const projectedSteps =
+    job.status === "continued"
+      ? job.steps?.map((step) => projectContinuedWidgetStep(job, step))
+      : undefined;
+  const running =
+    job.status === "continued" ? 0 : (job.runningSteps ?? (job.status === "running" ? 1 : 0));
+  const done =
+    job.status === "continued"
+      ? (projectedSteps?.filter((step) => isCompletedWidgetStepStatus(step.status)).length ??
+        stepsTotal)
+      : (job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0));
   if (includeStepProgress && job.activeParallelGroup) {
-    const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
-    const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
     if (job.mode === "parallel") {
       if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
         parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
@@ -1178,8 +1364,6 @@ function widgetStats(
       parts.push(`step ${logicalStep + 1}/${total} · parallel group: ${groupParts.join(" · ")}`);
     }
   } else if (includeStepProgress && job.mode === "parallel") {
-    const running = job.runningSteps ?? (job.status === "running" ? 1 : 0);
-    const done = job.completedSteps ?? (job.status === "complete" ? stepsTotal : 0);
     if (job.status === "running" && running > 0 && job.interruptRequestedAt !== undefined)
       parts.push(`${running === 1 ? "1 agent pausing" : `${running} agents pausing`}`);
     if (stepsTotal > 0) parts.push(`${done}/${stepsTotal} done`);
@@ -1232,14 +1416,27 @@ function modelThinkingBadge(theme: Theme, model?: string, thinking?: string): st
 
 function widgetStepActivityLines(
   step: NonNullable<AsyncJobState["steps"]>[number],
-  width: number,
+  firstWidth: number,
+  continuationWidth: number,
   expanded: boolean,
   snapshotNow?: number,
+  fitTrailingStatus = false,
 ): string[] {
+  if (step.status === "continued") return [];
   if (step.interruptRequestedAt !== undefined) return ["pausing…"];
-  const toolLine = formatCurrentToolLine(step, width, expanded, snapshotNow);
+  const toolLines = formatCurrentToolLines(
+    step,
+    firstWidth,
+    continuationWidth,
+    expanded,
+    snapshotNow,
+  );
   const activity = buildLiveStatusLine(step, snapshotNow);
-  if (toolLine) return [toolLine, ...(activity && activity !== toolLine ? [activity] : [])];
+  if (toolLines) {
+    if (fitTrailingStatus)
+      return fitCompactToolStatus(toolLines, activity, firstWidth, continuationWidth);
+    return [...toolLines, ...(activity && !toolLines.includes(activity) ? [activity] : [])];
+  }
   if (!expanded && step.status === "running")
     return [
       compactThinkingPhrase(step.activityState, step.turnCount),
@@ -1436,9 +1633,10 @@ function singleWidgetStepDisplayStatus(
   job: AsyncJobState,
   step: NonNullable<AsyncJobState["steps"]>[number],
 ): AsyncJobStep["status"] {
-  if (step.status !== "running") return step.status;
+  const projectedStep = projectContinuedWidgetStep(job, step);
+  if (projectedStep.status !== "running") return projectedStep.status;
   if (job.status === "complete" || job.status === "failed") return job.status;
-  return step.status;
+  return projectedStep.status;
 }
 
 function foregroundStyleWidgetStepLines(
@@ -1450,34 +1648,44 @@ function foregroundStyleWidgetStepLines(
   total: number,
   expanded: boolean,
   width: number,
-  displayStatus: AsyncJobStep["status"] = step.status,
+  displayStatus?: AsyncJobStep["status"],
 ): string[] {
+  const displayStep = projectContinuedWidgetStep(job, step);
+  const resolvedDisplayStatus = displayStatus ?? displayStep.status;
   const status = widgetStepStatus(
-    displayStatus,
+    resolvedDisplayStatus,
     theme,
-    displayStatus === "running" ? step.interruptRequestedAt : undefined,
+    resolvedDisplayStatus === "running" ? displayStep.interruptRequestedAt : undefined,
   );
   const durationFallbackMs =
     itemTitle === undefined &&
-    step.status === "running" &&
-    step.durationMs === undefined &&
+    displayStep.status === "running" &&
+    displayStep.durationMs === undefined &&
     job.startedAt !== undefined &&
     job.updatedAt !== undefined
       ? Math.max(0, job.updatedAt - job.startedAt)
       : undefined;
-  const stats = widgetStepStats(theme, step, durationFallbackMs, expanded);
-  const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+  const stats = widgetStepStats(theme, displayStep, durationFallbackMs, expanded);
+  const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
   const itemLabel = itemTitle ? `${itemTitle} ${index}/${total}: ` : "";
   const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
   const lines = [
-    `  ${widgetStepGlyph(displayStatus, theme, widgetStepRunningSeed(step, index - 1))} ${itemLabel}${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+    `  ${widgetStepGlyph(resolvedDisplayStatus, theme, widgetStepRunningSeed(displayStep, index - 1))} ${itemLabel}${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
   ];
   const activityLines =
-    displayStatus === step.status
-      ? widgetStepActivityLines(step, width, expanded, job.updatedAt)
+    resolvedDisplayStatus === displayStep.status
+      ? widgetStepActivityLines(
+          displayStep,
+          width - visibleWidth(WIDGET_ACTIVITY_PREFIX),
+          width - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+          expanded,
+          job.updatedAt,
+        )
       : [];
   for (const [activityIndex, activity] of activityLines.entries()) {
-    lines.push(`    ${theme.fg("dim", activityIndex === 0 ? `⎿  ${activity}` : `   ${activity}`)}`);
+    const prefix =
+      activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+    lines.push(theme.fg("dim", `${prefix}${activity}`));
   }
   for (const nestedLine of formatNestedWidgetLines(
     step.children,
@@ -1490,7 +1698,7 @@ function foregroundStyleWidgetStepLines(
   )) {
     lines.push(`    ${nestedLine}`);
   }
-  if (displayStatus === "running") {
+  if (resolvedDisplayStatus === "running") {
     if (!expanded) lines.push(`    ${theme.fg("dim", liveDetailHintText())}`);
     if (expanded) {
       const output = widgetOutputPath(job, step);
@@ -1682,6 +1890,7 @@ function singleWidgetHeaderLines(job: AsyncJobState, theme: Theme, expanded: boo
 // step-level dedup: when the step's widgetStepActivityLines already surfaces the
 // same health text, the job-level line is suppressed to avoid a duplicate.
 function jobHealthWarningLines(job: AsyncJobState, theme: Theme): string[] {
+  if (job.status === "continued") return [];
   if (!isHealthActivityState(job.activityState)) return [];
   if (!job.steps?.length) return [];
   // Pausing/interruption takes precedence: do not add a competing health line
@@ -1715,6 +1924,7 @@ function singleModeHealthWarningLines(
   contentWidth: number,
   expanded: boolean,
 ): string[] {
+  if (job.status === "continued") return [];
   if (!isHealthActivityState(job.activityState)) return [];
   if (!job.steps?.length) return [];
   if (job.interruptRequestedAt !== undefined || widgetHasPausingStep(job)) return [];
@@ -1726,9 +1936,16 @@ function singleModeHealthWarningLines(
   // Dedup: if the step is already rendering the same health text via
   // widgetStepActivityLines, do not emit a second identical line.
   const step = job.steps[0]!;
+  const displayStep = projectContinuedWidgetStep(job, step);
   const displayStatus = singleWidgetStepDisplayStatus(job, step);
-  if (displayStatus === step.status) {
-    const stepActivityLines = widgetStepActivityLines(step, contentWidth, expanded, job.updatedAt);
+  if (displayStatus === displayStep.status) {
+    const stepActivityLines = widgetStepActivityLines(
+      displayStep,
+      contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX),
+      contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+      expanded,
+      job.updatedAt,
+    );
     if (stepActivityLines.includes(warning)) return [];
   }
   return [`    ${theme.fg("dim", `⎿  ${warning}`)}`];
@@ -1792,26 +2009,48 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
     ...widgetTkTicketLines(job, theme),
   ];
   for (const [index, step] of job.steps.entries()) {
-    const status = widgetStepStatus(step.status, theme, step.interruptRequestedAt);
+    const displayStep = projectContinuedWidgetStep(job, step);
+    const status = widgetStepStatus(displayStep.status, theme, displayStep.interruptRequestedAt);
     const statusSuffix = status ? ` ${theme.fg("dim", "·")} ${status}` : "";
-    const activityLines = widgetStepActivityLines(step, contentWidth, false, job.updatedAt);
+    const stepStats = widgetStepStats(theme, displayStep);
+    const modelDisplay = modelThinkingBadge(theme, displayStep.model, displayStep.thinking);
+    const rowPrefix = `  ${widgetStepGlyph(displayStep.status, theme, widgetStepRunningSeed(displayStep, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, displayStep.agent)}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
+    const activitySeparator = ` ${theme.fg("dim", "·")} `;
+    const activityContinuationPrefix = WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+    const inlineFirstWidth = contentWidth - visibleWidth(rowPrefix + activitySeparator);
+    const minimumCommandWidth = displayStep.currentTool
+      ? visibleWidth(`${displayStep.currentTool}${displayStep.currentToolArgs ? ": " : ""}`)
+      : 0;
+    const inlineCommand =
+      Boolean(displayStep.currentTool) && inlineFirstWidth >= minimumCommandWidth;
+    const activityLines = widgetStepActivityLines(
+      displayStep,
+      inlineCommand ? inlineFirstWidth : contentWidth - visibleWidth(WIDGET_ACTIVITY_PREFIX),
+      inlineCommand
+        ? contentWidth - visibleWidth(activityContinuationPrefix)
+        : contentWidth - visibleWidth(WIDGET_ACTIVITY_CONTINUATION_PREFIX),
+      false,
+      job.updatedAt,
+      true,
+    );
     const activity = activityLines.join(" · ");
-    const stepStats = widgetStepStats(theme, step);
-    const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
-    const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
-    const rowPrefix = `  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${statusSuffix}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`;
+    const activitySuffix = activity ? `${activitySeparator}${theme.fg("dim", activity)}` : "";
     const healthWarning =
-      step.status === "running" &&
-      step.interruptRequestedAt === undefined &&
-      !step.currentTool &&
-      isHealthActivityState(step.activityState)
+      displayStep.status === "running" &&
+      displayStep.interruptRequestedAt === undefined &&
+      !displayStep.currentTool &&
+      isHealthActivityState(displayStep.activityState)
         ? activityLines.find(
-            (activityLine) => activityLine === buildLiveStatusLine(step, job.updatedAt),
+            (activityLine) => activityLine === buildLiveStatusLine(displayStep, job.updatedAt),
           )
         : undefined;
     if (healthWarning) {
       lines.push(...fitInlineActivity(rowPrefix, healthWarning, theme, contentWidth));
-    } else if (step.status === "running" && !step.currentTool && activityLines.length === 2) {
+    } else if (
+      displayStep.status === "running" &&
+      !displayStep.currentTool &&
+      activityLines.length === 2
+    ) {
       lines.push(
         ...fitInlineThinkingActivity(
           rowPrefix,
@@ -1821,6 +2060,20 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
           contentWidth,
         ),
       );
+    } else if (displayStep.currentTool && activityLines.length > 0) {
+      if (inlineCommand) {
+        lines.push(`${rowPrefix}${activitySeparator}${theme.fg("dim", activityLines[0]!)}`);
+        for (const activityLine of activityLines.slice(1)) {
+          lines.push(`${activityContinuationPrefix}${theme.fg("dim", activityLine)}`);
+        }
+      } else {
+        lines.push(...wrapDisplayLine(rowPrefix, contentWidth));
+        for (const [activityIndex, activityLine] of activityLines.entries()) {
+          const prefix =
+            activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+          lines.push(theme.fg("dim", `${prefix}${activityLine}`));
+        }
+      }
     } else {
       lines.push(`${rowPrefix}${activitySuffix}`);
     }
@@ -1835,7 +2088,7 @@ function compactSingleWidgetLines(job: AsyncJobState, theme: Theme, width: numbe
     ))
       lines.push(`    ${nestedLine}`);
   }
-  if (job.steps.some((step) => step.status === "running"))
+  if (job.steps.some((step) => projectContinuedWidgetStep(job, step).status === "running"))
     lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
   return wrapDisplayLines(lines, contentWidth);
 }
@@ -1890,7 +2143,7 @@ function widgetHeaderCounts(jobs: AsyncJobState[]): {
   return {
     running: jobs.filter((job) => job.status === "running"),
     queued: jobs.filter((job) => job.status === "queued"),
-    complete: jobs.filter((job) => job.status === "complete"),
+    complete: jobs.filter((job) => job.status === "complete" || job.status === "continued"),
     failed: jobs.filter((job) => job.status === "failed"),
     paused: jobs.filter((job) => job.status === "paused"),
   };
@@ -2073,6 +2326,7 @@ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number): st
   const runningStep = widgetRunningStep(job);
   const activityState = widgetActivityState(job, runningStep);
   const healthWarning =
+    job.status !== "continued" &&
     job.interruptRequestedAt === undefined &&
     !job.currentTool &&
     !widgetActiveStep(job) &&
@@ -2417,8 +2671,12 @@ function renderSingleCompact(
     for (const [activityIndex, activity] of compactProgressActivityLines(
       r.progress,
       width,
+      FOREGROUND_ACTIVITY_PREFIX,
+      FOREGROUND_ACTIVITY_CONTINUATION_PREFIX,
     ).entries()) {
-      lines.push(theme.fg("dim", activityIndex === 0 ? `  ⎿  ${activity}` : `     ${activity}`));
+      const prefix =
+        activityIndex === 0 ? FOREGROUND_ACTIVITY_PREFIX : FOREGROUND_ACTIVITY_CONTINUATION_PREFIX;
+      lines.push(theme.fg("dim", `${prefix}${activity}`));
     }
     lines.push(theme.fg("dim", `  ${liveDetailHintText()}`));
     return collapsedForegroundComponent(lines, theme);
@@ -2502,6 +2760,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
         agentName: r?.agent || `${fallbackLabel}-${rowNumber}`,
       };
     });
+  let hasRunningResult = false;
   for (const entry of renderEntries) {
     if (entry.kind === "placeholder") {
       const glyph = widgetStepGlyph(entry.status as AsyncJobStep["status"], theme);
@@ -2543,15 +2802,17 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
     const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
     if (ticketLine) lines.push(ticketLine);
     if (rRunning && liveProgress) {
+      hasRunningResult = true;
       for (const [activityIndex, activity] of compactProgressActivityLines(
         liveProgress,
         width,
+        WIDGET_ACTIVITY_PREFIX,
+        WIDGET_ACTIVITY_CONTINUATION_PREFIX,
       ).entries()) {
-        lines.push(
-          theme.fg("dim", activityIndex === 0 ? `    ⎿  ${activity}` : `       ${activity}`),
-        );
+        const prefix =
+          activityIndex === 0 ? WIDGET_ACTIVITY_PREFIX : WIDGET_ACTIVITY_CONTINUATION_PREFIX;
+        lines.push(theme.fg("dim", `${prefix}${activity}`));
       }
-      lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
     } else if (
       !rPending &&
       (r.exitCode !== 0 ||
@@ -2565,6 +2826,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
     }
   }
   if (d.artifacts) lines.push(theme.fg("dim", `  artifacts: ${shortenPath(d.artifacts.dir)}`));
+  if (hasRunningResult) lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
   return collapsedForegroundComponent(lines, theme);
 }
 
@@ -2662,9 +2924,16 @@ export function renderSubagentResult(
 
     if (isRunning && r.progress) {
       const progressSnapshotNow = snapshotNowForProgress(r.progress);
-      const toolLine = formatCurrentToolLine(r.progress, w, expanded, progressSnapshotNow);
-      if (toolLine) {
-        c.addChild(new Text(theme.fg("warning", `> ${toolLine}`), 0, 0));
+      const toolLines = formatCurrentToolLines(
+        r.progress,
+        w - visibleWidth("> "),
+        w - visibleWidth("  "),
+        expanded,
+        progressSnapshotNow,
+      );
+      for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
+        const prefix = toolLineIndex === 0 ? "> " : "  ";
+        c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
       }
       const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
       if (liveStatusLine) {
@@ -2685,7 +2954,7 @@ export function renderSubagentResult(
         c.addChild(new Text(theme.fg("dim", `  ${line}`), 0, 0));
       }
       if (
-        toolLine ||
+        toolLines?.length ||
         liveStatusLine ||
         r.progress.recentTools?.length ||
         r.progress.recentOutput?.length ||
@@ -2915,9 +3184,16 @@ export function renderSubagentResult(
         );
       }
       const progressSnapshotNow = snapshotNowForProgress(liveProgress);
-      const toolLine = formatCurrentToolLine(liveProgress, w, expanded, progressSnapshotNow);
-      if (toolLine) {
-        c.addChild(new Text(theme.fg("warning", `    > ${toolLine}`), 0, 0));
+      const toolLines = formatCurrentToolLines(
+        liveProgress,
+        w - visibleWidth("    > "),
+        w - visibleWidth("      "),
+        expanded,
+        progressSnapshotNow,
+      );
+      for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
+        const prefix = toolLineIndex === 0 ? "    > " : "      ";
+        c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
       }
       const liveStatusLine = buildLiveStatusLine(liveProgress, progressSnapshotNow);
       if (liveStatusLine) {

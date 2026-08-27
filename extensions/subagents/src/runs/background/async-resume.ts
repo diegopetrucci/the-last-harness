@@ -5,14 +5,12 @@ import {
   RESULTS_DIR,
   type AsyncResultArtifact,
   type AsyncStatus,
-  type SubagentState,
 } from "../../shared/types.ts";
 import {
   lifecycleContinuationForIndex,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
-import { deliverInterruptRequest } from "./control-channel.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
@@ -35,9 +33,6 @@ import {
 } from "../../shared/context-diagnostics.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
 import { readStatus } from "../../shared/utils.ts";
-
-export const ASYNC_RESUME_INTERRUPT_SIGNAL: NodeJS.Signals =
-  process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 
 /**
  * Guards against a persisted `skipped` acceptance ledger whose `effectiveAcceptance`
@@ -127,26 +122,26 @@ function resolvePausedContinuationAcceptance(
   );
 }
 
-export interface AsyncResumeParams {
+interface AsyncResumeParams {
   id?: string;
   dir?: string;
   index?: number;
 }
 
-export interface AsyncResumeDeps {
+interface AsyncResumeDeps {
   asyncDirRoot?: string;
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
   now?: () => number;
 }
 
-export interface AsyncResumeOptions {
+interface AsyncResumeOptions {
   requireSessionFile?: boolean;
   /** Read persisted state without repairing lifecycle metadata before a resume gate. */
   readOnly?: boolean;
 }
 
-export type AsyncResumeTarget = {
+type AsyncResumeTarget = {
   kind: "live" | "revive";
   runId: string;
   asyncDir?: string;
@@ -168,54 +163,6 @@ export type AsyncResumeTarget = {
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
 };
-
-type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
-
-export function interruptLiveAsyncResumeTarget(input: {
-  target: AsyncResumeTarget & { kind: "live" };
-  state?: Pick<SubagentState, "asyncJobs">;
-  kill?: KillFn;
-  now?: () => number;
-  resultsDir?: string;
-}): { ok: true; asyncId: string } | { ok: false; message: string } {
-  const asyncId = input.target.runId;
-  if (!input.target.asyncDir) {
-    return {
-      ok: false,
-      message: `Async run ${asyncId} is live but does not have an async directory to interrupt.`,
-    };
-  }
-  const status = reconcileAsyncRun(input.target.asyncDir, {
-    resultsDir: input.resultsDir,
-    kill: input.kill,
-    now: input.now,
-  }).status;
-  if (!status || status.state !== "running" || typeof status.pid !== "number") {
-    return {
-      ok: false,
-      message: `Async run ${asyncId} is live but no interrupt-capable runner pid was found.`,
-    };
-  }
-  try {
-    deliverInterruptRequest({
-      asyncDir: input.target.asyncDir,
-      pid: status.pid,
-      kill: input.kill,
-      signal: ASYNC_RESUME_INTERRUPT_SIGNAL,
-      now: input.now,
-      source: "async-resume",
-    });
-    const tracked = input.state?.asyncJobs.get(asyncId);
-    if (tracked) {
-      tracked.activityState = undefined;
-      tracked.updatedAt = input.now?.() ?? Date.now();
-    }
-    return { ok: true, asyncId };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `Failed to interrupt async run ${asyncId}: ${message}` };
-  }
-}
 
 /**
  * Defensive top-level widener: makes every field optional and widens

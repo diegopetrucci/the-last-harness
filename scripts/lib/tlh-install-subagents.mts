@@ -48,7 +48,7 @@ function isPlainObject(value: unknown): value is PlainObject {
 
 export { TLH_SUBAGENT_PROMPTS };
 
-export interface RetiredSubagentPackageCandidate {
+interface RetiredSubagentPackageCandidate {
   source: string;
   identity: string;
 }
@@ -79,7 +79,7 @@ interface RetiredSubagentCleanupConfig {
   ) => PackageManagerRunResult;
 }
 
-export interface RetiredSubagentCleanupResult {
+interface RetiredSubagentCleanupResult {
   uninstalledNpmPackages: string[];
   removedGitPaths: string[];
   plannedNpmPackages: string[];
@@ -602,25 +602,20 @@ export function copyTlhSubagentPrompts(
 
 /**
  * Provision the subagent extension config at extensions/subagent/config.json
- * with TLH-preferred defaults: compact tool descriptions and a first active
- * long-running notice after 270000ms (4m30).
+ * with the TLH-preferred first active long-running notice after 270000ms
+ * (4m30).
  *
- * Each default is added independently when its setting is missing. Existing
- * user values, including a user-chosen toolDescriptionMode such as "full" or
- * an activeNoticeAfterMs override, are left untouched. Re-running the
- * installer is therefore safe and will not clobber user edits.
+ * The default is added only when its setting is missing. Existing user values
+ * and unrelated keys are left untouched. Re-running the installer is therefore
+ * safe and will not clobber user edits.
  *
- * Revert path: open <agentDir>/extensions/subagent/config.json and set either
- * "toolDescriptionMode" or "control.activeNoticeAfterMs" to the value you
- * want. Existing values are preserved on subsequent installer runs. To return
- * a setting to the managed default, remove that key and rerun install or
- * update; missing defaults are re-provisioned. Valid non-object or unreadable
- * config files are preserved untouched.
- *
- * Runtime note: toolDescriptionMode is consumed by TLH's first-party
- * subagent runtime. Retired external builds may ignore the unknown key.
+ * Revert path: open <agentDir>/extensions/subagent/config.json and set
+ * "control.activeNoticeAfterMs" to the value you want. Existing values are
+ * preserved on subsequent installer runs. To return the setting to the managed
+ * default, remove that key and rerun install or update; the missing default is
+ * re-provisioned. Valid non-object or unreadable config files are preserved
+ * untouched.
  */
-const TLH_TOOL_DESCRIPTION_MODE = "compact";
 const TLH_ACTIVE_NOTICE_AFTER_MS = 270000;
 
 function activeNoticeCanBeProvisioned(existing: PlainObject): boolean {
@@ -647,8 +642,6 @@ function readExistingSubagentExtensionConfig(config: { agentDir: string }): Plai
 
 function missingSubagentExtensionDefaultLabels(existing: PlainObject): string[] {
   const missingDefaults: string[] = [];
-  if (!("toolDescriptionMode" in existing))
-    missingDefaults.push(`toolDescriptionMode: ${TLH_TOOL_DESCRIPTION_MODE}`);
   if (activeNoticeIsMissing(existing)) {
     missingDefaults.push(`control.activeNoticeAfterMs: ${TLH_ACTIVE_NOTICE_AFTER_MS} (4m30)`);
   }
@@ -665,31 +658,18 @@ export function subagentExtensionConfigMissingDefaults(config: { agentDir: strin
   return existing ? missingSubagentExtensionDefaultLabels(existing) : [];
 }
 
-/**
- * Returns true when provisionSubagentExtensionConfig would write to disk,
- * false when it would leave the existing file untouched (all writable defaults
- * are present, the config has a non-object JSON value, or it is unreadable).
- */
-export function subagentExtensionConfigNeedsProvisioning(config: { agentDir: string }): boolean {
-  return subagentExtensionConfigMissingDefaults(config).length > 0;
-}
-
 export function provisionSubagentExtensionConfig(config: { agentDir: string }): void {
   const relativePath = "extensions/subagent/config.json";
   const existing = readExistingSubagentExtensionConfig(config);
   if (!existing) return;
 
-  const missingToolDescriptionMode = !("toolDescriptionMode" in existing);
   const missingActiveNotice = activeNoticeIsMissing(existing);
-  if (!missingToolDescriptionMode && !missingActiveNotice) return;
+  if (!missingActiveNotice) return;
 
   ensureSafeProfileDir(config, "extensions/subagent", "TLH subagent extension config directory");
   const updated: PlainObject = { ...existing };
-  if (missingToolDescriptionMode) updated.toolDescriptionMode = TLH_TOOL_DESCRIPTION_MODE;
-  if (missingActiveNotice) {
-    const existingControl = isPlainObject(existing.control) ? existing.control : {};
-    updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
-  }
+  const existingControl = isPlainObject(existing.control) ? existing.control : {};
+  updated.control = { activeNoticeAfterMs: TLH_ACTIVE_NOTICE_AFTER_MS, ...existingControl };
   writeSafeProfileFile(
     config,
     relativePath,

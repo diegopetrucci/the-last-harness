@@ -23,32 +23,12 @@ import type { ToolPair } from "../../extensions/the-last-harness/tool-pairing.js
 // ---------------------------------------------------------------------------
 
 /** Session header — the first entry in every session JSONL file. */
-export interface SessionHeader {
+interface SessionHeader {
   type: "session";
   version: number;
   id: string;
   timestamp: string;
   cwd: string;
-}
-
-/** Cost breakdown from an assistant message's usage object. */
-export interface MessageUsageCost {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-
-/** Token/cost usage from an assistant message. */
-export interface MessageUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  reasoning: number;
-  cost: MessageUsageCost;
 }
 
 // Re-export pairing types so this module's public API is unchanged.
@@ -93,7 +73,7 @@ export interface SessionScanResult {
  * tool result.  All fields come from data already present in the corpus —
  * nothing is synthesised.
  */
-export interface SubagentCorrelation {
+interface SubagentCorrelation {
   parentSessionFile: string;
   parentSessionId: string;
   toolCallId: string;

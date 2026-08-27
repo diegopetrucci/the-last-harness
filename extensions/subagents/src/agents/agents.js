@@ -10,13 +10,13 @@ import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
-export function defaultSystemPromptMode(name) {
+function defaultSystemPromptMode(name) {
     return name === "delegate" ? "append" : "replace";
 }
-export function defaultInheritProjectContext(name) {
+function defaultInheritProjectContext(name) {
     return name === "delegate";
 }
-export function defaultInheritSkills() {
+function defaultInheritSkills() {
     return false;
 }
 const KNOWN_FIELDS = new Set([
@@ -51,9 +51,21 @@ function getUserChainDir() {
     return path.join(getAgentDir(), "chains");
 }
 let cachedGlobalNpmRoot = null;
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function readJsonFileBestEffort(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch {
         return null;
@@ -61,7 +73,8 @@ function readJsonFileBestEffort(filePath) {
 }
 function readOptionalJsonFile(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        return isJsonValue(parsed) ? parsed : null;
     }
     catch (error) {
         const code = typeof error === "object" && error !== null && "code" in error
@@ -350,7 +363,7 @@ function cloneOverrideBase(agent) {
         maxExecutionTimeMs: agent.maxExecutionTimeMs,
     };
 }
-export function findNearestProjectRoot(cwd) {
+function findNearestProjectRoot(cwd) {
     const ignoredProjectConfigDirs = new Set([
         path.resolve(path.dirname(getAgentDir())),
         path.resolve(getProjectConfigDir(os.homedir())),

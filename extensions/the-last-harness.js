@@ -4,6 +4,7 @@ import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerClaudeSkillsDiscovery } from "./the-last-harness/claude-skills.js";
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
@@ -97,6 +98,7 @@ export default function theLastHarness(pi) {
         activeProviderAuthHealthStore = undefined;
     });
     installTlhModelVisibilityFilter();
+    registerClaudeSkillsDiscovery(pi);
     registerContextCap(pi);
     const activityTracker = registerTlhEffectiveActivityTracker(pi);
     registerTlhActivityReporters(pi, activityTracker);
@@ -275,7 +277,7 @@ export default function theLastHarness(pi) {
                     }
                     tui.requestRender();
                 };
-                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, event.reason === "startup" ? installNotice : undefined, {
+                const header = createTlhHeader(theme, sessionState.resources, headerUpdate, {
                     requestRender,
                     startupTip,
                     launchContextAllocation: sessionState.launchContextAllocation,

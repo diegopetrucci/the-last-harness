@@ -11,6 +11,7 @@ import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
 import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
+import { registerClaudeSkillsDiscovery } from "./the-last-harness/claude-skills.js";
 import { registerContextCap } from "./the-last-harness/context-cap.js";
 import { registerEffortCommand } from "./the-last-harness/effort.js";
 import { registerExperimentalCommand } from "./the-last-harness/experimental.js";
@@ -63,9 +64,7 @@ const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
 const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 
 function getActiveProjectTrustDecision(ctx: ExtensionContext): boolean | undefined {
-  const projectTrusted = (
-    ctx as ExtensionContext & { isProjectTrusted?: () => unknown }
-  ).isProjectTrusted?.();
+  const projectTrusted = ctx.isProjectTrusted?.();
   return typeof projectTrusted === "boolean" ? projectTrusted : undefined;
 }
 
@@ -139,6 +138,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
   });
 
   installTlhModelVisibilityFilter();
+  registerClaudeSkillsDiscovery(pi);
   registerContextCap(pi);
   const activityTracker = registerTlhEffectiveActivityTracker(pi);
   registerTlhActivityReporters(pi, activityTracker);
@@ -382,17 +382,11 @@ export default function theLastHarness(pi: ExtensionAPI) {
           }
           tui.requestRender();
         };
-        const header = createTlhHeader(
-          theme,
-          sessionState.resources,
-          headerUpdate,
-          event.reason === "startup" ? installNotice : undefined,
-          {
-            requestRender,
-            startupTip,
-            launchContextAllocation: sessionState.launchContextAllocation,
-          },
-        );
+        const header = createTlhHeader(theme, sessionState.resources, headerUpdate, {
+          requestRender,
+          startupTip,
+          launchContextAllocation: sessionState.launchContextAllocation,
+        });
         sessionState.header = header;
         sessionState.requestRender = requestRender;
         if (activeTlhHeaderSessionToken === sessionToken) {

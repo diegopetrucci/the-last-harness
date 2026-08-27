@@ -48,41 +48,4 @@ export function registerLazyTlhTicketWorkflowUi(pi, options = {}) {
         activateTlhTicketSessionScope(ctx.cwd);
         applyCurrentSettings(ctx);
     });
-    pi.on("session_shutdown", () => {
-        if (runtime) {
-            runtime.handleSessionShutdown();
-            return;
-        }
-        void runtimePromise
-            ?.then((loadedRuntime) => loadedRuntime.handleSessionShutdown())
-            .catch(() => undefined);
-    });
-    pi.on("user_bash", (event, ctx) => {
-        if (runtime) {
-            runtime.handleUserBash(event, ctx);
-            return;
-        }
-        if (!ctx.hasUI) {
-            return;
-        }
-        void getRuntime()
-            .then((loadedRuntime) => {
-            loadedRuntime.handleUserBash(event, ctx);
-        })
-            .catch(() => undefined);
-    });
-    pi.on("tool_result", async (event, ctx) => {
-        if (runtime) {
-            runtime.handleToolResult(event, ctx);
-            return;
-        }
-        if (!ctx.hasUI) {
-            return;
-        }
-        void getRuntime()
-            .then((loadedRuntime) => {
-            loadedRuntime.handleToolResult(event, ctx);
-        })
-            .catch(() => undefined);
-    });
 }

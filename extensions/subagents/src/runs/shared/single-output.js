@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-export const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
+const SINGLE_OUTPUT_INSTRUCTION_PREFIX = "Write your findings to exactly this path:";
 const SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL = String.raw `(?:\*\*Output:\*\*\s*)?`;
 const SINGLE_OUTPUT_INSTRUCTION_PATTERN = "(?:The harness will save your final response to:|Write your findings to(?: exactly this path)?:)";
-export const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(String.raw `${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`, "i");
+const SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN = new RegExp(String.raw `${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}\s*(\S+)`, "i");
 export const SINGLE_OUTPUT_INSTRUCTION_LINE_PATTERN = new RegExp(String.raw `^\s*${SINGLE_OUTPUT_INSTRUCTION_OPTIONAL_LABEL}${SINGLE_OUTPUT_INSTRUCTION_PATTERN}`, "i");
 export function extractSingleOutputInstructionTarget(text) {
     const match = text.match(SINGLE_OUTPUT_INSTRUCTION_TARGET_PATTERN);

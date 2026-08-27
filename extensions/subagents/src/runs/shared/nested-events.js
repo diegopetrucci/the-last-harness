@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
+import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
@@ -13,10 +13,7 @@ const MAX_EVENT_BYTES = 64 * 1024;
 const MAX_STEPS = 12;
 const MAX_CHILDREN = 16;
 const MAX_DEPTH = 3;
-export const NESTED_RUNNER_ACCEPTANCE_TIMEOUT_MS = 500;
-export const NESTED_CONTROL_DELIVERY_TIMEOUT_MS = 700;
-export const NESTED_CONTROL_RESULT_TIMEOUT_MS = 1_000;
-export function isSafeNestedId(value) {
+function isSafeNestedId(value) {
     return isSafeNestedPathId(value);
 }
 export function assertSafeNestedId(label, value) {
@@ -536,7 +533,7 @@ function attachChild(children, event) {
         ? next.map((child, index) => (index === childIndex ? nextChild : child))
         : [...next, nextChild].slice(0, MAX_CHILDREN);
 }
-export function applyNestedEvent(registry, event) {
+function applyNestedEvent(registry, event) {
     return {
         ...registry,
         updatedAt: Math.max(registry.updatedAt, event.ts),
@@ -618,19 +615,6 @@ export function projectNestedRegistryForRoot(rootRunId) {
     const route = findNestedRouteForRootId(rootRunId);
     return route ? projectNestedEvents(route) : undefined;
 }
-export function findNestedRun(children, id) {
-    if (!children?.length)
-        return undefined;
-    for (const child of children) {
-        if (child.id === id)
-            return child;
-        const nested = findNestedRun(child.children, id) ??
-            findNestedRun(child.steps?.flatMap((step) => step.children ?? []), id);
-        if (nested)
-            return nested;
-    }
-    return undefined;
-}
 function collectNestedRuns(children, output = []) {
     for (const child of children ?? []) {
         output.push(child);
@@ -702,11 +686,7 @@ export function findNestedRunMatchesById(id, options = {}) {
     }
     return matches;
 }
-export function findNestedRunById(id) {
-    const match = findNestedRunMatchesById(id)[0];
-    return match ? { rootRunId: match.rootRunId, run: match.run } : undefined;
-}
-export function readNestedRegistry(route) {
+function readNestedRegistry(route) {
     validateNestedRoute(route);
     try {
         const parsed = JSON.parse(fs.readFileSync(registryPath(route), "utf-8"));
@@ -796,226 +776,6 @@ export function writeNestedEvent(route, event) {
     if (!sanitized)
         throw new Error("Nested event record failed validation.");
     writeRouteRecord(route.eventSink, sanitized.ts, sanitized);
-}
-function parseControlRequest(content, route) {
-    if (Buffer.byteLength(content, "utf-8") > MAX_EVENT_BYTES)
-        return undefined;
-    let parsed;
-    try {
-        parsed = JSON.parse(content);
-    }
-    catch {
-        return undefined;
-    }
-    if (!parsed || typeof parsed !== "object")
-        return undefined;
-    const raw = parsed;
-    if (raw.type !== "subagent.nested.control-request")
-        return undefined;
-    if (raw.rootRunId !== route.rootRunId || raw.capabilityToken !== route.capabilityToken)
-        return undefined;
-    if (!isSafeNestedId(raw.requestId) ||
-        !isSafeNestedId(raw.targetRunId) ||
-        !isSafeNestedId(raw.ownerParentRunId))
-        return undefined;
-    if (raw.action !== "interrupt" && raw.action !== "resume")
-        return undefined;
-    const ownerParentStepIndex = clampNumber(raw.ownerParentStepIndex);
-    if (raw.ownerParentStepIndex !== undefined) {
-        if (ownerParentStepIndex === undefined ||
-            !Number.isInteger(ownerParentStepIndex) ||
-            ownerParentStepIndex < 0)
-            return undefined;
-    }
-    const deliveryDeadlineAt = clampNumber(raw.deliveryDeadlineAt);
-    if (deliveryDeadlineAt === undefined || deliveryDeadlineAt <= 0)
-        return undefined;
-    const targetIndex = clampNumber(raw.targetIndex);
-    if (raw.targetIndex !== undefined) {
-        if (targetIndex === undefined || !Number.isInteger(targetIndex) || targetIndex < 0)
-            return undefined;
-    }
-    const ts = clampNumber(raw.ts);
-    if (ts === undefined)
-        return undefined;
-    return {
-        type: "subagent.nested.control-request",
-        ts,
-        rootRunId: route.rootRunId,
-        capabilityToken: route.capabilityToken,
-        requestId: raw.requestId,
-        targetRunId: raw.targetRunId,
-        ownerParentRunId: raw.ownerParentRunId,
-        ...(ownerParentStepIndex !== undefined ? { ownerParentStepIndex } : {}),
-        deliveryDeadlineAt,
-        action: raw.action,
-        ...(targetIndex !== undefined ? { targetIndex } : {}),
-        ...(stringValue(raw.message, 16_000) ? { message: stringValue(raw.message, 16_000) } : {}),
-    };
-}
-function parseControlResult(content, route) {
-    if (Buffer.byteLength(content, "utf-8") > MAX_EVENT_BYTES)
-        return undefined;
-    let parsed;
-    try {
-        parsed = JSON.parse(content);
-    }
-    catch {
-        return undefined;
-    }
-    if (!parsed || typeof parsed !== "object")
-        return undefined;
-    const raw = parsed;
-    if (raw.type !== "subagent.nested.control-result")
-        return undefined;
-    if (raw.rootRunId !== route.rootRunId || raw.capabilityToken !== route.capabilityToken)
-        return undefined;
-    if (!isSafeNestedId(raw.requestId) || !isSafeNestedId(raw.targetRunId))
-        return undefined;
-    const ts = clampNumber(raw.ts);
-    if (ts === undefined || typeof raw.ok !== "boolean")
-        return undefined;
-    return {
-        type: "subagent.nested.control-result",
-        ts,
-        rootRunId: route.rootRunId,
-        capabilityToken: route.capabilityToken,
-        requestId: raw.requestId,
-        targetRunId: raw.targetRunId,
-        ok: raw.ok,
-        message: stringValue(raw.message, 16_000) ??
-            (raw.ok ? "Control request completed." : "Control request failed."),
-    };
-}
-export function writeNestedControlRequest(route, request) {
-    validateNestedRoute(route);
-    assertSafeId("requestId", request.requestId);
-    assertSafeId("targetRunId", request.targetRunId);
-    const record = {
-        type: "subagent.nested.control-request",
-        ...request,
-        rootRunId: route.rootRunId,
-        capabilityToken: route.capabilityToken,
-    };
-    const sanitized = parseControlRequest(JSON.stringify(record), route);
-    if (!sanitized)
-        throw new Error("Nested control request failed validation.");
-    return writeRouteRecord(route.controlInbox, sanitized.ts, sanitized);
-}
-export function readNestedControlRequests(route) {
-    validateNestedRoute(route);
-    let entries = [];
-    try {
-        entries = fs
-            .readdirSync(route.controlInbox)
-            .filter((entry) => entry.endsWith(".json"))
-            .sort();
-    }
-    catch (error) {
-        if (error.code !== "ENOENT")
-            throw error;
-    }
-    const requests = [];
-    for (const entry of entries) {
-        const filePath = path.join(route.controlInbox, entry);
-        if (!containedPath(route.controlInbox, filePath))
-            continue;
-        try {
-            const stat = fs.statSync(filePath);
-            if (!stat.isFile() || stat.size > MAX_EVENT_BYTES)
-                continue;
-            const request = parseControlRequest(fs.readFileSync(filePath, "utf-8"), route);
-            if (request)
-                requests.push({ ...request, filePath });
-        }
-        catch {
-            continue;
-        }
-    }
-    return requests;
-}
-export function nestedControlRequestOwnedBy(request, owner) {
-    return (request.ownerParentRunId === owner.parentRunId &&
-        request.ownerParentStepIndex === owner.parentStepIndex);
-}
-export function claimNestedControlRequest(route, request, claimantId) {
-    validateNestedRoute(route);
-    assertSafeId("claimantId", claimantId);
-    if (!containedPath(route.controlInbox, request.filePath))
-        return undefined;
-    const claimDir = path.join(route.controlInbox, ".claims", claimantId);
-    fs.mkdirSync(claimDir, { recursive: true, mode: 0o700 });
-    const claimPath = path.join(claimDir, path.basename(request.filePath));
-    try {
-        fs.renameSync(request.filePath, claimPath);
-        return claimPath;
-    }
-    catch (error) {
-        if (error.code === "ENOENT")
-            return undefined;
-        throw error;
-    }
-}
-export function writeNestedControlResult(route, result) {
-    validateNestedRoute(route);
-    assertSafeId("requestId", result.requestId);
-    assertSafeId("targetRunId", result.targetRunId);
-    const record = {
-        type: "subagent.nested.control-result",
-        ...result,
-        rootRunId: route.rootRunId,
-        capabilityToken: route.capabilityToken,
-    };
-    const sanitized = parseControlResult(JSON.stringify(record), route);
-    if (!sanitized)
-        throw new Error("Nested control result failed validation.");
-    writeRouteRecord(route.eventSink, sanitized.ts, sanitized);
-}
-export function readNestedControlResults(route) {
-    validateNestedRoute(route);
-    let entries = [];
-    try {
-        entries = fs
-            .readdirSync(route.eventSink)
-            .filter((entry) => entry.endsWith(".json") || entry.endsWith(".jsonl"))
-            .sort();
-    }
-    catch (error) {
-        if (error.code !== "ENOENT")
-            throw error;
-    }
-    const results = [];
-    for (const entry of entries) {
-        const eventPath = path.join(route.eventSink, entry);
-        if (!containedPath(route.eventSink, eventPath))
-            continue;
-        try {
-            const stat = fs.statSync(eventPath);
-            if (!stat.isFile() || stat.size > MAX_EVENT_BYTES)
-                continue;
-            const content = fs.readFileSync(eventPath, "utf-8");
-            const lines = content.includes("\n")
-                ? content.split("\n").filter((line) => line.trim())
-                : [content];
-            for (const line of lines) {
-                const result = parseControlResult(line, route);
-                if (result)
-                    results.push(result);
-            }
-        }
-        catch {
-            continue;
-        }
-    }
-    return results;
-}
-export function nestedRouteEnv(route) {
-    return {
-        [SUBAGENT_PARENT_EVENT_SINK_ENV]: route.eventSink,
-        [SUBAGENT_PARENT_CONTROL_INBOX_ENV]: route.controlInbox,
-        [SUBAGENT_PARENT_ROOT_RUN_ID_ENV]: route.rootRunId,
-        [SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV]: route.capabilityToken,
-    };
 }
 export function attachRootChildrenToSteps(rootRunId, steps, children) {
     if (!steps?.length)
@@ -1145,17 +905,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
             }
             : {}),
     };
-}
-export function nestedArtifactEnv(rootRunId, parentRunId) {
-    return {
-        PI_SUBAGENT_NESTED_ROOT_RUN_ID: rootRunId,
-        PI_SUBAGENT_NESTED_PARENT_RUN_ID: parentRunId,
-    };
-}
-export function isTopLevelAsyncDir(asyncDir) {
-    const resolved = path.resolve(asyncDir);
-    return (containedPath(ASYNC_DIR, resolved) &&
-        !containedPath(path.join(TEMP_ROOT_DIR, "nested-subagent-runs"), resolved));
 }
 export function nestedResultsPath(rootRunId, id) {
     assertSafeId("rootRunId", rootRunId);

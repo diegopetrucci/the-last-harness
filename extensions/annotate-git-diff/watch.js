@@ -20,7 +20,7 @@ const ignoredFileNames = new Set([".DS_Store"]);
 function normalizeWatchPath(path) {
     return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }
-export function isIgnoredWatchPath(path) {
+function isIgnoredWatchPath(path) {
     if (path == null)
         return false;
     const normalized = normalizeWatchPath(path.toString());

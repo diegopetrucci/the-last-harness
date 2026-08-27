@@ -4,7 +4,6 @@ import { DUMB_ZONE_LABEL, DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import { getTlhSubscriptionUsageFooterState, } from "./footer-subscription-usage.js";
 import { getMcpToolKind, hasPersistedDirectMcpResultDetails } from "./mcp-tools.js";
@@ -12,6 +11,8 @@ export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-u
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
+const FAST_STATUS_KEY = "fast";
+const NO_PROVIDER_WARNING_TEXT = "\u26a0 no provider \u2014 run /login";
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -169,6 +170,10 @@ function appendMcpContextEstimate(statusText, suffix) {
     }
     return `${statusText}${suffix}`;
 }
+function formatNoProviderWarningLine(width, theme) {
+    const warningText = theme.fg("warning", NO_PROVIDER_WARNING_TEXT);
+    return truncateToWidth(warningText, width, theme.fg("warning", "..."));
+}
 export function formatReauthWarningLine(providers, width, theme) {
     if (providers.length === 0)
         return undefined;
@@ -203,6 +208,8 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 fallbackBranch: footerData?.getGitBranch?.(),
             });
             const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+            const extensionStatuses = footerData?.getExtensionStatuses?.();
+            const hasFastStatus = extensionStatuses?.has(FAST_STATUS_KEY) ?? false;
             const modelOrNoModel = model?.id ?? "no-model";
             const modelPart = modelOrNoModel;
             const primaryName = getPrimaryName();
@@ -233,7 +240,11 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
                 agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
             }
-            const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
+            const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
+            const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
+            const agentLine2 = fastLine2SuffixWidth <= width
+                ? `${truncateToWidth(agentLine2Str, width - fastLine2SuffixWidth, theme.fg("dim", "..."))}${fastLine2Suffix}`
+                : truncateToWidth(agentLine2Str + fastLine2Suffix, width, theme.fg("dim", "..."));
             const subscriptionUsageState = getTlhSubscriptionUsageFooterState(ctx, model, usageOptions);
             const costStr = totals.cost > 0 && !subscriptionUsageState.suppressCost
                 ? formatCost(totals.cost)
@@ -245,28 +256,20 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 line3Parts.push(subscriptionUsageState.segment);
             const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
             const lines = [pwdLine, agentLine2];
+            if (footerData?.getAvailableProviderCount?.() === 0) {
+                lines.push(formatNoProviderWarningLine(width, theme));
+            }
             if (providerAuthHealth) {
                 const reauthProviders = providerAuthHealth.getReauthProviders();
                 const warningLine = formatReauthWarningLine(reauthProviders, width, theme);
                 if (warningLine !== undefined)
                     lines.push(warningLine);
             }
-            const extensionStatuses = footerData?.getExtensionStatuses?.();
             const hasMcpStatus = extensionStatuses
                 ? Array.from(extensionStatuses.values()).some((status) => MCP_STATUS_PREFIX.test(sanitizeStatusText(status)))
                 : false;
             if (hasMcpStatus) {
                 mcpContextEstimateCache = getMcpContextEstimateSuffix(pi, ctx, contextUsage, mcpContextEstimateCache);
-            }
-            const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
-            if (tkWorkflowStatus) {
-                const tkWorkflowLines = tkWorkflowStatus
-                    .split(/\r?\n/)
-                    .map((line) => sanitizeStatusText(line))
-                    .filter(Boolean);
-                for (const line of tkWorkflowLines) {
-                    lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
-                }
             }
             if (line3 !== undefined) {
                 lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
@@ -281,7 +284,7 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
             }
             if (extensionStatuses && extensionStatuses.size > 0) {
                 const visibleStatuses = Array.from(extensionStatuses.entries())
-                    .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
+                    .filter(([key]) => key !== FAST_STATUS_KEY)
                     .sort(([a], [b]) => a.localeCompare(b));
                 const statusLine = visibleStatuses
                     .map(([, text]) => appendMcpContextEstimate(sanitizeStatusText(text), mcpContextEstimateCache?.suffix))

@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { ExtensionConfig } from "../shared/types.ts";
 import { getAgentDir } from "../shared/utils.ts";
 
-export function getConfigPath(): string {
+function getConfigPath(): string {
   return path.join(getAgentDir(), "extensions", "subagent", "config.json");
 }
 

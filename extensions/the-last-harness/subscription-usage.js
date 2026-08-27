@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 export const TLH_SUBSCRIPTION_USAGE_OPENAI_CODEX_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_URL = "https://api.anthropic.com/api/oauth/usage";
 export const TLH_SUBSCRIPTION_USAGE_ANTHROPIC_BETA = "oauth-2025-04-20";
-export const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
-export const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
+const TLH_SUBSCRIPTION_USAGE_CACHE_TTL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_MIN_FETCH_INTERVAL_MS = 60_000;
+const TLH_SUBSCRIPTION_USAGE_TIMEOUT_MS = 3_000;
 const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const ACCOUNT_ID_KEYS = [
     "accountId",
@@ -18,6 +18,22 @@ function asObject(value) {
     return value && typeof value === "object" && !Array.isArray(value)
         ? value
         : undefined;
+}
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
+function hasAuthStorageGetter(value) {
+    const storage = asObject(value);
+    return storage !== undefined && typeof storage.get === "function";
 }
 function finiteNumber(value) {
     if (typeof value === "number" && Number.isFinite(value)) {
@@ -247,7 +263,7 @@ function createSnapshot(provider, session, weekly, fetchedAt) {
     }
     return { provider, fetchedAt, windows };
 }
-export function isSupportedTlhSubscriptionUsageProvider(provider) {
+function isSupportedTlhSubscriptionUsageProvider(provider) {
     return (typeof provider === "string" &&
         SUPPORTED_PROVIDERS.has(provider));
 }
@@ -279,11 +295,15 @@ async function responseJson(response) {
     if (response?.ok !== true || typeof response.json !== "function") {
         return undefined;
     }
-    return response.json();
+    const payload = await response.json();
+    return isJsonValue(payload) ? payload : undefined;
 }
 function oauthCredentialFromRegistry(modelRegistry, provider) {
     const authStorage = modelRegistry?.authStorage;
-    const credential = authStorage?.get?.(provider);
+    if (!hasAuthStorageGetter(authStorage)) {
+        return undefined;
+    }
+    const credential = authStorage.get(provider);
     const stored = asObject(credential);
     return stored?.type === "oauth" ? stored : undefined;
 }
@@ -318,7 +338,7 @@ function cacheKeyMatchesProvider(cacheKey, provider) {
 }
 function hasRuntimeCredentialOverride(modelRegistry, provider) {
     try {
-        const authStorage = modelRegistry?.authStorage;
+        const authStorage = asObject(modelRegistry?.authStorage);
         const runtimeOverrides = authStorage?.runtimeOverrides;
         return runtimeOverrides instanceof Map && runtimeOverrides.has(provider);
     }
@@ -521,7 +541,7 @@ async function resolveTlhSubscriptionUsageTarget(resolved) {
         },
     };
 }
-export class TlhSubscriptionUsageService {
+class TlhSubscriptionUsageService {
     fetch;
     now;
     cacheTtlMs;

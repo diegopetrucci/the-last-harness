@@ -1,5 +1,23 @@
+# Contributor and release validation scripts stay in git but are not published.
+check-installer-smoke.sh
+installer-smoke/guards.sh
+installer-smoke/helpers.sh
+installer-smoke/install-state-pi.sh
+installer-smoke/release-pinning.sh
+installer-smoke/stage0.sh
+installer-smoke/stage1.sh
+installer-smoke/static-and-manifest.sh
+installer-smoke/uninstall-runtime.sh
+check-lazy-import-boundaries.mjs
 check-package-contents.mjs
+check-package-versions.mjs
+check-release-tag-ancestry.mjs
+check-startup-performance.mjs
+release-notes.mjs
 run-subagents-tests.mjs
 run-lane.mjs
 run-ci-test-shard.mjs
 run-ci-validation.mjs
+run-validation.mjs
+runtime-typescript.mjs
+validation-checks.mjs

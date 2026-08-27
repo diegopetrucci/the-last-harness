@@ -504,6 +504,80 @@ test("usage footer stays within narrow terminal widths", () => {
 });
 
 // ---------------------------------------------------------------------------
+// NEW: no-provider warning tests
+// ---------------------------------------------------------------------------
+
+test("footer warns when the upstream provider count is zero", () => {
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    WIDTH,
+    createFooterData({ providerCount: 0 }),
+  );
+
+  assert.ok(lines.includes("⚠ no provider — run /login"));
+});
+
+test("footer omits the no-provider warning when a provider is available", () => {
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    WIDTH,
+    createFooterData({ providerCount: 1 }),
+  );
+
+  assert.doesNotMatch(lines.join("\n"), /no provider|run \/login/);
+});
+
+test("footer dismisses the no-provider warning after the provider count becomes nonzero", () => {
+  let providerCount = 0;
+  const footerData = {
+    ...createFooterData(),
+    getAvailableProviderCount: () => providerCount,
+  };
+  const footer = createTlhFooter(
+    pi,
+    createCtx({ entries: [] }),
+    theme,
+    () => "architect",
+    footerData,
+    {},
+  );
+
+  assert.match(footer.render(WIDTH).join("\n"), /⚠ no provider — run \/login/);
+
+  providerCount = 1;
+  assert.doesNotMatch(footer.render(WIDTH).join("\n"), /no provider|run \/login/);
+});
+
+test("footer renders the no-provider warning with warning styling", () => {
+  const lines = createTlhFooter(
+    pi,
+    createCtx({ entries: [] }),
+    colorTheme,
+    () => "architect",
+    createFooterData({ providerCount: 0 }),
+    {},
+  ).render(COLOR_WIDTH);
+
+  assert.equal(lines.at(-1), "<warning>⚠ no provider — run /login</warning>");
+});
+
+test("no-provider warning respects narrow footer widths", () => {
+  const width = 12;
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    width,
+    createFooterData({ providerCount: 0 }),
+  );
+  const warningLine = lines.at(-1) ?? "";
+
+  assert.ok(visibleWidth(warningLine) <= width);
+  assert.ok(warningLine.length > 0);
+});
+
+// ---------------------------------------------------------------------------
 // NEW: focused line-2 composition tests
 // ---------------------------------------------------------------------------
 
@@ -842,28 +916,59 @@ test("line 2 (color-aware): product and bug-hunter render name with accent", () 
 // NEW: extension status line rendering
 // ---------------------------------------------------------------------------
 
-test("tk workflow status renders as dim footer lines between agent and usage without generic duplication", () => {
-  const ctx = createCtx({ provider: "anthropic", usingOAuth: false });
+test("fast extension status renders as a dim line-2 segment without generic duplication", () => {
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    getGitBranch: () => undefined,
+    getAvailableProviderCount: () => 1,
+    getExtensionStatuses: () => new Map([["fast", "Fast on"]]),
+  };
+  const lines = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {}).render(
+    COLOR_WIDTH,
+  );
+
+  assert.equal(lines.length, 2, "fast should not create a separate extension-status line");
+  assert.match(lines[1] ?? "", /<dim> • <\/dim><dim>fast<\/dim>$/);
+  assert.doesNotMatch(lines[1] ?? "", /Fast on/);
+});
+
+test("fast extension status coexists with MCP and unrelated extension statuses", () => {
+  const ctx = createCtx({ entries: [] });
   const footerData = {
     getGitBranch: () => undefined,
     getAvailableProviderCount: () => 1,
     getExtensionStatuses: () =>
       new Map([
-        ["tlh-ticket-workflow", "ticket: Implement read-only ticket workflow status UI (/tickets)"],
+        ["fast", "Fast on"],
+        ["mcp", "MCP: 1/1 servers"],
         ["my-ext", "my-ext: active"],
       ]),
   };
-  const footer = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {});
-  const lines = footer.render(COLOR_WIDTH);
-
-  assert.match(lines[1] ?? "", /<dim>agent: <\/dim>/);
-  assert.equal(
-    lines[2],
-    "<dim>ticket: Implement read-only ticket workflow status UI (/tickets)</dim>",
+  const lines = createTlhFooter(pi, ctx, colorTheme, () => "architect", footerData, {}).render(
+    COLOR_WIDTH,
   );
-  assert.equal(lines[3], "<dim>$1.250</dim>");
-  assert.equal(lines[4], "my-ext: active");
-  assert.doesNotMatch(lines[4] ?? "", /ticket:|\/tickets/);
+
+  assert.match(lines[1] ?? "", /<dim> • <\/dim><dim>fast<\/dim>$/);
+  assert.equal(lines.length, 3, "MCP and unrelated statuses should share one generic line");
+  assert.match(lines[2] ?? "", /MCP: 1\/1 servers/);
+  assert.match(lines[2] ?? "", /my-ext: active/);
+  assert.doesNotMatch(lines[2] ?? "", /fast|Fast on/);
+});
+
+test("fast extension status remains visible when line 2 is truncated", () => {
+  const ctx = createCtx({ entries: [] });
+  const footerData = {
+    getGitBranch: () => undefined,
+    getAvailableProviderCount: () => 1,
+    getExtensionStatuses: () => new Map([["fast", "Fast on"]]),
+  };
+  const width = 60;
+  const line =
+    createTlhFooter(pi, ctx, theme, () => "architect", footerData, {}).render(width)[1] ?? "";
+
+  assert.ok(visibleWidth(line) <= width);
+  assert.match(line, /\.\.\./);
+  assert.match(line, / • fast$/);
 });
 
 test("non-context-cap extension statuses are still rendered in the footer", () => {

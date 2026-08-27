@@ -103,7 +103,7 @@ export function createSubagentLiveDetailController(initialExpanded = false) {
         },
     };
 }
-export function formatShortcutDisplay(key) {
+function formatShortcutDisplay(key) {
     return key
         .split("/")
         .map((binding) => binding
@@ -116,7 +116,4 @@ export function formatShortcutDisplay(key) {
 }
 export function liveDetailShortcutDisplay() {
     return formatShortcutDisplay(SUBAGENT_LIVE_DETAIL_SHORTCUT);
-}
-export function pauseAllShortcutDisplay() {
-    return formatShortcutDisplay(SUBAGENT_PAUSE_ALL_SHORTCUT);
 }

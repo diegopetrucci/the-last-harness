@@ -44,6 +44,8 @@ import {
   isProtectedPausedLifecycle,
   protectedLifecycleText,
 } from "../shared/lifecycle-privacy.ts";
+import { acceptanceRejectionReason } from "../shared/acceptance.ts";
+import { formatRejectionReason } from "../../shared/string-utils.ts";
 
 interface RunStatusParams {
   action?: "status";
@@ -676,6 +678,10 @@ export function inspectSubagentStatus(
         lines.push(
           `${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`,
         );
+        if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
+          const reason = acceptanceRejectionReason(step.acceptance);
+          if (reason) lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
+        }
         const stepContinuation = lifecycleContinuationForIndex(status, index);
         const stepClaimed =
           typeof stepContinuation?.claimToken === "string" &&

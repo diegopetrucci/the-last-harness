@@ -47,7 +47,7 @@ export interface ToolPair {
 }
 
 /** Result returned by {@link pairToolCalls}. */
-export interface PairingResult {
+interface PairingResult {
   toolPairs: ToolPair[];
   /** Tool calls with no matching tool result (session may still be active). */
   unmatchedToolCallCount: number;

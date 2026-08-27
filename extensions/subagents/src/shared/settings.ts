@@ -71,7 +71,7 @@ export interface SequentialStep {
 }
 
 /** Parallel task item within a parallel step */
-export interface ParallelTaskItem {
+interface ParallelTaskItem {
   agent: string;
   task?: string;
   phase?: string;
@@ -92,7 +92,7 @@ export interface ParallelTaskItem {
 }
 
 /** Parallel step: multiple agents running concurrently */
-export interface ParallelStep {
+interface ParallelStep {
   parallel: ParallelTaskItem[];
   concurrency?: number;
   failFast?: boolean;
@@ -191,7 +191,7 @@ export function resolveStepBehavior(
   };
 }
 
-export function resolveTaskTextForFileUpdatePolicy(
+function resolveTaskTextForFileUpdatePolicy(
   task: string | undefined,
   originalTask?: string,
 ): string | undefined {

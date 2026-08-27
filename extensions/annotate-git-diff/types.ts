@@ -122,7 +122,7 @@ export type ReviewWindowMessage =
   | ReviewClipboardReadPayload
   | ReviewClipboardWritePayload;
 
-export interface ReviewFileDataMessage {
+interface ReviewFileDataMessage {
   type: "file-data";
   requestId: string;
   fileId: string;
@@ -138,7 +138,7 @@ export interface ReviewFileDataMessage {
   modifiedPreviewUrl: string | null;
 }
 
-export interface ReviewFileErrorMessage {
+interface ReviewFileErrorMessage {
   type: "file-error";
   requestId: string;
   fileId: string;
@@ -147,21 +147,21 @@ export interface ReviewFileErrorMessage {
   message: string;
 }
 
-export interface ReviewCommitDataMessage {
+interface ReviewCommitDataMessage {
   type: "commit-data";
   requestId: string;
   sha: string;
   files: ReviewFile[];
 }
 
-export interface ReviewCommitErrorMessage {
+interface ReviewCommitErrorMessage {
   type: "commit-error";
   requestId: string;
   sha: string;
   message: string;
 }
 
-export interface ReviewReviewDataMessage {
+interface ReviewReviewDataMessage {
   type: "review-data";
   requestId: string;
   files: ReviewFile[];
@@ -171,20 +171,20 @@ export interface ReviewReviewDataMessage {
   repositoryHasHead: boolean;
 }
 
-export interface ReviewReviewDataErrorMessage {
+interface ReviewReviewDataErrorMessage {
   type: "review-data-error";
   requestId: string;
   message: string;
 }
 
-export interface ReviewClipboardDataMessage {
+interface ReviewClipboardDataMessage {
   type: "clipboard-data";
   requestId: string;
   text: string;
   message?: string;
 }
 
-export interface ReviewWorkingTreeChangedMessage {
+interface ReviewWorkingTreeChangedMessage {
   type: "working-tree-changed";
   changedAt: number;
 }

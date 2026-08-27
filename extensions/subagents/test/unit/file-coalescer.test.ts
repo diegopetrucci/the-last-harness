@@ -9,12 +9,12 @@ function createFakeTimers() {
   const tasks = new Map<number, TimerTask>();
   return {
     timerApi: {
-      setTimeout(handler: () => void, delayMs: number): unknown {
+      setTimeout(handler: () => void, delayMs: number): number {
         const id = nextId++;
         tasks.set(id, { id, cb: handler, delay: delayMs });
         return id;
       },
-      clearTimeout(handle: unknown): void {
+      clearTimeout(handle: number): void {
         if (typeof handle === "number") tasks.delete(handle);
       },
     },

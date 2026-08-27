@@ -30,9 +30,19 @@ export interface AsyncExecutionResult {
 }
 
 /**
- * Test mirror of the async result artifact. Derived from the canonical
- * AsyncResultArtifact so that field names and types stay in sync automatically.
- * Tests cast parsed JSON to this type; the canonical type validates writers.
+ * WRITER contract: a transparent alias for AsyncResultArtifact used when tests
+ * read artifacts that the production writers produced earlier in the same test
+ * run — including via the readAsyncPayload() helper below. Because every field
+ * reflects live writer output, the full required-field contract applies.
+ *
+ * This is an alias — not a re-declaration — so field names and types stay in
+ * sync with AsyncResultArtifact automatically. Before PR #515 this was a
+ * hand-maintained restatement that silently drifted twice and needed manual
+ * patches; the alias makes that class of drift impossible.
+ *
+ * Tests that exercise legacy, synthetic, or malformed artifacts must use the
+ * Partial-based fixtures in test/support/async-artifact-fixtures.ts instead of
+ * casting to this type.
  */
 export type AsyncResultPayload = AsyncResultArtifact;
 
@@ -406,9 +416,29 @@ export function lifecycleLockDir(asyncDir: string): string {
   return path.join(asyncDir, ".lifecycle-transition.lock");
 }
 
-export function writeLifecycleLock(asyncDir: string): void {
+export async function writeLifecycleLock(asyncDir: string): Promise<void> {
   const lockDir = lifecycleLockDir(asyncDir);
-  fs.mkdirSync(lockDir, { recursive: true });
+  const timeoutMs = scaleTestTimeout(10_000);
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    try {
+      fs.mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? (error as NodeJS.ErrnoException).code
+          : undefined;
+      if (code !== "EEXIST") throw error;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`Timed out acquiring lifecycle lock '${lockDir}' after ${timeoutMs}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(50, remainingMs)));
+    }
+  }
+
   fs.writeFileSync(
     path.join(lockDir, "owner.json"),
     JSON.stringify({ pid: 999999, acquiredAt: Date.now() }, null, 2),

@@ -13,9 +13,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
-import type { StartupResources, StartupResourceSnapshot } from "./types.js";
+import type { StartupResourceSnapshot } from "./types.js";
 
-export type CollectStartupResourcesOptions = {
+type CollectStartupResourcesOptions = {
   projectTrusted?: boolean;
 };
 
@@ -129,20 +129,11 @@ function resolveProjectTrusted(
 }
 
 function createSettingsManager(cwd: string, agentDir: string, projectTrusted: boolean) {
-  const create = SettingsManager.create as unknown as (
-    cwd: string,
-    agentDir: string,
-    options?: { projectTrusted?: boolean },
-  ) => ReturnType<typeof SettingsManager.create>;
-  return create(cwd, agentDir, { projectTrusted });
+  return SettingsManager.create(cwd, agentDir, { projectTrusted });
 }
 
 function loadContextFiles(cwd: string, agentDir: string): Array<{ path: string; content: string }> {
-  const load = loadProjectContextFiles as unknown as (options: {
-    cwd: string;
-    agentDir: string;
-  }) => Array<{ path: string; content: string }>;
-  return load({ cwd, agentDir });
+  return loadProjectContextFiles({ cwd, agentDir });
 }
 
 function filterVisibleResources(
@@ -194,11 +185,4 @@ export async function collectStartupResourceSnapshot(
       })),
     },
   };
-}
-
-export async function collectStartupResources(
-  cwd: string,
-  options: CollectStartupResourcesOptions = {},
-): Promise<StartupResources> {
-  return (await collectStartupResourceSnapshot(cwd, options)).resources;
 }

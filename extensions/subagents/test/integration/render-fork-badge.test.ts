@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { createPlainTheme } from "../support/themes.ts";
 import { finalizeSingleOutput } from "../../src/runs/shared/single-output.ts";
 import { liveDetailShortcutDisplay } from "../../src/shared/subagent-shortcuts.ts";
 import { truncateOutput } from "../../src/shared/types.ts";
@@ -11,14 +11,7 @@ import {
   whimsicalThinkingPhrase,
 } from "../../src/tui/whimsical-phrases.ts";
 
-// Theme is an SDK class with private colour-table fields; a plain object with
-// the two methods the render functions actually call is sufficient for tests.
-// Casting to the real Theme type (not a handwritten local shape) means the
-// compiler still validates everything except the theme argument itself.
-const theme = {
-  fg: (_name: string, text: string) => text,
-  bold: (text: string) => text,
-} as unknown as Theme;
+const theme = createPlainTheme();
 
 const expandKey = liveDetailShortcutDisplay();
 const expandHint = `Press ${expandKey} for full output`;
@@ -43,6 +36,22 @@ function withTerminalWidth<T>(columns: number, fn: () => T): T {
     return fn();
   } finally {
     Object.defineProperty(process.stdout, "columns", {
+      value: original,
+      configurable: true,
+    });
+  }
+}
+
+function withTerminalRows<T>(rows: number, fn: () => T): T {
+  const original = process.stdout.rows;
+  Object.defineProperty(process.stdout, "rows", {
+    value: rows,
+    configurable: true,
+  });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process.stdout, "rows", {
       value: original,
       configurable: true,
     });
@@ -151,6 +160,286 @@ describe("renderSubagentResult fork indicator", () => {
       .render(140)
       .join("\n");
     assert.equal(text.match(/ticket: Show active tk title/g)?.length, 1);
+  });
+
+  it("renders one live-detail hint after all running foreground result rows", () => {
+    const text = withTerminalWidth(140, () =>
+      renderSubagentResult!(
+        {
+          content: [{ type: "text", text: "running" }],
+          details: {
+            mode: "parallel",
+            totalSteps: 2,
+            results: [
+              {
+                agent: "reviewer",
+                task: "Review the change.",
+                exitCode: 0,
+                usage: emptyUsage,
+                tkTicket: { id: "tlhf-first", title: "First ticket" },
+                progress: {
+                  index: 0,
+                  agent: "reviewer",
+                  status: "running",
+                  task: "Review the change.",
+                  currentTool: "read",
+                  currentToolArgs: "reviewer.ts",
+                  recentTools: [],
+                  recentOutput: [],
+                  toolCount: 1,
+                  tokens: 0,
+                  durationMs: 10,
+                },
+              },
+              {
+                agent: "writer",
+                task: "Write the change.",
+                exitCode: 0,
+                usage: emptyUsage,
+                progress: {
+                  index: 1,
+                  agent: "writer",
+                  status: "running",
+                  task: "Write the change.",
+                  currentTool: "write",
+                  currentToolArgs: "writer.ts",
+                  recentTools: [],
+                  recentOutput: [],
+                  toolCount: 1,
+                  tokens: 0,
+                  durationMs: 10,
+                },
+              },
+            ],
+            artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+          },
+        },
+        { expanded: false },
+        theme,
+      )
+        .render(140)
+        .join("\n"),
+    );
+
+    const lines = text.split("\n");
+    const hintLines = lines.filter((line) => line.includes(liveDetailHint));
+    assert.equal(hintLines.length, 1, "concurrent running rows should share one live-detail hint");
+    assert.match(text, /artifacts: \/tmp\/foreground-artifacts/);
+
+    const reviewerRowIndex = lines.findIndex((line) => line.includes("reviewer"));
+    const reviewerTicketIndex = lines.findIndex((line) => line.includes("ticket: First ticket"));
+    const reviewerActivityIndex = lines.findIndex((line) => line.includes("read: reviewer.ts"));
+    const writerRowIndex = lines.findIndex((line) => line.includes("writer"));
+    const writerActivityIndex = lines.findIndex((line) => line.includes("write: writer.ts"));
+    const artifactsIndex = lines.findIndex((line) =>
+      line.includes("artifacts: /tmp/foreground-artifacts"),
+    );
+    const hintIndex = lines.findIndex((line) => line.includes(liveDetailHint));
+
+    assert.ok(reviewerRowIndex !== -1, "first agent row should be present");
+    assert.ok(reviewerTicketIndex > reviewerRowIndex, "ticket should remain under its agent row");
+    assert.ok(
+      reviewerActivityIndex > reviewerTicketIndex,
+      "first agent activity should remain after its ticket",
+    );
+    assert.ok(writerRowIndex !== -1, "second agent row should be present");
+    assert.ok(
+      writerActivityIndex > writerRowIndex,
+      "second agent activity should remain in its row",
+    );
+    assert.ok(hintIndex > writerActivityIndex, "shared hint should follow all agent activity");
+    assert.equal(
+      artifactsIndex,
+      hintIndex - 1,
+      "artifacts should remain immediately before the shared hint",
+    );
+    assert.equal(hintIndex, lines.length - 1, "shared hint should be the final rendered card line");
+  });
+
+  it("keeps the shared live-detail footer after collapsed multi-agent truncation", () => {
+    const text = withTerminalWidth(140, () =>
+      withTerminalRows(10, () =>
+        renderSubagentResult!(
+          {
+            content: [{ type: "text", text: "running" }],
+            details: {
+              mode: "parallel",
+              totalSteps: 2,
+              results: [
+                {
+                  agent: "reviewer",
+                  task: "Review the change.",
+                  exitCode: 0,
+                  usage: emptyUsage,
+                  progress: {
+                    index: 0,
+                    agent: "reviewer",
+                    status: "running",
+                    task: "Review the change.",
+                    currentTool: "read",
+                    currentToolArgs: "reviewer.ts",
+                    recentTools: [],
+                    recentOutput: [],
+                    toolCount: 1,
+                    tokens: 0,
+                    durationMs: 10,
+                  },
+                },
+                {
+                  agent: "writer",
+                  task: "Write the change.",
+                  exitCode: 0,
+                  usage: emptyUsage,
+                  progress: {
+                    index: 1,
+                    agent: "writer",
+                    status: "running",
+                    task: "Write the change.",
+                    currentTool: "write",
+                    currentToolArgs: "writer.ts",
+                    recentTools: [],
+                    recentOutput: [],
+                    toolCount: 1,
+                    tokens: 0,
+                    durationMs: 10,
+                  },
+                },
+              ],
+              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+            },
+          },
+          { expanded: false },
+          theme,
+        )
+          .render(140)
+          .join("\n"),
+      ),
+    );
+
+    const lines = text.split("\n");
+    assert.match(text, new RegExp(`lines hidden · ${escapeRegExp(expandKey)} expands`));
+    assert.equal(
+      lines.filter((line) => line.includes(liveDetailHint)).length,
+      1,
+      "truncation should retain one shared live-detail footer",
+    );
+    assert.match(lines.at(-1) ?? "", new RegExp(escapeRegExp(liveDetailHint)));
+    assert.ok(lines.length <= 5, "collapsed output should respect the constrained line budget");
+  });
+
+  it("keeps the wrapped live-detail footer within a narrow collapsed height budget", () => {
+    const text = withTerminalWidth(37, () =>
+      withTerminalRows(10, () =>
+        renderSubagentResult!(
+          {
+            content: [{ type: "text", text: "running" }],
+            details: {
+              mode: "parallel",
+              totalSteps: 2,
+              results: [
+                {
+                  agent: "reviewer",
+                  task: "Review the change.",
+                  exitCode: 0,
+                  usage: emptyUsage,
+                  progress: {
+                    index: 0,
+                    agent: "reviewer",
+                    status: "running",
+                    task: "Review the change.",
+                    currentTool: "read",
+                    currentToolArgs: "reviewer.ts",
+                    recentTools: [],
+                    recentOutput: [],
+                    toolCount: 1,
+                    tokens: 0,
+                    durationMs: 10,
+                  },
+                },
+                {
+                  agent: "writer",
+                  task: "Write the change.",
+                  exitCode: 0,
+                  usage: emptyUsage,
+                  progress: {
+                    index: 1,
+                    agent: "writer",
+                    status: "running",
+                    task: "Write the change.",
+                    currentTool: "write",
+                    currentToolArgs: "writer.ts",
+                    recentTools: [],
+                    recentOutput: [],
+                    toolCount: 1,
+                    tokens: 0,
+                    durationMs: 10,
+                  },
+                },
+              ],
+              artifacts: { dir: "/tmp/foreground-artifacts", files: [] },
+            },
+          },
+          { expanded: false },
+          theme,
+        )
+          .render(37)
+          .join("\n"),
+      ),
+    );
+
+    const lines = text.split("\n");
+    const normalized = lines.join(" ").replace(/\s+/g, " ").trim();
+    assert.equal(
+      normalized.match(new RegExp(escapeRegExp(liveDetailHint), "g"))?.length,
+      1,
+      "narrow wrapping should retain exactly one live-detail hint",
+    );
+    const footerStart = lines.findIndex((line) => line.includes(`Press ${expandKey}`));
+    assert.ok(footerStart !== -1, "wrapped live-detail footer should be present");
+    assert.equal(
+      lines.slice(footerStart).join(" ").replace(/\s+/g, " ").trim(),
+      liveDetailHint,
+      "wrapped live-detail footer should remain final",
+    );
+    assert.ok(lines.length <= 5, "narrow collapsed output should respect the line budget");
+  });
+
+  it("falls back to a bounded key summary when the footer cannot fit", () => {
+    const tinyResult = {
+      content: [{ type: "text" as const, text: "running" }],
+      details: {
+        mode: "parallel" as const,
+        totalSteps: 2,
+        results: ["reviewer", "writer"].map((agent, index) => ({
+          agent,
+          task: "Run the assigned task.",
+          exitCode: 0,
+          usage: emptyUsage,
+          progress: {
+            index,
+            agent,
+            status: "running" as const,
+            task: "Run the assigned task.",
+            currentTool: "read",
+            currentToolArgs: `${agent}.ts`,
+            recentTools: [],
+            recentOutput: [],
+            toolCount: 1,
+            tokens: 0,
+            durationMs: 10,
+          },
+        })),
+      },
+    };
+    const text = withTerminalWidth(8, () =>
+      withTerminalRows(10, () =>
+        renderSubagentResult!(tinyResult, { expanded: false }, theme).render(8).join("\n"),
+      ),
+    );
+
+    const lines = text.split("\n");
+    assert.ok(lines.length <= 5, "tiny collapsed output should respect the line budget");
+    assert.doesNotMatch(text, /Press|live detail|for live/);
   });
 
   it("indents the ticket line deeper than its agent row in multi-agent compact output", () => {
@@ -448,16 +737,10 @@ describe("renderSubagentResult fork indicator", () => {
 
   it("styles keyboard instruction hints with the dim theme", () => {
     const hintStyles: string[] = [];
-    // Theme is an SDK class with private fields; cast to allow a test stub.
-    const styledTheme = {
-      fg(name: string, text: string): string {
-        if (text.includes("Press ")) hintStyles.push(name);
-        return text;
-      },
-      bold(text: string): string {
-        return text;
-      },
-    } as unknown as Theme;
+    const styledTheme = createPlainTheme((name, text) => {
+      if (text.includes("Press ")) hintStyles.push(name);
+      return text;
+    });
     const activeResult = {
       agent: "worker",
       task: "review",

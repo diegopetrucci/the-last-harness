@@ -11,6 +11,7 @@ import {
   ensureArtifactsDir,
   getArtifactPaths,
   writeArtifact,
+  writeArtifactWithFloor,
   writeMetadata,
 } from "../../shared/artifacts.ts";
 import {
@@ -98,9 +99,8 @@ import {
   buildSkippedAcceptanceLedger,
   evaluateAcceptance,
   formatAcceptancePrompt,
-  parseAcceptanceReport,
+  parseAndStripAcceptanceReport,
   resolveEffectiveAcceptance,
-  stripAcceptanceReport,
 } from "../shared/acceptance.ts";
 import {
   appendTurnBudgetSystemPrompt,
@@ -295,7 +295,7 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
     if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
       if (part.type === "text" && "text" in part && typeof part.text === "string") {
-        part.text = stripAcceptanceReport(part.text);
+        part.text = parseAndStripAcceptanceReport(part.text).stripped;
       }
     }
   }
@@ -1405,7 +1405,12 @@ async function runSingleAttempt(
             options.artifactConfig?.includeOutput !== false
           ) {
             try {
-              writeArtifact(result.artifactPaths.outputPath, result.finalOutput);
+              writeArtifactWithFloor(
+                result.artifactPaths.outputPath,
+                result.finalOutput,
+                finalOutput,
+                !!result.savedOutputPath,
+              );
             } catch {
               // Detached children may outlive test/temp cleanup; recovered status is best-effort.
             }
@@ -1622,8 +1627,9 @@ async function runSingleAttempt(
   };
 
   const acceptanceOutput = getFinalOutput(result.messages ?? []);
-  const { report: finalAcceptanceReport } = parseAcceptanceReport(acceptanceOutput);
-  let fullOutput = stripAcceptanceReport(acceptanceOutput);
+  const acceptanceParsed = parseAndStripAcceptanceReport(acceptanceOutput);
+  const { report: finalAcceptanceReport } = acceptanceParsed;
+  let fullOutput = acceptanceParsed.stripped;
   if (result.timedOut) {
     const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
     fullOutput = fullOutput.trim()
@@ -1675,7 +1681,7 @@ async function runSingleAttempt(
       fullOutput,
       shared.outputSnapshot,
     );
-    fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
+    fullOutput = parseAndStripAcceptanceReport(resolvedOutput.fullOutput).stripped;
     result.savedOutputPath = resolvedOutput.savedPath;
     result.outputSaveError = resolvedOutput.saveError;
     if (resolvedOutput.savedPath) {
@@ -1684,9 +1690,9 @@ async function runSingleAttempt(
   }
   // The artifact file is the supervisor-facing surface (it is what gets read back
   // as *_output.md). Append the validation-evidence digest there only, so the
-  // acceptance evidence survives stripAcceptanceReport without touching
-  // result.finalOutput, which is a semantic value feeding user-requested output
-  // files and chain/parallel output references.
+  // acceptance evidence survives the strip without touching result.finalOutput,
+  // which is a semantic value feeding user-requested output files and
+  // chain/parallel output references.
   //
   // Exception: when the run saved a user-requested output file, the artifact is a
   // verbatim archive of that deliverable, so it stays byte-exact.
@@ -2013,10 +2019,12 @@ export async function runSync(
     // Append the acceptance digest to the artifact copy only; result.finalOutput must
     // remain exactly timeoutDiagnostics so it does not corrupt output-file or chain
     // output references. The savedOutputPath exception (no digest) is preserved.
+    // Parse with the trailing-fence rule so the digest describes the same fence
+    // the gate will evaluate.
     const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
-    const { report: timeoutReport } = storedAcceptanceOutput
-      ? parseAcceptanceReport(storedAcceptanceOutput)
-      : { report: undefined };
+    const timeoutReport = storedAcceptanceOutput
+      ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
+      : undefined;
     artifactOutputByResult.set(
       result,
       timeoutReport && !result.savedOutputPath
@@ -2124,9 +2132,11 @@ export async function runSync(
   if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
     result.artifactPaths = artifactPathsResult;
     if (options.artifactConfig?.includeOutput !== false) {
-      writeArtifact(
+      writeArtifactWithFloor(
         artifactPathsResult.outputPath,
         artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
+        acceptanceOutputByResult.get(result) ?? "",
+        !!result.savedOutputPath,
       );
     }
     if (options.maxOutput) {

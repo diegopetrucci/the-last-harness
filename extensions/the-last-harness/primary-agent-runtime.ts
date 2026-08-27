@@ -26,7 +26,6 @@ import {
   allowedSubagentsForExperimentalConfig,
   collectSubagentTargets,
   isEmbeddedSubagentTarget,
-  isExperimentalFeatureEnabled,
   registerTlhStartupMode,
   validateSubagentToolInput,
 } from "../the-last-harness-subagent-safety.mjs";
@@ -42,15 +41,12 @@ import {
   TLH_NAME,
   TLH_PACKAGE_NAME,
 } from "./constants.js";
-import {
-  EMBEDDED_SUBAGENTS_FEATURE,
-  buildChildExperimentalPrompt,
-  buildPrimaryExperimentalPrompt,
-} from "./experimental.js";
+import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
   parseProviderModelReference,
+  resolveProviderThinking,
   selectProviderAwareAgentDefaults,
 } from "./model-defaults.js";
 import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
@@ -83,7 +79,6 @@ import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-s
 import type {
   AgentPrompt,
   SubagentMetadata,
-  TlhExperimentalConfig,
   TlhPrimaryAgentConfig,
   TlhPrimaryAgentSelection,
   TlhPrimaryAgentSessionState,
@@ -638,7 +633,6 @@ function createTlhPrimaryAgentRuntime(
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
-  let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
 
   // Per-provider throttle for credential preflights.
   // Key: provider string. Value: { failures, nextAllowedAt (ms timestamp) }.
@@ -886,10 +880,8 @@ function createTlhPrimaryAgentRuntime(
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
-      // Embedded-subagent guidance uses the once-per-session snapshot so it matches the
-      // session-start delegation gate and keeps its documented next-session-only semantics.
-      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
-      // Other experimental guidance reads settings fresh to preserve its existing mid-session behavior.
+      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled),
+      // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
       buildTlhCommitAttributionPrompt(commitAttributionState),
     ];
@@ -1141,11 +1133,7 @@ function createTlhPrimaryAgentRuntime(
       primary,
       availableModels,
       ctx.model?.provider,
-    );
-    const currentProviderDefaults = selectProviderAwareAgentDefaults(
-      primary,
-      [],
-      ctx.model?.provider,
+      ctx.model,
     );
 
     // Resolve model: stored override (if still available in registry) takes precedence over frontmatter default
@@ -1176,10 +1164,10 @@ function createTlhPrimaryAgentRuntime(
         ? await applyPrimaryModel(ctx, primary, resolvedModel)
         : undefined;
     if (shouldApplyThinking) {
-      applyPrimaryThinking(
-        primary,
-        activePrimaryModel ? primaryDefaults.thinking : currentProviderDefaults.thinking,
-      );
+      // Thinking follows the model that is actually effective after stored pins
+      // and model-application decisions, rather than the pre-pin selection.
+      const effectiveModel = activePrimaryModel ?? ctx.model;
+      applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
     }
   }
 
@@ -1420,7 +1408,6 @@ function createTlhPrimaryAgentRuntime(
     setTlhModelSelectionActiveModelResolver(() => ctx.model);
     updateSessionOnlyModel(undefined);
     activateTlhTicketSessionScope(ctx.cwd);
-    sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
     syncPrimaryAgentState(ctx);
     await applyPrimaryDefaults(ctx, { warnOnMissing: false });
   }
@@ -1519,6 +1506,7 @@ function createTlhPrimaryAgentRuntime(
         primary,
         getUnfilteredAvailableModels(ctx.modelRegistry),
         event.model.provider,
+        event.model,
       );
       const bundledKey = primaryDefaults.model
         ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
@@ -1670,9 +1658,7 @@ function createTlhPrimaryAgentRuntime(
       capScoutSubagentTimeout(event.input);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
-      const allowedSubagents = allowedSubagentsForExperimentalConfig(
-        getTlhGlobalSettings(ctx.cwd).tlh?.experimental,
-      );
+      const allowedSubagents = allowedSubagentsForExperimentalConfig();
       if (!isEnabledPrimaryAgentSelection(selection)) {
         if (!isSubagentResumeAction(event.input)) {
           return undefined;
@@ -1689,17 +1675,11 @@ function createTlhPrimaryAgentRuntime(
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const embeddedFeatureEnabled = isExperimentalFeatureEnabled(
-        sessionExperimentalSnapshot,
-        EMBEDDED_SUBAGENTS_FEATURE,
-      );
-      if (embeddedFeatureEnabled) {
-        const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-        if (embeddedBlockReason) {
-          return { block: true, reason: embeddedBlockReason };
-        }
+      const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
+      if (embeddedBlockReason) {
+        return { block: true, reason: embeddedBlockReason };
       }
-      const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
+      const allowEmbeddedTargets = selection === "architect";
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
         allowEmbeddedTargets,
@@ -1788,25 +1768,21 @@ function createTlhPrimaryAgentRuntime(
     // artifact carries the full attempt history.
     //
     // Uses pi.events as an EventBus (duck-typed for test compatibility).
-    const piEventsRecord = pi.events as unknown as Record<string, unknown>;
-    if (typeof piEventsRecord?.on === "function") {
-      (pi.events as { on(channel: string, handler: (data: unknown) => void): unknown }).on(
-        SUBAGENT_ASYNC_COMPLETE_EVENT,
-        (data: unknown) => {
-          const authStore = getProviderAuthHealthStore?.();
-          if (!authStore) return;
-          const prevReauthProviders = new Set(authStore.getReauthProviders());
-          processSubagentRunDetails(data, authStore);
-          // We have no ctx here, so we cannot notify immediately. Record intent
-          // for any provider that newly entered reauth-required; the next
-          // turn_end will flush it before any clearing probe can reset the status.
-          for (const provider of authStore.getReauthProviders()) {
-            if (!prevReauthProviders.has(provider)) {
-              pendingReauthNotifications.add(provider);
-            }
+    if (typeof pi.events?.on === "function") {
+      void pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data: unknown) => {
+        const authStore = getProviderAuthHealthStore?.();
+        if (!authStore) return;
+        const prevReauthProviders = new Set(authStore.getReauthProviders());
+        processSubagentRunDetails(data, authStore);
+        // We have no ctx here, so we cannot notify immediately. Record intent
+        // for any provider that newly entered reauth-required; the next
+        // turn_end will flush it before any clearing probe can reset the status.
+        for (const provider of authStore.getReauthProviders()) {
+          if (!prevReauthProviders.has(provider)) {
+            pendingReauthNotifications.add(provider);
           }
-        },
-      );
+        }
+      });
     }
   }
 
@@ -1861,7 +1837,7 @@ export function registerTlhPrimaryAgentRuntime(
  * which is user-editable JSON, i.e. an external I/O boundary. Callers must validate
  * before treating a key as a `TlhPrimaryAgentSelection` rather than asserting the type.
  */
-export function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
+function isTlhPrimaryAgentSelection(value: string): value is TlhPrimaryAgentSelection {
   return (PRIMARY_AGENT_CYCLE as readonly string[]).includes(value);
 }
 

@@ -1,7 +1,7 @@
 import { lstat, open, readFile } from "node:fs/promises";
 import { relative } from "node:path";
-export const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
-export const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
+const REVIEW_UNTRACKED_BEGIN_DELIMITER = "--- begin untracked files ---";
+const REVIEW_UNTRACKED_END_DELIMITER = "--- end untracked files ---";
 export function buildReviewEnvelope(parsed, ctx) {
     const { mode, extra } = parsed;
     const lines = [];
@@ -46,10 +46,10 @@ export function buildReviewEnvelope(parsed, ctx) {
 export function parseNullDelimitedGitPaths(stdout) {
     return stdout.split("\0").filter((filePath) => filePath.length > 0);
 }
-export function escapeDelimitedContentLine(line) {
+function escapeDelimitedContentLine(line) {
     return `\\${line}`;
 }
-export function escapeContentDelimiters(content) {
+function escapeContentDelimiters(content) {
     return content
         .split("\n")
         .map((line) => {
@@ -64,7 +64,7 @@ export function escapeContentDelimiters(content) {
     })
         .join("\n");
 }
-export function escapeEnvelopeFenceLines(body, fenceKind) {
+function escapeEnvelopeFenceLines(body, fenceKind) {
     const beginFence = `--- begin ${fenceKind} ---`;
     const endFence = `--- end ${fenceKind} ---`;
     return body
@@ -72,13 +72,13 @@ export function escapeEnvelopeFenceLines(body, fenceKind) {
         .map((line) => line === beginFence || line === endFence ? escapeDelimitedContentLine(line) : line)
         .join("\n");
 }
-export function renderDelimitedPath(relPath) {
+function renderDelimitedPath(relPath) {
     return JSON.stringify(relPath)
         .replace(/[\u007f-\u009f\u2028\u2029]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`)
         .replace(/\[/g, "\\u005b")
         .replace(/\]/g, "\\u005d");
 }
-export function getNonRegularSnapshotMarker(relPath, pathStat) {
+function getNonRegularSnapshotMarker(relPath, pathStat) {
     const renderedPath = renderDelimitedPath(relPath);
     if (pathStat.isSymbolicLink()) {
         return `[skipped symlink: ${renderedPath}]`;

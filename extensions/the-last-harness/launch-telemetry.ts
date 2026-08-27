@@ -346,7 +346,7 @@ function readTlhLaunchSettings(): { ok: true; config: TlhLaunchSettings } | { ok
   };
 }
 
-export function shouldSkipTlhLaunchTelemetry(
+function shouldSkipTlhLaunchTelemetry(
   launchSettings: ReturnType<typeof readTlhLaunchSettings> = readTlhLaunchSettings(),
 ): boolean {
   if (!tlhTelemetryStatePath()) return true;
@@ -459,9 +459,7 @@ export function privacySafeTlhTelemetryThinkingLevel(thinkingLevel: string | und
   return (THINKING_LEVELS as readonly string[]).includes(normalized) ? normalized : "custom";
 }
 
-export function privacySafeTlhTelemetryPrimaryAgentName(
-  primaryAgentName: string | undefined,
-): string {
+function privacySafeTlhTelemetryPrimaryAgentName(primaryAgentName: string | undefined): string {
   if (typeof primaryAgentName !== "string" || !primaryAgentName.trim()) {
     return "unknown";
   }
@@ -553,7 +551,7 @@ async function getTlhOsMetadata(): Promise<TlhOsMetadata> {
   }
 }
 
-export async function sendTlhTelemetry(
+async function sendTlhTelemetry(
   envelopes: readonly TlhTelemetryEnvelope[],
   version: string,
   /**
@@ -618,6 +616,7 @@ function readSubagentFrontmatterConfig(
   agentDir: string,
   name: string,
   providerId: string | undefined,
+  currentModel: ProviderModelReference | undefined,
   availableModels: readonly ProviderModelReference[],
 ): { thinking?: string; model?: string } {
   const filePath = join(agentDir, "tlh", "agents", "subagents", `${name}.md`);
@@ -649,6 +648,10 @@ function readSubagentFrontmatterConfig(
       frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
         ? frontmatter.tlhAnthropicThinking
         : undefined,
+    tlhOpenrouterThinking:
+      frontmatter.tlhOpenrouterThinking && isThinkingLevel(frontmatter.tlhOpenrouterThinking)
+        ? frontmatter.tlhOpenrouterThinking
+        : undefined,
     preferOppositeProvider:
       frontmatter.preferOppositeProvider?.trim() === "true"
         ? true
@@ -666,7 +669,12 @@ function readSubagentFrontmatterConfig(
   // Resolve against the real available-models list captured at schedule time rather than
   // a synthetic list built from frontmatter candidates. This ensures the reported model
   // matches what the runtime would actually select.
-  const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId);
+  const result = selectProviderAwareAgentDefaults(
+    agentDefaults,
+    availableModels,
+    providerId,
+    currentModel,
+  );
   const thinking = result.thinking;
 
   // For provider-qualified model names (e.g. "anthropic/claude-opus-5"), only report
@@ -729,6 +737,7 @@ function buildSubagentTelemetryPayload(
   effectiveOverrides: Record<string, SubagentOverrideEntry>,
   agentDir: string | undefined,
   providerId: string | undefined,
+  currentModel: ProviderModelReference | undefined,
   availableModels: readonly ProviderModelReference[],
 ): Record<string, string> {
   const payload: Record<string, string> = {};
@@ -747,7 +756,7 @@ function buildSubagentTelemetryPayload(
     const needFrontmatter =
       agentDir !== undefined && (override?.thinking === undefined || override?.model === undefined);
     const fm = needFrontmatter
-      ? readSubagentFrontmatterConfig(agentDir, name, providerId, availableModels)
+      ? readSubagentFrontmatterConfig(agentDir, name, providerId, currentModel, availableModels)
       : undefined;
 
     // "cleared" is the telemetry sentinel for an explicit false override.
@@ -776,6 +785,10 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
   }
   const stateDir = tlhStateDir();
   const agentDir = stateDir ? dirname(stateDir) : undefined;
+  const currentModel =
+    snapshot.providerId && snapshot.modelId
+      ? { provider: snapshot.providerId, id: snapshot.modelId }
+      : undefined;
   // Project settings read happens here, inside the deferred send — never on the startup path.
   // Absent project settings are the normal case and degrade quietly to user scope.
   const effectiveSubagentOverrides = resolveEffectiveSubagentOverrides(
@@ -807,6 +820,7 @@ export async function sendTlhLaunchTelemetry(snapshot: TlhTelemetrySnapshot): Pr
             effectiveSubagentOverrides,
             agentDir,
             snapshot.providerId,
+            currentModel,
             snapshot.availableModels ?? [],
           ),
         },

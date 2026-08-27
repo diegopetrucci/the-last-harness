@@ -39,6 +39,10 @@ const mutableProcess = process as typeof process & { kill: typeof process.kill }
 const originalKill = process.kill;
 const originalReaddirSync = builtinFs.readdirSync;
 
+function readDirectoryEntries(target: fs.PathLike): Dirent<string>[] {
+  return originalReaddirSync(target, { withFileTypes: true, encoding: "utf8" });
+}
+
 function stubPortableInterruptKill(): Array<{
   pid: number;
   signal: NodeJS.Signals | number | undefined;
@@ -164,9 +168,9 @@ describe("pause-all shortcut handler", () => {
     ) => {
       if (target === NESTED_RUNS_DIR) return [];
       const entries = originalReaddirSync(target, options as never);
-      if (target === ASYNC_DIR && Array.isArray(entries))
+      if (target === ASYNC_DIR)
         // Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
-        return (entries as unknown as Dirent<string>[]).filter(
+        return readDirectoryEntries(target).filter(
           (entry) => entry.name === path.basename(asyncDir),
         );
       return entries;
@@ -215,9 +219,9 @@ describe("pause-all shortcut handler", () => {
         throw error;
       }
       const entries = originalReaddirSync(target, options as never);
-      if (target === ASYNC_DIR && Array.isArray(entries))
+      if (target === ASYNC_DIR)
         // Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
-        return (entries as unknown as Dirent<string>[]).filter(
+        return readDirectoryEntries(target).filter(
           (entry) => entry.name === path.basename(asyncDir),
         );
       return entries;
@@ -264,12 +268,10 @@ describe("pause-all shortcut handler", () => {
       if (target === ASYNC_DIR) return [];
       const entries = originalReaddirSync(target, options as never);
       // Production readdirSync on nested directories uses { withFileTypes: true }, so entries are Dirents.
-      if (target === NESTED_RUNS_DIR && Array.isArray(entries))
-        return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === rootRunId);
-      if (target === rootDir && Array.isArray(entries))
-        return (entries as unknown as Dirent<string>[]).filter(
-          (entry) => entry.name === childRunId,
-        );
+      if (target === NESTED_RUNS_DIR)
+        return readDirectoryEntries(target).filter((entry) => entry.name === rootRunId);
+      if (target === rootDir)
+        return readDirectoryEntries(target).filter((entry) => entry.name === childRunId);
       return entries;
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
@@ -318,12 +320,10 @@ describe("pause-all shortcut handler", () => {
       if (target === ASYNC_DIR) return [];
       const entries = originalReaddirSync(target, options as never);
       // Production readdirSync on nested directories uses { withFileTypes: true }, so entries are Dirents.
-      if (target === NESTED_RUNS_DIR && Array.isArray(entries))
-        return (entries as unknown as Dirent<string>[]).filter((entry) => entry.name === rootRunId);
-      if (target === rootDir && Array.isArray(entries))
-        return (entries as unknown as Dirent<string>[]).filter(
-          (entry) => entry.name === childRunId,
-        );
+      if (target === NESTED_RUNS_DIR)
+        return readDirectoryEntries(target).filter((entry) => entry.name === rootRunId);
+      if (target === rootDir)
+        return readDirectoryEntries(target).filter((entry) => entry.name === childRunId);
       return entries;
     }) as typeof fs.readdirSync;
     syncBuiltinESMExports();
@@ -369,9 +369,9 @@ describe("pause-all shortcut handler", () => {
     ) => {
       if (target === NESTED_RUNS_DIR) return [];
       const entries = originalReaddirSync(target, options as never);
-      if (target === ASYNC_DIR && Array.isArray(entries))
+      if (target === ASYNC_DIR)
         // Production readdirSync on ASYNC_DIR uses { withFileTypes: true }, so entries are Dirents.
-        return (entries as unknown as Dirent<string>[]).filter(
+        return readDirectoryEntries(target).filter(
           (entry) => entry.name === path.basename(asyncDir),
         );
       return entries;

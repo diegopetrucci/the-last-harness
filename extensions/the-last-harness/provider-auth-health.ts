@@ -12,18 +12,16 @@
 // - Capability-tested adapter: getProviderAuth / getProviderAuthStatus are
 //   duck-typed; missing methods degrade to no-warning (fail open).
 
+import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Closed status enum for provider credential health. */
-export type ProviderAuthHealthStatus =
-  | "healthy"
-  | "reauth-required"
-  | "transient-unavailable"
-  | "unknown";
+type ProviderAuthHealthStatus = "healthy" | "reauth-required" | "transient-unavailable" | "unknown";
 
-export type ProviderHealthEntry = {
+type ProviderHealthEntry = {
   status: ProviderAuthHealthStatus;
   checkedAt: number;
 };
@@ -106,7 +104,7 @@ export type ProviderAuthHealthStore = {
 // We only duck-type what we call, per the TypeScript boundaries skill.
 
 type RegistryWithGetProviderAuth = {
-  getProviderAuth(provider: string): Promise<unknown>;
+  getProviderAuth(provider: string): ReturnType<ModelRegistry["getProviderAuth"]>;
 };
 
 type RegistryWithGetProviderAuthStatus = {
@@ -425,7 +423,7 @@ function isTransientError(message: string, error: unknown, statuses: ReadonlySet
 // Factory
 // ---------------------------------------------------------------------------
 
-export type ProviderAuthHealthStoreOptions = {
+type ProviderAuthHealthStoreOptions = {
   /** Injectable clock for testing. Defaults to Date.now. */
   now?: () => number;
 };

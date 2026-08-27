@@ -15,6 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, it } from "node:test";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
   NATIVE_SUPERVISOR_TOOL_NAME,
   createNativeSupervisorChannel,
@@ -36,6 +37,66 @@ import { SUBAGENT_CONTROL_INTERCOM_EVENT } from "../../src/shared/types.ts";
 // pipeline it belonged to has been permanently removed.
 const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
 import type { ControlEvent, SubagentState } from "../../src/shared/types.ts";
+
+type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
+
+interface ContactSupervisorFixtureParams {
+  reason: SupervisorReason;
+  message?: string;
+  interview?: unknown;
+}
+
+interface SupervisorRequestFixtureDetails {
+  delivered: boolean;
+  requestId: string;
+  reason: SupervisorReason;
+}
+
+interface PendingSupervisorFixture {
+  id: string;
+  runId: string;
+  agent: string;
+  childIndex: number;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+}
+
+type SupervisorChannelFixtureDetails =
+  | { active: true; pending: number; root: string }
+  | { pending: PendingSupervisorFixture[] };
+
+type SupervisorRequestToolResult = AgentToolResult<SupervisorRequestFixtureDetails>;
+type SupervisorChannelToolResult = AgentToolResult<SupervisorChannelFixtureDetails>;
+
+interface RequestFileInspection {
+  type: string;
+  reason: SupervisorReason;
+  expectsReply: boolean;
+  runId: string;
+}
+
+function parseRequestFileInspection(value: unknown): RequestFileInspection | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const type = Object.getOwnPropertyDescriptor(value, "type")?.value;
+  const reason = Object.getOwnPropertyDescriptor(value, "reason")?.value;
+  const expectsReply = Object.getOwnPropertyDescriptor(value, "expectsReply")?.value;
+  const runId = Object.getOwnPropertyDescriptor(value, "runId")?.value;
+  if (
+    typeof type !== "string" ||
+    (reason !== "need_decision" &&
+      reason !== "interview_request" &&
+      reason !== "progress_update") ||
+    typeof expectsReply !== "boolean" ||
+    typeof runId !== "string"
+  )
+    return undefined;
+  return { type, reason, expectsReply, runId };
+}
+
+function resultText(result: SupervisorChannelToolResult): string {
+  const content = result.content[0];
+  return content?.type === "text" ? content.text : "";
+}
 
 // ─── env save/restore ────────────────────────────────────────────────────────
 
@@ -163,13 +224,23 @@ describe("no-pi-intercom regression guard", () => {
       // Child side: mock pi with NO 'intercom' tool pre-installed
       const childTools = new Map<
         string,
-        { execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown> }
+        {
+          execute: (
+            _id: string,
+            params: ContactSupervisorFixtureParams,
+            signal?: AbortSignal,
+          ) => Promise<SupervisorRequestToolResult>;
+        }
       >();
       const childPi = {
         getAllTools: () => [...childTools.keys()].map((name) => ({ name })),
         registerTool: (tool: {
           name: string;
-          execute: (_id: string, params: unknown, signal?: AbortSignal) => Promise<unknown>;
+          execute: (
+            _id: string,
+            params: ContactSupervisorFixtureParams,
+            signal?: AbortSignal,
+          ) => Promise<SupervisorRequestToolResult>;
         }) => {
           childTools.set(tool.name, tool);
         },
@@ -188,7 +259,12 @@ describe("no-pi-intercom regression guard", () => {
       // proactive parent notice channel.start()/polling may deliver.
       const parentTools = new Map<
         string,
-        { execute: (_id: string, params: { action: string }) => Promise<unknown> }
+        {
+          execute: (
+            _id: string,
+            params: { action: "pending" | "status" },
+          ) => Promise<SupervisorChannelToolResult>;
+        }
       >();
       const parentCtx = {
         cwd: process.cwd(),
@@ -203,7 +279,10 @@ describe("no-pi-intercom regression guard", () => {
         getAllTools: () => [...parentTools.keys()].map((name) => ({ name })),
         registerTool: (tool: {
           name: string;
-          execute: (_id: string, params: { action: string }) => Promise<unknown>;
+          execute: (
+            _id: string,
+            params: { action: "pending" | "status" },
+          ) => Promise<SupervisorChannelToolResult>;
         }) => {
           parentTools.set(tool.name, tool);
         },
@@ -250,12 +329,9 @@ describe("no-pi-intercom regression guard", () => {
 
         // Verify the request content
         const requestFile = path.join(requestsDir, `${requestId}.json`);
-        const request = JSON.parse(fs.readFileSync(requestFile, "utf-8")) as {
-          type?: string;
-          reason?: string;
-          expectsReply?: boolean;
-          runId?: string;
-        };
+        const parsedRequest: unknown = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
+        const request = parseRequestFileInspection(parsedRequest);
+        assert.ok(request, "Request file should contain the native supervisor shape");
         assert.equal(request.type, "subagent.supervisor.request");
         assert.equal(request.reason, "need_decision");
         assert.equal(request.expectsReply, true);
@@ -263,21 +339,22 @@ describe("no-pi-intercom regression guard", () => {
 
         // Wait for the parent channel poller to discover the request
         // (new request files are picked up by the poll loop, ≤500ms).
-        await pollUntil(() => parentChannel.pending.has(requestId!), 4000);
+        await pollUntil(
+          () => requestId !== undefined && parentChannel.pending.has(requestId),
+          4000,
+        );
 
-        const status = (await parentTools
+        const status = await parentTools
           .get(NATIVE_SUPERVISOR_TOOL_NAME)!
-          .execute("status", { action: "status" })) as {
-          content?: Array<{ text?: string }>;
-        };
-        assert.match(status.content?.[0]?.text ?? "", /Native supervisor channel active/);
-        const pending = (await parentTools
+          .execute("status", { action: "status" });
+        assert.match(resultText(status), /Native supervisor channel active/);
+        const pending = await parentTools
           .get(NATIVE_SUPERVISOR_TOOL_NAME)!
-          .execute("pending", { action: "pending" })) as {
-          details?: { pending?: Array<{ id?: string }> };
-        };
+          .execute("pending", { action: "pending" });
+        const pendingRequests = pending.details.pending;
+        assert.ok(Array.isArray(pendingRequests));
         assert.deepEqual(
-          pending.details?.pending?.map((request) => request.id),
+          pendingRequests.map((request) => request.id),
           [requestId],
         );
 

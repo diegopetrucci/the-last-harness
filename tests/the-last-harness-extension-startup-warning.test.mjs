@@ -39,6 +39,33 @@ const LATEST_STABLE_INSTALL_STATE = {
   track: "latest-release",
 };
 
+const REF_INSTALL_STATE = {
+  ...LATEST_STABLE_INSTALL_STATE,
+  track: "ref",
+  ref: "main",
+  packageSource: "git:github.com/diegopetrucci/the-last-harness@main",
+};
+
+const LOCAL_INSTALL_STATE = {
+  ...LATEST_STABLE_INSTALL_STATE,
+  packageSource: "../the-last-harness",
+  packageSourceIsDefault: false,
+};
+
+const CUSTOM_INSTALL_STATE = {
+  ...LATEST_STABLE_INSTALL_STATE,
+  track: "custom",
+};
+
+const FOOTER_INSTALL_TRACK_CASES = [
+  { name: "ref", installState: REF_INSTALL_STATE, expectedLabel: "main" },
+  { name: "pinned-tag", installState: PINNED_TAG_INSTALL_STATE, expectedLabel: "v0.10.0" },
+  { name: "local", installState: LOCAL_INSTALL_STATE, expectedLabel: "local" },
+  { name: "custom", installState: CUSTOM_INSTALL_STATE, expectedLabel: "custom" },
+  { name: "unknown", installState: undefined, expectedLabel: "unknown" },
+  { name: "latest-release", installState: LATEST_STABLE_INSTALL_STATE, expectedLabel: undefined },
+];
+
 const TEST_CONTEXT_MODEL = { contextWindow: 100_000 };
 
 function createPi() {
@@ -337,7 +364,7 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
-test("interactive startup renders the non-latest track warning in the TLH header", async () => {
+test("interactive startup omits the non-latest track warning from the TLH header", async () => {
   const { notifications, headerLines } = await runSessionStart({
     reason: "startup",
     installState: PINNED_TAG_INSTALL_STATE,
@@ -345,10 +372,13 @@ test("interactive startup renders the non-latest track warning in the TLH header
 
   assert.deepEqual(notifications, []);
   assert.ok(headerLines);
-  assert.ok(headerLines.includes("Warning: running TLH from v0.10.0 track"));
+  assert.equal(
+    headerLines.some((line) => line.includes("running TLH from")),
+    false,
+  );
 });
 
-test("interactive startup prefers the pinned ref label over a local package-source label", async () => {
+test("interactive startup keeps install-track labels out of the header even for local sources", async () => {
   const { notifications, headerLines } = await runSessionStart({
     reason: "startup",
     installState: PINNED_TAG_LOCAL_INSTALL_STATE,
@@ -356,7 +386,10 @@ test("interactive startup prefers the pinned ref label over a local package-sour
 
   assert.deepEqual(notifications, []);
   assert.ok(headerLines);
-  assert.ok(headerLines.includes("Warning: running TLH from v0.10.0 track"));
+  assert.equal(
+    headerLines.some((line) => line.includes("running TLH from")),
+    false,
+  );
 });
 
 test("interactive startup renders one curated startup tip and reuses the same selection within the process", async () => {
@@ -427,10 +460,15 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
 
   assert.ok(header);
   assert.ok(headerLines);
-  assert.ok(
-    headerLines.includes(
-      "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
-    ),
+  // The launch context line (including the /context suffix) only appears when
+  // a launchContextAllocation is provided; the toggle test harness wires none.
+  // The install-track warning is no longer shown in the header (it moved to
+  // the footer only). Verify the header is non-empty and contains no warning.
+  assert.ok(headerLines.length > 0, "collapsed header should be non-empty");
+  assert.equal(
+    headerLines.some((line) => line.includes("Warning: running TLH from")),
+    false,
+    "collapsed header should not contain the retired install-track warning",
   );
 
   const shortcut = shortcuts.get(TLH_HEADER_TOGGLE_SHORTCUT);
@@ -442,19 +480,25 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
   await shortcut.handler(shortcutCtx);
   const expandedLines = header.render(200);
   assert.equal(
-    expandedLines.includes(
-      "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
+    expandedLines.some((line) =>
+      line.includes(
+        "Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions",
+      ),
     ),
     false,
+    "expanded header should not contain the old Ctrl+Shift+E hint line",
   );
-  assert.ok(expandedLines.includes("Warning: running TLH from v0.10.0 track"));
+  assert.equal(
+    expandedLines.some((line) => line.includes("running TLH from")),
+    false,
+  );
   assert.equal(requestRenderCalls(), 1);
 
   await shortcut.handler(shortcutCtx);
-  assert.ok(
-    header
-      .render(200)
-      .includes("Press Ctrl+Shift+E to show loaded context files, skills, prompts, and extensions"),
+  assert.equal(
+    header.render(200).some((line) => line.includes("Warning: running TLH from")),
+    false,
+    "re-collapsed header should not contain the retired install-track warning",
   );
   assert.equal(requestRenderCalls(), 2);
 });
@@ -813,19 +857,40 @@ test("startup without UI does not show the install-track notice", async () => {
   assert.equal(headerLines, undefined);
 });
 
-test("production footer wiring: non-release install renders install-track notice as last footer line on startup", async () => {
-  const { footerLines } = await runSessionStart({
-    reason: "startup",
-    installState: PINNED_TAG_INSTALL_STATE,
-  });
+test("production footer wiring preserves every install-track label and keeps the header warning-free", async () => {
+  for (const { name, installState, expectedLabel } of FOOTER_INSTALL_TRACK_CASES) {
+    const { footerLines, headerLines } = await runSessionStart({
+      reason: "startup",
+      installState,
+    });
 
-  assert.ok(footerLines, "expected a footer to be rendered");
-  const nonEmptyLines = footerLines.filter((line) => line.trim().length > 0);
-  assert.ok(nonEmptyLines.length > 0, "expected at least one non-empty footer line");
-  assert.equal(nonEmptyLines.at(-1), "TLH v0.10.0");
+    assert.ok(footerLines, `expected a footer for ${name} installs`);
+    const nonEmptyFooterLines = footerLines.filter((line) => line.trim().length > 0);
+    assert.ok(nonEmptyFooterLines.length > 0, `expected non-empty footer lines for ${name}`);
+    if (expectedLabel === undefined) {
+      assert.equal(
+        nonEmptyFooterLines.some((line) => line.startsWith("TLH ")),
+        false,
+        `footer must not show a track notice for ${name} installs`,
+      );
+    } else {
+      assert.equal(
+        nonEmptyFooterLines.at(-1),
+        `TLH ${expectedLabel}`,
+        `footer must preserve the ${name} track label`,
+      );
+    }
+
+    assert.ok(headerLines, `expected a header for ${name} installs`);
+    assert.equal(
+      headerLines.some((line) => line.includes("running TLH from")),
+      false,
+      `header must not show the install-track warning for ${name} installs`,
+    );
+  }
 });
 
-test("production footer wiring: footer always shows install-track notice but header only shows it on startup", async () => {
+test("production footer wiring: footer remains visible on non-startup session reasons", async () => {
   const { footerLines, headerLines } = await runSessionStart({
     reason: "resume",
     installState: PINNED_TAG_INSTALL_STATE,
@@ -842,22 +907,8 @@ test("production footer wiring: footer always shows install-track notice but hea
 
   assert.ok(headerLines, "expected a header to be rendered");
   assert.equal(
-    headerLines.some((line) => line.startsWith("Warning:")),
+    headerLines.some((line) => line.includes("running TLH from")),
     false,
-    "header must NOT show the install-track warning for non-startup reasons",
-  );
-});
-
-test("production footer wiring: latest-stable install has no TLH track notice in footer", async () => {
-  const { footerLines } = await runSessionStart({
-    reason: "startup",
-    installState: LATEST_STABLE_INSTALL_STATE,
-  });
-
-  assert.ok(footerLines, "expected a footer to be rendered");
-  assert.equal(
-    footerLines.some((line) => line.startsWith("TLH ")),
-    false,
-    "footer must not show a TLH track notice for latest-stable installs",
+    "header must not show the install-track warning",
   );
 });

@@ -17,7 +17,7 @@ import type { CompletionBatchConfig } from "../../shared/types.ts";
 
 export type { CompletionBatchConfig };
 
-export interface ResolvedCompletionBatchConfig {
+interface ResolvedCompletionBatchConfig {
   enabled: boolean;
   debounceMs: number;
   maxWaitMs: number;
@@ -62,17 +62,19 @@ export function resolveCompletionBatchConfig(
   };
 }
 
+type TimerHandle = ReturnType<typeof setTimeout> | number;
+
 interface TimerApi {
-  setTimeout(handler: () => void, delayMs: number): unknown;
-  clearTimeout(handle: unknown): void;
+  setTimeout(handler: () => void, delayMs: number): TimerHandle;
+  clearTimeout(handle: TimerHandle): void;
 }
 
 const defaultTimers: TimerApi = {
   setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  clearTimeout: (handle) => clearTimeout(handle),
 };
 
-function unrefHandle(handle: unknown): void {
+function unrefHandle(handle: TimerHandle): void {
   if (
     handle &&
     typeof handle === "object" &&
@@ -83,7 +85,7 @@ function unrefHandle(handle: unknown): void {
   }
 }
 
-export interface CompletionBatcherOptions<T> {
+interface CompletionBatcherOptions<T> {
   config: ResolvedCompletionBatchConfig;
   emit: (items: T[]) => void;
   timers?: TimerApi;
@@ -122,8 +124,8 @@ export function createCompletionBatcher<T>(
   }
 
   let pending: T[] = [];
-  let debounceTimer: unknown = null;
-  let maxWaitTimer: unknown = null;
+  let debounceTimer: TimerHandle | null = null;
+  let maxWaitTimer: TimerHandle | null = null;
   let straggler = false;
   let lastEmitAt: number | null = null;
 

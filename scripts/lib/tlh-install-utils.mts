@@ -13,22 +13,22 @@ import process from "node:process";
 
 import { pathWithinOrEqual, realpathForCompare } from "./tlh-install-paths.mjs";
 
-export interface JsonReadOptions<T> {
+interface JsonReadOptions<T> {
   missingValue?: T;
   emptyValue?: T;
 }
 
-export interface ReadOptionValueMatch {
+interface ReadOptionValueMatch {
   flag: string;
   value: string;
   nextIndex: number;
 }
 
-export interface ReadOptionValueOptions {
+interface ReadOptionValueOptions {
   requireEqualsValue?: boolean;
 }
 
-export interface TlhPathOptions {
+interface TlhPathOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   preferTlhAgentDir?: boolean;
@@ -352,7 +352,7 @@ export function isTlhOwnedBackupFilename(filename: string, baseName: string): bo
   return false;
 }
 
-export interface SelectExpiredBackupsOptions {
+interface SelectExpiredBackupsOptions {
   /** Maximum age in ms before a backup becomes eligible for deletion.
    *  Default: 28 days. */
   maxAgeMs?: number;

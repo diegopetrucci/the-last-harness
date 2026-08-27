@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { formatHomePath } from "./common.js";
 import { analyzeCurrentSessionUsage, } from "./tokens-analyzer.js";
 const TOKENS_COMMAND_HELP = "Usage: /tokens";
-export const TOKENS_COMMAND_DESCRIPTION = "Generate and open a local TLH token-spend report";
 const REPORT_FILE_NAME = "tokens-report.html";
 const execFileAsync = promisify(execFile);
 const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
@@ -57,12 +56,6 @@ export function createTokensCommandHandler(pi, dependencies = {}) {
             ctx.ui.notify(`Could not generate TLH token report: ${message}`, "error");
         }
     };
-}
-export function registerTokensCommand(pi, dependencies = {}) {
-    pi.registerCommand("tokens", {
-        description: TOKENS_COMMAND_DESCRIPTION,
-        handler: createTokensCommandHandler(pi, dependencies),
-    });
 }
 export function buildTokensReportHtml(analysis, options = {}) {
     const generatedAt = options.generatedAt ?? new Date().toISOString();
@@ -169,7 +162,7 @@ export function renderMetricCard(title, value, detail) {
         "</article>",
     ].join("");
 }
-export function renderKeyValueGrid(items) {
+function renderKeyValueGrid(items) {
     return [
         '<dl class="kv-grid">',
         ...items.flatMap(([label, value]) => [

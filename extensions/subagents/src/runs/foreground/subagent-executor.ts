@@ -116,15 +116,10 @@ import {
 import { reconcileAsyncRun } from "../background/stale-run-reconciler.ts";
 import {
   attachRootChildrenToSteps,
-  createNestedRoute,
-  NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
-  NESTED_CONTROL_RESULT_TIMEOUT_MS,
-  readNestedControlResults,
   resolveInheritedNestedRouteFromEnv,
   resolveNestedAsyncDir,
   resolveNestedParentAddressFromEnv,
   updateForegroundNestedProjection,
-  writeNestedControlRequest,
   writeNestedEvent,
 } from "../shared/nested-events.ts";
 import { resolveSubagentRunId, type ResolvedSubagentRunId } from "../background/run-id-resolver.ts";
@@ -1849,7 +1844,7 @@ function discoverDiskOnlyRunningAsyncTargets(
   return { targets, errors };
 }
 
-export interface InterruptAllRunningSubagentRunsResult {
+interface InterruptAllRunningSubagentRunsResult {
   foregroundRunIds: string[];
   asyncRunIds: string[];
   skippedForegroundRunIds: string[];
@@ -2270,55 +2265,6 @@ function resolveNestedResumeTarget(
   };
 }
 
-async function waitForNestedControlResult(
-  target: ResolvedSubagentRunId & { kind: "nested" },
-  requestId: string,
-  timeoutMs = NESTED_CONTROL_RESULT_TIMEOUT_MS,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const result = readNestedControlResults(target.match.route).find(
-      (candidate) =>
-        candidate.requestId === requestId && candidate.targetRunId === target.match.run.id,
-    );
-    if (result) return result;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  return undefined;
-}
-
-async function sendNestedControlRequest(
-  target: ResolvedSubagentRunId & { kind: "nested" },
-  action: "interrupt" | "resume",
-  message?: string,
-  targetIndex?: number,
-) {
-  const requestId = randomUUID();
-  const now = Date.now();
-  const requestPath = writeNestedControlRequest(target.match.route, {
-    ts: now,
-    requestId,
-    targetRunId: target.match.run.id,
-    ownerParentRunId: target.match.run.parentRunId,
-    ...(target.match.run.parentStepIndex !== undefined
-      ? { ownerParentStepIndex: target.match.run.parentStepIndex }
-      : {}),
-    deliveryDeadlineAt: now + NESTED_CONTROL_DELIVERY_TIMEOUT_MS,
-    action,
-    ...(targetIndex !== undefined ? { targetIndex } : {}),
-    ...(message ? { message } : {}),
-  });
-  const result = await waitForNestedControlResult(target, requestId);
-  if (!result) {
-    try {
-      fs.rmSync(requestPath, { force: true });
-    } catch {
-      /* Best effort cancellation of an unclaimed owner-gone request. */
-    }
-  }
-  return result;
-}
-
 function directNestedAsyncInterrupt(
   target: ResolvedSubagentRunId & { kind: "nested" },
 ): SubagentToolResult<Details> | undefined {
@@ -2442,9 +2388,9 @@ function directNestedAsyncSteer(input: {
   };
 }
 
-async function interruptNestedRun(
+function interruptNestedRun(
   target: ResolvedSubagentRunId & { kind: "nested" },
-): Promise<SubagentToolResult<Details>> {
+): SubagentToolResult<Details> {
   const run = target.match.run;
   if (run.state === "complete")
     return {
@@ -2471,20 +2417,13 @@ async function interruptNestedRun(
       isError: true,
       details: { mode: "management", results: [] },
     };
-  const result = await sendNestedControlRequest(target, "interrupt");
-  if (result)
-    return {
-      content: [{ type: "text", text: result.message }],
-      isError: result.ok ? undefined : true,
-      details: { mode: "management", results: [] },
-    };
   const direct = directNestedAsyncInterrupt(target);
   if (direct) return direct;
   return {
     content: [
       {
         type: "text",
-        text: `Nested run ${run.id} owner is not reachable and no safe direct async interrupt fallback is available.`,
+        text: `Nested run ${run.id} has no live async target (async run directory/pid), so no safe direct interrupt is available.`,
       },
     ],
     isError: true,
@@ -2492,24 +2431,15 @@ async function interruptNestedRun(
   };
 }
 
-async function resumeLiveNestedRun(input: {
-  target: ResolvedSubagentRunId & { kind: "nested" };
-  message: string;
-  index?: number;
-}): Promise<SubagentToolResult<Details>> {
-  const run = input.target.match.run;
-  const result = await sendNestedControlRequest(input.target, "resume", input.message, input.index);
-  if (result)
-    return {
-      content: [{ type: "text", text: result.message }],
-      isError: result.ok ? undefined : true,
-      details: { mode: "management", results: [] },
-    };
+function resumeLiveNestedRun(
+  target: ResolvedSubagentRunId & { kind: "nested" },
+): SubagentToolResult<Details> {
+  const run = target.match.run;
   return {
     content: [
       {
         type: "text",
-        text: `Nested run ${run.id} appears live but its owner route is not reachable. Wait for completion, then retry action='resume'.`,
+        text: `Nested run ${run.id} is live; no supported live nested resume path is available. Wait for completion, then retry action='resume' with a follow-up message.`,
       },
     ],
     isError: true,
@@ -2767,18 +2697,7 @@ async function resumeAsyncRun(input: {
     }
     if (resolved?.kind === "nested") {
       if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-        if (!requestedFollowUp) {
-          return {
-            content: [{ type: "text", text: "action='resume' requires message." }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        return resumeLiveNestedRun({
-          target: resolved,
-          message: requestedFollowUp,
-          index: input.params.index,
-        });
+        return resumeLiveNestedRun(resolved);
       }
       const trustedSessionRoots = parentSessionFile
         ? [input.deps.getSubagentSessionRoot(parentSessionFile)]
@@ -5311,7 +5230,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const nestedParentAddress = inheritedNestedRoute
       ? resolveNestedParentAddressFromEnv()
       : undefined;
-    const nestedRoute = inheritedNestedRoute ?? createNestedRoute(runId);
+    const nestedRoute = inheritedNestedRoute;
     const shareEnabled = effectiveParams.share === true;
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);

@@ -184,7 +184,7 @@ function inferLevel(input) {
             async: input.async,
         });
 }
-export function normalizeAcceptanceInput(input) {
+function normalizeAcceptanceInput(input) {
     if (input === undefined || input === "auto")
         return { level: "auto" };
     if (input === false)
@@ -525,7 +525,7 @@ export function formatAcceptancePrompt(acceptance) {
     if (acceptance.stopRules.length > 0) {
         lines.push("", "Stop rules:", ...acceptance.stopRules.map((rule) => `- ${rule}`));
     }
-    lines.push("", "Finish with a fenced JSON block tagged `acceptance-report` in this shape:", "Use empty arrays when no items apply; array fields contain strings unless object entries are shown.", "```acceptance-report", JSON.stringify({
+    lines.push("", "Write a one-line prose summary of what you completed immediately before the fenced block.", 'For commandsRun[].result, "passed" or "failed" are preferred, but honest annotations such as "failed as expected" are also accepted.', "Finish with a fenced JSON block tagged `acceptance-report` in this shape:", "Use empty arrays when no items apply; array fields contain strings unless object entries are shown.", "```acceptance-report", JSON.stringify({
         criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "specific proof" }],
         changedFiles: ["src/file.ts"],
         testsAddedOrUpdated: ["test/file.test.ts"],
@@ -569,14 +569,15 @@ function extractBalancedJson(text, start) {
     return undefined;
 }
 function unwrapAcceptanceReport(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return value;
-    const record = value;
-    if ("acceptance" in record)
-        return record.acceptance;
-    if ("acceptance-report" in record)
-        return record["acceptance-report"];
-    return value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        return { value, wrapper: "" };
+    }
+    if ("acceptance" in value)
+        return { value: value.acceptance, wrapper: "acceptance" };
+    if ("acceptance-report" in value) {
+        return { value: value["acceptance-report"], wrapper: "acceptance-report" };
+    }
+    return { value, wrapper: "" };
 }
 function isCommandsRunArray(value) {
     return (Array.isArray(value) &&
@@ -606,45 +607,50 @@ function hasGenericAcceptanceReportSignal(value) {
             isStringArray(record.reviewFindings) ||
             typeof record.manualNotes === "string"));
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+        return true;
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
 function parseReportJson(body) {
     const trimmed = body.trim();
     try {
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        if (isJsonValue(parsed))
+            return parsed;
     }
     catch (error) {
         const jsonStart = trimmed.indexOf("{");
         if (jsonStart > 0) {
             const json = extractBalancedJson(trimmed, jsonStart);
-            if (json)
-                return JSON.parse(json);
+            if (json) {
+                const parsed = JSON.parse(json);
+                if (isJsonValue(parsed))
+                    return parsed;
+            }
         }
         throw error;
     }
+    throw new Error("Acceptance report JSON must contain a JSON value.");
 }
 function fencedBlocks(output, tag) {
     return [...output.matchAll(new RegExp(`\`\`\`${tag}\\s*\\n([\\s\\S]*?)\`\`\``, "gi"))]
         .map((match) => match[1]?.trim())
         .filter((value) => Boolean(value));
 }
-function validationPathLabelForWrapper(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-        return "";
-    const record = value;
-    if ("acceptance" in record)
-        return "acceptance";
-    if ("acceptance-report" in record)
-        return "acceptance-report";
-    return "";
-}
 function parseAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    return validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    return validateAcceptanceReport(parsed.value, parsed.wrapper);
 }
 function parseGenericJsonAcceptanceReportBody(body) {
-    const parsed = parseReportJson(body);
-    const report = unwrapAcceptanceReport(parsed);
-    const validation = validateAcceptanceReport(report);
+    const parsed = unwrapAcceptanceReport(parseReportJson(body));
+    const validation = validateAcceptanceReport(parsed.value);
     if (!validation.report)
         return undefined;
     return hasGenericAcceptanceReportSignal(validation.report) ? validation.report : undefined;
@@ -681,9 +687,8 @@ export function parseAcceptanceReport(output) {
             const json = extractBalancedJson(output, jsonStart);
             if (json) {
                 try {
-                    const parsed = JSON.parse(json);
-                    const report = unwrapAcceptanceReport(parsed);
-                    const validation = validateAcceptanceReport(report, validationPathLabelForWrapper(parsed));
+                    const parsed = unwrapAcceptanceReport(parseReportJson(json));
+                    const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
                     if (validation.report)
                         return { report: validation.report };
                     return {
@@ -698,7 +703,7 @@ export function parseAcceptanceReport(output) {
     }
     return { error: "Structured acceptance report not found." };
 }
-export function stripAcceptanceReport(output) {
+export function parseAndStripAcceptanceReport(output) {
     const trailingFencePattern = /\n?```(acceptance-report|json|jsonc|json5)\s*\n([\s\S]*?)```\s*/gi;
     let trailingFence;
     for (const match of output.matchAll(trailingFencePattern)) {
@@ -708,19 +713,78 @@ export function stripAcceptanceReport(output) {
         }
     }
     if (trailingFence) {
-        if (trailingFence.tag === "acceptance-report")
-            return output.slice(0, trailingFence.index).trimEnd();
+        const stripped = output.slice(0, trailingFence.index).trimEnd();
+        if (trailingFence.tag === "acceptance-report") {
+            try {
+                const validation = parseAcceptanceReportBody(trailingFence.body);
+                if (validation.report)
+                    return { stripped, report: validation.report };
+                return {
+                    stripped: output,
+                    error: `Failed to parse acceptance-report: ${validation.errors.join("; ")}`,
+                };
+            }
+            catch (err) {
+                return {
+                    stripped: output,
+                    error: `Failed to parse acceptance-report: ${err instanceof Error ? err.message : String(err)}`,
+                };
+            }
+        }
         try {
-            if (parseGenericJsonAcceptanceReportBody(trailingFence.body))
-                return output.slice(0, trailingFence.index).trimEnd();
+            const report = parseGenericJsonAcceptanceReportBody(trailingFence.body);
+            if (report)
+                return { stripped, report };
         }
         catch {
         }
     }
-    return output
-        .replace(/\n?```acceptance-report\s*\n[\s\S]*?```\s*$/i, "")
-        .replace(/\n?ACCEPTANCE_REPORT\s*:\s*\{[\s\S]*\}\s*$/i, "")
-        .trimEnd();
+    const markerPattern = /ACCEPTANCE_REPORT\s*:/gi;
+    let markerMatch;
+    let trailingMarker;
+    while ((markerMatch = markerPattern.exec(output)) !== null) {
+        const jsonStart = output.indexOf("{", markerMatch.index + markerMatch[0].length);
+        if (jsonStart === -1)
+            continue;
+        const json = extractBalancedJson(output, jsonStart);
+        if (!json)
+            continue;
+        if (output.slice(jsonStart + json.length).trim().length === 0) {
+            trailingMarker = { markerStart: markerMatch.index, json };
+        }
+    }
+    if (trailingMarker) {
+        try {
+            const parsed = unwrapAcceptanceReport(parseReportJson(trailingMarker.json));
+            const validation = validateAcceptanceReport(parsed.value, parsed.wrapper);
+            if (validation.report) {
+                return {
+                    stripped: output.slice(0, trailingMarker.markerStart).trimEnd(),
+                    report: validation.report,
+                };
+            }
+            return {
+                stripped: output,
+                error: `Failed to parse acceptance-report: Invalid acceptance-report: ${validation.errors.join("; ")}`,
+            };
+        }
+        catch (err) {
+            return {
+                stripped: output,
+                error: err instanceof Error ? err.message : String(err),
+            };
+        }
+    }
+    return { stripped: output, error: "Structured acceptance report not found." };
+}
+export function isEffectivelyEmpty(s) {
+    const trimmed = s.trim();
+    if (trimmed.length === 0)
+        return true;
+    return trimmed.split(/\r?\n/).every((line) => {
+        const l = line.trim();
+        return l.length === 0 || /^(-{3,}|\*{3,}|_{3,})$/.test(l);
+    });
 }
 export function buildAcceptanceReportDigest(report) {
     const lines = ["---", "Validation evidence (from acceptance report):"];
@@ -830,11 +894,8 @@ function validateAcceptanceReport(value, pathLabel = "") {
                 const command = item;
                 if (typeof command.command !== "string" || !command.command.trim())
                     pushTypeError(errors, `${itemPath}.command`, "non-empty string", command.command);
-                if (command.result !== "passed" &&
-                    command.result !== "failed" &&
-                    command.result !== "not-run") {
-                    pushTypeError(errors, `${itemPath}.result`, 'one of "passed", "failed", "not-run"', command.result);
-                }
+                if (typeof command.result !== "string")
+                    pushTypeError(errors, `${itemPath}.result`, "string", command.result);
                 if (typeof command.summary !== "string")
                     pushTypeError(errors, `${itemPath}.summary`, "string", command.summary);
             }
@@ -1081,7 +1142,9 @@ export async function evaluateAcceptance(input) {
     };
     if (acceptance.level === "none")
         return ledger;
-    const parsed = input.report ? { report: input.report } : parseAcceptanceReport(input.output);
+    const parsed = input.report
+        ? { report: input.report, error: undefined }
+        : parseAndStripAcceptanceReport(input.output);
     if (parsed.report) {
         ledger.childReport = parsed.report;
         ledger.status = "attested";
@@ -1155,6 +1218,29 @@ export async function evaluateAcceptance(input) {
         }
     }
     return ledger;
+}
+export function acceptanceRejectionReason(ledger) {
+    if (ledger.status !== "rejected")
+        return undefined;
+    if (typeof ledger.childReportParseError === "string" && ledger.childReportParseError)
+        return ledger.childReportParseError;
+    const checks = Array.isArray(ledger.runtimeChecks) ? ledger.runtimeChecks : [];
+    for (const check of checks) {
+        if (!check || typeof check !== "object")
+            continue;
+        if (check.status === "failed" && typeof check.message === "string")
+            return check.message;
+    }
+    const verifyRuns = Array.isArray(ledger.verifyRuns) ? ledger.verifyRuns : [];
+    for (const run of verifyRuns) {
+        if (!run || typeof run !== "object")
+            continue;
+        if ((run.status === "failed" || run.status === "timed-out") &&
+            typeof run.id === "string" &&
+            typeof run.status === "string")
+            return `Verification '${run.id}' ${run.status}.`;
+    }
+    return undefined;
 }
 export function acceptanceFailureMessage(ledger) {
     if (ledger.status !== "rejected")

@@ -206,9 +206,6 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
   assert.ok(rush, "Rush primary prompt should load");
 
   const primaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true);
-  const legacyFlagPrimaryPrompt = buildTlhSystemPrompt(rush, loadSubagentMetadata(), true, {
-    enabledFeatures: ["contrarian"],
-  });
   const childPrompt = buildChildSubagentSystemPrompt();
 
   assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
@@ -217,7 +214,6 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
   assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
   assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
   assert.match(primaryPrompt, /- contrarian:/i);
-  assert.match(legacyFlagPrimaryPrompt, /- contrarian:/i);
 
   for (const prompt of [primaryPrompt, childPrompt]) {
     assert.doesNotMatch(prompt, /## TLH Ticket Integration Disabled/);
@@ -226,46 +222,34 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
   }
 });
 
-test("allowed-subagents prompt scopes embedded guidance to architect", () => {
+test("allowed-subagents prompt scopes embedded guidance to architect regardless of settings", () => {
   const primaryAgents = loadPrimaryAgents();
   const architect = primaryAgents.get("architect");
   const rush = primaryAgents.get("rush");
   const product = primaryAgents.get("product");
   const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
-
-  const embeddedConfig = { enabledFeatures: ["embedded-subagents"] };
-  const noEmbeddedConfig = { enabledFeatures: [] };
+  const developer = subagents.find((agent) => agent.name === "developer");
+  assert.equal(developer?.tlhOpenrouterThinking, "medium");
+  assert.equal(developer?.preferOppositeProvider, undefined);
 
   const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
   const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
   const managementGuidance = /TLH minor agents are isolated to the user scope/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
 
-  const architectOn = buildTlhSystemPrompt(architect, subagents, true, embeddedConfig);
-  assert.match(architectOn, sectionHeader);
-  assert.match(architectOn, managementGuidance);
-  assert.match(architectOn, embeddedClause);
-  assert.doesNotMatch(architectOn, closingRule);
-
-  const architectOff = buildTlhSystemPrompt(architect, subagents, true, noEmbeddedConfig);
-  assert.match(architectOff, sectionHeader);
-  assert.match(architectOff, managementGuidance);
-  assert.doesNotMatch(architectOff, embeddedClause);
-  assert.match(architectOff, closingRule);
-
-  const architectUndefined = buildTlhSystemPrompt(architect, subagents, true, undefined);
-  assert.doesNotMatch(architectUndefined, embeddedClause);
-  assert.match(architectUndefined, closingRule);
+  const architectPrompt = buildTlhSystemPrompt(architect, subagents, true);
+  assert.match(architectPrompt, sectionHeader);
+  assert.match(architectPrompt, managementGuidance);
+  assert.match(architectPrompt, embeddedClause);
+  assert.doesNotMatch(architectPrompt, closingRule);
 
   for (const primary of [rush, product, bugHunter]) {
     const label = primary?.name ?? "unknown";
-    for (const config of [embeddedConfig, noEmbeddedConfig, undefined]) {
-      const prompt = buildTlhSystemPrompt(primary, subagents, true, config);
-      assert.match(prompt, sectionHeader, `${label}: section header present`);
-      assert.match(prompt, managementGuidance, `${label}: management guidance present`);
-      assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
-      assert.match(prompt, closingRule, `${label}: closing rule present`);
-    }
+    const prompt = buildTlhSystemPrompt(primary, subagents, true);
+    assert.match(prompt, sectionHeader, `${label}: section header present`);
+    assert.match(prompt, managementGuidance, `${label}: management guidance present`);
+    assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
+    assert.match(prompt, closingRule, `${label}: closing rule present`);
   }
 });

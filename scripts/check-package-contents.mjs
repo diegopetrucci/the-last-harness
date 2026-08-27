@@ -35,6 +35,7 @@ const files = new Set(packResult.flatMap((entry) => entry.files ?? []).map((entr
 // package.json files negations) when adding or removing a public doc.
 const PUBLIC_DOCS = [
   "docs/commands.md",
+  "docs/custom-subagents.md",
   "docs/embedded-subagents.md",
   "docs/git-attribution.md",
   "docs/install.md",
@@ -82,6 +83,7 @@ const TERMINAL_SKILL_FILES = [
   "skills/tmux/SKILL.md",
   "skills/tmux/scripts/find-sessions.sh",
   "skills/tmux/scripts/wait-for-text.sh",
+  "skills/show-me/SKILL.md",
 ];
 const packagedSkillFiles = [...files].filter((file) => file.startsWith("skills/"));
 const missingSkillFiles = TERMINAL_SKILL_FILES.filter((file) => !files.has(file));
@@ -95,18 +97,74 @@ if (missingSkillFiles.length > 0 || unexpectedSkillFiles.length > 0) {
   process.exit(1);
 }
 
-const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
-const forbiddenExactPaths = [
-  "scripts/check-package-contents.mjs",
-  "scripts/run-subagents-tests.mjs",
-  "scripts/run-lane.mjs",
-  "scripts/run-ci-test-shard.mjs",
-  "scripts/run-ci-validation.mjs",
+// Keep the package's scripts/ surface fail-closed. These are the installer,
+// runtime, and dynamically loaded support files that an installed tlh profile
+// needs. Contributor checks, CI orchestration, release tooling, and the
+// runtime-TypeScript compiler remain in git but are excluded by
+// scripts/.npmignore. A new scripts/ file must be classified here before it
+// can enter the published package.
+const PACKAGED_SCRIPT_FILES = [
+  "scripts/lib/default-extensions.mjs",
+  "scripts/lib/default-extensions.mts",
+  "scripts/lib/session-analysis.mjs",
+  "scripts/lib/session-analysis.mts",
+  "scripts/lib/tlh-install-git.mjs",
+  "scripts/lib/tlh-install-git.mts",
+  "scripts/lib/tlh-install-package-source.mjs",
+  "scripts/lib/tlh-install-package-source.mts",
+  "scripts/lib/tlh-install-paths.mjs",
+  "scripts/lib/tlh-install-paths.mts",
+  "scripts/lib/tlh-install-subagents.mjs",
+  "scripts/lib/tlh-install-subagents.mts",
+  "scripts/lib/tlh-install-support-files.mjs",
+  "scripts/lib/tlh-install-support-files.mts",
+  "scripts/lib/tlh-install-support-manifest.mjs",
+  "scripts/lib/tlh-install-support-manifest.mts",
+  "scripts/lib/tlh-install-utils.mjs",
+  "scripts/lib/tlh-install-utils.mts",
+  "scripts/lib/tlh-safe-profile-write.mjs",
+  "scripts/lib/tlh-safe-profile-write.mts",
+  "scripts/merge-keybindings.mjs",
+  "scripts/merge-keybindings.mts",
+  "scripts/merge-settings.mjs",
+  "scripts/merge-settings.mts",
+  "scripts/tlh-defaults.mjs",
+  "scripts/tlh-defaults.mts",
+  "scripts/tlh-doctor.mjs",
+  "scripts/tlh-doctor.mts",
+  "scripts/tlh-gnosis.mjs",
+  "scripts/tlh-gnosis.mts",
+  "scripts/tlh-install-query.mjs",
+  "scripts/tlh-install-state.mjs",
+  "scripts/tlh-install.mjs",
+  "scripts/tlh-install.mts",
+  "scripts/tlh-recover-update.mjs",
+  "scripts/tlh-recover-update.mts",
+  "scripts/tlh-sessions.mjs",
+  "scripts/tlh-sessions.mts",
+  "scripts/tlh-tickets.mjs",
+  "scripts/tlh-tickets.mts",
+  "scripts/tlh-update.mjs",
+  "scripts/tlh-update.mts",
+  "scripts/tlh-wrapper.mjs",
+  "scripts/tlh-wrapper.mts",
 ];
-const forbiddenFiles = [...files].filter(
-  (file) =>
-    forbiddenExactPaths.includes(file) ||
-    forbiddenPrefixes.some((prefix) => file.startsWith(prefix)),
+const packedScriptFiles = [...files].filter((file) => file.startsWith("scripts/"));
+const unexpectedScriptFiles = packedScriptFiles.filter(
+  (file) => !PACKAGED_SCRIPT_FILES.includes(file),
+);
+const missingScriptFiles = PACKAGED_SCRIPT_FILES.filter((file) => !files.has(file));
+if (unexpectedScriptFiles.length > 0 || missingScriptFiles.length > 0) {
+  console.error("Published package contains an unexpected or incomplete scripts/ runtime closure:");
+  for (const file of missingScriptFiles) console.error(`  - missing runtime: ${file}`);
+  for (const file of unexpectedScriptFiles.sort())
+    console.error(`  - unexpected contributor/non-runtime: ${file}`);
+  process.exit(1);
+}
+
+const forbiddenPrefixes = ["extensions/subagents/test/", "tests/"];
+const forbiddenFiles = [...files].filter((file) =>
+  forbiddenPrefixes.some((prefix) => file.startsWith(prefix)),
 );
 if (forbiddenFiles.length > 0) {
   console.error("Published package contains contributor-only files:");

@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { openQuietGlimpse, type QuietGlimpseWindow } from "../shared/quiet-glimpse.js";
 import {
@@ -62,15 +62,12 @@ function isCancelPayload(value: unknown): value is AnnotateLastMessageCancelPayl
   return typeof value === "object" && value != null && "type" in value && value.type === "cancel";
 }
 
-export const ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION =
-  "Open a native annotation window for the latest assistant message";
-
-export type AnnotateLastMessageCommand = {
+type AnnotateLastMessageCommand = {
   handler: (_args: string, ctx: ExtensionCommandContext) => Promise<void>;
   handleSessionShutdown: () => void;
 };
 
-export type AnnotateLastMessageDependencies = {
+type AnnotateLastMessageDependencies = {
   sendUserMessage: (message: string, options: { deliverAs: "followUp" }) => void;
   openAnnotationWindow?: typeof openQuietGlimpse;
   setTimeoutFn?: typeof setTimeout;
@@ -251,18 +248,4 @@ export function buildAnnotateLastMessageCommand(
       closeActiveWindow({ suppressResults: true });
     },
   };
-}
-
-export function registerAnnotateLastMessageCommand(pi: ExtensionAPI): void {
-  const command = buildAnnotateLastMessageCommand({
-    sendUserMessage: (message, options) => pi.sendUserMessage(message, options),
-  });
-  pi.registerCommand("annotate-last-message", {
-    description: ANNOTATE_LAST_MESSAGE_COMMAND_DESCRIPTION,
-    handler: command.handler,
-  });
-
-  pi.on("session_shutdown", async () => {
-    command.handleSessionShutdown();
-  });
 }

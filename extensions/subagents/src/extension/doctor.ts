@@ -6,7 +6,7 @@ import {
   diagnoseIntercomBridge,
   type IntercomBridgeDiagnostic,
 } from "../intercom/intercom-bridge.ts";
-import { discoverAvailableSkills, type SkillSource } from "../agents/skills.ts";
+import { discoverAvailableSkills, SOURCE_PRIORITY, type SkillSource } from "../agents/skills.ts";
 import {
   ASYNC_DIR,
   CHAIN_RUNS_DIR,
@@ -93,23 +93,20 @@ function formatSourceCounts(counts: {
   return `builtin ${counts.builtin}, package ${counts.package}, user ${counts.user}, project ${counts.project}`;
 }
 
+// Canonical ordering derived from SOURCE_PRIORITY (descending priority).
+// Sharing this with SOURCE_PRIORITY means adding a new SkillSource and
+// assigning it a priority number here is sufficient — the doctor report
+// and its test automatically pick it up.
+const SKILL_SOURCE_ORDER: SkillSource[] = (Object.keys(SOURCE_PRIORITY) as SkillSource[]).sort(
+  (a, b) => (SOURCE_PRIORITY[b] ?? 0) - (SOURCE_PRIORITY[a] ?? 0),
+);
+
 function formatSkillSourceCounts(skills: Array<{ source: SkillSource }>): string {
   const counts = new Map<SkillSource, number>();
   for (const skill of skills) counts.set(skill.source, (counts.get(skill.source) ?? 0) + 1);
-  const ordered: SkillSource[] = [
-    "project",
-    "project-settings",
-    "project-package",
-    "user",
-    "user-settings",
-    "user-package",
-    "extension",
-    "builtin",
-    "unknown",
-  ];
-  const parts = ordered
-    .map((source) => `${source} ${counts.get(source) ?? 0}`)
-    .filter((part) => !part.endsWith(" 0"));
+  const parts = SKILL_SOURCE_ORDER.map((source) => `${source} ${counts.get(source) ?? 0}`).filter(
+    (part) => !part.endsWith(" 0"),
+  );
   return parts.length > 0 ? parts.join(", ") : "none";
 }
 

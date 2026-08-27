@@ -34,7 +34,7 @@ function normalizeWatchPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 
-export function isIgnoredWatchPath(path: string | Buffer | null | undefined): boolean {
+function isIgnoredWatchPath(path: string | Buffer | null | undefined): boolean {
   if (path == null) return false;
   const normalized = normalizeWatchPath(path.toString());
   if (normalized.length === 0) return false;

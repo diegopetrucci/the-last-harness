@@ -8,6 +8,7 @@ import {
   getArtifactsDir,
   getProjectArtifactsDir,
   getProjectSubagentsDir,
+  writeArtifactWithFloor,
 } from "../../src/shared/artifacts.ts";
 import { TEMP_ARTIFACTS_DIR } from "../../src/shared/types.ts";
 
@@ -140,4 +141,77 @@ describe("artifact cleanup", () => {
       });
     },
   );
+});
+
+// These writeArtifactWithFloor tests are the discriminating coverage for the
+// non-destruction floor (tlhm-76ph). The integration tests that exercise the
+// digest-surfacing path do NOT discriminate on the floor: in those cases the
+// raw and computed values are identical, so removing the floor does not change
+// their outcome. Do not delete these unit tests assuming integration covers it.
+describe("writeArtifactWithFloor", () => {
+  function withTempDir(fn: (dir: string) => void): void {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-artifacts-floor-"));
+    try {
+      fn(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // The incident's own shape: raw output has real prose, computed content is
+  // exactly "---" (the 3-byte value observed in destroyed artifacts).
+  // This test fails if the floor is removed from writeArtifactWithFloor.
+  it('preserves raw output when computed content is the incident "---" value', () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "output.md");
+      writeArtifactWithFloor(filePath, "---", "My implementation report\n\nFound 3 issues.", false);
+      assert.equal(
+        fs.readFileSync(filePath, "utf-8"),
+        "My implementation report\n\nFound 3 issues.",
+      );
+    });
+  });
+
+  // Positive control: a healthy computed value must be written byte-exact and
+  // must NOT be replaced by the raw output. If the floor fired unconditionally
+  // this test would fail.
+  it("writes computed content byte-exact when it is not effectively empty", () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "output.md");
+      const computed =
+        "Implementation complete.\n\n---\nValidation evidence (from acceptance report):\n\n  [passed] npm test \u2014 passed\n---";
+      writeArtifactWithFloor(
+        filePath,
+        computed,
+        "Implementation complete.\n\n```acceptance-report\n{...}\n```",
+        false,
+      );
+      assert.equal(fs.readFileSync(filePath, "utf-8"), computed);
+    });
+  });
+
+  it("writes computed content byte-exact even when it is empty and isArchive is true", () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "output.md");
+      writeArtifactWithFloor(filePath, "---", "non-empty raw output", true);
+      assert.equal(fs.readFileSync(filePath, "utf-8"), "---");
+    });
+  });
+
+  it("preserves whitespace-only computed content as empty rather than injecting raw", () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "output.md");
+      // raw is also whitespace-only — floor must not fire (rawOutput.trim() is falsy)
+      writeArtifactWithFloor(filePath, "", "", false);
+      assert.equal(fs.readFileSync(filePath, "utf-8"), "");
+    });
+  });
+
+  it("preserves raw output when computed content is whitespace-only", () => {
+    withTempDir((dir) => {
+      const filePath = path.join(dir, "output.md");
+      writeArtifactWithFloor(filePath, "   \n", "substantive findings", false);
+      assert.equal(fs.readFileSync(filePath, "utf-8"), "substantive findings");
+    });
+  });
 });

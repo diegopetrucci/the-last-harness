@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import type {
   AcceptanceInput,
   AcceptanceRole,
@@ -23,19 +24,19 @@ import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
-export type AgentSource = "builtin" | "package" | "user" | "project";
+type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
-export type AgentDefaultContext = "fresh" | "fork";
+type AgentDefaultContext = "fresh" | "fork";
 
-export function defaultSystemPromptMode(name: string): SystemPromptMode {
+function defaultSystemPromptMode(name: string): SystemPromptMode {
   return name === "delegate" ? "append" : "replace";
 }
 
-export function defaultInheritProjectContext(name: string): boolean {
+function defaultInheritProjectContext(name: string): boolean {
   return name === "delegate";
 }
 
-export function defaultInheritSkills(): boolean {
+function defaultInheritSkills(): boolean {
   return false;
 }
 
@@ -66,7 +67,7 @@ const KNOWN_FIELDS = new Set([
   "toolBudget",
 ]);
 
-export interface BuiltinAgentOverrideBase {
+interface BuiltinAgentOverrideBase {
   model?: string;
   fallbackModels?: string[];
   thinking?: string | false;
@@ -110,7 +111,7 @@ interface BuiltinAgentOverrideInfo {
   base: BuiltinAgentOverrideBase;
 }
 
-export interface AgentModelSourceInfo {
+interface AgentModelSourceInfo {
   type: "subagents.defaultModel";
   scope: "user" | "project";
   path: string;
@@ -161,7 +162,7 @@ interface SubagentSettings {
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
 
-export interface ChainStepConfig {
+interface ChainStepConfig {
   agent?: string;
   task?: string;
   phase?: string;
@@ -194,7 +195,7 @@ export interface ChainConfig {
   extraFields?: Record<string, string>;
 }
 
-export interface ChainDiscoveryDiagnostic {
+interface ChainDiscoveryDiagnostic {
   source: AgentSource;
   filePath: string;
   error: string;
@@ -216,9 +217,19 @@ interface PackageSubagentPaths {
 
 let cachedGlobalNpmRoot: string | null = null;
 
-function readJsonFileBestEffort(filePath: string): unknown {
+function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value !== "object") return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function readJsonFileBestEffort(filePath: string): JsonValue {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isJsonValue(parsed) ? parsed : null;
   } catch {
     // Installed package scans are opportunistic; bad third-party manifests
     // should not break local agent discovery.
@@ -226,9 +237,10 @@ function readJsonFileBestEffort(filePath: string): unknown {
   }
 }
 
-function readOptionalJsonFile(filePath: string): unknown {
+function readOptionalJsonFile(filePath: string): JsonValue {
   try {
-    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return isJsonValue(parsed) ? parsed : null;
   } catch (error) {
     const code =
       typeof error === "object" && error !== null && "code" in error
@@ -546,7 +558,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
   };
 }
 
-export function findNearestProjectRoot(cwd: string): string | null {
+function findNearestProjectRoot(cwd: string): string | null {
   const ignoredProjectConfigDirs = new Set([
     path.resolve(path.dirname(getAgentDir())),
     path.resolve(getProjectConfigDir(os.homedir())),

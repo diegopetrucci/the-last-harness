@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { DynamicBorder, getMarkdownTheme, } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Text, matchesKey } from "@earendil-works/pi-tui";
 const TLH_CHANGELOG_PATH = new URL("../../CHANGELOG.md", import.meta.url);
-export const TLH_CHANGELOG_COMMAND_DESCRIPTION = "Show TLH release notes from the packaged changelog";
 const TLH_RELEASE_NOTES_LABEL = "TLH release notes";
 const TLH_RELEASE_NOTES_TITLE = "TLH Release Notes";
 const TLH_CHANGELOG_CLOSE_HINT = "Press Enter or Esc to close";
@@ -54,11 +53,5 @@ export async function handleTlhChangelogCommand(pi, _args, ctx) {
         content: changelog,
         display: true,
         details: { title: TLH_RELEASE_NOTES_TITLE },
-    });
-}
-export function registerTlhChangelogCommand(pi) {
-    pi.registerCommand("tlh-changelog", {
-        description: TLH_CHANGELOG_COMMAND_DESCRIPTION,
-        handler: async (args, ctx) => handleTlhChangelogCommand(pi, args, ctx),
     });
 }

@@ -2,7 +2,7 @@ import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { formatHomePath } from "./common.js";
 import { DUMB_ZONE_THRESHOLD_TOKENS } from "./constants.js";
 import { withLockedTlhSettingsWrite } from "./profile-state.js";
-export const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
+const DEFAULT_CONTEXT_CAP_TOKENS = DUMB_ZONE_THRESHOLD_TOKENS;
 const TOGGLE_CONTEXT_CAP_COMMAND_HELP = "Usage: /toggle-context-cap";
 const originalContextWindows = new WeakMap();
 function getOriginalContextWindow(model) {

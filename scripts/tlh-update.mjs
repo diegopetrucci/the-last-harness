@@ -224,10 +224,26 @@ function resolveCommand(command, env) {
     }
     throw new Error(`required command not found on sanitized PATH: ${command}`);
 }
+function isJsonValue(value) {
+    if (value === null)
+        return true;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return true;
+    }
+    if (Array.isArray(value))
+        return value.every(isJsonValue);
+    if (typeof value !== "object")
+        return false;
+    return Object.values(value).every(isJsonValue);
+}
+function isJsonObject(value) {
+    return isJsonValue(value) && typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function readJson(path) {
     // Keep update metadata/settings parsing strict so existing diagnostics stay unchanged.
     const content = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    return isJsonValue(parsed) ? parsed : undefined;
 }
 function packageSourceOf(entry) {
     if (typeof entry === "string")
@@ -308,7 +324,7 @@ function trackForPackageRef(ref) {
     return isSemverTag(ref) ? "pinned-tag" : "ref";
 }
 function normalizeState(raw, fallback = {}) {
-    if (!raw || typeof raw !== "object")
+    if (!isJsonObject(raw))
         return undefined;
     const record = raw;
     const repo = typeof record.repo === "string" && record.repo.trim() ? record.repo.trim() : fallback.repo;
@@ -342,9 +358,7 @@ function inferStateFromSettings(agentDir, requestedRepo) {
     if (!existsSync(path))
         return undefined;
     const settings = readJson(path);
-    if (!settings ||
-        typeof settings !== "object" ||
-        !Array.isArray(settings.packages)) {
+    if (!isJsonObject(settings) || !Array.isArray(settings.packages)) {
         return undefined;
     }
     let fallback;

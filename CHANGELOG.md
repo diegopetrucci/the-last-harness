@@ -4,6 +4,41 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+- TLH now warns in the footer when no providers are available and points to `/login`.
+- Promoted trusted user-owned custom subagents to a stable, always-available architect extension point. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, architect-only initiation, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+
+## [0.39.0] - 2026-08-24
+
+### Added
+
+- [pi-transcribe](https://github.com/earendil-works/pi-transcribe) is now bundled by default.
+- TLH now also reads user `~/.claude/skills` and project `.claude/skills` directories.
+- TLH now bundles the show-me skill for visual explanations with diagrams, code-shape sketches, and focused HTML artifacts.
+- TLH now supports OpenRouter as a primary provider.
+
+### Changed
+
+- TLH installs much faster now.
+
+### Removed
+
+- Removed redundant `/subagent-cost` and `/subagents-fleet` commands. Use `/tokens` for the native token report and `subagent({ action: "status", view: "fleet" })` for active subagent status; `/subagents-doctor` remains available for read-only diagnostics.
+- Retired full subagent tool-description mode and configuration selection; the compact description is now unconditional. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted.
+
+### Fixed
+
+- Acceptance reports were rejected when a recorded command result carried text such as "failed as expected"; that field is now treated as free text and correct completed work is no longer reported as rejected.
+- When a run's acceptance was rejected, the reason was computed but then discarded, so run status and completion notifications showed only a bare rejection. The specific reason is now shown, truncated to a readable length.
+- The acceptance gate and the report-removal step could evaluate different blocks from the same output, making it possible for work to pass acceptance via an example block while the real report block was simultaneously removed. Both steps now operate on the same candidate, invalid blocks are left intact in the output, and a near-empty computed artifact is no longer written when report processing fails.
+- Run status could crash when rendering a rejection reason due to malformed acceptance-ledger fields. Those fields are now parsed defensively.
+
+## [0.38.1] - 2026-08-18
+
+### Fixed
+
+- Fixed async subagent widgets that could show stale activity or health warnings after continuing a run.
+- Update-available warnings now reappear on every interactive launch until the release is installed.
+
 ## [0.38.0] - 2026-08-17
 
 ### Added

@@ -10,7 +10,7 @@ The managed wrapper sets `PI_CODING_AGENT_DIR` to the isolated TLH profile befor
 
 TLH copies its eight minor-agent definitions to `<agent-dir>/tlh/agents/subagents` and keeps that directory in the isolated `subagents.agentDirs` setting. For primary-agent delegation, TLH also forces the bundled agents to user scope and fresh context. This prevents project or legacy-profile definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child. The underlying runtime retains generic project-scope and fork-context support for compatible non-primary entrypoints, but those are not the bundled TLH delegation policy.
 
-The bundled minor agents are `developer`, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright; only these eight TLH minor agents exist. Trusted user-owned `embedded.<slug>` agents are a separate default-off feature documented in [embedded-subagents.md](embedded-subagents.md).
+The bundled minor agents are `developer`, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright; only these eight TLH minor agents exist. Stable, always-available user-owned `embedded.<slug>` agents are also available to the architect when authorized by the active profile; see [custom-subagents.md](custom-subagents.md).
 
 ## Dispatch and tool surface
 
@@ -79,13 +79,26 @@ When a run starts, the runtime walks the following locations and collects all sk
 | 300 | `user` | `<agent-dir>/skills/` |
 | 250 | `user-settings` | Paths listed under `skills` in `<agent-dir>/settings.json` |
 | 200 | `user-package` | `<agent-dir>/npm/node_modules/<pkg>` or the global npm root |
+| 180 | `project-claude` | `.claude/skills/` in the project root ² |
+| 170 | `user-claude` | `~/.claude/skills/` ² |
 | 150 | `extension` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
 | 100 | `builtin` | Not assigned by `buildSkillPaths` or `inferSkillSource`; only reachable via an explicit `sourceHint` ¹ |
 | 0 | `unknown` | Anything that does not match a known root |
 
 ¹ `extension` and `builtin` are defined in `SOURCE_PRIORITY` and appear in the doctor's per-source breakdown, but `buildSkillPaths` never emits them and `inferSkillSource` never infers them. No current runtime caller passes either as a `sourceHint`; they are reserved for future use.
 
+² Both Claude-sourced roots (`project-claude` at 180 and `user-claude` at 170) rank below every non-Claude source, including user-scoped ones. This diverges from the usual project-over-user ordering for three reasons: (a) `<cwd>/.claude/skills` is repo-controlled content — a cloned repository can place skills there, and the subagent resolver applies no trust gate (unlike the primary-agent hook), so ranking it low is the mitigation; (b) `~/.claude/skills` is a directory curated for a different tool, not for tlh, so tlh’s own curated skills should win a name collision; (c) it keeps the subagent resolver consistent with the primary agent, where extension-provided paths are appended after all defaults and therefore lose every same-name collision. Within the two Claude sources, `project-claude` is intentionally above `user-claude` so that when two `.claude/skills` entries collide with each other, the project-local one wins.
+
 Deduplication is per resolved absolute path: if the same physical directory appears via two routes, the one with the higher source priority wins.
+
+#### Trust gating and primary-agent / subagent asymmetry
+
+The two surfaces that discover `.claude/skills` directories behave differently:
+
+- **Primary agent** (`resources_discover` hook in `claude-skills.ts`): project roots are gated on `ctx.isProjectTrusted()`. When the project has not been trusted, all `.claude/skills/` directories from the ancestor walk are silently skipped. The ancestor walk starts at `<cwd>` and climbs to the git root, collecting a `.claude/skills/` candidate at every level before stopping. User root (`~/.claude/skills`) is always a candidate regardless of trust.
+- **Subagent resolver** (`buildSkillPaths` in `skills.ts`): only uses `<cwd>/.claude/skills` (no ancestor walk) and does **not** gate on project trust, following the same convention as the existing `.pi/.agents` roots.
+
+To opt out of `.claude/skills` discovery entirely, set `"tlh": { "claudeSkills": { "disabled": true } }` in the isolated profile's **global** `settings.json` (`~/.the-last-harness/agent/settings.json`). The setting is read from that file only; a project-level `.pi/settings.json` has no effect on this flag.
 
 ### Two-cwd fallback
 
@@ -162,7 +175,7 @@ The `pi-subagents` skill is filtered out of discovery output by design — it wi
 
 ## Async control, pause, and resume
 
-An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `/subagents-fleet` for the interactive fleet view or `subagent({ action: "status", id: "..." })` for the model-facing status path.
+An asynchronous receipt includes an `asyncId` and `asyncDir`. Status and lifecycle data are persisted there, including `status.json`, `events.jsonl`, and output/log references. Use `subagent({ action: "status", view: "fleet" })` for the read-only fleet view or `subagent({ action: "status", id: "..." })` for a specific model-facing status path.
 
 The runtime distinguishes these controls:
 
@@ -197,16 +210,30 @@ The active runtime config is:
 <agent-dir>/extensions/subagent/config.json
 ```
 
-For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only missing TLH defaults: compact tool descriptions and `control.activeNoticeAfterMs: 270000` (4m30). Existing values and unrelated keys survive. Remove a customized key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
+For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30); the parent-facing subagent tool description is always compact. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Existing values and unrelated keys survive. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
 Useful diagnostics:
 
 - `tlh doctor` checks installer-owned profile resources without writing.
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics.
-- `/subagents-fleet` reports active runs and transcript commands.
+- `subagent({ action: "status", view: "fleet" })` reports active runs and transcript commands.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.
+
+## Provider auth-health warning
+
+When TLH dispatches a subagent and the provider's credential fails, a sticky footer warning appears:
+
+```text
+⚠ reauth: anthropic
+```
+
+The warning is per-provider (both providers are shown in one line when both fail: `⚠ reauth: anthropic, openai-codex`) and **outlives the run that revealed it** — it does not disappear when the failing run finishes. It clears automatically once the credential works again, checked at each dispatch and turn boundary, so no restart is needed. A new session starts clean and re-flags on the next failed dispatch. A toast notification pointing at `/login` appears the first time a provider is flagged within a session.
+
+Credential failures are detected at dispatch time and also from completed runs, including async ones — so a silently degraded `code-reviewer`, `oracle`, or `contrarian` is surfaced even when the failure happened after the tool call returned.
+
+Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
 
 ## Updating, migrating, and removing
 

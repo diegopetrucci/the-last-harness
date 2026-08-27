@@ -12,7 +12,6 @@ import { DEFAULT_PRIMARY_AGENT } from "../the-last-harness-primary-agent.mjs";
 import { formatCompactTokenCount, formatHomePath, sanitizeStatusText } from "./common.js";
 import type { FooterGitCache } from "./footer-git-cache.js";
 import { formatTlhInstallNoticeTrackLabel } from "./install-state.js";
-import { TK_WORKFLOW_STATUS_KEY } from "./ticket-workflow-ui-constants.js";
 import { composeTlhFooterFirstLine } from "./footer-first-line.js";
 import {
   getTlhSubscriptionUsageFooterState,
@@ -26,6 +25,8 @@ export { formatTlhSubscriptionUsageFooterSegment } from "./footer-subscription-u
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
+const FAST_STATUS_KEY = "fast";
+const NO_PROVIDER_WARNING_TEXT = "\u26a0 no provider \u2014 run /login";
 
 type McpFooterContextEstimateCache = {
   key: string;
@@ -218,7 +219,12 @@ function appendMcpContextEstimate(statusText: string, suffix: string | undefined
   return `${statusText}${suffix}`;
 }
 
-export type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
+function formatNoProviderWarningLine(width: number, theme: Theme): string {
+  const warningText = theme.fg("warning", NO_PROVIDER_WARNING_TEXT);
+  return truncateToWidth(warningText, width, theme.fg("warning", "..."));
+}
+
+type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
 
 /**
  * Choose the widest reauth warning text that fits within `width` visible columns.
@@ -286,9 +292,11 @@ export function createTlhFooter(
         fallbackBranch: footerData?.getGitBranch?.(),
       });
       const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+      const extensionStatuses = footerData?.getExtensionStatuses?.();
+      const hasFastStatus = extensionStatuses?.has(FAST_STATUS_KEY) ?? false;
 
       // Line 2 (single flowing left-justified line):
-      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE]
+      //   agent: <primaryName> • <model|no-model> [• thinking] • context% [• DUMB ZONE] [• fast]
       // Each segment is explicitly themed to avoid ANSI foreground-reset bleed from nested
       // theme.fg() calls. Non-default agent names are highlighted with the accent color.
       const modelOrNoModel = model?.id ?? "no-model";
@@ -327,7 +335,16 @@ export function createTlhFooter(
       if ((contextUsage?.tokens ?? 0) > DUMB_ZONE_THRESHOLD_TOKENS) {
         agentLine2Str += dimSep + theme.fg("error", DUMB_ZONE_LABEL);
       }
-      const agentLine2 = truncateToWidth(agentLine2Str, width, theme.fg("dim", "..."));
+      const fastLine2Suffix = hasFastStatus ? dimSep + theme.fg("dim", FAST_STATUS_KEY) : "";
+      const fastLine2SuffixWidth = visibleWidth(fastLine2Suffix);
+      const agentLine2 =
+        fastLine2SuffixWidth <= width
+          ? `${truncateToWidth(
+              agentLine2Str,
+              width - fastLine2SuffixWidth,
+              theme.fg("dim", "..."),
+            )}${fastLine2Suffix}`
+          : truncateToWidth(agentLine2Str + fastLine2Suffix, width, theme.fg("dim", "..."));
 
       // Line 3 (optional): [<cost> · ]<subscription usage segment>
       // Omitted entirely when both parts are absent.
@@ -343,6 +360,12 @@ export function createTlhFooter(
 
       const lines: string[] = [pwdLine, agentLine2];
 
+      // Read the upstream cached count on every render so the warning dismisses after login.
+      // This is intentionally limited to footer data; it does not inspect credentials or probe.
+      if (footerData?.getAvailableProviderCount?.() === 0) {
+        lines.push(formatNoProviderWarningLine(width, theme));
+      }
+
       // Reauth warning line: rendered before cost/status lines so it is not the first
       // segment lost to truncation at narrow widths.
       // Only 'reauth-required' providers render; transient-unavailable and unknown are silent.
@@ -356,7 +379,6 @@ export function createTlhFooter(
         if (warningLine !== undefined) lines.push(warningLine);
       }
 
-      const extensionStatuses = footerData?.getExtensionStatuses?.();
       const hasMcpStatus = extensionStatuses
         ? Array.from(extensionStatuses.values()).some((status) =>
             MCP_STATUS_PREFIX.test(sanitizeStatusText(status)),
@@ -370,17 +392,6 @@ export function createTlhFooter(
           mcpContextEstimateCache,
         );
       }
-      const tkWorkflowStatus = extensionStatuses?.get(TK_WORKFLOW_STATUS_KEY);
-      if (tkWorkflowStatus) {
-        const tkWorkflowLines = tkWorkflowStatus
-          .split(/\r?\n/)
-          .map((line) => sanitizeStatusText(line))
-          .filter(Boolean);
-        for (const line of tkWorkflowLines) {
-          lines.push(truncateToWidth(theme.fg("dim", line), width, theme.fg("dim", "...")));
-        }
-      }
-
       if (line3 !== undefined) {
         lines.push(truncateToWidth(theme.fg("dim", line3), width, theme.fg("dim", "...")));
       }
@@ -404,7 +415,7 @@ export function createTlhFooter(
       // Extension status line (conditional on registered extension statuses)
       if (extensionStatuses && extensionStatuses.size > 0) {
         const visibleStatuses = Array.from(extensionStatuses.entries())
-          .filter(([key]) => key !== TK_WORKFLOW_STATUS_KEY)
+          .filter(([key]) => key !== FAST_STATUS_KEY)
           .sort(([a], [b]) => a.localeCompare(b));
         const statusLine = visibleStatuses
           .map(([, text]) =>

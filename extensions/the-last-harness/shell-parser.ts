@@ -3,26 +3,26 @@
 // one-directional: attribution.ts imports from here, never the reverse.
 
 export const ENV_SHORT_OPTIONS_WITH_VALUES = new Set(["-C", "-P", "-a", "-u"]);
-export const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
-export const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);
-export const ENV_LONG_OPTIONS_WITHOUT_VALUES = new Set(["--ignore-environment", "--null"]);
-export const ENV_SHORT_SPLIT_STRING_OPTIONS = new Set(["-S"]);
-export const ENV_LONG_SPLIT_STRING_OPTIONS = new Set(["--split-string"]);
-export const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
-export const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
+const ENV_LONG_OPTIONS_WITH_VALUES = new Set(["--argv0", "--chdir", "--unset"]);
+const ENV_SHORT_OPTIONS_WITHOUT_VALUES = new Set(["-0", "-i", "-v"]);
+const ENV_LONG_OPTIONS_WITHOUT_VALUES = new Set(["--ignore-environment", "--null"]);
+const ENV_SHORT_SPLIT_STRING_OPTIONS = new Set(["-S"]);
+const ENV_LONG_SPLIT_STRING_OPTIONS = new Set(["--split-string"]);
+const SHELL_COMMAND_WRAPPERS = new Set(["bash", "sh"]);
+const SHELL_OPTIONS_WITH_VALUES = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 export const MAX_WRAPPED_SHELL_GIT_COMMIT_RECURSION_DEPTH = 4;
 
-export type HereDocSpec = {
+type HereDocSpec = {
   delimiter: string;
   allowIndent: boolean;
 };
 
-export type ShellCommandSegment = {
+type ShellCommandSegment = {
   segment: string;
   separator: string;
 };
 
-export type EnvLeadingOptionParseResult =
+type EnvLeadingOptionParseResult =
   | { kind: "continue"; nextIndex: number }
   | { kind: "missing-value" }
   | { kind: "split-string"; effectiveTokens: string[] | undefined }
@@ -244,7 +244,7 @@ export function readProcessSubstitutionBody(
   return undefined;
 }
 
-export function readShellCommandSegment(
+function readShellCommandSegment(
   command: string,
   startIndex: number,
 ): { segment: string; nextIndex: number } {
@@ -452,11 +452,11 @@ export function isSupportedEnvCommand(command: string): boolean {
   return commandBasename(command) === "env";
 }
 
-export function normalizeCaseInsensitiveLongOptionToken(token: string): string {
+function normalizeCaseInsensitiveLongOptionToken(token: string): string {
   return token.startsWith("--") ? token.toLowerCase() : token;
 }
 
-export function isSupportedEnvOptionWithoutValue(token: string): boolean {
+function isSupportedEnvOptionWithoutValue(token: string): boolean {
   const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
   return (
     ENV_SHORT_OPTIONS_WITHOUT_VALUES.has(token) ||
@@ -464,14 +464,14 @@ export function isSupportedEnvOptionWithoutValue(token: string): boolean {
   );
 }
 
-export function isSupportedEnvOptionWithValue(token: string): boolean {
+function isSupportedEnvOptionWithValue(token: string): boolean {
   const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
   return (
     ENV_SHORT_OPTIONS_WITH_VALUES.has(token) || ENV_LONG_OPTIONS_WITH_VALUES.has(normalizedToken)
   );
 }
 
-export function isSupportedEnvOptionWithAttachedValue(token: string): boolean {
+function isSupportedEnvOptionWithAttachedValue(token: string): boolean {
   const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
   return (
     normalizedToken.startsWith("--argv0=") ||
@@ -480,14 +480,14 @@ export function isSupportedEnvOptionWithAttachedValue(token: string): boolean {
   );
 }
 
-export function isEnvSplitStringOption(token: string): boolean {
+function isEnvSplitStringOption(token: string): boolean {
   const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
   return (
     ENV_SHORT_SPLIT_STRING_OPTIONS.has(token) || ENV_LONG_SPLIT_STRING_OPTIONS.has(normalizedToken)
   );
 }
 
-export function getAttachedEnvSplitStringCommand(token: string): string | undefined {
+function getAttachedEnvSplitStringCommand(token: string): string | undefined {
   const normalizedToken = normalizeCaseInsensitiveLongOptionToken(token);
   if (normalizedToken.startsWith("--split-string=")) {
     return token.slice(token.indexOf("=") + 1);
@@ -525,7 +525,7 @@ export function getEnvSplitStringEffectiveTokens(
   return buildEnvSplitStringEffectiveTokens(payload, remainingTokens);
 }
 
-export function getShortEnvLeadingOptionParseResult(
+function getShortEnvLeadingOptionParseResult(
   tokens: string[],
   index: number,
 ): EnvLeadingOptionParseResult | undefined {
@@ -642,7 +642,7 @@ export function normalizeShellCommandTokens(segment: string): string[] {
   return normalizeShellCommandTokensFromTokens(tokenizeShellWords(segment));
 }
 
-export function getShellCommandPrefix(command: string): string {
+function getShellCommandPrefix(command: string): string {
   let quote: "'" | '"' | "`" | undefined;
   let escaped = false;
 
@@ -690,7 +690,7 @@ export function getShellCommandPrefix(command: string): string {
   return command;
 }
 
-export function renderPrintfEscape(
+function renderPrintfEscape(
   format: string,
   index: number,
 ): { output: string; nextIndex: number } | undefined {
@@ -704,7 +704,7 @@ export function renderPrintfEscape(
   return undefined;
 }
 
-export function renderPrintfCycle(
+function renderPrintfCycle(
   format: string,
   args: string[],
   startIndex: number,
@@ -834,7 +834,7 @@ export function getProcessSubstitutionOutput(command: string): string | undefine
   return output;
 }
 
-export function isSupportedShellCommandWrapper(command: string): boolean {
+function isSupportedShellCommandWrapper(command: string): boolean {
   return SHELL_COMMAND_WRAPPERS.has(commandBasename(command));
 }
 

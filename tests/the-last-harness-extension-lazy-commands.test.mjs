@@ -108,9 +108,15 @@ test("Jiti command facades resolve review, tokens, annotate-last-message, and tl
     const annotateCommand = pi.commands.get("annotate-last-message");
     const changelogCommand = pi.commands.get("tlh-changelog");
     assert.equal(typeof reviewCommand?.handler, "function");
+    assert.equal(reviewCommand?.description, "Review code changes via an interactive mode picker");
     assert.equal(reviewCommand?.getArgumentCompletions?.("anything"), null);
     assert.equal(typeof tokensCommand?.handler, "function");
+    assert.equal(tokensCommand?.description, "Generate and open a local TLH token-spend report");
     assert.equal(typeof annotateCommand?.handler, "function");
+    assert.equal(
+      annotateCommand?.description,
+      "Open a native annotation window for the latest assistant message",
+    );
     assert.equal(typeof changelogCommand?.handler, "function");
 
     const shutdownHandlerCount = pi.handlers.get("session_shutdown")?.length ?? 0;

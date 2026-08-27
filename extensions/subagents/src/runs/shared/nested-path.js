@@ -1,6 +1,6 @@
 import * as path from "node:path";
 const MAX_NESTED_ID_LENGTH = 128;
-export const MAX_NESTED_PATH_ENTRIES = 4;
+const MAX_NESTED_PATH_ENTRIES = 4;
 export function isSafeNestedPathId(value) {
     return (typeof value === "string" &&
         value.length > 0 &&

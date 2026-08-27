@@ -212,6 +212,93 @@ run_missing_required_helper_preflight_smoke() {
   assert_contains "${combined_file}" "Pinning local Pi runtime to"
 }
 
+run_stage0_remote_support_fetch_smoke() {
+  log "Running stage-0 remote support fetch smoke check..."
+  local case_dir="${TMP_ROOT}/stage0-remote-support-fetch"
+  local required_case_dir="${case_dir}/required"
+  local optional_case_dir="${case_dir}/optional"
+  local raw_base="https://example.invalid/stage0-fetch-ref"
+  local missing_required="scripts/lib/tlh-install-utils.mjs"
+  local expected_count actual_count max_active target_dir status
+  local stage_root support_root fakebin home_dir track_dir stdout_file stderr_file combined_file
+  mkdir -p "${required_case_dir}" "${optional_case_dir}"
+
+  stage_root="${required_case_dir}/stage-root"
+  support_root="${required_case_dir}/support-root"
+  fakebin="${required_case_dir}/fakebin"
+  home_dir="${required_case_dir}/home"
+  track_dir="${required_case_dir}/curl-tracking"
+  stdout_file="${required_case_dir}/stdout.log"
+  stderr_file="${required_case_dir}/stderr.log"
+  combined_file="${required_case_dir}/combined.log"
+  mkdir -p "${stage_root}" "${home_dir}"
+  cp install.sh "${stage_root}/install.sh"
+  make_tracking_support_curl "${fakebin}"
+  make_fake_remote_stage1_support_root "${support_root}"
+  rm -f "${support_root}/${missing_required}"
+
+  set +e
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_CURL_DELAY=0.02 FAKE_CURL_TRACK_DIR="${track_dir}" FAKE_RAW_BASE="${raw_base}" FAKE_SUPPORT_ROOT="${support_root}" TLH_REF="stage0-fetch-ref" TLH_RAW_BASE="${raw_base}" _TLH_STAGE0_CANONICALIZED=1 bash "${stage_root}/install.sh" --no-settings --agent-dir "${required_case_dir}/agent" --bin-dir "${required_case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -eq 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 required remote support failure unexpectedly succeeded"
+  fi
+  assert_contains "${combined_file}" "required installer support file not found for ref stage0-fetch-ref: ${missing_required}"
+  assert_not_contains "${combined_file}" "fake_stage1=ok"
+  expected_count="$(extract_stage0_support_manifest true | wc -l | tr -d '[:space:]')"
+  actual_count="$(wc -l <"${track_dir}/completed.log" | tr -d '[:space:]')"
+  if [[ "${actual_count}" -ne "${expected_count}" ]]; then
+    fail "stage-0 required remote support fetch did not await every worker (expected ${expected_count}, got ${actual_count})"
+  fi
+  max_active="$(cat "${track_dir}/max-active")"
+  if [[ "${max_active}" -gt 8 || "${max_active}" -lt 2 ]]; then
+    fail "stage-0 remote support fetch concurrency was not bounded as expected (max active: ${max_active})"
+  fi
+  if [[ "$(cat "${track_dir}/active")" -ne 0 ]]; then
+    fail "stage-0 remote support fetch left an active worker"
+  fi
+  assert_contains "${track_dir}/args.log" "--retry 2"
+  assert_contains "${track_dir}/args.log" "--retry-delay 1"
+  assert_contains "${track_dir}/args.log" "--retry-max-time 20"
+  assert_contains "${track_dir}/args.log" "--connect-timeout 5"
+  assert_contains "${track_dir}/args.log" "--max-time 30"
+  target_dir="$(dirname "$(head -n 1 "${track_dir}/started.log")")"
+  assert_absent "${target_dir}"
+
+  stage_root="${optional_case_dir}/stage-root"
+  support_root="${optional_case_dir}/support-root"
+  fakebin="${optional_case_dir}/fakebin"
+  home_dir="${optional_case_dir}/home"
+  track_dir="${optional_case_dir}/curl-tracking"
+  stdout_file="${optional_case_dir}/stdout.log"
+  stderr_file="${optional_case_dir}/stderr.log"
+  combined_file="${optional_case_dir}/combined.log"
+  mkdir -p "${stage_root}" "${home_dir}"
+  cp install.sh "${stage_root}/install.sh"
+  make_tracking_support_curl "${fakebin}"
+  make_fake_remote_stage1_support_root "${support_root}"
+  rm -f "${support_root}/scripts/tlh-update.mjs"
+
+  set +e
+  run_scrubbed_installer_env HOME="${home_dir}" PATH="${fakebin}:${PATH}" FAKE_CURL_DELAY=0.01 FAKE_CURL_TRACK_DIR="${track_dir}" FAKE_RAW_BASE="${raw_base}" FAKE_SUPPORT_ROOT="${support_root}" TLH_REF="stage0-fetch-ref" TLH_RAW_BASE="${raw_base}" _TLH_STAGE0_CANONICALIZED=1 bash "${stage_root}/install.sh" --no-settings --agent-dir "${optional_case_dir}/agent" --bin-dir "${optional_case_dir}/bin" >"${stdout_file}" 2>"${stderr_file}"
+  status=$?
+  set -e
+  combine_output "${stdout_file}" "${stderr_file}" "${combined_file}"
+
+  if [[ "${status}" -ne 0 ]]; then
+    cat "${combined_file}" >&2
+    fail "stage-0 optional remote support miss unexpectedly failed"
+  fi
+  assert_contains "${combined_file}" "tlh update support script not found for ref stage0-fetch-ref; the wrapper update helper will be unavailable"
+  assert_contains "${combined_file}" "fake_stage1=ok"
+  assert_absent "${optional_case_dir}/agent"
+  assert_absent "${optional_case_dir}/bin"
+}
+
 run_stale_stage0_manifest_compatibility_smoke() {
   log "Running stale stage-0 manifest compatibility smoke check..."
   local case_dir="${TMP_ROOT}/stale-stage0-manifest-compat"
@@ -225,7 +312,7 @@ run_stale_stage0_manifest_compatibility_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs'
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs'
   mkdir -p "${case_dir}" "${home_dir}"
 
   make_support_copy_curl "${fakebin}"
@@ -238,7 +325,6 @@ run_stale_stage0_manifest_compatibility_smoke() {
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_contains "${combined_file}" "compat_librarian_present=true"
   assert_contains "${combined_file}" "compat_query_present=true"
-  assert_contains "${combined_file}" "compat_profile_writes_present=true"
   assert_contains "${combined_file}" "stale_poison_present=false"
   assert_absent "${agent_dir}"
   assert_absent "${bin_dir}"
@@ -259,7 +345,7 @@ run_stage0_canonical_handoff_smoke() {
   local stderr_file="${case_dir}/stderr.log"
   local combined_file="${case_dir}/combined.log"
   local raw_base="https://example.invalid/current-main"
-  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|scripts/lib/tlh-profile-writes.mjs\nrequired|poison/stale-stage0-only.txt'
+  local stale_manifest=$'required|config/librarian.defaults.json\nrequired|scripts/tlh-install-query.mjs\nrequired|poison/stale-stage0-only.txt'
   mkdir -p "${case_dir}" "${home_dir}"
 
   make_support_copy_curl "${fakebin}"
@@ -273,7 +359,6 @@ run_stage0_canonical_handoff_smoke() {
   assert_contains "${combined_file}" "fake_stage1=ok"
   assert_contains "${combined_file}" "compat_librarian_present=false"
   assert_contains "${combined_file}" "compat_query_present=false"
-  assert_contains "${combined_file}" "compat_profile_writes_present=false"
   assert_contains "${combined_file}" "stale_poison_present=false"
   assert_not_contains "${combined_file}" "stale-stage0-only.txt"
   assert_absent "${agent_dir}"
