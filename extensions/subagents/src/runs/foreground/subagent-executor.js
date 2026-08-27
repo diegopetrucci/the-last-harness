@@ -3761,6 +3761,260 @@ function duplicateSubagentCallResult(params) {
         details: { mode: inferExecutionMode(params), results: [] },
     };
 }
+function executeDoctorAction(params, requestCwd, ctx, deps) {
+    let currentSessionFile = null;
+    let currentSessionId = deps.state.currentSessionId;
+    let sessionError;
+    try {
+        currentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
+        currentSessionId = ctx.sessionManager.getSessionId();
+    }
+    catch (error) {
+        sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    }
+    let orchestratorTarget;
+    try {
+        orchestratorTarget = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
+    }
+    catch (error) {
+        if (!sessionError)
+            sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    }
+    return {
+        content: [
+            {
+                type: "text",
+                text: buildDoctorReport({
+                    cwd: requestCwd,
+                    config: deps.config,
+                    state: deps.state,
+                    context: params.context,
+                    requestedSessionDir: params.sessionDir,
+                    currentSessionFile,
+                    currentSessionId,
+                    orchestratorTarget,
+                    sessionError,
+                    expandTilde: deps.expandTilde,
+                }),
+            },
+        ],
+        details: { mode: "management", results: [] },
+    };
+}
+function executeStatusAction(params, ctx, deps) {
+    const targetRunId = params.id;
+    const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+    if (params.view === "fleet") {
+        return inspectSubagentStatus(buildRunStatusParams(params), {
+            state: deps.state,
+            sessionRoots,
+        });
+    }
+    if (targetRunId) {
+        try {
+            const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
+            if (resolved?.kind === "foreground") {
+                const foreground = getForegroundControl(deps.state, resolved.id);
+                if (foreground) {
+                    if (params.view === "transcript") {
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+                                },
+                            ],
+                            details: { mode: "management", results: [] },
+                        };
+                    }
+                    return foregroundStatusResult(foreground);
+                }
+            }
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: message }],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
+    }
+    else {
+        const foreground = getForegroundControl(deps.state, undefined);
+        if (foreground && params.view !== "transcript")
+            return foregroundStatusResult(foreground);
+        if (foreground && params.view === "transcript") {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+                    },
+                ],
+                details: { mode: "management", results: [] },
+            };
+        }
+    }
+    return inspectSubagentStatus(buildRunStatusParams(params), {
+        state: deps.state,
+        sessionRoots,
+    });
+}
+function executeSteerAction(params, ctx, deps) {
+    deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+    const message = (params.message ?? params.task ?? "").trim();
+    if (!message)
+        return {
+            content: [{ type: "text", text: "action='steer' requires message." }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    const targetRunId = params.id;
+    if (params.dir) {
+        try {
+            const location = resolveAsyncRunLocation(params, ASYNC_DIR, RESULTS_DIR);
+            const runId = location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? params.dir);
+            return steerAsyncRun({
+                state: deps.state,
+                runId,
+                message,
+                index: params.index,
+                kill: deps.kill,
+                location,
+            });
+        }
+        catch (error) {
+            const text = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text }],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
+    }
+    if (!targetRunId)
+        return {
+            content: [{ type: "text", text: "action='steer' requires id or dir." }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    let resolved;
+    try {
+        resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
+    }
+    catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    }
+    if (resolved?.kind === "nested")
+        return steerNestedRun({ target: resolved, message, index: params.index });
+    if (resolved?.kind === "foreground")
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs.",
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    if (resolved?.kind !== "async")
+        return {
+            content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    return steerAsyncRun({
+        state: deps.state,
+        runId: resolved.id,
+        message,
+        index: params.index,
+        kill: deps.kill,
+        location: resolved.location,
+    });
+}
+function executeInterruptAction(params, deps) {
+    const targetRunId = params.id;
+    const rememberedPaused = resolveRememberedForegroundRun(params, deps.state);
+    if (rememberedPaused?.child.status === "paused" &&
+        rememberedPaused.child.pause &&
+        !getForegroundControl(deps.state, rememberedPaused.run.runId)) {
+        const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
+        if (fs.existsSync(pausedAsyncDir))
+            return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, rememberedPaused.run.runId, rememberedPaused.index);
+    }
+    let resolved;
+    if (targetRunId) {
+        try {
+            resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: message }],
+                isError: true,
+                details: { mode: "management", results: [] },
+            };
+        }
+    }
+    if (resolved?.kind === "nested")
+        return interruptNestedRun(resolved);
+    const foreground = getForegroundControl(deps.state, resolved?.kind === "foreground" ? resolved.id : targetRunId);
+    if (foreground) {
+        if (requestForegroundInterrupt(foreground)) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `Interrupt requested for foreground run ${foreground.runId}.`,
+                    },
+                ],
+                details: { mode: "management", results: [] },
+            };
+        }
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
+                },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+        };
+    }
+    if (resolved?.kind === "foreground") {
+        const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
+        const persistedStatus = readStatus(pausedAsyncDir);
+        if (persistedStatus?.state === "paused" ||
+            persistedStatus?.state === "continued" ||
+            persistedStatus?.state === "cancelled") {
+            return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, resolved.id, params.index);
+        }
+    }
+    if (resolved?.kind === "async" && resolved.location.asyncDir) {
+        const persistedStatus = readStatus(resolved.location.asyncDir);
+        if (persistedStatus?.state === "paused" ||
+            persistedStatus?.state === "continued" ||
+            persistedStatus?.state === "cancelled") {
+            return cancelPersistedPausedForegroundRun(deps.state, resolved.location.asyncDir, resolved.id, params.index);
+        }
+    }
+    const asyncInterruptResult = interruptAsyncRun(deps.state, resolved?.kind === "async" ? resolved.id : targetRunId, deps.kill, resolved?.kind === "async" ? resolved.location : undefined);
+    if (asyncInterruptResult)
+        return asyncInterruptResult;
+    return {
+        content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
+        isError: true,
+        details: { mode: "management", results: [] },
+    };
+}
 export function createSubagentExecutor(deps) {
     const execute = async (_id, params, signal, onUpdate, ctx) => {
         deps.state.baseCwd = ctx.cwd;
@@ -3775,266 +4029,17 @@ export function createSubagentExecutor(deps) {
             return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);
         const action = paramsWithResolvedCwd.action;
         if (action) {
-            if (action === "doctor") {
-                let currentSessionFile = null;
-                let currentSessionId = deps.state.currentSessionId;
-                let sessionError;
-                try {
-                    currentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-                    currentSessionId = ctx.sessionManager.getSessionId();
-                }
-                catch (error) {
-                    sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-                }
-                let orchestratorTarget;
-                try {
-                    orchestratorTarget = resolveIntercomSessionTarget(deps.pi.getSessionName(), ctx.sessionManager.getSessionId());
-                }
-                catch (error) {
-                    if (!sessionError)
-                        sessionError =
-                            error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-                }
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: buildDoctorReport({
-                                cwd: requestCwd,
-                                config: deps.config,
-                                state: deps.state,
-                                context: paramsWithResolvedCwd.context,
-                                requestedSessionDir: paramsWithResolvedCwd.sessionDir,
-                                currentSessionFile,
-                                currentSessionId,
-                                orchestratorTarget,
-                                sessionError,
-                                expandTilde: deps.expandTilde,
-                            }),
-                        },
-                    ],
-                    details: { mode: "management", results: [] },
-                };
-            }
-            if (action === "status") {
-                const targetRunId = paramsWithResolvedCwd.id;
-                const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
-                if (paramsWithResolvedCwd.view === "fleet") {
-                    return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
-                        state: deps.state,
-                        sessionRoots,
-                    });
-                }
-                if (targetRunId) {
-                    try {
-                        const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
-                        if (resolved?.kind === "foreground") {
-                            const foreground = getForegroundControl(deps.state, resolved.id);
-                            if (foreground) {
-                                if (paramsWithResolvedCwd.view === "transcript") {
-                                    return {
-                                        content: [
-                                            {
-                                                type: "text",
-                                                text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
-                                            },
-                                        ],
-                                        details: { mode: "management", results: [] },
-                                    };
-                                }
-                                return foregroundStatusResult(foreground);
-                            }
-                        }
-                    }
-                    catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: "text", text: message }],
-                            isError: true,
-                            details: { mode: "management", results: [] },
-                        };
-                    }
-                }
-                else {
-                    const foreground = getForegroundControl(deps.state, undefined);
-                    if (foreground && paramsWithResolvedCwd.view !== "transcript")
-                        return foregroundStatusResult(foreground);
-                    if (foreground && paramsWithResolvedCwd.view === "transcript") {
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
-                                },
-                            ],
-                            details: { mode: "management", results: [] },
-                        };
-                    }
-                }
-                return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
-                    state: deps.state,
-                    sessionRoots,
-                });
-            }
+            if (action === "doctor")
+                return executeDoctorAction(paramsWithResolvedCwd, requestCwd, ctx, deps);
+            if (action === "status")
+                return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
             if (action === "resume") {
                 return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
             }
-            if (action === "steer") {
-                deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-                const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
-                if (!message)
-                    return {
-                        content: [{ type: "text", text: "action='steer' requires message." }],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                const targetRunId = paramsWithResolvedCwd.id;
-                if (paramsWithResolvedCwd.dir) {
-                    try {
-                        const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
-                        const runId = location.resolvedId ??
-                            targetRunId ??
-                            path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-                        return steerAsyncRun({
-                            state: deps.state,
-                            runId,
-                            message,
-                            index: paramsWithResolvedCwd.index,
-                            kill: deps.kill,
-                            location,
-                        });
-                    }
-                    catch (error) {
-                        const text = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: "text", text }],
-                            isError: true,
-                            details: { mode: "management", results: [] },
-                        };
-                    }
-                }
-                if (!targetRunId)
-                    return {
-                        content: [{ type: "text", text: "action='steer' requires id or dir." }],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                let resolved;
-                try {
-                    resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
-                }
-                catch (error) {
-                    const text = error instanceof Error ? error.message : String(error);
-                    return {
-                        content: [{ type: "text", text }],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                }
-                if (resolved?.kind === "nested")
-                    return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
-                if (resolved?.kind === "foreground")
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs.",
-                            },
-                        ],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                if (resolved?.kind !== "async")
-                    return {
-                        content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                return steerAsyncRun({
-                    state: deps.state,
-                    runId: resolved.id,
-                    message,
-                    index: paramsWithResolvedCwd.index,
-                    kill: deps.kill,
-                    location: resolved.location,
-                });
-            }
-            if (action === "interrupt") {
-                const targetRunId = paramsWithResolvedCwd.id;
-                const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
-                if (rememberedPaused?.child.status === "paused" &&
-                    rememberedPaused.child.pause &&
-                    !getForegroundControl(deps.state, rememberedPaused.run.runId)) {
-                    const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
-                    if (fs.existsSync(pausedAsyncDir))
-                        return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, rememberedPaused.run.runId, rememberedPaused.index);
-                }
-                let resolved;
-                if (targetRunId) {
-                    try {
-                        resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
-                    }
-                    catch (error) {
-                        const message = error instanceof Error ? error.message : String(error);
-                        return {
-                            content: [{ type: "text", text: message }],
-                            isError: true,
-                            details: { mode: "management", results: [] },
-                        };
-                    }
-                }
-                if (resolved?.kind === "nested")
-                    return interruptNestedRun(resolved);
-                const foreground = getForegroundControl(deps.state, resolved?.kind === "foreground" ? resolved.id : targetRunId);
-                if (foreground) {
-                    if (requestForegroundInterrupt(foreground)) {
-                        return {
-                            content: [
-                                {
-                                    type: "text",
-                                    text: `Interrupt requested for foreground run ${foreground.runId}.`,
-                                },
-                            ],
-                            details: { mode: "management", results: [] },
-                        };
-                    }
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
-                            },
-                        ],
-                        isError: true,
-                        details: { mode: "management", results: [] },
-                    };
-                }
-                if (resolved?.kind === "foreground") {
-                    const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
-                    const persistedStatus = readStatus(pausedAsyncDir);
-                    if (persistedStatus?.state === "paused" ||
-                        persistedStatus?.state === "continued" ||
-                        persistedStatus?.state === "cancelled") {
-                        return cancelPersistedPausedForegroundRun(deps.state, pausedAsyncDir, resolved.id, paramsWithResolvedCwd.index);
-                    }
-                }
-                if (resolved?.kind === "async" && resolved.location.asyncDir) {
-                    const persistedStatus = readStatus(resolved.location.asyncDir);
-                    if (persistedStatus?.state === "paused" ||
-                        persistedStatus?.state === "continued" ||
-                        persistedStatus?.state === "cancelled") {
-                        return cancelPersistedPausedForegroundRun(deps.state, resolved.location.asyncDir, resolved.id, paramsWithResolvedCwd.index);
-                    }
-                }
-                const asyncInterruptResult = interruptAsyncRun(deps.state, resolved?.kind === "async" ? resolved.id : targetRunId, deps.kill, resolved?.kind === "async" ? resolved.location : undefined);
-                if (asyncInterruptResult)
-                    return asyncInterruptResult;
-                return {
-                    content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
-                    isError: true,
-                    details: { mode: "management", results: [] },
-                };
-            }
+            if (action === "steer")
+                return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
+            if (action === "interrupt")
+                return executeInterruptAction(paramsWithResolvedCwd, deps);
             if (!SUBAGENT_ACTIONS.includes(action)) {
                 return {
                     content: [
