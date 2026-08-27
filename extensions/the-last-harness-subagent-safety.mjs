@@ -77,14 +77,6 @@ export function readEnabledExperimentalFeatures(config) {
   return normalizeEnabledExperimentalFeatures(config.enabledFeatures);
 }
 
-export function isExperimentalFeatureEnabled(config, featureId) {
-  const normalizedFeatureId = normalizeExperimentalFeatureId(featureId);
-  return (
-    Boolean(normalizedFeatureId) &&
-    readEnabledExperimentalFeatures(config).includes(normalizedFeatureId)
-  );
-}
-
 export function allowedSubagentsForExperimentalConfig(_config) {
   return DEFAULT_ALLOWED_SUBAGENTS;
 }
