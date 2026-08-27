@@ -200,6 +200,82 @@ test("provider-aware model resolver follows active Anthropic provider for non-re
   assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
 });
 
+test("provider-aware model resolver follows ordered candidates for an active custom provider", () => {
+  const customProviderAgent = {
+    name: "custom-provider-developer",
+    tlhModelDefaults: [
+      {
+        provider: "google",
+        models: [
+          { provider: "google", id: "gemini-unavailable" },
+          { provider: "google", id: "gemini-available" },
+        ],
+        effort: "high",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const customAgents = new Map([[customProviderAgent.name, customProviderAgent]]);
+  const available = [
+    { provider: "google", id: "gemini-available" },
+    { provider: "openai-codex", id: "gpt-family-fallback" },
+  ];
+
+  assert.equal(
+    selectedProviderModelId(customProviderAgent, available, "google"),
+    "google/gemini-available",
+  );
+  const input = { agent: customProviderAgent.name, task: "Implement the ticket" };
+  assert.equal(applyProviderAwareSubagentModels(input, customAgents, available, "google"), 1);
+  assert.equal(input.model, "google/gemini-available:high");
+});
+
+test("provider-aware model resolver does not use custom defaults for unrelated providers", () => {
+  const customProviderAgent = {
+    name: "custom-provider-only",
+    tlhModelDefaults: [
+      {
+        provider: "google",
+        models: [{ provider: "google", id: "gemini-available" }],
+        effort: "high",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const customAgents = new Map([[customProviderAgent.name, customProviderAgent]]);
+  const available = [{ provider: "google", id: "gemini-available" }];
+
+  for (const currentProvider of ["anthropic", "unrelated-provider"]) {
+    assert.equal(
+      selectedProviderModelId(customProviderAgent, available, currentProvider),
+      undefined,
+    );
+    const input = { agent: customProviderAgent.name, task: "Implement the ticket" };
+    assert.equal(
+      applyProviderAwareSubagentModels(input, customAgents, available, currentProvider),
+      0,
+    );
+    assert.equal(input.model, undefined);
+  }
+
+  const oppositeAgent = {
+    ...customProviderAgent,
+    name: "custom-provider-reviewer",
+    preferOppositeProvider: true,
+  };
+  const oppositeInput = { agent: oppositeAgent.name, task: "Review the diff" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      oppositeInput,
+      new Map([[oppositeAgent.name, oppositeAgent]]),
+      available,
+      "google",
+    ),
+    0,
+  );
+  assert.equal(oppositeInput.model, undefined);
+});
+
 test("provider-aware model resolver follows active provider for non-review subagents when both providers are available", () => {
   const available = [...anthropicAvailable, ...codexAvailable];
 

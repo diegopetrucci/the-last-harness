@@ -150,6 +150,23 @@ function currentProviderAnthropicCandidate(agent, availableModels, currentProvid
     const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find((candidate) => candidate.provider === currentProvider);
     return availableAnthropicCandidate(availableModels, currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined);
 }
+function currentProviderCustomCandidate(agent, availableModels, currentProvider) {
+    if (agent?.tlhModelDefaultsSource !== "frontmatter" ||
+        agent?.preferOppositeProvider ||
+        !currentProvider ||
+        isOpenaiProvider(currentProvider) ||
+        isAnthropicProvider(currentProvider) ||
+        isOpenrouterProvider(currentProvider)) {
+        return undefined;
+    }
+    for (const candidate of agentModelsForProvider(agent, currentProvider)) {
+        const model = findAvailableProviderModel(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+            return model;
+        }
+    }
+    return undefined;
+}
 function selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider, currentModel) {
     if (!agent?.preferOppositeProvider) {
         return undefined;
@@ -221,7 +238,8 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
         return defaultModel;
     }
     const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
-        currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+        currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+        currentProviderCustomCandidate(agent, availableModels, currentProvider);
     if (currentProviderModel) {
         return currentProviderModel;
     }
