@@ -48,7 +48,7 @@ function isPlainObject(value: unknown): value is PlainObject {
 
 export { TLH_SUBAGENT_PROMPTS };
 
-export interface RetiredSubagentPackageCandidate {
+interface RetiredSubagentPackageCandidate {
   source: string;
   identity: string;
 }
@@ -79,7 +79,7 @@ interface RetiredSubagentCleanupConfig {
   ) => PackageManagerRunResult;
 }
 
-export interface RetiredSubagentCleanupResult {
+interface RetiredSubagentCleanupResult {
   uninstalledNpmPackages: string[];
   removedGitPaths: string[];
   plannedNpmPackages: string[];

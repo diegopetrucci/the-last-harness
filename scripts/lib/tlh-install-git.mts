@@ -245,7 +245,7 @@ function writeNpmInstallMarker(markerPath: string, head: string): void {
   }
 }
 
-export function gitOutput(
+function gitOutput(
   config: GitInstallConfig,
   targetDir: string,
   args: string[],
@@ -255,7 +255,7 @@ export function gitOutput(
   return spawnCapture(config, ["git", "-C", targetDir, ...args]).stdout.trim();
 }
 
-export function gitSucceeds(
+function gitSucceeds(
   config: GitInstallConfig,
   targetDir: string,
   args: string[],
@@ -266,7 +266,7 @@ export function gitSucceeds(
   return !result.error && result.status === 0;
 }
 
-export function assertGitRepositoryConfined(
+function assertGitRepositoryConfined(
   config: GitInstallConfig,
   targetDir: string,
   label = "git package checkout",
@@ -321,7 +321,7 @@ export function assertGitSourceTargetSafe(
   }
 }
 
-export function safeGitCheckoutDirForMutation(
+function safeGitCheckoutDirForMutation(
   config: GitInstallConfig,
   targetDir: string,
   label = "git package checkout",
