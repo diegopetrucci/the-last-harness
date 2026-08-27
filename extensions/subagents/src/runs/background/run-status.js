@@ -82,6 +82,85 @@ function formatSteeringSummary(input) {
         parts.push(`last ${new Date(input.lastSteerAt).toISOString()}`);
     return parts.length ? parts.join(", ") : undefined;
 }
+function formatAsyncStepStatusLines(status, step, index, asyncDir, outputPath, privacySafeAwaitingSupervisorLifecycle) {
+    const lines = [];
+    const stepActivityText = step.status === "running"
+        ? formatActivityLabel(step.lastActivityAt, step.activityState)
+        : undefined;
+    const modelThinking = formatModelThinking(step.model, step.thinking);
+    const modelText = modelThinking ? ` (${modelThinking})` : "";
+    const steeringText = formatSteeringSummary(step);
+    const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";
+    const errorText = step.error
+        ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}`
+        : "";
+    const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+    const budgetText = step.turnBudget
+        ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
+        : "";
+    const display = step.label ? `${step.label} (${step.agent})` : step.agent;
+    const phase = step.phase ? `[${step.phase}] ` : "";
+    lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
+    if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
+        const reason = acceptanceRejectionReason(step.acceptance);
+        if (reason)
+            lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
+    }
+    const stepContinuation = lifecycleContinuationForIndex(status, index);
+    const stepClaimed = typeof stepContinuation?.claimToken === "string" && stepContinuation.claimToken.length > 0;
+    if (isPausedAwaitingSupervisorStep(status, step)) {
+        lines.push(`  Pause: awaiting supervisor${step.pause?.summary ? ` (${step.pause.summary})` : ""}`);
+        lines.push("  No child process is running.");
+        if (stepClaimed) {
+            lines.push("  Resume unchanged: unavailable; this paused child is already claimed for continuation.");
+            lines.push("  Resume with guidance: unavailable; this paused child is already claimed for continuation.");
+            lines.push("  Cancel: unavailable while continuation launch is finalizing.");
+        }
+        else {
+            lines.push(`  Resume unchanged: subagent({ action: "resume", id: "${status.runId}", index: ${index} })`);
+            lines.push(`  Resume with guidance: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "Supervisor replied: ..." })`);
+            lines.push(`  Cancel: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`);
+        }
+    }
+    else if (isPausedCohortStep(status, step)) {
+        lines.push("  Pause: cohort pause while another child awaited supervisor.");
+        lines.push(`  Resume child: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "..." })`);
+        lines.push(`  Cancel child: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`);
+    }
+    else if (isPausingLifecycleStep(status, step)) {
+        if (step.pause?.kind === "awaiting_supervisor")
+            lines.push(`  Pause: awaiting supervisor${step.pause.summary ? ` (${step.pause.summary})` : ""}`);
+        else
+            lines.push("  Pause: cohort pause while another child awaited supervisor.");
+        lines.push("  Stopping/reaping child; not resumable yet; check status again.");
+    }
+    if (step.exitCode !== undefined)
+        lines.push(`  Exit code: ${step.exitCode}`);
+    if (step.exitSignal)
+        lines.push(`  Exit signal: ${step.exitSignal}`);
+    if (step.processCleanup) {
+        lines.push(`  Cleanup: ${privacySafeAwaitingSupervisorLifecycle ? formatProtectedLifecycleCleanup(step.processCleanup) : formatOwnedProcessGroupCleanup(step.processCleanup)}`);
+        if (!privacySafeAwaitingSupervisorLifecycle)
+            for (const warning of step.processCleanup.warnings ?? [])
+                lines.push(`  Cleanup warning: ${warning}`);
+    }
+    lines.push(...formatNestedRunStatusLines(step.children, {
+        indent: "  ",
+        commandHints: true,
+        maxLines: 20,
+        redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
+    }));
+    const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
+    if (!privacySafeAwaitingSupervisorLifecycle &&
+        stepOutputPath !== outputPath &&
+        fs.existsSync(stepOutputPath))
+        lines.push(`  Output: ${stepOutputPath}`);
+    if (step.status === "running") {
+        lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
+        lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
+    }
+    return lines;
+}
 function rememberedForegroundChildOutput(child) {
     const outputPath = child.artifactPaths?.outputPath;
     if (outputPath && fs.existsSync(outputPath)) {
@@ -236,6 +315,168 @@ function formatNestedExactStatus(rootRunId, run) {
     lines.push(...formatNestedRunStatusLines(run.children, { indent: "  ", commandHints: true }));
     lines.push("Commands:", `  Status: subagent({ action: "status", id: "${run.id}" })`, `  Interrupt: subagent({ action: "interrupt", id: "${run.id}" })`, `  Resume: subagent({ action: "resume", id: "${run.id}", message: "..." })`, `  Steer: subagent({ action: "steer", id: "${run.id}", message: "..." })`, `  Root status: subagent({ action: "status", id: "${rootRunId}" })`);
     return lines.join("\n");
+}
+function formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation, nestedChildren, nestedWarning, requestedIndex, logPath, eventsPath) {
+    const progressLabel = formatAsyncRunProgressLabel({
+        mode: status.mode,
+        state: status.state,
+        currentStep: status.currentStep,
+        chainStepCount: status.chainStepCount,
+        parallelGroups: status.parallelGroups,
+        steps: (status.steps ?? []).map((step, index) => ({
+            index,
+            agent: step.agent,
+            status: step.status,
+        })),
+    });
+    const started = new Date(status.startedAt).toISOString();
+    const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
+    const statusActivityText = status.state === "running"
+        ? formatActivityLabel(status.lastActivityAt, status.activityState)
+        : undefined;
+    const steeringText = formatSteeringSummary(status);
+    const pausedAwaitingSupervisor = isPausedAwaitingSupervisorStatus(status);
+    const privacySafeAwaitingSupervisorLifecycle = isProtectedPausedLifecycle(status);
+    const lines = [
+        `Run: ${status.runId}`,
+        `State: ${status.state}`,
+        status.error
+            ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : status.error}`
+            : undefined,
+        statusActivityText ? `Activity: ${statusActivityText}` : undefined,
+        steeringText ? `Steering: ${steeringText}` : undefined,
+        `Mode: ${status.mode}`,
+        !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
+            ? `PID: ${status.pid}`
+            : undefined,
+        !privacySafeAwaitingSupervisorLifecycle && status.cwd ? `Cwd: ${status.cwd}` : undefined,
+        `Progress: ${progressLabel}`,
+        status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
+        `Started: ${started}`,
+        `Updated: ${updated}`,
+        status.turnBudget
+            ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})`
+            : undefined,
+        !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${asyncDir}` : undefined,
+        !privacySafeAwaitingSupervisorLifecycle && outputPath ? `Output: ${outputPath}` : undefined,
+        reconciliation.message
+            ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}`
+            : undefined,
+        !privacySafeAwaitingSupervisorLifecycle &&
+            reconciliation.resultPath &&
+            fs.existsSync(reconciliation.resultPath)
+            ? `Result: ${reconciliation.resultPath}`
+            : undefined,
+    ].filter((line) => Boolean(line));
+    for (const [index, step] of (status.steps ?? []).entries())
+        lines.push(...formatAsyncStepStatusLines(status, step, index, asyncDir, outputPath, privacySafeAwaitingSupervisorLifecycle));
+    const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
+    const unattached = nestedChildren.filter((child) => !attached.has(child.id));
+    lines.push(...formatNestedRunStatusLines(unattached, {
+        indent: "",
+        commandHints: true,
+        maxLines: 20,
+        redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
+    }));
+    if (nestedWarning)
+        lines.push(`Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : nestedWarning}`);
+    if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
+        lines.push(`Session: ${status.sessionFile}`);
+    if (status.state === "running")
+        lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
+    if (pausedAwaitingSupervisor && (status.steps?.length ?? 0) <= 1) {
+        lines.push(...formatForegroundSupervisorPauseMessage({
+            headline: "Paused lifecycle actions:",
+            runId: status.runId,
+            agent: status.steps?.[0]?.agent ?? "subagent",
+            requestSummary: status.pause?.summary,
+            claimUnavailable: typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" &&
+                lifecycleContinuationForIndex(status, 0).claimToken.length > 0,
+            index: requestedIndex,
+        }).split("\n"));
+    }
+    else if (pausedAwaitingSupervisor) {
+        lines.push("Paused lifecycle actions are listed per child above.");
+    }
+    else if (status.state === "continued") {
+        lines.push(`Continuation: ${lifecycleContinuationForIndex(status, requestedIndex ?? 0)?.continuationRunId ?? status.lifecycle?.continuation?.continuationRunId ?? "unknown"}`);
+        lines.push("Resume: unavailable; this paused supervisor run already launched its continuation.");
+    }
+    else if (status.state !== "running" && status.state !== "pausing") {
+        lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
+    }
+    if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(logPath))
+        lines.push(`Log: ${logPath}`);
+    if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(eventsPath))
+        lines.push(`Events: ${eventsPath}`);
+    return lines.join("\n");
+}
+function inspectAsyncResultFile(resultPath, params, resolvedId) {
+    try {
+        const raw = fs.readFileSync(resultPath, "utf-8");
+        const data = JSON.parse(raw);
+        if (params.view === "transcript") {
+            try {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: formatAsyncResultTranscript(data, resultPath, {
+                                index: params.index,
+                                lines: params.lines,
+                            }),
+                        },
+                    ],
+                    details: { mode: "single", results: [] },
+                };
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                return {
+                    content: [{ type: "text", text: message }],
+                    isError: true,
+                    details: { mode: "single", results: [] },
+                };
+            }
+        }
+        const status = data.success
+            ? "complete"
+            : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
+                ? data.state
+                : data.state === "paused" || data.exitCode === 0
+                    ? "paused"
+                    : "failed";
+        const runId = data.runId ?? data.id ?? resolvedId;
+        const privacySafeResult = isProtectedPausedLifecycle({
+            state: data.state,
+            pause: data.pause,
+        });
+        const lines = [
+            `Run: ${runId}`,
+            `State: ${status}`,
+            ...(privacySafeResult ? [] : [`Result: ${resultPath}`]),
+        ];
+        const children = Array.isArray(data.results)
+            ? data.results
+            : data.agent
+                ? [{ agent: data.agent, sessionFile: data.sessionFile }]
+                : [];
+        lines.push(formatResumeGuidance(runId, children, data.sessionFile));
+        if (data.summary)
+            lines.push("", privacySafeResult ? "Paused awaiting supervisor." : data.summary);
+        return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: { mode: "single", results: [] },
+        };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Failed to read async result file: ${message}` }],
+            isError: true,
+            details: { mode: "single", results: [] },
+        };
+    }
 }
 export function inspectSubagentStatus(params, deps = {}) {
     const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
@@ -495,249 +736,19 @@ export function inspectSubagentStatus(params, deps = {}) {
                 nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
             }
             const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
-            const progressLabel = formatAsyncRunProgressLabel({
-                mode: status.mode,
-                state: status.state,
-                currentStep: status.currentStep,
-                chainStepCount: status.chainStepCount,
-                parallelGroups: status.parallelGroups,
-                steps: (status.steps ?? []).map((step, index) => ({
-                    index,
-                    agent: step.agent,
-                    status: step.status,
-                })),
-            });
-            const started = new Date(status.startedAt).toISOString();
-            const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
-            const statusActivityText = status.state === "running"
-                ? formatActivityLabel(status.lastActivityAt, status.activityState)
-                : undefined;
-            const steeringText = formatSteeringSummary(status);
-            const pausedAwaitingSupervisor = isPausedAwaitingSupervisorStatus(status);
-            const privacySafeAwaitingSupervisorLifecycle = isProtectedPausedLifecycle(status);
-            const lines = [
-                `Run: ${status.runId}`,
-                `State: ${status.state}`,
-                status.error
-                    ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : status.error}`
-                    : undefined,
-                statusActivityText ? `Activity: ${statusActivityText}` : undefined,
-                steeringText ? `Steering: ${steeringText}` : undefined,
-                `Mode: ${status.mode}`,
-                !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
-                    ? `PID: ${status.pid}`
-                    : undefined,
-                !privacySafeAwaitingSupervisorLifecycle && status.cwd ? `Cwd: ${status.cwd}` : undefined,
-                `Progress: ${progressLabel}`,
-                status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
-                `Started: ${started}`,
-                `Updated: ${updated}`,
-                status.turnBudget
-                    ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})`
-                    : undefined,
-                !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${asyncDir}` : undefined,
-                !privacySafeAwaitingSupervisorLifecycle && outputPath ? `Output: ${outputPath}` : undefined,
-                reconciliation.message
-                    ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}`
-                    : undefined,
-                !privacySafeAwaitingSupervisorLifecycle &&
-                    reconciliation.resultPath &&
-                    fs.existsSync(reconciliation.resultPath)
-                    ? `Result: ${reconciliation.resultPath}`
-                    : undefined,
-            ].filter((line) => Boolean(line));
-            for (const [index, step] of (status.steps ?? []).entries()) {
-                const stepActivityText = step.status === "running"
-                    ? formatActivityLabel(step.lastActivityAt, step.activityState)
-                    : undefined;
-                const modelThinking = formatModelThinking(step.model, step.thinking);
-                const modelText = modelThinking ? ` (${modelThinking})` : "";
-                const steeringText = formatSteeringSummary(step);
-                const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";
-                const errorText = step.error
-                    ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}`
-                    : "";
-                const acceptanceText = step.acceptance?.status
-                    ? `, acceptance: ${step.acceptance.status}`
-                    : "";
-                const budgetText = step.turnBudget
-                    ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
-                    : "";
-                const display = step.label ? `${step.label} (${step.agent})` : step.agent;
-                const phase = step.phase ? `[${step.phase}] ` : "";
-                lines.push(`${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`);
-                if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
-                    const reason = acceptanceRejectionReason(step.acceptance);
-                    if (reason)
-                        lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
-                }
-                const stepContinuation = lifecycleContinuationForIndex(status, index);
-                const stepClaimed = typeof stepContinuation?.claimToken === "string" &&
-                    stepContinuation.claimToken.length > 0;
-                if (isPausedAwaitingSupervisorStep(status, step)) {
-                    lines.push(`  Pause: awaiting supervisor${step.pause?.summary ? ` (${step.pause.summary})` : ""}`);
-                    lines.push("  No child process is running.");
-                    if (stepClaimed) {
-                        lines.push("  Resume unchanged: unavailable; this paused child is already claimed for continuation.");
-                        lines.push("  Resume with guidance: unavailable; this paused child is already claimed for continuation.");
-                        lines.push("  Cancel: unavailable while continuation launch is finalizing.");
-                    }
-                    else {
-                        lines.push(`  Resume unchanged: subagent({ action: "resume", id: "${status.runId}", index: ${index} })`);
-                        lines.push(`  Resume with guidance: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "Supervisor replied: ..." })`);
-                        lines.push(`  Cancel: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`);
-                    }
-                }
-                else if (isPausedCohortStep(status, step)) {
-                    lines.push("  Pause: cohort pause while another child awaited supervisor.");
-                    lines.push(`  Resume child: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "..." })`);
-                    lines.push(`  Cancel child: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`);
-                }
-                else if (isPausingLifecycleStep(status, step)) {
-                    if (step.pause?.kind === "awaiting_supervisor")
-                        lines.push(`  Pause: awaiting supervisor${step.pause.summary ? ` (${step.pause.summary})` : ""}`);
-                    else
-                        lines.push("  Pause: cohort pause while another child awaited supervisor.");
-                    lines.push("  Stopping/reaping child; not resumable yet; check status again.");
-                }
-                if (step.exitCode !== undefined)
-                    lines.push(`  Exit code: ${step.exitCode}`);
-                if (step.exitSignal)
-                    lines.push(`  Exit signal: ${step.exitSignal}`);
-                if (step.processCleanup) {
-                    lines.push(`  Cleanup: ${privacySafeAwaitingSupervisorLifecycle ? formatProtectedLifecycleCleanup(step.processCleanup) : formatOwnedProcessGroupCleanup(step.processCleanup)}`);
-                    if (!privacySafeAwaitingSupervisorLifecycle)
-                        for (const warning of step.processCleanup.warnings ?? [])
-                            lines.push(`  Cleanup warning: ${warning}`);
-                }
-                lines.push(...formatNestedRunStatusLines(step.children, {
-                    indent: "  ",
-                    commandHints: true,
-                    maxLines: 20,
-                    redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
-                }));
-                const stepOutputPath = path.join(asyncDir, `output-${index}.log`);
-                if (!privacySafeAwaitingSupervisorLifecycle &&
-                    stepOutputPath !== outputPath &&
-                    fs.existsSync(stepOutputPath))
-                    lines.push(`  Output: ${stepOutputPath}`);
-                if (step.status === "running") {
-                    lines.push(`  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`);
-                    lines.push(`  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`);
-                }
-            }
-            const attached = new Set((status.steps ?? []).flatMap((step) => step.children?.map((child) => child.id) ?? []));
-            const unattached = nestedChildren.filter((child) => !attached.has(child.id));
-            lines.push(...formatNestedRunStatusLines(unattached, {
-                indent: "",
-                commandHints: true,
-                maxLines: 20,
-                redactSensitiveDetails: privacySafeAwaitingSupervisorLifecycle,
-            }));
-            if (nestedWarning)
-                lines.push(`Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : nestedWarning}`);
-            if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
-                lines.push(`Session: ${status.sessionFile}`);
-            if (status.state === "running")
-                lines.push(`Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`);
-            if (pausedAwaitingSupervisor && (status.steps?.length ?? 0) <= 1) {
-                lines.push(...formatForegroundSupervisorPauseMessage({
-                    headline: "Paused lifecycle actions:",
-                    runId: status.runId,
-                    agent: status.steps?.[0]?.agent ?? "subagent",
-                    requestSummary: status.pause?.summary,
-                    claimUnavailable: typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" &&
-                        lifecycleContinuationForIndex(status, 0).claimToken.length > 0,
-                    index: params.index,
-                }).split("\n"));
-            }
-            else if (pausedAwaitingSupervisor) {
-                lines.push("Paused lifecycle actions are listed per child above.");
-            }
-            else if (status.state === "continued") {
-                lines.push(`Continuation: ${lifecycleContinuationForIndex(status, params.index ?? 0)?.continuationRunId ?? status.lifecycle?.continuation?.continuationRunId ?? "unknown"}`);
-                lines.push("Resume: unavailable; this paused supervisor run already launched its continuation.");
-            }
-            else if (status.state !== "running" && status.state !== "pausing") {
-                lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
-            }
-            if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(logPath))
-                lines.push(`Log: ${logPath}`);
-            if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(eventsPath))
-                lines.push(`Events: ${eventsPath}`);
             return {
-                content: [{ type: "text", text: lines.join("\n") }],
+                content: [
+                    {
+                        type: "text",
+                        text: formatDetailedAsyncStatus(status, asyncDir, outputPath, reconciliation, nestedChildren, nestedWarning, params.index, logPath, eventsPath),
+                    },
+                ],
                 details: { mode: "single", results: [] },
             };
         }
     }
-    if (resultPath) {
-        try {
-            const raw = fs.readFileSync(resultPath, "utf-8");
-            const data = JSON.parse(raw);
-            if (params.view === "transcript") {
-                try {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: formatAsyncResultTranscript(data, resultPath, {
-                                    index: params.index,
-                                    lines: params.lines,
-                                }),
-                            },
-                        ],
-                        details: { mode: "single", results: [] },
-                    };
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    return {
-                        content: [{ type: "text", text: message }],
-                        isError: true,
-                        details: { mode: "single", results: [] },
-                    };
-                }
-            }
-            const status = data.success
-                ? "complete"
-                : data.state === "cancelled" || data.state === "continued" || data.state === "pausing"
-                    ? data.state
-                    : data.state === "paused" || data.exitCode === 0
-                        ? "paused"
-                        : "failed";
-            const runId = data.runId ?? data.id ?? resolvedId;
-            const privacySafeResult = isProtectedPausedLifecycle({
-                state: data.state,
-                pause: data.pause,
-            });
-            const lines = [
-                `Run: ${runId}`,
-                `State: ${status}`,
-                ...(privacySafeResult ? [] : [`Result: ${resultPath}`]),
-            ];
-            const children = Array.isArray(data.results)
-                ? data.results
-                : data.agent
-                    ? [{ agent: data.agent, sessionFile: data.sessionFile }]
-                    : [];
-            lines.push(formatResumeGuidance(runId, children, data.sessionFile));
-            if (data.summary)
-                lines.push("", privacySafeResult ? "Paused awaiting supervisor." : data.summary);
-            return {
-                content: [{ type: "text", text: lines.join("\n") }],
-                details: { mode: "single", results: [] },
-            };
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Failed to read async result file: ${message}` }],
-                isError: true,
-                details: { mode: "single", results: [] },
-            };
-        }
-    }
+    if (resultPath)
+        return inspectAsyncResultFile(resultPath, params, resolvedId);
     return {
         content: [{ type: "text", text: "Status file not found." }],
         isError: true,
