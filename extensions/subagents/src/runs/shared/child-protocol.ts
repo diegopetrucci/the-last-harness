@@ -375,15 +375,19 @@ export function boundChildStderrError(
 }
 
 function trimBufferToUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
-  if (buffer.length <= maxBytes) return buffer;
-  let end = Math.max(0, maxBytes);
+  const limit = Math.min(buffer.length, Math.max(0, maxBytes));
+  if (limit === 0) return buffer.subarray(0, 0);
+  let end = limit;
   while (end > 0 && (buffer[end - 1]! & 0xc0) === 0x80) end--;
-  if (end > 0) {
-    const lead = buffer[end - 1]!;
-    const width = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : 2;
+  if (end === 0) return buffer.subarray(0, 0);
+  const lead = buffer[end - 1]!;
+  const width = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : 2;
+  if (end === limit) {
+    if (width > 1) end--;
+  } else {
     const codePointEnd = end - 1 + width;
-    if (codePointEnd > maxBytes) end--;
-    else if (codePointEnd === maxBytes) end = maxBytes;
+    if (codePointEnd > limit) end--;
+    else if (codePointEnd === limit) end = limit;
   }
   return buffer.subarray(0, end);
 }
@@ -549,23 +553,26 @@ export function createBoundedBytePrefix(maxBytes = MAX_CHILD_RAW_STDOUT_BYTES): 
     throw new Error("maxBytes must be a positive integer.");
   }
   let prefix: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  let capturedBytes = 0;
   let totalBytes = 0;
   let truncated = false;
+  const completePrefix = (): Buffer => trimBufferToUtf8Prefix(prefix, maxBytes);
   return {
     push(chunk) {
       const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
       totalBytes = Math.min(Number.MAX_SAFE_INTEGER, totalBytes + bytes.length);
-      if (prefix.length >= maxBytes) {
+      if (capturedBytes >= maxBytes) {
         if (bytes.length > 0) truncated = true;
         return;
       }
-      const remaining = maxBytes - prefix.length;
+      const remaining = maxBytes - capturedBytes;
       if (bytes.length > remaining) truncated = true;
       const addition = bytes.subarray(0, remaining);
-      prefix = trimBufferToUtf8Prefix(Buffer.concat([prefix, addition]), maxBytes);
+      prefix = Buffer.concat([prefix, addition]);
+      capturedBytes += addition.length;
     },
-    text: () => prefix.toString("utf8"),
-    byteLength: () => prefix.length,
+    text: () => completePrefix().toString("utf8"),
+    byteLength: () => completePrefix().length,
     totalByteLength: () => totalBytes,
     wasTruncated: () => truncated,
     maxBytes: () => maxBytes,

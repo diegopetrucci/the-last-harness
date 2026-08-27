@@ -248,6 +248,51 @@ describe("bounded child diagnostics", () => {
     assert.equal(MAX_CHILD_STDERR_LINE_BYTES, 64 * 1024);
   });
 
+  it("retains a complete UTF-8 code point ending exactly at the raw stdout cap", () => {
+    const prefix = createBoundedBytePrefix(6);
+    const input = "xx😀 later";
+    prefix.push(input);
+
+    assert.equal(prefix.text(), "xx😀");
+    assert.equal(prefix.byteLength(), 6);
+    assert.equal(prefix.totalByteLength(), Buffer.byteLength(input, "utf8"));
+    assert.equal(prefix.wasTruncated(), true);
+    assert.equal(prefix.text().includes("�"), false);
+  });
+
+  it("omits a UTF-8 code point split by the raw stdout cap without replacement", () => {
+    const prefix = createBoundedBytePrefix(6);
+    const input = "xxx😀 later";
+    prefix.push(input);
+    prefix.push("tail");
+
+    assert.equal(prefix.text(), "xxx");
+    assert.equal(prefix.byteLength(), 3);
+    assert.equal(
+      prefix.totalByteLength(),
+      Buffer.byteLength(input, "utf8") + Buffer.byteLength("tail", "utf8"),
+    );
+    assert.equal(prefix.wasTruncated(), true);
+    assert.equal(prefix.text().includes("�"), false);
+  });
+
+  it("keeps split UTF-8 bytes out of raw stdout text when chunks meet the cap", () => {
+    const prefix = createBoundedBytePrefix(6);
+    const input = Buffer.from("xxx😀tail", "utf8");
+
+    prefix.push(input.subarray(0, 6));
+    assert.equal(prefix.text(), "xxx");
+    assert.equal(prefix.byteLength(), 3);
+    assert.equal(prefix.totalByteLength(), 6);
+    assert.equal(prefix.wasTruncated(), false);
+
+    prefix.push(input.subarray(6));
+    assert.equal(prefix.text(), "xxx");
+    assert.equal(prefix.totalByteLength(), input.length);
+    assert.equal(prefix.wasTruncated(), true);
+    assert.equal(prefix.text().includes("�"), false);
+  });
+
   it("keeps the bounded message ledger synchronized through evictions", () => {
     const messages: Message[] = [];
     const ledger = { bytes: 0, sizes: [] };
