@@ -2,11 +2,15 @@
 name: diff-summarizer
 description: Summarizes the current VCS diff and highlights review risk hotspots.
 tools: read, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.6-luna
-tlhAnthropicModels: anthropic/claude-haiku-4-5
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: medium
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: medium
+  - provider: anthropic
+    models: [claude-haiku-4-5]
+    effort: high
+  - provider: openrouter
+    effort: high
 toolBudget: {"soft":12,"hard":20}
 systemPromptMode: replace
 inheritProjectContext: true

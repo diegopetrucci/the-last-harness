@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { Compile } from "typebox/compile";
 export const STRUCTURED_OUTPUT_SCHEMA_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA";
 export const STRUCTURED_OUTPUT_CAPTURE_ENV = "PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE";
+export const STRUCTURED_OUTPUT_TOOL_NAME = "structured_output";
 export function assertJsonSchemaObject(schema, label = "outputSchema") {
     if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
         throw new Error(`${label} must be a JSON Schema object.`);

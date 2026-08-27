@@ -15,6 +15,7 @@ import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
 import {
   STRUCTURED_OUTPUT_CAPTURE_ENV,
   STRUCTURED_OUTPUT_SCHEMA_ENV,
+  STRUCTURED_OUTPUT_TOOL_NAME,
   assertJsonSchemaObject,
   validateStructuredOutputValue,
 } from "./structured-output.ts";
@@ -345,7 +346,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
       additionalProperties: false,
     });
     pi.registerTool({
-      name: "structured_output",
+      name: STRUCTURED_OUTPUT_TOOL_NAME,
       label: "Structured Output",
       description:
         "Submit the required final structured output for this subagent step. This terminates the step.",

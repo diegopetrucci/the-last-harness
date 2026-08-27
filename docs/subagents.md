@@ -12,6 +12,10 @@ TLH copies its eight minor-agent definitions to `<agent-dir>/tlh/agents/subagent
 
 The bundled minor agents are `developer`, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright; only these eight TLH minor agents exist. Stable, always-available user-owned `embedded.<slug>` agents are also available to the architect or disabled primary mode when authorized by the active profile; see [custom-subagents.md](custom-subagents.md).
 
+### Malformed custom-agent handling
+
+A malformed custom markdown definition is isolated during discovery instead of aborting the whole agent set. Definitions that fail validation (for example, missing required frontmatter or invalid package, acceptance-role, execution-limit, or tool-budget values) are skipped while valid peers remain executable. `subagent({ action: "list" })` reports an **Agent load warnings** section with the source path and validation error; requesting a skipped definition reports the same diagnostic when it can identify the file.
+
 ## Dispatch and tool surface
 
 The model-facing `subagent` tool deliberately has a small, fail-closed surface:
@@ -23,6 +27,16 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 - **Execution controls:** `context`, `timeoutMs`, `cwd`, `artifacts`, and `includeProgress`; single runs also accept `output`, `outputMode`, `model`, and `fallbackModels`. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
 
 The runtime capability gate drops a thinking level only when positive registry metadata rules it out: `reasoning: false`, a `null` level mapping, or a present map that omits `xhigh` or `max`. Missing capability metadata and unknown or unresolvable models fail open and still receive the suffix. Already-suffixed model arguments short-circuit before capability checks, and an explicit caller `thinkingOverride` is exempt from the gate. Each drop emits a note naming the level and model.
+
+### Child tool-policy translation
+
+The optional `tools` declaration has three distinct states, and the child CLI is enforced accordingly:
+
+- **Omitted:** no tool restriction flag is passed, so Pi's existing builtin and extension defaults remain available.
+- **Explicit empty or MCP-only:** all tools are disabled with `--no-tools`, except that runtime-required tools are added to an exact allowlist: `read` for lazy skills, `contact_supervisor` for an active supervisor bridge, and `structured_output` when structured output is requested. Entries are deduplicated in stable order.
+- **Named tools:** named entries become an exact `--tools` allowlist; extension paths are registered separately. A declaration containing only extension paths uses `--no-builtin-tools`, leaving those custom tools and runtime extension tools available.
+
+A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
 
 The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; user-owned custom agents remain markdown files managed through the documented profile/project paths.
 
@@ -64,6 +78,8 @@ For built-in agents, an entry keyed by the agent's plain name under `subagents.a
   }
 }
 ```
+
+In config overrides, `"tools": false` clears the override so the agent inherits its normal tool behavior, while `"tools": []` is an explicit no-tools policy.
 
 Set `"skills": false` in the override to disable skills for agents whose frontmatter does NOT declare `skill:` or `skills:`; when the frontmatter declares them, the override is ignored entirely.
 
@@ -196,9 +212,23 @@ Paused/interrupted runs record acceptance as skipped rather than rejected. A con
 
 A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. The native child runtime does not register or advertise an `intercom` fallback, and the parent supervisor tool has no legacy list/send/ask/reply actions. Separately installed external intercom tools remain user-owned and are not overridden when TLH primary-agent filtering is disabled.
 
+### Child protocol and display boundaries
+
+Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
+
+Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
+
 ## Acceptance and artifacts
 
 TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.
+
+Acceptance evaluates and strips the same report candidate; malformed or invalid candidates remain in output. Blank or whitespace-only entries in report evidence arrays are ignored, and review wording such as `must-fix` or `no-fix` does not by itself imply a write task. When a saved deliverable is rejected by acceptance, its saved-output reference remains visible, including in `file-only` mode; ordinary failures, timeouts, and interruptions do not gain that reference. Rejection reasons remain attached even when child diagnostics must be bounded.
+
+### Fallback filtering and retry classification
+
+Fallbacks are filtered conservatively: a fallback is removed only when a complete model catalog identifies it and a non-empty availability snapshot positively excludes it. Unknown models and empty, stale, partial, or errored registry views remain candidates, and the primary model is never filtered. Notices about filtered fallbacks and retries are combined within a bounded display message.
+
+A fallback retry occurs only for classified provider or transient failures, such as rate/usage limits, network or timeout errors, and the specific `stream ended without finish_reason` condition. Deterministic child-tool failures (for example, a command failing with an exit code) are not retried under another model.
 
 Debug artifacts are enabled by default. Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference. Inspect artifacts before retrying a failed or interrupted run; remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
 

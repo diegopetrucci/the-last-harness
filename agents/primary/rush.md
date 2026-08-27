@@ -1,11 +1,15 @@
 ---
 name: rush
 description: Implements small bounded changes directly with narrow validation and optional review when warranted.
-model: anthropic/claude-sonnet-4-6
-tlhOpenaiModels: openai-codex/gpt-5.6-luna
-tlhAnthropicThinking: low
-tlhOpenrouterThinking: low
-tlhOpenaiThinking: medium
+tlhModelDefaults:
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: low
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: medium
+  - provider: openrouter
+    effort: low
 preferCurrentOpenaiModel: true
 applyModel: true
 applyThinking: true

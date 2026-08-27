@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 import {
   appendRuntimeFallbackResolution,
   buildFallbackModelList,
+  buildModelCandidatePlan,
   buildModelCandidates,
+  combineModelFallbackNotices,
   canonicalSubagentModelIdentity,
   fuzzyResolveModel,
   isRetryableModelFailure,
@@ -138,6 +140,198 @@ describe("model fallback helpers", () => {
     );
   });
 
+  it("filters only positively unavailable catalog entries and keeps partial unknowns", () => {
+    const primary = { provider: "openai", id: "primary", fullId: "openai/primary" };
+    const knownUnavailable = {
+      provider: "anthropic",
+      id: "known-backup",
+      fullId: "anthropic/known-backup",
+    };
+    const availableBackup = {
+      provider: "google",
+      id: "available-backup",
+      fullId: "google/available-backup",
+    };
+    const plan = buildModelCandidatePlan(
+      primary.fullId,
+      [knownUnavailable.fullId, "stale/unknown-backup", availableBackup.fullId],
+      [primary, availableBackup],
+      undefined,
+      { registry: { allModels: [primary, knownUnavailable, availableBackup] } },
+    );
+
+    assert.deepEqual(plan.candidates, [
+      primary.fullId,
+      "stale/unknown-backup",
+      availableBackup.fullId,
+    ]);
+    assert.deepEqual(plan.filteredFallbackModels, [knownUnavailable.fullId]);
+    assert.match(plan.filteringNotice ?? "", /provider credentials|fallbackModels/);
+  });
+
+  it("fails open for empty, stale, and missing registry views", () => {
+    const primary = "openai/primary";
+    const fallback = "anthropic/backup";
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: primary },
+      { provider: "anthropic", id: "backup", fullId: fallback },
+    ];
+    for (const registry of [
+      { allModels: [] },
+      { allModels: catalog, error: "availability refresh failed" },
+      undefined,
+    ]) {
+      const plan = buildModelCandidatePlan(
+        primary,
+        [fallback],
+        [],
+        undefined,
+        registry ? { registry } : undefined,
+      );
+      assert.deepEqual(plan.candidates, [primary, fallback]);
+      assert.deepEqual(plan.filteredFallbackModels, []);
+      assert.equal(plan.filteringNotice, undefined);
+    }
+  });
+
+  it("keeps the full configured fallback chain for a populated catalog with empty availability", () => {
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: "openai/primary" },
+      { provider: "anthropic", id: "backup", fullId: "anthropic/backup" },
+    ];
+    const plan = buildModelCandidatePlan(
+      catalog[0]!.fullId,
+      [catalog[1]!.fullId, "stale/unknown-backup"],
+      [],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(plan.candidates, [
+      catalog[0]!.fullId,
+      catalog[1]!.fullId,
+      "stale/unknown-backup",
+    ]);
+    assert.deepEqual(plan.filteredFallbackModels, []);
+    assert.equal(plan.filteringNotice, undefined);
+  });
+
+  it("preserves the primary while filtering every known fallback in a complete catalog", () => {
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: "openai/primary" },
+      { provider: "anthropic", id: "backup-a", fullId: "anthropic/backup-a" },
+      { provider: "google", id: "backup-b", fullId: "google/backup-b" },
+    ];
+    const plan = buildModelCandidatePlan(
+      catalog[0]!.fullId,
+      [catalog[1]!.fullId, catalog[2]!.fullId],
+      [catalog[0]!],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(plan.candidates, [catalog[0]!.fullId]);
+    assert.deepEqual(plan.filteredFallbackModels, [catalog[1]!.fullId, catalog[2]!.fullId]);
+    assert.ok(plan.filteringNotice);
+    assert.ok(plan.filteringNotice!.length <= 240);
+  });
+
+  it("matches qualified ids but retains ambiguous unqualified ids", () => {
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: "openai/primary" },
+      { provider: "openai", id: "backup", fullId: "openai/backup" },
+      { provider: "anthropic", id: "backup", fullId: "anthropic/backup" },
+    ];
+    const plan = buildModelCandidatePlan(
+      "openai/primary",
+      ["openai/backup", "backup"],
+      [catalog[0]!],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(plan.candidates, ["openai/primary", "backup"]);
+    assert.deepEqual(plan.filteredFallbackModels, ["openai/backup"]);
+  });
+
+  it("matches registry ids that contain a colon without losing the fallback suffix", () => {
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: "openai/primary" },
+      { provider: "ollama", id: "qwen3:high", fullId: "ollama/qwen3:high" },
+    ];
+    const plan = buildModelCandidatePlan(
+      catalog[0]!.fullId,
+      [catalog[1]!.fullId],
+      [catalog[0]!],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(plan.candidates, [catalog[0]!.fullId]);
+    assert.deepEqual(plan.filteredFallbackModels, [catalog[1]!.fullId]);
+  });
+
+  it("keeps a dated alias when its normalized dispatch candidate is available", () => {
+    const primary = { provider: "openai", id: "primary", fullId: "openai/primary" };
+    const canonical = {
+      provider: "anthropic",
+      id: "claude-haiku-4-5",
+      fullId: "anthropic/claude-haiku-4-5",
+    };
+    const datedAlias = "anthropic/claude-haiku-4-5-20251001";
+    const plan = buildModelCandidatePlan(
+      primary.fullId,
+      [datedAlias],
+      [primary, canonical],
+      undefined,
+      { registry: { allModels: [primary, canonical] } },
+    );
+    assert.deepEqual(plan.candidates, [primary.fullId, canonical.fullId]);
+    assert.deepEqual(plan.filteredFallbackModels, []);
+    assert.equal(plan.filteringNotice, undefined);
+  });
+
+  it("keeps a preferred-provider bare id when its normalized candidate is available", () => {
+    const primary = { provider: "openai", id: "primary", fullId: "openai/primary" };
+    const openaiModel = { provider: "openai", id: "shared", fullId: "openai/shared" };
+    const preferredModel = {
+      provider: "github-copilot",
+      id: "shared",
+      fullId: "github-copilot/shared",
+    };
+    const plan = buildModelCandidatePlan(
+      primary.fullId,
+      ["shared"],
+      [primary, preferredModel],
+      "github-copilot",
+      { registry: { allModels: [primary, openaiModel, preferredModel] } },
+    );
+    assert.deepEqual(plan.candidates, [primary.fullId, preferredModel.fullId]);
+    assert.deepEqual(plan.filteredFallbackModels, []);
+    assert.equal(plan.filteringNotice, undefined);
+  });
+
+  it("deduplicates duplicate filtered and retained fallback candidates", () => {
+    const catalog = [
+      { provider: "openai", id: "primary", fullId: "openai/primary" },
+      { provider: "anthropic", id: "backup", fullId: "anthropic/backup" },
+    ];
+    const filtered = buildModelCandidatePlan(
+      catalog[0]!.fullId,
+      ["anthropic/backup", "anthropic/backup"],
+      [catalog[0]!],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(filtered.candidates, [catalog[0]!.fullId]);
+    assert.deepEqual(filtered.filteredFallbackModels, ["anthropic/backup"]);
+
+    const retained = buildModelCandidatePlan(
+      catalog[0]!.fullId,
+      ["unknown/backup", "unknown/backup"],
+      [catalog[0]!],
+      undefined,
+      { registry: { allModels: catalog } },
+    );
+    assert.deepEqual(retained.candidates, [catalog[0]!.fullId, "unknown/backup"]);
+  });
+
   it("applies the current provider preference to fallback candidates too", () => {
     const ambiguous = [
       ...availableModels,
@@ -214,6 +408,57 @@ describe("model fallback helpers", () => {
     assert.equal(isRetryableModelFailure("bash failed (exit 1): command not found"), false);
     assert.equal(isRetryableModelFailure("read failed (exit 1): no such file or directory"), false);
     assert.equal(isRetryableModelFailure(undefined), false);
+  });
+
+  it("ports only the verified usage-limit and stream-end retry signals", () => {
+    // Added retry classifications: /usage\\s*limit/i and the exact Pi provider
+    // error /stream ended without finish_reason/i. A generic finish_reason is
+    // intentionally not retryable.
+    assert.equal(isRetryableModelFailure("The usage limit has been reached"), true);
+    assert.equal(isRetryableModelFailure("Stream ended without finish_reason"), true);
+    assert.equal(isRetryableModelFailure("Provider finish_reason: length"), false);
+    assert.equal(isRetryableModelFailure("Provider finish_reason: content_filter"), false);
+    assert.equal(isRetryableModelFailure("Provider finish_reason: network_error"), false);
+    assert.equal(isRetryableModelFailure("provider transport failed"), false);
+    assert.equal(isRetryableModelFailure("usage limit"), true);
+  });
+
+  it("does not retry network-flavored child tool failures", () => {
+    // The tool-failure guard is a classification correction, not a new retry
+    // pattern: retrying another model would rerun the failed task unchanged.
+    assert.equal(
+      isRetryableModelFailure(
+        "bash failed (exit 1): requests.exceptions.ConnectionError: Connection error.",
+      ),
+      false,
+    );
+    assert.equal(isRetryableModelFailure("mcp.server/write failed with exit code 1"), false);
+    assert.equal(isRetryableModelFailure("Provider error: request timed out"), true);
+  });
+
+  it("combines notices within the same bounded display contract", () => {
+    const combined = combineModelFallbackNotices(
+      "Skipped unavailable fallback model (backup). Check provider credentials or update fallbackModels; the primary model was retained.",
+      "Configured review fallback used",
+    );
+    assert.ok(combined);
+    assert.ok(combined!.length <= 240);
+    assert.match(combined!, /Skipped unavailable fallback model/);
+    assert.match(combined!, /provider credentials/);
+
+    const longConfigured = combineModelFallbackNotices("x".repeat(240), combined);
+    assert.ok(longConfigured!.length <= 240);
+    assert.match(longConfigured!, /provider credentials|fallbackModels/);
+
+    const highPriority = `Registry filtering notice ${"detail ".repeat(30)}`;
+    const safeHighPriority = sanitizeModelFallbackNotice(highPriority)!;
+    const droppedFragment = combineModelFallbackNotices(
+      "Configured fallback was used",
+      highPriority,
+    );
+    assert.equal(droppedFragment, safeHighPriority);
+    assert.ok(droppedFragment.length <= 240);
+    assert.doesNotMatch(droppedFragment, /Configured|Config/);
   });
 });
 

@@ -36,11 +36,41 @@ import { reconcileAsyncRun } from "../background/stale-run-reconciler.js";
 import { attachRootChildrenToSteps, resolveInheritedNestedRouteFromEnv, resolveNestedAsyncDir, resolveNestedParentAddressFromEnv, updateForegroundNestedProjection, writeNestedEvent, } from "../shared/nested-events.js";
 import { resolveSubagentRunId } from "../background/run-id-resolver.js";
 import { assessDurableResumeContext, formatDurableResumeContextBlock, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, resolveEffectiveContextWindow, } from "../../shared/context-diagnostics.js";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
 import { inspectSubagentStatus } from "../background/run-status.js";
 import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SUBAGENT_ACTIONS, TEMP_ROOT_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, checkSubagentDepth, resolveTopLevelParallelConcurrency, resolveTopLevelParallelMaxTasks, resolveChildMaxSubagentDepth, resolveCurrentMaxSubagentDepth, wrapForkTask, } from "../../shared/types.js";
 const NESTED_ASYNC_RUNS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-runs");
 const FOREGROUND_LIVE_MESSAGE_INBOXES_DIR = path.join(TEMP_ROOT_DIR, "foreground-live-message-inboxes");
+function readModelRegistrySnapshot(ctx) {
+    const optionalRegistry = ctx.modelRegistry;
+    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    let allModels;
+    let error;
+    if (typeof optionalRegistry.getAll === "function") {
+        try {
+            allModels = optionalRegistry.getAll().map(toModelInfo);
+        }
+        catch {
+            error = "model catalog unavailable";
+        }
+    }
+    if (typeof optionalRegistry.getError === "function") {
+        try {
+            error ??= optionalRegistry.getError();
+        }
+        catch {
+            error = "model availability status unavailable";
+        }
+    }
+    return {
+        availableModels,
+        evidence: {
+            ...(allModels ? { allModels } : {}),
+            ...(error ? { error } : {}),
+        },
+    };
+}
 function resolveRequestedCwd(runtimeCwd, requestedCwd) {
     return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
@@ -2128,7 +2158,12 @@ async function resumeAsyncRun(input) {
     const agentConfig = agents.find((agent) => agent.name === target.agent);
     if (!agentConfig) {
         return {
-            content: [{ type: "text", text: `Unknown agent for resume: ${target.agent}` }],
+            content: [
+                {
+                    type: "text",
+                    text: unknownAgentMessage(target.agent, discovered.agentDiagnostics, "Unknown agent for resume"),
+                },
+            ],
             isError: true,
             details: { mode: "management", results: [] },
         };
@@ -2155,7 +2190,8 @@ async function resumeAsyncRun(input) {
             details: { mode: "management", results: [] },
         };
     }
-    const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
+    const { availableModels } = modelRegistrySnapshot;
     let modelContextWindow;
     if (target.kind === "revive") {
         const selectedModel = explicitResumeModel(input.params.model) ??
@@ -2262,6 +2298,7 @@ async function resumeAsyncRun(input) {
                 ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index)
                 : undefined,
             availableModels,
+            modelRegistry: modelRegistrySnapshot.evidence,
             fallbackModels: input.params.fallbackModels,
             modelFallbackNotice: input.params.modelFallbackNotice,
         });
@@ -2380,16 +2417,16 @@ function resultNoticeForEarlierSuccessfulChainStep(result) {
     return lines.join("\n\n");
 }
 function formatFailedSingleRunOutput(result, displayOutput) {
-    const error = result.error || "Failed";
-    const output = displayOutput.trim();
+    const error = safeTerminalText(result.error || "Failed");
+    const output = safeTerminalText(displayOutput).trim();
     const lines = [error];
     if (output && output !== error.trim()) {
         lines.push("", "Output:", output);
     }
     if (result.artifactPaths?.outputPath) {
-        lines.push("", `Output artifact: ${result.artifactPaths.outputPath}`);
+        lines.push("", `Output artifact: ${safeTerminalText(result.artifactPaths.outputPath)}`);
     }
-    return lines.join("\n");
+    return safeTerminalDocument(lines.join("\n"));
 }
 function createForegroundControlNotifier(data, deps) {
     return (event) => emitControlNotification({
@@ -2452,7 +2489,22 @@ function buildForegroundNativeResult(input) {
         details: input.details,
     };
 }
-function validateExecutionInput(params, agents, hasTasks, hasSingle) {
+function diagnosticMatchesAgent(diagnostic, agentName) {
+    if (diagnostic.error.includes(`Agent '${agentName}'`))
+        return true;
+    const localName = diagnostic.error.match(/Agent '([^']+)'/)?.[1];
+    if (localName !== undefined && agentName.endsWith(`.${localName}`))
+        return true;
+    const fileName = path.basename(diagnostic.filePath, path.extname(diagnostic.filePath));
+    return agentName === fileName || agentName.endsWith(`.${fileName}`);
+}
+function unknownAgentMessage(agentName, agentDiagnostics, prefix = "Unknown agent") {
+    const diagnostic = agentDiagnostics?.find((candidate) => diagnosticMatchesAgent(candidate, agentName));
+    if (!diagnostic)
+        return `${prefix}: ${agentName}`;
+    return `${prefix}: ${agentName}. Malformed definition at '${diagnostic.filePath}': ${diagnostic.error}`;
+}
+function validateExecutionInput(params, agents, agentDiagnostics, hasTasks, hasSingle) {
     if (Number(hasTasks) + Number(hasSingle) !== 1) {
         return {
             content: [
@@ -2475,7 +2527,7 @@ function validateExecutionInput(params, agents, hasTasks, hasSingle) {
     }
     if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
         return {
-            content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+            content: [{ type: "text", text: unknownAgentMessage(params.agent, agentDiagnostics) }],
             isError: true,
             details: { mode: "single", results: [] },
         };
@@ -2485,7 +2537,12 @@ function validateExecutionInput(params, agents, hasTasks, hasSingle) {
             const task = params.tasks[i];
             if (!agents.find((agent) => agent.name === task.agent)) {
                 return {
-                    content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
+                    content: [
+                        {
+                            type: "text",
+                            text: `${unknownAgentMessage(task.agent, agentDiagnostics)} (task ${i + 1})`,
+                        },
+                    ],
                     isError: true,
                     details: { mode: "parallel", results: [] },
                 };
@@ -2752,7 +2809,8 @@ function runAsyncPath(data, deps) {
         currentModel: ctx.model,
         modelScope: data.modelScope,
     };
-    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+    const { availableModels } = modelRegistrySnapshot;
     const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
     const currentProvider = ctx.model?.provider;
     const controlIntercomTarget = intercomBridge.active
@@ -2795,6 +2853,7 @@ function runAsyncPath(data, deps) {
             agents,
             ctx: asyncCtx,
             availableModels,
+            modelRegistry: modelRegistrySnapshot.evidence,
             cwd: effectiveCwd,
             maxOutput: params.maxOutput,
             artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
@@ -2841,6 +2900,7 @@ function runAsyncPath(data, deps) {
             agentConfig: a,
             ctx: asyncCtx,
             availableModels,
+            modelRegistry: modelRegistrySnapshot.evidence,
             cwd: effectiveCwd,
             maxOutput: params.maxOutput,
             artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
@@ -3086,6 +3146,7 @@ async function runForegroundParallelTasks(input) {
             modelFallbackNotice: behavior?.modelFallbackNotice,
             thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
             availableModels: input.availableModels,
+            modelRegistry: input.modelRegistry,
             preferredModelProvider: input.ctx.model?.provider,
             modelScope: input.modelScope,
             ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
@@ -3212,7 +3273,8 @@ async function runParallelPath(data, deps) {
         toolBudgets.push(resolved.toolBudget);
     }
     const currentProvider = ctx.model?.provider;
-    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+    const { availableModels } = modelRegistrySnapshot;
     const taskTexts = tasks.map((t) => t.task);
     const behaviorOverrides = tasks.map((task, index) => ({
         ...(task.output !== undefined
@@ -3278,6 +3340,7 @@ async function runParallelPath(data, deps) {
         paramsCwd: effectiveCwd,
         progressDir: parallelProgressDir,
         availableModels,
+        modelRegistry: modelRegistrySnapshot.evidence,
         modelScope: data.modelScope,
         modelOverrides,
         behaviors,
@@ -3442,7 +3505,8 @@ async function runSinglePath(data, deps) {
     if (effectiveToolBudget.error)
         return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
     const currentProvider = ctx.model?.provider;
-    const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+    const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+    const { availableModels } = modelRegistrySnapshot;
     let task = params.task ?? "";
     const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
     const modelOverride = resolveSubagentModelOverride(params.model ?? agentConfig.model, ctx.model, availableModels, currentProvider, {
@@ -3579,6 +3643,7 @@ async function runSinglePath(data, deps) {
             modelFallbackNotice,
             thinkingOverride: thinkingOverrideForTask(params.agent, 0),
             availableModels,
+            modelRegistry: modelRegistrySnapshot.evidence,
             preferredModelProvider: currentProvider,
             modelScope: data.modelScope,
             ...(tkTicket ? { tkTicket } : {}),
@@ -3628,6 +3693,7 @@ async function runSinglePath(data, deps) {
         savedPath: r.savedOutputPath,
         outputReference: r.outputReference,
         saveError: r.outputSaveError,
+        acceptanceRejected: r.acceptance?.status === "rejected" && Boolean(r.savedOutputPath),
     });
     if (foregroundControl) {
         updateForegroundNestedProjection(foregroundControl);
@@ -3678,14 +3744,14 @@ async function runSinglePath(data, deps) {
             content: [
                 {
                     type: "text",
-                    text: r.pause?.kind === "awaiting_supervisor"
+                    text: safeTerminalDocument(r.pause?.kind === "awaiting_supervisor"
                         ? formatForegroundSupervisorPauseMessage({
                             headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
                             runId,
                             agent: params.agent,
                             requestSummary: r.pause.summary,
                         })
-                        : `Legacy detached result: ${params.agent}. Inspect status/artifacts, then resume or replace work explicitly if needed.`,
+                        : `Legacy detached result: ${params.agent}. Inspect status/artifacts, then resume or replace work explicitly if needed.`),
                 },
             ],
             details,
@@ -3696,12 +3762,12 @@ async function runSinglePath(data, deps) {
             content: [
                 {
                     type: "text",
-                    text: formatForegroundSupervisorPauseMessage({
+                    text: safeTerminalDocument(formatForegroundSupervisorPauseMessage({
                         headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
                         runId,
                         agent: params.agent,
                         requestSummary: r.pause.summary,
-                    }),
+                    })),
                 },
             ],
             details,
@@ -3712,18 +3778,20 @@ async function runSinglePath(data, deps) {
             content: [
                 {
                     type: "text",
-                    text: formatForegroundPauseMessage({
+                    text: safeTerminalDocument(formatForegroundPauseMessage({
                         headline: `Foreground run ${runId} paused after interrupt (${params.agent}).`,
                         runId,
                         resume: { kind: "single" },
                         redispatch: `subagent({ agent: "${params.agent}", task: "..." })`,
-                    }),
+                    })),
                 },
             ],
             details,
         };
     }
-    const noticePrefix = r.modelFallbackNotice ? `Notice: ${r.modelFallbackNotice}\n\n` : "";
+    const noticePrefix = r.modelFallbackNotice
+        ? `Notice: ${safeTerminalText(r.modelFallbackNotice)}\n\n`
+        : "";
     if (r.exitCode !== 0)
         return {
             content: [
@@ -4109,7 +4177,7 @@ export function createSubagentExecutor(deps) {
         const shareEnabled = effectiveParams.share === true;
         const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
         const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
-        const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle);
+        const validationError = validateExecutionInput(effectiveParams, agents, discovered.agentDiagnostics, hasTasks, hasSingle);
         if (validationError)
             return validationError;
         let forkSessionFileForIndex = () => undefined;

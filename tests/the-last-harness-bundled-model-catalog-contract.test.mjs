@@ -17,14 +17,18 @@ function collectBundledModelReferences() {
   const bundledAgents = [...loadPrimaryAgents().values(), ...loadSubagentMetadata()];
 
   for (const agent of bundledAgents) {
-    for (const [field, values] of [
-      ["model", agent.model ? [agent.model] : []],
-      ["tlhOpenaiModels", agent.tlhOpenaiModels ?? []],
-      ["tlhAnthropicModels", agent.tlhAnthropicModels ?? []],
-    ]) {
-      for (const value of values) {
+    const models = agent.tlhModelDefaultsSource === "legacy" && agent.model ? [agent.model] : [];
+    for (const model of models) {
+      const sources = references.get(model) ?? [];
+      sources.push(`${agent.name}:model`);
+      references.set(model, sources);
+    }
+
+    for (const entry of agent.tlhModelDefaults) {
+      for (const model of entry.models ?? []) {
+        const value = `${model.provider}/${model.id}`;
         const sources = references.get(value) ?? [];
-        sources.push(`${agent.name}:${field}`);
+        sources.push(`${agent.name}:tlhModelDefaults`);
         references.set(value, sources);
       }
     }

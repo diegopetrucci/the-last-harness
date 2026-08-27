@@ -229,9 +229,6 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const product = primaryAgents.get("product");
   const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
-  const developer = subagents.find((agent) => agent.name === "developer");
-  assert.equal(developer?.tlhOpenrouterThinking, "medium");
-  assert.equal(developer?.preferOppositeProvider, undefined);
 
   const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
   const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;

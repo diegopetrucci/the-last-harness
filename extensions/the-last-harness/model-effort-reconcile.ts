@@ -15,6 +15,7 @@
 import { isRecord, readText } from "./common.js";
 import {
   formatProviderModelReference,
+  listAgentModelDefaultReferences,
   parseProviderModelReference,
   selectProviderAwareAgentDefaults,
   splitKnownThinkingSuffix,
@@ -352,32 +353,33 @@ export function updateReconcileAcknowledgedSnapshot(
 // Packaged-default resolution
 // ---------------------------------------------------------------------------
 
-/** Frontmatter fields that declare an agent's packaged model catalog. */
-type PackagedAgent = Pick<
-  AgentPrompt,
-  "name" | "model" | "tlhOpenaiModels" | "tlhAnthropicModels"
-> &
+/** Normalized agent fields that declare a packaged model catalog. */
+type PackagedAgent = Pick<AgentPrompt, "name" | "tlhModelDefaults" | "tlhModelDefaultsSource"> &
   Partial<
     Pick<
       AgentPrompt,
-      "thinking" | "tlhOpenaiThinking" | "tlhAnthropicThinking" | "preferOppositeProvider"
+      | "model"
+      | "preferredModel"
+      | "thinking"
+      | "preferOppositeProvider"
+      | "preferCurrentOpenaiModel"
     >
-  > &
-  Partial<Pick<AgentPrompt, "preferCurrentOpenaiModel">>;
+  >;
 
 /**
- * Every model the agent's frontmatter declares, parsed and de-duplicated.
+ * Every model the agent's normalized provider entries declares, plus a legacy generic
+ * `model` when reconciliation historically included it, parsed and de-duplicated.
  *
  * Returns all packaged models regardless of provider. Used internally by
  * `packagedCandidateModelsForProvider`; not used directly by `resolvePackagedDefaults`.
  */
 function packagedCandidateModels(agent: PackagedAgent): ProviderModelReference[] {
   const seen = new Map<string, ProviderModelReference>();
-  for (const raw of [
-    agent.model,
-    ...(agent.tlhOpenaiModels ?? []),
-    ...(agent.tlhAnthropicModels ?? []),
-  ]) {
+  const rawModels = [
+    ...(agent.tlhModelDefaultsSource === "legacy" ? [agent.model] : []),
+    ...listAgentModelDefaultReferences(agent).map(formatProviderModelReference),
+  ];
+  for (const raw of rawModels) {
     // Frontmatter model strings may carry a thinking suffix; the catalog holds base models.
     const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
     if (!parsed) {

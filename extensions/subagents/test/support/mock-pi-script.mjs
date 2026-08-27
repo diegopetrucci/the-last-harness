@@ -150,12 +150,102 @@ function claimNextResponse(dir, args) {
   return responseMatchesArgs(fallback, args) ? fallback : undefined;
 }
 
+function defaultUsage(usage) {
+  const raw = usage && typeof usage === "object" && !Array.isArray(usage) ? usage : {};
+  const input = Number.isFinite(raw.input)
+    ? raw.input
+    : Number.isFinite(raw.inputTokens)
+      ? raw.inputTokens
+      : 0;
+  const output = Number.isFinite(raw.output)
+    ? raw.output
+    : Number.isFinite(raw.outputTokens)
+      ? raw.outputTokens
+      : 0;
+  const cacheRead = Number.isFinite(raw.cacheRead) ? raw.cacheRead : 0;
+  const cacheWrite = Number.isFinite(raw.cacheWrite) ? raw.cacheWrite : 0;
+  const rawCost = raw.cost && typeof raw.cost === "object" ? raw.cost : {};
+  const total = Number.isFinite(rawCost.total) ? rawCost.total : 0;
+  return {
+    ...raw,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: Number.isFinite(raw.totalTokens)
+      ? raw.totalTokens
+      : input + output + cacheRead + cacheWrite,
+    cost: {
+      ...rawCost,
+      input: Number.isFinite(rawCost.input) ? rawCost.input : 0,
+      output: Number.isFinite(rawCost.output) ? rawCost.output : 0,
+      cacheRead: Number.isFinite(rawCost.cacheRead) ? rawCost.cacheRead : 0,
+      cacheWrite: Number.isFinite(rawCost.cacheWrite) ? rawCost.cacheWrite : 0,
+      total,
+    },
+  };
+}
+
+function normalizeProtocolMessage(message) {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return message;
+  const normalized = { ...message };
+  if (message.role === "assistant" && Array.isArray(message.content)) {
+    const model = typeof message.model === "string" ? message.model : "mock/test-model";
+    normalized.content = message.content.map((part, index) =>
+      part && typeof part === "object" && part.type === "toolCall" && typeof part.id !== "string"
+        ? { ...part, id: `mock-tool-call-${index}` }
+        : part,
+    );
+    normalized.api = typeof message.api === "string" ? message.api : "pi-messages";
+    normalized.provider =
+      typeof message.provider === "string" ? message.provider : model.split("/", 1)[0] || "mock";
+    normalized.model = model;
+    normalized.stopReason =
+      message.stopReason === "tool_use"
+        ? "toolUse"
+        : typeof message.stopReason === "string"
+          ? message.stopReason
+          : message.errorMessage
+            ? "error"
+            : "stop";
+    normalized.usage = defaultUsage(message.usage);
+    normalized.timestamp = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+  } else if (message.role === "toolResult" && Array.isArray(message.content)) {
+    normalized.toolCallId =
+      typeof message.toolCallId === "string" ? message.toolCallId : "mock-tool-call";
+    normalized.toolName = typeof message.toolName === "string" ? message.toolName : "mock-tool";
+    normalized.isError = typeof message.isError === "boolean" ? message.isError : false;
+    normalized.timestamp = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+    if (message.usage !== undefined) normalized.usage = defaultUsage(message.usage);
+  } else if (
+    message.role === "user" &&
+    (typeof message.content === "string" || Array.isArray(message.content))
+  ) {
+    normalized.timestamp = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+  }
+  return normalized;
+}
+
+function normalizeProtocolEntry(entry) {
+  if (
+    !entry ||
+    typeof entry !== "object" ||
+    (entry.type !== "message_end" && entry.type !== "tool_result_end") ||
+    !entry.message ||
+    typeof entry.message !== "object"
+  )
+    return entry;
+  return { ...entry, message: normalizeProtocolMessage(entry.message) };
+}
+
 function defaultAssistantMessage(output) {
   return {
     type: "message_end",
     message: {
       role: "assistant",
       content: [{ type: "text", text: output }],
+      api: "pi-messages",
+      provider: "mock",
       model: "mock/test-model",
       stopReason: "stop",
       usage: {
@@ -163,8 +253,10 @@ function defaultAssistantMessage(output) {
         output: 50,
         cacheRead: 0,
         cacheWrite: 0,
-        cost: { total: 0.001 },
+        totalTokens: 150,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.001 },
       },
+      timestamp: Date.now(),
     },
   };
 }
@@ -280,6 +372,11 @@ async function writeStdout(text) {
   await new Promise((resolve) => process.stdout.once("drain", resolve));
 }
 
+async function writeStderr(text) {
+  if (process.stderr.write(text)) return;
+  await new Promise((resolve) => process.stderr.once("drain", resolve));
+}
+
 async function writeJsonlLine(entry) {
   const line = typeof entry === "string" ? entry : JSON.stringify(entry);
   await writeStdout(`${line}\n`);
@@ -317,7 +414,7 @@ async function writeResponseEntries(entries, jsonMode, args) {
       }
     }
     if (jsonMode) {
-      await writeJsonlLine(entry);
+      await writeJsonlLine(normalizeProtocolEntry(entry));
       continue;
     }
     const text = extractPlainText(entry);
@@ -372,8 +469,11 @@ async function maybeWriteStructuredOutput(response, jsonMode) {
     type: "tool_result_end",
     message: {
       role: "toolResult",
+      toolCallId: "mock-structured-output",
       toolName: "structured_output",
       content: [{ type: "text", text: "Structured output captured." }],
+      isError: false,
+      timestamp: Date.now(),
     },
   });
   await writeJsonlLine({ type: "tool_execution_end", toolName: "structured_output" });
@@ -421,7 +521,9 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, response.delay));
   }
 
-  if (Array.isArray(response.steps) && response.steps.length > 0) {
+  if (typeof response.rawStdout === "string") {
+    await writeStdout(response.rawStdout);
+  } else if (Array.isArray(response.steps) && response.steps.length > 0) {
     for (const step of response.steps) {
       if (typeof step?.writeMarker === "string" && step.writeMarker.length > 0) {
         writeMarkerFile(step.writeMarker);
@@ -436,7 +538,7 @@ async function main() {
         await writeResponseEntries(step.jsonl, jsonMode, args);
       }
       if (typeof step?.stderr === "string" && step.stderr.length > 0) {
-        process.stderr.write(step.stderr);
+        await writeStderr(step.stderr);
       }
     }
   } else if (Array.isArray(response.jsonl) && response.jsonl.length > 0) {
@@ -455,8 +557,13 @@ async function main() {
   }
   await maybeWriteStructuredOutput(response, jsonMode);
 
+  if (Array.isArray(response.stderrByteChunks)) {
+    for (const chunk of response.stderrByteChunks) {
+      if (Array.isArray(chunk) && chunk.length > 0) await writeStderr(Buffer.from(chunk));
+    }
+  }
   if (typeof response.stderr === "string" && response.stderr.length > 0) {
-    process.stderr.write(response.stderr);
+    await writeStderr(response.stderr);
   }
 
   if (
