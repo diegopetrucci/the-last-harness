@@ -1,6 +1,12 @@
 import { THINKING_LEVELS } from "./constants.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
-import type { ReasoningModel, ThinkingLevel, TlhSubagentOverride } from "./types.js";
+import type {
+  ReasoningModel,
+  ThinkingLevel,
+  TlhModelDefault,
+  TlhModelDefaultsSource,
+  TlhSubagentOverride,
+} from "./types.js";
 
 import { isRecord } from "./common.js";
 
@@ -12,12 +18,14 @@ export type ProviderModelReference = {
 export type AgentModelDefaults = {
   name: string;
   model?: string;
-  tlhOpenaiModels?: string[];
-  tlhAnthropicModels?: string[];
+  /** Primary-only preferred model preserving the former generic default precedence. */
+  preferredModel?: ProviderModelReference;
+  /** Normalized provider entries produced by the frontmatter loader. */
+  tlhModelDefaults: readonly TlhModelDefault[];
+  /** Required provenance prevents direct constructors from silently changing semantics. */
+  tlhModelDefaultsSource: TlhModelDefaultsSource;
+  /** Generic compatibility fields are retained for legacy frontmatter only. */
   thinking?: ThinkingLevel;
-  tlhOpenaiThinking?: ThinkingLevel;
-  tlhAnthropicThinking?: ThinkingLevel;
-  tlhOpenrouterThinking?: ThinkingLevel;
   preferCurrentOpenaiModel?: boolean;
   preferOppositeProvider?: boolean;
 };
@@ -70,6 +78,51 @@ export function parseProviderModelReference(
 
 export function formatProviderModelReference(model: ProviderModelReference): string {
   return `${model.provider}/${model.id}`;
+}
+
+/**
+ * Return the validated provider/model references declared by an agent, in
+ * frontmatter order and without duplicates. Consumers must use this normalized
+ * collection rather than the legacy provider-specific frontmatter fields.
+ */
+export function listAgentModelDefaultReferences(
+  agent: { tlhModelDefaults?: readonly TlhModelDefault[] } | undefined,
+): ProviderModelReference[] {
+  const seen = new Set<string>();
+  const references: ProviderModelReference[] = [];
+  for (const entry of agent?.tlhModelDefaults ?? []) {
+    for (const model of entry.models ?? []) {
+      if (model.provider !== entry.provider) {
+        continue;
+      }
+      const key = formatProviderModelReference(model);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      references.push(model);
+    }
+  }
+  return references;
+}
+
+function agentModelsForProvider(
+  agent: AgentModelDefaults | undefined,
+  provider: string | undefined,
+): ProviderModelReference[] {
+  if (!provider) {
+    return [];
+  }
+  return listAgentModelDefaultReferences(agent).filter((model) => model.provider === provider);
+}
+
+function agentModelsForFamily(
+  agent: AgentModelDefaults | undefined,
+  family: ProviderFamily,
+): ProviderModelReference[] {
+  return listAgentModelDefaultReferences(agent).filter((model) =>
+    family === "openai" ? isOpenaiProvider(model.provider) : isAnthropicProvider(model.provider),
+  );
 }
 
 /**
@@ -231,10 +284,13 @@ function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
   if (!isOpenaiProvider(currentProvider)) {
     return undefined;
   }
-  const currentProviderCandidate = agent?.tlhOpenaiModels?.find(
-    (candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+  const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find(
+    (candidate) => candidate.provider === currentProvider,
   );
-  return availableOpenaiCandidate(availableModels, currentProviderCandidate);
+  return availableOpenaiCandidate(
+    availableModels,
+    currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined,
+  );
 }
 
 function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
@@ -245,10 +301,13 @@ function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
   if (!isAnthropicProvider(currentProvider)) {
     return undefined;
   }
-  const currentProviderCandidate = agent?.tlhAnthropicModels?.find(
-    (candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+  const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find(
+    (candidate) => candidate.provider === currentProvider,
   );
-  return availableAnthropicCandidate(availableModels, currentProviderCandidate);
+  return availableAnthropicCandidate(
+    availableModels,
+    currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined,
+  );
 }
 
 function selectOppositeProviderPreferredAgentModel<T extends ProviderModelReference>(
@@ -270,12 +329,12 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
           ? ["anthropic", "openai"]
           : ["openai", "anthropic"];
     for (const family of families) {
-      const candidates = family === "openai" ? agent.tlhOpenaiModels : agent.tlhAnthropicModels;
-      for (const candidate of candidates ?? []) {
+      const candidates = agentModelsForFamily(agent, family);
+      for (const candidate of candidates) {
         const model =
           family === "openai"
-            ? availableOpenaiCandidate(availableModels, candidate)
-            : availableAnthropicCandidate(availableModels, candidate);
+            ? availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate))
+            : availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
           return model;
         }
@@ -285,8 +344,11 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   }
 
   if (isAnthropicProvider(currentProvider)) {
-    for (const candidate of agent.tlhOpenaiModels ?? []) {
-      const model = availableCodexCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "openai")) {
+      const model = availableCodexCandidate(
+        availableModels,
+        formatProviderModelReference(candidate),
+      );
       if (model) {
         return model;
       }
@@ -295,8 +357,11 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   }
 
   if (isOpenaiProvider(currentProvider)) {
-    for (const candidate of agent.tlhAnthropicModels ?? []) {
-      const model = availableAnthropicCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+      const model = availableAnthropicCandidate(
+        availableModels,
+        formatProviderModelReference(candidate),
+      );
       if (model) {
         return model;
       }
@@ -349,7 +414,14 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
     return undefined;
   }
 
-  const defaultModel = findAvailableProviderModel(availableModels, agent.model);
+  // Primary agents expose preferredModel so the new provider list retains the
+  // former generic `model:` precedence. New-format subagents intentionally omit
+  // this field and begin with current-provider/provider-list selection below.
+  const defaultModel =
+    findAvailableProviderModelReference(availableModels, agent.preferredModel) ??
+    (agent.tlhModelDefaultsSource === "legacy"
+      ? findAvailableProviderModel(availableModels, agent.model)
+      : undefined);
   if (defaultModel) {
     return defaultModel;
   }
@@ -361,15 +433,21 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
     return currentProviderModel;
   }
 
-  for (const candidate of agent.tlhOpenaiModels ?? []) {
-    const model = availableOpenaiCandidate(availableModels, candidate);
+  for (const candidate of agentModelsForFamily(agent, "openai")) {
+    const model = availableOpenaiCandidate(
+      availableModels,
+      formatProviderModelReference(candidate),
+    );
     if (model) {
       return model;
     }
   }
 
-  for (const candidate of agent.tlhAnthropicModels ?? []) {
-    const model = availableAnthropicCandidate(availableModels, candidate);
+  for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+    const model = availableAnthropicCandidate(
+      availableModels,
+      formatProviderModelReference(candidate),
+    );
     if (model) {
       return model;
     }
@@ -383,8 +461,8 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
  * preferOppositeProvider follow the current session model instead of falling
  * through to bundled codex/anthropic candidates.
  *
- * Thinking comes exclusively from tlhOpenrouterThinking; the generic `thinking`
- * key does NOT leak through on this path. Returns undefined when the rule does
+ * Thinking comes exclusively from the normalized OpenRouter entry; the generic
+ * `thinking` key does NOT leak through on this path. Returns undefined when the rule does
  * not apply (provider is not openrouter or agent prefers opposite provider).
  *
  * The current model is a session identity, not necessarily a registry entry. Keep
@@ -409,30 +487,41 @@ function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   if (!followedModel) {
     return undefined;
   }
-  // Explicitly use tlhOpenrouterThinking only — do not fall through to agent.thinking.
-  return { model: followedModel, thinking: agent?.tlhOpenrouterThinking };
+  // OpenRouter effort is scoped to its normalized provider entry. Generic
+  // thinking never leaks onto this follow path.
+  return { model: followedModel, thinking: resolveProviderThinking(agent, "openrouter") };
 }
 
 /**
  * Resolve the bundled thinking level for the given agent and provider.
- * Checks provider-specific overrides (`tlhOpenaiThinking`, `tlhAnthropicThinking`)
- * before falling back to the generic `thinking` field.
+ * A matching normalized provider entry is authoritative, even when it omits
+ * effort. Generic thinking is retained only for legacy-normalized agents when
+ * no matching provider entry exists (and never for OpenRouter).
  */
 export function resolveProviderThinking(
   agent: AgentModelDefaults | undefined,
   provider: string | undefined,
 ): ThinkingLevel | undefined {
   if (!agent) return undefined;
-  if (isOpenaiProvider(provider) && agent.tlhOpenaiThinking) {
-    return agent.tlhOpenaiThinking;
+  const providerEntry = agent.tlhModelDefaults?.find((entry) => entry.provider === provider);
+  if (providerEntry) {
+    return providerEntry.effort;
   }
-  if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
-    return agent.tlhAnthropicThinking;
+  if (isOpenaiProvider(provider)) {
+    // The legacy `tlhOpenaiThinking` value covered both OpenAI API and Codex
+    // providers. Preserve that family behavior when the new block declares only
+    // one of those provider names.
+    const openaiEntry = agent.tlhModelDefaults?.find((entry) => isOpenaiProvider(entry.provider));
+    if (openaiEntry) {
+      return openaiEntry.effort;
+    }
   }
   if (isOpenrouterProvider(provider)) {
-    return agent.tlhOpenrouterThinking;
+    return undefined;
   }
-  return agent.thinking;
+  // New-format entries do not synthesize a generic effort for unknown providers.
+  // Only legacy-normalized files retain their old generic thinking fallback.
+  return agent.tlhModelDefaultsSource === "legacy" ? agent.thinking : undefined;
 }
 
 // Keep the internal name for model-default resolution paths; primary runtime
@@ -711,7 +800,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 
   // OpenRouter follow rule (non-opposite-role agents only): follow the session model.
   // Thinking-only overrides are capability-gated; the pure no-override path uses
-  // tlhOpenrouterThinking exclusively — the generic thinking key does not leak.
+  // The normalized OpenRouter entry exclusively — the generic thinking key does not leak.
   const openrouterFollow = resolveOpenrouterFollowDefaults(
     agent,
     availableModels,
@@ -903,7 +992,8 @@ function applyModelToRunnableTarget(
       currentModel,
     );
     const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
-    if (!selectedModel || selectedModel === agent?.model) {
+    const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
+    if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
       return 0;
     }
     const thinking = defaults.thinking;
@@ -978,7 +1068,12 @@ function applyModelToRunnableTarget(
     resolution.unavailableModel ?? resolution.model,
     resolution.unavailableModel ? undefined : resolution.thinking,
   );
-  if (!selectedModel || (!resolution.unavailableModel && selectedModel === agent?.model)) {
+  if (
+    !selectedModel ||
+    (!resolution.unavailableModel &&
+      agent?.tlhModelDefaultsSource === "legacy" &&
+      selectedModel === agent?.model)
+  ) {
     return 0;
   }
 

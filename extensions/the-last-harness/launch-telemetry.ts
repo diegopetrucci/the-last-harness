@@ -36,8 +36,7 @@ import {
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
-import { parseFrontmatter } from "./prompts.js";
-import { isThinkingLevel } from "./thinking.js";
+import { normalizeAgentModelDefaults, parseFrontmatter } from "./prompts.js";
 import type {
   TlhExperimentalConfig,
   TlhOsMetadata,
@@ -598,14 +597,13 @@ export async function sendTlhTelemetry(
 /**
  * Read provider-aware thinking and model from the installed subagent frontmatter file.
  *
- * Parses provider-aware keys (tlhOpenaiModels, tlhAnthropicModels, tlhOpenaiThinking,
- * tlhAnthropicThinking) using parseFrontmatter, then resolves the effective model and
- * thinking level for the active provider via selectProviderAwareAgentDefaults. This is
- * the same resolver the runtime uses for model selection, ensuring reported values match
- * what would actually be used.
+ * Parses the installed agent frontmatter through the same normalization helper used by
+ * the runtime loader, then resolves the effective model and thinking level for the active
+ * provider via selectProviderAwareAgentDefaults. This is the same resolver the runtime uses
+ * for model selection, ensuring reported values match what would actually be used.
  *
- * Falls back to generic `model:` and `thinking:` keys for compatibility with user-hand-edited
- * frontmatter that predates the provider-aware format.
+ * The shared normalizer retains generic `model:` and `thinking:` compatibility for
+ * user-hand-edited frontmatter that predates the provider-default block.
  *
  * Install path set by scripts/lib/tlh-install-subagents.mts: <agentDir>/tlh/agents/subagents/<name>.md.
  * Returns empty object if the file is absent or unreadable.
@@ -622,48 +620,20 @@ function readSubagentFrontmatterConfig(
   const filePath = join(agentDir, "tlh", "agents", "subagents", `${name}.md`);
   const content = readText(filePath);
   if (!content) return {};
-  const { frontmatter } = parseFrontmatter(content);
-
-  // Split comma-separated model lists (e.g. "openai-codex/gpt-5.6-luna, openai/gpt-4o")
-  const splitList = (val: string | undefined): string[] =>
-    (val ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const { frontmatter, tlhModelDefaults } = parseFrontmatter(content);
+  const normalized = normalizeAgentModelDefaults(frontmatter, tlhModelDefaults);
+  const parseBoolean = (value: string | undefined): boolean | undefined => {
+    const normalizedValue = value?.trim().toLowerCase();
+    if (normalizedValue === "true") return true;
+    if (normalizedValue === "false") return false;
+    return undefined;
+  };
 
   const agentDefaults: AgentModelDefaults = {
     name,
-    model: frontmatter.model || undefined,
-    tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
-    tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
-    thinking:
-      frontmatter.thinking && isThinkingLevel(frontmatter.thinking)
-        ? frontmatter.thinking
-        : undefined,
-    tlhOpenaiThinking:
-      frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
-        ? frontmatter.tlhOpenaiThinking
-        : undefined,
-    tlhAnthropicThinking:
-      frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
-        ? frontmatter.tlhAnthropicThinking
-        : undefined,
-    tlhOpenrouterThinking:
-      frontmatter.tlhOpenrouterThinking && isThinkingLevel(frontmatter.tlhOpenrouterThinking)
-        ? frontmatter.tlhOpenrouterThinking
-        : undefined,
-    preferOppositeProvider:
-      frontmatter.preferOppositeProvider?.trim() === "true"
-        ? true
-        : frontmatter.preferOppositeProvider?.trim() === "false"
-          ? false
-          : undefined,
-    preferCurrentOpenaiModel:
-      frontmatter.preferCurrentOpenaiModel?.trim() === "true"
-        ? true
-        : frontmatter.preferCurrentOpenaiModel?.trim() === "false"
-          ? false
-          : undefined,
+    ...normalized,
+    preferOppositeProvider: parseBoolean(frontmatter.preferOppositeProvider),
+    preferCurrentOpenaiModel: parseBoolean(frontmatter.preferCurrentOpenaiModel),
   };
 
   // Resolve against the real available-models list captured at schedule time rather than
@@ -679,14 +649,15 @@ function readSubagentFrontmatterConfig(
 
   // For provider-qualified model names (e.g. "anthropic/claude-opus-5"), only report
   // the model if it was found in the real available list — a plausible-but-wrong value
-  // is worse than "unknown". For bare model names (no slash, e.g. "claude-opus-4-5"),
-  // fall back to the raw frontmatter value since they cannot be verified against the
-  // registry; reporting them is still useful and matches historical behaviour.
+  // is worse than "unknown". For bare model names (no slash, e.g. "claude-opus-4-5")
+  // on legacy frontmatter, fall back to the raw value since it cannot be verified against
+  // the registry; a present provider-default block remains authoritative.
   const model = result.model
     ? formatProviderModelReference(result.model)
-    : parseProviderModelReference(agentDefaults.model) === undefined
-      ? agentDefaults.model // bare name: cannot verify, report as-is
-      : undefined; // provider-qualified but not in available list: report unknown
+    : agentDefaults.tlhModelDefaultsSource === "legacy" &&
+        parseProviderModelReference(agentDefaults.model) === undefined
+      ? agentDefaults.model // bare legacy name: cannot verify, report as-is
+      : undefined; // provider-qualified or block model unavailable: report unknown
 
   return { thinking, model };
 }

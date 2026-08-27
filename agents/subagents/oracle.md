@@ -2,12 +2,16 @@
 name: oracle
 description: Provides read-only high-reasoning second opinions and direct analysis.
 tools: read, grep, find, ls, contact_supervisor, bash
-tlhOpenaiModels: openai-codex/gpt-5.6-sol
-tlhAnthropicModels: anthropic/claude-opus-5
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-sol]
+    effort: high
+  - provider: anthropic
+    models: [claude-opus-5]
+    effort: high
+  - provider: openrouter
+    effort: high
 preferOppositeProvider: true
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

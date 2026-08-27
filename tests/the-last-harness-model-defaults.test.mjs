@@ -3,38 +3,121 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  applyProviderAwareSubagentModels,
-  findAvailableProviderModel,
-  formatProviderModelReference,
-  resolveProviderAwareSubagentResolution,
-  resolveProviderThinking,
-  selectProviderAwareAgentDefaults,
-  splitKnownThinkingSuffix,
-} = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const modelDefaults = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const { normalizeAgentModelDefaults } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
+const { findAvailableProviderModel, formatProviderModelReference, splitKnownThinkingSuffix } =
+  modelDefaults;
+
+function frontmatterModelFields(agent) {
+  const frontmatter = {};
+  for (const key of [
+    "model",
+    "thinking",
+    "tlhOpenaiModels",
+    "tlhAnthropicModels",
+    "tlhOpenaiThinking",
+    "tlhAnthropicThinking",
+    "tlhOpenrouterThinking",
+  ]) {
+    const value = agent[key];
+    if (Array.isArray(value)) {
+      frontmatter[key] = value.join(",");
+    } else if (typeof value === "string") {
+      frontmatter[key] = value;
+    }
+  }
+  return frontmatter;
+}
+
+function normalizeAgentFixture(agent) {
+  if (!agent) {
+    return agent;
+  }
+  const {
+    tlhOpenaiModels: _openaiModels,
+    tlhAnthropicModels: _anthropicModels,
+    tlhOpenaiThinking: _openaiThinking,
+    tlhAnthropicThinking: _anthropicThinking,
+    tlhOpenrouterThinking: _openrouterThinking,
+    ...withoutLegacyFields
+  } = agent;
+  return {
+    ...withoutLegacyFields,
+    ...normalizeAgentModelDefaults(frontmatterModelFields(agent), agent.tlhModelDefaults),
+  };
+}
+
+function normalizeAgents(agents) {
+  return new Map([...agents].map(([name, agent]) => [name, normalizeAgentFixture(agent)]));
+}
+
+const applyProviderAwareSubagentModels = (input, agents, ...args) =>
+  modelDefaults.applyProviderAwareSubagentModels(input, normalizeAgents(agents), ...args);
+const resolveProviderAwareSubagentResolution = (agent, ...args) =>
+  modelDefaults.resolveProviderAwareSubagentResolution(normalizeAgentFixture(agent), ...args);
+const resolveProviderThinking = (agent, ...args) =>
+  modelDefaults.resolveProviderThinking(normalizeAgentFixture(agent), ...args);
+const selectProviderAwareAgentDefaults = (agent, ...args) =>
+  modelDefaults.selectProviderAwareAgentDefaults(normalizeAgentFixture(agent), ...args);
 const { applyThinkingSuffix: applyRuntimeThinkingSuffix } = await jiti.import(
   "../extensions/subagents/src/runs/shared/pi-args.ts",
 );
 
 const developer = {
   name: "developer",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-  tlhAnthropicThinking: "medium",
-  tlhOpenaiThinking: "max",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
 };
 
 const codeReviewer = {
   name: "code-reviewer",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
   preferOppositeProvider: true,
 };
 
 const oracle = {
   name: "oracle",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
   preferOppositeProvider: true,
 };
 
@@ -56,10 +139,21 @@ const openaiParentPrefersAnthropicReviewer = {
 
 const rushLikePrimary = {
   name: "rush",
-  model: "anthropic/claude-sonnet-4-6",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  thinking: "low",
-  tlhOpenaiThinking: "medium",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "low",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "low" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
   preferCurrentOpenaiModel: true,
 };
 
@@ -220,14 +314,14 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
 
   const anthropicInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
-  assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol");
-  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5"]);
+  assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5:high"]);
   assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const codexInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
-  assert.equal(codexInput.model, "anthropic/claude-opus-5");
-  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
+  assert.equal(codexInput.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
   assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const noOppositeInput = { agent: "code-reviewer" };
@@ -419,8 +513,8 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     }),
     1,
   );
-  assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol");
-  assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6"]);
+  assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6:high"]);
   assert.equal(reviewerInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const oracleInput = { agent: "oracle" };
@@ -431,8 +525,8 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     }),
     1,
   );
-  assert.equal(oracleInput.model, "anthropic/claude-opus-5");
-  assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna"]);
+  assert.equal(oracleInput.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna:high"]);
   assert.equal(oracleInput.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -489,7 +583,7 @@ test("provider-aware primary defaults keep the Anthropic default first without t
   );
 });
 
-test("provider-aware primary defaults fall back to Anthropic thinking when OpenAI models are unavailable", () => {
+test("provider-aware primary defaults retain each declared provider effort", () => {
   assert.deepEqual(
     selectProviderAwareAgentDefaults(rushLikePrimary, anthropicAvailable, "openai-codex"),
     {
@@ -498,19 +592,77 @@ test("provider-aware primary defaults fall back to Anthropic thinking when OpenA
     },
   );
   assert.deepEqual(
-    selectProviderAwareAgentDefaults(
-      { ...rushLikePrimary, tlhOpenaiThinking: undefined },
-      codexAvailable,
-      "openai-codex",
-    ),
+    selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"),
     {
       model: { provider: "openai-codex", id: "gpt-5.6-luna" },
-      thinking: "low",
+      thinking: "medium",
     },
   );
 });
 
-// --- tlhAnthropicModels: new tests (ticket tlht-k7h8) ---
+test("new provider entries do not inherit generic thinking when effort is omitted", () => {
+  const agent = {
+    name: "new-format",
+    model: "anthropic/legacy-model",
+    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-new" }],
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const available = [{ provider: "anthropic", id: "claude-new" }];
+  assert.deepEqual(selectProviderAwareAgentDefaults(agent, available, "anthropic"), {
+    model: available[0],
+    thinking: undefined,
+  });
+  const input = { agent: agent.name, task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(input, new Map([[agent.name, agent]]), available, "anthropic"),
+    1,
+  );
+  assert.equal(input.model, "anthropic/claude-new");
+});
+
+test("a present provider block does not supplement an unmatched provider with generic model or thinking", () => {
+  const agent = {
+    name: "new-format-only-openai",
+    model: "anthropic/legacy-model",
+    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-new" }],
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const available = [{ provider: "anthropic", id: "claude-legacy" }];
+  assert.deepEqual(selectProviderAwareAgentDefaults(agent, available, "anthropic"), {
+    model: undefined,
+    thinking: undefined,
+  });
+  const input = { agent: agent.name, task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(input, new Map([[agent.name, agent]]), available, "anthropic"),
+    0,
+  );
+  assert.equal(input.model, undefined);
+});
+
+test("legacy-normalized generic thinking still applies when no provider entry matches", () => {
+  const agent = {
+    name: "legacy-generic",
+    thinking: "medium",
+    tlhOpenaiModels: ["openai-codex/gpt-legacy"],
+  };
+  const available = [{ provider: "anthropic", id: "claude-current" }];
+  assert.equal(selectProviderAwareAgentDefaults(agent, available, "anthropic").thinking, "medium");
+});
+
+// --- legacy provider model compatibility tests ---
 
 test("tlhAnthropicModels: selects Anthropic fallback when primary OpenAI model is absent from registry", () => {
   const agentWithAnthropicFallback = {
@@ -576,6 +728,32 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
   assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
 });
 
+test("legacy provider lists do not treat generic model as an opposite candidate and still generate explicit-list fallback", () => {
+  const agent = {
+    name: "legacy-opposite-order",
+    model: "openai-codex/gpt-generic",
+    tlhOpenaiModels: ["openai-codex/gpt-review"],
+    tlhAnthropicModels: ["anthropic/claude-same"],
+    preferOppositeProvider: true,
+  };
+  const available = [
+    { provider: "openai-codex", id: "gpt-generic" },
+    { provider: "openai-codex", id: "gpt-review" },
+    { provider: "anthropic", id: "claude-same" },
+  ];
+  const currentModel = available[2];
+  const resolution = resolveProviderAwareSubagentResolution(
+    agent,
+    available,
+    "anthropic",
+    currentModel,
+  );
+
+  assert.deepEqual(resolution.model, available[1]);
+  assert.deepEqual(resolution.fallbackModels, [{ model: currentModel, thinking: undefined }]);
+  assert.equal(resolution.modelFallbackNotice, reducedIndependenceNotice);
+});
+
 test("provider-aware subagent mutation preserves explicit user-supplied model values", () => {
   const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.6" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
@@ -599,7 +777,7 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
     applyProviderAwareSubagentModels(withFallbackModels, agents, available, "anthropic"),
     1,
   );
-  assert.equal(withFallbackModels.model, "openai-codex/gpt-5.6-sol");
+  assert.equal(withFallbackModels.model, "openai-codex/gpt-5.6-sol:high");
   assert.deepEqual(withFallbackModels.fallbackModels, ["custom/provider-model"]);
   assert.equal(withFallbackModels.modelFallbackNotice, reducedIndependenceNotice);
 
@@ -610,8 +788,8 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
     applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"),
     1,
   );
-  assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5");
-  assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
+  assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
   assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
   // Explicit model still prevents all injection regardless of other fallback fields.
@@ -2005,6 +2183,51 @@ test("openrouter follow rule: generic thinking key does NOT leak when tlhOpenrou
   );
   assert.deepEqual(result.model, openrouterAvailableModels[0]);
   // Must be undefined, not the generic 'high' from agent.thinking
+  assert.equal(result.thinking, undefined);
+});
+
+test("openrouter follow rule: normalized effort-only entry follows the session model", () => {
+  const agent = {
+    name: "normalized-openrouter-effort-only",
+    thinking: "high",
+    tlhModelDefaults: [{ provider: "openrouter", effort: "medium" }],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const result = selectProviderAwareAgentDefaults(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
+  assert.equal(result.thinking, "medium");
+
+  const resolution = resolveProviderAwareSubagentResolution(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+    undefined,
+  );
+  assert.deepEqual(resolution.model, openrouterAvailableModels[0]);
+  assert.equal(resolution.thinking, "medium");
+  assert.deepEqual(resolution.fallbackModels, []);
+});
+
+test("openrouter follow rule: generic thinking does not leak when normalized entry omits effort", () => {
+  const agent = {
+    name: "normalized-openrouter-no-effort",
+    thinking: "high",
+    tlhModelDefaults: [{ provider: "openrouter" }],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const result = selectProviderAwareAgentDefaults(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
   assert.equal(result.thinking, undefined);
 });
 

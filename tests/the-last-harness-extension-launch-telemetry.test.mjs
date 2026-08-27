@@ -925,8 +925,8 @@ test("launch telemetry: non-public model in frontmatter is reported as 'custom'"
 // ── provider-aware frontmatter tests ────────────────────────────────────────
 
 test("launch telemetry reports provider-aware defaults for bundled agents (Anthropic active)", async (t) => {
-  // developer.md: tlhAnthropicThinking=medium, tlhOpenaiThinking=max
-  //               tlhAnthropicModels=anthropic/claude-sonnet-4-6, tlhOpenaiModels=openai-codex/gpt-5.6-luna
+  // developer.md: Anthropic effort=medium, OpenAI Codex effort=max
+  //               Anthropic model=claude-sonnet-4-6, OpenAI Codex model=gpt-5.6-luna
   // Expected for Anthropic provider: modelEffort="claude-sonnet-4-6:medium"
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
   writeTelemetryState(fixture);
@@ -935,7 +935,18 @@ test("launch telemetry reports provider-aware defaults for bundled agents (Anthr
   mkdirSync(subagentDir, { recursive: true });
   writeFileSync(
     join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\ntlhOpenaiThinking: max\n---\nBody.\n",
+    `---
+name: developer
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+---
+Body.
+`,
   );
 
   const previousFetch = globalThis.fetch;
@@ -974,7 +985,7 @@ test("launch telemetry reports provider-aware defaults for bundled agents (Anthr
 
   assert.ok(request, "expected telemetry fetch call");
   const [event] = JSON.parse(request.options?.body ?? "[]");
-  // Anthropic provider: tlhAnthropicThinking=medium, model resolved as claude-sonnet-4-6.
+  // Anthropic provider: normalized Anthropic effort=medium, model resolved as claude-sonnet-4-6.
   assert.equal(
     event.payload["Tlh.Subagent.developer.modelEffort"],
     "claude-sonnet-4-6:medium",
@@ -983,7 +994,7 @@ test("launch telemetry reports provider-aware defaults for bundled agents (Anthr
 });
 
 test("launch telemetry reports provider-aware defaults for bundled agents (OpenAI active)", async (t) => {
-  // Same frontmatter as above but with OpenAI provider
+  // Same normalized frontmatter as above but with OpenAI Codex provider
   // Expected: modelEffort="gpt-5.6-luna:max"
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-provider-aware-", { test: t });
   writeTelemetryState(fixture);
@@ -992,7 +1003,18 @@ test("launch telemetry reports provider-aware defaults for bundled agents (OpenA
   mkdirSync(subagentDir, { recursive: true });
   writeFileSync(
     join(subagentDir, "developer.md"),
-    "---\nname: developer\ntlhOpenaiModels: openai-codex/gpt-5.6-luna\ntlhAnthropicModels: anthropic/claude-sonnet-4-6\ntlhAnthropicThinking: medium\ntlhOpenaiThinking: max\n---\nBody.\n",
+    `---
+name: developer
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+---
+Body.
+`,
   );
 
   const previousFetch = globalThis.fetch;
@@ -1030,7 +1052,7 @@ test("launch telemetry reports provider-aware defaults for bundled agents (OpenA
 
   assert.ok(request, "expected telemetry fetch call");
   const [event] = JSON.parse(request.options?.body ?? "[]");
-  // OpenAI-codex provider: tlhOpenaiThinking=max, model resolved as gpt-5.6-luna.
+  // OpenAI-codex provider: normalized effort=max, model resolved as gpt-5.6-luna.
   assert.equal(
     event.payload["Tlh.Subagent.developer.modelEffort"],
     "gpt-5.6-luna:max",
@@ -1041,6 +1063,73 @@ test("launch telemetry reports provider-aware defaults for bundled agents (OpenA
     event.payload["Tlh.Subagent.developer.modelEffort"],
     "claude-sonnet-4-6:medium",
     "OpenAI modelEffort should differ from Anthropic modelEffort for developer",
+  );
+});
+
+test("launch telemetry uses normalized provider entries and ignores generic compatibility fields in a present block", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-normalized-defaults-", {
+    test: t,
+  });
+  writeTelemetryState(fixture);
+
+  const subagentDir = join(fixture.agent, "tlh", "agents", "subagents");
+  mkdirSync(subagentDir, { recursive: true });
+  writeFileSync(
+    join(subagentDir, "developer.md"),
+    `---
+name: developer
+model: anthropic/legacy-model
+thinking: high
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+---
+Body.
+`,
+  );
+
+  const previousFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return { ok: true, status: 200, statusText: "OK" };
+  };
+
+  try {
+    await withEnv(
+      {
+        HOME: fixture.home,
+        PI_CODING_AGENT_DIR: fixture.agent,
+        TLH_TELEMETRY_NAMESPACE: "test-namespace",
+        TLH_TELEMETRY_APP_ID: "test-app-id",
+        TLH_TELEMETRY_INGEST_BASE_URL: "https://telemetry.example.test/namespace",
+        PI_OFFLINE: undefined,
+        TLH_SKIP_TELEMETRY: undefined,
+        TLH_TELEMETRY_DISABLED: undefined,
+        PI_TELEMETRY: undefined,
+      },
+      async () => {
+        await sendTlhLaunchTelemetry({
+          version: "1.2.3",
+          providerId: "anthropic",
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        });
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+
+  assert.ok(request, "expected telemetry fetch call");
+  const [event] = JSON.parse(request.options?.body ?? "[]");
+  assert.equal(
+    event.payload["Tlh.Subagent.developer.modelEffort"],
+    "claude-sonnet-4-6:medium",
+    "telemetry must use the matching normalized provider entry instead of generic thinking/model",
   );
 });
 
@@ -1720,7 +1809,7 @@ async function captureSubagentPayload(
   return event.payload;
 }
 
-test("launch telemetry follows a registry-missing OpenRouter session model and effort", async (t) => {
+test("launch telemetry follows a registry-missing OpenRouter session model and normalized effort", async (t) => {
   const payload = await captureSubagentPayload(t, {
     snapshot: {
       providerId: "openrouter",
@@ -1731,7 +1820,9 @@ test("launch telemetry follows a registry-missing OpenRouter session model and e
       "---",
       "name: developer",
       "description: Developer",
-      "tlhOpenrouterThinking: high",
+      "tlhModelDefaults:",
+      "  - provider: openrouter",
+      "    effort: high",
       "---",
       "Prompt",
       "",

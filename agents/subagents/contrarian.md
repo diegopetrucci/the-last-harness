@@ -2,12 +2,16 @@
 name: contrarian
 description: Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.
 tools: read, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.6-sol
-tlhAnthropicModels: anthropic/claude-opus-5
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-sol]
+    effort: high
+  - provider: anthropic
+    models: [claude-opus-5]
+    effort: high
+  - provider: openrouter
+    effort: high
 preferOppositeProvider: true
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: high
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

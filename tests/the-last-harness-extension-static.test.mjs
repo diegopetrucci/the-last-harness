@@ -233,9 +233,6 @@ test("allowed-subagents prompt scopes embedded guidance to architect", () => {
   const product = primaryAgents.get("product");
   const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
-  const developer = subagents.find((agent) => agent.name === "developer");
-  assert.equal(developer?.tlhOpenrouterThinking, "medium");
-  assert.equal(developer?.preferOppositeProvider, undefined);
 
   const embeddedConfig = { enabledFeatures: ["embedded-subagents"] };
   const noEmbeddedConfig = { enabledFeatures: [] };

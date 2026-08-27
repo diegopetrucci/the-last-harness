@@ -50,6 +50,8 @@ import {
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
+  formatProviderModelReference,
+  listAgentModelDefaultReferences,
   parseProviderModelReference,
   resolveProviderThinking,
   selectProviderAwareAgentDefaults,
@@ -1004,9 +1006,12 @@ function createTlhPrimaryAgentRuntime(
     model: ActiveModel | undefined,
   ): Promise<ActiveModel | undefined> {
     if (!model) {
-      const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])]
-        .filter(Boolean)
-        .join(", ");
+      const candidateValues = [
+        primary.preferredModel ? formatProviderModelReference(primary.preferredModel) : undefined,
+        ...(primary.tlhModelDefaultsSource === "legacy" ? [primary.model] : []),
+        ...listAgentModelDefaultReferences(primary).map(formatProviderModelReference),
+      ].filter((candidate): candidate is string => Boolean(candidate));
+      const candidates = [...new Set(candidateValues)].join(", ");
       warnOnce(
         ctx,
         `missing-primary-model-${primary.name}`,

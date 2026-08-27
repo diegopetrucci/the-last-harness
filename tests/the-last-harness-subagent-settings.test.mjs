@@ -1018,10 +1018,20 @@ test("journey: subagent override created under packaged X fires the startup noti
     const updatedDeveloper = {
       name: "developer",
       description: "Developer subagent after a TLH update",
-      tlhAnthropicModels: ["anthropic/claude-CHANGED-after-update"],
-      tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-      tlhAnthropicThinking: "medium",
-      tlhOpenaiThinking: "max",
+      tlhModelDefaultsSource: "frontmatter",
+      tlhModelDefaults: [
+        {
+          provider: "anthropic",
+          models: [{ provider: "anthropic", id: "claude-CHANGED-after-update" }],
+          effort: "medium",
+        },
+        {
+          provider: "openai-codex",
+          models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+          effort: "max",
+        },
+        { provider: "openrouter", effort: "medium" },
+      ],
     };
 
     __resetModelEffortNoticeForTests();
@@ -1103,10 +1113,20 @@ test("journey: {model: null} stored subagent override is treated as absent, base
     const updatedDeveloper = {
       name: "developer",
       description: "Developer subagent after a TLH update",
-      tlhAnthropicModels: ["anthropic/claude-CHANGED-after-update"],
-      tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-      tlhAnthropicThinking: "medium",
-      tlhOpenaiThinking: "max",
+      tlhModelDefaultsSource: "frontmatter",
+      tlhModelDefaults: [
+        {
+          provider: "anthropic",
+          models: [{ provider: "anthropic", id: "claude-CHANGED-after-update" }],
+          effort: "medium",
+        },
+        {
+          provider: "openai-codex",
+          models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+          effort: "max",
+        },
+        { provider: "openrouter", effort: "medium" },
+      ],
     };
 
     // User-visible outcome: notice fires because baseline was recorded and packaged changed.

@@ -1,5 +1,5 @@
 import { isRecord, readText } from "./common.js";
-import { formatProviderModelReference, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
+import { formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, selectProviderAwareAgentDefaults, splitKnownThinkingSuffix, } from "./model-defaults.js";
 import { tlhStatePath, writeGuardedTlhStateFile } from "./profile-state.js";
 export function isKnownProvider(provider) {
     return typeof provider === "string" && provider.length > 0;
@@ -119,11 +119,11 @@ export function updateReconcileAcknowledgedSnapshot(snapshot, lastDecisionAt) {
 }
 function packagedCandidateModels(agent) {
     const seen = new Map();
-    for (const raw of [
-        agent.model,
-        ...(agent.tlhOpenaiModels ?? []),
-        ...(agent.tlhAnthropicModels ?? []),
-    ]) {
+    const rawModels = [
+        ...(agent.tlhModelDefaultsSource === "legacy" ? [agent.model] : []),
+        ...listAgentModelDefaultReferences(agent).map(formatProviderModelReference),
+    ];
+    for (const raw of rawModels) {
         const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
         if (!parsed) {
             continue;

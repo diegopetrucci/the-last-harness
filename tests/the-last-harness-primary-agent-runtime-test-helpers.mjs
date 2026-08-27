@@ -15,6 +15,9 @@ export const {
 export const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
 );
+export const { normalizeAgentModelDefaults } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
 
 export function createPiHarness() {
   const commands = new Map();
@@ -152,14 +155,49 @@ export function writePrimaryConfig(agentDir, primaryAgent = {}) {
   );
 }
 
+function frontmatterModelFields(overrides) {
+  const frontmatter = {};
+  for (const key of [
+    "model",
+    "thinking",
+    "tlhOpenaiModels",
+    "tlhAnthropicModels",
+    "tlhOpenaiThinking",
+    "tlhAnthropicThinking",
+    "tlhOpenrouterThinking",
+  ]) {
+    const value = overrides[key];
+    if (Array.isArray(value)) {
+      frontmatter[key] = value.join(",");
+    } else if (typeof value === "string") {
+      frontmatter[key] = value;
+    }
+  }
+  return frontmatter;
+}
+
 export function createPrimaryPrompt(name, overrides = {}) {
+  const normalized = normalizeAgentModelDefaults(
+    frontmatterModelFields(overrides),
+    overrides.tlhModelDefaults,
+  );
+  const {
+    tlhOpenaiModels: _tlhOpenaiModels,
+    tlhAnthropicModels: _tlhAnthropicModels,
+    tlhOpenaiThinking: _tlhOpenaiThinking,
+    tlhAnthropicThinking: _tlhAnthropicThinking,
+    tlhOpenrouterThinking: _tlhOpenrouterThinking,
+    ...withoutLegacyFields
+  } = overrides;
   return {
     name,
     description: "Test primary",
     tools: ["subagent"],
     systemPrompt: "test",
     filePath: `agents/primary/${name}.md`,
-    ...overrides,
+    ...withoutLegacyFields,
+    ...normalized,
+    ...(overrides.preferredModel ? { preferredModel: overrides.preferredModel } : {}),
   };
 }
 
@@ -177,18 +215,40 @@ export function contrarianMetadata() {
     name: "contrarian",
     description:
       "Stress-tests plans, designs, and conclusions by steelmanning the strongest opposing case.",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-    tlhAnthropicModels: ["anthropic/claude-opus-5"],
+    tlhModelDefaults: [
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
     preferOppositeProvider: true,
   };
 }
 
 export function rushLikePrimary(name = "architect") {
   return createPrimaryPrompt(name, {
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-    thinking: "low",
-    tlhOpenaiThinking: "medium",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+        effort: "medium",
+      },
+      { provider: "openrouter", effort: "low" },
+    ],
+    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
     applyModel: true,
     applyThinking: true,
   });
@@ -196,10 +256,20 @@ export function rushLikePrimary(name = "architect") {
 
 export function lockedRushPrimary() {
   return createPrimaryPrompt("rush", {
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-    thinking: "low",
-    tlhOpenaiThinking: "medium",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+        effort: "medium",
+      },
+      { provider: "openrouter", effort: "low" },
+    ],
+    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
     applyModel: true,
     applyThinking: true,
     lockThinking: true,
