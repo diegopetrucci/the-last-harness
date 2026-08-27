@@ -323,7 +323,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             systemPromptMode: agent.systemPromptMode,
             inheritProjectContext: agent.inheritProjectContext,
             inheritSkills: agent.inheritSkills,
-            requireReadTool: Boolean(shared.resolvedSkillNames?.length),
+            requireReadTool: agent.inheritSkills || Boolean(shared.resolvedSkillNames?.length),
             tools: agent.tools,
             extensions: agent.extensions,
             subagentOnlyExtensions: agent.subagentOnlyExtensions,

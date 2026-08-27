@@ -641,6 +641,35 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(args[args.indexOf("--tools") + 1], "read,bash");
   });
 
+  it("adds read for inherited skills under explicit named and empty policies", () => {
+    for (const tools of [["bash"], []]) {
+      const { args } = buildPiArgs({
+        baseArgs: ["-p"],
+        task: "hello",
+        sessionEnabled: false,
+        inheritProjectContext: false,
+        inheritSkills: true,
+        tools,
+      });
+
+      assert.equal(args[args.indexOf("--tools") + 1], tools.length > 0 ? "read,bash" : "read");
+      assert.ok(!args.includes("--no-tools"));
+    }
+  });
+
+  it("does not add read when skills are neither inherited nor directly injected", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["bash"],
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "bash");
+  });
+
   it("always sets MCP_DIRECT_TOOLS=__none__ sentinel for @diegopetrucci/pi-mcp-adapter", () => {
     // The adapter's init.ts checks envDirect !== "__none__" before bootstrapping direct MCP tools.
     // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would widen every child's tool surface.

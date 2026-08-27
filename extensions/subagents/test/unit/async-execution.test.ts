@@ -172,4 +172,24 @@ describe("async runner execution", () => {
       error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
     });
   });
+
+  it("returns an actionable preflight error for extension-only tools with inherited skills", () => {
+    const result = buildAsyncRunnerSteps("run-invalid-inherited-tool-policy", {
+      chain: [{ agent: "worker", task: "Inspect the task" }],
+      agents: [
+        {
+          ...agent("worker"),
+          inheritSkills: true,
+          tools: ["./custom-tool.ts"],
+        },
+      ],
+      ctx,
+      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+      maxSubagentDepth: 2,
+    });
+
+    assert.deepEqual(result, {
+      error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
+    });
+  });
 });

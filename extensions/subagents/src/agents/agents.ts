@@ -19,6 +19,7 @@ import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
@@ -1261,7 +1262,13 @@ function loadAgentsFromDir(
             `Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`,
           );
         }
-        toolBudget = parsed as ToolBudgetConfig;
+        const normalizedToolBudget = validateToolBudgetConfig(parsed);
+        if (normalizedToolBudget.error) {
+          throw new AgentDefinitionValidationError(
+            `Agent '${localName}' has invalid toolBudget frontmatter: ${normalizedToolBudget.error}`,
+          );
+        }
+        toolBudget = normalizedToolBudget.budget;
       }
       const completionGuard =
         frontmatter.completionGuard === "false"

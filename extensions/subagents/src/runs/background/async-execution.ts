@@ -565,7 +565,7 @@ export function buildAsyncRunnerSteps(
       throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
     const toolPolicyError = validatePiToolPolicy({
       tools: a.tools,
-      requireReadTool: resolvedSkills.length > 0,
+      requireReadTool: a.inheritSkills || resolvedSkills.length > 0,
     });
     if (toolPolicyError) throw new AsyncStartValidationError(toolPolicyError);
 
@@ -1139,7 +1139,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
   const toolPolicyError = validatePiToolPolicy({
     tools: agentConfig.tools,
-    requireReadTool: resolvedSkills.length > 0,
+    requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
   });
   if (toolPolicyError) return formatAsyncStartError("single", toolPolicyError);
   let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";

@@ -250,6 +250,67 @@ Valid
     assert.match(diagnostic.error, /toolBudget/);
   });
 
+  it("skips semantically invalid toolBudgets while retaining normalized valid peers", () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-semantic-invalid-"),
+    );
+    tempDirs.push(dir);
+    const agentsDir = path.join(dir, ".pi", "agents");
+    const invalidBudgets: Array<{
+      name: string;
+      config: Record<string, unknown>;
+      field: string;
+    }> = [
+      { name: "invalid-hard", config: { hard: 0 }, field: "hard" },
+      { name: "invalid-soft", config: { soft: 5, hard: 4 }, field: "soft" },
+      { name: "invalid-block", config: { hard: 4, block: [] }, field: "block" },
+    ];
+    for (const { name, config } of invalidBudgets) {
+      writeAgent(
+        path.join(agentsDir, `${name}.md`),
+        `---
+name: ${name}
+description: Invalid ${name}
+toolBudget: ${JSON.stringify(config)}
+---
+
+Invalid ${name}
+`,
+      );
+    }
+    writeAgent(
+      path.join(agentsDir, "valid-normalized.md"),
+      `---
+name: valid-normalized
+description: Valid normalized budget
+toolBudget: ${JSON.stringify({ soft: 2, hard: 4, block: [" read ", "read", "write"] })}
+---
+
+Valid budget
+`,
+    );
+
+    const result = discoverAgentsAll(dir);
+    const valid = result.project.find((agent) => agent.name === "valid-normalized");
+    assert.deepEqual(valid?.toolBudget, {
+      soft: 2,
+      hard: 4,
+      block: ["read", "write"],
+    });
+    for (const { name, field } of invalidBudgets) {
+      assert.equal(
+        result.project.some((agent) => agent.name === name),
+        false,
+        `invalid ${name} agent must be skipped`,
+      );
+      const diagnostic = result.agentDiagnostics?.find((entry) =>
+        entry.filePath.endsWith(`${name}.md`),
+      );
+      assert.ok(diagnostic);
+      assert.match(diagnostic.error, new RegExp(`toolBudget\\.${field}`));
+    }
+  });
+
   it("silently skips README.md and empty frontmatter files", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-no-frontmatter-"));
     tempDirs.push(dir);

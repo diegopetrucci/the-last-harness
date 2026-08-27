@@ -53,7 +53,7 @@ export interface ChildTranscriptWriter {
   writeStderrText(text: string): void;
   /** Stream raw stderr in bounded records while preserving split UTF-8 sequences. */
   writeStderrChunk(chunk: Buffer | string): void;
-  /** Flush the decoder after the child stderr stream closes or errors. */
+  /** Flush the current child stderr decoder after its stream closes or errors. */
   finishStderr(): void;
   getError(): string | undefined;
 }
@@ -109,8 +109,7 @@ export function createChildTranscriptWriter(
   let bytesWritten = 0;
   let writeError: string | undefined;
   let truncated = false;
-  let stderrFinished = false;
-  const stderrDecoder = new StringDecoder("utf8");
+  let stderrDecoder: StringDecoder | undefined;
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES;
 
   const baseRecord = (recordType: ChildTranscriptRecordType) => {
@@ -186,6 +185,10 @@ export function createChildTranscriptWriter(
 
   const writeStderrChunk = (chunk: Buffer | string): void => {
     const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    if (bytes.length === 0 || writeError || truncated) return;
+    // The writer is shared by fallback attempts, so each child stream gets its
+    // own decoder and cannot inherit an incomplete code point from a prior one.
+    stderrDecoder ??= new StringDecoder("utf8");
     for (
       let start = 0;
       start < bytes.length && !writeError && !truncated;
@@ -198,9 +201,12 @@ export function createChildTranscriptWriter(
   };
 
   const finishStderr = (): void => {
-    if (stderrFinished) return;
-    stderrFinished = true;
-    writeStderrDecodedText(stderrDecoder.end());
+    const decoder = stderrDecoder;
+    if (!decoder) return;
+    // Clear before flushing so the next chunk starts a fresh fallback attempt;
+    // repeated finalization without a new chunk remains a no-op.
+    stderrDecoder = undefined;
+    writeStderrDecodedText(decoder.end());
   };
 
   const writeMessage = (sourceEventType: string, message: ChildTranscriptMessage) => {

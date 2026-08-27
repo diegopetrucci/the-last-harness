@@ -211,6 +211,34 @@ describe("createChildTranscriptWriter", () => {
     assert.equal(records[2]!.text, "warn two");
   });
 
+  it("flushes stderr independently across fallback attempts and ignores duplicate finishes", () => {
+    const dir = tmpDir();
+    const transcriptPath = path.join(dir, "transcript.jsonl");
+    const writer = createChildTranscriptWriter({
+      transcriptPath,
+      source: "async",
+      runId: "run-fallback-stderr",
+      agent: "worker",
+      cwd: "/repo",
+    });
+    const incompleteCodePoint = Buffer.from("€", "utf8").subarray(0, 1);
+
+    // Each child process can end with an incomplete code point. Finalization
+    // must flush it, then the next fallback attempt must start from a fresh
+    // decoder rather than inheriting the previous stream's state.
+    writer.writeStderrChunk(incompleteCodePoint);
+    writer.finishStderr();
+    writer.finishStderr();
+    writer.writeStderrChunk(incompleteCodePoint);
+    writer.finishStderr();
+    writer.finishStderr();
+
+    assert.deepEqual(
+      readRecords(transcriptPath).map((record) => record.text),
+      ["�", "�"],
+    );
+  });
+
   it("truncates after the byte cap and stops writing further records without erroring", () => {
     const dir = tmpDir();
     const transcriptPath = path.join(dir, "transcript.jsonl");

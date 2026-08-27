@@ -8,6 +8,7 @@ import { mergeAgentsForScope } from "./agent-selection.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
 function defaultSystemPromptMode(name) {
@@ -907,7 +908,11 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                 if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
                     throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`);
                 }
-                toolBudget = parsed;
+                const normalizedToolBudget = validateToolBudgetConfig(parsed);
+                if (normalizedToolBudget.error) {
+                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter: ${normalizedToolBudget.error}`);
+                }
+                toolBudget = normalizedToolBudget.budget;
             }
             const completionGuard = frontmatter.completionGuard === "false"
                 ? false

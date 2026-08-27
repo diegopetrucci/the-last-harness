@@ -132,7 +132,8 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     }
     const hasStructuredOutput = Boolean(input.structuredOutput);
     const requiresContactSupervisor = Boolean(input.orchestratorIntercomTarget?.trim());
-    const toolPolicy = resolveToolPolicy(input.tools, input.requireReadTool);
+    const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
+    const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
     if (toolPolicy.error)
         throw new Error(toolPolicy.error);
     const { namedToolNames, toolExtensionPaths, hasOnlyExtensionPaths } = toolPolicy;
@@ -142,7 +143,7 @@ function buildPiArgsInternal(input, onTempDirCreated) {
         }
         else {
             const allowedToolNames = [...namedToolNames];
-            if (input.requireReadTool && !allowedToolNames.includes("read")) {
+            if (requiresReadTool && !allowedToolNames.includes("read")) {
                 allowedToolNames.unshift("read");
             }
             if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {

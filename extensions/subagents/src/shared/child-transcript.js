@@ -46,8 +46,7 @@ export function createChildTranscriptWriter(input) {
     let bytesWritten = 0;
     let writeError;
     let truncated = false;
-    let stderrFinished = false;
-    const stderrDecoder = new StringDecoder("utf8");
+    let stderrDecoder;
     const maxBytes = input.maxBytes ?? DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES;
     const baseRecord = (recordType) => {
         const ts = Date.now();
@@ -123,15 +122,19 @@ export function createChildTranscriptWriter(input) {
     };
     const writeStderrChunk = (chunk) => {
         const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+        if (bytes.length === 0 || writeError || truncated)
+            return;
+        stderrDecoder ??= new StringDecoder("utf8");
         for (let start = 0; start < bytes.length && !writeError && !truncated; start += MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES) {
             writeStderrDecodedText(stderrDecoder.write(bytes.subarray(start, start + MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES)));
         }
     };
     const finishStderr = () => {
-        if (stderrFinished)
+        const decoder = stderrDecoder;
+        if (!decoder)
             return;
-        stderrFinished = true;
-        writeStderrDecodedText(stderrDecoder.end());
+        stderrDecoder = undefined;
+        writeStderrDecodedText(decoder.end());
     };
     const writeMessage = (sourceEventType, message) => {
         const text = extractTextFromContent(message.content);

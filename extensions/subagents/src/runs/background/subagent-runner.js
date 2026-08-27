@@ -1034,7 +1034,7 @@ async function runSingleStep(step, ctx) {
                 model: candidate,
                 inheritProjectContext: step.inheritProjectContext,
                 inheritSkills: step.inheritSkills,
-                requireReadTool: Boolean(step.skills?.length),
+                requireReadTool: step.inheritSkills || Boolean(step.skills?.length),
                 tools: step.tools,
                 extensions: step.extensions,
                 subagentOnlyExtensions: step.subagentOnlyExtensions,
