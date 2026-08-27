@@ -10,7 +10,6 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 import {
   createPiHarness,
   createPrimaryPrompt,
-  lockedRushPrimary,
   rushLikePrimary,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
@@ -882,8 +881,8 @@ test("TLH-internal model application persists defaults without prompting or reco
   });
 });
 
-test("locked-primary All sessions persists globally without creating a role override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-locked-all-", {
+test("overrideable Rush All sessions persists globally and creates its role override", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-scope-override-all-", {
     cwd: true,
     test: t,
   });
@@ -897,7 +896,7 @@ test("locked-primary All sessions persists globally without creating a role over
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+    const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
     const { beforeAgentStart, modelSelect, pi } = registerScopeRuntime(primaryAgents);
     pi.model = primaryModel;
     installScopeOverride(() => pi.model);
@@ -912,17 +911,21 @@ test("locked-primary All sessions persists globally without creating a role over
     );
     let written = readSettings(fixture.agent);
     assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, undefined);
+    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, "anthropic/claude-opus-5");
 
     await beforeAgentStart({ systemPrompt: "base" }, context);
-    assert.deepEqual(pi.model, primaryModel);
+    assert.deepEqual(
+      pi.model,
+      selectedModel,
+      "an overrideable primary must retain its persisted model override",
+    );
     written = readSettings(fixture.agent);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, undefined);
+    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, "anthropic/claude-opus-5");
   });
 });
 
-test("locked-primary session-only is reapplied on the next before_agent_start", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-locked-session-", {
+test("overrideable Rush session-only selection is retained on the next before_agent_start", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-scope-override-session-", {
     cwd: true,
     test: t,
   });
@@ -936,7 +939,7 @@ test("locked-primary session-only is reapplied on the next before_agent_start", 
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+    const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
     const { beforeAgentStart, modelSelect, pi } = registerScopeRuntime(primaryAgents);
     pi.model = primaryModel;
     installScopeOverride(() => pi.model);
@@ -955,12 +958,65 @@ test("locked-primary session-only is reapplied on the next before_agent_start", 
     await beforeAgentStart({ systemPrompt: "base" }, context);
     assert.deepEqual(
       pi.model,
-      primaryModel,
-      "locked primary must force its model on the next turn",
+      selectedModel,
+      "an overrideable primary must retain a session-only model on the next turn",
     );
     assert.equal(readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.rush, undefined);
   });
 });
+
+for (const selection of ["product", "bug-hunter"]) {
+  test(`${selection} All sessions selection persists a distinct primary override`, async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-model-scope-primary-", {
+      cwd: true,
+      test: t,
+    });
+    const primaryModel = { provider: "anthropic", id: "claude-opus-5" };
+    const selectedModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
+    const primary = createPrimaryPrompt(selection, {
+      model: "anthropic/claude-opus-5",
+      tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+      tlhAnthropicThinking: "high",
+      tlhOpenaiThinking: "high",
+      applyModel: true,
+      applyThinking: true,
+    });
+    writeSettings(fixture.agent, {
+      defaultProvider: primaryModel.provider,
+      defaultModel: primaryModel.id,
+      tlh: { primaryAgent: { enabled: true, selected: selection } },
+    });
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+      const { beforeAgentStart, modelSelect, pi, runtime } = registerScopeRuntime(
+        new Map([[selection, primary]]),
+      );
+      pi.model = primaryModel;
+      installScopeOverride(() => pi.model);
+      const context = createScopeContext(fixture, 1, selectedModel, [primaryModel, selectedModel]);
+      Object.defineProperty(context, "model", { get: () => pi.model });
+      await runtime.applySessionStart(context);
+      await queueNativeSelectorWrites(manager, selectedModel, () => {
+        pi.model = selectedModel;
+      });
+      await modelSelect(
+        { type: "model_select", model: selectedModel, previousModel: primaryModel, source: "set" },
+        context,
+      );
+      await manager.flush();
+
+      const written = readSettings(fixture.agent);
+      assert.equal(written.defaultModel, selectedModel.id);
+      assert.equal(
+        written.tlh?.primaryAgent?.modelOverrides?.[selection],
+        "anthropic/claude-sonnet-4-6",
+      );
+      await beforeAgentStart({ systemPrompt: "base" }, context);
+      assert.deepEqual(pi.model, selectedModel);
+    });
+  });
+}
 
 test("non-TUI native model events retain persistent upstream behavior without showing the scope picker", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-model-scope-nontui-", { cwd: true, test: t });

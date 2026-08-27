@@ -9,7 +9,6 @@ tlhOpenaiThinking: medium
 preferCurrentOpenaiModel: true
 applyModel: true
 applyThinking: true
-lockThinking: true
 tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor
 systemPromptMode: append
 inheritProjectContext: true

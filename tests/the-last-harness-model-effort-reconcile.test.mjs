@@ -68,10 +68,41 @@ const rushAgent = {
   description: "Rush primary agent",
   model: "anthropic/claude-sonnet-4-6",
   tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  thinking: "low",
+  tlhAnthropicThinking: "low",
+  tlhOpenrouterThinking: "low",
+  tlhOpenaiThinking: "medium",
+  preferCurrentOpenaiModel: true,
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/rush.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const productAgent = {
+  name: "product",
+  description: "Product primary agent",
+  model: "anthropic/claude-opus-5",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+  tlhAnthropicThinking: "high",
+  tlhOpenrouterThinking: "high",
+  tlhOpenaiThinking: "high",
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/product.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const bugHunterAgent = {
+  name: "bug-hunter",
+  description: "Bug-hunter primary agent",
+  model: "anthropic/claude-opus-5",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+  tlhAnthropicThinking: "high",
+  tlhOpenrouterThinking: "high",
+  tlhOpenaiThinking: "high",
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/bug-hunter.md",
 };
 
 /** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
@@ -115,6 +146,8 @@ const rushOpenaiAgent = {
 const primaryAgents = new Map([
   ["architect", architectAgent],
   ["rush", rushAgent],
+  ["product", productAgent],
+  ["bug-hunter", bugHunterAgent],
   ["rush-openai", rushOpenaiAgent],
 ]);
 
@@ -203,6 +236,55 @@ test("primary override drift — empty or invalid override values are skipped", 
   const result = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
   assert.equal(result.length, 1);
   assert.equal(result[0].name, "rush");
+});
+
+test("unlocked primary overrides for Rush, Product, and Bug-hunter are surfaced after packaged drift", () => {
+  const settings = {
+    tlh: {
+      primaryAgent: {
+        modelOverrides: {
+          rush: "anthropic/claude-opus-5",
+          product: "anthropic/claude-sonnet-4-6",
+          "bug-hunter": "anthropic/claude-sonnet-4-6",
+        },
+      },
+    },
+  };
+  const acknowledgedSnapshot = {
+    rush: { byProvider: { anthropic: { model: "anthropic/old-rush", thinking: "medium" } } },
+    product: {
+      byProvider: { anthropic: { model: "anthropic/old-product", thinking: "low" } },
+    },
+    "bug-hunter": {
+      byProvider: { anthropic: { model: "anthropic/old-bug-hunter", thinking: "low" } },
+    },
+  };
+
+  const result = computeModelEffortDrift(
+    primaryAgents,
+    subagentMetadata,
+    settings,
+    "anthropic",
+    acknowledgedSnapshot,
+  );
+  const byName = new Map(result.map((entry) => [entry.name, entry]));
+  assert.deepEqual([...byName.keys()], ["rush", "product", "bug-hunter"]);
+  assert.deepEqual(byName.get("rush")?.packaged, {
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+  });
+  assert.deepEqual(byName.get("product")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  assert.deepEqual(byName.get("bug-hunter")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  for (const name of ["rush", "product", "bug-hunter"]) {
+    assert.equal(byName.get(name)?.role, "primary");
+    assert.equal(byName.get(name)?.packagedDefaultsChanged, true);
+  }
 });
 
 // --- Subagent overrides ---
@@ -393,18 +475,18 @@ test("packaged defaults agree with selectProviderAwareAgentDefaults across a fix
   }
 });
 
-test("rush primary agent falls back to generic thinking when provider is unknown", () => {
+test("rush primary agent defers thinking resolution when provider is unknown", () => {
   const settings = {
     tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
   };
-  // rush has generic thinking: "low" and no provider-specific thinking fields
+  // Rush declares provider-specific thinking defaults, so an unknown provider cannot resolve one.
   const [entry] = computeModelEffortDrift(
     primaryAgents,
     subagentMetadata,
     settings,
     "unknown-provider",
   );
-  assert.equal(entry.packaged.thinking, "low");
+  assert.equal(entry.packaged.thinking, undefined);
 });
 
 // --- packagedDefaultsChanged detection ---

@@ -193,18 +193,6 @@ export function rushLikePrimary(name = "architect") {
   });
 }
 
-export function lockedRushPrimary() {
-  return createPrimaryPrompt("rush", {
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-    thinking: "low",
-    tlhOpenaiThinking: "medium",
-    applyModel: true,
-    applyThinking: true,
-    lockThinking: true,
-  });
-}
-
 export function createCommandContext(branchEntries = [], overrides = {}) {
   const notifications = [];
   return { notifications, ctx: createToolCallContext(branchEntries, notifications, overrides) };

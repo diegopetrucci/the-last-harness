@@ -69,6 +69,24 @@ const anthropicFirstPrimary = {
   preferCurrentOpenaiModel: undefined,
 };
 
+const productPrimary = {
+  name: "product",
+  model: "anthropic/claude-opus-5",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+  tlhAnthropicThinking: "high",
+  tlhOpenaiThinking: "high",
+  tlhOpenrouterThinking: "high",
+};
+
+const bugHunterPrimary = {
+  name: "bug-hunter",
+  model: "anthropic/claude-opus-5",
+  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
+  tlhAnthropicThinking: "high",
+  tlhOpenaiThinking: "high",
+  tlhOpenrouterThinking: "high",
+};
+
 const agents = new Map([
   [developer.name, developer],
   [codeReviewer.name, codeReviewer],
@@ -487,6 +505,19 @@ test("provider-aware primary defaults keep the Anthropic default first without t
       thinking: "low",
     },
   );
+});
+
+test("Product and Bug-hunter retain their provider-aware packaged defaults", () => {
+  for (const primary of [productPrimary, bugHunterPrimary]) {
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, anthropicAvailable, "anthropic"), {
+      model: { provider: "anthropic", id: "claude-opus-5" },
+      thinking: "high",
+    });
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, codexAvailable, "openai-codex"), {
+      model: { provider: "openai-codex", id: "gpt-5.6-sol" },
+      thinking: "high",
+    });
+  }
 });
 
 test("provider-aware primary defaults fall back to Anthropic thinking when OpenAI models are unavailable", () => {

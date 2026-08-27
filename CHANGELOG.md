@@ -6,6 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 - TLH now warns in the footer when no providers are available and points to `/login`.
 - Promoted trusted user-owned custom subagents to a stable, always-available architect extension point. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, architect-only initiation, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+- Rush, Product, and Bug-hunter now use their provider-aware model and thinking values as editable defaults. Their model selections persist per primary and can be reviewed or reset with `/reconcile`; supported `/thinking` and `/effort` levels are no longer locked. Explicit thinking choices use the upstream durable default, remain retained across turns, and clamp safely when a switched model supports fewer levels. Architect's medium thinking floor remains unchanged.
 
 ## [0.39.0] - 2026-08-24
 

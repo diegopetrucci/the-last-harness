@@ -158,6 +158,8 @@ type TlhSubagentsConfig = {
 };
 
 export type TlhSettings = {
+  /** Upstream's durable thinking choice, when explicitly written by the user. */
+  defaultThinkingLevel?: ThinkingLevel;
   subagents?: TlhSubagentsConfig;
   tlh?: {
     usageLimits?: TlhUsageLimitsConfig;

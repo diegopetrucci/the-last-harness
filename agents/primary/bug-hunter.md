@@ -8,7 +8,6 @@ tlhOpenrouterThinking: high
 tlhOpenaiThinking: high
 applyModel: true
 applyThinking: true
-lockThinking: true
 tools: read, grep, find, ls, bash, subagent, subagent_supervisor
 systemPromptMode: append
 inheritProjectContext: true
