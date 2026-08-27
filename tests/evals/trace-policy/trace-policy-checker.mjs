@@ -191,6 +191,42 @@ const GIT_GLOBAL_OPTIONS_WITH_VALUES = new Set([
   "--super-prefix",
   "--work-tree",
 ]);
+const GIT_CONFIG_MUTATING_OPTIONS = new Set([
+  "--add",
+  "--edit",
+  "--remove-section",
+  "--rename-section",
+  "--replace-all",
+  "--unset",
+  "--unset-all",
+]);
+const GIT_CONFIG_READ_OPTIONS = new Set([
+  "--get",
+  "--get-all",
+  "--get-color",
+  "--get-colorbool",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--list",
+]);
+const GIT_CONFIG_MODERN_MUTATING_ACTIONS = new Set([
+  "edit",
+  "remove-section",
+  "rename-section",
+  "set",
+  "unset",
+]);
+const GIT_CONFIG_MODERN_READ_ACTIONS = new Set(["get", "list"]);
+const GIT_CONFIG_OPTIONS_WITH_VALUES = new Set([
+  "--blob",
+  "--default",
+  "--file",
+  "--type",
+  "--url",
+  "--value",
+  "-f",
+]);
+const GIT_CONFIG_SHORT_OPTIONS_WITH_VALUES = new Set(["f", "t"]);
 const PACKAGE_GLOBAL_OPTIONS_WITH_VALUES = new Map([
   ["apt", new Set()],
   ["apt-get", new Set()],
@@ -264,43 +300,69 @@ function shellCommandSegments(command) {
 }
 
 function shellWords(segment) {
+  return shellWordsWithQuoteMetadata(segment).map(({ value }) => value);
+}
+
+function shellWordsWithQuoteMetadata(segment) {
   const words = [];
   let current = "";
+  let currentQuoted = [];
   let singleQuoted = false;
   let doubleQuoted = false;
   let escaped = false;
+  let quoted = false;
+
+  const pushWord = () => {
+    if (!current) {
+      quoted = false;
+      currentQuoted = [];
+      return;
+    }
+    const redirection = current.match(SHELL_REDIRECTION_TOKEN_PATTERN);
+    const operatorLength = redirection ? redirection[0].length - redirection[2].length : 0;
+    const operatorStart = redirection ? operatorLength - redirection[1].length : 0;
+    words.push({
+      value: current,
+      quoted,
+      operatorQuoted: currentQuoted.slice(operatorStart, operatorLength).some(Boolean),
+    });
+    current = "";
+    currentQuoted = [];
+    quoted = false;
+  };
 
   for (const char of segment) {
     if (escaped) {
       current += char;
+      currentQuoted.push(true);
       escaped = false;
+      quoted = true;
       continue;
     }
     if (char === "\\" && !singleQuoted) {
       escaped = true;
+      quoted = true;
       continue;
     }
     if (char === "'" && !doubleQuoted) {
       singleQuoted = !singleQuoted;
+      quoted = true;
       continue;
     }
     if (char === '"' && !singleQuoted) {
       doubleQuoted = !doubleQuoted;
+      quoted = true;
       continue;
     }
     if (!singleQuoted && !doubleQuoted && /\s/.test(char)) {
-      if (current) {
-        words.push(current);
-        current = "";
-      }
+      pushWord();
       continue;
     }
     current += char;
+    currentQuoted.push(singleQuoted || doubleQuoted);
   }
 
-  if (current) {
-    words.push(current);
-  }
+  pushWord();
   return words;
 }
 
@@ -762,8 +824,129 @@ function hasSedInPlaceFlag(args) {
   );
 }
 
-function isMutatingGitCommand(args) {
-  const subcommand = firstPositionalArgument(args, GIT_GLOBAL_OPTIONS_WITH_VALUES);
+const SHELL_REDIRECTION_TOKEN_PATTERN = /^(?:\d+)?(&>>|&>|>>|>\||>|<<<|<<-|<<|<>|>&|<&|<)(.*)$/;
+
+function shellWordsWithoutRedirections(args, wordMetadata = []) {
+  const words = [];
+  let skipNext = false;
+
+  for (const [index, arg] of args.entries()) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    const redirection = wordMetadata[index]?.operatorQuoted
+      ? undefined
+      : normalizeText(arg).match(SHELL_REDIRECTION_TOKEN_PATTERN);
+    if (redirection) {
+      if (!redirection[2]) {
+        skipNext = true;
+      }
+      continue;
+    }
+    words.push({
+      value: arg,
+      quoted: wordMetadata[index]?.quoted === true,
+      operatorQuoted: wordMetadata[index]?.operatorQuoted === true,
+    });
+  }
+
+  return words;
+}
+
+function shellArgumentsWithoutRedirections(args, wordMetadata = []) {
+  return shellWordsWithoutRedirections(args, wordMetadata).map(({ value }) => value);
+}
+
+function isMutatingGitConfig(args, wordMetadata = []) {
+  const configArguments = shellArgumentsWithoutRedirections(args, wordMetadata);
+  const positionalArguments = [];
+  let hasMutatingOption = false;
+  let hasReadOption = false;
+  let skipNext = false;
+  let optionsEnded = false;
+
+  for (let index = 0; index < configArguments.length; index += 1) {
+    const arg = configArguments[index];
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (!arg) {
+      continue;
+    }
+    if (optionsEnded) {
+      positionalArguments.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const optionName = arg.split("=", 1)[0];
+      if (GIT_CONFIG_MUTATING_OPTIONS.has(optionName)) {
+        hasMutatingOption = true;
+      }
+      if (GIT_CONFIG_READ_OPTIONS.has(optionName)) {
+        hasReadOption = true;
+      }
+      if (GIT_CONFIG_OPTIONS_WITH_VALUES.has(optionName) && !arg.includes("=")) {
+        skipNext = true;
+      }
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      for (let optionIndex = 1; optionIndex < arg.length; optionIndex += 1) {
+        const option = arg[optionIndex];
+        if (option === "e") {
+          hasMutatingOption = true;
+        }
+        if (option === "l") {
+          hasReadOption = true;
+        }
+        if (GIT_CONFIG_SHORT_OPTIONS_WITH_VALUES.has(option)) {
+          if (optionIndex === arg.length - 1) {
+            skipNext = true;
+          }
+          break;
+        }
+      }
+      continue;
+    }
+    positionalArguments.push(arg);
+  }
+
+  if (hasMutatingOption) {
+    return true;
+  }
+  if (hasReadOption) {
+    return false;
+  }
+
+  const action = normalizeText(positionalArguments[0]).toLowerCase();
+  if (GIT_CONFIG_MODERN_MUTATING_ACTIONS.has(action)) {
+    return true;
+  }
+  if (GIT_CONFIG_MODERN_READ_ACTIONS.has(action)) {
+    return false;
+  }
+
+  // Before the modern `set`/`unset` actions, a second positional argument
+  // was the value in `git config <name> <value>` and therefore wrote config.
+  // Unknown option forms remain outside this bounded classifier.
+  return positionalArguments.length >= 2;
+}
+
+function isMutatingGitCommand(args, wordMetadata = []) {
+  const {
+    subcommand,
+    subcommandArgs = [],
+    subcommandMetadata = [],
+  } = gitSubcommandAndArgs(args, wordMetadata);
+  if (subcommand === "config") {
+    return isMutatingGitConfig(subcommandArgs, subcommandMetadata);
+  }
   return Boolean(subcommand) && MUTATING_GIT_SUBCOMMANDS.has(subcommand);
 }
 
@@ -779,11 +962,40 @@ function isMutatingPackageCommand(commandWord, args) {
   return Boolean(subcommand) && mutatingSubcommands.has(subcommand);
 }
 
-function isMutatingShellInvocation(commandWord, args) {
+function hasTeeFileTarget(args, wordMetadata = []) {
+  let optionsEnded = false;
+
+  for (const arg of shellArgumentsWithoutRedirections(args, wordMetadata)) {
+    if (!arg) {
+      continue;
+    }
+    if (optionsEnded) {
+      if (!isSafeShellSink(arg)) {
+        return true;
+      }
+      continue;
+    }
+    if (arg === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (arg.startsWith("-") && arg !== "-") {
+      continue;
+    }
+    if (!isSafeShellSink(arg)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isMutatingShellInvocation(commandWord, args, wordMetadata = []) {
   return (
     MUTATING_SHELL_COMMANDS.has(commandWord) ||
     (commandWord === "sed" && hasSedInPlaceFlag(args)) ||
-    (commandWord === "git" && isMutatingGitCommand(args)) ||
+    (commandWord === "git" && isMutatingGitCommand(args, wordMetadata)) ||
+    (commandWord === "tee" && hasTeeFileTarget(args, wordMetadata)) ||
     isMutatingPackageCommand(commandWord, args)
   );
 }
@@ -816,14 +1028,19 @@ function firstPositionalArgumentIndex(args, optionsWithValues = new Set()) {
   return -1;
 }
 
-function gitSubcommandAndArgs(args) {
-  const subcommandIndex = firstPositionalArgumentIndex(args, GIT_GLOBAL_OPTIONS_WITH_VALUES);
+function gitSubcommandAndArgs(args, wordMetadata) {
+  const words = Array.isArray(wordMetadata)
+    ? shellWordsWithoutRedirections(args, wordMetadata)
+    : args.map((value) => ({ value, quoted: false }));
+  const commandArgs = words.map(({ value }) => value);
+  const subcommandIndex = firstPositionalArgumentIndex(commandArgs, GIT_GLOBAL_OPTIONS_WITH_VALUES);
   if (subcommandIndex < 0) {
     return {};
   }
   return {
-    subcommand: normalizeText(args[subcommandIndex]).toLowerCase(),
-    subcommandArgs: args.slice(subcommandIndex + 1),
+    subcommand: normalizeText(commandArgs[subcommandIndex]).toLowerCase(),
+    subcommandArgs: commandArgs.slice(subcommandIndex + 1),
+    subcommandMetadata: words.slice(subcommandIndex + 1),
   };
 }
 
@@ -1076,10 +1293,19 @@ function hasRiskyExistingChangesGitCommand(step) {
   );
 }
 
-function hasMutatingShellWords(words) {
+function hasMutatingShellWords(words, wordMetadata = []) {
   for (let index = 0; index < words.length; index += 1) {
     const token = words[index];
     if (!token) {
+      continue;
+    }
+    const redirection = wordMetadata[index]?.operatorQuoted
+      ? undefined
+      : normalizeText(token).match(SHELL_REDIRECTION_TOKEN_PATTERN);
+    if (redirection) {
+      if (!redirection[2]) {
+        index += 1;
+      }
       continue;
     }
     if (isShellEnvironmentAssignment(token)) {
@@ -1095,7 +1321,7 @@ function hasMutatingShellWords(words) {
     if (token === "--" || token.startsWith("-")) {
       continue;
     }
-    return isMutatingShellInvocation(token, words.slice(index + 1));
+    return isMutatingShellInvocation(token, words.slice(index + 1), wordMetadata.slice(index + 1));
   }
   return false;
 }
@@ -1103,12 +1329,53 @@ function hasMutatingShellWords(words) {
 function hasMutatingShellCommand(command) {
   for (const candidate of shellCommandTexts(command)) {
     for (const segment of shellCommandSegments(candidate)) {
-      if (hasMutatingShellWords(shellWords(segment))) {
+      const wordMetadata = shellWordsWithQuoteMetadata(segment);
+      if (
+        hasMutatingShellWords(
+          wordMetadata.map(({ value }) => value),
+          wordMetadata,
+        )
+      ) {
         return true;
       }
     }
   }
   return false;
+}
+
+function hasMutatingArgvPrefix(words) {
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index];
+    if (!token || isShellEnvironmentAssignment(token)) {
+      continue;
+    }
+    if (!SHELL_COMMAND_PREFIXES.has(token)) {
+      return false;
+    }
+
+    if (
+      token === "env" &&
+      envSplitStringValues(words, index).some((command) =>
+        hasMutatingShellArgv(shellWords(command)),
+      )
+    ) {
+      return true;
+    }
+
+    const nestedIndex = skipShellCommandPrefix(words, index);
+    return nestedIndex < words.length && hasMutatingShellArgv(words.slice(nestedIndex));
+  }
+  return false;
+}
+
+function hasMutatingShellArgv(argv) {
+  const words = argv.map((part) => String(part));
+  const wordMetadata = words.map((value) => ({ value, quoted: true, operatorQuoted: true }));
+  return (
+    isTkMutatingArgv(words) ||
+    hasMutatingShellWords(words, wordMetadata) ||
+    hasMutatingArgvPrefix(words)
+  );
 }
 
 function isSafeShellSink(target) {
@@ -1247,9 +1514,26 @@ function extractSedInPlaceTarget(command) {
   return undefined;
 }
 
+function extractSedInPlaceArgvTarget(argv) {
+  const words = argv.map((part) => String(part));
+  if (words[0] !== "sed" || !hasSedInPlaceFlag(words.slice(1))) {
+    return undefined;
+  }
+  for (let index = words.length - 1; index >= 1; index -= 1) {
+    const candidatePath = normalizeText(words[index]);
+    if (candidatePath && !candidatePath.startsWith("-")) {
+      return candidatePath;
+    }
+  }
+  return undefined;
+}
+
 function bashMutationPath(step) {
   if (toolName(step) !== "bash") {
     return undefined;
+  }
+  if (Array.isArray(step.argv)) {
+    return extractSedInPlaceArgvTarget(step.argv);
   }
   const command = commandText(step);
   return extractShellRedirectionTarget(command) || extractSedInPlaceTarget(command);
@@ -1291,9 +1575,76 @@ function isTkMutatingShellSegment(segment) {
   return Boolean(subcommand) && TK_MUTATING_SUBCOMMANDS.has(subcommand);
 }
 
+function isTkMutatingArgv(argv) {
+  if (!Array.isArray(argv) || argv.length < 2) {
+    return false;
+  }
+  const words = argv.map((part) => String(part));
+  if (
+    normalizeText(words[0]).toLowerCase() === "tk" &&
+    TK_MUTATING_SUBCOMMANDS.has(normalizeText(words[1]).toLowerCase())
+  ) {
+    return true;
+  }
+
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index];
+    if (!token || isShellEnvironmentAssignment(token)) {
+      continue;
+    }
+    if (!SHELL_COMMAND_PREFIXES.has(token)) {
+      return false;
+    }
+    if (
+      token === "env" &&
+      envSplitStringValues(words, index).some((command) => isTkMutatingArgv(shellWords(command)))
+    ) {
+      return true;
+    }
+    const nestedIndex = skipShellCommandPrefix(words, index);
+    return nestedIndex < words.length && isTkMutatingArgv(words.slice(nestedIndex));
+  }
+  return false;
+}
+
+function isPureTkShowArgv(argv) {
+  if (!Array.isArray(argv) || argv.length < 3) {
+    return false;
+  }
+  const words = argv.map((part) => String(part));
+  if (
+    normalizeText(words[0]).toLowerCase() === "tk" &&
+    normalizeText(words[1]).toLowerCase() === "show"
+  ) {
+    return Boolean(firstPositionalArgument(words.slice(2)));
+  }
+
+  for (let index = 0; index < words.length; index += 1) {
+    const token = words[index];
+    if (!token || isShellEnvironmentAssignment(token)) {
+      continue;
+    }
+    if (!SHELL_COMMAND_PREFIXES.has(token)) {
+      return false;
+    }
+    if (
+      token === "env" &&
+      envSplitStringValues(words, index).some((command) => isPureTkShowArgv(shellWords(command)))
+    ) {
+      return true;
+    }
+    const nestedIndex = skipShellCommandPrefix(words, index);
+    return nestedIndex < words.length && isPureTkShowArgv(words.slice(nestedIndex));
+  }
+  return false;
+}
+
 function isPureTkMutatingCommand(step) {
   if (toolName(step) !== "bash") {
     return false;
+  }
+  if (Array.isArray(step.argv)) {
+    return isTkMutatingArgv(step.argv);
   }
   const command = commandText(step);
   if (!command || hasMutatingShellCommand(command) || extractShellRedirectionTarget(command)) {
@@ -1307,6 +1658,9 @@ function isTkMutatingCommand(step) {
   if (toolName(step) !== "bash") {
     return false;
   }
+  if (Array.isArray(step.argv)) {
+    return isTkMutatingArgv(step.argv);
+  }
   const command = commandText(step);
   if (!command) {
     return false;
@@ -1317,6 +1671,9 @@ function isTkMutatingCommand(step) {
 function isPureTkShowCommand(step) {
   if (toolName(step) !== "bash") {
     return false;
+  }
+  if (Array.isArray(step.argv)) {
+    return isPureTkShowArgv(step.argv);
   }
   const command = commandText(step);
   if (!command || hasMutatingShellCommand(command) || extractShellRedirectionTarget(command)) {
@@ -1361,10 +1718,14 @@ function readOnlyBashMutation(step) {
   if (!command) {
     return false;
   }
+  const hasArgv = Array.isArray(step.argv);
+  const hasMutatingCommand = hasArgv
+    ? hasMutatingShellArgv(step.argv)
+    : hasMutatingShellCommand(command);
   return (
-    hasMutatingShellCommand(command) ||
+    hasMutatingCommand ||
     isTkMutatingCommand(step) ||
-    Boolean(extractShellRedirectionTarget(command))
+    (!hasArgv && Boolean(extractShellRedirectionTarget(command)))
   );
 }
 
