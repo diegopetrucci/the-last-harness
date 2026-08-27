@@ -504,6 +504,80 @@ test("usage footer stays within narrow terminal widths", () => {
 });
 
 // ---------------------------------------------------------------------------
+// NEW: no-provider warning tests
+// ---------------------------------------------------------------------------
+
+test("footer warns when the upstream provider count is zero", () => {
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    WIDTH,
+    createFooterData({ providerCount: 0 }),
+  );
+
+  assert.ok(lines.includes("⚠ no provider — run /login"));
+});
+
+test("footer omits the no-provider warning when a provider is available", () => {
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    WIDTH,
+    createFooterData({ providerCount: 1 }),
+  );
+
+  assert.doesNotMatch(lines.join("\n"), /no provider|run \/login/);
+});
+
+test("footer dismisses the no-provider warning after the provider count becomes nonzero", () => {
+  let providerCount = 0;
+  const footerData = {
+    ...createFooterData(),
+    getAvailableProviderCount: () => providerCount,
+  };
+  const footer = createTlhFooter(
+    pi,
+    createCtx({ entries: [] }),
+    theme,
+    () => "architect",
+    footerData,
+    {},
+  );
+
+  assert.match(footer.render(WIDTH).join("\n"), /⚠ no provider — run \/login/);
+
+  providerCount = 1;
+  assert.doesNotMatch(footer.render(WIDTH).join("\n"), /no provider|run \/login/);
+});
+
+test("footer renders the no-provider warning with warning styling", () => {
+  const lines = createTlhFooter(
+    pi,
+    createCtx({ entries: [] }),
+    colorTheme,
+    () => "architect",
+    createFooterData({ providerCount: 0 }),
+    {},
+  ).render(COLOR_WIDTH);
+
+  assert.equal(lines.at(-1), "<warning>⚠ no provider — run /login</warning>");
+});
+
+test("no-provider warning respects narrow footer widths", () => {
+  const width = 12;
+  const lines = renderFooterLines(
+    createCtx({ entries: [] }),
+    {},
+    width,
+    createFooterData({ providerCount: 0 }),
+  );
+  const warningLine = lines.at(-1) ?? "";
+
+  assert.ok(visibleWidth(warningLine) <= width);
+  assert.ok(warningLine.length > 0);
+});
+
+// ---------------------------------------------------------------------------
 // NEW: focused line-2 composition tests
 // ---------------------------------------------------------------------------
 
