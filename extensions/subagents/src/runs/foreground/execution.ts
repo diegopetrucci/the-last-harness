@@ -28,6 +28,8 @@ import {
   type RunSyncOptions,
   type SingleResult,
   type SubagentModelIdentity,
+  type AcceptanceLedger,
+  type ResolvedAcceptanceConfig,
   type Usage,
   DEFAULT_MAX_OUTPUT,
   INTERCOM_DETACH_REQUEST_EVENT,
@@ -451,6 +453,53 @@ function resolveResultSessionFile(
   }
 }
 
+type ForegroundArtifactSetup = {
+  artifactPathsResult?: ArtifactPaths;
+  jsonlPath?: string;
+  transcriptWriter?: ChildTranscriptWriter;
+};
+
+function setupForegroundArtifacts(
+  runtimeCwd: string,
+  agentName: string,
+  taskWithAcceptance: string,
+  options: RunSyncOptions,
+): ForegroundArtifactSetup {
+  let artifactPathsResult: ArtifactPaths | undefined;
+  let jsonlPath: string | undefined;
+  let transcriptWriter: ChildTranscriptWriter | undefined;
+  if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
+    artifactPathsResult = getArtifactPaths(
+      options.artifactsDir,
+      options.runId,
+      agentName,
+      options.index,
+    );
+    ensureArtifactsDir(options.artifactsDir);
+    if (options.artifactConfig?.includeInput !== false) {
+      writeArtifact(
+        artifactPathsResult.inputPath,
+        `# Task for ${agentName}\n\n${taskWithAcceptance}`,
+      );
+    }
+    if (options.artifactConfig?.includeJsonl !== false) {
+      jsonlPath = artifactPathsResult.jsonlPath;
+    }
+    if (options.artifactConfig?.includeTranscript !== false) {
+      transcriptWriter = createChildTranscriptWriter({
+        transcriptPath: artifactPathsResult.transcriptPath,
+        source: "foreground",
+        runId: options.runId,
+        agent: agentName,
+        childIndex: options.index,
+        cwd: options.cwd ?? runtimeCwd,
+      });
+      transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
+    }
+  }
+  return { artifactPathsResult, jsonlPath, transcriptWriter };
+}
+
 type SingleAttemptFinalizationInput = {
   result: SingleResult;
   progress: AgentProgress;
@@ -745,6 +794,225 @@ function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): SingleRes
   };
 
   return finalizeSingleAttemptOutput(input);
+}
+
+type ForegroundRunFinalizationInput = {
+  result: SingleResult;
+  options: RunSyncOptions;
+  shareEnabled: boolean;
+  artifactPathsResult?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+};
+
+function prepareForegroundRunFinalization(input: ForegroundRunFinalizationInput): void {
+  const { result, options, shareEnabled, artifactPathsResult, transcriptWriter } = input;
+  resolveResultSessionFile(result, options, shareEnabled);
+  if (result.timedOut) {
+    const timeoutDiagnostics = formatTimeoutDiagnostics(
+      result,
+      options,
+      artifactPathsResult ?? result.artifactPaths,
+    );
+    result.finalOutput = timeoutDiagnostics;
+    // Append the acceptance digest to the artifact copy only; result.finalOutput must
+    // remain exactly timeoutDiagnostics so it does not corrupt output-file or chain
+    // output references. The savedOutputPath exception (no digest) is preserved.
+    // Parse with the trailing-fence rule so the digest describes the same fence
+    // the gate will evaluate.
+    const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
+    const timeoutReport = storedAcceptanceOutput
+      ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
+      : undefined;
+    artifactOutputByResult.set(
+      result,
+      timeoutReport && !result.savedOutputPath
+        ? appendAcceptanceReportDigest(timeoutDiagnostics, timeoutReport)
+        : timeoutDiagnostics,
+    );
+  }
+  if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
+  if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
+  finalizeTerminationReason(result);
+}
+
+type SingleAcceptanceEvaluationInput = {
+  result: SingleResult;
+  effectiveAcceptance: ResolvedAcceptanceConfig;
+  options: RunSyncOptions;
+  runtimeCwd: string;
+};
+
+type SingleAcceptanceEvaluation = {
+  interruptedAcceptance: AcceptanceLedger;
+  acceptance: AcceptanceLedger | Promise<AcceptanceLedger>;
+};
+
+function evaluateSingleAcceptance(
+  input: SingleAcceptanceEvaluationInput,
+): SingleAcceptanceEvaluation {
+  const { result, effectiveAcceptance, options, runtimeCwd } = input;
+  const interruptedAcceptance = buildSkippedAcceptanceLedger({
+    acceptance: effectiveAcceptance,
+    ledgerStatus: "skipped",
+    runtimeCheckStatus: "not-applicable",
+    id: "paused",
+    message:
+      "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+  });
+  const interruptedBeforeAcceptance =
+    result.interrupted || options.interruptSignal?.aborted === true;
+  if (result.timedOut) {
+    return {
+      interruptedAcceptance,
+      acceptance: buildSkippedAcceptanceLedger({
+        acceptance: effectiveAcceptance,
+        ledgerStatus: "rejected",
+        runtimeCheckStatus: "failed",
+        id: "timeout",
+        message: "Acceptance was not evaluated because the subagent timed out.",
+      }),
+    };
+  }
+  if (result.turnBudgetExceeded) {
+    return {
+      interruptedAcceptance,
+      acceptance: buildSkippedAcceptanceLedger({
+        acceptance: effectiveAcceptance,
+        ledgerStatus: "rejected",
+        runtimeCheckStatus: "failed",
+        id: "turn-budget",
+        message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
+      }),
+    };
+  }
+  if (interruptedBeforeAcceptance) {
+    return { interruptedAcceptance, acceptance: interruptedAcceptance };
+  }
+  return {
+    interruptedAcceptance,
+    acceptance: evaluateAcceptance({
+      acceptance: effectiveAcceptance,
+      output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
+      cwd: options.cwd ?? runtimeCwd,
+      signal: options.interruptSignal,
+      abortMessage: "Interrupted. Waiting for explicit next action.",
+    }),
+  };
+}
+
+type ForegroundArtifactFinalizationInput = {
+  result: SingleResult;
+  options: RunSyncOptions;
+  artifactPathsResult?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  agentName: string;
+  task: string;
+  finalAttemptContextUsage?: SingleResult["contextUsage"];
+};
+
+function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizationInput): void {
+  const {
+    result,
+    options,
+    artifactPathsResult,
+    transcriptWriter,
+    agentName,
+    task,
+    finalAttemptContextUsage,
+  } = input;
+  finalizeTerminationReason(result);
+  // Classify from raw model messages before acceptance-report stripping can turn
+  // a report-only terminal assistant message into empty text.
+  const contextExhaustedReason = classifyContextExhaustedTermination({
+    messages: result.messages,
+    // Classification belongs to the final model attempt. Keep the aggregate
+    // diagnostics on the result for reporting and durable artifacts.
+    contextUsage: finalAttemptContextUsage,
+    exitCode: result.exitCode,
+    error: result.error,
+    terminationReason: result.terminationReason,
+  });
+  if (contextExhaustedReason) {
+    result.exitCode = 1;
+    result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
+    result.terminationReason = contextExhaustedReason;
+    if (result.progress) {
+      result.progress.status = "failed";
+      result.progress.error = result.error;
+    }
+    artifactOutputByResult.set(
+      result,
+      formatErrorWithOutput(result.error, result.finalOutput ?? ""),
+    );
+  }
+  if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
+    result.artifactPaths = artifactPathsResult;
+    if (options.artifactConfig?.includeOutput !== false) {
+      writeArtifactWithFloor(
+        artifactPathsResult.outputPath,
+        artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
+        acceptanceOutputByResult.get(result) ?? "",
+        !!result.savedOutputPath,
+      );
+    }
+    if (options.maxOutput) {
+      const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+      const truncationResult = truncateOutput(
+        result.finalOutput ?? "",
+        config,
+        artifactPathsResult.outputPath,
+      );
+      if (truncationResult.truncated) result.truncation = truncationResult;
+    }
+  } else if (options.maxOutput) {
+    const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+    const truncationResult = truncateOutput(result.finalOutput ?? "", config);
+    if (truncationResult.truncated) result.truncation = truncationResult;
+  }
+  stripAcceptanceReportsFromMessages(result.messages);
+  if (
+    artifactPathsResult &&
+    options.artifactConfig?.enabled !== false &&
+    options.artifactConfig?.includeMetadata !== false
+  ) {
+    // Acceptance can change exitCode, error, interruption, and therefore the
+    // canonical termination reason. Write metadata only after that finalization
+    // so recovery observes the same terminal result returned to the caller.
+    writeMetadata(artifactPathsResult.metadataPath, {
+      runId: options.runId,
+      agent: agentName,
+      task,
+      exitCode: result.exitCode,
+      exitSignal: result.exitSignal,
+      timedOut: result.timedOut,
+      terminationReason: result.terminationReason,
+      contextUsage: result.contextUsage,
+      contextPressure: result.contextPressure,
+      contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
+      ...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
+        ? { sessionFile: result.sessionFile }
+        : {}),
+      usage: result.usage,
+      model: result.model,
+      thinking: result.thinking,
+      modelIdentity: result.modelIdentity,
+      modelResolution: result.modelResolution,
+      attemptedModels: result.attemptedModels,
+      modelAttempts: result.modelAttempts,
+      modelFallbackNotice: result.modelFallbackNotice,
+      durationMs: result.progressSummary?.durationMs,
+      activeRuntimeMs: result.activeRuntimeMs,
+      timeoutMs: options.timeoutMs,
+      deadlineAt: options.deadlineAt,
+      toolCount: result.progressSummary?.toolCount,
+      error: result.error,
+      ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
+      transcriptError: result.transcriptError,
+      skills: result.skills,
+      skillsWarning: result.skillsWarning,
+      timestamp: Date.now(),
+    });
+  }
 }
 
 async function runSingleAttempt(
@@ -1913,38 +2181,12 @@ export async function runSync(
   let totalToolCount = 0;
   let totalDurationMs = 0;
 
-  let artifactPathsResult: ArtifactPaths | undefined;
-  let jsonlPath: string | undefined;
-  let transcriptWriter: ChildTranscriptWriter | undefined;
-  if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
-    artifactPathsResult = getArtifactPaths(
-      options.artifactsDir,
-      options.runId,
-      agentName,
-      options.index,
-    );
-    ensureArtifactsDir(options.artifactsDir);
-    if (options.artifactConfig?.includeInput !== false) {
-      writeArtifact(
-        artifactPathsResult.inputPath,
-        `# Task for ${agentName}\n\n${taskWithAcceptance}`,
-      );
-    }
-    if (options.artifactConfig?.includeJsonl !== false) {
-      jsonlPath = artifactPathsResult.jsonlPath;
-    }
-    if (options.artifactConfig?.includeTranscript !== false) {
-      transcriptWriter = createChildTranscriptWriter({
-        transcriptPath: artifactPathsResult.transcriptPath,
-        source: "foreground",
-        runId: options.runId,
-        agent: agentName,
-        childIndex: options.index,
-        cwd: options.cwd ?? runtimeCwd,
-      });
-      transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
-    }
-  }
+  const { artifactPathsResult, jsonlPath, transcriptWriter } = setupForegroundArtifacts(
+    runtimeCwd,
+    agentName,
+    taskWithAcceptance,
+    options,
+  );
 
   let lastResult: SingleResult | undefined;
   let aggregateContextUsage: SingleResult["contextUsage"];
@@ -2070,69 +2312,22 @@ export async function runSync(
     }
   }
 
-  resolveResultSessionFile(result, options, shareEnabled);
-  if (result.timedOut) {
-    const timeoutDiagnostics = formatTimeoutDiagnostics(
-      result,
-      options,
-      artifactPathsResult ?? result.artifactPaths,
-    );
-    result.finalOutput = timeoutDiagnostics;
-    // Append the acceptance digest to the artifact copy only; result.finalOutput must
-    // remain exactly timeoutDiagnostics so it does not corrupt output-file or chain
-    // output references. The savedOutputPath exception (no digest) is preserved.
-    // Parse with the trailing-fence rule so the digest describes the same fence
-    // the gate will evaluate.
-    const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
-    const timeoutReport = storedAcceptanceOutput
-      ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
-      : undefined;
-    artifactOutputByResult.set(
-      result,
-      timeoutReport && !result.savedOutputPath
-        ? appendAcceptanceReportDigest(timeoutDiagnostics, timeoutReport)
-        : timeoutDiagnostics,
-    );
-  }
-  if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
-  if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
-  finalizeTerminationReason(result);
-
-  const interruptedAcceptance = buildSkippedAcceptanceLedger({
-    acceptance: effectiveAcceptance,
-    ledgerStatus: "skipped",
-    runtimeCheckStatus: "not-applicable",
-    id: "paused",
-    message:
-      "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+  prepareForegroundRunFinalization({
+    result,
+    options,
+    shareEnabled,
+    artifactPathsResult,
+    transcriptWriter,
   });
-  const interruptedBeforeAcceptance =
-    result.interrupted || options.interruptSignal?.aborted === true;
-  result.acceptance = result.timedOut
-    ? buildSkippedAcceptanceLedger({
-        acceptance: effectiveAcceptance,
-        ledgerStatus: "rejected",
-        runtimeCheckStatus: "failed",
-        id: "timeout",
-        message: "Acceptance was not evaluated because the subagent timed out.",
-      })
-    : result.turnBudgetExceeded
-      ? buildSkippedAcceptanceLedger({
-          acceptance: effectiveAcceptance,
-          ledgerStatus: "rejected",
-          runtimeCheckStatus: "failed",
-          id: "turn-budget",
-          message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
-        })
-      : interruptedBeforeAcceptance
-        ? interruptedAcceptance
-        : await evaluateAcceptance({
-            acceptance: effectiveAcceptance,
-            output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
-            cwd: options.cwd ?? runtimeCwd,
-            signal: options.interruptSignal,
-            abortMessage: "Interrupted. Waiting for explicit next action.",
-          });
+
+  const acceptanceEvaluation = evaluateSingleAcceptance({
+    result,
+    effectiveAcceptance,
+    options,
+    runtimeCwd,
+  });
+  const { interruptedAcceptance, acceptance } = acceptanceEvaluation;
+  result.acceptance = acceptance instanceof Promise ? await acceptance : acceptance;
   if (
     !result.timedOut &&
     !result.turnBudgetExceeded &&
@@ -2166,98 +2361,14 @@ export async function runSync(
     }
   }
 
-  finalizeTerminationReason(result);
-  // Classify from raw model messages before acceptance-report stripping can turn
-  // a report-only terminal assistant message into empty text.
-  const contextExhaustedReason = classifyContextExhaustedTermination({
-    messages: result.messages,
-    // Classification belongs to the final model attempt. Keep the aggregate
-    // diagnostics on the result for reporting and durable artifacts.
-    contextUsage: finalAttemptContextUsage,
-    exitCode: result.exitCode,
-    error: result.error,
-    terminationReason: result.terminationReason,
+  finalizeForegroundArtifacts({
+    result,
+    options,
+    artifactPathsResult,
+    transcriptWriter,
+    agentName,
+    task,
+    finalAttemptContextUsage,
   });
-  if (contextExhaustedReason) {
-    result.exitCode = 1;
-    result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
-    result.terminationReason = contextExhaustedReason;
-    if (result.progress) {
-      result.progress.status = "failed";
-      result.progress.error = result.error;
-    }
-    artifactOutputByResult.set(
-      result,
-      formatErrorWithOutput(result.error, result.finalOutput ?? ""),
-    );
-  }
-  if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
-    result.artifactPaths = artifactPathsResult;
-    if (options.artifactConfig?.includeOutput !== false) {
-      writeArtifactWithFloor(
-        artifactPathsResult.outputPath,
-        artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
-        acceptanceOutputByResult.get(result) ?? "",
-        !!result.savedOutputPath,
-      );
-    }
-    if (options.maxOutput) {
-      const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-      const truncationResult = truncateOutput(
-        result.finalOutput ?? "",
-        config,
-        artifactPathsResult.outputPath,
-      );
-      if (truncationResult.truncated) result.truncation = truncationResult;
-    }
-  } else if (options.maxOutput) {
-    const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-    const truncationResult = truncateOutput(result.finalOutput ?? "", config);
-    if (truncationResult.truncated) result.truncation = truncationResult;
-  }
-  stripAcceptanceReportsFromMessages(result.messages);
-  if (
-    artifactPathsResult &&
-    options.artifactConfig?.enabled !== false &&
-    options.artifactConfig?.includeMetadata !== false
-  ) {
-    // Acceptance can change exitCode, error, interruption, and therefore the
-    // canonical termination reason. Write metadata only after that finalization
-    // so recovery observes the same terminal result returned to the caller.
-    writeMetadata(artifactPathsResult.metadataPath, {
-      runId: options.runId,
-      agent: agentName,
-      task,
-      exitCode: result.exitCode,
-      exitSignal: result.exitSignal,
-      timedOut: result.timedOut,
-      terminationReason: result.terminationReason,
-      contextUsage: result.contextUsage,
-      contextPressure: result.contextPressure,
-      contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
-      ...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
-        ? { sessionFile: result.sessionFile }
-        : {}),
-      usage: result.usage,
-      model: result.model,
-      thinking: result.thinking,
-      modelIdentity: result.modelIdentity,
-      modelResolution: result.modelResolution,
-      attemptedModels: result.attemptedModels,
-      modelAttempts: result.modelAttempts,
-      modelFallbackNotice: result.modelFallbackNotice,
-      durationMs: result.progressSummary?.durationMs,
-      activeRuntimeMs: result.activeRuntimeMs,
-      timeoutMs: options.timeoutMs,
-      deadlineAt: options.deadlineAt,
-      toolCount: result.progressSummary?.toolCount,
-      error: result.error,
-      ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
-      transcriptError: result.transcriptError,
-      skills: result.skills,
-      skillsWarning: result.skillsWarning,
-      timestamp: Date.now(),
-    });
-  }
   return result;
 }
