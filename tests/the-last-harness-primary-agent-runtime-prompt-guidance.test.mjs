@@ -98,7 +98,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
       },
     };
     assert.equal(await toolCall(defaultEvent, ctx), undefined);
-    assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5");
+    assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(defaultEvent.input.agentScope, "project");
     assert.equal(defaultEvent.input.context, "resume");
 
@@ -117,7 +117,7 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
         },
       };
       assert.equal(await toolCall(staleEvent, ctx), undefined);
-      assert.equal(staleEvent.input.model, "anthropic/claude-opus-5");
+      assert.equal(staleEvent.input.model, "anthropic/claude-opus-5:high");
       assert.equal(staleEvent.input.agentScope, "project");
       assert.equal(staleEvent.input.context, "resume");
     }
