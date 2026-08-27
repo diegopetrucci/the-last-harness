@@ -51,7 +51,7 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
 | `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews` and `ci-failure-investigation` are currently registered) |
 | `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
-| `/review` | Open an interactive code-review mode picker (requires the architect primary agent) |
+| `/review` | Open an interactive code-review mode picker (available with the architect or disabled primary agent) |
 | `/switch-primary-agent` | Show or switch the active TLH primary agent (`architect`, `rush`, `product`, `bug-hunter`, `disabled`) |
 | `/reconcile` | Review and resolve model/effort override drift from TLH packaged defaults |
 | `/subagent-settings` | Show or edit persisted TLH bundled minor-agent model and effort overrides |
@@ -65,9 +65,17 @@ These commands are registered by the TLH extension bundled with this profile.
 
 ### `/thinking` and `/effort`
 
-Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled.
+Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Locked** primaries — rush, product, and bug-hunter — each run at a fixed thinking level and return an error if you try to change it (`Thinking is locked at "<level>" for the <name> primary agent.`). **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` The floor does not apply when the primary is disabled; disabled mode does not apply an automatic primary thinking default.
 
 With no level argument in the interactive TUI, a changed selection opens a second `Thinking selection scope` picker: `This session only — default` keeps the new level active without changing the isolated profile's `defaultThinkingLevel`, while `All sessions` persists it for future sessions. Cancel restores the level that was active before the picker and leaves the persistent default unchanged. Selecting the current level still reports the active level but does not open the scope picker; dismissing the level picker or making a rejected selection also does not open it. Typed levels and thinking cycling/shortcuts retain their existing persistent behavior. To replace a persistent default, run `/thinking <level>` or `/effort <level>` with the desired value. Pi writes that default only when the active level changes, so to persist a session-only level that is already active, first change to another allowed level and then type the desired level. A session-only level is not a lock: it remains active until a later model or thinking-level operation changes it; a new session also returns to its resolved default.
+
+### Disabled primary-agent mode
+
+Use `/switch-primary-agent disabled` to disable the primary persona for the current session; use `/switch-primary-agent default disabled` to make it the persistent default. `Shift+Tab` also cycles into disabled mode.
+
+Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Bundled minor agents and authorized trusted `embedded.<slug>` agents remain available; new embedded runs are forced to the user scope and a fresh context. It does not inject the architect persona, architect-only experimental guidance, automatic primary model/thinking defaults, minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
+
+`/review` is available while architect or disabled is active (and requires the interactive TUI); rush, product, and bug-hunter remain blocked. It gathers the selected review target, sends a `[/review]` handoff, and the active primary delegates it to `code-reviewer` in a fresh isolated context, digests findings, and keeps the request review-only. Disabled mode does not regain architect planning, approval, ticket, or implementation orchestration.
 
 ### `/experimental`
 

@@ -58,13 +58,17 @@ A few quick-fire tips to get the most of the architect:
 
 These are smaller, laser-focused primary agents. I especially recommend `rush` for quicker fixes that the architect's workflow would be overkill for. `product` handles framing, tradeoffs, strategy, and ticket shaping — it doesn't write code. `bug-hunter` is read-only: reach for it when you want root cause before you've decided how to fix something.
 
+### Disabled mode
+
+Disabled mode removes the primary-agent persona, not TLH's infrastructure. It keeps the architect-equivalent configured tools and subagent safety/authorization checks, including provider auth-health preflight, bundled minor agents, and authorized trusted custom `embedded.<slug>` agents (forced to the user scope and a fresh context); `/review` remains available and dispatches a fresh isolated `code-reviewer` for a review-only handoff. It does not inject the architect's planning/ticket persona or automatic model/thinking defaults, and it does not enforce the architect's thinking floor: the current session model and thinking level remain unchanged until you explicitly use `/model`, `/thinking`, or `/effort`. Use `/switch-primary-agent disabled` for this session or `/switch-primary-agent default disabled` for future sessions.
+
 ## Everything else
 
 ### Subagents
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-Stable, always-available user-owned trusted custom subagents are available to the architect when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
+Stable, always-available user-owned trusted custom subagents are available to the architect or disabled primary mode when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 

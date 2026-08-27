@@ -32,7 +32,7 @@ export interface ReviewGatheredContext {
 /**
  * Build the canonical [/review] envelope string to send as a user message.
  *
- * The first line is always exactly `[/review]` so the architect can detect it.
+ * The first line is always exactly `[/review]` so the active primary agent can detect it.
  * Structured metadata follows, then the `extra` block, then a fenced section
  * holding the diff or snapshot body.
  *

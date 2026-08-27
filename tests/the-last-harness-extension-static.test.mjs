@@ -251,5 +251,25 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
     assert.match(prompt, managementGuidance, `${label}: management guidance present`);
     assert.doesNotMatch(prompt, embeddedClause, `${label}: no embedded clause`);
     assert.match(prompt, closingRule, `${label}: closing rule present`);
+    assert.doesNotMatch(prompt, /## \/review handoff/, `${label}: no review handoff`);
   }
+
+  const disabledPrompt = buildTlhSystemPrompt(undefined, subagents, false);
+  assert.match(disabledPrompt, sectionHeader, "disabled: section header present");
+  assert.match(disabledPrompt, managementGuidance, "disabled: management guidance present");
+  assert.match(disabledPrompt, embeddedClause, "disabled: embedded guidance present");
+  assert.match(disabledPrompt, /## \/review handoff/);
+  assert.match(disabledPrompt, /`code-reviewer` subagent in a \*\*fresh \(isolated\) context\*\*/);
+  assert.match(disabledPrompt, /passing the full envelope contents as the task input/);
+  assert.match(disabledPrompt, /present a concise digested summary with your own assessment/);
+  assert.doesNotMatch(disabledPrompt, /You are the TLH architect/);
+  assert.doesNotMatch(
+    disabledPrompt,
+    /Do not delegate outside this bundled TLH minor-agent list\./,
+  );
+  assert.doesNotMatch(
+    disabledPrompt,
+    /clarify the requested outcome.*create and maintain.*ticket plan/is,
+  );
+  assert.doesNotMatch(disabledPrompt, /After approval:/);
 });

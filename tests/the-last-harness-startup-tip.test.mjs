@@ -27,6 +27,17 @@ test("the curated startup tips explain pi-transcribe setup and microphone usage"
   );
 });
 
+test("the curated startup tips include exactly one disabled-mode affordance", () => {
+  const disabledModeTip =
+    "Use “disabled” mode (Shift+Tab) to keep TLH’s tools and subagents without architect-specific guidance.";
+
+  assert.equal(
+    TLH_STARTUP_TIPS.filter((tip) => tip === disabledModeTip).length,
+    1,
+    "expected exactly one approved disabled-mode startup tip",
+  );
+});
+
 test("getTlhStartupTip returns one process-scoped selection from the curated list", () => {
   const startupTip = getTlhStartupTip();
 

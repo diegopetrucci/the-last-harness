@@ -253,9 +253,21 @@ export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir: string): st
   );
 }
 
+const REVIEW_HANDOFF_PROMPT = `
+## /review handoff
+
+When the incoming user turn's first line is exactly \`[/review]\`, treat it as a review-only request.
+
+- Delegate the review immediately to the \`code-reviewer\` subagent in a **fresh (isolated) context**, passing the full envelope contents as the task input. Never resume an existing run for this request.
+- Do not relay raw subagent findings back to the user.
+- Critically evaluate the reviewer's findings, then present a concise digested summary with your own assessment.
+- Keep this handoff review-only; do not perform implementation work as part of this request.
+`;
+
 function formatAllowedSubagents(
   primary: AgentPrompt | undefined,
   subagents: SubagentMetadata[],
+  options: { neutral?: boolean } = {},
 ): string {
   const allowed = new Set(allowedSubagentsForExperimentalConfig());
   const lines = subagents
@@ -265,6 +277,9 @@ function formatAllowedSubagents(
     return "";
   }
   const managementGuidance = `For subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
+  if (options.neutral) {
+    return `## TLH Allowed Minor Subagents\n\nThe subagent tool may delegate to these bundled TLH minor agents:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted \`embedded.<slug>\` subagents may also be used only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf.`;
+  }
   const isArchitect = primary?.name === "architect";
   if (isArchitect) {
     return `## TLH Allowed Minor Subagents\n\nYou may delegate to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} You may also delegate to a trusted \`embedded.<slug>\` subagent only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf.`;
@@ -283,6 +298,11 @@ export function buildTlhSystemPrompt(
       prompts.push(primary.systemPrompt.trim());
     }
     prompts.push(formatAllowedSubagents(primary, subagents));
+  } else {
+    // Disabled mode retains TLH's infrastructure guidance without injecting a
+    // primary-agent persona or its model/thinking/experimental defaults.
+    prompts.push(formatAllowedSubagents(undefined, subagents, { neutral: true }));
+    prompts.push(REVIEW_HANDOFF_PROMPT.trim());
   }
   return prompts.filter(Boolean).join("\n\n");
 }

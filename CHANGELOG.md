@@ -5,7 +5,8 @@ All notable changes to The Last Harness will be documented in this file.
 ## Unreleased
 
 - TLH now warns in the footer when no providers are available and points to `/login`.
-- Promoted trusted user-owned custom subagents to a stable, always-available architect extension point. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, architect-only initiation, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+- Promoted trusted user-owned custom subagents to a stable, always-available TLH extension point for the architect or disabled primary mode. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, initiation from architect or disabled mode, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+- Disabled primary-agent mode now retains TLH's architect-equivalent tools and guarded bundled/trusted-subagent access, and `/review` can dispatch a fresh isolated `code-reviewer`; it still omits the architect persona, automatic primary model/thinking behavior, and architect thinking floor while preserving the current session model and thinking level. See [README.md](README.md), [docs/commands.md](docs/commands.md), and [docs/models.md](docs/models.md).
 
 ## [0.39.0] - 2026-08-24
 
