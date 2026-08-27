@@ -946,6 +946,26 @@ export const TRACE_POLICY_FIXTURES = [
     },
   },
   {
+    id: "diff-summarizer-invalid-failed-inspection",
+    name: "diff-summarizer rejects findings when a required diff inspection fails",
+    expectedResult: "reject",
+    expectedCodes: ["diff-summarizer.diff_inspection_required"],
+    transcript: {
+      agent: "diff-summarizer",
+      steps: [
+        {
+          type: "tool",
+          tool: "bash",
+          command: "git status --short --untracked-files=all",
+          exitCode: 1,
+        },
+        { type: "tool", tool: "bash", command: "git diff --cached --no-color" },
+        { type: "tool", tool: "bash", command: "git diff --no-color" },
+        { type: "assistant", text: "No blockers found in the reviewed diff." },
+      ],
+    },
+  },
+  {
     id: "diff-summarizer-invalid-network-bash",
     name: "diff-summarizer invalid when bash runs an obvious GitHub command",
     expectedResult: "reject",
@@ -1172,6 +1192,54 @@ export const TRACE_POLICY_FIXTURES = [
           type: "tool",
           tool: "bash",
           command: "gh api graphql -f query='query Files { file(path: \"mutation.md\") }'",
+        },
+      ],
+    },
+  },
+  {
+    id: "librarian-invalid-graphql-input-bodies",
+    name: "librarian rejects opaque GraphQL input file and stdin bodies",
+    expectedResult: "reject",
+    expectedCodes: ["librarian.gh_state_change", "librarian.gh_state_change"],
+    transcript: {
+      agent: "librarian",
+      steps: [
+        { type: "tool", tool: "bash", command: "gh api graphql --input request.json" },
+        { type: "tool", tool: "bash", command: "gh api graphql --input -" },
+      ],
+    },
+  },
+  {
+    id: "librarian-invalid-graphql-typed-field-query-inputs",
+    name: "librarian rejects opaque GraphQL query file and stdin values from typed fields",
+    expectedResult: "reject",
+    expectedCodes: ["librarian.gh_state_change", "librarian.gh_state_change"],
+    transcript: {
+      agent: "librarian",
+      steps: [
+        { type: "tool", tool: "bash", command: "gh api graphql -F query=@request.graphql" },
+        { type: "tool", tool: "bash", command: "gh api graphql --field query=-" },
+      ],
+    },
+  },
+  {
+    id: "librarian-valid-graphql-field-literals",
+    name: "librarian preserves literal GraphQL field values and raw-field markers",
+    expectedResult: "allow",
+    transcript: {
+      agent: "librarian",
+      steps: [
+        { type: "tool", tool: "bash", command: "gh api graphql -f query=@request.graphql" },
+        { type: "tool", tool: "bash", command: "gh api graphql --raw-field query=-" },
+        {
+          type: "tool",
+          tool: "bash",
+          command: "gh api graphql -F query='query { viewer { login } }'",
+        },
+        {
+          type: "tool",
+          tool: "bash",
+          command: "gh api graphql --field query='query { viewer { login } }'",
         },
       ],
     },

@@ -1973,6 +1973,33 @@ function ghApiHasOption(args, optionNames) {
   );
 }
 
+function ghApiHasOpaqueGraphqlFieldQuery(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      continue;
+    }
+    for (const optionName of ["-F", "--field"]) {
+      const value =
+        arg === optionName
+          ? args[index + 1]
+          : arg.startsWith(`${optionName}=`)
+            ? arg.slice(optionName.length + 1)
+            : optionName === "-F" && arg.startsWith(optionName) && arg.length > optionName.length
+              ? arg.slice(optionName.length)
+              : undefined;
+      if (typeof value !== "string") {
+        continue;
+      }
+      const queryValue = value.match(/^query=(.*)$/is)?.[1];
+      if (queryValue?.startsWith("@") || queryValue === "-") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function ghApiGraphqlQuery(args) {
   const queryValues = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -2005,6 +2032,10 @@ function ghApiStateChange(args) {
   const isGraphql = normalizeText(endpoint).toLowerCase() === "graphql";
 
   if (isGraphql) {
+    if (ghApiHasOption(args, ["--input"]) || ghApiHasOpaqueGraphqlFieldQuery(args)) {
+      return true;
+    }
+
     const query = ghApiGraphqlQuery(args);
     if (query !== undefined) {
       return (
@@ -2276,7 +2307,7 @@ function hasBashWorkingDirectoryChange(step) {
 }
 
 function exactDiffInspectionCommands(step) {
-  if (toolName(step) !== "bash" || hasBashWorkingDirectoryChange(step)) {
+  if (toolName(step) !== "bash" || hasBashWorkingDirectoryChange(step) || didToolStepFail(step)) {
     return [];
   }
   return shellLeafCommandSegments(commandText(step)).filter((segment) =>
