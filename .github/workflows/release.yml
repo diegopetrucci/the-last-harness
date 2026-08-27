@@ -21,6 +21,7 @@ jobs:
       - name: Check out tag
         uses: actions/checkout@v7
         with:
+          # The ancestry gate needs the full history to verify reachability from origin/main.
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -28,6 +29,11 @@ jobs:
         with:
           node-version: '22.19.0'
           cache: 'npm'
+
+      - name: Verify release commit ancestry
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: node scripts/check-release-tag-ancestry.mjs
 
       - name: Verify release tag
         run: |

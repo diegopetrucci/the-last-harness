@@ -41,7 +41,7 @@ interface BeforeCommitContext {
   tempTarget: string;
 }
 
-export interface SafeProfileWriteOptions extends InstallerPathOptions {
+interface SafeProfileWriteOptions extends InstallerPathOptions {
   mode?: number;
   encoding?: BufferEncoding;
   beforeCommit?: (context: BeforeCommitContext) => void;

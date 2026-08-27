@@ -32,7 +32,7 @@ export interface DefaultExtensionEntry {
   description: string;
 }
 
-export interface DefaultExtensionProvenance {
+interface DefaultExtensionProvenance {
   exists: boolean;
   managedPackageIdentities: Set<string>;
 }

@@ -341,14 +341,34 @@ export function createTlhEffectiveActivityTracker(
     syncRetryGraceReason();
   };
 
+  const mergeAsyncJobRecord = (
+    existing: AsyncJobRecord | undefined,
+    incoming: AsyncJobRecord,
+  ): AsyncJobRecord => {
+    const incomingAsyncDir =
+      typeof incoming.asyncDir === "string" && incoming.asyncDir.length > 0
+        ? incoming.asyncDir
+        : undefined;
+    const existingAsyncDir =
+      typeof existing?.asyncDir === "string" && existing.asyncDir.length > 0
+        ? existing.asyncDir
+        : undefined;
+    const asyncDir = incomingAsyncDir ?? existingAsyncDir;
+    const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
+    return {
+      source: incoming.source,
+      ...(asyncDir ? { asyncDir } : {}),
+      ...(pid !== undefined ? { pid } : {}),
+    };
+  };
+
   const setAsyncJobActive = (runId: string, record: AsyncJobRecord): void => {
     if (disposed) return;
     cleanupCompletedAsyncJobTombstones();
     if (!runId || recentlyCompletedAsyncJobs.has(runId)) {
       return;
     }
-    const existing = activeAsyncJobs.get(runId);
-    activeAsyncJobs.set(runId, existing ? { ...existing, ...record } : record);
+    activeAsyncJobs.set(runId, mergeAsyncJobRecord(activeAsyncJobs.get(runId), record));
     // Start the periodic liveness drain if it isn't already running.
     scheduleLivenessCheck();
   };
@@ -609,13 +629,12 @@ export function createTlhEffectiveActivityTracker(
       }
       // Validate pid: must be a positive integer. Reject 0 (targets the current process
       // group on POSIX and would report "alive" forever) and any non-integer value.
+      const record: AsyncJobRecord = { source: "started" };
+      const asyncDir = readNonEmptyStringField(data, "asyncDir");
+      if (asyncDir) record.asyncDir = asyncDir;
       const pid = toValidPid(data.pid);
-      setAsyncJobActive(data.id, {
-        asyncDir:
-          typeof data.asyncDir === "string" && data.asyncDir.length > 0 ? data.asyncDir : undefined,
-        pid,
-        source: "started",
-      });
+      if (pid !== undefined) record.pid = pid;
+      setAsyncJobActive(data.id, record);
       notifyIfChanged();
     },
     handleAsyncComplete(data) {
@@ -642,12 +661,12 @@ export function createTlhEffectiveActivityTracker(
       if (!isAsyncControlContext(data, data.event)) {
         return;
       }
-      setAsyncJobActive(data.event.runId, {
-        asyncDir:
-          readNonEmptyStringField(data, "asyncDir") ??
-          readNonEmptyStringField(data.event, "asyncDir"),
-        source: "control",
-      });
+      const record: AsyncJobRecord = { source: "control" };
+      const asyncDir =
+        readNonEmptyStringField(data, "asyncDir") ??
+        readNonEmptyStringField(data.event, "asyncDir");
+      if (asyncDir) record.asyncDir = asyncDir;
+      setAsyncJobActive(data.event.runId, record);
       notifyIfChanged();
     },
   };
