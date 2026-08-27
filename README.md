@@ -68,7 +68,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-Stable, always-available user-owned trusted custom subagents are available to the architect or disabled primary mode when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
+Stable, always-available user-owned trusted custom subagents are available to the architect (and `disabled` mode) when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 
