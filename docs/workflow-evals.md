@@ -43,7 +43,7 @@ The fixtures are designed to stay reviewable:
 - explicit actor/tool/output sequences;
 - stable fixture IDs and expected outcomes;
 - deterministic assertions instead of model scoring;
-- coverage for architect, developer, code-reviewer, product, Rush, bug-hunter, web-scout, and oracle boundaries.
+- direct deterministic trace-policy coverage for architect, developer, code-reviewer, product, Rush, bug-hunter, web-scout, oracle, contrarian, diff-summarizer, librarian, and repo-scout boundaries.
 
 ### Incident-to-fixture loop
 
