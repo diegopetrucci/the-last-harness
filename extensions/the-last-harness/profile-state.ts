@@ -16,7 +16,7 @@ import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
 import type { SettingsStorageLike, TlhInstallState, TlhStartupState } from "./types.js";
 
-export function isDefaultPiAgentDir(agentDir: string): boolean {
+function isDefaultPiAgentDir(agentDir: string): boolean {
   const home = process.env.HOME || process.env.USERPROFILE;
   if (!home) return false;
   try {
@@ -270,7 +270,7 @@ export function writeGuardedTlhStateFile(
   return writeTlhStateFileAtomically(statePath, content);
 }
 
-export function writeTlhStartupState(state: TlhStartupState): void {
+function writeTlhStartupState(state: TlhStartupState): void {
   try {
     const statePath = tlhStartupStatePath();
     if (!statePath) {

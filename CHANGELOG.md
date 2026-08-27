@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- TLH now warns in the footer when no providers are available and points to `/login`.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

@@ -168,16 +168,16 @@ function writeNpmInstallMarker(markerPath, head) {
         rmSync(tempPath, { force: true });
     }
 }
-export function gitOutput(config, targetDir, args, io = {}) {
+function gitOutput(config, targetDir, args, io = {}) {
     const spawnCapture = io.spawnCapture || defaultSpawnCapture;
     return spawnCapture(config, ["git", "-C", targetDir, ...args]).stdout.trim();
 }
-export function gitSucceeds(config, targetDir, args, io = {}) {
+function gitSucceeds(config, targetDir, args, io = {}) {
     const spawnCapture = io.spawnCapture || defaultSpawnCapture;
     const result = spawnCapture(config, ["git", "-C", targetDir, ...args], { allowFailure: true });
     return !result.error && result.status === 0;
 }
-export function assertGitRepositoryConfined(config, targetDir, label = "git package checkout", io = {}) {
+function assertGitRepositoryConfined(config, targetDir, label = "git package checkout", io = {}) {
     const topLevel = gitOutput(config, targetDir, ["rev-parse", "--show-toplevel"], io);
     const gitDir = gitOutput(config, targetDir, ["rev-parse", "--absolute-git-dir"], io);
     let commonGitDir = gitOutput(config, targetDir, ["rev-parse", "--git-common-dir"], io);
@@ -218,7 +218,7 @@ export function assertGitSourceTargetSafe(config, source, label = "git package c
         assertGitRepositoryConfined(config, targetDir, label, io);
     }
 }
-export function safeGitCheckoutDirForMutation(config, targetDir, label = "git package checkout", io = {}) {
+function safeGitCheckoutDirForMutation(config, targetDir, label = "git package checkout", io = {}) {
     assertProfilePathWithinAgent(config, targetDir, label);
     if (isSymlink(targetDir))
         throw new Error(`refusing to mutate symlinked ${label}: ${targetDir}`);

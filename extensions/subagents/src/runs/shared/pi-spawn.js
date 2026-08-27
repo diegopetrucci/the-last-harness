@@ -7,7 +7,7 @@ export function buildSubagentSpawnEnv(inheritedEnv, explicitEnv, depthEnv) {
     const filteredInheritedEnv = Object.fromEntries(Object.entries(inheritedEnv).filter(([key]) => !key.startsWith("HERDR_")));
     return { ...filteredInheritedEnv, ...explicitEnv, ...depthEnv };
 }
-export function findPiPackageRootFromEntry(entryPoint) {
+function findPiPackageRootFromEntry(entryPoint) {
     let dir = path.dirname(entryPoint);
     while (dir !== path.dirname(dir)) {
         const packageJsonPath = path.join(dir, "package.json");
