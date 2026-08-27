@@ -249,8 +249,11 @@ function trimBufferToUtf8Prefix(buffer, maxBytes) {
     if (end > 0) {
         const lead = buffer[end - 1];
         const width = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : 2;
-        if (end - 1 + width > maxBytes)
+        const codePointEnd = end - 1 + width;
+        if (codePointEnd > maxBytes)
             end--;
+        else if (codePointEnd === maxBytes)
+            end = maxBytes;
     }
     return buffer.subarray(0, end);
 }

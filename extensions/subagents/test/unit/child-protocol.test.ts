@@ -284,6 +284,36 @@ describe("bounded child diagnostics", () => {
     assert.ok(Buffer.byteLength(limit.diagnosticTail, "utf8") <= 4096);
   });
 
+  it("retains a complete UTF-8 code point ending exactly at the diagnostic cutoff", () => {
+    const limits: ProtocolOutputLimit[] = [];
+    const reader = createBoundedLineReader({
+      maxPendingLineBytes: 8,
+      onLine: () => {},
+      onLimit: (limit) => limits.push(limit),
+    });
+    const completePrefix = `${"x".repeat(4092)}😀`;
+    reader.push(Buffer.from(`${completePrefix}overflow`, "utf8"));
+    const limit = limits[0]!;
+    assert.equal(limit.diagnosticPrefix, completePrefix);
+    assert.equal(Buffer.byteLength(limit.diagnosticPrefix, "utf8"), 4096);
+    assert.equal(limit.diagnosticPrefix.includes("�"), false);
+  });
+
+  it("drops a UTF-8 code point split by the diagnostic cutoff without replacement", () => {
+    const limits: ProtocolOutputLimit[] = [];
+    const reader = createBoundedLineReader({
+      maxPendingLineBytes: 8,
+      onLine: () => {},
+      onLimit: (limit) => limits.push(limit),
+    });
+    const completePrefix = "x".repeat(4093);
+    reader.push(Buffer.from(`${completePrefix}😀overflow`, "utf8"));
+    const limit = limits[0]!;
+    assert.equal(limit.diagnosticPrefix, completePrefix);
+    assert.equal(Buffer.byteLength(limit.diagnosticPrefix, "utf8"), 4093);
+    assert.equal(limit.diagnosticPrefix.includes("�"), false);
+  });
+
   it("keeps the first terminal reason authoritative", () => {
     const timeout = {};
     assert.equal(claimChildTerminalReason(timeout, "timed_out"), true);
