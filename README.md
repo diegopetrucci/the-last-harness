@@ -60,7 +60,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 ### Disabled mode
 
-Disabled mode removes the primary-agent persona, not TLH's infrastructure. It keeps the architect-equivalent configured tools and subagent safety/authorization checks, including provider auth-health preflight, bundled minor agents, and authorized trusted custom `embedded.<slug>` agents (forced to the user scope and a fresh context); `/review` remains available and dispatches a fresh isolated `code-reviewer` for a review-only handoff. It does not inject the architect's planning/ticket persona or automatic model/thinking defaults, and it does not enforce the architect's thinking floor: the current session model and thinking level remain unchanged until you explicitly use `/model`, `/thinking`, or `/effort`. Use `/switch-primary-agent disabled` for this session or `/switch-primary-agent default disabled` for future sessions.
+`disabled` is a mode where no ad-hoc guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
 ## Everything else
 
