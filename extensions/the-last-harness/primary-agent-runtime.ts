@@ -71,6 +71,11 @@ import {
   setTlhSessionOnlyModel,
 } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
+import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import {
+  inventoryProjectAgentGuidance,
+  type ProjectAgentGuidanceInventory,
+} from "../shared/project-agent-guidance.js";
 import {
   buildChildSubagentSystemPrompt,
   buildTlhSystemPrompt,
@@ -114,6 +119,7 @@ type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
 export type TlhPrimaryAgentRuntime = {
   applySessionStart(ctx: ExtensionContext): Promise<void>;
+  projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
   currentPrimaryAgentLabel(): string;
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
   buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string;
@@ -456,15 +462,15 @@ function registerChildSubagentRuntime(
     const settings = getTlhGlobalSettings(ctx.cwd);
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
+    const additions = [
+      buildChildPrompt(),
+      buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
+      buildTlhCommitAttributionPrompt(commitAttributionState),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
-      systemPrompt: [
-        event.systemPrompt,
-        buildChildPrompt(),
-        buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
-        buildTlhCommitAttributionPrompt(commitAttributionState),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
+      systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
     };
   });
 
@@ -640,6 +646,7 @@ function createTlhPrimaryAgentRuntime(
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
   let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
+  let sessionProjectAgentGuidanceSnapshot: ProjectAgentGuidanceInventory | undefined;
 
   // Per-provider throttle for credential preflights.
   // Key: provider string. Value: { failures, nextAllowedAt (ms timestamp) }.
@@ -887,9 +894,16 @@ function createTlhPrimaryAgentRuntime(
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
-      // Embedded-subagent guidance uses the once-per-session snapshot so it matches the
-      // session-start delegation gate and keeps its documented next-session-only semantics.
-      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+      // Embedded-subagent guidance and project-agent guidance use once-per-session snapshots so
+      // they remain stable until /reload or a new session, while role changes select the matching
+      // entry from the same snapshot.
+      buildTlhSystemPrompt(
+        primary,
+        subagentMetadata,
+        primaryEnabled,
+        sessionExperimentalSnapshot,
+        sessionProjectAgentGuidanceSnapshot,
+      ),
       // Other experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
       buildTlhCommitAttributionPrompt(commitAttributionState),
@@ -931,6 +945,26 @@ function createTlhPrimaryAgentRuntime(
       `Model override: ${modelOverride}.`,
       `Settings: ${settingsLabel}.`,
     ].join("\n");
+  }
+
+  function notifyUndecidedProjectAgentGuidance(
+    ctx: ExtensionContext,
+    inventory: ProjectAgentGuidanceInventory,
+  ): void {
+    if (ctx.hasUI === false || inventory.trust !== "undecided" || inventory.files.length === 0) {
+      return;
+    }
+
+    const diagnostic = inventory.diagnostics.find(({ code }) => code === "project-not-trusted");
+    if (!diagnostic) {
+      return;
+    }
+
+    try {
+      ctx.ui.notify(diagnostic.message, "warning");
+    } catch {
+      // Startup should remain usable when a non-interactive UI rejects a notification.
+    }
   }
 
   function setSessionPrimaryAgentOverride(selection: TlhPrimaryAgentSelection | undefined): void {
@@ -1418,6 +1452,8 @@ function createTlhPrimaryAgentRuntime(
     updateSessionOnlyModel(undefined);
     activateTlhTicketSessionScope(ctx.cwd);
     sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
+    sessionProjectAgentGuidanceSnapshot = inventoryProjectAgentGuidance(ctx.cwd, getAgentDir());
+    notifyUndecidedProjectAgentGuidance(ctx, sessionProjectAgentGuidanceSnapshot);
     syncPrimaryAgentState(ctx);
     await applyPrimaryDefaults(ctx, { warnOnMissing: false });
   }
@@ -1606,6 +1642,7 @@ function createTlhPrimaryAgentRuntime(
       replayAllTlhUnclaimedModelSelectionDefaults();
       setTlhModelSelectionActiveModelResolver(undefined);
       updateSessionOnlyModel(undefined);
+      sessionProjectAgentGuidanceSnapshot = undefined;
       restorePrimaryToolsIfAppropriate();
       // Clear session-scoped auth-notification state so that a new session
       // (which reuses this closure, because registerTlhPrimaryAgentRuntime runs
@@ -1806,6 +1843,7 @@ function createTlhPrimaryAgentRuntime(
 
   return {
     applySessionStart,
+    projectAgentGuidanceSnapshot: () => sessionProjectAgentGuidanceSnapshot,
     currentPrimaryAgentLabel,
     activePrimaryAgentPrompt: activePrimaryAgent,
     buildLaunchSystemPrompt,

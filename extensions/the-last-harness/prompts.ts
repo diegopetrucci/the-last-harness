@@ -12,6 +12,12 @@ import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText, uniqueSorted } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
+import {
+  formatProjectAgentGuidance,
+  type ProjectAgentGuidanceInventory,
+} from "../shared/project-agent-guidance.js";
+
+export { formatProjectAgentGuidance } from "../shared/project-agent-guidance.js";
 import type {
   AgentPrompt,
   SubagentMetadata,
@@ -285,11 +291,13 @@ export function buildTlhSystemPrompt(
   subagents: SubagentMetadata[],
   primaryEnabled: boolean,
   experimentalConfig?: TlhExperimentalConfig,
+  projectAgentGuidanceInventory?: ProjectAgentGuidanceInventory,
 ): string {
   const prompts = [HARNESS_PROMPT.trim()];
   if (primaryEnabled) {
     if (primary) {
       prompts.push(primary.systemPrompt.trim());
+      prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
     }
     prompts.push(formatAllowedSubagents(primary, subagents, experimentalConfig));
   }

@@ -136,6 +136,39 @@ test("startup resources keep AGENTS.md and CLAUDE.md context visible when trust 
   });
 });
 
+test("startup resources surface only trusted project-agent guidance sources", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-resources-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const guidancePath = join(fixture.cwd, ".tlh", "ARCHITECT.md");
+  mkdirSync(join(fixture.cwd, ".tlh"), { recursive: true });
+  writeFileSync(guidancePath, "architect project guidance", "utf8");
+  writeTrust(fixture.agent, { [realpathSync(fixture.cwd)]: true });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const snapshot = await collectStartupResourceSnapshot(fixture.cwd);
+
+    assert.deepEqual(snapshot.resources.projectGuidance, ["architect: .tlh/ARCHITECT.md"]);
+  });
+});
+
+test("startup resources hide undecided project-agent guidance and retain an actionable diagnostic", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-resources-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const guidancePath = join(fixture.cwd, ".tlh", "ARCHITECT.md");
+  mkdirSync(join(fixture.cwd, ".tlh"), { recursive: true });
+  writeFileSync(guidancePath, "private project guidance", "utf8");
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const snapshot = await collectStartupResourceSnapshot(fixture.cwd);
+
+    assert.deepEqual(snapshot.resources.projectGuidance, []);
+  });
+});
+
 test("startup resources use AGENTS.override.md for the nearest context and retain ancestor inheritance", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-resources-context-override-", {
     cwd: true,

@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added trusted, append-only per-agent project guidance for packaged TLH roles through exact `.tlh/<ROLE>.md` files. See [Per-agent project guidance](README.md#per-agent-project-guidance) for the supported filenames, trust and reload steps, timing, and safety limits.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

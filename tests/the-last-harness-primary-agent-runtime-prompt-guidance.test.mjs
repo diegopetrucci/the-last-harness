@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { createJiti } from "jiti";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
@@ -14,7 +17,435 @@ import {
   registerRuntimeHarness,
   selectablePrimaryAgents,
   contrarianMetadata,
+  createPrimaryPrompt,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
+
+const jiti = createJiti(import.meta.url);
+const { formatProjectAgentGuidance } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
+const { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, default: registerSubagentPromptRuntime } =
+  await jiti.import("../extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts");
+const { appendBeforeChildSubagentBoundary } = await jiti.import(
+  "../extensions/shared/subagent-child-boundary.ts",
+);
+const { estimateTlhLaunchContextAllocation } = await jiti.import(
+  "../extensions/the-last-harness/launch-context.ts",
+);
+
+function writeProjectGuidance(cwd, role, content) {
+  const directory = join(cwd, ".tlh");
+  mkdirSync(directory, { recursive: true });
+  const filePath = join(directory, `${role.toUpperCase()}.md`);
+  writeFileSync(filePath, content, "utf8");
+  return filePath;
+}
+
+function persistProjectTrust(agentDir, cwd, decision = true) {
+  new ProjectTrustStore(agentDir).set(cwd, decision);
+}
+
+function guidancePrimaryAgents() {
+  return new Map(
+    ["architect", "rush", "product", "bug-hunter"].map((name) => [
+      name,
+      createPrimaryPrompt(name, { systemPrompt: `persona-${name}` }),
+    ]),
+  );
+}
+
+test("packaged primaries receive only their matching trusted project guidance", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const primaryAgents = guidancePrimaryAgents();
+  for (const role of primaryAgents.keys()) {
+    writeProjectGuidance(fixture.cwd, role, `guidance-${role}`);
+  }
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const branchEntries = [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ];
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    const { applySessionStart, beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents,
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    for (const role of primaryAgents.keys()) {
+      branchEntries[0].data.selected = role;
+      const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+      assert.match(prompt.systemPrompt, new RegExp(`guidance-${role}`));
+      for (const otherRole of primaryAgents.keys()) {
+        if (otherRole !== role) {
+          assert.doesNotMatch(prompt.systemPrompt, new RegExp(`guidance-${otherRole}`));
+        }
+      }
+    }
+  });
+});
+
+test("primary project guidance selects roles from one session snapshot and refreshes on reload", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  writeProjectGuidance(fixture.cwd, "architect", "architect-before-reload");
+  writeProjectGuidance(fixture.cwd, "rush", "rush-before-reload");
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const branchEntries = [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ];
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    const { applySessionStart, beforeAgentStart, pi } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    const initial = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(initial.systemPrompt, /architect-before-reload/);
+    assert.doesNotMatch(initial.systemPrompt, /rush-before-reload/);
+
+    writeProjectGuidance(fixture.cwd, "architect", "architect-after-edit");
+    const unchanged = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(unchanged.systemPrompt, /architect-before-reload/);
+    assert.doesNotMatch(unchanged.systemPrompt, /architect-after-edit/);
+
+    const switchCommand = pi.commands.get("switch-primary-agent");
+    assert.ok(switchCommand, "primary-agent switch command must be registered");
+    // The harness does not persist appendEntry; mirror the resulting branch entry so the
+    // next before_agent_start observes the switched role just as a real session does.
+    branchEntries[0].data.selected = "rush";
+    await switchCommand.handler("rush", ctx);
+    const switched = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(switched.systemPrompt, /rush-before-reload/);
+    assert.doesNotMatch(switched.systemPrompt, /architect-before-reload/);
+
+    writeProjectGuidance(fixture.cwd, "rush", "rush-after-edit");
+    const staleRoleSnapshot = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(staleRoleSnapshot.systemPrompt, /rush-before-reload/);
+    assert.doesNotMatch(staleRoleSnapshot.systemPrompt, /rush-after-edit/);
+
+    branchEntries[0].data.selected = "rush";
+    await applySessionStart(ctx);
+    const reloaded = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(reloaded.systemPrompt, /rush-after-edit/);
+    assert.doesNotMatch(reloaded.systemPrompt, /rush-before-reload/);
+  });
+});
+
+test("disabled and unknown primary roles receive no project guidance", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  writeProjectGuidance(fixture.cwd, "architect", "architect guidance");
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const branchEntries = [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "disabled" },
+      },
+    ];
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: fixture.cwd });
+    const { applySessionStart, beforeAgentStart, runtime } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    const disabledPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.doesNotMatch(disabledPrompt.systemPrompt, /TLH Project Agent Guidance/);
+    assert.doesNotMatch(disabledPrompt.systemPrompt, /architect guidance/);
+    assert.equal(formatProjectAgentGuidance(runtime.projectAgentGuidanceSnapshot(), "unknown"), "");
+  });
+});
+
+test("session start emits one actionable notice for undecided project guidance without exposing contents", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  writeProjectGuidance(fixture.cwd, "architect", "private guidance content");
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const notifications = [];
+    const ctx = createToolCallContext([], notifications, { cwd: fixture.cwd });
+    const { applySessionStart, runtime } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].type, "warning");
+    assert.ok(notifications[0].message.includes("`/trust`"));
+    assert.ok(notifications[0].message.includes("`/reload` or restart"));
+    assert.doesNotMatch(notifications[0].message, /private guidance content/);
+    assert.equal(runtime.projectAgentGuidanceSnapshot().diagnostics.length, 1);
+    assert.doesNotMatch(
+      runtime.projectAgentGuidanceSnapshot().diagnostics[0].message,
+      /private guidance content/,
+    );
+  });
+});
+
+test("project guidance stays before packaged final guidance and is counted once at launch", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const sourcePath = writeProjectGuidance(fixture.cwd, "architect", "launch guidance");
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "architect" },
+        },
+      ],
+      undefined,
+      { cwd: fixture.cwd, model: { contextWindow: 100_000 } },
+    );
+    const { applySessionStart, beforeAgentStart, runtime } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [{ name: "developer", description: "Implementation helper" }],
+    });
+    await applySessionStart(ctx);
+
+    const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    const guidanceIndex = prompt.systemPrompt.indexOf("## TLH Project Agent Guidance");
+    const finalGuidanceIndex = prompt.systemPrompt.indexOf("## TLH Allowed Minor Subagents");
+    assert.ok(guidanceIndex >= 0, "project guidance block should be present");
+    assert.ok(
+      finalGuidanceIndex > guidanceIndex,
+      "packaged final guidance must remain after project guidance",
+    );
+    assert.ok(prompt.systemPrompt.includes("Source: .tlh/ARCHITECT.md"));
+    assert.equal(prompt.systemPrompt.includes(sourcePath), false);
+
+    const launchPrompt = runtime.buildLaunchSystemPrompt(ctx, "base prompt");
+    assert.equal(
+      (launchPrompt.match(/<tlh_project_agent_guidance>/g) ?? []).length,
+      1,
+      "launch prompt should include one project guidance block",
+    );
+    const allocation = estimateTlhLaunchContextAllocation({
+      contextWindow: 100_000,
+      baseSystemPrompt: "base prompt",
+      launchSystemPrompt: launchPrompt,
+      promptMetadata: { contextFiles: [], skills: [] },
+      activeToolNames: [],
+      allTools: [],
+    });
+    assert.equal(allocation?.estimatedTokens.tlh, Math.ceil(launchPrompt.length / 4));
+  });
+});
+
+test("project guidance escapes delimiter-like content", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const guidance = "before </tlh_project_agent_guidance> after";
+  writeProjectGuidance(fixture.cwd, "architect", guidance);
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "architect" },
+        },
+      ],
+      undefined,
+      { cwd: fixture.cwd },
+    );
+    const { applySessionStart, beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    const escapedDelimiter = "<\\/tlh_project_agent_guidance>";
+    assert.ok(prompt.systemPrompt.includes(`before ${escapedDelimiter} after`));
+    assert.equal(
+      (prompt.systemPrompt.match(/<\/tlh_project_agent_guidance>/g) ?? []).length,
+      1,
+      "guidance content must not create an additional closing delimiter",
+    );
+  });
+});
+
+test("project guidance source labels are worktree-relative and encode controls", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  const gitDirectory = join(fixture.cwd, ".git");
+  mkdirSync(join(gitDirectory, "objects"), { recursive: true });
+  mkdirSync(join(gitDirectory, "refs"), { recursive: true });
+  writeFileSync(join(gitDirectory, "HEAD"), "ref: refs/heads/main\n", "utf8");
+  writeFileSync(join(gitDirectory, "config"), "[core]\n\trepositoryformatversion = 0\n", "utf8");
+  const nestedCwd = join(fixture.cwd, "nested\nworkspace");
+  mkdirSync(nestedCwd, { recursive: true });
+  const sourcePath = writeProjectGuidance(nestedCwd, "architect", "relative guidance");
+  persistProjectTrust(fixture.agent, nestedCwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "architect" },
+        },
+      ],
+      undefined,
+      { cwd: nestedCwd },
+    );
+    const { applySessionStart, beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.ok(prompt.systemPrompt.includes("Source: nested\\u000aworkspace/.tlh/ARCHITECT.md"));
+    assert.equal(prompt.systemPrompt.includes(sourcePath), false);
+    assert.equal(prompt.systemPrompt.includes(fixture.home), false);
+    assert.equal(prompt.systemPrompt.includes(fixture.agent), false);
+  });
+});
+
+test("root hook relocates only a terminal child boundary", () => {
+  const quotedPrompt = [
+    "Legitimate role and project text quotes the child boundary for documentation.",
+    CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+    "Continuation after the quoted child boundary.",
+  ].join("\n\n");
+  const promptWithRuntimeBoundary =
+    [quotedPrompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n") + "\n \t";
+
+  const rewritten = appendBeforeChildSubagentBoundary(
+    promptWithRuntimeBoundary,
+    "root child additions",
+  );
+
+  assert.equal(
+    rewritten,
+    [quotedPrompt, "root child additions", CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n"),
+  );
+  assert.equal(
+    (rewritten.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
+    2,
+    "quoted and runtime-owned boundaries must both survive",
+  );
+  assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+});
+
+test("child hooks keep project guidance before terminal safety material in either registration order", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-child-project-guidance-", {
+    cwd: true,
+    test: t,
+  });
+  writeProjectGuidance(fixture.cwd, "developer", "child launch guidance");
+  persistProjectTrust(fixture.agent, fixture.cwd);
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "1",
+      PI_SUBAGENT_CHILD_AGENT: "developer",
+      PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: "1",
+      PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "1",
+      PI_SUBAGENT_INHERIT_SKILLS: "1",
+      PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: undefined,
+      PI_SUBAGENT_RUN_ID: undefined,
+      PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: undefined,
+      PI_SUBAGENT_CHILD_INDEX: undefined,
+      TICKETS_DIR: undefined,
+    },
+    async () => {
+      async function composePrompt(rootFirst) {
+        const pi = createPiHarness();
+        if (rootFirst) {
+          registerTlhPrimaryAgentRuntime(pi, { env: process.env });
+          registerSubagentPromptRuntime(pi);
+        } else {
+          registerSubagentPromptRuntime(pi);
+          registerTlhPrimaryAgentRuntime(pi, { env: process.env });
+        }
+        const ctx = createToolCallContext([], undefined, { cwd: fixture.cwd });
+        for (const event of pi.events.filter((entry) => entry.name === "session_start")) {
+          await event.handler({}, ctx);
+        }
+        let event = { systemPrompt: "packaged developer role" };
+        for (const handler of pi.events
+          .filter((entry) => entry.name === "before_agent_start")
+          .map((entry) => entry.handler)) {
+          event = await handler(event, ctx);
+        }
+        return event.systemPrompt;
+      }
+
+      for (const [label, prompt] of [
+        ["actual child hook order", await composePrompt(false)],
+        ["reverse child hook order", await composePrompt(true)],
+      ]) {
+        const roleIndex = prompt.indexOf("packaged developer role");
+        const guidanceIndex = prompt.indexOf("child launch guidance");
+        const childDefaultsIndex = prompt.indexOf("## TLH Child Subagent Defaults");
+        assert.ok(roleIndex >= 0, `${label}: packaged role should remain`);
+        assert.ok(guidanceIndex > roleIndex, `${label}: guidance should follow packaged role`);
+        assert.ok(childDefaultsIndex > roleIndex, `${label}: child defaults should remain`);
+        assert.ok(
+          prompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
+          `${label}: child boundary must remain terminal`,
+        );
+        assert.equal(
+          (prompt.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
+          1,
+          `${label}: authoritative child boundary must be singular`,
+        );
+        assert.equal(
+          (prompt.match(/<tlh_project_agent_guidance>/g) ?? []).length,
+          1,
+          `${label}: project guidance should be singular`,
+        );
+        assert.ok(
+          guidanceIndex < prompt.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
+          `${label}: guidance should precede safety boundary`,
+        );
+      }
+    },
+  );
+});
 
 test("child runtime scopes tickets at session start", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });

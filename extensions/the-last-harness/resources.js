@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { DefaultPackageManager, SettingsManager, getAgentDir, loadProjectContextFiles, loadSkills, } from "@earendil-works/pi-coding-agent";
+import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
 function packageSourceLabel(source) {
@@ -106,9 +107,15 @@ function filterVisibleResources(resources, projectTrusted) {
         existsSync(resource.path) &&
         (projectTrusted || resource.metadata.scope !== "project"));
 }
+function projectGuidanceLabels(cwd, inventory) {
+    return uniqueSorted(inventory.files
+        .filter((file) => file.content !== undefined)
+        .map((file) => `${file.role}: ${formatPathFromCwd(cwd, file.path)}`));
+}
 export async function collectStartupResourceSnapshot(cwd, options = {}) {
     const agentDir = getAgentDir();
     const projectTrusted = resolveProjectTrusted(cwd, agentDir, options);
+    const guidanceInventory = options.projectAgentGuidance ?? inventoryProjectAgentGuidance(cwd, agentDir);
     const settingsManager = createSettingsManager(cwd, agentDir, projectTrusted);
     const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
     const resolved = await packageManager.resolve(async () => "skip");
@@ -128,6 +135,7 @@ export async function collectStartupResourceSnapshot(cwd, options = {}) {
             prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
             extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
             themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+            projectGuidance: projectGuidanceLabels(cwd, guidanceInventory),
         },
         promptMetadata: {
             contextFiles,

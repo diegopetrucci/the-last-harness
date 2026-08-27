@@ -22,6 +22,10 @@ import type { MockPi } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+} from "../../src/runs/shared/pi-args.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 import {
   ASYNC_DIR,
@@ -84,7 +88,7 @@ describe("async execution utilities", () => {
   }
 
   it(
-    "pauses async supervisor requests durably and reload resume stays single-claim",
+    "pauses async supervisor requests durably, reload resume preserves packaged identity, and stays single-claim",
     {
       skip:
         process.platform === "win32"
@@ -94,6 +98,16 @@ describe("async execution utilities", () => {
     async () => {
       const resumeTimeoutMs = scaleTestTimeout(1_000);
       const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
+      const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const originalGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      const agentDir = path.join(tempDir, "profile");
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+      const canonicalDeveloper = makeAgent("developer", {
+        maxExecutionTimeMs: 5_000,
+        acceptanceRole: "writer",
+        filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+      });
       process.env.MOCK_PI_SESSION_DIR_FILE = "1";
       try {
         const id = `async-supervisor-pause-${Date.now().toString(36)}`;
@@ -112,9 +126,9 @@ describe("async execution utilities", () => {
           keepAliveAfterFinalMessageMs: 5_000,
         });
         const started = executeAsyncSingle!(id, {
-          agent: "worker",
+          agent: "developer",
           task: "Ask for a supervisor decision and stop there.",
-          agentConfig: makeAgent("worker", { maxExecutionTimeMs: 5_000 }),
+          agentConfig: canonicalDeveloper,
           ctx: {
             pi: {
               events: {
@@ -176,8 +190,10 @@ describe("async execution utilities", () => {
         const resumeTarget = resolveAsyncResumeTarget({ id });
         assert.equal(resumeTarget.kind, "revive");
         assert.equal(resumeTarget.pauseKind, "awaiting_supervisor");
-        mockPi.onCall({ output: "resumed after supervisor reply" });
-        const reloaded = makeAsyncExecutor([makeAgent("worker", { maxExecutionTimeMs: 5_000 })]);
+        mockPi.onCall({
+          echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+        });
+        const reloaded = makeAsyncExecutor([canonicalDeveloper]);
         await reloaded.execute(
           "async-supervisor-resume",
           {
@@ -203,7 +219,10 @@ describe("async execution utilities", () => {
           continuedStatus.lifecycle.continuation.continuationRunId,
         );
         assert.equal(continuationPayload.state, "complete");
-        assert.equal(continuationPayload.results[0]?.output, "resumed after supervisor reply");
+        assert.deepEqual(JSON.parse(continuationPayload.results[0]?.output ?? "{}"), {
+          [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        });
         assert.equal(continuationPayload.timeoutMs, resumeTimeoutMs);
         assert.ok((continuationPayload.results[0]?.activeRuntimeMs ?? 0) >= pausedActiveRuntimeMs);
         const continuationStatus = JSON.parse(
@@ -237,6 +256,11 @@ describe("async execution utilities", () => {
       } finally {
         if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
         else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
+        if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+        if (originalGuidanceMarker === undefined)
+          delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+        else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = originalGuidanceMarker;
       }
     },
   );

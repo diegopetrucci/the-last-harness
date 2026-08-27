@@ -97,6 +97,44 @@ Repo settings:
 
 After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
 
+#### Per-agent project guidance
+
+To give project-specific instructions to one packaged TLH role, add plain Markdown under `.tlh/` using one of these exact filenames:
+
+| Packaged role     | Exact filename            |
+| ----------------- | ------------------------- |
+| `architect`       | `.tlh/ARCHITECT.md`       |
+| `rush`            | `.tlh/RUSH.md`            |
+| `product`         | `.tlh/PRODUCT.md`         |
+| `bug-hunter`      | `.tlh/BUG-HUNTER.md`      |
+| `developer`       | `.tlh/DEVELOPER.md`       |
+| `code-reviewer`   | `.tlh/CODE-REVIEWER.md`   |
+| `repo-scout`      | `.tlh/REPO-SCOUT.md`      |
+| `diff-summarizer` | `.tlh/DIFF-SUMMARIZER.md` |
+| `librarian`       | `.tlh/LIBRARIAN.md`       |
+| `web-scout`       | `.tlh/WEB-SCOUT.md`       |
+| `oracle`          | `.tlh/ORACLE.md`          |
+| `contrarian`      | `.tlh/CONTRARIAN.md`      |
+
+For each role, TLH starts at the current working directory and searches upward through the enclosing Git worktree; outside a Git worktree it checks only the current directory. The nearest exact match wins. A nearer blank, invalid, or unsafe match does not fall through to a farther same-role file. Only the matching role's file is appended to that packaged role's prompt. Files are append-only plain Markdown: they do not replace the packaged prompt, and they do not support YAML frontmatter or model, tool, or other agent configuration. Embedded agents and other custom agents are not supported by this convention.
+
+Example:
+
+```sh
+mkdir -p .tlh
+cat > .tlh/ARCHITECT.md <<'EOF'
+Before proposing implementation work, state the important assumptions and risks.
+EOF
+```
+
+`.tlh` is not classified as a trust-requiring resource by the upstream runtime, but the persisted trust entry must contain the selected guidance source before TLH reads it. In TLH, run `/trust`, choose a persistent `Trust` option (not a session-only option), and save the decision. For a worktree-root file, run `/trust` while TLH is at that worktree root and persist the `Trust` decision there; trust saved only for a nested cwd does not authorize ancestor/worktree-root `.tlh` files. Then run `/reload` or restart. Primary-agent guidance is snapshotted at session start: edits and newly saved trust take effect for the primary only after that boundary, while switching primary roles selects the corresponding file from the same snapshot. Minor-agent guidance is resolved when each child process starts, including foreground, parallel, async, and any resume/revival that launches a new child process. A live async resume/steer that continues the same child process keeps its session-start guidance snapshot; a resume/revival that starts a new child process rereads the current `.tlh/<ROLE>.md` guidance.
+
+TLH refuses to read a symlinked `.tlh` directory or role file, a non-regular file, or a file larger than **64 KiB**. It fails closed rather than following a symlink, truncating content, or throwing; diagnostics for rejected files are internal and are not guaranteed to be user-visible. Recognized trusted files appear in the expanded startup header under **Project guidance**; rejected files do not appear in startup resources. If role files are found without persisted trust, startup shows an actionable `/trust` plus `/reload` or restart warning without exposing their contents.
+
+To undo the example, remove `.tlh/ARCHITECT.md` and run `/reload` or restart; new child launches and resume/revival actions that start a new child process stop using it, while a live async resume/steer that continues an existing child keeps its session-start snapshot. If an ancestor contains another `ARCHITECT.md`, it becomes the nearest match, so remove that file too if you want no architect guidance (or leave an empty nearest file to explicitly shadow farther guidance).
+
+This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: the global file in the active isolated profile (by default `~/.the-last-harness/agent/APPEND_SYSTEM.md`) and project `.pi/APPEND_SYSTEM.md` append general system instructions, not role-specific guidance. `.tlh/<ROLE>.md` only adds content to its matching packaged role and does not replace or reconfigure that system prompt.
+
 ### Docs dump
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)

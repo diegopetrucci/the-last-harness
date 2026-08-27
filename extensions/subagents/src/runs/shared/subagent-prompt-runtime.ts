@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentMessage, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import {
@@ -11,7 +11,11 @@ import {
   type ResumeRequest,
   type SteerRequest,
 } from "../background/control-channel.ts";
-import { SUBAGENT_STEER_INBOX_ENV } from "./pi-args.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  SUBAGENT_STEER_INBOX_ENV,
+} from "./pi-args.ts";
 import {
   STRUCTURED_OUTPUT_CAPTURE_ENV,
   STRUCTURED_OUTPUT_SCHEMA_ENV,
@@ -26,7 +30,15 @@ import {
   toolBudgetSoftNudge,
 } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
+import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS } from "../../../../shared/subagent-child-boundary.ts";
+import {
+  formatProjectAgentGuidance,
+  inventoryProjectAgentGuidance,
+  PACKAGED_MINOR_AGENT_ROLES,
+} from "../../../../shared/project-agent-guidance.ts";
 import { PARENT_ONLY_NUDGE_TEXTS } from "./nudge-texts.ts";
+
+export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -36,14 +48,6 @@ const STRUCTURED_OUTPUT_INSTRUCTIONS = [
   "This subagent step has a strict structured output contract.",
   "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
   "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
-].join("\n");
-
-export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
-  "You are a child subagent, not the parent orchestrator.",
-  "The parent session owns delegation, orchestration, review fanout, and follow-up worker launches.",
-  "Ignore prior parent-only orchestration instructions in inherited conversation history.",
-  "Do not propose or run subagents. Complete only your assigned role-specific task with the tools available to you.",
-  "If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 
 const PARENT_ONLY_CUSTOM_MESSAGE_TYPES = new Set([
@@ -109,15 +113,39 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
     );
 }
 
-function stripChildBoundaryInstructions(prompt: string): string {
-  let rewritten = prompt;
-  rewritten = rewritten.split(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS).join("");
-  return rewritten.replace(/^(?:[ \t]*\r?\n)+/, "");
+const TRAILING_WHITESPACE_PATTERN = /\s*$/u;
+const RUNTIME_SEPARATOR_PATTERN = /[ \t]*(?:\r?\n[ \t]*)+$/u;
+
+function stripTerminalRuntimeBlock(prompt: string, block: string): string | undefined {
+  const trailingWhitespace = prompt.match(TRAILING_WHITESPACE_PATTERN)?.[0] ?? "";
+  const contentEnd = prompt.length - trailingWhitespace.length;
+  const blockStart = contentEnd - block.length;
+  if (blockStart < 0 || prompt.slice(blockStart, contentEnd) !== block) return undefined;
+
+  // Runtime blocks are joined with a blank line. Remove only that separator
+  // while preserving all preceding prompt text byte-for-byte.
+  return prompt.slice(0, blockStart).replace(RUNTIME_SEPARATOR_PATTERN, "");
+}
+
+function stripRuntimeOwnedSuffix(prompt: string, projectAgentGuidance: string): string {
+  // The child runtime owns a terminal boundary. Only after finding that
+  // boundary do the preceding structured-output and guidance blocks become
+  // eligible for removal as the rest of its known trailing sequence.
+  const withoutBoundary = stripTerminalRuntimeBlock(prompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS);
+  if (withoutBoundary === undefined) return prompt;
+
+  let rewritten = withoutBoundary;
+  rewritten = stripTerminalRuntimeBlock(rewritten, STRUCTURED_OUTPUT_INSTRUCTIONS) ?? rewritten;
+  if (projectAgentGuidance) {
+    rewritten = stripTerminalRuntimeBlock(rewritten, projectAgentGuidance) ?? rewritten;
+  }
+  return rewritten;
 }
 
 export function rewriteSubagentPrompt(
   prompt: string,
   options: { inheritProjectContext: boolean; inheritSkills: boolean },
+  projectAgentGuidance = "",
 ): string {
   let rewritten = prompt;
   if (!options.inheritProjectContext) {
@@ -127,11 +155,13 @@ export function rewriteSubagentPrompt(
     rewritten = stripInheritedSkills(rewritten);
   }
   rewritten = stripSubagentOrchestrationSkill(rewritten);
-  rewritten = stripChildBoundaryInstructions(rewritten);
+  rewritten = stripRuntimeOwnedSuffix(rewritten, projectAgentGuidance);
   const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV]
-    ? `\n\n${STRUCTURED_OUTPUT_INSTRUCTIONS}`
+    ? STRUCTURED_OUTPUT_INSTRUCTIONS
     : "";
-  return `${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}${structured}\n\n${rewritten}`;
+  return [rewritten, projectAgentGuidance, structured, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
@@ -225,6 +255,15 @@ function formatResumeMessage(request: ResumeRequest): string {
 
 function formatChildMessage(request: ChildMessageRequest): string {
   return request.type === "resume" ? formatResumeMessage(request) : formatSteerMessage(request);
+}
+
+function resolveChildProjectAgentGuidance(cwd: string): string {
+  const childAgentName = process.env[SUBAGENT_CHILD_AGENT_ENV];
+  const childRole = PACKAGED_MINOR_AGENT_ROLES.find((role) => role === childAgentName);
+  if (!childRole || process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] !== "1") return "";
+
+  const inventory = inventoryProjectAgentGuidance(cwd, getAgentDir());
+  return formatProjectAgentGuidance(inventory, childRole);
 }
 
 function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undefined): void {
@@ -326,12 +365,15 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
   registerSteeringInbox(pi);
   registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV]));
   let nativeSupervisorClientRegistered = false;
-  const registerNativeSupervisorClientOnce = (): void => {
-    if (nativeSupervisorClientRegistered) return;
-    nativeSupervisorClientRegistered = true;
-    registerNativeSupervisorClient(pi);
+  let projectAgentGuidanceSnapshot = "";
+  const handleSessionStart = (_event: unknown, ctx: { cwd: string }): void => {
+    if (!nativeSupervisorClientRegistered) {
+      nativeSupervisorClientRegistered = true;
+      registerNativeSupervisorClient(pi);
+    }
+    projectAgentGuidanceSnapshot = resolveChildProjectAgentGuidance(ctx.cwd);
   };
-  pi.on("session_start", registerNativeSupervisorClientOnce);
+  pi.on("session_start", handleSessionStart);
   const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
   const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
   if (structuredOutputPath && structuredSchemaPath) {
@@ -383,11 +425,20 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 
     const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
     const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);
-    if (inheritProjectContext === undefined && inheritSkills === undefined) return undefined;
-    const rewritten = rewriteSubagentPrompt(event.systemPrompt, {
-      inheritProjectContext: inheritProjectContext ?? true,
-      inheritSkills: inheritSkills ?? true,
-    });
+    if (
+      inheritProjectContext === undefined &&
+      inheritSkills === undefined &&
+      projectAgentGuidanceSnapshot.length === 0
+    )
+      return undefined;
+    const rewritten = rewriteSubagentPrompt(
+      event.systemPrompt,
+      {
+        inheritProjectContext: inheritProjectContext ?? true,
+        inheritSkills: inheritSkills ?? true,
+      },
+      projectAgentGuidanceSnapshot,
+    );
     if (rewritten === event.systemPrompt) return undefined;
     return { systemPrompt: rewritten };
   });

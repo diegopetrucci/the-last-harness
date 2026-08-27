@@ -102,6 +102,7 @@ import {
   resolveTkTicketMetadata,
   resolveTkTicketTaskContext,
 } from "../shared/tk-ticket.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -666,6 +667,7 @@ export function buildAsyncRunnerSteps(
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
       agent: s.agent,
+      projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
       task,
       phase: s.phase,
       label: s.label,
@@ -1300,6 +1302,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
           {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
             task: taskWithOutputInstruction,
             cwd: runnerCwd,
             model,

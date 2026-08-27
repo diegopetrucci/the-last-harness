@@ -17,6 +17,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropN
 import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidates, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
@@ -321,6 +322,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         orchestratorIntercomTarget: options.orchestratorIntercomTarget,
         runId: options.runId,
         childAgentName: agent.name,
+        projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
         childIndex: options.index ?? 0,
         parentSessionId: options.parentSessionId,
         structuredOutput: options.structuredOutput,

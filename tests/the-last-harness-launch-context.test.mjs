@@ -163,6 +163,7 @@ test("collapsed launch allocation hides resource names while expanded mode prese
     prompts: ["/review"],
     extensions: ["tools.js"],
     themes: ["night"],
+    projectGuidance: ["architect: .tlh/ARCHITECT.md"],
   };
   const header = createTlhHeader(plainTheme, resources, undefined, {
     launchContextAllocation: createAllocation(),
@@ -188,7 +189,13 @@ test("collapsed launch allocation hides resource names while expanded mode prese
     false,
   );
   assert.equal(contextIndex, allocationIndex + 1);
-  for (const section of ["[Skills]", "[Prompts]", "[Extensions]", "[Themes]"]) {
+  for (const section of [
+    "[Skills]",
+    "[Prompts]",
+    "[Extensions]",
+    "[Themes]",
+    "[Project guidance]",
+  ]) {
     assert.ok(expanded.includes(section), `expected expanded inventory section ${section}`);
   }
 });

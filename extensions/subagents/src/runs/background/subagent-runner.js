@@ -972,6 +972,7 @@ async function runSingleStep(step, ctx) {
             orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
             runId: ctx.id,
             childAgentName: step.agent,
+            projectAgentGuidance: step.projectAgentGuidance === true,
             childIndex: ctx.flatIndex,
             steerInboxDir: ctx.steerInboxDir,
             structuredOutput: effectiveStructuredOutput,

@@ -22,6 +22,7 @@ import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -307,6 +308,7 @@ export function buildAsyncRunnerSteps(id, params) {
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             agent: s.agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
             task,
             phase: s.phase,
             label: s.label,
@@ -773,6 +775,7 @@ export function executeAsyncSingle(id, params) {
                 {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
                     agent,
+                    projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
                     model,

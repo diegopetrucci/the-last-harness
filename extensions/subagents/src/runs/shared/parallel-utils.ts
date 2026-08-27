@@ -14,6 +14,8 @@ export interface RunnerSubagentStep {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
   agent: string;
+  /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
+  projectAgentGuidance?: boolean;
   task: string;
   phase?: string;
   label?: string;

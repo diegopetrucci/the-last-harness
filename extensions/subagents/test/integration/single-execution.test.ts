@@ -36,7 +36,11 @@ import type {
   ContextUsageDiagnostics,
   SingleResult,
 } from "../../src/shared/types.ts";
-import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  getThinkingLevelDropNote,
+} from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
 
 interface ModelAttempt {
@@ -221,6 +225,7 @@ interface ExecutorToolResult {
       | "progress"
       | "tkTicket"
       | "controlEvents"
+      | "finalOutput"
     >[];
   };
 }
@@ -346,6 +351,107 @@ describe(
 
       const output = getFinalOutput(result.messages);
       assert.equal(output, "Hello from mock agent");
+    });
+
+    it("propagates the packaged child identity through a foreground single launch", async () => {
+      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV] });
+      const result = await runSync(
+        tempDir,
+        [makeAgent("developer")],
+        "developer",
+        "Echo the packaged child identity.",
+        {},
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(JSON.parse(getFinalOutput(result.messages)), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+      });
+    });
+
+    it("emits verified provenance only for the canonical foreground agent config", async () => {
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      const agentDir = path.join(tempDir, "profile");
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+      try {
+        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        const canonical = makeAgent("developer", {
+          filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+        });
+        const verified = await runSync(
+          tempDir,
+          [canonical],
+          "developer",
+          "Echo verified provenance.",
+          {},
+        );
+        assert.equal(verified.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(verified.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        });
+
+        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        const collision = await runSync(
+          tempDir,
+          [
+            makeAgent("developer", {
+              filePath: path.join(tempDir, "custom", "developer.md"),
+            }),
+          ],
+          "developer",
+          "Echo disabled provenance.",
+          {},
+        );
+        assert.equal(collision.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(collision.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+        });
+      } finally {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        if (previousGuidanceMarker === undefined)
+          delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+        else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      }
+    });
+
+    it("propagates each packaged child identity through a foreground parallel launch", async () => {
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      const executor = makeExecutor([makeAgent("developer"), makeAgent("code-reviewer")]);
+      const result = await executor.execute(
+        "parallel-packaged-identities",
+        {
+          tasks: [
+            { agent: "developer", task: "Echo the developer identity." },
+            { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
+          ],
+        },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(
+        result.details?.results?.map((child) => JSON.parse(child.finalOutput ?? "{}")),
+        [
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+          },
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+          },
+        ],
+      );
     });
 
     it("classifies the #456 empty terminal as context exhausted and persists failure metadata", async () => {

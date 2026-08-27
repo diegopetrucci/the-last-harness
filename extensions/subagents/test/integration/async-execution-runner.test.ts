@@ -19,6 +19,10 @@ import {
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+} from "../../src/runs/shared/pi-args.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import {
@@ -288,6 +292,137 @@ describe("async execution utilities", () => {
       PI_SUBAGENT_CHILD_AGENT: "worker",
       PI_SUBAGENT_CHILD_INDEX: "0",
     });
+  });
+
+  it("propagates verified packaged provenance through async single and parallel launches", async () => {
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+    const canonicalAgent = (name: "developer" | "code-reviewer") =>
+      makeAgent(name, {
+        filePath: path.join(agentDir, "tlh", "agents", "subagents", `${name}.md`),
+      });
+    try {
+      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+      const singleId = `async-packaged-identity-${Date.now().toString(36)}`;
+      const commonParams = {
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      };
+      const single = executeAsyncSingle(singleId, {
+        agent: "developer",
+        task: "Echo the developer identity.",
+        agentConfig: canonicalAgent("developer"),
+        ...commonParams,
+      });
+      assert.equal(single.isError, undefined);
+      const singlePayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(singleId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(singlePayload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+      });
+
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      const parallelId = `async-packaged-identities-${Date.now().toString(36)}`;
+      const parallel = executeAsyncChain(parallelId, {
+        chain: [
+          {
+            parallel: [
+              { agent: "developer", task: "Echo the developer identity." },
+              { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
+            ],
+          },
+        ],
+        resultMode: "parallel",
+        agents: [canonicalAgent("developer"), canonicalAgent("code-reviewer")],
+        ...commonParams,
+      });
+      assert.equal(parallel.isError, undefined);
+      const parallelPayload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(parallelId), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(
+        parallelPayload.results.map((child) => JSON.parse(child.output)),
+        [
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          },
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+          },
+        ],
+      );
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      if (previousGuidanceMarker === undefined)
+        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+    }
+  });
+
+  it("clears inherited provenance for same-name custom async agents", async () => {
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+    const agentDir = path.join(tempDir, "profile");
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+    try {
+      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+      const id = `async-custom-collision-${Date.now().toString(36)}`;
+      const run = executeAsyncSingle(id, {
+        agent: "developer",
+        task: "Echo the custom collision identity.",
+        agentConfig: makeAgent("developer", {
+          filePath: path.join(tempDir, "custom", "developer.md"),
+        }),
+        ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        maxSubagentDepth: 2,
+      });
+      assert.equal(run.isError, undefined);
+      const payload = JSON.parse(
+        fs.readFileSync(await waitForAsyncResultFile(id), "utf-8"),
+      ) as AsyncResultPayload;
+      assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+        [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+      });
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      if (previousGuidanceMarker === undefined)
+        delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+    }
   });
 
   it("async launch messages stay concise one-line receipts", async () => {

@@ -12,6 +12,8 @@ import { applyProviderAwareSubagentModels, parseProviderModelReference, resolveP
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
+import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
@@ -269,15 +271,15 @@ function registerChildSubagentRuntime(pi, buildChildPrompt, env) {
         const settings = getTlhGlobalSettings(ctx.cwd);
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
+        const additions = [
+            buildChildPrompt(),
+            buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
+            buildTlhCommitAttributionPrompt(commitAttributionState),
+        ]
+            .filter(Boolean)
+            .join("\n\n");
         return {
-            systemPrompt: [
-                event.systemPrompt,
-                buildChildPrompt(),
-                buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
-                buildTlhCommitAttributionPrompt(commitAttributionState),
-            ]
-                .filter(Boolean)
-                .join("\n\n"),
+            systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
         };
     });
     pi.on("tool_call", async (event, ctx) => {
@@ -374,6 +376,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     let primaryAgentDefaultSelection = DEFAULT_PRIMARY_AGENT;
     let sessionPrimaryAgentOverride;
     let sessionExperimentalSnapshot;
+    let sessionProjectAgentGuidanceSnapshot;
     const preflightThrottle = new Map();
     const notifiedForReauth = new Set();
     const pendingReauthNotifications = new Set();
@@ -489,7 +492,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
         const prompts = [
             baseSystemPrompt,
-            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot),
+            buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled, sessionExperimentalSnapshot, sessionProjectAgentGuidanceSnapshot),
             buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
             buildTlhCommitAttributionPrompt(commitAttributionState),
         ];
@@ -526,6 +529,20 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             `Model override: ${modelOverride}.`,
             `Settings: ${settingsLabel}.`,
         ].join("\n");
+    }
+    function notifyUndecidedProjectAgentGuidance(ctx, inventory) {
+        if (ctx.hasUI === false || inventory.trust !== "undecided" || inventory.files.length === 0) {
+            return;
+        }
+        const diagnostic = inventory.diagnostics.find(({ code }) => code === "project-not-trusted");
+        if (!diagnostic) {
+            return;
+        }
+        try {
+            ctx.ui.notify(diagnostic.message, "warning");
+        }
+        catch {
+        }
     }
     function setSessionPrimaryAgentOverride(selection) {
         sessionPrimaryAgentOverride = selection;
@@ -869,6 +886,8 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         updateSessionOnlyModel(undefined);
         activateTlhTicketSessionScope(ctx.cwd);
         sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
+        sessionProjectAgentGuidanceSnapshot = inventoryProjectAgentGuidance(ctx.cwd, getAgentDir());
+        notifyUndecidedProjectAgentGuidance(ctx, sessionProjectAgentGuidanceSnapshot);
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
@@ -977,6 +996,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             replayAllTlhUnclaimedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(undefined);
             updateSessionOnlyModel(undefined);
+            sessionProjectAgentGuidanceSnapshot = undefined;
             restorePrimaryToolsIfAppropriate();
             notifiedForReauth.clear();
             pendingReauthNotifications.clear();
@@ -1104,6 +1124,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     return {
         applySessionStart,
+        projectAgentGuidanceSnapshot: () => sessionProjectAgentGuidanceSnapshot,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
         buildLaunchSystemPrompt,

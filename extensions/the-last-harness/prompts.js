@@ -7,6 +7,8 @@ import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
 import { readMarkdownFilesRecursive, readText, uniqueSorted } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
+import { formatProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
+export { formatProjectAgentGuidance } from "../shared/project-agent-guidance.js";
 export function parseFrontmatter(content) {
     if (!content.startsWith("---")) {
         return { frontmatter: {}, body: content.trim() };
@@ -238,11 +240,12 @@ function formatAllowedSubagents(primary, subagents, experimentalConfig) {
     }
     return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list.`;
 }
-export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, experimentalConfig) {
+export function buildTlhSystemPrompt(primary, subagents, primaryEnabled, experimentalConfig, projectAgentGuidanceInventory) {
     const prompts = [HARNESS_PROMPT.trim()];
     if (primaryEnabled) {
         if (primary) {
             prompts.push(primary.systemPrompt.trim());
+            prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
         }
         prompts.push(formatAllowedSubagents(primary, subagents, experimentalConfig));
     }

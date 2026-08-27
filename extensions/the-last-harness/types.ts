@@ -1,11 +1,11 @@
 import type { ProviderModelReference } from "./model-defaults.js";
-
 export type StartupResources = {
   context: string[];
   skills: string[];
   prompts: string[];
   extensions: string[];
   themes: string[];
+  projectGuidance?: string[];
 };
 
 export type StartupPromptResourceMetadata = {

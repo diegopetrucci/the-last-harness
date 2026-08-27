@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 let tempHome = "";
 let tempProject = "";
@@ -50,6 +51,32 @@ describe("builtin agent overrides", () => {
     else process.env.PI_SUBAGENT_EXTRA_AGENT_DIRS = originalExtraAgentDirs;
     fs.rmSync(tempHome, { recursive: true, force: true });
     fs.rmSync(tempProject, { recursive: true, force: true });
+  });
+
+  it("preserves canonical packaged provenance when settings override the copied prompt", () => {
+    const agentDir = path.join(tempHome, ".pi", "agent");
+    const canonicalPath = path.join(agentDir, "tlh", "agents", "subagents", "developer.md");
+    fs.mkdirSync(path.dirname(canonicalPath), { recursive: true });
+    fs.writeFileSync(
+      canonicalPath,
+      "---\nname: developer\ndescription: TLH developer\n---\n\nPackaged developer.\n",
+      "utf-8",
+    );
+    writeJson(path.join(agentDir, "settings.json"), {
+      subagents: {
+        agentDirs: ["tlh/agents/subagents"],
+        agentOverrides: { developer: { model: "mock/override" } },
+      },
+    });
+
+    const developer = discoverAgents(tempProject, "both").agents.find(
+      (agent) => agent.name === "developer",
+    );
+    assert.ok(developer);
+    assert.equal(developer.filePath, canonicalPath);
+    assert.equal(developer.model, "mock/override");
+    assert.equal(developer.override?.scope, "user");
+    assert.equal(isCanonicalPackagedMinorAgent(developer), true);
   });
 
   it("confirms no builtin agents are present in discoverAgentsAll", () => {
