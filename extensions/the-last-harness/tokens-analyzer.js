@@ -63,14 +63,10 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
     let totalToolErrors = 0;
     let mcpProxyCalls = 0;
     let mcpDirectCalls = 0;
-    let cacheMissPrev;
-    let assistantTurnIndex = 0;
-    const cacheMissEvents = [];
-    let totalMissedTokens = 0;
-    let totalMissedCost = 0;
+    const cacheMissAnalyzer = createCacheMissAnalyzer(priceSource);
     for (const entry of entries) {
         if (entry.type === "compaction" || entry.type === "branch_summary") {
-            cacheMissPrev = undefined;
+            cacheMissAnalyzer.reset();
         }
         if (entry.type === "custom") {
             registerDiscoveries(collectStructuredDiscoveries(entry.data, { sourceEntryId: entry.id }), {
@@ -107,59 +103,7 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
                 primaryTotals.turns += 1;
                 primaryTotals.assistantMessages += 1;
             }
-            const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
-            const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
-            const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ??
-                rawMsgUsage?.cacheReadTokens ??
-                rawMsgUsage?.cache_read_input_tokens ??
-                rawMsgUsage?.cacheReadInputTokens) ?? 0;
-            const cmCacheWrite = numberFromUnknown(rawMsgUsage?.cacheWrite ??
-                rawMsgUsage?.cacheWriteTokens ??
-                rawMsgUsage?.cache_creation_input_tokens ??
-                rawMsgUsage?.cacheWriteInputTokens) ?? 0;
-            const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
-            const rawCost = isRecord(rawMsgUsage?.cost) ? rawMsgUsage.cost : undefined;
-            const cmCostInput = numberFromUnknown(rawCost?.input) ?? 0;
-            const cmCostCacheWrite = numberFromUnknown(rawCost?.cacheWrite) ?? 0;
-            const cmCostCacheRead = numberFromUnknown(rawCost?.cacheRead) ?? 0;
-            const cmProvider = typeof message.provider === "string" ? message.provider : "";
-            const cmModel = typeof message.model === "string" ? message.model : "";
-            const cmModelKey = `${cmProvider}/${cmModel}`;
-            const cmTimestampMs = Date.parse(entry.timestamp);
-            const cmTimestamp = Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0;
-            if (cacheMissPrev !== undefined &&
-                cmPromptTokens > 0 &&
-                !(cmCacheRead + cmCacheWrite === 0 && !cacheMissPrev.reportedCache)) {
-                const missedTokens = Math.min(cacheMissPrev.promptTokens, cmPromptTokens) - cmCacheRead;
-                if (missedTokens > NOISE_FLOOR_TOKENS) {
-                    const paidTokens = cmInput + cmCacheWrite;
-                    const paidPerToken = paidTokens > 0 ? (cmCostInput + cmCostCacheWrite) / paidTokens : 0;
-                    const readPerToken = cmCacheRead > 0
-                        ? cmCostCacheRead / cmCacheRead
-                        : (priceSource?.find(cmProvider, cmModel)?.cost.cacheRead ?? 0) / 1_000_000;
-                    const missedCost = missedTokens * Math.max(0, paidPerToken - readPerToken);
-                    const idleMs = Math.max(0, cmTimestamp - cacheMissPrev.timestamp);
-                    const modelChanged = cmModelKey !== cacheMissPrev.modelKey;
-                    cacheMissEvents.push({
-                        turnIndex: assistantTurnIndex,
-                        idleMs,
-                        modelChanged,
-                        missedTokens,
-                        missedCost,
-                    });
-                    totalMissedTokens += missedTokens;
-                    totalMissedCost += missedCost;
-                }
-            }
-            if (cmPromptTokens > 0) {
-                cacheMissPrev = {
-                    promptTokens: cmPromptTokens,
-                    timestamp: cmTimestamp,
-                    modelKey: cmModelKey,
-                    reportedCache: (cacheMissPrev?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
-                };
-            }
-            assistantTurnIndex += 1;
+            cacheMissAnalyzer.record(message, entry.timestamp);
             const activeBranch = activeBranchIds.has(entry.id);
             const turn = {
                 turnIndex: timeline.length + 1,
@@ -352,16 +296,8 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
         const maxMs = latencies[latencies.length - 1] ?? 0;
         toolEntry.observedLatency = { medianMs, maxMs, pairedCount: latencies.length };
     }
-    const worstMisses = [...cacheMissEvents]
-        .sort((a, b) => b.missedTokens - a.missedTokens)
-        .slice(0, 10);
     return {
-        cacheMisses: {
-            missedTokens: totalMissedTokens,
-            missedCost: totalMissedCost,
-            missCount: cacheMissEvents.length,
-            worst: worstMisses,
-        },
+        cacheMisses: cacheMissAnalyzer.summarize(),
         session: {
             sessionId,
             sessionName,
@@ -429,6 +365,86 @@ export function analyzeSessionEntries(entries, { sessionId, sessionName, started
             "Subagent usage appears only when structured session data exposed it; missing discoveries do not prove zero subagent spend.",
             "Artifact and session references are sanitized and do not expose absolute local paths.",
         ],
+    };
+}
+function createCacheMissAnalyzer(priceSource) {
+    const state = {
+        assistantTurnIndex: 0,
+        events: [],
+        totalMissedTokens: 0,
+        totalMissedCost: 0,
+    };
+    return {
+        reset() {
+            state.previous = undefined;
+        },
+        record(message, timestamp) {
+            const rawMsgUsage = isRecord(message.usage) ? message.usage : undefined;
+            const cmInput = numberFromUnknown(rawMsgUsage?.input ?? rawMsgUsage?.inputTokens) ?? 0;
+            const cmCacheRead = numberFromUnknown(rawMsgUsage?.cacheRead ??
+                rawMsgUsage?.cacheReadTokens ??
+                rawMsgUsage?.cache_read_input_tokens ??
+                rawMsgUsage?.cacheReadInputTokens) ?? 0;
+            const cmCacheWrite = numberFromUnknown(rawMsgUsage?.cacheWrite ??
+                rawMsgUsage?.cacheWriteTokens ??
+                rawMsgUsage?.cache_creation_input_tokens ??
+                rawMsgUsage?.cacheWriteInputTokens) ?? 0;
+            const cmPromptTokens = cmInput + cmCacheRead + cmCacheWrite;
+            const rawCost = isRecord(rawMsgUsage?.cost) ? rawMsgUsage.cost : undefined;
+            const cmCostInput = numberFromUnknown(rawCost?.input) ?? 0;
+            const cmCostCacheWrite = numberFromUnknown(rawCost?.cacheWrite) ?? 0;
+            const cmCostCacheRead = numberFromUnknown(rawCost?.cacheRead) ?? 0;
+            const cmProvider = typeof message.provider === "string" ? message.provider : "";
+            const cmModel = typeof message.model === "string" ? message.model : "";
+            const cmModelKey = `${cmProvider}/${cmModel}`;
+            const cmTimestampMs = Date.parse(timestamp);
+            const cmTimestamp = Number.isFinite(cmTimestampMs) ? cmTimestampMs : 0;
+            const previous = state.previous;
+            if (previous !== undefined &&
+                cmPromptTokens > 0 &&
+                !(cmCacheRead + cmCacheWrite === 0 && !previous.reportedCache)) {
+                const missedTokens = Math.min(previous.promptTokens, cmPromptTokens) - cmCacheRead;
+                if (missedTokens > NOISE_FLOOR_TOKENS) {
+                    const paidTokens = cmInput + cmCacheWrite;
+                    const paidPerToken = paidTokens > 0 ? (cmCostInput + cmCostCacheWrite) / paidTokens : 0;
+                    const readPerToken = cmCacheRead > 0
+                        ? cmCostCacheRead / cmCacheRead
+                        : (priceSource?.find(cmProvider, cmModel)?.cost.cacheRead ?? 0) / 1_000_000;
+                    const missedCost = missedTokens * Math.max(0, paidPerToken - readPerToken);
+                    const idleMs = Math.max(0, cmTimestamp - previous.timestamp);
+                    const modelChanged = cmModelKey !== previous.modelKey;
+                    state.events.push({
+                        turnIndex: state.assistantTurnIndex,
+                        idleMs,
+                        modelChanged,
+                        missedTokens,
+                        missedCost,
+                    });
+                    state.totalMissedTokens += missedTokens;
+                    state.totalMissedCost += missedCost;
+                }
+            }
+            if (cmPromptTokens > 0) {
+                state.previous = {
+                    promptTokens: cmPromptTokens,
+                    timestamp: cmTimestamp,
+                    modelKey: cmModelKey,
+                    reportedCache: (previous?.reportedCache ?? false) || cmCacheRead + cmCacheWrite > 0,
+                };
+            }
+            state.assistantTurnIndex += 1;
+        },
+        summarize() {
+            const worstMisses = [...state.events]
+                .sort((a, b) => b.missedTokens - a.missedTokens)
+                .slice(0, 10);
+            return {
+                missedTokens: state.totalMissedTokens,
+                missedCost: state.totalMissedCost,
+                missCount: state.events.length,
+                worst: worstMisses,
+            };
+        },
     };
 }
 function createUsageTotals() {
