@@ -280,6 +280,21 @@ TLH's first-party implementation adapts the MIT-licensed `@ryan_nookpi/pi-extens
 - If the window says TLH could not load its packaged review assets, the `monaco-editor` package is missing or corrupt in your TLH install (Monaco editor, syntax-highlighting tokenizers, and the worker source are all inlined at build time, not fetched at runtime). Reinstall TLH (or run `tlh update`) to restore the package, then rerun `/annotate-git-diff`. If the problem persists after reinstalling, please file an issue.
 - There is no separate `tlh defaults` toggle for `/annotate-git-diff` because it ships inside TLH itself. If you customize TLH packages manually, keep that change inside the isolated TLH profile rather than `~/.pi/agent`.
 
+### `Ctrl+Shift+X` — Copy unsent draft
+
+While TLH has terminal focus, press `Ctrl+Shift+X` to copy the full contents of the unsent editor draft to the clipboard. Collapsed large pastes are expanded automatically so the clipboard always receives the complete text. The draft is left untouched after the copy.
+
+#### Behavior
+
+- Empty or whitespace-only drafts show an `info` notification: `No draft to copy`.
+- If the clipboard write fails, TLH shows an `error` notification: `Could not copy draft: <reason>`.
+- While the draft is multi-line or ≥ 200 characters (and contains non-whitespace), a dim `↳ Ctrl+Shift+X to copy draft` hint appears below the editor. It disappears once the draft is cleared or becomes short and single-line.
+- The shortcut is listed in `/help` under **Keyboard Shortcuts > Extensions**.
+
+#### Rebinding
+
+Extension shortcuts registered via `pi.registerShortcut` are not rebindable through `keybindings.json`. The runtime uses that config file only for conflict detection (not remapping). `Ctrl+Shift+X` cannot be rebound.
+
 ---
 
 ## Packaged prompt templates

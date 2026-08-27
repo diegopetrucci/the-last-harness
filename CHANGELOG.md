@@ -4,6 +4,10 @@ All notable changes to The Last Harness will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Press `Ctrl+Shift+X` to copy the full unsent editor draft to the clipboard. Collapsed large pastes are expanded automatically; the draft is left untouched. A dim hint appears below the editor while the draft is multi-line or ≥ 200 characters. The shortcut is listed in `/help` under Keyboard Shortcuts > Extensions.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

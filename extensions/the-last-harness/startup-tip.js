@@ -22,6 +22,7 @@ export const TLH_STARTUP_TIPS = [
     "With `/experimental enable ci-failure-investigation` TLH auto-investigates failed CI checks, so you don't have to.",
     "After opening a PR, TLH automatically monitors CI and reports failures.",
     "Ask for a diagram or visual explanation and TLH will sketch logic, flows, or UI structure (show-me skill).",
+    "Press Ctrl+Shift+X to copy your unsent draft to the clipboard.",
 ];
 export function selectTlhStartupTip(random = Math.random) {
     const tips = TLH_STARTUP_TIPS;
