@@ -650,6 +650,78 @@ test("regression: job is retained when asyncDir exists but status.json not yet w
   }
 });
 
+test("regression: partial control events preserve started async anchors during startup", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-start-control-anchors-"));
+  try {
+    const asyncDir = join(root, "run-start-control");
+    mkdirSync(asyncDir, { recursive: true });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    // The parent emits async-started before the child has written status.json.
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir, pid: 12345 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+
+    // Duplicate async-started events can omit or invalidate the PID. Losing the
+    // PID in this missing-status startup window would make the job unverifiable.
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir, pid: 0 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+
+    // A later control event can also be partial: neither an omitted nor an invalid
+    // asyncDir may erase the startup evidence needed to bridge that race.
+    tracker.handleAsyncControl({
+      event: { runId: "run-start-control", mode: "background" },
+    });
+    tracker.handleAsyncControl({
+      event: { runId: "run-start-control", mode: "background" },
+      asyncDir: {},
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("regression: valid control and started evidence survives a later partial started event", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-control-start-anchors-"));
+  try {
+    const originalDir = makeAsyncDir(root, "run-control-start-original", {
+      runId: "run-control-start",
+      state: "running",
+      pid: 12346,
+    });
+    const newerDir = makeAsyncDir(root, "run-control-start-newer", {
+      runId: "run-control-start",
+      state: "running",
+      pid: 12347,
+    });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    tracker.handleAsyncControl({
+      event: { runId: "run-control-start", mode: "background" },
+      asyncDir: originalDir,
+    });
+    tracker.handleAsyncStarted({ id: "run-control-start", asyncDir: newerDir, pid: 12347 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-control-start"]);
+
+    // Make the old anchor terminal. If the valid newer evidence was not retained,
+    // the next partial started event would either follow this tombstone or be dropped.
+    writeFileSync(
+      join(originalDir, "status.json"),
+      JSON.stringify({ runId: "run-control-start", state: "complete", pid: 12346 }),
+    );
+    tracker.handleAsyncStarted({ id: "run-control-start", asyncDir: "", pid: -1 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-control-start"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("regression: started job with dead pid and no status.json is dropped (startup window with dead pid)", () => {
   const root = mkdtempSync(join(tmpdir(), "tlh-start-race-dead-"));
   try {
