@@ -47,6 +47,7 @@ import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
+  followsOpenrouterSession,
   parseProviderModelReference,
   resolveProviderThinking,
   selectProviderAwareAgentDefaults,
@@ -1707,16 +1708,18 @@ function createTlhPrimaryAgentRuntime(
         return;
       }
       const chosenKey = `${event.model.provider}/${event.model.id}`;
-      // Determine the primary's bundled default model to know whether to clear the override.
+      // OpenRouter's non-opposite primary default intentionally follows the active
+      // session model, so it is not a packaged default that should clear an override.
       const primaryDefaults = selectProviderAwareAgentDefaults(
         primary,
         getUnfilteredAvailableModels(ctx.modelRegistry),
         event.model.provider,
         event.model,
       );
-      const bundledKey = primaryDefaults.model
-        ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
-        : undefined;
+      const bundledKey =
+        !followsOpenrouterSession(primary, event.model.provider) && primaryDefaults.model
+          ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
+          : undefined;
       // If user picked the bundled default, clear the override; otherwise record it.
       const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
       // Capture before write to detect the no-override → override transition.
