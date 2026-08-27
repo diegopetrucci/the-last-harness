@@ -970,7 +970,7 @@ describe("async execution utilities", () => {
       await waitForMockPiCall(mockPi, 0);
       const childPids = startedMockPiPids(mockPi);
       assert.equal(childPids.length, 1);
-      writeLifecycleLock(asyncDir);
+      await writeLifecycleLock(asyncDir);
       const payload = await readAsyncPayload(id);
       const lockedStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
@@ -1043,7 +1043,7 @@ describe("async execution utilities", () => {
       // post-child status writes are skipped while the lock is held. We therefore
       // write the cancelled status immediately without waiting for the step-update
       // write — the adopted cancelled status already carries the correct step state.
-      writeLifecycleLock(asyncDir);
+      await writeLifecycleLock(asyncDir);
       // Write the concurrent terminal status immediately; writeNormalizedLifecycleStatus
       // bypasses the lifecycle lock so this write succeeds even while the lock is held.
       writeNormalizedLifecycleStatus(asyncDir, {

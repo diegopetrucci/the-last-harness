@@ -206,7 +206,7 @@ interface AsyncRunnerLogPathConfig {
   asyncDir?: string;
 }
 
-export interface AsyncRunnerStepBuildParams {
+interface AsyncRunnerStepBuildParams {
   chain: ChainStep[];
   task?: string;
   resultMode?: SubagentRunMode;

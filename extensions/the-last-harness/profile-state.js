@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
-export function isDefaultPiAgentDir(agentDir) {
+function isDefaultPiAgentDir(agentDir) {
     const home = process.env.HOME || process.env.USERPROFILE;
     if (!home)
         return false;
@@ -190,7 +190,7 @@ export function writeGuardedTlhStateFile(statePath, content, resolveExpectedPath
     }
     return writeTlhStateFileAtomically(statePath, content);
 }
-export function writeTlhStartupState(state) {
+function writeTlhStartupState(state) {
     try {
         const statePath = tlhStartupStatePath();
         if (!statePath) {

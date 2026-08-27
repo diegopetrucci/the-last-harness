@@ -64,7 +64,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-User-owned embedded subagents are supported behind the default-off `embedded-subagents` experimental flag; see [docs/embedded-subagents.md](docs/embedded-subagents.md).
+Stable, always-available user-owned trusted custom subagents are available to the architect when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 
@@ -101,7 +101,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
-- User-owned trusted embedded subagents: [`docs/embedded-subagents.md`](docs/embedded-subagents.md)
+- User-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)
