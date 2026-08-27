@@ -12,7 +12,6 @@ import {
   selectablePrimaryAgents,
   contrarianMetadata,
   rushLikePrimary,
-  lockedRushPrimary,
   createCommandContext,
   EMBEDDED_SUBAGENTS_FEATURE,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
@@ -597,9 +596,9 @@ test("/switch-primary-agent status reports model override or none", async (t) =>
   );
 });
 
-test("/switch-primary-agent status hides stale overrides for locked primaries", async (t) => {
+test("/switch-primary-agent status reports an override for overrideable Rush", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-opus-5" } });
@@ -621,14 +620,16 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 
     assert.equal(status.notifications.at(-1)?.type, "info");
     assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
-    assert.match(status.notifications.at(-1)?.message ?? "", /Model override: none\./);
-    assert.doesNotMatch(status.notifications.at(-1)?.message ?? "", /claude-opus-5/);
+    assert.match(
+      status.notifications.at(-1)?.message ?? "",
+      /Model override: anthropic\/claude-opus-5\./,
+    );
   });
 });
 
-test("/switch-primary-agent model reset clears a stale locked-primary model override", async (t) => {
+test("/switch-primary-agent model reset clears an overrideable Rush model override", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
   const initialSettings = `${JSON.stringify(
     {
       tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
@@ -663,10 +664,7 @@ test("/switch-primary-agent model reset clears a stale locked-primary model over
     assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
     assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
     assert.equal(reset.notifications.at(-1)?.type, "info");
-    assert.match(
-      reset.notifications.at(-1)?.message ?? "",
-      /Cleared stale ignored model override for rush/,
-    );
+    assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared model override for rush/);
   });
 });
 

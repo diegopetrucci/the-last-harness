@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
@@ -5,13 +6,13 @@ import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harne
 import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
-import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
+import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, followsOpenrouterSession, formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
-import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
-import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
+import { beginTlhModelSelectionDefaultSuppression, beginTlhThinkingDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, getTlhThinkingChangeContext, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, runTlhThinkingChangeContext, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
+import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast, } from "./thinking.js";
 import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
@@ -31,6 +32,10 @@ function getTlhGlobalSettings(cwd) {
 }
 function getTlhPrimaryAgentConfig(cwd) {
     return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
+}
+function getTlhDurableThinkingLevel(cwd) {
+    const level = getTlhGlobalSettings(cwd).defaultThinkingLevel;
+    return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
 }
 function getTlhSubagentOverrides(cwd) {
     const overrides = getTlhGlobalSettings(cwd).subagents?.agentOverrides;
@@ -462,6 +467,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             : DISABLED_PRIMARY_AGENT;
     }
     function syncPrimaryAgentState(ctx) {
+        const previousSelection = currentPrimaryAgentSelection();
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
         const defaultResolution = resolvePrimaryAgentConfig(primaryConfig);
         if (defaultResolution.invalidSelected) {
@@ -475,6 +481,9 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         sessionPrimaryAgentOverride = sessionResolution.selection
             ? ensureLoadedPrimarySelection(ctx, sessionResolution.selection, "session")
             : undefined;
+        if (currentPrimaryAgentSelection() !== previousSelection) {
+            clearSessionThinkingOverride();
+        }
     }
     function currentPrimaryAgentSelection() {
         return sessionPrimaryAgentOverride ?? primaryAgentDefaultSelection;
@@ -568,11 +577,90 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
     }
     let tlhApplyingModel = false;
+    let tlhApplyingThinking = false;
     let tlhRestoringCancelledModel = false;
+    const tlhInternalChange = new AsyncLocalStorage();
+    let lastObservedModel;
     let sessionOnlyModel;
+    let sessionThinkingOverride;
     function updateSessionOnlyModel(model) {
         sessionOnlyModel = model;
         setTlhSessionOnlyModel(model);
+    }
+    function modelsMatch(left, right) {
+        return left?.provider === right?.provider && left?.id === right?.id;
+    }
+    function clearSessionThinkingOverride() {
+        sessionThinkingOverride = undefined;
+    }
+    function setTlhThinkingLevel(level) {
+        const releaseThinkingSuppression = beginTlhThinkingDefaultSuppression();
+        tlhApplyingThinking = true;
+        try {
+            tlhInternalChange.run(true, () => runTlhThinkingChangeContext("internal", () => setExtensionThinkingLevel(pi, level)));
+        }
+        finally {
+            releaseThinkingSuppression();
+            tlhApplyingThinking = false;
+        }
+    }
+    function recordUserThinkingLevel(level) {
+        const selection = currentPrimaryAgentSelection();
+        const primary = activePrimaryAgent();
+        if (!isThinkingLevel(level) ||
+            !isEnabledPrimaryAgentSelection(selection) ||
+            !primary ||
+            primary.lockThinking === true) {
+            return;
+        }
+        const retainedLevel = primary.minThinking !== undefined && !thinkingLevelAtLeast(level, primary.minThinking)
+            ? primary.minThinking
+            : level;
+        sessionThinkingOverride = { primary: selection, level: retainedLevel };
+    }
+    function clampThinkingLevelForPrimary(level, primary, model) {
+        let availableLevels = model && "reasoning" in model
+            ? getAvailableThinkingLevels(model)
+            : [...THINKING_LEVELS];
+        const minThinking = primary.minThinking;
+        if (minThinking !== undefined) {
+            availableLevels = availableLevels.filter((candidate) => thinkingLevelAtLeast(candidate, minThinking));
+        }
+        if (availableLevels.includes(level)) {
+            return level;
+        }
+        const requestedIndex = THINKING_LEVELS.indexOf(level);
+        if (requestedIndex >= 0) {
+            for (let index = requestedIndex; index < THINKING_LEVELS.length; index += 1) {
+                const candidate = THINKING_LEVELS[index];
+                if (availableLevels.includes(candidate)) {
+                    return candidate;
+                }
+            }
+            for (let index = requestedIndex - 1; index >= 0; index -= 1) {
+                const candidate = THINKING_LEVELS[index];
+                if (availableLevels.includes(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        return availableLevels[0] ?? "off";
+    }
+    function updateRetainedThinkingForModel(selection, primary, model) {
+        const override = sessionThinkingOverride;
+        if (!override || override.primary !== selection || primary.lockThinking === true) {
+            return;
+        }
+        override.level = clampThinkingLevelForPrimary(override.level, primary, model);
+    }
+    function sessionThinkingLevelForPrimary(selection, primary, model) {
+        const override = sessionThinkingOverride;
+        if (!override || override.primary !== selection || primary.lockThinking === true) {
+            return undefined;
+        }
+        const clamped = clampThinkingLevelForPrimary(override.level, primary, model);
+        override.level = clamped;
+        return clamped;
     }
     async function applyPrimaryModel(ctx, primary, model) {
         if (!model) {
@@ -588,12 +676,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
             return model;
         }
+        const releaseThinkingSuppression = beginTlhThinkingDefaultSuppression();
         tlhApplyingModel = true;
         let success;
         try {
-            success = await pi.setModel(model);
+            success = await tlhInternalChange.run(true, () => runTlhThinkingChangeContext("internal", () => pi.setModel(model)));
         }
         finally {
+            releaseThinkingSuppression();
             tlhApplyingModel = false;
         }
         if (!success) {
@@ -608,16 +698,21 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             isThinkingLevel(currentThinking) &&
             thinkingLevelAtLeast(currentThinking, primary.minThinking));
     }
-    function applyPrimaryThinking(primary, thinking) {
-        if (!thinking) {
+    function applyPrimaryThinking(cwd, selection, primary, thinking, model) {
+        const sessionThinking = sessionThinkingLevelForPrimary(selection, primary, model);
+        const durableThinking = getTlhDurableThinkingLevel(cwd);
+        const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+        if (requestedThinking === undefined) {
             return;
         }
+        const hasExplicitThinking = sessionThinking !== undefined || durableThinking !== undefined;
+        const targetThinking = clampThinkingLevelForPrimary(requestedThinking, primary, model);
         const currentThinking = pi.getThinkingLevel();
-        if (currentThinking === thinking ||
-            currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)) {
+        if (currentThinking === targetThinking ||
+            (!hasExplicitThinking && currentThinkingSatisfiesPrimaryFloor(primary, currentThinking))) {
             return;
         }
-        setExtensionThinkingLevel(pi, thinking);
+        setTlhThinkingLevel(targetThinking);
     }
     async function restoreCancelledModel(ctx, previousModel) {
         if (!previousModel) {
@@ -627,7 +722,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         tlhRestoringCancelledModel = true;
         tlhApplyingModel = true;
         try {
-            const restored = await pi.setModel(previousModel);
+            const restored = await tlhInternalChange.run(true, () => runTlhThinkingChangeContext("internal", () => pi.setModel(previousModel)));
             if (restored) {
                 setImmediate(() => {
                     try {
@@ -656,6 +751,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     async function applyPrimaryDefaults(ctx, options = {}) {
         const { warnOnMissing = true } = options;
+        lastObservedModel = ctx.model;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
             try {
@@ -702,12 +798,15 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             : undefined;
         if (shouldApplyThinking) {
             const effectiveModel = activePrimaryModel ?? ctx.model;
-            applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
+            applyPrimaryThinking(ctx.cwd, selection, primary, resolveProviderThinking(primary, effectiveModel?.provider), effectiveModel);
         }
+        lastObservedModel = activePrimaryModel ?? ctx.model;
     }
     async function applyPrimaryModeChange(ctx) {
+        await persistTlhStandaloneThinkingDefaults();
         replayTlhUnmatchedModelSelectionDefaults();
         updateSessionOnlyModel(undefined);
+        clearSessionThinkingOverride();
         await applyPrimaryDefaults(ctx);
     }
     async function resetPrimaryAgentModelOverride(ctx, agentName) {
@@ -877,18 +976,43 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         });
     }
     async function applySessionStart(ctx) {
+        await persistTlhStandaloneThinkingDefaults();
         replayAllTlhUnclaimedModelSelectionDefaults();
         setTlhModelSelectionActiveModelResolver(() => ctx.model);
         updateSessionOnlyModel(undefined);
+        clearSessionThinkingOverride();
         activateTlhTicketSessionScope(ctx.cwd);
         syncPrimaryAgentState(ctx);
         await applyPrimaryDefaults(ctx, { warnOnMissing: false });
     }
     function registerLifecycleHooks() {
-        pi.on("thinking_level_select", async () => {
+        pi.on("thinking_level_select", async (event, ctx) => {
+            const modelChanged = lastObservedModel !== undefined &&
+                ctx.model !== undefined &&
+                !modelsMatch(lastObservedModel, ctx.model);
+            const thinkingChangeContext = getTlhThinkingChangeContext();
+            const internalChange = tlhApplyingModel ||
+                tlhApplyingThinking ||
+                tlhInternalChange.getStore() === true ||
+                thinkingChangeContext === "internal";
+            const interactiveChange = thinkingChangeContext === "interactive";
+            if (!internalChange && !interactiveChange) {
+                if (modelChanged) {
+                    const selection = currentPrimaryAgentSelection();
+                    const primary = activePrimaryAgent();
+                    if (primary) {
+                        updateRetainedThinkingForModel(selection, primary, ctx.model);
+                    }
+                }
+                else {
+                    recordUserThinkingLevel(event.level);
+                }
+            }
+            lastObservedModel = ctx.model;
             await persistTlhStandaloneThinkingDefaults();
         });
         pi.on("model_select", async (event, ctx) => {
+            lastObservedModel = event.model;
             const defaultsClaim = claimTlhModelSelectionDefaults(event.model);
             setTlhModelSelectionActiveModelResolver(() => ctx.model);
             if (tlhRestoringCancelledModel) {
@@ -942,7 +1066,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             }
             const chosenKey = `${event.model.provider}/${event.model.id}`;
             const primaryDefaults = selectProviderAwareAgentDefaults(primary, getUnfilteredAvailableModels(ctx.modelRegistry), event.model.provider, event.model);
-            const bundledKey = primaryDefaults.model
+            const bundledKey = !followsOpenrouterSession(primary, event.model.provider) && primaryDefaults.model
                 ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
                 : undefined;
             const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
@@ -961,6 +1085,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             }
         });
         pi.on("session_tree", async (_event, ctx) => {
+            await persistTlhStandaloneThinkingDefaults();
             replayTlhUnmatchedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(() => ctx.model);
             syncPrimaryAgentState(ctx);
@@ -988,13 +1113,16 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         pi.on("session_shutdown", async (_event, _ctx) => {
             replayAllTlhUnclaimedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(undefined);
+            lastObservedModel = undefined;
             updateSessionOnlyModel(undefined);
+            clearSessionThinkingOverride();
             restorePrimaryToolsIfAppropriate();
             notifiedForReauth.clear();
             pendingReauthNotifications.clear();
             preflightThrottle.clear();
         });
         pi.on("before_agent_start", async (event, ctx) => {
+            await persistTlhStandaloneThinkingDefaults();
             replayTlhUnmatchedModelSelectionDefaults();
             setTlhModelSelectionActiveModelResolver(() => ctx.model);
             const settings = getTlhGlobalSettings(ctx.cwd);
@@ -1111,6 +1239,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         applySessionStart,
         currentPrimaryAgentLabel,
         activePrimaryAgentPrompt: activePrimaryAgent,
+        recordUserThinkingLevel,
         buildLaunchSystemPrompt,
         resetPrimaryAgentModelOverride,
         registerCommands,

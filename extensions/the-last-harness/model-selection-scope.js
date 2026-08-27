@@ -206,9 +206,11 @@ export function installTlhModelSelectionPersistenceOverride() {
         standaloneThinkingWrites: [],
         interactiveThinkingSelection: undefined,
         suppressionDepth: 0,
+        thinkingSuppressionDepth: 0,
     };
     const patch = {
         nativeSelectorContext: new AsyncLocalStorage(),
+        thinkingChangeContext: new AsyncLocalStorage(),
         originals,
         state,
     };
@@ -240,7 +242,7 @@ export function installTlhModelSelectionPersistenceOverride() {
         originals.setDefaultProvider.call(this, provider);
     };
     prototype.setDefaultThinkingLevel = function (level) {
-        if (state.suppressionDepth > 0) {
+        if (state.suppressionDepth > 0 || state.thinkingSuppressionDepth > 0) {
             return;
         }
         const interactiveThinkingSelection = state.interactiveThinkingSelection;
@@ -279,6 +281,28 @@ export function setTlhModelSelectionActiveModelResolver(resolver) {
     if (patch) {
         patch.state.activeModelResolver = resolver;
     }
+}
+export function runTlhThinkingChangeContext(origin, callback) {
+    const patch = getInstalledPatch();
+    return patch ? patch.thinkingChangeContext.run(origin, callback) : callback();
+}
+export function getTlhThinkingChangeContext() {
+    return getInstalledPatch()?.thinkingChangeContext.getStore();
+}
+export function beginTlhThinkingDefaultSuppression() {
+    const patch = getInstalledPatch();
+    if (!patch) {
+        return () => { };
+    }
+    patch.state.thinkingSuppressionDepth += 1;
+    let released = false;
+    return () => {
+        if (released) {
+            return;
+        }
+        released = true;
+        patch.state.thinkingSuppressionDepth = Math.max(0, patch.state.thinkingSuppressionDepth - 1);
+    };
 }
 export function setTlhSessionOnlyModel(model) {
     const patch = getInstalledPatch();

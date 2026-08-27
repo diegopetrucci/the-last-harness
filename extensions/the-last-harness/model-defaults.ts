@@ -192,6 +192,17 @@ function isOpenrouterProvider(provider: string | undefined): boolean {
   return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
 }
 
+/**
+ * Whether an agent follows the active session model for the OpenRouter provider.
+ * This predicate is shared by default resolution and primary override persistence.
+ */
+export function followsOpenrouterSession(
+  agent: AgentModelDefaults | undefined,
+  provider: string | undefined,
+): boolean {
+  return isOpenrouterProvider(provider) && !agent?.preferOppositeProvider;
+}
+
 type ProviderFamily = "openai" | "anthropic";
 
 function providerFamily(
@@ -503,7 +514,7 @@ function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   currentProvider: string | undefined,
   currentModel: ProviderModelReference | undefined,
 ): ProviderAwareAgentDefaults<T> | undefined {
-  if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
+  if (!followsOpenrouterSession(agent, currentProvider)) {
     return undefined;
   }
   // Prefer registry metadata when present, but follow a valid session identity even

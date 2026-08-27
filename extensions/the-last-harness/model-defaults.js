@@ -82,6 +82,9 @@ function isAnthropicProvider(provider) {
 function isOpenrouterProvider(provider) {
     return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
 }
+export function followsOpenrouterSession(agent, provider) {
+    return isOpenrouterProvider(provider) && !agent?.preferOppositeProvider;
+}
 function providerFamily(provider, modelId) {
     if (isOpenaiProvider(provider)) {
         return "openai";
@@ -258,7 +261,7 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     return undefined;
 }
 function resolveOpenrouterFollowDefaults(agent, availableModels, currentProvider, currentModel) {
-    if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
+    if (!followsOpenrouterSession(agent, currentProvider)) {
         return undefined;
     }
     const followedModel = findAvailableProviderModelReference(availableModels, currentModel) ??

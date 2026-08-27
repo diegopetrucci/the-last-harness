@@ -163,6 +163,44 @@ const anthropicFirstPrimary = {
   preferCurrentOpenaiModel: undefined,
 };
 
+const productPrimary = {
+  name: "product",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+};
+
+const bugHunterPrimary = {
+  name: "bug-hunter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+};
+
 const agents = new Map([
   [developer.name, developer],
   [codeReviewer.name, codeReviewer],
@@ -657,6 +695,19 @@ test("provider-aware primary defaults keep the Anthropic default first without t
       thinking: "low",
     },
   );
+});
+
+test("Product and Bug-hunter retain their provider-aware packaged defaults", () => {
+  for (const primary of [productPrimary, bugHunterPrimary]) {
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, anthropicAvailable, "anthropic"), {
+      model: { provider: "anthropic", id: "claude-opus-5" },
+      thinking: "high",
+    });
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, codexAvailable, "openai-codex"), {
+      model: { provider: "openai-codex", id: "gpt-5.6-sol" },
+      thinking: "high",
+    });
+  }
 });
 
 test("provider-aware primary defaults retain each declared provider effort", () => {

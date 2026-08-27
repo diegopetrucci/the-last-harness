@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 
 import {
@@ -38,6 +39,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import {
   GNOSIS_PROMPT,
   PRIMARY_AGENT_CYCLE_SHORTCUT,
+  THINKING_LEVELS,
   TLH_NAME,
   TLH_PACKAGE_NAME,
 } from "./constants.js";
@@ -45,6 +47,7 @@ import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
+  followsOpenrouterSession,
   formatProviderModelReference,
   listAgentModelDefaultReferences,
   parseProviderModelReference,
@@ -55,19 +58,27 @@ import type { ProviderAuthHealthStore } from "./provider-auth-health.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import {
   beginTlhModelSelectionDefaultSuppression,
+  beginTlhThinkingDefaultSuppression,
   chooseTlhModelSelectionScope,
   claimTlhModelSelectionDefaults,
   discardTlhModelSelectionDefaults,
+  getTlhThinkingChangeContext,
   installTlhModelSelectionPersistenceOverride,
   isTlhNativeModelSelectorClaim,
   persistTlhModelSelectionDefaults,
   persistTlhStandaloneThinkingDefaults,
   replayAllTlhUnclaimedModelSelectionDefaults,
   replayTlhUnmatchedModelSelectionDefaults,
+  runTlhThinkingChangeContext,
   setTlhModelSelectionActiveModelResolver,
   setTlhSessionOnlyModel,
 } from "./model-selection-scope.js";
-import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
+import {
+  getAvailableThinkingLevels,
+  isThinkingLevel,
+  setExtensionThinkingLevel,
+  thinkingLevelAtLeast,
+} from "./thinking.js";
 import {
   buildChildSubagentSystemPrompt,
   buildTlhSystemPrompt,
@@ -80,7 +91,9 @@ import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-eff
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
 import type {
   AgentPrompt,
+  ReasoningModel,
   SubagentMetadata,
+  ThinkingLevel,
   TlhPrimaryAgentConfig,
   TlhPrimaryAgentSelection,
   TlhPrimaryAgentSessionState,
@@ -108,10 +121,17 @@ type TlhPrimaryAgentRuntimeOptions = {
 
 type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
+type SessionThinkingOverride = {
+  primary: TlhPrimaryAgentSelection;
+  level: ThinkingLevel;
+};
+
 export type TlhPrimaryAgentRuntime = {
   applySessionStart(ctx: ExtensionContext): Promise<void>;
   currentPrimaryAgentLabel(): string;
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
+  /** Remember a validated user thinking selection for this primary/session. */
+  recordUserThinkingLevel?(level: ThinkingLevel): void;
   buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string;
   /**
    * Clear the stored model override for a named primary agent and reapply
@@ -145,6 +165,11 @@ function getTlhGlobalSettings(cwd: string): TlhSettings {
 
 function getTlhPrimaryAgentConfig(cwd: string): TlhPrimaryAgentConfig | undefined {
   return getTlhGlobalSettings(cwd).tlh?.primaryAgent;
+}
+
+function getTlhDurableThinkingLevel(cwd: string): ThinkingLevel | undefined {
+  const level = getTlhGlobalSettings(cwd).defaultThinkingLevel;
+  return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
 }
 
 function getTlhSubagentOverrides(cwd: string): ReadonlyMap<string, TlhSubagentOverride> {
@@ -840,6 +865,7 @@ function createTlhPrimaryAgentRuntime(
   }
 
   function syncPrimaryAgentState(ctx: ExtensionContext): void {
+    const previousSelection = currentPrimaryAgentSelection();
     const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
     const defaultResolution = resolvePrimaryAgentConfig(primaryConfig) as {
       selection: TlhPrimaryAgentSelection;
@@ -864,6 +890,9 @@ function createTlhPrimaryAgentRuntime(
     sessionPrimaryAgentOverride = sessionResolution.selection
       ? ensureLoadedPrimarySelection(ctx, sessionResolution.selection, "session")
       : undefined;
+    if (currentPrimaryAgentSelection() !== previousSelection) {
+      clearSessionThinkingOverride();
+    }
   }
 
   function currentPrimaryAgentSelection(): TlhPrimaryAgentSelection {
@@ -990,12 +1019,131 @@ function createTlhPrimaryAgentRuntime(
   }
 
   let tlhApplyingModel = false;
+  let tlhApplyingThinking = false;
   let tlhRestoringCancelledModel = false;
+  const tlhInternalChange = new AsyncLocalStorage<boolean>();
+  let lastObservedModel: ActiveModel | undefined;
   let sessionOnlyModel: ActiveModel | undefined;
+  let sessionThinkingOverride: SessionThinkingOverride | undefined;
 
   function updateSessionOnlyModel(model: ActiveModel | undefined): void {
     sessionOnlyModel = model;
     setTlhSessionOnlyModel(model);
+  }
+
+  function modelsMatch(left: ActiveModel | undefined, right: ActiveModel | undefined): boolean {
+    return left?.provider === right?.provider && left?.id === right?.id;
+  }
+
+  function clearSessionThinkingOverride(): void {
+    sessionThinkingOverride = undefined;
+  }
+
+  function setTlhThinkingLevel(level: ThinkingLevel): void {
+    // `thinking_level_select` is emitted synchronously as the upstream setter
+    // starts its async extension dispatch. Keep this guard active for that
+    // dispatch so TLH's own lifecycle/default work is never recorded as a user
+    // selection.
+    const releaseThinkingSuppression = beginTlhThinkingDefaultSuppression();
+    tlhApplyingThinking = true;
+    try {
+      tlhInternalChange.run(true, () =>
+        runTlhThinkingChangeContext("internal", () => setExtensionThinkingLevel(pi, level)),
+      );
+    } finally {
+      releaseThinkingSuppression();
+      tlhApplyingThinking = false;
+    }
+  }
+
+  function recordUserThinkingLevel(level: ThinkingLevel): void {
+    const selection = currentPrimaryAgentSelection();
+    const primary = activePrimaryAgent();
+    if (
+      !isThinkingLevel(level) ||
+      !isEnabledPrimaryAgentSelection(selection) ||
+      !primary ||
+      primary.lockThinking === true
+    ) {
+      return;
+    }
+    const retainedLevel =
+      primary.minThinking !== undefined && !thinkingLevelAtLeast(level, primary.minThinking)
+        ? primary.minThinking
+        : level;
+    sessionThinkingOverride = { primary: selection, level: retainedLevel };
+  }
+
+  function clampThinkingLevelForPrimary(
+    level: ThinkingLevel,
+    primary: AgentPrompt,
+    model: ActiveModel | undefined,
+  ): ThinkingLevel {
+    // Model metadata can be absent in older/direct contexts. In that case only
+    // apply a primary floor; do not guess at provider capabilities.
+    let availableLevels =
+      model && "reasoning" in model
+        ? getAvailableThinkingLevels(model as ReasoningModel)
+        : [...THINKING_LEVELS];
+    const minThinking = primary.minThinking;
+    if (minThinking !== undefined) {
+      availableLevels = availableLevels.filter((candidate) =>
+        thinkingLevelAtLeast(candidate, minThinking),
+      );
+    }
+    if (availableLevels.includes(level)) {
+      return level;
+    }
+
+    const requestedIndex = THINKING_LEVELS.indexOf(level);
+    if (requestedIndex >= 0) {
+      // Match upstream's clamp policy: prefer the nearest supported level at
+      // or above the requested level, then walk down if none exists.
+      for (let index = requestedIndex; index < THINKING_LEVELS.length; index += 1) {
+        const candidate = THINKING_LEVELS[index];
+        if (availableLevels.includes(candidate)) {
+          return candidate;
+        }
+      }
+      for (let index = requestedIndex - 1; index >= 0; index -= 1) {
+        const candidate = THINKING_LEVELS[index];
+        if (availableLevels.includes(candidate)) {
+          return candidate;
+        }
+      }
+    }
+    // A non-reasoning model exposes no level meeting Architect's floor. `off`
+    // is the only safe fallback instead of replaying a reasoning-only target.
+    return availableLevels[0] ?? "off";
+  }
+
+  function updateRetainedThinkingForModel(
+    selection: TlhPrimaryAgentSelection,
+    primary: AgentPrompt,
+    model: ActiveModel | undefined,
+  ): void {
+    const override = sessionThinkingOverride;
+    if (!override || override.primary !== selection || primary.lockThinking === true) {
+      return;
+    }
+    override.level = clampThinkingLevelForPrimary(override.level, primary, model);
+  }
+
+  function sessionThinkingLevelForPrimary(
+    selection: TlhPrimaryAgentSelection,
+    primary: AgentPrompt,
+    model: ActiveModel | undefined,
+  ): ThinkingLevel | undefined {
+    const override = sessionThinkingOverride;
+    if (!override || override.primary !== selection || primary.lockThinking === true) {
+      return undefined;
+    }
+    const clamped = clampThinkingLevelForPrimary(override.level, primary, model);
+    // A model switch can make a retained level unavailable. Keep the clamped
+    // value as the session intent so later lifecycle reapplication is stable
+    // and does not jump back to the packaged role default.
+    override.level = clamped;
+    return clamped;
   }
 
   async function applyPrimaryModel(
@@ -1020,11 +1168,15 @@ function createTlhPrimaryAgentRuntime(
     if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
       return model;
     }
+    const releaseThinkingSuppression = beginTlhThinkingDefaultSuppression();
     tlhApplyingModel = true;
     let success: boolean;
     try {
-      success = await pi.setModel(model);
+      success = await tlhInternalChange.run(true, () =>
+        runTlhThinkingChangeContext("internal", () => pi.setModel(model)),
+      );
     } finally {
+      releaseThinkingSuppression();
       tlhApplyingModel = false;
     }
     if (!success) {
@@ -1050,18 +1202,29 @@ function createTlhPrimaryAgentRuntime(
     );
   }
 
-  function applyPrimaryThinking(primary: AgentPrompt, thinking: AgentPrompt["thinking"]): void {
-    if (!thinking) {
+  function applyPrimaryThinking(
+    cwd: string,
+    selection: TlhPrimaryAgentSelection,
+    primary: AgentPrompt,
+    thinking: AgentPrompt["thinking"],
+    model: ActiveModel | undefined,
+  ): void {
+    const sessionThinking = sessionThinkingLevelForPrimary(selection, primary, model);
+    const durableThinking = getTlhDurableThinkingLevel(cwd);
+    const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+    if (requestedThinking === undefined) {
       return;
     }
+    const hasExplicitThinking = sessionThinking !== undefined || durableThinking !== undefined;
+    const targetThinking = clampThinkingLevelForPrimary(requestedThinking, primary, model);
     const currentThinking = pi.getThinkingLevel();
     if (
-      currentThinking === thinking ||
-      currentThinkingSatisfiesPrimaryFloor(primary, currentThinking)
+      currentThinking === targetThinking ||
+      (!hasExplicitThinking && currentThinkingSatisfiesPrimaryFloor(primary, currentThinking))
     ) {
       return;
     }
-    setExtensionThinkingLevel(pi, thinking);
+    setTlhThinkingLevel(targetThinking);
   }
 
   async function restoreCancelledModel(
@@ -1075,7 +1238,9 @@ function createTlhPrimaryAgentRuntime(
     tlhRestoringCancelledModel = true;
     tlhApplyingModel = true;
     try {
-      const restored = await pi.setModel(previousModel);
+      const restored = await tlhInternalChange.run(true, () =>
+        runTlhThinkingChangeContext("internal", () => pi.setModel(previousModel)),
+      );
       if (restored) {
         // The upstream picker posts `Model: <attempted>` after model_select
         // dispatch completes. Run on the next event-loop turn so the accurate
@@ -1120,6 +1285,7 @@ function createTlhPrimaryAgentRuntime(
     options: { warnOnMissing?: boolean } = {},
   ): Promise<void> {
     const { warnOnMissing = true } = options;
+    lastObservedModel = ctx.model;
     const selection = currentPrimaryAgentSelection();
     if (!isEnabledPrimaryAgentSelection(selection)) {
       // Disabled mode keeps the architect capability surface (tools only) while
@@ -1179,8 +1345,8 @@ function createTlhPrimaryAgentRuntime(
       ctx.model?.provider === sessionOnlyModel.provider &&
       ctx.model.id === sessionOnlyModel.id;
     if (sessionOnlyModel && !preservesSessionOnlyModel) {
-      // Locked primaries remain unconditional, and an out-of-band model
-      // change must not leave the session-only gate stuck on another model.
+      // Fixed primaries remain unconditional, and an out-of-band model change
+      // must not leave the session-only gate stuck on another model.
       updateSessionOnlyModel(undefined);
     }
     const activePrimaryModel =
@@ -1191,15 +1357,24 @@ function createTlhPrimaryAgentRuntime(
       // Thinking follows the model that is actually effective after stored pins
       // and model-application decisions, rather than the pre-pin selection.
       const effectiveModel = activePrimaryModel ?? ctx.model;
-      applyPrimaryThinking(primary, resolveProviderThinking(primary, effectiveModel?.provider));
+      applyPrimaryThinking(
+        ctx.cwd,
+        selection,
+        primary,
+        resolveProviderThinking(primary, effectiveModel?.provider),
+        effectiveModel,
+      );
     }
+    lastObservedModel = activePrimaryModel ?? ctx.model;
   }
 
   async function applyPrimaryModeChange(ctx: ExtensionContext): Promise<void> {
     // A primary-mode change is an explicit request to reapply that mode's
     // defaults, so it ends any model choice scoped to the prior mode/session.
+    await persistTlhStandaloneThinkingDefaults();
     replayTlhUnmatchedModelSelectionDefaults();
     updateSessionOnlyModel(undefined);
+    clearSessionThinkingOverride();
     await applyPrimaryDefaults(ctx);
   }
 
@@ -1428,23 +1603,55 @@ function createTlhPrimaryAgentRuntime(
     // Session-only model intent does not cross session_start. This includes
     // /reload: the replacement runtime cannot safely prove that process-global
     // shim state belongs to the same session rather than a switched session.
+    await persistTlhStandaloneThinkingDefaults();
     replayAllTlhUnclaimedModelSelectionDefaults();
     setTlhModelSelectionActiveModelResolver(() => ctx.model);
     updateSessionOnlyModel(undefined);
+    clearSessionThinkingOverride();
     activateTlhTicketSessionScope(ctx.cwd);
     syncPrimaryAgentState(ctx);
     await applyPrimaryDefaults(ctx, { warnOnMissing: false });
   }
 
   function registerLifecycleHooks(): void {
-    pi.on("thinking_level_select", async () => {
+    pi.on("thinking_level_select", async (event, ctx) => {
       // Native model-selector thinking writes stay attached to the pending
       // model claim. Independent /effort and thinking-cycle writes are drained
       // and restored through the retained upstream setter here.
+      //
+      // The upstream event has no source field. The synchronous/async-local
+      // guard covers TLH's own default/capability setters. A model change is
+      // also distinguishable from native thinking cycling because the live
+      // model differs from the last lifecycle observation; it may clamp an
+      // existing retained level, but must not create new user thinking intent.
+      const modelChanged =
+        lastObservedModel !== undefined &&
+        ctx.model !== undefined &&
+        !modelsMatch(lastObservedModel, ctx.model);
+      const thinkingChangeContext = getTlhThinkingChangeContext();
+      const internalChange =
+        tlhApplyingModel ||
+        tlhApplyingThinking ||
+        tlhInternalChange.getStore() === true ||
+        thinkingChangeContext === "internal";
+      const interactiveChange = thinkingChangeContext === "interactive";
+      if (!internalChange && !interactiveChange) {
+        if (modelChanged) {
+          const selection = currentPrimaryAgentSelection();
+          const primary = activePrimaryAgent();
+          if (primary) {
+            updateRetainedThinkingForModel(selection, primary, ctx.model);
+          }
+        } else {
+          recordUserThinkingLevel(event.level);
+        }
+      }
+      lastObservedModel = ctx.model;
       await persistTlhStandaloneThinkingDefaults();
     });
 
     pi.on("model_select", async (event, ctx) => {
+      lastObservedModel = event.model;
       // The claim remains pending for the full upstream dispatch, regardless
       // of earlier async extension handlers. Refresh the live getter only after
       // claiming the operation classified during AgentSession.setModel.
@@ -1520,21 +1727,23 @@ function createTlhPrimaryAgentRuntime(
       if (!primary) {
         return;
       }
-      // Locked primaries (e.g. rush) keep their fixed provider defaults and do not persist user model overrides.
+      // Fixed primaries keep their provider defaults and do not persist user model overrides.
       if (shouldForceApplyForLock(primary)) {
         return;
       }
       const chosenKey = `${event.model.provider}/${event.model.id}`;
-      // Determine the primary's bundled default model to know whether to clear the override.
+      // OpenRouter's non-opposite primary default intentionally follows the active
+      // session model, so it is not a packaged default that should clear an override.
       const primaryDefaults = selectProviderAwareAgentDefaults(
         primary,
         getUnfilteredAvailableModels(ctx.modelRegistry),
         event.model.provider,
         event.model,
       );
-      const bundledKey = primaryDefaults.model
-        ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
-        : undefined;
+      const bundledKey =
+        !followsOpenrouterSession(primary, event.model.provider) && primaryDefaults.model
+          ? `${primaryDefaults.model.provider}/${primaryDefaults.model.id}`
+          : undefined;
       // If user picked the bundled default, clear the override; otherwise record it.
       const nextOverride = chosenKey === bundledKey ? undefined : chosenKey;
       // Capture before write to detect the no-override → override transition.
@@ -1564,6 +1773,7 @@ function createTlhPrimaryAgentRuntime(
     });
 
     pi.on("session_tree", async (_event, ctx) => {
+      await persistTlhStandaloneThinkingDefaults();
       replayTlhUnmatchedModelSelectionDefaults();
       setTlhModelSelectionActiveModelResolver(() => ctx.model);
       syncPrimaryAgentState(ctx);
@@ -1619,7 +1829,9 @@ function createTlhPrimaryAgentRuntime(
     pi.on("session_shutdown", async (_event, _ctx) => {
       replayAllTlhUnclaimedModelSelectionDefaults();
       setTlhModelSelectionActiveModelResolver(undefined);
+      lastObservedModel = undefined;
       updateSessionOnlyModel(undefined);
+      clearSessionThinkingOverride();
       restorePrimaryToolsIfAppropriate();
       // Clear session-scoped auth-notification state so that a new session
       // (which reuses this closure, because registerTlhPrimaryAgentRuntime runs
@@ -1636,6 +1848,7 @@ function createTlhPrimaryAgentRuntime(
     });
 
     pi.on("before_agent_start", async (event, ctx) => {
+      await persistTlhStandaloneThinkingDefaults();
       replayTlhUnmatchedModelSelectionDefaults();
       setTlhModelSelectionActiveModelResolver(() => ctx.model);
       const settings = getTlhGlobalSettings(ctx.cwd);
@@ -1812,6 +2025,7 @@ function createTlhPrimaryAgentRuntime(
     applySessionStart,
     currentPrimaryAgentLabel,
     activePrimaryAgentPrompt: activePrimaryAgent,
+    recordUserThinkingLevel,
     buildLaunchSystemPrompt,
     resetPrimaryAgentModelOverride,
     registerCommands,
