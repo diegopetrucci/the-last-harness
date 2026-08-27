@@ -44,6 +44,7 @@ import {
   type AsyncStatusCorruptionKind,
 } from "./async-status-corruption.ts";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
   parseContextPressureCrossedThresholds,
@@ -543,12 +544,14 @@ function formatActivityFacts(input: {
 }): string | undefined {
   if (input.interruptRequestedAt !== undefined) return "pausing…";
   const facts: string[] = [];
-  if (input.currentTool && input.currentToolStartedAt !== undefined)
+  const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
+  if (currentTool && input.currentToolStartedAt !== undefined)
     facts.push(
-      `tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`,
+      `tool ${currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`,
     );
-  else if (input.currentTool) facts.push(`tool ${input.currentTool}`);
-  if (!input.privacySafe && input.currentPath) facts.push(shortenPath(input.currentPath));
+  else if (currentTool) facts.push(`tool ${currentTool}`);
+  if (!input.privacySafe && input.currentPath)
+    facts.push(safeTerminalText(shortenPath(input.currentPath)));
   if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
   if (input.turnBudgetExceeded && input.turnBudget)
     facts.push(
@@ -569,17 +572,21 @@ function formatActivityFacts(input: {
 }
 
 function formatStepLine(step: AsyncRunStepSummary, privacySafe = false): string {
-  const display = step.label ? `${step.label} (${step.agent})` : step.agent;
-  const phase = step.phase ? `[${step.phase}] ` : "";
+  const agent = safeTerminalText(step.agent);
+  const display = step.label ? `${safeTerminalText(step.label)} (${agent})` : agent;
+  const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
   const parts = [
     `${step.index + 1}. ${phase}${display}`,
-    step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status,
+    step.interruptRequestedAt !== undefined && step.status === "running"
+      ? "pausing"
+      : safeTerminalText(step.status),
   ];
   const activity = formatActivityFacts({ ...step, privacySafe });
   if (activity) parts.push(activity);
-  const modelThinking = formatModelThinking(step.model, step.thinking);
+  const modelThinking = safeTerminalText(formatModelThinking(step.model, step.thinking));
   if (modelThinking) parts.push(modelThinking);
-  if (step.modelResolution?.reason) parts.push(`model decision: ${step.modelResolution.reason}`);
+  if (step.modelResolution?.reason)
+    parts.push(`model decision: ${safeTerminalText(step.modelResolution.reason)}`);
   if (step.durationMs !== undefined) parts.push(formatDuration(step.durationMs));
   if (step.tokens) parts.push(`${formatTokens(step.tokens.total)} tok`);
   return parts.join(" | ");
@@ -653,25 +660,27 @@ export function formatAsyncRunProgressLabel(
 
 function formatRunHeader(run: AsyncRunSummary): string {
   const privacySafe = isProtectedPausedLifecycle(run);
-  const stepLabel = formatAsyncRunProgressLabel(run);
+  const stepLabel = safeTerminalText(formatAsyncRunProgressLabel(run));
   const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
   const activity = formatActivityFacts({ ...run, privacySafe });
+  const runId = safeTerminalText(run.id);
+  const mode = safeTerminalText(run.mode);
   const pending = run.pendingAppends
     ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
     : "";
   const lifecycleState =
     run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
       ? "pausing"
-      : run.state;
+      : safeTerminalText(run.state);
   return privacySafe
-    ? `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending}`
-    : `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
+    ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+    : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
 
 export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active async runs"): string {
-  if (runs.length === 0) return `No ${heading.toLowerCase()}.`;
+  if (runs.length === 0) return `No ${safeTerminalText(heading.toLowerCase())}.`;
 
-  const lines = [`${heading}: ${runs.length}`, ""];
+  const lines = [`${safeTerminalText(heading)}: ${runs.length}`, ""];
   for (const run of runs) {
     const privacySafe = isProtectedPausedLifecycle(run);
     lines.push(`- ${formatRunHeader(run)}`);
@@ -697,13 +706,19 @@ export function formatAsyncRunList(runs: AsyncRunSummary[], heading = "Active as
       }),
     );
     if (run.error)
-      lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : run.error}`);
+      lines.push(
+        `  Error: ${privacySafe ? protectedLifecycleText("error") : safeTerminalText(run.error)}`,
+      );
     for (const warning of run.nestedWarnings ?? [])
-      lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : warning}`);
+      lines.push(
+        `  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : safeTerminalText(warning)}`,
+      );
     const outputPath = formatAsyncRunOutputPath(run);
-    if (!privacySafe && outputPath) lines.push(`  output: ${shortenPath(outputPath)}`);
-    if (!privacySafe && run.sessionFile) lines.push(`  session: ${shortenPath(run.sessionFile)}`);
+    if (!privacySafe && outputPath)
+      lines.push(`  output: ${safeTerminalText(shortenPath(outputPath))}`);
+    if (!privacySafe && run.sessionFile)
+      lines.push(`  session: ${safeTerminalText(shortenPath(run.sessionFile))}`);
     lines.push("");
   }
-  return lines.join("\n").trimEnd();
+  return safeTerminalDocument(lines.join("\n").trimEnd());
 }

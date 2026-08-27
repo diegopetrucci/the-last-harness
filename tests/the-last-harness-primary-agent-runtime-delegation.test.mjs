@@ -221,7 +221,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
       input: { agent: "contrarian", task: "stress-test this plan" },
     };
     assert.equal(await toolCall(defaultEvent, blockedCtx), undefined);
-    assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5");
+    assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(defaultEvent.input.agentScope, "user");
     assert.equal(defaultEvent.input.context, "fresh");
 
@@ -234,7 +234,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
       input: { agent: "contrarian", task: "stress-test this plan" },
     };
     assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
-    assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5");
+    assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(legacyFlagEvent.input.agentScope, "user");
     assert.equal(legacyFlagEvent.input.context, "fresh");
   });

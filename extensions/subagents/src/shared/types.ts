@@ -464,6 +464,16 @@ export interface ModelAttempt {
   usage?: Usage;
 }
 
+/** Bounded diagnostic emitted when a child protocol line cannot be retained safely. */
+export interface ProtocolOutputLimit {
+  code: "protocol_output_limit";
+  stream: "stdout" | "stderr";
+  limitBytes: number;
+  observedBytes: number;
+  diagnosticPrefix: string;
+  diagnosticTail: string;
+}
+
 export type ChildProcessCleanupSkippedReason =
   | "soft_pause"
   | "unsupported_platform"
@@ -656,6 +666,10 @@ export interface SingleResult {
   modelFallbackNotice?: string;
   controlEvents?: ControlEvent[];
   error?: string;
+  /** Bounded stderr tail retained for diagnostics; durable raw stderr stays in the transcript. */
+  stderr?: string;
+  stderrTruncated?: boolean;
+  protocolOutputLimit?: ProtocolOutputLimit;
   sessionFile?: string;
   skills?: string[];
   skillsWarning?: string;
@@ -982,6 +996,9 @@ export interface AsyncStatus {
     steerCount?: number;
     lastSteerAt?: number;
     error?: string;
+    stderr?: string;
+    stderrTruncated?: boolean;
+    protocolOutputLimit?: ProtocolOutputLimit;
     processCleanup?: ChildProcessCleanupResult;
     structuredOutput?: unknown;
     structuredOutputPath?: string;
@@ -1016,6 +1033,9 @@ export interface AsyncResultArtifactResultItem {
   success: boolean;
   output: string;
   error?: string;
+  stderr?: string;
+  stderrTruncated?: boolean;
+  protocolOutputLimit?: ProtocolOutputLimit;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals;
   skipped?: boolean;
@@ -1314,12 +1334,14 @@ export interface RunSyncOptions {
   contextPressure?: ContextPressureProjection;
   /** Thresholds already crossed in this execution, used for restart-safe deduplication. */
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  /** Optional sanitized notice shown only if a fallback retry is used. */
+  /** Optional bounded notice for a supplied fallback retry and/or registry filtering. */
   modelFallbackNotice?: string;
   /** Override the agent's default thinking level for this run */
   thinkingOverride?: import("../agents/agents.ts").AgentConfig["thinking"];
   /** Registry models available for model resolution and thinking-capability checks */
   availableModels?: import("./model-info.ts").ModelInfo[];
+  /** Catalog/error evidence used to conservatively filter unavailable fallbacks. */
+  modelRegistry?: import("../runs/shared/model-fallback.ts").ModelRegistryEvidence;
   /** Current parent-session provider to prefer for ambiguous bare model ids */
   preferredModelProvider?: string;
   /** Optional subagent model-scope enforcement for fallback candidates */

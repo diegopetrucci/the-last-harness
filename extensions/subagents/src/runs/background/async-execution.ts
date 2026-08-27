@@ -9,7 +9,11 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.ts";
+import {
+  applyThinkingSuffix,
+  getThinkingLevelDropNote,
+  validatePiToolPolicy,
+} from "../shared/pi-args.ts";
 import {
   injectOutputPathSystemPrompt,
   injectSingleOutputInstruction,
@@ -39,11 +43,12 @@ import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import {
   buildFallbackModelList,
-  buildModelCandidates,
+  buildModelCandidatePlan,
   canonicalSubagentModelIdentity,
   modelReferenceFromIdentity,
   resolveSubagentModelOverride,
   type AvailableModelInfo,
+  type ModelRegistryEvidence,
   type ParentModel,
 } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
@@ -124,6 +129,7 @@ interface AsyncChainParams {
   agents: AgentConfig[];
   ctx: AsyncExecutionContext;
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   cwd?: string;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
@@ -175,6 +181,7 @@ interface AsyncSingleParams {
   modelFallbackNotice?: string;
   thinkingOverride?: AgentConfig["thinking"];
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
   controlIntercomTarget?: string;
@@ -206,6 +213,7 @@ interface AsyncRunnerStepBuildParams {
   agents: AgentConfig[];
   ctx: AsyncExecutionContext;
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   cwd?: string;
   sessionFilesByFlatIndex?: (string | undefined)[];
   thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
@@ -555,6 +563,11 @@ export function buildAsyncRunnerSteps(
     );
     if (missingSkills.includes("pi-subagents"))
       throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+    const toolPolicyError = validatePiToolPolicy({
+      tools: a.tools,
+      requireReadTool: a.inheritSkills || resolvedSkills.length > 0,
+    });
+    if (toolPolicyError) throw new AsyncStartValidationError(toolPolicyError);
 
     let systemPrompt = a.systemPrompt?.trim() ?? "";
     if (resolvedSkills.length > 0) {
@@ -639,13 +652,14 @@ export function buildAsyncRunnerSteps(
     const modelThinking =
       modelIdentity?.thinking ??
       (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-    const modelCandidates = buildModelCandidates(
+    const candidatePlan = buildModelCandidatePlan(
       primaryModel,
       fallbackModels,
       availableModels,
       ctx.currentModelProvider,
-      { scope: ctx.modelScope },
-    )
+      { scope: ctx.modelScope, registry: params.modelRegistry },
+    );
+    const modelCandidates = candidatePlan.candidates
       .map((candidate) => {
         appendThinkingDropNote(
           attemptNotes,
@@ -686,6 +700,9 @@ export function buildAsyncRunnerSteps(
       ),
       ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
       ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+      ...(candidatePlan.filteringNotice
+        ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+        : {}),
       modelFallbackNotice: behavior.modelFallbackNotice,
       tools: a.tools,
       extensions: a.extensions,
@@ -854,6 +871,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
     agents,
     ctx,
     availableModels: params.availableModels,
+    modelRegistry: params.modelRegistry,
     cwd,
     sessionFilesByFlatIndex,
     thinkingOverridesByFlatIndex,
@@ -1119,6 +1137,11 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
   );
   if (missingSkills.includes("pi-subagents"))
     return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+  const toolPolicyError = validatePiToolPolicy({
+    tools: agentConfig.tools,
+    requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
+  });
+  if (toolPolicyError) return formatAsyncStartError("single", toolPolicyError);
   let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
   if (resolvedSkills.length > 0) {
     const injection = buildSkillInjection(resolvedSkills);
@@ -1229,16 +1252,18 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     model,
     primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
   );
-  const modelCandidates = buildModelCandidates(
+  const candidatePlan = buildModelCandidatePlan(
     primaryModel,
     fallbackModels,
     availableModels,
     ctx.currentModelProvider,
     {
       scope: ctx.modelScope,
+      registry: params.modelRegistry,
       ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
     },
-  )
+  );
+  const modelCandidates = candidatePlan.candidates
     .map((candidate) => {
       appendThinkingDropNote(
         attemptNotes,
@@ -1317,6 +1342,9 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
             ),
             ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
             ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+            ...(candidatePlan.filteringNotice
+              ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+              : {}),
             modelFallbackNotice: params.modelFallbackNotice,
             tools: agentConfig.tools,
             extensions: agentConfig.extensions,

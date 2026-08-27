@@ -27,11 +27,20 @@ const { computeModelEffortDrift, backfillMissingBaselines } = await jiti.import(
 const architectAgent = {
   name: "architect",
   description: "Primary architect agent",
-  model: "anthropic/claude-opus-5",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
-  tlhAnthropicThinking: "high",
-  tlhOpenaiThinking: "high",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/architect.md",
@@ -41,10 +50,20 @@ const architectAgent = {
 const developerSubagent = {
   name: "developer",
   description: "Developer subagent",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-  tlhAnthropicThinking: "medium",
-  tlhOpenaiThinking: "max",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ],
 };
 
 const primaryAgentsMap = new Map([["architect", architectAgent]]);

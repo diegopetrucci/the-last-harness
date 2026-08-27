@@ -37,7 +37,9 @@ const READ_ONLY_BUILTIN_TOOLS = new Set([
     "contact_supervisor",
 ]);
 function toolMutationCapability(tools) {
-    if (tools === undefined || tools.length === 0)
+    if (tools === null || (tools !== undefined && tools.length === 0))
+        return { kind: "read-only" };
+    if (tools === undefined)
         return { kind: "mutation-capable" };
     return tools.every((tool) => READ_ONLY_BUILTIN_TOOLS.has(tool))
         ? { kind: "read-only" }

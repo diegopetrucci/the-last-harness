@@ -8,6 +8,15 @@ All notable changes to The Last Harness will be documented in this file.
 - Promoted trusted user-owned custom subagents to a stable, always-available architect extension point. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, architect-only initiation, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
 - Rush, Product, and Bug-hunter now use their provider-aware model and thinking values as editable defaults. Their model selections persist per primary and can be reviewed or reset with `/reconcile`; supported `/thinking` and `/effort` levels are no longer locked. Explicit thinking choices use the upstream durable default, remain retained across turns, and clamp safely when a switched model supports fewer levels. Architect's medium thinking floor remains unchanged.
 
+### Fixed
+
+- Child `tools` policies now preserve three states: omitted inherits Pi defaults; explicit empty/MCP-only disables tools (while runtime-required tools are added); named and extension-path entries are translated to exact allowlists or `--no-builtin-tools`, and lazy-skill path-only declarations fail early with guidance.
+- Malformed custom-agent markdown is isolated from discovery: invalid definitions are skipped without hiding valid agents, and list/unknown-agent diagnostics identify the source path and validation error.
+- Child-derived terminal text is sanitized only at display boundaries (including terminal controls and binary-looking content); durable transcripts, output artifacts, metadata, and logs retain unsanitized values subject to their existing retention limits.
+- Child protocol input is validated and bounded; oversized protocol lines terminate deterministically with `protocol_output_limit` using SIGTERM followed by bounded SIGKILL escalation, while stderr diagnostics remain bounded and raw transcript bytes are retained.
+- Acceptance parsing now ignores blank evidence entries and preserves saved-output references when an otherwise successful run is rejected; acceptance failures remain visible alongside bounded child diagnostics.
+- Fallback selection now filters only positively unavailable known models with complete registry evidence, keeps uncertain or unknown fallbacks, and retries only classified provider/transient failures rather than deterministic child-tool failures.
+
 ## [0.39.0] - 2026-08-24
 
 ### Added

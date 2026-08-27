@@ -77,7 +77,7 @@ test("read-only issue drafting tasks do not trigger on suggested fix wording", (
   );
 });
 
-test("omitted, empty, bash, unknown, write, and MCP tool capabilities stay conservative", () => {
+test("omitted, explicit-empty, bash, unknown, write, and MCP tool capabilities stay conservative", () => {
   const base = {
     agent: "architect",
     task: "Implement the approved source fix",
@@ -85,7 +85,8 @@ test("omitted, empty, bash, unknown, write, and MCP tool capabilities stay conse
   };
 
   assert.equal(evaluateCompletionMutationGuard(base).triggered, true);
-  assert.equal(evaluateCompletionMutationGuard({ ...base, tools: [] }).triggered, true);
+  assert.equal(evaluateCompletionMutationGuard({ ...base, tools: null }).triggered, false);
+  assert.equal(evaluateCompletionMutationGuard({ ...base, tools: [] }).triggered, false);
   assert.equal(
     evaluateCompletionMutationGuard({ ...base, tools: ["read", "bash", "ls"] }).triggered,
     true,

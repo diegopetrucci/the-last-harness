@@ -9,7 +9,7 @@ import { formatHomePath, isRecord } from "./common.js";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
 import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
-import { applyProviderAwareSubagentModels, followsOpenrouterSession, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
+import { applyProviderAwareSubagentModels, followsOpenrouterSession, formatProviderModelReference, listAgentModelDefaultReferences, parseProviderModelReference, resolveProviderThinking, selectProviderAwareAgentDefaults, } from "./model-defaults.js";
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { beginTlhModelSelectionDefaultSuppression, beginTlhThinkingDefaultSuppression, chooseTlhModelSelectionScope, claimTlhModelSelectionDefaults, discardTlhModelSelectionDefaults, getTlhThinkingChangeContext, installTlhModelSelectionPersistenceOverride, isTlhNativeModelSelectorClaim, persistTlhModelSelectionDefaults, persistTlhStandaloneThinkingDefaults, replayAllTlhUnclaimedModelSelectionDefaults, replayTlhUnmatchedModelSelectionDefaults, runTlhThinkingChangeContext, setTlhModelSelectionActiveModelResolver, setTlhSessionOnlyModel, } from "./model-selection-scope.js";
 import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast, } from "./thinking.js";
@@ -660,9 +660,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
     }
     async function applyPrimaryModel(ctx, primary, model) {
         if (!model) {
-            const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])]
-                .filter(Boolean)
-                .join(", ");
+            const candidateValues = [
+                primary.preferredModel ? formatProviderModelReference(primary.preferredModel) : undefined,
+                ...(primary.tlhModelDefaultsSource === "legacy" ? [primary.model] : []),
+                ...listAgentModelDefaultReferences(primary).map(formatProviderModelReference),
+            ].filter((candidate) => Boolean(candidate));
+            const candidates = [...new Set(candidateValues)].join(", ");
             warnOnce(ctx, `missing-primary-model-${primary.name}`, `TLH primary agent models are not available for configured providers: ${candidates}`);
             return undefined;
         }

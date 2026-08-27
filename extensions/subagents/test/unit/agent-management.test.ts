@@ -74,4 +74,129 @@ describe("agent management config parsing", () => {
     const discovered = discoverAgentsAll(tempDir);
     assert.deepEqual(discovered.builtin, [], "builtin agents must be empty after removal");
   });
+
+  it("formats omitted tools differently from explicit empty and named policies", () => {
+    const agentsDir = path.join(tempDir, ".pi", "agents");
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentsDir, "omitted.md"),
+      `---
+name: omitted
+description: Omitted tools
+---
+
+Omitted tools.
+`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(agentsDir, "empty.md"),
+      `---
+name: empty
+description: Explicit empty tools
+tools:
+---
+
+Empty tools.
+`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(agentsDir, "named.md"),
+      `---
+name: named
+description: Named tools
+tools: read, bash
+---
+
+Named tools.
+`,
+      "utf-8",
+    );
+
+    const getAgent = (agent: string): string => {
+      const result = handleManagementAction("get", { agent }, { cwd: tempDir });
+      assert.equal(result.isError, false);
+      return readText(result);
+    };
+
+    assert.doesNotMatch(getAgent("omitted"), /^Tools:/m);
+    assert.match(getAgent("empty"), /^Tools: \(none\)$/m);
+    assert.match(getAgent("named"), /^Tools: read, bash$/m);
+  });
+
+  it("lists malformed-agent warnings without hiding valid agents", () => {
+    const agentsDir = path.join(tempDir, ".pi", "agents");
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentsDir, "broken.md"),
+      `---
+name: broken
+description: Broken
+acceptanceRole: observer
+---
+
+Broken.
+`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(agentsDir, "valid.md"),
+      `---
+name: valid
+description: Valid
+---
+
+Valid.
+`,
+      "utf-8",
+    );
+
+    const listed = handleManagementAction("list", {}, { cwd: tempDir });
+    assert.equal(listed.isError, false);
+    const text = readText(listed);
+    assert.match(text, /- valid \(project\): Valid/);
+    assert.match(text, /Agent load warnings:/);
+    assert.match(text, /broken\.md/);
+    assert.match(text, /acceptanceRole/);
+  });
+
+  it("keeps malformed-agent warnings aligned with existing list scopes", () => {
+    const userAgentsDir = path.join(tempDir, "agent-home", "agents");
+    const projectAgentsDir = path.join(tempDir, ".pi", "agents");
+    fs.mkdirSync(userAgentsDir, { recursive: true });
+    fs.mkdirSync(projectAgentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(userAgentsDir, "user-broken.md"),
+      `---
+description: User malformed
+---
+
+Malformed user.
+`,
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(projectAgentsDir, "project-broken.md"),
+      `---
+name: project-broken
+---
+
+Malformed project.
+`,
+      "utf-8",
+    );
+
+    const userText = readText(
+      handleManagementAction("list", { agentScope: "user" }, { cwd: tempDir }),
+    );
+    assert.match(userText, /user-broken\.md/);
+    assert.doesNotMatch(userText, /project-broken\.md/);
+
+    const projectText = readText(
+      handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir }),
+    );
+    assert.match(projectText, /project-broken\.md/);
+    assert.doesNotMatch(projectText, /user-broken\.md/);
+  });
 });

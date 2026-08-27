@@ -13,6 +13,8 @@ import {
   registerRuntimeHarness,
   writePrimaryConfig,
   createPrimaryPrompt,
+  createCommandContext,
+  lockedRushPrimary,
   rushLikePrimary,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
@@ -191,6 +193,61 @@ test("overrideable primary on OpenRouter keeps the session model while applying 
       });
       assert.equal(pi.model, undefined, "OpenRouter primary follows the active session model");
       assert.equal(pi.thinkingLevel, "high", "OpenRouter primary applies its default thinking");
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("custom locked primaries reject typed effort without recording session thinking intent", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-locked-thinking-", {
+    cwd: true,
+    test: t,
+  });
+  const { notifications, ctx } = createCommandContext([
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "rush" },
+    },
+  ]);
+  ctx.cwd = fixture.cwd;
+  writePrimaryConfig(fixture.agent, { selected: "rush" });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { pi, runtime } = registerRuntimeHarness({
+        primaryAgents: new Map([["rush", lockedRushPrimary()]]),
+        subagentMetadata: [],
+      });
+      assert.ok(runtime, "runtime should register outside child sessions");
+      const recordedThinkingLevels = [];
+      runtime.recordUserThinkingLevel = (level) => {
+        recordedThinkingLevels.push(level);
+      };
+      registerEffortCommand(pi, runtime);
+
+      await runtime.applySessionStart(ctx);
+      assert.equal(pi.thinkingLevel, "medium", "the custom lock keeps its provider default active");
+
+      await pi.commands.get("effort").handler("high", ctx);
+
+      assert.deepEqual(notifications, [
+        {
+          message: 'Thinking is locked at "medium" for the rush primary agent.',
+          type: "error",
+        },
+      ]);
+      assert.deepEqual(
+        recordedThinkingLevels,
+        [],
+        "a rejected effort must not create session intent",
+      );
+      assert.equal(
+        pi.thinkingLevel,
+        "medium",
+        "a rejected effort must not change the active level",
+      );
     });
   } finally {
     cleanupTempDir(fixture);

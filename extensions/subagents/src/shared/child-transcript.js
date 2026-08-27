@@ -1,12 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import { boundChildError } from "../runs/shared/child-protocol.js";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.js";
 export const CHILD_TRANSCRIPT_ARTIFACT_VERSION = 1;
 const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+const MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES = 64 * 1024;
 const MAX_CHILD_TRANSCRIPT_ARGS_PREVIEW_CHARS = 32 * 1024;
 const CHILD_TRANSCRIPT_ARGS_PREVIEW_MARKER = " … [truncated for child transcript storage]";
 function errorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
+    return boundChildError(error instanceof Error ? error.message : String(error)) ?? "unknown error";
 }
 function finiteNumber(value) {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -43,6 +46,7 @@ export function createChildTranscriptWriter(input) {
     let bytesWritten = 0;
     let writeError;
     let truncated = false;
+    let stderrDecoder;
     const maxBytes = input.maxBytes ?? DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES;
     const baseRecord = (recordType) => {
         const ts = Date.now();
@@ -111,6 +115,27 @@ export function createChildTranscriptWriter(input) {
     catch (error) {
         writeError = `Failed to initialize child transcript '${input.transcriptPath}': ${errorMessage(error)}`;
     }
+    const writeStderrDecodedText = (text) => {
+        if (!text || writeError || truncated)
+            return;
+        writeRecord({ ...baseRecord("stderr"), text });
+    };
+    const writeStderrChunk = (chunk) => {
+        const bytes = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+        if (bytes.length === 0 || writeError || truncated)
+            return;
+        stderrDecoder ??= new StringDecoder("utf8");
+        for (let start = 0; start < bytes.length && !writeError && !truncated; start += MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES) {
+            writeStderrDecodedText(stderrDecoder.write(bytes.subarray(start, start + MAX_CHILD_TRANSCRIPT_STDERR_CHUNK_BYTES)));
+        }
+    };
+    const finishStderr = () => {
+        const decoder = stderrDecoder;
+        if (!decoder)
+            return;
+        stderrDecoder = undefined;
+        writeStderrDecodedText(decoder.end());
+    };
     const writeMessage = (sourceEventType, message) => {
         const text = extractTextFromContent(message.content);
         writeRecord({
@@ -175,6 +200,8 @@ export function createChildTranscriptWriter(input) {
             for (const line of text.split(/\r?\n/))
                 this.writeStderrLine(line);
         },
+        writeStderrChunk,
+        finishStderr,
         getError() {
             return writeError;
         },
