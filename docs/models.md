@@ -24,6 +24,8 @@ For compatibility with older installed or user-edited agent files, TLH falls bac
 
 The native model-picker scope is documented below. The runtime retains `lockThinking` support for fixed primary definitions, but none of the bundled primaries is locked.
 
+Disabled mode is not a model role: it applies no primary model/effort default or override, leaves the current session's model and effort unchanged, and does not enforce the architect's minimum effort floor. Explicit `/model`, `/thinking`, and `/effort` controls remain available, and bundled minor-agent dispatches still receive provider-aware defaults.
+
 ### OpenRouter sessions
 
 The upstream Pi runtime provides OpenRouter authentication and transport: use `/login openrouter` for OAuth or set `OPENROUTER_API_KEY`. TLH does not implement that provider's transport or authentication. All non-opposite TLH primaries and subagents follow the active OpenRouter session model by default. For an active primary, a persisted `tlh.primaryAgent.modelOverrides.<primary>` entry takes precedence and is reapplied at the next session or primary-mode boundary; otherwise the primary follows the current session model. Their effort comes from each role's effort-only `openrouter` entry; generic or legacy thinking values do not leak onto this path. Primary `lockThinking` and `minThinking` rules apply through that OpenRouter effort. Unknown versus explicitly non-reasoning capability checks apply to stored minor-agent effort overrides and generated fallback handling, not pure bundled or primary defaults.

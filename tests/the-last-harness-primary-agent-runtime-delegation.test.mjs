@@ -349,6 +349,60 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
   });
 });
 
+test("disabled primary mode enforces architect-equivalent subagent safety and scope", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const { toolCall } = registerRuntimeHarness({
+    primaryAgents: selectablePrimaryAgents(),
+    subagentMetadata: [],
+  });
+  const ctx = createToolCallContext(
+    [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "disabled" },
+      },
+    ],
+    undefined,
+    { cwd: fixture.cwd },
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const allowedEvent = {
+      toolName: "subagent",
+      input: { agent: "repo-scout", task: "Map the repository" },
+    };
+    assert.equal(await toolCall(allowedEvent, ctx), undefined);
+    assert.equal(allowedEvent.input.agentScope, "user");
+    assert.equal(allowedEvent.input.context, "fresh");
+    assert.equal(allowedEvent.input.timeoutMs, SCOUT_RUN_MAX_TIMEOUT_MS);
+
+    const blockedTargetEvent = {
+      toolName: "subagent",
+      input: { agent: "planner", task: "Plan the work" },
+    };
+    assert.deepEqual(await toolCall(blockedTargetEvent, ctx), {
+      block: true,
+      reason:
+        "TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
+    });
+    assert.equal(blockedTargetEvent.input.agentScope, "user");
+    assert.equal(blockedTargetEvent.input.context, "fresh");
+
+    const blockedScopeEvent = {
+      toolName: "subagent",
+      input: { agent: "developer", task: "Implement the change", agentScope: "project" },
+    };
+    assert.match((await toolCall(blockedScopeEvent, ctx))?.reason ?? "", /may not use agentScope/);
+
+    const blockedContextEvent = {
+      toolName: "subagent",
+      input: { agent: "developer", task: "Implement the change", context: "resume" },
+    };
+    assert.match((await toolCall(blockedContextEvent, ctx))?.reason ?? "", /may not use context/);
+  });
+});
+
 test("Rush blocks subagent resume with a Rush-specific reason", async () => {
   const { toolCall } = registerRuntimeHarness({
     primaryAgents: selectablePrimaryAgents(),
@@ -685,6 +739,52 @@ function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
   return filePath;
 }
 
+test("embedded subagents: disabled mode allows authorized targets and blocks unauthorized ones", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\n---",
+    );
+    const { applySessionStart, toolCall } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "disabled" },
+        },
+      ],
+      undefined,
+      { cwd: fixture.cwd },
+    );
+    await applySessionStart(ctx);
+
+    const allowedEvent = {
+      toolName: "subagent",
+      input: { agent: "embedded.my-tool", prompt: "do something" },
+    };
+    assert.equal(await toolCall(allowedEvent, ctx), undefined);
+    assert.equal(allowedEvent.input.agentScope, "user");
+    assert.equal(allowedEvent.input.context, "fresh");
+
+    const blockedEvent = {
+      toolName: "subagent",
+      input: { agent: "embedded.missing-tool", prompt: "blocked" },
+    };
+    const blockedResult = await toolCall(blockedEvent, ctx);
+    assert.equal(blockedResult?.block, true);
+    assert.match(blockedResult?.reason ?? "", /embedded\.missing-tool/);
+    assert.match(blockedResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
+    assert.match(blockedResult?.reason ?? "", /primary-agent infrastructure/);
+  });
+});
+
 test("embedded subagents: architect delegates authorized targets without the retired experimental gate", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
@@ -761,7 +861,10 @@ test("embedded subagents: non-architect primary agents remain blocked regardless
           "i",
         ),
       );
-      assert.match(result?.reason ?? "", /reserved for the architect|Rush must edit directly/i);
+      assert.match(
+        result?.reason ?? "",
+        /available only while architect or disabled mode is active|Rush must edit directly/i,
+      );
     }
   });
 });
@@ -941,8 +1044,10 @@ test("embedded subagents: product blocks embedded targets with product-specific 
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
       assert.equal(result?.block, true);
-      assert.match(result?.reason ?? "", /Product may not delegate to embedded/i);
-      assert.match(result?.reason ?? "", /reserved for the architect/i);
+      assert.equal(
+        result?.reason,
+        "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.",
+      );
     }
   });
 });
@@ -978,8 +1083,10 @@ test("embedded subagents: bug-hunter blocks embedded targets with bug-hunter-spe
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
       assert.equal(result?.block, true);
-      assert.match(result?.reason ?? "", /Bug-Hunter may not delegate to embedded/i);
-      assert.match(result?.reason ?? "", /reserved for the architect/i);
+      assert.equal(
+        result?.reason,
+        "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.",
+      );
     }
   });
 });

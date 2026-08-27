@@ -17,6 +17,10 @@ import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmb
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
+const EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE = "Extension runtime not initialized. Action methods cannot be called during extension loading.";
+function isExtensionRuntimeNotInitializedError(error) {
+    return error instanceof Error && error.message === EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE;
+}
 function getTlhGlobalSettings(cwd) {
     try {
         const settings = SettingsManager.create(cwd, getAgentDir()).getGlobalSettings();
@@ -259,10 +263,10 @@ function embeddedDelegationBlockedReason(selection, input) {
         return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
     }
     if (selection === "product") {
-        return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+        return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
     }
     if (selection === "bug-hunter") {
-        return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+        return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
     }
     return undefined;
 }
@@ -552,7 +556,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         const validTools = filterAvailableTools(desiredTools, allToolNames);
         const missingTools = desiredTools.filter((tool) => !allToolNames.has(tool));
         if (warnOnMissing && missingTools.length > 0) {
-            warnOnce(ctx, `missing-primary-tools-${primary.name}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
+            warnOnce(ctx, `missing-primary-tools-${primary?.name ?? DISABLED_PRIMARY_AGENT}`, `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`);
         }
         return validTools;
     }
@@ -750,7 +754,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         lastObservedModel = ctx.model;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
-            restorePrimaryToolsIfAppropriate();
+            try {
+                applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
+            }
+            catch (error) {
+                if (!isExtensionRuntimeNotInitializedError(error)) {
+                    throw error;
+                }
+            }
             return;
         }
         const primary = activePrimaryAgent();
@@ -1143,13 +1154,6 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
             const allowedSubagents = allowedSubagentsForExperimentalConfig();
-            if (!isEnabledPrimaryAgentSelection(selection)) {
-                if (!isSubagentResumeAction(event.input)) {
-                    return undefined;
-                }
-                const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
-                return disabledReason ? { block: true, reason: disabledReason } : undefined;
-            }
             if (selection === "rush" && isSubagentResumeAction(event.input)) {
                 return { block: true, reason: rushResumeDelegationReason() };
             }
@@ -1163,7 +1167,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (embeddedBlockReason) {
                 return { block: true, reason: embeddedBlockReason };
             }
-            const allowEmbeddedTargets = selection === "architect";
+            const allowEmbeddedTargets = selection === "architect" || selection === DISABLED_PRIMARY_AGENT;
             const reason = validateSubagentToolInput(event.input, {
                 allowedSubagents,
                 allowEmbeddedTargets,
@@ -1177,9 +1181,12 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                     const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
                     const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
                     if (unauthorizedTargets.length > 0) {
+                        const authorizationSubject = selection === DISABLED_PRIMARY_AGENT
+                            ? "TLH primary-agent infrastructure"
+                            : "TLH architect";
                         return {
                             block: true,
-                            reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+                            reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
                         };
                     }
                 }
