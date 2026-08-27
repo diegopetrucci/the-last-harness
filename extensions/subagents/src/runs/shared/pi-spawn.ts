@@ -17,7 +17,7 @@ export function buildSubagentSpawnEnv(
   return { ...filteredInheritedEnv, ...explicitEnv, ...depthEnv };
 }
 
-export function findPiPackageRootFromEntry(entryPoint: string): string | undefined {
+function findPiPackageRootFromEntry(entryPoint: string): string | undefined {
   let dir = path.dirname(entryPoint);
   while (dir !== path.dirname(dir)) {
     const packageJsonPath = path.join(dir, "package.json");

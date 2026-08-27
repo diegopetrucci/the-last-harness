@@ -57,7 +57,7 @@ type NestedStatusEventType =
 
 export type NestedRoute = NestedRouteInfo;
 
-export interface NestedEventRecord {
+interface NestedEventRecord {
   type: NestedStatusEventType;
   ts: number;
   rootRunId: string;
