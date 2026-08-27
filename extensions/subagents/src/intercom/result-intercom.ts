@@ -6,6 +6,7 @@ import {
   type SubagentRunMode,
 } from "../shared/types.ts";
 import { truncateWithMarker } from "../shared/string-utils.ts";
+import { safeTerminalText } from "../shared/display-text.ts";
 
 export function resolveSubagentResultStatus(input: {
   exitCode?: number;
@@ -189,12 +190,16 @@ const MAX_NATIVE_FOREGROUND_NESTED_ENTRIES = 8;
 const MAX_NATIVE_FOREGROUND_NESTED_DEPTH = 2;
 
 function boundedNativeForegroundLabel(value: string): string {
-  return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
+  return truncateWithMarker(
+    safeTerminalText(value),
+    MAX_NATIVE_FOREGROUND_LABEL_CHARS,
+    "… [label truncated]",
+  );
 }
 
 function boundedNativeForegroundReference(value: string): string {
   return truncateWithMarker(
-    value,
+    safeTerminalText(value),
     MAX_NATIVE_FOREGROUND_REFERENCE_CHARS,
     "… [reference truncated]",
   );
@@ -202,7 +207,7 @@ function boundedNativeForegroundReference(value: string): string {
 
 function boundedNativeForegroundError(value: string): string {
   return truncateWithMarker(
-    value,
+    safeTerminalText(value),
     MAX_NATIVE_FOREGROUND_ERROR_CHARS,
     "… [error truncated; full text is unavailable]",
   );
@@ -217,7 +222,7 @@ function boundedNativeForegroundSummary(
   child: SubagentResultIntercomChild,
   maxChars: number,
 ): string {
-  const raw = child.summary.trim() || "(no output)";
+  const raw = safeTerminalText(child.summary).trim() || "(no output)";
   if (raw.length <= maxChars) return raw;
   // Select the marker first, then suppress when the budget cannot hold it.
   // Comparing against the selected marker's own length avoids suppressing a short

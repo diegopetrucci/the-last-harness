@@ -190,4 +190,39 @@ describe("taskMayMutate", () => {
     assert.equal(taskMayMutate("Do not modify tests but implement the fix"), true);
     assert.equal(taskMayMutate("Do not modify tests; update the parser"), true);
   });
+
+  it("does not treat must-fix or no-fix compounds as mutation verbs", () => {
+    assert.equal(taskMayMutate("Review findings and report must-fix items"), false);
+    assert.equal(taskMayMutate("Review findings and report no-fix items"), false);
+
+    for (const task of [
+      "Auto-fix all lint issues.",
+      "Bulk-update the snapshots.",
+      "Bug-fix the parser.",
+      "Mass-delete stale artifacts.",
+    ]) {
+      assert.equal(taskMayMutate(task), true, task);
+    }
+  });
+});
+
+describe("compound task intent", () => {
+  it("does not infer implementation from must-fix wording alone", () => {
+    assert.equal(
+      classifyTaskMutationIntent("custom-agent", "Review findings and report must-fix items").kind,
+      "unknown",
+    );
+    assert.equal(
+      classifyTaskMutationIntent("worker", "Review findings and report no-fix items").kind,
+      "unknown",
+    );
+    assert.equal(
+      expectsImplementationMutation("worker", "Review findings and report no-fix items"),
+      false,
+    );
+    assert.equal(
+      classifyTaskMutationIntent("worker", "Implement the must-fix changes from the audit").kind,
+      "implementation",
+    );
+  });
 });

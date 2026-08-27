@@ -1,5 +1,6 @@
 import { formatDuration, formatTokens, shortenPath } from "../../shared/formatters.js";
 import { formatActivityLabel } from "../../shared/status-format.js";
+import { safeTerminalText } from "../../shared/display-text.js";
 export function countNestedRuns(children) {
     const counts = {
         total: 0,
@@ -40,21 +41,22 @@ function formatNestedAggregate(children) {
 }
 function nestedRunLabel(run) {
     if (run.agent)
-        return run.agent;
+        return safeTerminalText(run.agent);
     if (run.agents?.length)
-        return run.agents.length === 1
+        return safeTerminalText(run.agents.length === 1
             ? run.agents[0]
-            : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
-    return run.id;
+            : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`);
+    return safeTerminalText(run.id);
 }
 function formatNestedActivity(input) {
     const facts = [];
-    if (input.currentTool && input.currentToolStartedAt !== undefined)
-        facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
-    else if (input.currentTool)
-        facts.push(`tool ${input.currentTool}`);
+    const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
+    if (currentTool && input.currentToolStartedAt !== undefined)
+        facts.push(`tool ${currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+    else if (currentTool)
+        facts.push(`tool ${currentTool}`);
     if (!input.redactSensitiveDetails && input.currentPath)
-        facts.push(shortenPath(input.currentPath));
+        facts.push(safeTerminalText(shortenPath(input.currentPath)));
     if (input.turnCount !== undefined)
         facts.push(`${input.turnCount} turns`);
     if (input.toolCount !== undefined)
@@ -90,11 +92,12 @@ function formatNestedRunLines(children, options) {
                 })
                 : undefined;
             const error = child.error
-                ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : child.error}`
+                ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : safeTerminalText(child.error)}`
                 : "";
-            lines.push(`${indent}↳ ${nestedRunLabel(child)} [${child.id}] ${child.state}${activity ? ` | ${activity}` : ""}${error}`);
+            const childId = safeTerminalText(child.id);
+            lines.push(`${indent}↳ ${nestedRunLabel(child)} [${childId}] ${safeTerminalText(child.state)}${activity ? ` | ${activity}` : ""}${error}`);
             if (options.commandHints && lines.length < options.maxLines)
-                lines.push(`${indent}  Status: subagent({ action: "status", id: "${child.id}" })`);
+                lines.push(`${indent}  Status: subagent({ action: "status", id: "${childId}" })`);
             if (depth === options.maxDepth) {
                 const aggregate = formatNestedAggregate([
                     ...(child.steps?.flatMap((step) => step.children ?? []) ?? []),
@@ -113,7 +116,11 @@ function formatNestedRunLines(children, options) {
                         redactSensitiveDetails: options.redactSensitiveDetails,
                     })
                     : undefined;
-                lines.push(`${indent}  ${stepIndex + 1}. ${step.agent} ${step.status}${stepActivity ? ` | ${stepActivity}` : ""}${step.error ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : step.error}` : ""}`);
+                const stepAgent = safeTerminalText(step.agent);
+                const stepError = step.error
+                    ? ` | error: ${options.redactSensitiveDetails ? "lifecycle status requires attention" : safeTerminalText(step.error)}`
+                    : "";
+                lines.push(`${indent}  ${stepIndex + 1}. ${stepAgent} ${safeTerminalText(step.status)}${stepActivity ? ` | ${stepActivity}` : ""}${stepError}`);
                 append(step.children, depth + 1, `${indent}    `);
             }
             append(child.children, depth + 1, `${indent}  `);

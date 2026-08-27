@@ -19,6 +19,7 @@ import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
@@ -79,7 +80,7 @@ interface BuiltinAgentOverrideBase {
   disabled?: boolean;
   systemPrompt: string;
   skills?: string[];
-  tools?: string[];
+  tools?: string[] | null;
   subagentOnlyExtensions?: string[];
   completionGuard?: boolean;
   toolBudget?: ToolBudgetConfig;
@@ -123,7 +124,12 @@ export interface AgentConfig {
   localName?: string;
   packageName?: string;
   description: string;
-  tools?: string[];
+  /**
+   * Child tool policy after filtering MCP declarations.
+   * `undefined` means the tools field was omitted; `null` means it was explicit
+   * but contained no named tools; an array is an explicit named allowlist.
+   */
+  tools?: string[] | null;
   model?: string;
   fallbackModels?: string[];
   thinking?: string | false;
@@ -161,6 +167,13 @@ interface SubagentSettings {
 
 const EMPTY_SUBAGENT_SETTINGS: SubagentSettings = { overrides: {} };
 const agentFrontmatterFields = new WeakMap<AgentConfig, Set<string>>();
+
+class AgentDefinitionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentDefinitionValidationError";
+  }
+}
 
 interface ChainStepConfig {
   agent?: string;
@@ -201,10 +214,17 @@ interface ChainDiscoveryDiagnostic {
   error: string;
 }
 
+export interface AgentDiscoveryDiagnostic {
+  source: AgentSource;
+  filePath: string;
+  error: string;
+}
+
 interface AgentDiscoveryResult {
   agents: AgentConfig[];
   projectAgentsDir: string | null;
   modelScope?: ModelScopeConfig;
+  agentDiagnostics?: AgentDiscoveryDiagnostic[];
 }
 
 function getUserChainDir(): string {
@@ -517,9 +537,10 @@ function collectPackageSubagentPaths(
   return { agents };
 }
 
-function splitToolList(rawTools: string[] | undefined): { tools?: string[] } {
-  const tools = (rawTools ?? []).filter((tool) => !tool.startsWith("mcp:"));
-  return tools.length > 0 ? { tools } : {};
+function splitToolList(rawTools: string[] | undefined): { tools?: string[] | null } {
+  if (rawTools === undefined) return {};
+  const tools = rawTools.filter((tool) => !tool.startsWith("mcp:"));
+  return { tools: tools.length > 0 ? tools : null };
 }
 
 function parsePositiveIntegerFrontmatter(
@@ -530,7 +551,9 @@ function parsePositiveIntegerFrontmatter(
   if (value === undefined || !value.trim()) return undefined;
   const parsed = Number(value);
   if (!isPositiveSafeInteger(parsed)) {
-    throw new Error(`${label} has invalid ${field} frontmatter; expected a positive safe integer.`);
+    throw new AgentDefinitionValidationError(
+      `${label} has invalid ${field} frontmatter; expected a positive safe integer.`,
+    );
   }
   return parsed;
 }
@@ -548,7 +571,7 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
     disabled: agent.disabled,
     systemPrompt: agent.systemPrompt,
     skills: agent.skills ? [...agent.skills] : undefined,
-    tools: agent.tools ? [...agent.tools] : undefined,
+    tools: agent.tools === undefined ? undefined : agent.tools === null ? null : [...agent.tools],
     subagentOnlyExtensions: agent.subagentOnlyExtensions
       ? [...agent.subagentOnlyExtensions]
       : undefined,
@@ -998,7 +1021,7 @@ function applyCustomAgentOverride(
     );
   }
   if (override.tools !== undefined && !customAgentHasFrontmatterField(agent, "tools")) {
-    const { tools } = splitToolList(override.tools === false ? [] : override.tools);
+    const tools = override.tools === false ? undefined : splitToolList(override.tools).tools;
     const target = mutable();
     target.tools = tools;
     anyFilled = true;
@@ -1096,7 +1119,11 @@ function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
   return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
+function loadAgentsFromDir(
+  dir: string,
+  source: AgentSource,
+  agentDiagnosticsOut?: AgentDiscoveryDiagnostic[],
+): AgentConfig[] {
   const agents: AgentConfig[] = [];
 
   for (const filePath of listFilesRecursive(
@@ -1114,150 +1141,181 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentConfig[] {
       continue;
     }
 
-    const { frontmatter, body } = parseFrontmatter(content);
+    try {
+      const { frontmatter, body } = parseFrontmatter(content);
+      if (Object.keys(frontmatter).length === 0) continue;
 
-    if (!frontmatter.name || !frontmatter.description) {
-      continue;
-    }
-
-    const localName = frontmatter.name;
-    const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
-    if (parsedPackage.error) continue;
-    const packageName = parsedPackage.packageName;
-    const runtimeName = buildRuntimeName(localName, packageName);
-
-    const tools =
-      frontmatter.tools
-        ?.split(",")
-        .map((t) => t.trim())
-        .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
-
-    const defaultReads = frontmatter.defaultReads
-      ?.split(",")
-      .map((f) => f.trim())
-      .filter(Boolean);
-
-    const skillStr = frontmatter.skill || frontmatter.skills;
-    const skills = skillStr
-      ?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const fallbackModels = frontmatter.fallbackModels
-      ?.split(",")
-      .map((model) => model.trim())
-      .filter(Boolean);
-    const systemPromptMode =
-      frontmatter.systemPromptMode === "replace"
-        ? "replace"
-        : frontmatter.systemPromptMode === "append"
-          ? "append"
-          : defaultSystemPromptMode(localName);
-    const inheritProjectContext =
-      frontmatter.inheritProjectContext === "true"
-        ? true
-        : frontmatter.inheritProjectContext === "false"
-          ? false
-          : defaultInheritProjectContext(localName);
-    const inheritSkills =
-      frontmatter.inheritSkills === "true"
-        ? true
-        : frontmatter.inheritSkills === "false"
-          ? false
-          : defaultInheritSkills();
-    const defaultContext =
-      frontmatter.defaultContext === "fork"
-        ? ("fork" as const)
-        : frontmatter.defaultContext === "fresh"
-          ? ("fresh" as const)
-          : undefined;
-    let acceptanceRole: AcceptanceRole | undefined;
-    if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
-      if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
-        acceptanceRole = frontmatter.acceptanceRole;
-      else
-        throw new Error(
-          `Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`,
-        );
-    }
-
-    let extensions: string[] | undefined;
-    if (frontmatter.extensions !== undefined) {
-      extensions = frontmatter.extensions
-        .split(",")
-        .map((e) => e.trim())
-        .filter(Boolean);
-    }
-    let subagentOnlyExtensions: string[] | undefined;
-    if (frontmatter.subagentOnlyExtensions !== undefined) {
-      subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
-        .split(",")
-        .map((e) => e.trim())
-        .filter(Boolean);
-    }
-
-    const extraFields: Record<string, string> = {};
-    for (const [key, value] of Object.entries(frontmatter)) {
-      if (!KNOWN_FIELDS.has(key)) extraFields[key] = value;
-    }
-
-    const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
-    const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(
-      frontmatter.maxExecutionTimeMs,
-      "maxExecutionTimeMs",
-      `Agent '${localName}'`,
-    );
-    let toolBudget: ToolBudgetConfig | undefined;
-    if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
-      const parsed = JSON.parse(frontmatter.toolBudget) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error(
-          `Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`,
-        );
+      const missingRequiredFields = (["name", "description"] as const).filter(
+        (field) => !frontmatter[field],
+      );
+      if (missingRequiredFields.length > 0) {
+        agentDiagnosticsOut?.push({
+          source,
+          filePath,
+          error: `Agent frontmatter is missing required fields: ${missingRequiredFields.join(", ")}.`,
+        });
+        continue;
       }
-      toolBudget = parsed as ToolBudgetConfig;
-    }
-    const completionGuard =
-      frontmatter.completionGuard === "false"
-        ? false
-        : frontmatter.completionGuard === "true"
-          ? true
-          : undefined;
 
-    const agent: AgentConfig = {
-      name: runtimeName,
-      localName,
-      packageName,
-      description: frontmatter.description,
-      tools: tools.length > 0 ? tools : undefined,
-      model: frontmatter.model,
-      fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
-      thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
-      systemPromptMode,
-      inheritProjectContext,
-      inheritSkills,
-      defaultContext,
-      acceptanceRole,
-      systemPrompt: body,
-      source,
-      filePath,
-      skills: skills && skills.length > 0 ? skills : undefined,
-      extensions,
-      subagentOnlyExtensions,
-      output: frontmatter.output,
-      defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
-      defaultProgress: frontmatter.defaultProgress === "true",
-      interactive: frontmatter.interactive === "true",
-      maxSubagentDepth:
-        Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
-          ? parsedMaxSubagentDepth
-          : undefined,
-      completionGuard,
-      toolBudget,
-      maxExecutionTimeMs,
-      extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
-    };
-    agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
-    agents.push(agent);
+      const localName = frontmatter.name;
+      const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
+      if (parsedPackage.error) {
+        throw new AgentDefinitionValidationError(parsedPackage.error);
+      }
+      const packageName = parsedPackage.packageName;
+      const runtimeName = buildRuntimeName(localName, packageName);
+
+      const hasDeclaredToolsField = "tools" in frontmatter;
+      const tools =
+        frontmatter.tools
+          ?.split(",")
+          .map((t) => t.trim())
+          .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
+
+      const defaultReads = frontmatter.defaultReads
+        ?.split(",")
+        .map((f) => f.trim())
+        .filter(Boolean);
+
+      const skillStr = frontmatter.skill || frontmatter.skills;
+      const skills = skillStr
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const fallbackModels = frontmatter.fallbackModels
+        ?.split(",")
+        .map((model) => model.trim())
+        .filter(Boolean);
+      const systemPromptMode =
+        frontmatter.systemPromptMode === "replace"
+          ? "replace"
+          : frontmatter.systemPromptMode === "append"
+            ? "append"
+            : defaultSystemPromptMode(localName);
+      const inheritProjectContext =
+        frontmatter.inheritProjectContext === "true"
+          ? true
+          : frontmatter.inheritProjectContext === "false"
+            ? false
+            : defaultInheritProjectContext(localName);
+      const inheritSkills =
+        frontmatter.inheritSkills === "true"
+          ? true
+          : frontmatter.inheritSkills === "false"
+            ? false
+            : defaultInheritSkills();
+      const defaultContext =
+        frontmatter.defaultContext === "fork"
+          ? ("fork" as const)
+          : frontmatter.defaultContext === "fresh"
+            ? ("fresh" as const)
+            : undefined;
+      let acceptanceRole: AcceptanceRole | undefined;
+      if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
+        if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
+          acceptanceRole = frontmatter.acceptanceRole;
+        else
+          throw new AgentDefinitionValidationError(
+            `Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`,
+          );
+      }
+
+      let extensions: string[] | undefined;
+      if (frontmatter.extensions !== undefined) {
+        extensions = frontmatter.extensions
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean);
+      }
+      let subagentOnlyExtensions: string[] | undefined;
+      if (frontmatter.subagentOnlyExtensions !== undefined) {
+        subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean);
+      }
+
+      const extraFields: Record<string, string> = {};
+      for (const [key, value] of Object.entries(frontmatter)) {
+        if (!KNOWN_FIELDS.has(key)) extraFields[key] = value;
+      }
+
+      const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+      const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(
+        frontmatter.maxExecutionTimeMs,
+        "maxExecutionTimeMs",
+        `Agent '${localName}'`,
+      );
+      let toolBudget: ToolBudgetConfig | undefined;
+      if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(frontmatter.toolBudget) as unknown;
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
+          throw new AgentDefinitionValidationError(
+            `Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object: ${error.message}`,
+          );
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new AgentDefinitionValidationError(
+            `Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`,
+          );
+        }
+        const normalizedToolBudget = validateToolBudgetConfig(parsed);
+        if (normalizedToolBudget.error) {
+          throw new AgentDefinitionValidationError(
+            `Agent '${localName}' has invalid toolBudget frontmatter: ${normalizedToolBudget.error}`,
+          );
+        }
+        toolBudget = normalizedToolBudget.budget;
+      }
+      const completionGuard =
+        frontmatter.completionGuard === "false"
+          ? false
+          : frontmatter.completionGuard === "true"
+            ? true
+            : undefined;
+
+      const agent: AgentConfig = {
+        name: runtimeName,
+        localName,
+        packageName,
+        description: frontmatter.description,
+        tools: hasDeclaredToolsField ? (tools.length > 0 ? tools : null) : undefined,
+        model: frontmatter.model,
+        fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
+        thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
+        systemPromptMode,
+        inheritProjectContext,
+        inheritSkills,
+        defaultContext,
+        acceptanceRole,
+        systemPrompt: body,
+        source,
+        filePath,
+        skills: skills && skills.length > 0 ? skills : undefined,
+        extensions,
+        subagentOnlyExtensions,
+        output: frontmatter.output,
+        defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
+        defaultProgress: frontmatter.defaultProgress === "true",
+        interactive: frontmatter.interactive === "true",
+        maxSubagentDepth:
+          Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
+            ? parsedMaxSubagentDepth
+            : undefined,
+        completionGuard,
+        toolBudget,
+        maxExecutionTimeMs,
+        extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+      };
+      agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
+      agents.push(agent);
+    } catch (error) {
+      if (!(error instanceof AgentDefinitionValidationError)) throw error;
+      agentDiagnosticsOut?.push({ source, filePath, error: error.message });
+    }
   }
 
   return agents;
@@ -1325,10 +1383,14 @@ function resolveConfiguredAgentDirs(settings: SubagentSettings, baseDir: string)
   );
 }
 
-function loadAgentsFromDirs(dirs: string[], source: AgentSource): AgentConfig[] {
+function loadAgentsFromDirs(
+  dirs: string[],
+  source: AgentSource,
+  agentDiagnosticsOut?: AgentDiscoveryDiagnostic[],
+): AgentConfig[] {
   const agentMap = new Map<string, AgentConfig>();
   for (const dir of uniqueResolvedDirs(dirs)) {
-    for (const agent of loadAgentsFromDir(dir, source)) {
+    for (const agent of loadAgentsFromDir(dir, source, agentDiagnosticsOut)) {
       agentMap.set(agent.name, agent);
     }
   }
@@ -1382,6 +1444,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
   });
 
   const builtinAgents: AgentConfig[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
 
   const userConfiguredAgentDirs =
     scope === "project" ? [] : resolveConfiguredAgentDirs(customUserSettings, getAgentDir());
@@ -1402,6 +1465,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
               ...(userDirNew ? [userDirNew] : []),
             ],
             "user",
+            agentDiagnostics,
           ),
       defaultModel,
     ),
@@ -1415,7 +1479,11 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     applySubagentDefaultModel(
       scope === "user"
         ? []
-        : loadAgentsFromDirs([...projectConfiguredAgentDirs, ...projectAgentDirs], "project"),
+        : loadAgentsFromDirs(
+            [...projectConfiguredAgentDirs, ...projectAgentDirs],
+            "project",
+            agentDiagnostics,
+          ),
       defaultModel,
     ),
     customUserSettings,
@@ -1425,7 +1493,9 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
   );
   const packageAgents = applyCustomAgentOverrides(
     applySubagentDefaultModel(
-      packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package")),
+      packageSubagentPaths.agents.flatMap((dir) =>
+        loadAgentsFromDir(dir, "package", agentDiagnostics),
+      ),
       defaultModel,
     ),
     userSettings,
@@ -1441,7 +1511,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     packageAgents,
   ).filter((agent) => agent.disabled !== true);
 
-  return { agents, projectAgentsDir, modelScope };
+  return { agents, projectAgentsDir, modelScope, agentDiagnostics };
 }
 
 export function discoverAgentsAll(cwd: string): {
@@ -1451,6 +1521,7 @@ export function discoverAgentsAll(cwd: string): {
   project: AgentConfig[];
   chains: ChainConfig[];
   chainDiagnostics: ChainDiscoveryDiagnostic[];
+  agentDiagnostics?: AgentDiscoveryDiagnostic[];
   userDir: string;
   projectDir: string | null;
   userChainDir: string;
@@ -1476,6 +1547,7 @@ export function discoverAgentsAll(cwd: string): {
   const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
   const builtin: AgentConfig[] = [];
+  const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
   const userConfiguredAgentDirs = resolveConfiguredAgentDirs(userSettings, getAgentDir());
   const projectBaseDir = projectSettingsBaseDir(projectSettingsPath);
   const projectConfiguredAgentDirs = projectBaseDir
@@ -1491,6 +1563,7 @@ export function discoverAgentsAll(cwd: string): {
           ...(userDirNew ? [userDirNew] : []),
         ],
         "user",
+        agentDiagnostics,
       ),
       defaultModel,
     ),
@@ -1501,7 +1574,7 @@ export function discoverAgentsAll(cwd: string): {
   );
   const packageMap = new Map<string, AgentConfig>();
   for (const dir of packageSubagentPaths.agents) {
-    for (const agent of loadAgentsFromDir(dir, "package")) {
+    for (const agent of loadAgentsFromDir(dir, "package", agentDiagnostics)) {
       if (!packageMap.has(agent.name)) packageMap.set(agent.name, agent);
     }
   }
@@ -1514,7 +1587,11 @@ export function discoverAgentsAll(cwd: string): {
   );
   const project = applyCustomAgentOverrides(
     applySubagentDefaultModel(
-      loadAgentsFromDirs([...projectConfiguredAgentDirs, ...projectDirs], "project"),
+      loadAgentsFromDirs(
+        [...projectConfiguredAgentDirs, ...projectDirs],
+        "project",
+        agentDiagnostics,
+      ),
       defaultModel,
     ),
     userSettings,
@@ -1534,6 +1611,7 @@ export function discoverAgentsAll(cwd: string): {
     project,
     chains,
     chainDiagnostics,
+    agentDiagnostics,
     userDir,
     projectDir,
     userChainDir,
