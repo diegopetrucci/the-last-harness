@@ -41,6 +41,7 @@ import {
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ModelAttempt {
   success?: boolean;
@@ -3962,16 +3963,21 @@ describe(
         noStagedFiles: true,
       });
       const report = ["Done", "```acceptance-report", reportBody, "```"].join("\n");
+      // Verify timeout artifact semantics, not 150ms latency: scale both budgets so
+      // the report arrives before timeout while the mock remains alive past it; keep
+      // the report non-terminal so the fixed 1s final-stop drain cannot win.
+      const timeoutMs = scaleTestTimeout(1_000);
+      const keepAliveAfterFinalMessageMs = scaleTestTimeout(10_000);
       mockPi.onCall({
-        jsonl: [events.assistantMessage(report)],
-        keepAliveAfterFinalMessageMs: 10000,
+        jsonl: [mockAssistantMessage(report, "tool_use")],
+        keepAliveAfterFinalMessageMs,
       });
       const agents = makeAgentConfigs(["slow"]);
       const digestArtifactsDir = path.join(tempDir, "artifacts-timeout-digest");
 
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-digest-split",
-        timeoutMs: 150,
+        timeoutMs,
         artifactsDir: digestArtifactsDir,
         artifactConfig: { enabled: true, includeOutput: true, includeMetadata: false },
       });
