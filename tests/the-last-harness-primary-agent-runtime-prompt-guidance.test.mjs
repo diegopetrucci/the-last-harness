@@ -36,12 +36,12 @@ test("child runtime scopes tickets at session start", async (t) => {
   );
 });
 
-test("disabled primary mode still injects provider-aware subagent models", async (t) => {
+test("disabled primary mode validates calls after injecting provider-aware subagent models", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const { toolCall } = registerRuntimeHarness();
-    const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+    const event = { toolName: "subagent", input: { agent: "developer", context: "" } };
     const ctx = createToolCallContext(
       [
         {
@@ -57,8 +57,8 @@ test("disabled primary mode still injects provider-aware subagent models", async
     assert.equal(await toolCall(event, ctx), undefined);
     assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
     assert.equal(Object.hasOwn(event.input, "thinking"), false);
-    assert.equal(event.input.agentScope, undefined);
-    assert.equal(event.input.context, "resume");
+    assert.equal(event.input.agentScope, "user");
+    assert.equal(event.input.context, "fresh");
   });
 });
 
@@ -93,14 +93,14 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
       input: {
         agent: "contrarian",
         prompt: "stress-test this plan",
-        agentScope: "project",
-        context: "resume",
+        agentScope: "",
+        context: "",
       },
     };
     assert.equal(await toolCall(defaultEvent, ctx), undefined);
     assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
-    assert.equal(defaultEvent.input.agentScope, "project");
-    assert.equal(defaultEvent.input.context, "resume");
+    assert.equal(defaultEvent.input.agentScope, "user");
+    assert.equal(defaultEvent.input.context, "fresh");
 
     for (const enabledFeatures of [["Contrarian", 123], ["Contrarian"], ["contrarian"]]) {
       writeFileSync(
@@ -112,14 +112,14 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
         input: {
           agent: "contrarian",
           prompt: "stress-test this plan",
-          agentScope: "project",
-          context: "resume",
+          agentScope: "",
+          context: "",
         },
       };
       assert.equal(await toolCall(staleEvent, ctx), undefined);
       assert.equal(staleEvent.input.model, "anthropic/claude-opus-5:high");
-      assert.equal(staleEvent.input.agentScope, "project");
-      assert.equal(staleEvent.input.context, "resume");
+      assert.equal(staleEvent.input.agentScope, "user");
+      assert.equal(staleEvent.input.context, "fresh");
     }
   });
 });
@@ -200,6 +200,49 @@ test("enabled primary mode validates subagent input after injecting provider-awa
     assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
     assert.equal(Object.hasOwn(event.input, "thinking"), false);
     assert.equal(event.input.agentScope, "user");
+  });
+});
+
+test("disabled primary mode keeps neutral TLH delegation guidance without the architect persona", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [
+        { name: "developer", description: "Implements exactly one approved task at a time." },
+        contrarianMetadata(),
+      ],
+    });
+    const disabledPrompt = await beforeAgentStart(
+      { systemPrompt: "base prompt" },
+      createToolCallContext(
+        [
+          {
+            type: "custom",
+            customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+            data: { selected: "disabled" },
+          },
+        ],
+        undefined,
+        { cwd: fixture.cwd },
+      ),
+    );
+
+    assert.match(disabledPrompt.systemPrompt, /## The Last Harness Defaults/);
+    assert.match(disabledPrompt.systemPrompt, /## TLH Allowed Minor Subagents/);
+    assert.match(
+      disabledPrompt.systemPrompt,
+      /- developer: Implements exactly one approved task at a time\./,
+    );
+    assert.match(disabledPrompt.systemPrompt, /Trusted `embedded\.<slug>` subagents/);
+    assert.doesNotMatch(disabledPrompt.systemPrompt, /You are the TLH architect/);
+    assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Experimental Feature:/);
+    assert.doesNotMatch(
+      disabledPrompt.systemPrompt,
+      /final-validation ticket.*depends on all implementation tickets/i,
+    );
+    assert.doesNotMatch(disabledPrompt.systemPrompt, /architect-only/i);
   });
 });
 
