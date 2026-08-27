@@ -47,6 +47,7 @@ extensions/the-last-harness/claude-skills.js linguist-generated=true
 extensions/the-last-harness/common.js linguist-generated=true
 extensions/the-last-harness/constants.js linguist-generated=true
 extensions/the-last-harness/context-cap.js linguist-generated=true
+extensions/the-last-harness/copy-draft.js linguist-generated=true
 extensions/the-last-harness/effort-command.js linguist-generated=true
 extensions/the-last-harness/effort.js linguist-generated=true
 extensions/the-last-harness/experimental-command.js linguist-generated=true

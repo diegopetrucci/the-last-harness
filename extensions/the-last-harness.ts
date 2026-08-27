@@ -9,7 +9,11 @@ import {
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
-import { TLH_HEADER_TOGGLE_SHORTCUT } from "./the-last-harness/constants.js";
+import {
+  TLH_COPY_DRAFT_SHORTCUT,
+  TLH_HEADER_TOGGLE_SHORTCUT,
+} from "./the-last-harness/constants.js";
+import { createCopyDraftHandler, installCopyDraftHint } from "./the-last-harness/copy-draft.js";
 import { createTlhAutocompleteProvider } from "./the-last-harness/autocomplete.js";
 import { registerClaudeSkillsDiscovery } from "./the-last-harness/claude-skills.js";
 import { registerContextCap } from "./the-last-harness/context-cap.js";
@@ -129,12 +133,15 @@ export default function theLastHarness(pi: ExtensionAPI) {
   // dispatch-time probing and the footer renderer share the same instance.
   let activeProviderAuthHealthStore: ProviderAuthHealthStore | undefined;
   let activeProviderAuthHealthUnsubscribe: (() => void) | undefined;
+  let copyDraftHintTeardown: (() => void) | undefined;
   pi.on("session_shutdown", () => {
     invalidateActiveTlhHeaderSession();
     activeProviderAuthHealthUnsubscribe?.();
     activeProviderAuthHealthUnsubscribe = undefined;
     activeProviderAuthHealthStore?.dispose();
     activeProviderAuthHealthStore = undefined;
+    copyDraftHintTeardown?.();
+    copyDraftHintTeardown = undefined;
   });
 
   installTlhModelVisibilityFilter();
@@ -277,6 +284,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
   });
   registerUsageCommand(pi);
   registerVersionCommand(pi);
+  pi.registerShortcut(TLH_COPY_DRAFT_SHORTCUT, {
+    description: "Copy the unsent editor draft to the clipboard",
+    handler: createCopyDraftHandler(),
+  });
   pi.registerShortcut(TLH_HEADER_TOGGLE_SHORTCUT, {
     description: "Toggle TLH startup header resources",
     handler: (ctx) => {
@@ -307,12 +318,16 @@ export default function theLastHarness(pi: ExtensionAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     const sessionToken = invalidateActiveTlhHeaderSession();
+    copyDraftHintTeardown?.();
+    copyDraftHintTeardown = undefined;
     await primaryAgentRuntime.applySessionStart(ctx);
     refreshCachedTlhUsageWeeklyVisibility(ctx.cwd);
 
     if (!ctx.hasUI) {
       return;
     }
+
+    copyDraftHintTeardown = installCopyDraftHint(ctx);
 
     if (event.reason === "startup") {
       try {

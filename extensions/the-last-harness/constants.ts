@@ -22,6 +22,11 @@ export const DUMB_ZONE_LABEL = "DUMB ZONE";
 export const AUTOCOMPLETE_SOURCE_TAG_PATTERN = /(^|—\s*)\[(?:u|p|t)(?::(?:npm|git):[^\]]+)?\]\s*/g;
 export const PRIMARY_AGENT_CYCLE_SHORTCUT = "shift+tab";
 export const TLH_HEADER_TOGGLE_SHORTCUT = "ctrl+shift+e";
+// ctrl+shift+c is intentionally avoided: terminals that don't distinguish shift on control chars
+// collapse it to ctrl+c (app.clear), destroying the draft; many Linux/Windows emulators also
+// intercept it as their own copy binding. ctrl+shift+x parallels ctrl+x (app.message.copy)
+// and its worst-case collapse is harmless.
+export const TLH_COPY_DRAFT_SHORTCUT = "ctrl+shift+x";
 
 export const HARNESS_PROMPT = `
 ## The Last Harness Defaults
