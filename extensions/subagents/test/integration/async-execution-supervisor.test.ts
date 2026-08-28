@@ -6,8 +6,10 @@
 
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import {
   createEventBus,
   createMockPi,
@@ -19,6 +21,7 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
+import { discoverAgents } from "../../src/agents/agents.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
@@ -69,7 +72,10 @@ describe("async execution utilities", () => {
     removeTempDir(tempDir);
   });
 
-  function makeAsyncExecutor(agents = [makeAgent("worker")]) {
+  function makeAsyncExecutor(
+    agents = [makeAgent("worker")],
+    discoverAgentsImpl: typeof discoverAgents = () => ({ agents, projectAgentsDir: null }),
+  ) {
     return createSubagentExecutor!({
       pi: { events: createEventBus(), getSessionName: () => undefined },
       state: {
@@ -83,7 +89,7 @@ describe("async execution utilities", () => {
       tempArtifactsDir: tempDir,
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (p: string) => p,
-      discoverAgents: () => ({ agents }),
+      discoverAgents: discoverAgentsImpl,
     });
   }
 
@@ -264,6 +270,126 @@ describe("async execution utilities", () => {
       }
     },
   );
+
+  it("rebinds a process-starting custom-agent resume to the current file configuration", async () => {
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const originalSessionDirFile = process.env.MOCK_PI_SESSION_DIR_FILE;
+    process.env.MOCK_PI_SESSION_DIR_FILE = "1";
+    const repo = path.join(tempDir, "repo");
+    const agentDir = path.join(tempDir, "profile");
+    fs.mkdirSync(repo, { recursive: true });
+    fs.mkdirSync(agentDir, { recursive: true });
+    execFileSync("git", ["init", "--quiet"], { cwd: repo });
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    new ProjectTrustStore(agentDir).set(repo, true);
+    const customPath = path.join(repo, ".tlh", "agents", "custom", "HELPER.md");
+    fs.mkdirSync(path.dirname(customPath), { recursive: true });
+    fs.writeFileSync(
+      customPath,
+      "---\nname: helper\npackage: embedded\ndescription: Helper\ntools: bash, write, edit\nmodel: mock/test-model\n---\nOLD-PROMPT\n",
+      "utf-8",
+    );
+    const initialAgent = discoverAgents(repo, "project").agents.find(
+      (agent) => agent.name === "embedded.helper",
+    );
+    assert.ok(initialAgent?.projectCustomBinding);
+    const id = `async-custom-rebind-${Date.now().toString(36)}`;
+    let runnerPid: number | undefined;
+    try {
+      mockPi.onCall({
+        steps: [
+          {
+            jsonl: [
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Need input",
+              }),
+            ],
+          },
+        ],
+        keepAliveAfterFinalMessageMs: 5_000,
+      });
+      const started = executeAsyncSingle(id, {
+        agent: "embedded.helper",
+        task: "Ask for a decision.",
+        agentConfig: initialAgent,
+        ctx: {
+          pi: {
+            events: {
+              emit(event: string, payload: unknown) {
+                if (
+                  event === "subagent:async-started" &&
+                  payload &&
+                  typeof payload === "object" &&
+                  "pid" in payload
+                ) {
+                  runnerPid = (payload as { pid?: number }).pid;
+                }
+              },
+            },
+          },
+          cwd: repo,
+          currentSessionId: "session-custom-rebind",
+        },
+        artifactConfig: {
+          enabled: false,
+          includeInput: false,
+          includeOutput: false,
+          includeJsonl: false,
+          includeMetadata: false,
+          cleanupDays: 7,
+        },
+        shareEnabled: false,
+        sessionRoot: path.join(tempDir, "sessions"),
+        maxSubagentDepth: 2,
+      });
+      assert.equal(started.isError, undefined);
+      const asyncDir = path.join(ASYNC_DIR, id);
+      await waitForMockPiCall(mockPi, 0);
+      await waitForAsyncState(asyncDir, "paused");
+      assert.ok(runnerPid);
+      await waitForPidsToExit([runnerPid!], `paused custom run ${id}`);
+
+      fs.writeFileSync(
+        customPath,
+        "---\nname: helper\npackage: embedded\ndescription: Helper\ntools: read\nmodel: mock/test-model\n---\nNEW-PROMPT\n",
+        "utf-8",
+      );
+      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV] });
+      const reloaded = makeAsyncExecutor([makeAgent("embedded.helper")], discoverAgents);
+      const resumed = await reloaded.execute(
+        "async-custom-rebind-resume",
+        { action: "resume", id, message: "Continue." },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(repo),
+      );
+      assert.equal(resumed.isError, undefined);
+      await waitForMockPiCall(mockPi, 1);
+      await waitForAsyncState(asyncDir, "continued");
+      const callFiles = fs
+        .readdirSync(mockPi.dir)
+        .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+        .sort();
+      const resumedCall = JSON.parse(
+        fs.readFileSync(path.join(mockPi.dir, callFiles.at(-1)!), "utf-8"),
+      ) as { args?: string[]; systemPrompts?: Array<{ text?: string }> };
+      assert.ok(resumedCall.args?.includes("--tools"));
+      const resumedTools = resumedCall.args?.[resumedCall.args.indexOf("--tools") + 1] ?? "";
+      assert.ok(resumedTools.split(",").includes("read"));
+      assert.equal(resumedTools.split(",").includes("bash"), false);
+      assert.ok(resumedCall.systemPrompts?.some((prompt) => prompt.text?.includes("NEW-PROMPT")));
+      assert.equal(
+        resumedCall.systemPrompts?.some((prompt) => prompt.text?.includes("OLD-PROMPT")),
+        false,
+      );
+    } finally {
+      if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+      if (originalSessionDirFile === undefined) delete process.env.MOCK_PI_SESSION_DIR_FILE;
+      else process.env.MOCK_PI_SESSION_DIR_FILE = originalSessionDirFile;
+    }
+  });
 
   it(
     "blocks unsafe durable resume before claiming or spawning and preserves paused artifacts",

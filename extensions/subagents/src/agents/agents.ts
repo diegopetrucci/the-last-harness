@@ -13,13 +13,19 @@ import type {
   OutputMode,
   ToolBudgetConfig,
 } from "../shared/types.ts";
-import { expandTildePath, getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
+import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
+import {
+  inventoryProjectCustomAgents,
+  type ProjectCustomAgentBinding,
+  type ProjectCustomAgentDiagnostic,
+} from "../../../shared/project-custom-agent.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
 import { isPositiveSafeInteger } from "./execution-ceiling.ts";
 
@@ -141,6 +147,8 @@ export interface AgentConfig {
   systemPrompt: string;
   source: AgentSource;
   filePath: string;
+  /** Exact validated project custom-agent file, when this is embedded.<slug>. */
+  projectCustomBinding?: ProjectCustomAgentBinding;
   skills?: string[];
   extensions?: string[];
   subagentOnlyExtensions?: string[];
@@ -161,7 +169,6 @@ export interface AgentConfig {
 interface SubagentSettings {
   overrides: Record<string, BuiltinAgentOverrideConfig>;
   defaultModel?: string;
-  agentDirs?: string[];
   modelScope?: ModelScopeConfig;
 }
 
@@ -830,30 +837,6 @@ function parseBuiltinOverrideEntry(
   return Object.keys(override).length > 0 ? override : undefined;
 }
 
-function parseSettingsStringArray(
-  value: unknown,
-  meta: { filePath: string; field: string },
-): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error(
-      `Subagent settings in '${meta.filePath}' have invalid '${meta.field}'; expected an array of strings.`,
-    );
-  }
-
-  const items: string[] = [];
-  for (const item of value) {
-    if (typeof item !== "string") {
-      throw new Error(
-        `Subagent settings in '${meta.filePath}' have invalid '${meta.field}'; expected an array of strings.`,
-      );
-    }
-    const trimmed = item.trim();
-    if (trimmed) items.push(trimmed);
-  }
-  return items;
-}
-
 function readSubagentSettings(filePath: string | null): SubagentSettings {
   if (!filePath) return EMPTY_SUBAGENT_SETTINGS;
   const settings = readSettingsFileStrict(filePath);
@@ -862,10 +845,6 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
     return EMPTY_SUBAGENT_SETTINGS;
 
   const subagentsObject = subagents as Record<string, unknown>;
-  const agentDirs = parseSettingsStringArray(subagentsObject.agentDirs, {
-    filePath,
-    field: "agentDirs",
-  });
   let defaultModel: string | undefined;
   if ("defaultModel" in subagentsObject) {
     if (typeof subagentsObject.defaultModel === "string" && subagentsObject.defaultModel.trim()) {
@@ -881,13 +860,13 @@ function readSubagentSettings(filePath: string | null): SubagentSettings {
   const parsed: Record<string, BuiltinAgentOverrideConfig> = {};
   const agentOverrides = subagentsObject.agentOverrides;
   if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-    return { overrides: parsed, defaultModel, agentDirs, modelScope };
+    return { overrides: parsed, defaultModel, modelScope };
   }
   for (const [name, value] of Object.entries(agentOverrides)) {
     const override = parseBuiltinOverrideEntry(name, value, filePath);
     if (override) parsed[name] = override;
   }
-  return { overrides: parsed, defaultModel, agentDirs, modelScope };
+  return { overrides: parsed, defaultModel, modelScope };
 }
 
 function resolveSubagentDefaultModel(
@@ -920,29 +899,12 @@ function applySubagentDefaultModel(
 ): AgentConfig[] {
   if (!defaultModel) return agents;
   return agents.map((agent) => {
-    if (agent.model !== undefined) return agent;
+    if (agent.projectCustomBinding || agent.model !== undefined) return agent;
     const next = { ...agent, model: defaultModel.model, modelSource: defaultModel };
     const frontmatterFields = agentFrontmatterFields.get(agent);
     if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
     return next;
   });
-}
-
-function projectScopeUserBuiltinSettings(filePath: string | null): SubagentSettings {
-  if (!filePath) return EMPTY_SUBAGENT_SETTINGS;
-
-  let settings: Record<string, unknown>;
-  try {
-    settings = readSettingsFileStrict(filePath);
-  } catch {
-    return EMPTY_SUBAGENT_SETTINGS;
-  }
-
-  const subagents = settings.subagents;
-  if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
-    return EMPTY_SUBAGENT_SETTINGS;
-
-  return EMPTY_SUBAGENT_SETTINGS;
 }
 
 function customAgentHasFrontmatterField(agent: AgentConfig, ...fields: string[]): boolean {
@@ -955,6 +917,9 @@ function applyCustomAgentOverride(
   override: BuiltinAgentOverrideConfig,
   meta: { scope: "user" | "project"; path: string },
 ): AgentConfig {
+  // Project-root custom agents are self-contained trusted files. Settings
+  // overrides must never supply or replace their execution configuration.
+  if (agent.projectCustomBinding) return agent;
   let next: AgentConfig | undefined;
   let anyFilled = false;
 
@@ -1084,7 +1049,11 @@ function applyCustomAgentOverrides(
   });
 }
 
-function listFilesRecursive(dir: string, predicate: (fileName: string) => boolean): string[] {
+function listFilesRecursive(
+  dir: string,
+  predicate: (fileName: string) => boolean,
+  recursive = true,
+): string[] {
   const files: string[] = [];
   if (!fs.existsSync(dir)) return files;
 
@@ -1100,7 +1069,7 @@ function listFilesRecursive(dir: string, predicate: (fileName: string) => boolea
   for (const entry of entries) {
     const filePath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      files.push(...listFilesRecursive(filePath, predicate));
+      if (recursive) files.push(...listFilesRecursive(filePath, predicate, recursive));
       continue;
     }
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
@@ -1119,24 +1088,42 @@ function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
   return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
 
+interface AgentLoadOptions {
+  recursive?: boolean;
+  allowedPaths?: ReadonlySet<string>;
+  contentByPath?: ReadonlyMap<string, string>;
+  projectCustomBindings?: ReadonlyMap<string, ProjectCustomAgentBinding>;
+}
+
 function loadAgentsFromDir(
   dir: string,
   source: AgentSource,
   agentDiagnosticsOut?: AgentDiscoveryDiagnostic[],
+  options: AgentLoadOptions = {},
 ): AgentConfig[] {
   const agents: AgentConfig[] = [];
 
   for (const filePath of listFilesRecursive(
     dir,
     (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"),
+    options.recursive ?? true,
   )) {
+    const normalizedFilePath = path.resolve(filePath);
+    if (options.allowedPaths && !options.allowedPaths.has(normalizedFilePath)) continue;
+    if (
+      options.allowedPaths &&
+      options.contentByPath &&
+      !options.contentByPath.has(normalizedFilePath)
+    )
+      continue;
     if (isLegacyAgentSkillPath(dir, filePath)) {
       continue;
     }
 
     let content: string;
     try {
-      content = fs.readFileSync(filePath, "utf-8");
+      content =
+        options.contentByPath?.get(normalizedFilePath) ?? fs.readFileSync(filePath, "utf-8");
     } catch {
       continue;
     }
@@ -1164,6 +1151,22 @@ function loadAgentsFromDir(
       }
       const packageName = parsedPackage.packageName;
       const runtimeName = buildRuntimeName(localName, packageName);
+      if (options.projectCustomBindings) {
+        const binding = options.projectCustomBindings.get(normalizedFilePath);
+        if (
+          !binding ||
+          !runtimeName.startsWith("embedded.") ||
+          runtimeName !== binding.runtimeName
+        ) {
+          agentDiagnosticsOut?.push({
+            source,
+            filePath,
+            error:
+              "Project custom-agent parser identity diverged from its validated exact-file binding; the file was rejected.",
+          });
+          continue;
+        }
+      }
 
       const hasDeclaredToolsField = "tools" in frontmatter;
       const tools =
@@ -1294,6 +1297,9 @@ function loadAgentsFromDir(
         systemPrompt: body,
         source,
         filePath,
+        ...(options.projectCustomBindings?.get(normalizedFilePath)
+          ? { projectCustomBinding: options.projectCustomBindings.get(normalizedFilePath) }
+          : {}),
         skills: skills && skills.length > 0 ? skills : undefined,
         extensions,
         subagentOnlyExtensions,
@@ -1319,6 +1325,52 @@ function loadAgentsFromDir(
   }
 
   return agents;
+}
+
+function customAgentDiagnosticsToDiscovery(
+  diagnostics: ProjectCustomAgentDiagnostic[],
+): AgentDiscoveryDiagnostic[] {
+  return diagnostics.map((diagnostic) => ({
+    source: "project" as const,
+    filePath: diagnostic.path ?? "<project-custom-agent>",
+    error: diagnostic.message,
+  }));
+}
+
+function loadProjectCustomAgents(
+  cwd: string,
+  agentDir: string,
+  agentDiagnosticsOut: AgentDiscoveryDiagnostic[],
+): AgentConfig[] {
+  const inventory = inventoryProjectCustomAgents(cwd, agentDir);
+  agentDiagnosticsOut.push(...customAgentDiagnosticsToDiscovery(inventory.diagnostics));
+  if (!inventory.worktreeRoot || inventory.files.length === 0) return [];
+
+  const directCustomDir = path.join(inventory.worktreeRoot, ".tlh", "agents", "custom");
+  const allowedPaths = new Set(
+    inventory.files
+      .filter((file) => file.content !== undefined && file.binding !== undefined)
+      .map((file) => path.resolve(file.path)),
+  );
+  if (allowedPaths.size === 0) return [];
+  const contentByPath = new Map<string, string>();
+  const projectCustomBindings = new Map<string, ProjectCustomAgentBinding>();
+  for (const file of inventory.files) {
+    const normalizedPath = path.resolve(file.path);
+    if (file.content !== undefined && file.binding !== undefined) {
+      contentByPath.set(normalizedPath, file.content);
+      projectCustomBindings.set(normalizedPath, file.binding);
+    }
+  }
+  // Keep this loader explicitly direct-file-only. The inventory has already
+  // performed all trust, identity, and frontmatter checks; parsing its exact
+  // content avoids a second unbound read of the project-controlled file.
+  return loadAgentsFromDir(directCustomDir, "project", agentDiagnosticsOut, {
+    recursive: false,
+    allowedPaths,
+    contentByPath,
+    projectCustomBindings,
+  });
 }
 
 function isDirectory(p: string): boolean {
@@ -1374,33 +1426,6 @@ function uniqueResolvedDirs(dirs: string[]): string[] {
   return result;
 }
 
-function resolveConfiguredAgentDirs(settings: SubagentSettings, baseDir: string): string[] {
-  return uniqueResolvedDirs(
-    (settings.agentDirs ?? []).map((dir) => {
-      const expanded = expandTildePath(dir);
-      return path.isAbsolute(expanded) ? expanded : path.join(baseDir, expanded);
-    }),
-  );
-}
-
-function loadAgentsFromDirs(
-  dirs: string[],
-  source: AgentSource,
-  agentDiagnosticsOut?: AgentDiscoveryDiagnostic[],
-): AgentConfig[] {
-  const agentMap = new Map<string, AgentConfig>();
-  for (const dir of uniqueResolvedDirs(dirs)) {
-    for (const agent of loadAgentsFromDir(dir, source, agentDiagnosticsOut)) {
-      agentMap.set(agent.name, agent);
-    }
-  }
-  return Array.from(agentMap.values());
-}
-
-function projectSettingsBaseDir(projectSettingsPath: string | null): string | null {
-  return projectSettingsPath ? path.dirname(path.dirname(projectSettingsPath)) : null;
-}
-
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 
 // Additional read-only directories to scan for agent definitions, supplied by the
@@ -1417,17 +1442,41 @@ function extraUserAgentDirs(): string[] {
     .filter((dir) => dir.length > 0);
 }
 
+const EMBEDDED_RUNTIME_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
+
+function isEmbeddedRuntimeName(name: string): boolean {
+  return EMBEDDED_RUNTIME_NAME_PATTERN.test(name);
+}
+
+/**
+ * The installer-managed TLH role files are the only supported user/extra
+ * definitions. Generic profile, legacy, configured, and extra-dir files are
+ * intentionally not part of TLH's active discovery surface.
+ */
+function loadCanonicalPackagedAgents(agentDiagnostics: AgentDiscoveryDiagnostic[]): AgentConfig[] {
+  const canonicalDir = path.resolve(getAgentDir(), "tlh", "agents", "subagents");
+  const dirs = [
+    canonicalDir,
+    ...extraUserAgentDirs()
+      .map((dir) => path.resolve(dir))
+      .filter((dir) => dir === canonicalDir),
+  ];
+  const byName = new Map<string, AgentConfig>();
+  for (const dir of uniqueResolvedDirs(dirs)) {
+    for (const agent of loadAgentsFromDir(dir, "user", agentDiagnostics)) {
+      if (!isCanonicalPackagedMinorAgent(agent)) continue;
+      byName.set(agent.name, agent);
+    }
+  }
+  return Array.from(byName.values());
+}
+
 export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
-  const userDirOld = path.join(getAgentDir(), "agents");
-  const userDirNew = getLegacyGlobalAgentsDir();
-  const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } =
-    resolveNearestProjectAgentDirs(cwd);
+  const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
   const userSettingsPath = getUserAgentSettingsPath();
   const projectSettingsPath = getProjectAgentSettingsPath(cwd);
   const userSettings =
-    scope === "project"
-      ? projectScopeUserBuiltinSettings(userSettingsPath)
-      : readSubagentSettings(userSettingsPath);
+    scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath);
   const projectSettings =
     scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
   const defaultModel = resolveSubagentDefaultModel(
@@ -1436,61 +1485,26 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     userSettingsPath,
     projectSettingsPath,
   );
-  const customUserSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : userSettings;
   const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
   const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
     includeUser: scope !== "project",
     includeProject: scope !== "user",
   });
-
-  const builtinAgents: AgentConfig[] = [];
   const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
 
-  const userConfiguredAgentDirs =
-    scope === "project" ? [] : resolveConfiguredAgentDirs(customUserSettings, getAgentDir());
-  const projectBaseDir = projectSettingsBaseDir(projectSettingsPath);
-  const projectConfiguredAgentDirs =
-    scope === "user" || !projectBaseDir
-      ? []
-      : resolveConfiguredAgentDirs(projectSettings, projectBaseDir);
-  const userAgents = applyCustomAgentOverrides(
-    applySubagentDefaultModel(
-      scope === "project"
-        ? []
-        : loadAgentsFromDirs(
-            [
-              ...extraUserAgentDirs(),
-              ...userConfiguredAgentDirs,
-              userDirOld,
-              ...(userDirNew ? [userDirNew] : []),
-            ],
-            "user",
-            agentDiagnostics,
-          ),
-      defaultModel,
-    ),
-    customUserSettings,
+  // Only installer-managed TLH role files are retained from the user/extra
+  // mechanism. The old profile, legacy global, configured-dir, and project
+  // agent trees are deliberately not consulted here.
+  const canonicalAgents = applyCustomAgentOverrides(
+    applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
+    userSettings,
     projectSettings,
     userSettingsPath,
     projectSettingsPath,
   );
 
-  const projectAgents = applyCustomAgentOverrides(
-    applySubagentDefaultModel(
-      scope === "user"
-        ? []
-        : loadAgentsFromDirs(
-            [...projectConfiguredAgentDirs, ...projectAgentDirs],
-            "project",
-            agentDiagnostics,
-          ),
-      defaultModel,
-    ),
-    customUserSettings,
-    projectSettings,
-    userSettingsPath,
-    projectSettingsPath,
-  );
+  // Embedded package definitions are compatibility data only. They must never
+  // authorize or replace a validated project-root custom definition.
   const packageAgents = applyCustomAgentOverrides(
     applySubagentDefaultModel(
       packageSubagentPaths.agents.flatMap((dir) =>
@@ -1502,12 +1516,19 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
     projectSettings,
     userSettingsPath,
     projectSettingsPath,
+  ).filter(
+    (agent) =>
+      !isEmbeddedRuntimeName(agent.name) &&
+      !canonicalAgents.some((canonical) => canonical.name === agent.name),
   );
+
+  const projectAgents =
+    scope === "user" ? [] : loadProjectCustomAgents(cwd, getAgentDir(), agentDiagnostics);
   const agents = mergeAgentsForScope(
     scope,
-    userAgents,
+    [],
     projectAgents,
-    builtinAgents,
+    canonicalAgents,
     packageAgents,
   ).filter((agent) => agent.disabled !== true);
 
@@ -1532,7 +1553,7 @@ export function discoverAgentsAll(cwd: string): {
   const userDirOld = path.join(getAgentDir(), "agents");
   const userDirNew = getLegacyGlobalAgentsDir();
   const userChainDir = getUserChainDir();
-  const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
+  const { preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
   const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
   const userSettingsPath = getUserAgentSettingsPath();
   const projectSettingsPath = getProjectAgentSettingsPath(cwd);
@@ -1546,27 +1567,10 @@ export function discoverAgentsAll(cwd: string): {
   );
   const packageSubagentPaths = collectPackageSubagentPaths(cwd);
 
-  const builtin: AgentConfig[] = [];
   const agentDiagnostics: AgentDiscoveryDiagnostic[] = [];
-  const userConfiguredAgentDirs = resolveConfiguredAgentDirs(userSettings, getAgentDir());
-  const projectBaseDir = projectSettingsBaseDir(projectSettingsPath);
-  const projectConfiguredAgentDirs = projectBaseDir
-    ? resolveConfiguredAgentDirs(projectSettings, projectBaseDir)
-    : [];
+  const builtin: AgentConfig[] = [];
   const user = applyCustomAgentOverrides(
-    applySubagentDefaultModel(
-      loadAgentsFromDirs(
-        [
-          ...extraUserAgentDirs(),
-          ...userConfiguredAgentDirs,
-          userDirOld,
-          ...(userDirNew ? [userDirNew] : []),
-        ],
-        "user",
-        agentDiagnostics,
-      ),
-      defaultModel,
-    ),
+    applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel),
     userSettings,
     projectSettings,
     userSettingsPath,
@@ -1584,21 +1588,15 @@ export function discoverAgentsAll(cwd: string): {
     projectSettings,
     userSettingsPath,
     projectSettingsPath,
+  ).filter(
+    (agent) =>
+      !isEmbeddedRuntimeName(agent.name) &&
+      !user.some((canonical) => canonical.name === agent.name),
   );
-  const project = applyCustomAgentOverrides(
-    applySubagentDefaultModel(
-      loadAgentsFromDirs(
-        [...projectConfiguredAgentDirs, ...projectDirs],
-        "project",
-        agentDiagnostics,
-      ),
-      defaultModel,
-    ),
-    userSettings,
-    projectSettings,
-    userSettingsPath,
-    projectSettingsPath,
-  );
+  // Project-scoped custom agents are the only project filesystem definitions
+  // retained by the supported TLH runtime. The old .pi/.agents/configured-dir
+  // trees are intentionally not consulted.
+  const project = loadProjectCustomAgents(cwd, getAgentDir(), agentDiagnostics);
 
   const chains: ChainConfig[] = [];
   const chainDiagnostics: ChainDiscoveryDiagnostic[] = [];

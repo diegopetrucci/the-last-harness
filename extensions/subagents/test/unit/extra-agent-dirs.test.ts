@@ -55,25 +55,30 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("discovers agents from the env-provided dirs as a 'user' source", () => {
+  it("ignores env-provided generic agents while retaining canonical packaged TLH roles", () => {
     const bundledDir = path.join(tempDir, "store", "agents");
-    const bundledAgent = writeAgent(bundledDir, "bundled-reviewer");
+    writeAgent(bundledDir, "bundled-reviewer");
     process.env[EXTRA_AGENT_DIRS_ENV] = bundledDir;
+    const canonical = writeAgent(path.join(agentDir, "tlh", "agents", "subagents"), "developer");
 
     const scoped = discoverAgents(cwd, "user");
-    const found = scoped.agents.find((agent) => agent.name === "bundled-reviewer");
-    assert.ok(found, "expected bundled agent under 'user' scope");
-    assert.equal(found?.filePath, bundledAgent);
+    assert.equal(
+      scoped.agents.find((agent) => agent.name === "bundled-reviewer"),
+      undefined,
+    );
+    const found = scoped.agents.find((agent) => agent.name === "developer");
+    assert.ok(found);
+    assert.equal(found?.filePath, canonical);
 
     const all = discoverAgentsAll(cwd);
-    assert.ok(
-      all.user.find(
-        (agent) => agent.name === "bundled-reviewer" && agent.filePath === bundledAgent,
-      ),
+    assert.equal(
+      all.user.find((agent) => agent.name === "bundled-reviewer"),
+      undefined,
     );
+    assert.ok(all.user.find((agent) => agent.name === "developer"));
   });
 
-  it("scans every directory listed (PATH-style delimiter)", () => {
+  it("ignores every directory listed in the legacy extra-agent PATH", () => {
     const dirA = path.join(tempDir, "store-a");
     const dirB = path.join(tempDir, "store-b");
     writeAgent(dirA, "agent-a");
@@ -81,18 +86,24 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
     process.env[EXTRA_AGENT_DIRS_ENV] = [dirA, dirB].join(path.delimiter);
 
     const all = discoverAgentsAll(cwd);
-    assert.ok(all.user.find((agent) => agent.name === "agent-a"));
-    assert.ok(all.user.find((agent) => agent.name === "agent-b"));
+    assert.equal(
+      all.user.find((agent) => agent.name === "agent-a"),
+      undefined,
+    );
+    assert.equal(
+      all.user.find((agent) => agent.name === "agent-b"),
+      undefined,
+    );
   });
 
-  it("lets configured and local user agents override env-provided dirs by precedence", () => {
+  it("ignores configured and local user agent directories after the hard cutover", () => {
     const bundledDir = path.join(tempDir, "store", "agents");
     const configuredDir = path.join(agentDir, "configured", "agents");
     writeAgent(bundledDir, "shared");
     writeAgent(bundledDir, "configured-wins");
     const configuredShared = writeAgent(configuredDir, "shared");
     const configuredOnly = writeAgent(configuredDir, "configured-wins");
-    const localPath = writeAgent(path.join(agentDir, "agents"), "shared");
+    writeAgent(path.join(agentDir, "agents"), "shared");
     writeJson(path.join(agentDir, "settings.json"), {
       subagents: {
         agentDirs: ["configured/agents"],
@@ -101,29 +112,31 @@ describe("PI_SUBAGENT_EXTRA_AGENT_DIRS discovery", () => {
     process.env[EXTRA_AGENT_DIRS_ENV] = bundledDir;
 
     const scoped = discoverAgents(cwd, "user");
-    const matches = scoped.agents.filter((agent) => agent.name === "shared");
-    assert.equal(matches.length, 1, "name collisions must dedupe");
     assert.equal(
-      matches[0]?.filePath,
-      localPath,
-      "local user agent should win over configured and bundled dirs",
+      scoped.agents.find((agent) => agent.name === "shared"),
+      undefined,
     );
     assert.equal(
-      scoped.agents.find((agent) => agent.name === "configured-wins")?.filePath,
-      configuredOnly,
-      "configured dirs should win over bundled dirs when no local override exists",
+      scoped.agents.find((agent) => agent.name === "configured-wins"),
+      undefined,
     );
 
     const all = discoverAgentsAll(cwd);
-    assert.equal(all.user.find((agent) => agent.name === "shared")?.filePath, localPath);
     assert.equal(
-      all.user.find((agent) => agent.name === "configured-wins")?.filePath,
-      configuredOnly,
+      all.user.find((agent) => agent.name === "shared"),
+      undefined,
+    );
+    assert.equal(
+      all.user.find((agent) => agent.name === "configured-wins"),
+      undefined,
     );
     assert.equal(
       all.user.some((agent) => agent.filePath === configuredShared),
       false,
-      "configured duplicates should be hidden by the higher-precedence local agent",
+    );
+    assert.equal(
+      all.user.some((agent) => agent.filePath === configuredOnly),
+      false,
     );
   });
 

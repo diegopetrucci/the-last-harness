@@ -49,7 +49,7 @@ function makeFixture(options: { git?: boolean } = {}): Fixture {
 }
 
 function writeGuidance(directory: string, role: string, content: string): string {
-  const guidanceDirectory = path.join(directory, ".tlh");
+  const guidanceDirectory = path.join(directory, ".tlh", "agents", "builtin");
   fs.mkdirSync(guidanceDirectory, { recursive: true });
   const filename = projectAgentGuidanceFilename(role);
   assert.ok(filename, `expected packaged role filename for ${role}`);
@@ -77,6 +77,21 @@ function writeMinimalGitDirectory(directory: string, head?: string): string {
 function persistTrust(agentDir: string, cwd: string, decision: boolean): void {
   new ProjectTrustStore(agentDir).set(cwd, decision);
 }
+
+const EXPECTED_ROLE_FILENAMES = [
+  ["architect", "ARCHITECT_PROMPT_APPEND.md"],
+  ["rush", "RUSH_PROMPT_APPEND.md"],
+  ["product", "PRODUCT_PROMPT_APPEND.md"],
+  ["bug-hunter", "BUG-HUNTER_PROMPT_APPEND.md"],
+  ["developer", "DEVELOPER_PROMPT_APPEND.md"],
+  ["code-reviewer", "CODE-REVIEWER_PROMPT_APPEND.md"],
+  ["repo-scout", "REPO-SCOUT_PROMPT_APPEND.md"],
+  ["diff-summarizer", "DIFF-SUMMARIZER_PROMPT_APPEND.md"],
+  ["librarian", "LIBRARIAN_PROMPT_APPEND.md"],
+  ["web-scout", "WEB-SCOUT_PROMPT_APPEND.md"],
+  ["oracle", "ORACLE_PROMPT_APPEND.md"],
+  ["contrarian", "CONTRARIAN_PROMPT_APPEND.md"],
+] as const;
 
 describe("project-agent-guidance", () => {
   it("returns non-throwing diagnostics for invalid cwd and agent-directory inputs", () => {
@@ -140,10 +155,13 @@ describe("project-agent-guidance", () => {
       [...PACKAGED_PRIMARY_AGENT_ROLES, ...PACKAGED_MINOR_AGENT_ROLES],
       [...PROJECT_AGENT_GUIDANCE_ROLES],
     );
-    for (const role of PROJECT_AGENT_GUIDANCE_ROLES) {
-      const filename = projectAgentGuidanceFilename(role);
-      assert.equal(filename, `${role.toUpperCase()}.md`);
-      assert.equal(filename?.includes("/"), false);
+    assert.deepEqual(
+      EXPECTED_ROLE_FILENAMES.map(([role]) => role),
+      [...PROJECT_AGENT_GUIDANCE_ROLES],
+    );
+    for (const [role, expectedFilename] of EXPECTED_ROLE_FILENAMES) {
+      assert.equal(projectAgentGuidanceFilename(role), expectedFilename);
+      assert.equal(expectedFilename.includes("/"), false);
     }
     assert.equal(projectAgentGuidanceFilename("embedded.oracle"), undefined);
     assert.equal(projectAgentGuidanceFilename("custom-agent"), undefined);
@@ -151,12 +169,43 @@ describe("project-agent-guidance", () => {
     assert.equal(projectAgentGuidanceFilename(undefined), undefined);
   });
 
+  it("ignores a prompt append placed directly under .tlh", () => {
+    const fixture = makeFixture({ git: false });
+    const guidanceRoot = path.join(fixture.cwd, ".tlh");
+    fs.mkdirSync(guidanceRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(guidanceRoot, "ARCHITECT_PROMPT_APPEND.md"),
+      "legacy location",
+      "utf8",
+    );
+    persistTrust(fixture.agentDir, fixture.cwd, true);
+
+    const inventory = inventoryProjectAgentGuidance(fixture.cwd, fixture.agentDir);
+    assert.equal(inventory.trust, "not-evaluated");
+    assert.deepEqual(inventory.files, []);
+    assert.deepEqual(inventory.diagnostics, []);
+    const result = resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, "architect");
+    assert.equal(result.guidance, undefined);
+    assert.equal(result.sourcePath, undefined);
+  });
+
   it("ignores unknown and embedded filenames, including lowercase role files", () => {
     const fixture = makeFixture();
-    const guidanceDirectory = path.join(fixture.cwd, ".tlh");
+    const guidanceDirectory = path.join(fixture.cwd, ".tlh", "agents", "builtin");
     fs.mkdirSync(guidanceDirectory, { recursive: true });
-    fs.writeFileSync(path.join(guidanceDirectory, "EMBEDDED.ORACLE.md"), "ignore", "utf8");
-    fs.writeFileSync(path.join(guidanceDirectory, "architect.md"), "ignore", "utf8");
+    fs.writeFileSync(path.join(fixture.cwd, ".tlh", "ARCHITECT.md"), "legacy", "utf8");
+    fs.writeFileSync(
+      path.join(guidanceDirectory, "EMBEDDED.ORACLE_PROMPT_APPEND.md"),
+      "ignore",
+      "utf8",
+    );
+    fs.writeFileSync(path.join(guidanceDirectory, "architect_prompt_append.md"), "ignore", "utf8");
+    fs.mkdirSync(path.join(guidanceDirectory, "nested"), { recursive: true });
+    fs.writeFileSync(
+      path.join(guidanceDirectory, "nested", "ARCHITECT_PROMPT_APPEND.md"),
+      "ignore",
+      "utf8",
+    );
     persistTrust(fixture.agentDir, fixture.cwd, true);
 
     const inventory = inventoryProjectAgentGuidance(fixture.cwd, fixture.agentDir);
@@ -561,14 +610,18 @@ describe("project-agent-guidance", () => {
     assert.equal(directoryResult.inventory.files.length, 0);
     assert.equal(directoryResult.inventory.diagnostics.length, 1);
     assert.equal(directoryResult.inventory.diagnostics[0]?.code, "symlink-directory");
-    assert.match(directoryResult.inventory.diagnostics[0]?.message ?? "", /symlink/);
+    assert.equal(
+      directoryResult.inventory.diagnostics[0]?.path,
+      path.join(directoryLink.cwd, ".tlh"),
+    );
+    assert.match(directoryResult.inventory.diagnostics[0]?.message ?? "", /\.tlh.*symlink/);
 
     const fileLink = makeFixture();
-    const target = path.join(fileLink.root, "ARCHITECT.md");
+    const target = path.join(fileLink.root, "ARCHITECT_PROMPT_APPEND.md");
     fs.writeFileSync(target, "outside file", "utf8");
-    const guidanceDirectory = path.join(fileLink.cwd, ".tlh");
+    const guidanceDirectory = path.join(fileLink.cwd, ".tlh", "agents", "builtin");
     fs.mkdirSync(guidanceDirectory, { recursive: true });
-    fs.symlinkSync(target, path.join(guidanceDirectory, "ARCHITECT.md"));
+    fs.symlinkSync(target, path.join(guidanceDirectory, "ARCHITECT_PROMPT_APPEND.md"));
     persistTrust(fileLink.agentDir, fileLink.cwd, true);
     const fileResult = resolveProjectAgentGuidance(fileLink.cwd, fileLink.agentDir, "architect");
     assert.equal(fileResult.guidance, undefined);
@@ -576,6 +629,113 @@ describe("project-agent-guidance", () => {
     assert.equal(fileResult.inventory.diagnostics[0]?.code, "symlink-file");
     assert.match(fileResult.inventory.diagnostics[0]?.message ?? "", /symlink/);
   });
+
+  it(
+    "rejects symlinked agents and builtin intermediate directories",
+    { skip: process.platform === "win32" },
+    () => {
+      for (const intermediate of ["agents", "builtin"] as const) {
+        const fixture = makeFixture();
+        writeGuidance(fixture.cwd, "architect", "must not load");
+        const externalRoot = path.join(fixture.root, `external-${intermediate}`);
+        const externalPath = writeGuidance(externalRoot, "architect", "external guidance");
+        const intermediatePath =
+          intermediate === "agents"
+            ? path.dirname(path.dirname(externalPath))
+            : path.dirname(externalPath);
+        const replacedPath =
+          intermediate === "agents"
+            ? path.join(fixture.cwd, ".tlh", "agents")
+            : path.join(fixture.cwd, ".tlh", "agents", "builtin");
+        fs.rmSync(replacedPath, { recursive: true, force: true });
+        fs.symlinkSync(intermediatePath, replacedPath, "dir");
+        persistTrust(fixture.agentDir, fixture.cwd, true);
+
+        const result = resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, "architect");
+        assert.equal(result.guidance, undefined);
+        assert.equal(result.sourcePath, undefined);
+        assert.deepEqual(result.inventory.files, []);
+        assert.equal(result.inventory.diagnostics.length, 1);
+        assert.equal(result.inventory.diagnostics[0]?.code, "symlink-directory");
+        assert.equal(result.inventory.diagnostics[0]?.path, replacedPath);
+      }
+    },
+  );
+
+  it(
+    "fails closed when each intermediate directory changes identity before open",
+    {
+      skip: typeof fs.constants.O_NOFOLLOW !== "number" || fs.constants.O_NOFOLLOW === 0,
+    },
+    () => {
+      for (const component of [".tlh", "agents", "builtin"] as const) {
+        const fixture = makeFixture({ git: false });
+        const guidancePath = writeGuidance(fixture.cwd, "architect", "original guidance");
+        const externalRoot = path.join(
+          fixture.root,
+          `external-${component === ".tlh" ? "tlh" : component}`,
+        );
+        writeGuidance(externalRoot, "architect", "external guidance");
+        const componentPath =
+          component === ".tlh"
+            ? path.join(fixture.cwd, ".tlh")
+            : component === "agents"
+              ? path.join(fixture.cwd, ".tlh", "agents")
+              : path.join(fixture.cwd, ".tlh", "agents", "builtin");
+        const externalComponentPath =
+          component === ".tlh"
+            ? path.join(externalRoot, ".tlh")
+            : component === "agents"
+              ? path.join(externalRoot, ".tlh", "agents")
+              : path.join(externalRoot, ".tlh", "agents", "builtin");
+        const displacedPath = path.join(
+          fixture.root,
+          `original-${component === ".tlh" ? "tlh" : component}`,
+        );
+        persistTrust(fixture.agentDir, fixture.cwd, true);
+
+        const mutableFs = fsDefault as typeof fsDefault & {
+          openSync: typeof fsDefault.openSync;
+        };
+        const originalOpenSync = mutableFs.openSync;
+        let swapped = false;
+        mutableFs.openSync = (filePath, flags, mode) => {
+          if (!swapped && String(filePath) === guidancePath) {
+            fs.renameSync(componentPath, displacedPath);
+            fs.renameSync(externalComponentPath, componentPath);
+            swapped = true;
+          }
+          return mode === undefined
+            ? originalOpenSync(filePath, flags)
+            : originalOpenSync(filePath, flags, mode);
+        };
+        syncBuiltinESMExports();
+
+        let result: ReturnType<typeof resolveProjectAgentGuidance>;
+        try {
+          result = resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, "architect");
+        } finally {
+          mutableFs.openSync = originalOpenSync;
+          syncBuiltinESMExports();
+          if (swapped) {
+            fs.renameSync(componentPath, externalComponentPath);
+            fs.renameSync(displacedPath, componentPath);
+          }
+        }
+
+        assert.equal(result.guidance, undefined);
+        assert.equal(result.sourcePath, undefined);
+        assert.equal(result.inventory.files.length, 0);
+        assert.equal(result.inventory.diagnostics.length, 1);
+        assert.equal(result.inventory.diagnostics[0]?.code, "file-read-failed");
+        assert.equal(result.inventory.diagnostics[0]?.path, guidancePath);
+        assert.match(
+          result.inventory.diagnostics[0]?.message ?? "",
+          /directory changed while the file was being opened/,
+        );
+      }
+    },
+  );
 
   it("fails closed when O_NOFOLLOW is unavailable", () => {
     for (const noFollowFlag of [0, undefined]) {
@@ -660,7 +820,7 @@ describe("project-agent-guidance", () => {
   );
 
   it(
-    "fails closed when the .tlh parent changes to a symlink before open",
+    "fails closed when the builtin guidance directory changes to a symlink before open",
     { skip: process.platform === "win32" },
     () => {
       const fixture = makeFixture({ git: false });
@@ -679,7 +839,11 @@ describe("project-agent-guidance", () => {
       mutableFs.openSync = (filePath, flags, mode) => {
         if (!swapped && String(filePath) === guidancePath) {
           fs.renameSync(guidanceDirectory, displacedDirectory);
-          fs.symlinkSync(path.join(externalDirectory, ".tlh"), guidanceDirectory, "dir");
+          fs.symlinkSync(
+            path.join(externalDirectory, ".tlh", "agents", "builtin"),
+            guidanceDirectory,
+            "dir",
+          );
           swapped = true;
         }
         return mode === undefined
@@ -710,12 +874,71 @@ describe("project-agent-guidance", () => {
   );
 
   it(
+    "fails closed when the .tlh or agents directory changes to a symlink before open",
+    { skip: process.platform === "win32" },
+    () => {
+      for (const component of [".tlh", "agents"] as const) {
+        const fixture = makeFixture({ git: false });
+        const guidancePath = writeGuidance(fixture.cwd, "architect", "original guidance");
+        const componentPath =
+          component === ".tlh"
+            ? path.join(fixture.cwd, ".tlh")
+            : path.join(fixture.cwd, ".tlh", "agents");
+        const externalRoot = path.join(fixture.root, `external-${component.slice(1)}`);
+        writeGuidance(externalRoot, "architect", "external guidance");
+        const externalComponentPath =
+          component === ".tlh"
+            ? path.join(externalRoot, ".tlh")
+            : path.join(externalRoot, ".tlh", "agents");
+        const displacedPath = path.join(fixture.root, `original-${component.slice(1)}`);
+        persistTrust(fixture.agentDir, fixture.cwd, true);
+
+        const mutableFs = fsDefault as typeof fsDefault & {
+          openSync: typeof fsDefault.openSync;
+        };
+        const originalOpenSync = mutableFs.openSync;
+        let swapped = false;
+        mutableFs.openSync = (filePath, flags, mode) => {
+          if (!swapped && String(filePath) === guidancePath) {
+            fs.renameSync(componentPath, displacedPath);
+            fs.symlinkSync(externalComponentPath, componentPath, "dir");
+            swapped = true;
+          }
+          return mode === undefined
+            ? originalOpenSync(filePath, flags)
+            : originalOpenSync(filePath, flags, mode);
+        };
+        syncBuiltinESMExports();
+
+        let result: ReturnType<typeof resolveProjectAgentGuidance>;
+        try {
+          result = resolveProjectAgentGuidance(fixture.cwd, fixture.agentDir, "architect");
+        } finally {
+          mutableFs.openSync = originalOpenSync;
+          syncBuiltinESMExports();
+          if (swapped) {
+            fs.unlinkSync(componentPath);
+            fs.renameSync(displacedPath, componentPath);
+          }
+        }
+
+        assert.equal(result.guidance, undefined);
+        assert.equal(result.sourcePath, undefined);
+        assert.equal(result.inventory.files.length, 0);
+        assert.equal(result.inventory.diagnostics.length, 1);
+        assert.equal(result.inventory.diagnostics[0]?.code, "symlink-directory");
+        assert.equal(result.inventory.diagnostics[0]?.path, componentPath);
+      }
+    },
+  );
+
+  it(
     "fails closed when the opened guidance file is replaced before identity checks",
     { skip: process.platform === "win32" },
     () => {
       const fixture = makeFixture({ git: false });
       const guidancePath = writeGuidance(fixture.cwd, "architect", "original guidance");
-      const displacedPath = path.join(fixture.root, "original-ARCHITECT.md");
+      const displacedPath = path.join(fixture.root, "original-ARCHITECT_PROMPT_APPEND.md");
       persistTrust(fixture.agentDir, fixture.cwd, true);
 
       const mutableFs = fsDefault as typeof fsDefault & {
@@ -760,8 +983,8 @@ describe("project-agent-guidance", () => {
 
   it("rejects non-regular and oversized files with actionable diagnostics", () => {
     const nonRegular = makeFixture();
-    const guidanceDirectory = path.join(nonRegular.cwd, ".tlh");
-    fs.mkdirSync(path.join(guidanceDirectory, "ARCHITECT.md"), { recursive: true });
+    const guidanceDirectory = path.join(nonRegular.cwd, ".tlh", "agents", "builtin");
+    fs.mkdirSync(path.join(guidanceDirectory, "ARCHITECT_PROMPT_APPEND.md"), { recursive: true });
     persistTrust(nonRegular.agentDir, nonRegular.cwd, true);
     const nonRegularResult = resolveProjectAgentGuidance(
       nonRegular.cwd,
@@ -785,8 +1008,10 @@ describe("project-agent-guidance", () => {
     assert.match(oversizedResult.inventory.diagnostics[0]?.message ?? "", /64 KiB/);
 
     const invalidNearest = makeFixture();
-    const invalidNearestDirectory = path.join(invalidNearest.cwd, ".tlh");
-    fs.mkdirSync(path.join(invalidNearestDirectory, "ARCHITECT.md"), { recursive: true });
+    const invalidNearestDirectory = path.join(invalidNearest.cwd, ".tlh", "agents", "builtin");
+    fs.mkdirSync(path.join(invalidNearestDirectory, "ARCHITECT_PROMPT_APPEND.md"), {
+      recursive: true,
+    });
     const fartherValidPath = writeGuidance(invalidNearest.repo, "architect", "farther guidance");
     persistTrust(invalidNearest.agentDir, invalidNearest.repo, true);
     const invalidNearestResult = resolveProjectAgentGuidance(
@@ -800,7 +1025,7 @@ describe("project-agent-guidance", () => {
     assert.equal(invalidNearestResult.inventory.diagnostics[0]?.code, "non-regular-file");
     assert.equal(
       invalidNearestResult.inventory.diagnostics[0]?.path,
-      path.join(invalidNearestDirectory, "ARCHITECT.md"),
+      path.join(invalidNearestDirectory, "ARCHITECT_PROMPT_APPEND.md"),
     );
     assert.notEqual(invalidNearestResult.sourcePath, fartherValidPath);
   });

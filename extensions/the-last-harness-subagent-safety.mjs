@@ -119,6 +119,10 @@ export function collectSubagentTargets(input) {
   return [...new Set(targets)];
 }
 
+function hasEmbeddedSubagentTarget(input) {
+  return collectSubagentTargets(input).some((target) => isEmbeddedSubagentTarget(target));
+}
+
 function forceUserAgentScope(input, mode, { allowBoth = false } = {}) {
   const rawScope = input.agentScope;
   if (rawScope !== undefined) {
@@ -133,6 +137,47 @@ function forceUserAgentScope(input, mode, { allowBoth = false } = {}) {
     }
   }
 
+  input.agentScope = "user";
+  return undefined;
+}
+
+function forceProjectAgentScope(input, mode, { allowBoth = false } = {}) {
+  const rawScope = input.agentScope;
+  if (rawScope !== undefined) {
+    if (typeof rawScope !== "string") {
+      return `TLH primary-agent subagent ${mode} calls must use agentScope: "project" or omit agentScope.`;
+    }
+    const agentScope = rawScope.trim();
+    const scopeIsAllowed =
+      !agentScope || agentScope === "project" || (allowBoth && agentScope === "both");
+    if (!scopeIsAllowed) {
+      return `TLH primary-agent subagent ${mode} calls may not use agentScope: "${agentScope}". Project custom agents run only from the validated Git-root project scope.`;
+    }
+  }
+
+  input.agentScope = "project";
+  return undefined;
+}
+
+function forceExecutionAgentScope(input, mode) {
+  return hasEmbeddedSubagentTarget(input)
+    ? forceProjectAgentScope(input, mode)
+    : forceUserAgentScope(input, mode);
+}
+
+function forceResumeAgentScope(input, mode) {
+  const rawScope = input.agentScope;
+  if (rawScope !== undefined) {
+    if (typeof rawScope !== "string") {
+      return `TLH primary-agent subagent ${mode} calls must use agentScope: "user", "project", or omit agentScope.`;
+    }
+    const agentScope = rawScope.trim();
+    if (agentScope && !["user", "project", "both"].includes(agentScope)) {
+      return `TLH primary-agent subagent ${mode} calls may not use agentScope: "${agentScope}". Use "user", "project", "both", or omit it.`;
+    }
+    input.agentScope = agentScope === "project" ? "project" : "user";
+    return undefined;
+  }
   input.agentScope = "user";
   return undefined;
 }
@@ -244,10 +289,13 @@ export function validateSubagentToolInput(input, options = {}) {
       return `TLH primary agents may not use subagent management action '${action}'. Allowed actions: ${SAFE_SUBAGENT_ACTIONS.join(", ")}.`;
     }
     if (action === "list" || action === "get") {
-      return forceUserAgentScope(input, action, { allowBoth: true });
+      return forceProjectAgentScope(input, action, { allowBoth: true });
     }
     if (action === "resume") {
-      const scopeReason = forceUserAgentScope(input, action, { allowBoth: true });
+      // Resume is opaque at the primary boundary. Keep the historical user
+      // default; the executor switches to project scope after it resolves the
+      // persisted target and rebinds a current root custom file.
+      const scopeReason = forceResumeAgentScope(input, action);
       if (scopeReason) {
         return scopeReason;
       }
@@ -263,7 +311,7 @@ export function validateSubagentToolInput(input, options = {}) {
     return undefined;
   }
 
-  const scopeReason = forceUserAgentScope(input, "execution");
+  const scopeReason = forceExecutionAgentScope(input, "execution");
   if (scopeReason) {
     return scopeReason;
   }

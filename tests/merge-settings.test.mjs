@@ -284,11 +284,12 @@ test("merge refuses to mutate normal Pi config paths", () => {
   assert.equal(existsSync(join(homeDir, ".pi")), false);
 });
 
-test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
+// Negative cutover coverage: an old/user-owned `agentDirs` entry is preserved as data, but
+// the installer no longer adds or relies on it for canonical TLH agents.
+test("merge preserves user-owned subagents.agentDirs without adding installer defaults", () => {
   const fixture = tempFixture(
     {
       packages: [],
-      subagents: { agentDirs: ["tlh/agents/subagents"] },
     },
     {
       packages: [harnessPackage],
@@ -299,6 +300,7 @@ test("merge treats normalized subagents.agentDirs paths as duplicates", () => {
   runMerge(fixture);
 
   assert.deepEqual(readJson(fixture.settings).subagents.agentDirs, ["./tlh/agents/subagents/"]);
+  assert.equal(readJson(fixture.defaults).subagents, undefined);
 });
 
 for (const [name, malformedValue] of [
@@ -306,13 +308,10 @@ for (const [name, malformedValue] of [
   ["null", null],
   ["array", ["custom/subagents"]],
 ]) {
-  test(`merge repairs malformed subagents ${name} container with installer defaults`, () => {
+  test(`merge preserves malformed user-owned subagents ${name} container`, () => {
     const fixture = tempFixture(
       {
         packages: [],
-        subagents: {
-          agentDirs: ["tlh/agents/subagents"],
-        },
       },
       {
         packages: [harnessPackage],
@@ -322,9 +321,7 @@ for (const [name, malformedValue] of [
 
     runMerge(fixture);
 
-    assert.deepEqual(readJson(fixture.settings).subagents, {
-      agentDirs: ["tlh/agents/subagents"],
-    });
+    assert.deepEqual(readJson(fixture.settings).subagents, malformedValue);
   });
 }
 
@@ -347,6 +344,8 @@ test("merge only repairs malformed non-installer object containers with --force"
   assert.deepEqual(readJson(fixture.settings).warnings, { anthropicExtraUsage: false });
 });
 
+// `otherAgentDirs` is unrelated user data; this guards the merge contract while the
+// installer-owned `subagents.agentDirs` default remains removed.
 test("merge keeps exact append semantics for unrelated arrays", () => {
   const fixture = tempFixture(
     {
@@ -1595,13 +1594,10 @@ test("merge subagents retirement cleanup is idempotent after first run", () => {
   );
 });
 
-test("merge prune removes subagents.disableBuiltins while preserving sibling subagents keys", () => {
+test("merge prune removes subagents.disableBuiltins while preserving user-owned agentDirs", () => {
   const fixture = tempFixture(
     {
       packages: [],
-      subagents: {
-        agentDirs: ["tlh/agents/subagents"],
-      },
     },
     {
       packages: [harnessPackage],
@@ -1625,8 +1621,8 @@ test("merge prune removes subagents.disableBuiltins while preserving sibling sub
   );
   assert.deepEqual(
     settings.subagents.agentDirs,
-    ["custom/subagents", "tlh/agents/subagents"],
-    "agentDirs must survive",
+    ["custom/subagents"],
+    "user-owned agentDirs must survive without installer additions",
   );
   assert.deepEqual(
     settings.subagents.agentOverrides,
@@ -1639,9 +1635,6 @@ test("merge prune for subagents.disableBuiltins is idempotent on second run", ()
   const fixture = tempFixture(
     {
       packages: [],
-      subagents: {
-        agentDirs: ["tlh/agents/subagents"],
-      },
     },
     {
       packages: [harnessPackage],

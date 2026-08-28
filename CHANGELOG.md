@@ -6,10 +6,19 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Added trusted, append-only per-agent project guidance for packaged TLH roles through exact `.tlh/<ROLE>.md` files. See [Per-agent project guidance](README.md#per-agent-project-guidance) for the supported filenames, trust and reload steps, timing, and safety limits.
+- Added trusted, append-only project prompt appends for all twelve packaged TLH roles through exact `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` files. Nearest-upward worktree discovery, outside-Git cwd-only behavior, persisted trust, snapshots, reload timing, and 64 KiB/symlink safety rules are documented in [Per-agent project guidance](README.md#per-agent-project-guidance).
 - TLH now warns in the footer when no providers are available and points to `/login`.
-- Promoted trusted user-owned custom subagents to a stable, always-available TLH extension point for the architect or disabled primary mode. A valid active-profile `package: embedded` definition authorizes its `embedded.<slug>` runtime name; profile-file validation, user scope, fresh context, explicit-user-request policy, initiation from architect or disabled mode, and the accepted issue #330 limitation remain in force. See [docs/custom-subagents.md](docs/custom-subagents.md).
+- Added stable, always-available project custom embedded subagents at exact direct Git-root files `.tlh/agents/custom/<UPPERCASE-SLUG>.md`. The uppercase filename maps to the required lowercase `name`, while `package: embedded` and a non-empty `description` remain required; persisted project trust, 64 KiB/symlink-safe reads, explicit tool grants (including `bash`, `write`, and `edit`), and rejected `extensions`/`subagentOnlyExtensions` fields are enforced. The parser accepts `defaultContext: fork`, but every project custom execution is forced to fresh context, so it does not produce a forked child. Only `architect` and `disabled` may initiate these fresh project-scope runs. See [Project custom subagents](docs/custom-subagents.md) for the contract, migration, and undo steps.
 - Disabled primary-agent mode now retains TLH's architect-equivalent tools and guarded bundled/trusted-subagent access, and `/review` can dispatch a fresh isolated `code-reviewer`; it still omits the architect persona, automatic primary model/thinking behavior, and architect thinking floor while preserving the current session model and thinking level. See [README.md](README.md), [docs/commands.md](docs/commands.md), and [docs/models.md](docs/models.md).
+
+### Changed
+
+- TLH-primary project custom delegation follows the live OpenRouter session model when the caller omits `model`, overriding a root file's model; other providers keep the root file's model unless the caller explicitly overrides it.
+- TLH no longer installs `subagents.agentDirs` for canonical minor agents. The eight canonical minor roles load from the fixed installer-managed `<agent-dir>/tlh/agents/subagents/` paths; existing user/project `agentDirs` values are preserved by install/update but are inert for TLH role discovery and may be removed manually.
+
+### Removed
+
+- **Breaking:** removed generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides—not merely their ability to authorize `embedded.*`. These definitions no longer appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths. Only the persisted-trust-authorized direct Git-root `.tlh/agents/custom/<UPPERCASE-SLUG>.md` contract can authorize a project custom agent now.
 
 ### Fixed
 

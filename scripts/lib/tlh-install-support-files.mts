@@ -7,8 +7,6 @@ import {
   requiredSupportFiles,
   type SupportFileDescriptor,
 } from "./tlh-install-support-manifest.mjs";
-import { settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts } from "./tlh-install-subagents.mjs";
-
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
 export interface SupportFilesConfig {
@@ -168,11 +166,7 @@ async function prepareSupportFilesFromRemote(
     }
   }
 
-  if (
-    settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-      noSettings: config.noSettings,
-    })
-  ) {
+  {
     const targetDir = join(config.tmpDir, "agents", "subagents");
     mkdirSync(targetDir, { recursive: true });
     for (const prompt of config.subagentPrompts) {

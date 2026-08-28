@@ -1,4 +1,5 @@
 import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 function result(text, isError = false) {
     return {
         content: [{ type: "text", text }],
@@ -29,18 +30,27 @@ function sanitizeName(name) {
 function allAgents(d) {
     return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
+function isSupportedManagementAgent(agent) {
+    return !agent.name.startsWith("embedded.") || Boolean(agent.projectCustomBinding);
+}
 function isSourceVisibleInScope(source, scope) {
     return scope === "both" || source === "builtin" || source === "package" || source === scope;
 }
 function availableNames(cwd) {
-    return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
+    return [
+        ...new Set(allAgents(discoverAgentsAll(cwd))
+            .filter(isSupportedManagementAgent)
+            .map((agent) => agent.name)),
+    ].sort((a, b) => a.localeCompare(b));
 }
 function findAgents(name, cwd, scope = "both") {
     const d = discoverAgentsAll(cwd);
     const raw = name.trim();
     const sanitized = sanitizeName(raw);
     return allAgents(d)
-        .filter((a) => (scope === "both" || a.source === scope) && (a.name === raw || a.name === sanitized))
+        .filter((a) => isSupportedManagementAgent(a) &&
+        (scope === "both" || a.source === scope) &&
+        (a.name === raw || a.name === sanitized))
         .sort((a, b) => a.source.localeCompare(b.source));
 }
 function formatAgentDetail(agent) {
@@ -98,7 +108,12 @@ export function handleList(params, ctx) {
     const scope = normalizeListScope(params.agentScope) ?? "both";
     const d = discoverAgentsAll(ctx.cwd);
     const scopedAgents = allAgents(d)
-        .filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope)
+        .filter((a) => isSupportedManagementAgent(a) &&
+        (scope === "both" ||
+            a.source === "builtin" ||
+            a.source === "package" ||
+            a.source === scope ||
+            (scope === "project" && isCanonicalPackagedMinorAgent(a))))
         .sort((a, b) => a.name.localeCompare(b.name));
     const agents = scopedAgents.filter((a) => !a.disabled);
     const lines = [

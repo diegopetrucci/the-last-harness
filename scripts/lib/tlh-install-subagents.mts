@@ -461,22 +461,6 @@ export function cleanupManagedRetiredSubagentPackages(
   return cleanupResult;
 }
 
-export function settingsRequireTlhSubagentPrompts(
-  defaultsFile: string,
-  { noSettings = false }: { noSettings?: boolean } = {},
-): boolean {
-  if (noSettings || !defaultsFile || !existsSync(defaultsFile)) return false;
-  try {
-    const settings = readJsonFile(defaultsFile);
-    if (!isPlainObject(settings)) return false;
-    const subagents = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-    const agentDirs = subagents?.agentDirs;
-    return Array.isArray(agentDirs) && agentDirs.includes("tlh/agents/subagents");
-  } catch {
-    return false;
-  }
-}
-
 export function defaultExtensionsRequireCriticalInstall(
   defaultExtensionsFile: string,
   { noSettings = false }: { noSettings?: boolean } = {},

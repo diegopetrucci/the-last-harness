@@ -16,6 +16,8 @@ export interface RunnerSubagentStep {
   agent: string;
   /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
+  /** Exact validated project custom-agent file used for this child. */
+  projectCustomBinding?: import("../../../../shared/project-custom-agent.ts").ProjectCustomAgentBinding;
   task: string;
   phase?: string;
   label?: string;

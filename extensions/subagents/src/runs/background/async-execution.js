@@ -22,7 +22,8 @@ import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
-import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
+import { isCanonicalPackagedMinorAgent, resolveValidatedGitWorktreeRoot, } from "../../../../shared/project-agent-guidance.js";
+import { isProjectCustomAgentBinding, isProjectCustomAgentRuntimeName, validateProjectCustomAgentBinding, } from "../../../../shared/project-custom-agent.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -200,6 +201,28 @@ function validateAsyncExecutionAcceptance(params) {
     errors.push(...validateDispatchAcceptanceInput(params.acceptance, "acceptance"));
     return errors;
 }
+function validateAsyncProjectCustomBinding(agentName, binding, parentCwd, childCwd) {
+    if (!isProjectCustomAgentRuntimeName(agentName))
+        return undefined;
+    if (!isProjectCustomAgentBinding(binding)) {
+        return `Project custom agent '${agentName}' has no valid exact-file binding; refusing async execution.`;
+    }
+    if (binding.runtimeName !== agentName) {
+        return `Project custom agent '${agentName}' exact-file binding names a different runtime target.`;
+    }
+    const parentRoot = resolveValidatedGitWorktreeRoot(parentCwd);
+    const childRoot = resolveValidatedGitWorktreeRoot(childCwd);
+    if (!parentRoot || !childRoot || parentRoot !== childRoot) {
+        return `Project custom agent '${agentName}' resolved to cwd '${childCwd}' outside the effective Git root; cwd overrides must remain in one validated Git worktree.`;
+    }
+    if (binding.worktreeRoot !== childRoot) {
+        return `Project custom agent '${agentName}' exact-file binding root '${binding.worktreeRoot}' does not match effective Git root '${childRoot}'.`;
+    }
+    const bindingCheck = validateProjectCustomAgentBinding(binding, childCwd);
+    return bindingCheck.valid
+        ? undefined
+        : `Project custom agent '${agentName}' exact-file binding is invalid: ${bindingCheck.error}`;
+}
 export function buildAsyncRunnerSteps(id, params) {
     const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir, } = params;
     const outputBaseDir = params.outputBaseDir;
@@ -261,6 +284,9 @@ export function buildAsyncRunnerSteps(id, params) {
         if (resolvedToolBudget.error)
             throw new AsyncStartValidationError(resolvedToolBudget.error);
         const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
+        const customBindingError = validateAsyncProjectCustomBinding(s.agent, a.projectCustomBinding, ctx.cwd, stepCwd);
+        if (customBindingError)
+            throw new AsyncStartValidationError(customBindingError);
         const instructionCwd = behaviorCwd ?? stepCwd;
         const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)), s.task, originalTask);
         const skillNames = behavior.skills === false ? [] : behavior.skills;
@@ -316,6 +342,7 @@ export function buildAsyncRunnerSteps(id, params) {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             agent: s.agent,
             projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
+            ...(a.projectCustomBinding ? { projectCustomBinding: a.projectCustomBinding } : {}),
             task,
             phase: s.phase,
             label: s.label,
@@ -669,6 +696,9 @@ export function executeAsyncSingle(id, params) {
     if (acceptanceErrors.length > 0)
         return formatAsyncStartError("single", acceptanceErrors.join(" "));
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+    const customBindingError = validateAsyncProjectCustomBinding(agent, agentConfig.projectCustomBinding, ctx.cwd, runnerCwd);
+    if (customBindingError)
+        return formatAsyncStartError("single", customBindingError);
     const skillNames = params.skills ?? agentConfig.skills ?? [];
     const availableModels = params.availableModels;
     const thinkingSuffixOptions = {
@@ -795,6 +825,9 @@ export function executeAsyncSingle(id, params) {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
                     agent,
                     projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
+                    ...(agentConfig.projectCustomBinding
+                        ? { projectCustomBinding: agentConfig.projectCustomBinding }
+                        : {}),
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
                     model,

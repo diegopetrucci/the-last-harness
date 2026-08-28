@@ -141,15 +141,17 @@ test("startup resources surface only trusted project-agent guidance sources", as
     cwd: true,
     test: t,
   });
-  const guidancePath = join(fixture.cwd, ".tlh", "ARCHITECT.md");
-  mkdirSync(join(fixture.cwd, ".tlh"), { recursive: true });
+  const guidancePath = join(fixture.cwd, ".tlh", "agents", "builtin", "ARCHITECT_PROMPT_APPEND.md");
+  mkdirSync(join(fixture.cwd, ".tlh", "agents", "builtin"), { recursive: true });
   writeFileSync(guidancePath, "architect project guidance", "utf8");
   writeTrust(fixture.agent, { [realpathSync(fixture.cwd)]: true });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const snapshot = await collectStartupResourceSnapshot(fixture.cwd);
 
-    assert.deepEqual(snapshot.resources.projectGuidance, ["architect: .tlh/ARCHITECT.md"]);
+    assert.deepEqual(snapshot.resources.projectGuidance, [
+      "architect: .tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md",
+    ]);
   });
 });
 
@@ -158,8 +160,8 @@ test("startup resources hide undecided project-agent guidance and retain an acti
     cwd: true,
     test: t,
   });
-  const guidancePath = join(fixture.cwd, ".tlh", "ARCHITECT.md");
-  mkdirSync(join(fixture.cwd, ".tlh"), { recursive: true });
+  const guidancePath = join(fixture.cwd, ".tlh", "agents", "builtin", "ARCHITECT_PROMPT_APPEND.md");
+  mkdirSync(join(fixture.cwd, ".tlh", "agents", "builtin"), { recursive: true });
   writeFileSync(guidancePath, "private project guidance", "utf8");
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {

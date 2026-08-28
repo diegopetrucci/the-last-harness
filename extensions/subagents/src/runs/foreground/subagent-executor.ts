@@ -74,6 +74,15 @@ import { DEFAULT_TURN_BUDGET_GRACE_TURNS } from "../shared/turn-budget.ts";
 import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { resolveTkTicketMetadata, resolveTkTicketTaskContext } from "../shared/tk-ticket.ts";
 import {
+  isProjectCustomAgentBinding,
+  isProjectCustomAgentRuntimeName,
+  sameProjectCustomAgentBinding,
+  takeProjectCustomAgentAuthorization,
+  validateProjectCustomAgentBinding,
+  type ProjectCustomAgentAuthorization,
+} from "../../../../shared/project-custom-agent.ts";
+import { resolveValidatedGitWorktreeRoot } from "../../../../shared/project-agent-guidance.ts";
+import {
   finalizeSingleOutput,
   injectSingleOutputInstruction,
   normalizeSingleOutputOverride,
@@ -271,6 +280,8 @@ interface ExecutionContextData {
   signal: AbortSignal;
   onUpdate?: (r: SubagentToolResult<Details>) => void;
   agents: AgentConfig[];
+  /** Primary-gate exact-file bindings consumed by this execution request. */
+  authorizedProjectCustomAgents?: ProjectCustomAgentAuthorization;
   runId: string;
   shareEnabled: boolean;
   sessionRoot: string;
@@ -338,8 +349,20 @@ function readModelRegistrySnapshot(ctx: ExtensionContext): ModelRegistrySnapshot
   };
 }
 
-function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
-  return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
+function normalizeExecutionCwd(value: unknown, fallback = process.cwd()): string {
+  const raw = typeof value === "string" && value.trim() ? value : fallback;
+  const absolute = path.resolve(fallback, raw);
+  try {
+    return fs.realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
+function resolveRequestedCwd(runtimeCwd: string, requestedCwd: unknown): string {
+  const base = normalizeExecutionCwd(runtimeCwd);
+  if (typeof requestedCwd !== "string" || !requestedCwd.trim()) return base;
+  return normalizeExecutionCwd(path.resolve(base, requestedCwd), base);
 }
 
 function indexedLifecycleContinuation(
@@ -2850,8 +2873,10 @@ async function resumeAsyncRun(input: {
   }
 
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
-  const effectiveCwd = target.cwd ?? input.requestCwd;
-  const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
+  const effectiveCwd = normalizeExecutionCwd(target.cwd ?? input.requestCwd, input.requestCwd);
+  const scope: AgentScope = isProjectCustomAgentRuntimeName(target.agent)
+    ? "project"
+    : resolveExecutionAgentScope(input.params.agentScope);
   const discovered = input.deps.discoverAgents(effectiveCwd, scope);
   const discoveredAgents = discovered.agents;
   const modelScope = discovered.modelScope;
@@ -2868,6 +2893,61 @@ async function resumeAsyncRun(input: {
     ? discoveredAgents.map((agent) => applyIntercomBridgeToAgent(agent, intercomBridge))
     : discoveredAgents;
   const agentConfig = agents.find((agent) => agent.name === target.agent);
+  if (isProjectCustomAgentRuntimeName(target.agent)) {
+    if (!agentConfig?.projectCustomBinding) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Project custom agent '${target.agent}' is no longer available for resume because its exact root-file binding could not be resolved.`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    if (!isProjectCustomAgentBinding(agentConfig.projectCustomBinding)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Project custom agent '${target.agent}' cannot be resumed because its current exact root-file binding is malformed.`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    const effectiveRoot = resolveValidatedGitWorktreeRoot(effectiveCwd);
+    if (!effectiveRoot || agentConfig.projectCustomBinding.worktreeRoot !== effectiveRoot) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Project custom agent '${target.agent}' cannot be resumed because its binding root does not match effective cwd '${effectiveCwd}'.`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    const bindingCheck = validateProjectCustomAgentBinding(
+      agentConfig.projectCustomBinding,
+      effectiveCwd,
+    );
+    if (!bindingCheck.valid) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Project custom agent '${target.agent}' cannot be resumed because its current exact root-file binding is invalid: ${bindingCheck.error}`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+  }
   if (!agentConfig) {
     return {
       content: [
@@ -3424,6 +3504,106 @@ function collectRequestedAgentNames(params: SubagentParamsLike): string[] {
   if (params.agent) names.push(params.agent);
   for (const task of params.tasks ?? []) names.push(task.agent);
   return names;
+}
+
+interface RequestedProjectCustomTarget {
+  target: string;
+  taskIndex?: number;
+  cwd: string;
+}
+
+function collectRequestedProjectCustomTargets(
+  params: SubagentParamsLike,
+  effectiveCwd: string,
+): RequestedProjectCustomTarget[] {
+  const targets: RequestedProjectCustomTarget[] = [];
+  if (params.agent && isProjectCustomAgentRuntimeName(params.agent)) {
+    targets.push({ target: params.agent.trim(), cwd: effectiveCwd });
+  }
+  for (const [taskIndex, task] of (params.tasks ?? []).entries()) {
+    if (!isProjectCustomAgentRuntimeName(task.agent)) continue;
+    targets.push({
+      target: task.agent.trim(),
+      taskIndex,
+      cwd: normalizeExecutionCwd(resolveChildCwd(effectiveCwd, task.cwd), effectiveCwd),
+    });
+  }
+  return targets;
+}
+
+function enforceProjectCustomExecutionPolicy(
+  params: SubagentParamsLike,
+  effectiveCwd: string,
+): { params: SubagentParamsLike; error?: string } {
+  const targets = collectRequestedProjectCustomTargets(params, effectiveCwd);
+  if (targets.length === 0) return { params };
+  if (params.agentScope !== undefined && params.agentScope !== "project") {
+    return {
+      params,
+      error:
+        'Project custom embedded agents require agentScope: "project" so execution remains bound to the validated Git-root file.',
+    };
+  }
+  if (params.context !== undefined && params.context !== "fresh") {
+    return {
+      params,
+      error:
+        'Project custom embedded agents require context: "fresh"; forked context is not supported for this trusted project scope.',
+    };
+  }
+  return { params: { ...params, agentScope: "project", context: "fresh" } };
+}
+
+function validateProjectCustomExecutionBindings(
+  params: SubagentParamsLike,
+  effectiveCwd: string,
+  agents: AgentConfig[],
+  authorization: ProjectCustomAgentAuthorization | undefined,
+): string | undefined {
+  const targets = collectRequestedProjectCustomTargets(params, effectiveCwd);
+  if (targets.length === 0) return undefined;
+  const effectiveRoot = resolveValidatedGitWorktreeRoot(effectiveCwd);
+  if (!effectiveRoot) {
+    return `Project custom embedded agents require a validated Git worktree root for execution cwd '${effectiveCwd}'.`;
+  }
+  const validated = new Set<string>();
+  for (const target of targets) {
+    const targetRoot = resolveValidatedGitWorktreeRoot(target.cwd);
+    if (!targetRoot || targetRoot !== effectiveRoot) {
+      return `Project custom agent '${target.target}' resolved to cwd '${target.cwd}' outside the effective Git root '${effectiveRoot}'; cwd overrides must remain in one validated Git worktree.`;
+    }
+    const config = agents.find((agent) => agent.name === target.target);
+    if (!config?.projectCustomBinding) {
+      return `Project custom agent '${target.target}' is not executable because its selected configuration is not bound to a validated root file.`;
+    }
+    if (!isProjectCustomAgentBinding(config.projectCustomBinding)) {
+      return `Project custom agent '${target.target}' is not executable because its serialized exact-file binding is malformed.`;
+    }
+    if (config.projectCustomBinding.runtimeName !== target.target) {
+      return `Project custom agent '${target.target}' is not executable because its exact-file binding names a different runtime target.`;
+    }
+    if (config.projectCustomBinding.worktreeRoot !== effectiveRoot) {
+      return `Project custom agent '${target.target}' is not executable because its exact-file binding root '${config.projectCustomBinding.worktreeRoot}' does not match effective Git root '${effectiveRoot}'.`;
+    }
+    const authorized = authorization?.bindings.find(
+      (binding) => binding.target === target.target && binding.cwd === target.cwd,
+    );
+    if (
+      authorization &&
+      (!authorized ||
+        !sameProjectCustomAgentBinding(config.projectCustomBinding, authorized.binding))
+    ) {
+      return `Project custom agent '${target.target}' was not executed because its exact canonical file binding changed between authorization and execution.`;
+    }
+    const key = `${config.projectCustomBinding.canonicalPath}:${config.projectCustomBinding.identity.dev}:${config.projectCustomBinding.identity.ino}`;
+    if (validated.has(key)) continue;
+    const current = validateProjectCustomAgentBinding(config.projectCustomBinding, target.cwd);
+    if (!current.valid) {
+      return `Project custom agent '${target.target}' is no longer bound to its authorized file: ${current.error}`;
+    }
+    validated.add(key);
+  }
+  return undefined;
 }
 
 function shouldForkAgent(contextPolicy: AgentDefaultContextPolicy, agentName: string): boolean {
@@ -4971,6 +5151,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     onUpdate: ((r: SubagentToolResult<Details>) => void) | undefined,
     ctx: ExtensionContext,
   ): Promise<SubagentToolResult<Details>> => {
+    ctx = { ...ctx, cwd: normalizeExecutionCwd(ctx.cwd) };
     deps.state.baseCwd = ctx.cwd;
     deps.state.foregroundRuns ??= new Map();
     deps.state.foregroundControls ??= new Map();
@@ -5316,12 +5497,24 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     if (turnBudget.error) return buildRequestedModeError(effectiveParams, turnBudget.error);
     const runToolBudget = resolveToolBudget(effectiveParams.toolBudget, "toolBudget");
     if (runToolBudget.error) return buildRequestedModeError(effectiveParams, runToolBudget.error);
+    let effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
+    const customPolicy = enforceProjectCustomExecutionPolicy(effectiveParams, effectiveCwd);
+    if (customPolicy.error) return buildRequestedModeError(effectiveParams, customPolicy.error);
+    effectiveParams = customPolicy.params;
+    effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
     const scope: AgentScope = resolveExecutionAgentScope(effectiveParams.agentScope);
-    const effectiveCwd = effectiveParams.cwd ?? ctx.cwd;
     const parentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
     deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+    const authorizedProjectCustomAgents = takeProjectCustomAgentAuthorization(_id, params);
     const discovered = deps.discoverAgents(effectiveCwd, scope);
     const discoveredAgents = discovered.agents;
+    const bindingError = validateProjectCustomExecutionBindings(
+      effectiveParams,
+      effectiveCwd,
+      discoveredAgents,
+      authorizedProjectCustomAgents,
+    );
+    if (bindingError) return buildRequestedModeError(effectiveParams, bindingError);
     const modelScope = discovered.modelScope;
     const contextPolicy = resolveAgentDefaultContextPolicy(effectiveParams, discoveredAgents);
     effectiveParams = contextPolicy.params;
@@ -5422,6 +5615,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       signal,
       onUpdate: onUpdateWithContext,
       agents,
+      authorizedProjectCustomAgents,
       runId,
       shareEnabled,
       sessionRoot,

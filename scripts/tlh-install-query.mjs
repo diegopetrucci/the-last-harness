@@ -8,10 +8,7 @@ import {
   packageSourceInstallDir,
 } from "./lib/tlh-install-package-source.mjs";
 import { realpathForCompare } from "./lib/tlh-install-paths.mjs";
-import {
-  defaultExtensionsRequireCriticalInstall,
-  settingsRequireTlhSubagentPrompts,
-} from "./lib/tlh-install-subagents.mjs";
+import { defaultExtensionsRequireCriticalInstall } from "./lib/tlh-install-subagents.mjs";
 
 // Historical stage-0 installers fetched this helper from main.
 // Keep it as a thin compatibility wrapper so stale installers can still query
@@ -23,7 +20,6 @@ Internal installer query helper. Commands:
   critical-git-source-spec --source SOURCE --agent-dir DIR
   package-source-install-dir --source SOURCE --agent-dir DIR
   git-source-install-source --source SOURCE --agent-dir DIR
-  settings-require-subagent-prompts --defaults FILE [--no-settings]
   default-extensions-require-critical-install --defaults FILE [--no-settings]
   normalize-path --path PATH
 `;
@@ -108,14 +104,6 @@ function main(argv = process.argv.slice(2), env = process.env) {
     case "git-source-install-source":
       printLine(gitSourceInstallSource(source, { agentDir }));
       return 0;
-    case "settings-require-subagent-prompts": {
-      const defaults = options.defaults ?? env.TLH_DEFAULTS_FILE ?? "";
-      return settingsRequireTlhSubagentPrompts(defaults, {
-        noSettings: Boolean(options.noSettings),
-      })
-        ? 0
-        : 1;
-    }
     case "default-extensions-require-critical-install": {
       const defaults = options.defaults ?? env.TLH_DEFAULT_EXTENSIONS_FILE ?? "";
       return defaultExtensionsRequireCriticalInstall(defaults, {

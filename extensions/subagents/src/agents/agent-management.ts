@@ -7,6 +7,7 @@ import {
   frontmatterNameForConfig,
 } from "./agents.ts";
 import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 type ManagementAction = "list" | "get";
 type ManagementContext = Pick<ExtensionContext, "cwd"> & { config?: ExtensionConfig };
@@ -59,6 +60,12 @@ function allAgents(d: {
   return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
+function isSupportedManagementAgent(agent: AgentConfig): boolean {
+  // Package data is retained for upstream compatibility, but package/extra
+  // embedded definitions must never appear as a supported TLH custom agent.
+  return !agent.name.startsWith("embedded.") || Boolean(agent.projectCustomBinding);
+}
+
 function isSourceVisibleInScope(
   source: AgentDiscoveryDiagnostic["source"],
   scope: AgentScope,
@@ -67,9 +74,13 @@ function isSourceVisibleInScope(
 }
 
 function availableNames(cwd: string): string[] {
-  return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+  return [
+    ...new Set(
+      allAgents(discoverAgentsAll(cwd))
+        .filter(isSupportedManagementAgent)
+        .map((agent) => agent.name),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
 }
 
 function findAgents(name: string, cwd: string, scope: AgentScope = "both"): AgentConfig[] {
@@ -78,7 +89,10 @@ function findAgents(name: string, cwd: string, scope: AgentScope = "both"): Agen
   const sanitized = sanitizeName(raw);
   return allAgents(d)
     .filter(
-      (a) => (scope === "both" || a.source === scope) && (a.name === raw || a.name === sanitized),
+      (a) =>
+        isSupportedManagementAgent(a) &&
+        (scope === "both" || a.source === scope) &&
+        (a.name === raw || a.name === sanitized),
     )
     .sort((a, b) => a.source.localeCompare(b.source));
 }
@@ -134,7 +148,12 @@ export function handleList(
   const scopedAgents = allAgents(d)
     .filter(
       (a) =>
-        scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope,
+        isSupportedManagementAgent(a) &&
+        (scope === "both" ||
+          a.source === "builtin" ||
+          a.source === "package" ||
+          a.source === scope ||
+          (scope === "project" && isCanonicalPackagedMinorAgent(a))),
     )
     .sort((a, b) => a.name.localeCompare(b.name));
   const agents = scopedAgents.filter((a) => !a.disabled);

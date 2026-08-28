@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import {
   SettingsManager,
   getAgentDir,
@@ -74,9 +72,13 @@ import {
   type ProjectAgentGuidanceInventory,
 } from "../shared/project-agent-guidance.js";
 import {
+  authorizeProjectCustomAgentInput,
+  clearProjectCustomAgentAuthorization,
+  setProjectCustomAgentAuthorization,
+} from "../shared/project-custom-agent.js";
+import {
   buildChildSubagentSystemPrompt,
   buildTlhSystemPrompt,
-  loadAuthorizedEmbeddedSubagentRuntimeNames,
   loadPrimaryAgents,
   loadSubagentMetadata,
 } from "./prompts.js";
@@ -160,7 +162,7 @@ function getTlhSubagentOverrides(cwd: string): ReadonlyMap<string, TlhSubagentOv
   }
   return new Map(
     Object.entries(overrides)
-      .filter(([, value]) => isRecord(value))
+      .filter(([agent, value]) => !isEmbeddedSubagentTarget(agent) && isRecord(value))
       .map(([agent, value]) => [agent, value as TlhSubagentOverride]),
   );
 }
@@ -427,6 +429,34 @@ function capScoutSubagentTimeout(input: unknown): void {
   // The current subagent API exposes only a run-level timeout, so any execution batch containing
   // a capped scout target must cap the whole execution request.
   input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
+}
+
+function injectOpenrouterEmbeddedSessionModel(
+  input: unknown,
+  currentModel: ActiveModel | undefined,
+): void {
+  if (!isRecord(input) || currentModel?.provider !== "openrouter" || !currentModel.id) {
+    return;
+  }
+  const sessionModel = `${currentModel.provider}/${currentModel.id}`;
+  const apply = (target: unknown): void => {
+    if (
+      !isRecord(target) ||
+      typeof target.agent !== "string" ||
+      !isEmbeddedSubagentTarget(target.agent) ||
+      (Object.hasOwn(target, "model") && target.model !== undefined)
+    ) {
+      return;
+    }
+    // OpenRouter primary sessions already choose the model for the current session. Preserve that
+    // live behavior for project custom agents, whose file model must not replace the session model.
+    target.model = sessionModel;
+  };
+
+  apply(input);
+  if (Array.isArray(input.tasks)) {
+    for (const task of input.tasks) apply(task);
+  }
 }
 
 function embeddedDelegationBlockedReason(
@@ -1716,6 +1746,7 @@ function createTlhPrimaryAgentRuntime(
             warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
         },
       );
+      injectOpenrouterEmbeddedSessionModel(event.input, ctx.model);
       capScoutSubagentTimeout(event.input);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
@@ -1748,22 +1779,29 @@ function createTlhPrimaryAgentRuntime(
           isEmbeddedSubagentTarget,
         );
         if (requestedEmbeddedTargets.length > 0) {
-          const authorizedEmbeddedTargets = new Set(
-            loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()),
+          const authorization = authorizeProjectCustomAgentInput(
+            event.input,
+            ctx.cwd,
+            getAgentDir(),
           );
-          const unauthorizedTargets = requestedEmbeddedTargets.filter(
-            (target) => !authorizedEmbeddedTargets.has(target),
-          );
-          if (unauthorizedTargets.length > 0) {
+          if (authorization.error || !authorization.authorization) {
             const authorizationSubject =
               selection === DISABLED_PRIMARY_AGENT
                 ? "TLH primary-agent infrastructure"
                 : "TLH architect";
             return {
               block: true,
-              reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+              reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid trusted file exists at the validated Git root path .tlh/agents/custom/<UPPERCASE-SLUG>.md. Target(s): ${requestedEmbeddedTargets.join(", ")}. ${authorization.error ?? "Authorization failed."}`,
             };
           }
+          // Keep the validated canonical path and file identity in a runtime-owned
+          // binding. The executor consumes this by tool-call id and verifies the
+          // selected AgentConfig before any foreground or async child starts.
+          setProjectCustomAgentAuthorization(
+            event.toolCallId,
+            event.input,
+            authorization.authorization,
+          );
         }
       }
 
@@ -1797,8 +1835,9 @@ function createTlhPrimaryAgentRuntime(
     // the failing attempt's error lives in details.results[*].modelAttempts[*].error.
     // Parsing is from unknown per the TypeScript boundaries skill.
     pi.on("tool_result", (_event, _ctx) => {
-      const event = _event as { toolName?: string; details?: unknown };
+      const event = _event as { toolName?: string; toolCallId?: string; details?: unknown };
       if (event.toolName !== "subagent") return;
+      clearProjectCustomAgentAuthorization(event.toolCallId);
       const authStore = getProviderAuthHealthStore?.();
       if (!authStore) return;
       const prevReauthProviders = new Set(authStore.getReauthProviders());

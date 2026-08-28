@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
@@ -14,7 +13,8 @@ import { beginTlhModelSelectionDefaultSuppression, chooseTlhModelSelectionScope,
 import { isThinkingLevel, setExtensionThinkingLevel, thinkingLevelAtLeast } from "./thinking.js";
 import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
 import { inventoryProjectAgentGuidance, } from "../shared/project-agent-guidance.js";
-import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadAuthorizedEmbeddedSubagentRuntimeNames, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
+import { authorizeProjectCustomAgentInput, clearProjectCustomAgentAuthorization, setProjectCustomAgentAuthorization, } from "../shared/project-custom-agent.js";
+import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents, loadSubagentMetadata, } from "./prompts.js";
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
@@ -40,7 +40,7 @@ function getTlhSubagentOverrides(cwd) {
         return new Map();
     }
     return new Map(Object.entries(overrides)
-        .filter(([, value]) => isRecord(value))
+        .filter(([agent, value]) => !isEmbeddedSubagentTarget(agent) && isRecord(value))
         .map(([agent, value]) => [agent, value]));
 }
 function resolvePrimaryAutoApplySetting(primaryConfig, primary, key) {
@@ -248,6 +248,26 @@ function capScoutSubagentTimeout(input) {
         return;
     }
     input.timeoutMs = SCOUT_RUN_MAX_TIMEOUT_MS;
+}
+function injectOpenrouterEmbeddedSessionModel(input, currentModel) {
+    if (!isRecord(input) || currentModel?.provider !== "openrouter" || !currentModel.id) {
+        return;
+    }
+    const sessionModel = `${currentModel.provider}/${currentModel.id}`;
+    const apply = (target) => {
+        if (!isRecord(target) ||
+            typeof target.agent !== "string" ||
+            !isEmbeddedSubagentTarget(target.agent) ||
+            (Object.hasOwn(target, "model") && target.model !== undefined)) {
+            return;
+        }
+        target.model = sessionModel;
+    };
+    apply(input);
+    if (Array.isArray(input.tasks)) {
+        for (const task of input.tasks)
+            apply(task);
+    }
 }
 function embeddedDelegationBlockedReason(selection, input) {
     if (isOpaqueSubagentManagementActionInput(input)) {
@@ -1042,6 +1062,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 agentOverrides: subagentOverrides,
                 onWarning: ({ agent, message }) => warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
             });
+            injectOpenrouterEmbeddedSessionModel(event.input, ctx.model);
             capScoutSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
             const selection = currentPrimaryAgentSelection();
@@ -1070,17 +1091,17 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             if (allowEmbeddedTargets && !isOpaqueSubagentManagementActionInput(event.input)) {
                 const requestedEmbeddedTargets = collectSubagentCallTargetsMatching(event.input, isEmbeddedSubagentTarget);
                 if (requestedEmbeddedTargets.length > 0) {
-                    const authorizedEmbeddedTargets = new Set(loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()));
-                    const unauthorizedTargets = requestedEmbeddedTargets.filter((target) => !authorizedEmbeddedTargets.has(target));
-                    if (unauthorizedTargets.length > 0) {
+                    const authorization = authorizeProjectCustomAgentInput(event.input, ctx.cwd, getAgentDir());
+                    if (authorization.error || !authorization.authorization) {
                         const authorizationSubject = selection === DISABLED_PRIMARY_AGENT
                             ? "TLH primary-agent infrastructure"
                             : "TLH architect";
                         return {
                             block: true,
-                            reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+                            reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid trusted file exists at the validated Git root path .tlh/agents/custom/<UPPERCASE-SLUG>.md. Target(s): ${requestedEmbeddedTargets.join(", ")}. ${authorization.error ?? "Authorization failed."}`,
                         };
                     }
+                    setProjectCustomAgentAuthorization(event.toolCallId, event.input, authorization.authorization);
                 }
             }
             const authStore = getProviderAuthHealthStore?.();
@@ -1099,6 +1120,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             const event = _event;
             if (event.toolName !== "subagent")
                 return;
+            clearProjectCustomAgentAuthorization(event.toolCallId);
             const authStore = getProviderAuthHealthStore?.();
             if (!authStore)
                 return;

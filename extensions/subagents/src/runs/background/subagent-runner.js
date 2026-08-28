@@ -41,6 +41,8 @@ import { TERMINAL_RUN_STATES, boundSupervisorSummary, finalizeLifecycleContinuat
 import { formatForegroundSupervisorPauseMessage } from "../../shared/foreground-pause.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, mergeContextUsageDiagnostics, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, } from "../../shared/context-diagnostics.js";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.js";
+import { isProjectCustomAgentBinding, validateProjectCustomAgentBinding, isProjectCustomAgentRuntimeName, } from "../../../../shared/project-custom-agent.js";
+import { resolveValidatedGitWorktreeRoot } from "../../../../shared/project-agent-guidance.js";
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE = "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 const ASYNC_INTERRUPT_SIGNAL = process.platform === "win32" ? "SIGBREAK" : "SIGUSR2";
 const DEFAULT_MAX_ASYNC_EVENTS_BYTES = 50 * 1024 * 1024;
@@ -886,6 +888,44 @@ function dispatchThinkingDropped(step, model) {
     return Boolean(step.attemptNotes?.some((note) => note.includes(`model "${model}"`)));
 }
 async function runSingleStep(step, ctx) {
+    if (isProjectCustomAgentRuntimeName(step.agent)) {
+        const binding = step.projectCustomBinding;
+        if (!binding || !isProjectCustomAgentBinding(binding)) {
+            return {
+                agent: step.agent,
+                output: "",
+                exitCode: 1,
+                error: `Project custom agent '${step.agent}' has no valid serialized exact-file binding; refusing to start it.`,
+            };
+        }
+        if (binding.runtimeName !== step.agent) {
+            return {
+                agent: step.agent,
+                output: "",
+                exitCode: 1,
+                error: `Project custom agent '${step.agent}' serialized an exact-file binding for '${binding.runtimeName}'; refusing to start it.`,
+            };
+        }
+        const runnerRoot = resolveValidatedGitWorktreeRoot(ctx.cwd);
+        const stepRoot = resolveValidatedGitWorktreeRoot(step.cwd ?? ctx.cwd);
+        if (!runnerRoot || !stepRoot || runnerRoot !== stepRoot || binding.worktreeRoot !== stepRoot) {
+            return {
+                agent: step.agent,
+                output: "",
+                exitCode: 1,
+                error: `Project custom agent '${step.agent}' exact-file binding root does not match its serialized execution cwd; refusing to start it.`,
+            };
+        }
+        const bindingCheck = validateProjectCustomAgentBinding(binding, step.cwd ?? ctx.cwd);
+        if (!bindingCheck.valid) {
+            return {
+                agent: step.agent,
+                output: "",
+                exitCode: 1,
+                error: `Project custom agent '${step.agent}' exact-file binding was not revalidated before async execution: ${bindingCheck.error}`,
+            };
+        }
+    }
     const segmentStartedAt = ctx.startedAt ?? Date.now();
     const priorActiveRuntimeMs = Math.max(0, step.activeRuntimeMs ?? 0);
     const stepTimeoutController = new AbortController();

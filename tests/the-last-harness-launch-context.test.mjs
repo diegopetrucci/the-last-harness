@@ -163,7 +163,7 @@ test("collapsed launch allocation hides resource names while expanded mode prese
     prompts: ["/review"],
     extensions: ["tools.js"],
     themes: ["night"],
-    projectGuidance: ["architect: .tlh/ARCHITECT.md"],
+    projectGuidance: ["architect: .tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md"],
   };
   const header = createTlhHeader(plainTheme, resources, undefined, {
     launchContextAllocation: createAllocation(),

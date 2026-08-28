@@ -34,9 +34,9 @@ const { estimateTlhLaunchContextAllocation } = await jiti.import(
 );
 
 function writeProjectGuidance(cwd, role, content) {
-  const directory = join(cwd, ".tlh");
+  const directory = join(cwd, ".tlh", "agents", "builtin");
   mkdirSync(directory, { recursive: true });
-  const filePath = join(directory, `${role.toUpperCase()}.md`);
+  const filePath = join(directory, `${role.toUpperCase()}_PROMPT_APPEND.md`);
   writeFileSync(filePath, content, "utf8");
   return filePath;
 }
@@ -242,7 +242,9 @@ test("project guidance stays before packaged final guidance and is counted once 
       finalGuidanceIndex > guidanceIndex,
       "packaged final guidance must remain after project guidance",
     );
-    assert.ok(prompt.systemPrompt.includes("Source: .tlh/ARCHITECT.md"));
+    assert.ok(
+      prompt.systemPrompt.includes("Source: .tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md"),
+    );
     assert.equal(prompt.systemPrompt.includes(sourcePath), false);
 
     const launchPrompt = runtime.buildLaunchSystemPrompt(ctx, "base prompt");
@@ -335,7 +337,11 @@ test("project guidance source labels are worktree-relative and encode controls",
     await applySessionStart(ctx);
 
     const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
-    assert.ok(prompt.systemPrompt.includes("Source: nested\\u000aworkspace/.tlh/ARCHITECT.md"));
+    assert.ok(
+      prompt.systemPrompt.includes(
+        "Source: nested\\u000aworkspace/.tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md",
+      ),
+    );
     assert.equal(prompt.systemPrompt.includes(sourcePath), false);
     assert.equal(prompt.systemPrompt.includes(fixture.home), false);
     assert.equal(prompt.systemPrompt.includes(fixture.agent), false);
@@ -666,7 +672,7 @@ test("disabled primary mode keeps neutral TLH delegation guidance without the ar
       disabledPrompt.systemPrompt,
       /- developer: Implements exactly one approved task at a time\./,
     );
-    assert.match(disabledPrompt.systemPrompt, /Trusted `embedded\.<slug>` subagents/);
+    assert.match(disabledPrompt.systemPrompt, /Trusted `embedded\.<slug>` agents/);
     assert.doesNotMatch(disabledPrompt.systemPrompt, /You are the TLH architect/);
     assert.doesNotMatch(disabledPrompt.systemPrompt, /## TLH Experimental Feature:/);
     assert.doesNotMatch(

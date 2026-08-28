@@ -58,14 +58,6 @@ test("tlh-install-query rejects missing and empty option values consistently", (
       args: ["critical-git-source-spec", "--agent-dir="],
       error: /error: --agent-dir requires a value/,
     },
-    {
-      args: ["settings-require-subagent-prompts", "--defaults"],
-      error: /error: --defaults requires a value/,
-    },
-    {
-      args: ["settings-require-subagent-prompts", "--defaults="],
-      error: /error: --defaults requires a value/,
-    },
     { args: ["normalize-path", "--path"], error: /error: --path requires a value/ },
     { args: ["normalize-path", "--path="], error: /error: --path requires a value/ },
   ];
@@ -102,22 +94,6 @@ test("tlh-install-query CLI options override environment defaults", (t) => {
     spec.stdout.trim(),
     `${join(cliAgentDir, "git", "github.com", "cli", "repo")}\thttps://github.com/cli/repo\tv1.2.3`,
   );
-
-  const defaultsPath = join(root, "defaults.json");
-  const envDefaultsPath = join(root, "env-defaults.json");
-  writeFileSync(
-    defaultsPath,
-    JSON.stringify({ subagents: { agentDirs: ["tlh/agents/subagents"] } }),
-  );
-  writeFileSync(envDefaultsPath, JSON.stringify({ subagents: { agentDirs: ["other"] } }));
-  const booleanResult = runInstallQuery(
-    ["settings-require-subagent-prompts", `--defaults=${defaultsPath}`],
-    {
-      TLH_DEFAULTS_FILE: envDefaultsPath,
-    },
-  );
-  assert.equal(booleanResult.status, 0, booleanResult.stderr);
-  assert.equal(booleanResult.stdout, "");
 });
 
 test("tlh-install-query normalizes existing symlinks and missing descendant paths", (t) => {
@@ -182,42 +158,10 @@ test("tlh-install-query exposes package source compatibility commands without re
 
 test("tlh-install-query boolean commands honor output and exit-status contracts", (t) => {
   const root = tempFixture(t);
-  const settingsTrue = join(root, "settings-true.json");
-  const settingsFalse = join(root, "settings-false.json");
   const extensionsTrue = join(root, "extensions-true.json");
   const extensionsFalse = join(root, "extensions-false.json");
-  writeFileSync(
-    settingsTrue,
-    JSON.stringify({ subagents: { agentDirs: ["tlh/agents/subagents"] } }),
-  );
-  writeFileSync(settingsFalse, JSON.stringify({ subagents: { agentDirs: ["other"] } }));
   writeFileSync(extensionsTrue, JSON.stringify([{ id: "critical", critical: true }]));
   writeFileSync(extensionsFalse, JSON.stringify([{ id: "optional", critical: false }]));
-
-  const subagentsNeeded = runInstallQuery(["settings-require-subagent-prompts"], {
-    TLH_DEFAULTS_FILE: settingsTrue,
-  });
-  assert.equal(subagentsNeeded.status, 0, subagentsNeeded.stderr);
-  assert.equal(subagentsNeeded.stdout, "");
-  assert.equal(subagentsNeeded.stderr, "");
-
-  const subagentsNotNeeded = runInstallQuery([
-    "settings-require-subagent-prompts",
-    "--defaults",
-    settingsFalse,
-  ]);
-  assert.equal(subagentsNotNeeded.status, 1);
-  assert.equal(subagentsNotNeeded.stdout, "");
-  assert.equal(subagentsNotNeeded.stderr, "");
-
-  const subagentsSkipped = runInstallQuery([
-    "settings-require-subagent-prompts",
-    "--defaults",
-    settingsTrue,
-    "--no-settings",
-  ]);
-  assert.equal(subagentsSkipped.status, 1);
-  assert.equal(subagentsSkipped.stdout, "");
 
   const criticalNeeded = runInstallQuery(["default-extensions-require-critical-install"], {
     TLH_DEFAULT_EXTENSIONS_FILE: extensionsTrue,

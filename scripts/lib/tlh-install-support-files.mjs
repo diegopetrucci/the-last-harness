@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installableSupportFiles, requiredSupportFiles, } from "./tlh-install-support-manifest.mjs";
-import { settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts } from "./tlh-install-subagents.mjs";
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 function callLog(config, message, io) {
     if (typeof io.log === "function")
@@ -106,9 +105,7 @@ async function prepareSupportFilesFromRemote(config, io = {}) {
             warnMissingOptionalSupportFile(config, file.variable, file.relativePath, io);
         }
     }
-    if (settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-        noSettings: config.noSettings,
-    })) {
+    {
         const targetDir = join(config.tmpDir, "agents", "subagents");
         mkdirSync(targetDir, { recursive: true });
         for (const prompt of config.subagentPrompts) {

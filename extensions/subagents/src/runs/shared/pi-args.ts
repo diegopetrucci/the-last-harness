@@ -20,7 +20,6 @@ import {
   type ThinkingLevel,
 } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
-
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR =

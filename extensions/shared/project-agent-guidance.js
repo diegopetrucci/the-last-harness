@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir, ProjectTrustStore, } from "@earendil-works/pi-coding-agent";
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
 export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
+const PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY = "agents";
+const PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY = "builtin";
 export const PACKAGED_PRIMARY_AGENT_ROLES = ["architect", "rush", "product", "bug-hunter"];
 export const PACKAGED_MINOR_AGENT_ROLES = [
     "developer",
@@ -19,18 +21,18 @@ export const PROJECT_AGENT_GUIDANCE_ROLES = [
     ...PACKAGED_MINOR_AGENT_ROLES,
 ];
 const ROLE_FILENAMES = {
-    architect: "ARCHITECT.md",
-    rush: "RUSH.md",
-    product: "PRODUCT.md",
-    "bug-hunter": "BUG-HUNTER.md",
-    developer: "DEVELOPER.md",
-    "code-reviewer": "CODE-REVIEWER.md",
-    "repo-scout": "REPO-SCOUT.md",
-    "diff-summarizer": "DIFF-SUMMARIZER.md",
-    librarian: "LIBRARIAN.md",
-    "web-scout": "WEB-SCOUT.md",
-    oracle: "ORACLE.md",
-    contrarian: "CONTRARIAN.md",
+    architect: "ARCHITECT_PROMPT_APPEND.md",
+    rush: "RUSH_PROMPT_APPEND.md",
+    product: "PRODUCT_PROMPT_APPEND.md",
+    "bug-hunter": "BUG-HUNTER_PROMPT_APPEND.md",
+    developer: "DEVELOPER_PROMPT_APPEND.md",
+    "code-reviewer": "CODE-REVIEWER_PROMPT_APPEND.md",
+    "repo-scout": "REPO-SCOUT_PROMPT_APPEND.md",
+    "diff-summarizer": "DIFF-SUMMARIZER_PROMPT_APPEND.md",
+    librarian: "LIBRARIAN_PROMPT_APPEND.md",
+    "web-scout": "WEB-SCOUT_PROMPT_APPEND.md",
+    oracle: "ORACLE_PROMPT_APPEND.md",
+    contrarian: "CONTRARIAN_PROMPT_APPEND.md",
 };
 export const PROJECT_GUIDANCE_OPEN_DELIMITER = "<tlh_project_agent_guidance>";
 export const PROJECT_GUIDANCE_CLOSE_DELIMITER = "</tlh_project_agent_guidance>";
@@ -216,6 +218,22 @@ function findGitWorktree(cwd) {
     }
     return { searchCwd: canonicalCwd, root: canonicalRoot };
 }
+export function resolveValidatedGitWorktreeRoot(cwdInput) {
+    if (typeof cwdInput !== "string" || cwdInput.trim().length === 0)
+        return undefined;
+    let cwd;
+    try {
+        cwd = resolve(cwdInput);
+        if (cwd.includes("\0"))
+            return undefined;
+        cwd = fs.realpathSync(cwd);
+    }
+    catch {
+        return undefined;
+    }
+    const root = findValidatedGitWorktreeRoot(cwd);
+    return root ? strictCanonicalPath(root) : undefined;
+}
 function searchDirectories(cwd, worktreeRoot) {
     if (!worktreeRoot)
         return [cwd];
@@ -232,7 +250,7 @@ function searchDirectories(cwd, worktreeRoot) {
     }
 }
 function checkGuidanceDirectory(directory, diagnostics) {
-    const guidanceDirectory = join(directory, PROJECT_AGENT_GUIDANCE_DIRECTORY);
+    const guidanceRoot = join(directory, PROJECT_AGENT_GUIDANCE_DIRECTORY);
     let parentEntries;
     try {
         parentEntries = fs.readdirSync(directory);
@@ -242,60 +260,156 @@ function checkGuidanceDirectory(directory, diagnostics) {
             return { status: "missing" };
         pushDiagnostic(diagnostics, {
             code: "directory-inspection-failed",
-            message: `Could not inspect project-agent guidance directory '${guidanceDirectory}': ${errorMessage(error)}`,
-            path: guidanceDirectory,
+            message: `Could not inspect project-agent guidance directory '${guidanceRoot}': ${errorMessage(error)}`,
+            path: guidanceRoot,
         });
         return { status: "blocked" };
     }
     if (!parentEntries.includes(PROJECT_AGENT_GUIDANCE_DIRECTORY)) {
         return { status: "missing" };
     }
-    let stat;
+    let tlhStat;
     try {
-        stat = fs.lstatSync(guidanceDirectory);
+        tlhStat = fs.lstatSync(guidanceRoot);
     }
     catch (error) {
         if (isMissingError(error))
             return { status: "missing" };
         pushDiagnostic(diagnostics, {
             code: "directory-inspection-failed",
-            message: `Could not inspect project-agent guidance directory '${guidanceDirectory}': ${errorMessage(error)}`,
-            path: guidanceDirectory,
+            message: `Could not inspect project-agent guidance directory '${guidanceRoot}': ${errorMessage(error)}`,
+            path: guidanceRoot,
         });
         return { status: "blocked" };
     }
-    if (stat.isSymbolicLink()) {
+    if (tlhStat.isSymbolicLink()) {
         pushDiagnostic(diagnostics, {
             code: "symlink-directory",
-            message: `Project-agent guidance directory '${guidanceDirectory}' is a symlink; refusing to inspect it. Use a real '${PROJECT_AGENT_GUIDANCE_DIRECTORY}' directory.`,
-            path: guidanceDirectory,
+            message: `Project-agent guidance directory '${guidanceRoot}' is a symlink; refusing to inspect it. Use a real '.tlh' directory containing 'agents/builtin'.`,
+            path: guidanceRoot,
         });
         return { status: "blocked" };
     }
-    if (!stat.isDirectory()) {
+    if (!tlhStat.isDirectory()) {
         pushDiagnostic(diagnostics, {
             code: "invalid-directory",
-            message: `Project-agent guidance path '${guidanceDirectory}' is not a directory; refusing to inspect it.`,
-            path: guidanceDirectory,
+            message: `Project-agent guidance path '${guidanceRoot}' is not a directory; refusing to inspect it.`,
+            path: guidanceRoot,
         });
         return { status: "blocked" };
     }
-    let guidanceEntries;
+    let tlhEntries;
     try {
-        guidanceEntries = fs.readdirSync(guidanceDirectory);
+        tlhEntries = fs.readdirSync(guidanceRoot);
     }
     catch (error) {
         pushDiagnostic(diagnostics, {
             code: "directory-inspection-failed",
-            message: `Could not inspect project-agent guidance directory '${guidanceDirectory}': ${errorMessage(error)}`,
-            path: guidanceDirectory,
+            message: `Could not inspect project-agent guidance directory '${guidanceRoot}': ${errorMessage(error)}`,
+            path: guidanceRoot,
+        });
+        return { status: "blocked" };
+    }
+    if (!tlhEntries.includes(PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY)) {
+        return { status: "missing" };
+    }
+    const agentsDirectory = join(guidanceRoot, PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY);
+    let agentsStat;
+    try {
+        agentsStat = fs.lstatSync(agentsDirectory);
+    }
+    catch (error) {
+        if (isMissingError(error))
+            return { status: "missing" };
+        pushDiagnostic(diagnostics, {
+            code: "directory-inspection-failed",
+            message: `Could not inspect project-agent guidance directory '${agentsDirectory}': ${errorMessage(error)}`,
+            path: agentsDirectory,
+        });
+        return { status: "blocked" };
+    }
+    if (agentsStat.isSymbolicLink()) {
+        pushDiagnostic(diagnostics, {
+            code: "symlink-directory",
+            message: `Project-agent guidance directory '${agentsDirectory}' is a symlink; refusing to inspect it. Use a real '.tlh/agents' directory.`,
+            path: agentsDirectory,
+        });
+        return { status: "blocked" };
+    }
+    if (!agentsStat.isDirectory()) {
+        pushDiagnostic(diagnostics, {
+            code: "invalid-directory",
+            message: `Project-agent guidance path '${agentsDirectory}' is not a directory; refusing to inspect it.`,
+            path: agentsDirectory,
+        });
+        return { status: "blocked" };
+    }
+    let agentsEntries;
+    try {
+        agentsEntries = fs.readdirSync(agentsDirectory);
+    }
+    catch (error) {
+        pushDiagnostic(diagnostics, {
+            code: "directory-inspection-failed",
+            message: `Could not inspect project-agent guidance directory '${agentsDirectory}': ${errorMessage(error)}`,
+            path: agentsDirectory,
+        });
+        return { status: "blocked" };
+    }
+    if (!agentsEntries.includes(PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY)) {
+        return { status: "missing" };
+    }
+    const builtinDirectory = join(agentsDirectory, PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY);
+    let builtinStat;
+    try {
+        builtinStat = fs.lstatSync(builtinDirectory);
+    }
+    catch (error) {
+        if (isMissingError(error))
+            return { status: "missing" };
+        pushDiagnostic(diagnostics, {
+            code: "directory-inspection-failed",
+            message: `Could not inspect project-agent guidance directory '${builtinDirectory}': ${errorMessage(error)}`,
+            path: builtinDirectory,
+        });
+        return { status: "blocked" };
+    }
+    if (builtinStat.isSymbolicLink()) {
+        pushDiagnostic(diagnostics, {
+            code: "symlink-directory",
+            message: `Project-agent guidance directory '${builtinDirectory}' is a symlink; refusing to inspect it. Use a real '.tlh/agents/builtin' directory.`,
+            path: builtinDirectory,
+        });
+        return { status: "blocked" };
+    }
+    if (!builtinStat.isDirectory()) {
+        pushDiagnostic(diagnostics, {
+            code: "invalid-directory",
+            message: `Project-agent guidance path '${builtinDirectory}' is not a directory; refusing to inspect it.`,
+            path: builtinDirectory,
+        });
+        return { status: "blocked" };
+    }
+    let builtinEntries;
+    try {
+        builtinEntries = fs.readdirSync(builtinDirectory);
+    }
+    catch (error) {
+        pushDiagnostic(diagnostics, {
+            code: "directory-inspection-failed",
+            message: `Could not inspect project-agent guidance directory '${builtinDirectory}': ${errorMessage(error)}`,
+            path: builtinDirectory,
         });
         return { status: "blocked" };
     }
     return {
         status: "valid",
-        entries: new Set(guidanceEntries),
-        identity: fileIdentity(stat),
+        entries: new Set(builtinEntries),
+        identities: {
+            tlh: fileIdentity(tlhStat),
+            agents: fileIdentity(agentsStat),
+            builtin: fileIdentity(builtinStat),
+        },
     };
 }
 function canonicalPathForCompare(value) {
@@ -347,8 +461,8 @@ function scanRoleCandidates(role, directories, diagnostics, directoryChecks) {
             return {};
         if (!directoryCheck.entries?.has(filename))
             continue;
-        const guidanceDirectory = join(directory, PROJECT_AGENT_GUIDANCE_DIRECTORY);
-        const filePath = join(guidanceDirectory, filename);
+        const builtinDirectory = join(directory, PROJECT_AGENT_GUIDANCE_DIRECTORY, PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY, PROJECT_AGENT_GUIDANCE_BUILTIN_DIRECTORY);
+        const filePath = join(builtinDirectory, filename);
         let stat;
         try {
             stat = fs.lstatSync(filePath);
@@ -395,7 +509,7 @@ function scanRoleCandidates(role, directories, diagnostics, directoryChecks) {
             candidate: {
                 role,
                 path: filePath,
-                guidanceDirectoryIdentity: directoryCheck.identity,
+                guidanceDirectoryIdentities: directoryCheck.identities,
             },
         };
     }
@@ -418,34 +532,52 @@ function readGuidanceFileCore(candidate, trustBoundaryPath, diagnostics, noFollo
             return undefined;
         }
         descriptor = fs.openSync(candidate.path, fs.constants.O_RDONLY | noFollow);
-        const guidanceDirectory = dirname(candidate.path);
-        const guidanceDirectoryStat = fs.lstatSync(guidanceDirectory);
-        if (guidanceDirectoryStat.isSymbolicLink()) {
-            pushDiagnostic(diagnostics, {
-                code: "symlink-directory",
-                message: `Project-agent guidance directory '${guidanceDirectory}' became a symlink before the file could be read; refusing to inspect it.`,
-                path: guidanceDirectory,
-                role: candidate.role,
-            });
-            return undefined;
-        }
-        if (!guidanceDirectoryStat.isDirectory()) {
-            pushDiagnostic(diagnostics, {
-                code: "invalid-directory",
-                message: `Project-agent guidance path '${guidanceDirectory}' is no longer a directory; refusing to inspect it.`,
-                path: guidanceDirectory,
-                role: candidate.role,
-            });
-            return undefined;
-        }
-        const currentDirectoryIdentity = fileIdentity(guidanceDirectoryStat);
-        if (!candidate.guidanceDirectoryIdentity || !currentDirectoryIdentity) {
-            addFileReadFailure(diagnostics, candidate, "the .tlh directory identity could not be proven");
-            return undefined;
-        }
-        if (!sameFileIdentity(candidate.guidanceDirectoryIdentity, currentDirectoryIdentity)) {
-            addFileReadFailure(diagnostics, candidate, "the .tlh directory changed while the file was being opened");
-            return undefined;
+        const builtinDirectory = dirname(candidate.path);
+        const agentsDirectory = dirname(builtinDirectory);
+        const tlhDirectory = dirname(agentsDirectory);
+        const expectedDirectoryIdentities = candidate.guidanceDirectoryIdentities;
+        const directoryChecks = [
+            { label: ".tlh", path: tlhDirectory, identity: expectedDirectoryIdentities?.tlh },
+            {
+                label: ".tlh/agents",
+                path: agentsDirectory,
+                identity: expectedDirectoryIdentities?.agents,
+            },
+            {
+                label: ".tlh/agents/builtin",
+                path: builtinDirectory,
+                identity: expectedDirectoryIdentities?.builtin,
+            },
+        ];
+        for (const directoryCheck of directoryChecks) {
+            const stat = fs.lstatSync(directoryCheck.path);
+            if (stat.isSymbolicLink()) {
+                pushDiagnostic(diagnostics, {
+                    code: "symlink-directory",
+                    message: `Project-agent guidance directory '${directoryCheck.path}' became a symlink before the file could be read; refusing to inspect it.`,
+                    path: directoryCheck.path,
+                    role: candidate.role,
+                });
+                return undefined;
+            }
+            if (!stat.isDirectory()) {
+                pushDiagnostic(diagnostics, {
+                    code: "invalid-directory",
+                    message: `Project-agent guidance path '${directoryCheck.path}' is no longer a directory; refusing to inspect it.`,
+                    path: directoryCheck.path,
+                    role: candidate.role,
+                });
+                return undefined;
+            }
+            const currentIdentity = fileIdentity(stat);
+            if (!directoryCheck.identity || !currentIdentity) {
+                addFileReadFailure(diagnostics, candidate, `the ${directoryCheck.label} directory identity could not be proven`);
+                return undefined;
+            }
+            if (!sameFileIdentity(directoryCheck.identity, currentIdentity)) {
+                addFileReadFailure(diagnostics, candidate, `the ${directoryCheck.label} directory changed while the file was being opened`);
+                return undefined;
+            }
         }
         const pathStat = fs.lstatSync(candidate.path);
         if (pathStat.isSymbolicLink()) {
@@ -471,13 +603,20 @@ function readGuidanceFileCore(candidate, trustBoundaryPath, diagnostics, noFollo
             addFileReadFailure(diagnostics, candidate, "the persisted trust boundary could not be strictly canonicalized");
             return undefined;
         }
-        const canonicalGuidanceDirectory = strictCanonicalPath(guidanceDirectory);
+        const canonicalTlhDirectory = strictCanonicalPath(tlhDirectory);
+        const canonicalAgentsDirectory = strictCanonicalPath(agentsDirectory);
+        const canonicalBuiltinDirectory = strictCanonicalPath(builtinDirectory);
         const canonicalCandidatePath = strictCanonicalPath(candidate.path);
-        if (!canonicalGuidanceDirectory || !canonicalCandidatePath) {
-            addFileReadFailure(diagnostics, candidate, "the guidance directory and file could not be strictly canonicalized");
+        if (!canonicalTlhDirectory ||
+            !canonicalAgentsDirectory ||
+            !canonicalBuiltinDirectory ||
+            !canonicalCandidatePath) {
+            addFileReadFailure(diagnostics, candidate, "the guidance directories and file could not be strictly canonicalized");
             return undefined;
         }
-        if (!isCanonicalPathWithin(canonicalTrustBoundary, canonicalGuidanceDirectory) ||
+        if (!isCanonicalPathWithin(canonicalTrustBoundary, canonicalTlhDirectory) ||
+            !isCanonicalPathWithin(canonicalTrustBoundary, canonicalAgentsDirectory) ||
+            !isCanonicalPathWithin(canonicalTrustBoundary, canonicalBuiltinDirectory) ||
             !isCanonicalPathWithin(canonicalTrustBoundary, canonicalCandidatePath)) {
             pushDiagnostic(diagnostics, {
                 code: "source-outside-trusted-subtree",
@@ -487,8 +626,10 @@ function readGuidanceFileCore(candidate, trustBoundaryPath, diagnostics, noFollo
             });
             return undefined;
         }
-        if (dirname(canonicalCandidatePath) !== canonicalGuidanceDirectory) {
-            addFileReadFailure(diagnostics, candidate, "the opened file no longer resolves directly under its validated .tlh directory");
+        if (dirname(canonicalAgentsDirectory) !== canonicalTlhDirectory ||
+            dirname(canonicalBuiltinDirectory) !== canonicalAgentsDirectory ||
+            dirname(canonicalCandidatePath) !== canonicalBuiltinDirectory) {
+            addFileReadFailure(diagnostics, candidate, "the opened file no longer resolves directly under its validated .tlh/agents/builtin directory");
             return undefined;
         }
         const descriptorStat = fs.fstatSync(descriptor);
@@ -640,7 +781,7 @@ function addTrustDiagnostic(inventory) {
         : "no persisted project trust decision was found";
     pushDiagnostic(inventory.diagnostics, {
         code: "project-not-trusted",
-        message: `Project-agent guidance is disabled because ${detail} for '${inventory.cwd}'. Run \`/trust\`, persist the decision, then run \`/reload\` or restart before using files under '${PROJECT_AGENT_GUIDANCE_DIRECTORY}'.`,
+        message: `Project-agent guidance is disabled because ${detail} for '${inventory.cwd}'. Run \`/trust\`, persist the decision, then run \`/reload\` or restart before using files under '${PROJECT_AGENT_GUIDANCE_DIRECTORY}/agents/builtin'.`,
         path: inventory.cwd,
     });
 }

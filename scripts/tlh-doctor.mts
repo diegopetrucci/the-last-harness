@@ -19,7 +19,6 @@ import {
   copyTlhSubagentPrompts,
   missingTlhSubagentPrompts,
   restoreNeededTlhSubagentPrompts,
-  settingsRequireTlhSubagentPrompts,
 } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import {
@@ -364,17 +363,6 @@ function addBundledSubagentCheck(
   packageRoot: string,
   agentDir: string,
 ): void {
-  const packagedDefaultsPath = defaultsPath(packageRoot);
-  if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-    recordCheck(
-      results,
-      "OK",
-      "bundled subagent resources",
-      "packaged defaults do not require copied subagent prompts",
-    );
-    return;
-  }
-
   const sourceDir = join(packageRoot, "agents", "subagents");
   const sourceMissing = missingTlhSubagentPrompts(sourceDir);
   if (sourceMissing.length > 0) {
@@ -851,14 +839,6 @@ function repairSettings(
 }
 
 function repairBundledSubagentPrompts(packageRoot: string, agentDir: string): RepairAction {
-  const packagedDefaultsPath = defaultsPath(packageRoot);
-  if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-    return repairAction(
-      "SKIP",
-      "bundled subagent resources",
-      "packaged defaults do not require copied subagent prompts",
-    );
-  }
   const sourceDir = join(packageRoot, "agents", "subagents");
   const sourceMissing = missingTlhSubagentPrompts(sourceDir);
   if (sourceMissing.length > 0) {

@@ -508,8 +508,12 @@ test("startup surfaces one undecided project-guidance trust notice without expos
     reason: "restore",
     installState: LATEST_STABLE_INSTALL_STATE,
     setupWorkspace(cwd) {
-      mkdirSync(join(cwd, ".tlh"), { recursive: true });
-      writeFileSync(join(cwd, ".tlh", "ARCHITECT.md"), "private architect guidance", "utf8");
+      mkdirSync(join(cwd, ".tlh", "agents", "builtin"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".tlh", "agents", "builtin", "ARCHITECT_PROMPT_APPEND.md"),
+        "private architect guidance",
+        "utf8",
+      );
     },
   });
 

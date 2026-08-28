@@ -245,7 +245,7 @@ function writeProjectGuidance(
 ): string {
   const filename = projectAgentGuidanceFilename(role);
   assert.ok(filename, `expected a packaged project-guidance filename for ${role}`);
-  const directory = path.join(fixture.cwd, ".tlh");
+  const directory = path.join(fixture.cwd, ".tlh", "agents", "builtin");
   fs.mkdirSync(directory, { recursive: true });
   const filePath = path.join(directory, filename);
   fs.writeFileSync(filePath, content, "utf8");
@@ -791,7 +791,7 @@ describe("subagent prompt runtime", () => {
     const snapshot = [
       "## TLH Project Agent Guidance",
       "",
-      "Source: .tlh/DEVELOPER.md",
+      "Source: .tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md",
       "",
       "<tlh_project_agent_guidance>",
       "Runtime guidance.",
@@ -822,7 +822,7 @@ describe("subagent prompt runtime", () => {
     const snapshot = [
       "## TLH Project Agent Guidance",
       "",
-      "Source: .tlh/DEVELOPER.md",
+      "Source: .tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md",
       "",
       "<tlh_project_agent_guidance>",
       "Runtime guidance.",
