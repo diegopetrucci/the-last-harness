@@ -610,4 +610,119 @@ describe("builtin agent overrides", () => {
         error.message.includes("completionGuard"),
     );
   });
+
+  it("preserves omitted, explicit-empty, MCP-only, and named tool policies in overrides", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    writeJson(settingsPath, {
+      subagents: {
+        agentOverrides: {
+          omitted: { model: "mock/omitted" },
+          empty: { tools: [] },
+          mcpOnly: { tools: ["mcp:server/lookup"] },
+          named: { tools: ["read", "mcp:server/lookup"] },
+          cleared: { tools: false },
+          baseNull: { model: "mock/base-null" },
+        },
+      },
+    });
+    writeProjectAgent(
+      tempProject,
+      "omitted",
+      `---
+name: omitted
+description: Omitted tools
+---
+
+Omitted tools.
+`,
+    );
+    writeProjectAgent(
+      tempProject,
+      "empty",
+      `---
+name: empty
+description: Empty tools
+---
+
+Empty tools.
+`,
+    );
+    writeProjectAgent(
+      tempProject,
+      "mcpOnly",
+      `---
+name: mcpOnly
+description: MCP-only tools
+---
+
+MCP-only tools.
+`,
+    );
+    writeProjectAgent(
+      tempProject,
+      "named",
+      `---
+name: named
+description: Named tools
+---
+
+Named tools.
+`,
+    );
+    writeProjectAgent(
+      tempProject,
+      "cleared",
+      `---
+name: cleared
+description: Cleared tools override
+---
+
+Tools should inherit defaults.
+`,
+    );
+    writeProjectAgent(
+      tempProject,
+      "baseNull",
+      `---
+name: baseNull
+description: Explicit empty frontmatter tools
+tools:
+---
+
+Base null tools.
+`,
+    );
+
+    const agents = discoverAgents(tempProject, "both").agents;
+    assert.equal(agents.find((agent) => agent.name === "omitted")?.tools, undefined);
+    assert.equal(agents.find((agent) => agent.name === "empty")?.tools, null);
+    assert.equal(agents.find((agent) => agent.name === "mcpOnly")?.tools, null);
+    assert.deepEqual(agents.find((agent) => agent.name === "named")?.tools, ["read"]);
+    assert.equal(agents.find((agent) => agent.name === "cleared")?.tools, undefined);
+
+    const baseNull = agents.find((agent) => agent.name === "baseNull");
+    assert.ok(baseNull?.override);
+    assert.equal(baseNull.override.base.tools, null);
+  });
+
+  it("rejects malformed override tool values with a boundary error", () => {
+    const settingsPath = path.join(tempHome, ".pi", "agent", "settings.json");
+    writeJson(settingsPath, {
+      subagents: {
+        agentOverrides: {
+          worker: { tools: null },
+        },
+      },
+    });
+
+    assert.throws(
+      () => discoverAgents(tempProject, "both"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(settingsPath) &&
+        error.message.includes("worker") &&
+        error.message.includes("tools") &&
+        error.message.includes("array of strings or false"),
+    );
+  });
 });

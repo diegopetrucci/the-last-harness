@@ -5,7 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 interface MockPiResponse {
   output?: string;
+  /** Raw stdout bytes written without appending a newline. */
+  rawStdout?: string;
   stderr?: string;
+  /** Raw stderr byte chunks, useful for testing split UTF-8 input. */
+  stderrByteChunks?: number[][];
   exitCode?: number;
   delay?: number;
   keepAliveAfterFinalMessageMs?: number;

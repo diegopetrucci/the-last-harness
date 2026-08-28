@@ -16,6 +16,33 @@ export function parseProviderModelReference(model) {
 export function formatProviderModelReference(model) {
     return `${model.provider}/${model.id}`;
 }
+export function listAgentModelDefaultReferences(agent) {
+    const seen = new Set();
+    const references = [];
+    for (const entry of agent?.tlhModelDefaults ?? []) {
+        for (const model of entry.models ?? []) {
+            if (model.provider !== entry.provider) {
+                continue;
+            }
+            const key = formatProviderModelReference(model);
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            references.push(model);
+        }
+    }
+    return references;
+}
+function agentModelsForProvider(agent, provider) {
+    if (!provider) {
+        return [];
+    }
+    return listAgentModelDefaultReferences(agent).filter((model) => model.provider === provider);
+}
+function agentModelsForFamily(agent, family) {
+    return listAgentModelDefaultReferences(agent).filter((model) => family === "openai" ? isOpenaiProvider(model.provider) : isAnthropicProvider(model.provider));
+}
 export function formatResolvedProviderModelReference(model, thinking) {
     if (!thinking || !THINKING_LEVELS.includes(thinking)) {
         return formatProviderModelReference(model);
@@ -113,15 +140,32 @@ function currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
     if (!isOpenaiProvider(currentProvider)) {
         return undefined;
     }
-    const currentProviderCandidate = agent?.tlhOpenaiModels?.find((candidate) => parseProviderModelReference(candidate)?.provider === currentProvider);
-    return availableOpenaiCandidate(availableModels, currentProviderCandidate);
+    const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find((candidate) => candidate.provider === currentProvider);
+    return availableOpenaiCandidate(availableModels, currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined);
 }
 function currentProviderAnthropicCandidate(agent, availableModels, currentProvider) {
     if (!isAnthropicProvider(currentProvider)) {
         return undefined;
     }
-    const currentProviderCandidate = agent?.tlhAnthropicModels?.find((candidate) => parseProviderModelReference(candidate)?.provider === currentProvider);
-    return availableAnthropicCandidate(availableModels, currentProviderCandidate);
+    const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find((candidate) => candidate.provider === currentProvider);
+    return availableAnthropicCandidate(availableModels, currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined);
+}
+function currentProviderCustomCandidate(agent, availableModels, currentProvider) {
+    if (agent?.tlhModelDefaultsSource !== "frontmatter" ||
+        agent?.preferOppositeProvider ||
+        !currentProvider ||
+        isOpenaiProvider(currentProvider) ||
+        isAnthropicProvider(currentProvider) ||
+        isOpenrouterProvider(currentProvider)) {
+        return undefined;
+    }
+    for (const candidate of agentModelsForProvider(agent, currentProvider)) {
+        const model = findAvailableProviderModel(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+            return model;
+        }
+    }
+    return undefined;
 }
 function selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider, currentModel) {
     if (!agent?.preferOppositeProvider) {
@@ -135,11 +179,11 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
                 ? ["anthropic", "openai"]
                 : ["openai", "anthropic"];
         for (const family of families) {
-            const candidates = family === "openai" ? agent.tlhOpenaiModels : agent.tlhAnthropicModels;
-            for (const candidate of candidates ?? []) {
+            const candidates = agentModelsForFamily(agent, family);
+            for (const candidate of candidates) {
                 const model = family === "openai"
-                    ? availableOpenaiCandidate(availableModels, candidate)
-                    : availableAnthropicCandidate(availableModels, candidate);
+                    ? availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate))
+                    : availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
                 if (model) {
                     return model;
                 }
@@ -148,8 +192,8 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
         return undefined;
     }
     if (isAnthropicProvider(currentProvider)) {
-        for (const candidate of agent.tlhOpenaiModels ?? []) {
-            const model = availableCodexCandidate(availableModels, candidate);
+        for (const candidate of agentModelsForFamily(agent, "openai")) {
+            const model = availableCodexCandidate(availableModels, formatProviderModelReference(candidate));
             if (model) {
                 return model;
             }
@@ -157,8 +201,8 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
         return undefined;
     }
     if (isOpenaiProvider(currentProvider)) {
-        for (const candidate of agent.tlhAnthropicModels ?? []) {
-            const model = availableAnthropicCandidate(availableModels, candidate);
+        for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+            const model = availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
             if (model) {
                 return model;
             }
@@ -186,23 +230,27 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     if (!agent) {
         return undefined;
     }
-    const defaultModel = findAvailableProviderModel(availableModels, agent.model);
+    const defaultModel = findAvailableProviderModelReference(availableModels, agent.preferredModel) ??
+        (agent.tlhModelDefaultsSource === "legacy"
+            ? findAvailableProviderModel(availableModels, agent.model)
+            : undefined);
     if (defaultModel) {
         return defaultModel;
     }
     const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
-        currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+        currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+        currentProviderCustomCandidate(agent, availableModels, currentProvider);
     if (currentProviderModel) {
         return currentProviderModel;
     }
-    for (const candidate of agent.tlhOpenaiModels ?? []) {
-        const model = availableOpenaiCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "openai")) {
+        const model = availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
             return model;
         }
     }
-    for (const candidate of agent.tlhAnthropicModels ?? []) {
-        const model = availableAnthropicCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+        const model = availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
             return model;
         }
@@ -218,21 +266,25 @@ function resolveOpenrouterFollowDefaults(agent, availableModels, currentProvider
     if (!followedModel) {
         return undefined;
     }
-    return { model: followedModel, thinking: agent?.tlhOpenrouterThinking };
+    return { model: followedModel, thinking: resolveProviderThinking(agent, "openrouter") };
 }
 export function resolveProviderThinking(agent, provider) {
     if (!agent)
         return undefined;
-    if (isOpenaiProvider(provider) && agent.tlhOpenaiThinking) {
-        return agent.tlhOpenaiThinking;
+    const providerEntry = agent.tlhModelDefaults?.find((entry) => entry.provider === provider);
+    if (providerEntry) {
+        return providerEntry.effort;
     }
-    if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
-        return agent.tlhAnthropicThinking;
+    if (isOpenaiProvider(provider)) {
+        const openaiEntry = agent.tlhModelDefaults?.find((entry) => isOpenaiProvider(entry.provider));
+        if (openaiEntry) {
+            return openaiEntry.effort;
+        }
     }
     if (isOpenrouterProvider(provider)) {
-        return agent.tlhOpenrouterThinking;
+        return undefined;
     }
-    return agent.thinking;
+    return agent.tlhModelDefaultsSource === "legacy" ? agent.thinking : undefined;
 }
 function resolveThinkingForProvider(agent, provider) {
     return resolveProviderThinking(agent, provider);
@@ -495,7 +547,8 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (override === undefined) {
         const defaults = selectProviderAwareAgentDefaults(agent, availableModels, currentProvider, currentModel);
         const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
-        if (!selectedModel || selectedModel === agent?.model) {
+        const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
+        if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
             return 0;
         }
         const thinking = defaults.thinking;
@@ -542,7 +595,10 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
     }
     const selectedModel = formatEffectiveModelAndThinking(resolution.unavailableModel ?? resolution.model, resolution.unavailableModel ? undefined : resolution.thinking);
-    if (!selectedModel || (!resolution.unavailableModel && selectedModel === agent?.model)) {
+    if (!selectedModel ||
+        (!resolution.unavailableModel &&
+            agent?.tlhModelDefaultsSource === "legacy" &&
+            selectedModel === agent?.model)) {
         return 0;
     }
     target.model = selectedModel;

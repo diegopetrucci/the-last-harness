@@ -41,8 +41,11 @@ export interface RunnerSubagentStep {
   modelCandidates?: string[];
   /** Effective context windows keyed by provider-qualified base model ids, without thinking suffixes. */
   contextWindows?: Record<string, number>;
+  /** Notice generated when registry evidence filtered fallback attempts. */
+  modelFallbackFilterNotice?: string;
   modelFallbackNotice?: string;
-  tools?: string[];
+  /** Explicit child tool policy; see AgentConfig.tools for its null-vs-undefined semantics. */
+  tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
   completionGuard?: boolean;

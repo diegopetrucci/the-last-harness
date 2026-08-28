@@ -197,10 +197,6 @@ export function applyIntercomBridgeToAgent(
 ): AgentConfig {
   if (!bridge.active || !bridge.orchestratorTarget) return agent;
 
-  const bridgeTools = ["contact_supervisor"];
-  const tools = agent.tools
-    ? [...agent.tools, ...bridgeTools.filter((tool) => !agent.tools?.includes(tool))]
-    : agent.tools;
   const instruction = bridge.instruction;
   const trimmedPrompt = agent.systemPrompt?.trim() || "";
   const systemPrompt = trimmedPrompt.includes(INTERCOM_BRIDGE_MARKER)
@@ -209,10 +205,9 @@ export function applyIntercomBridgeToAgent(
       ? `${trimmedPrompt}\n\n${instruction}`
       : instruction;
 
-  if (tools === agent.tools && systemPrompt === agent.systemPrompt) return agent;
+  if (systemPrompt === agent.systemPrompt) return agent;
   return {
     ...agent,
-    tools,
     systemPrompt,
   };
 }

@@ -12,8 +12,7 @@ import { formatProviderModelReference, parseProviderModelReference, selectProvid
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
-import { parseFrontmatter } from "./prompts.js";
-import { isThinkingLevel } from "./thinking.js";
+import { normalizeAgentModelDefaults, parseFrontmatter } from "./prompts.js";
 const PUBLIC_PROVIDER_IDS = new Set([
     "amazon-bedrock",
     "ant-ling",
@@ -396,7 +395,7 @@ async function getTlhOsMetadata() {
         return { osName: "unknown", osVersion: "unknown", osArch: architecture };
     }
 }
-export async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
+async function sendTlhTelemetry(envelopes, version, preReadLaunchSettings) {
     if (envelopes.length === 0) {
         return;
     }
@@ -435,44 +434,28 @@ function readSubagentFrontmatterConfig(agentDir, name, providerId, currentModel,
     const content = readText(filePath);
     if (!content)
         return {};
-    const { frontmatter } = parseFrontmatter(content);
-    const splitList = (val) => (val ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+    const { frontmatter, tlhModelDefaults } = parseFrontmatter(content);
+    const normalized = normalizeAgentModelDefaults(frontmatter, tlhModelDefaults);
+    const parseBoolean = (value) => {
+        const normalizedValue = value?.trim().toLowerCase();
+        if (normalizedValue === "true")
+            return true;
+        if (normalizedValue === "false")
+            return false;
+        return undefined;
+    };
     const agentDefaults = {
         name,
-        model: frontmatter.model || undefined,
-        tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
-        tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
-        thinking: frontmatter.thinking && isThinkingLevel(frontmatter.thinking)
-            ? frontmatter.thinking
-            : undefined,
-        tlhOpenaiThinking: frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
-            ? frontmatter.tlhOpenaiThinking
-            : undefined,
-        tlhAnthropicThinking: frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
-            ? frontmatter.tlhAnthropicThinking
-            : undefined,
-        tlhOpenrouterThinking: frontmatter.tlhOpenrouterThinking && isThinkingLevel(frontmatter.tlhOpenrouterThinking)
-            ? frontmatter.tlhOpenrouterThinking
-            : undefined,
-        preferOppositeProvider: frontmatter.preferOppositeProvider?.trim() === "true"
-            ? true
-            : frontmatter.preferOppositeProvider?.trim() === "false"
-                ? false
-                : undefined,
-        preferCurrentOpenaiModel: frontmatter.preferCurrentOpenaiModel?.trim() === "true"
-            ? true
-            : frontmatter.preferCurrentOpenaiModel?.trim() === "false"
-                ? false
-                : undefined,
+        ...normalized,
+        preferOppositeProvider: parseBoolean(frontmatter.preferOppositeProvider),
+        preferCurrentOpenaiModel: parseBoolean(frontmatter.preferCurrentOpenaiModel),
     };
     const result = selectProviderAwareAgentDefaults(agentDefaults, availableModels, providerId, currentModel);
     const thinking = result.thinking;
     const model = result.model
         ? formatProviderModelReference(result.model)
-        : parseProviderModelReference(agentDefaults.model) === undefined
+        : agentDefaults.tlhModelDefaultsSource === "legacy" &&
+            parseProviderModelReference(agentDefaults.model) === undefined
             ? agentDefaults.model
             : undefined;
     return { thinking, model };

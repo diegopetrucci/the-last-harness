@@ -11,6 +11,7 @@ import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-grou
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
@@ -337,12 +338,13 @@ function formatActivityFacts(input) {
     if (input.interruptRequestedAt !== undefined)
         return "pausing…";
     const facts = [];
-    if (input.currentTool && input.currentToolStartedAt !== undefined)
-        facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
-    else if (input.currentTool)
-        facts.push(`tool ${input.currentTool}`);
+    const currentTool = input.currentTool ? safeTerminalText(input.currentTool) : undefined;
+    if (currentTool && input.currentToolStartedAt !== undefined)
+        facts.push(`tool ${currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
+    else if (currentTool)
+        facts.push(`tool ${currentTool}`);
     if (!input.privacySafe && input.currentPath)
-        facts.push(shortenPath(input.currentPath));
+        facts.push(safeTerminalText(shortenPath(input.currentPath)));
     if (input.turnCount !== undefined)
         facts.push(`${input.turnCount} turns`);
     if (input.turnBudgetExceeded && input.turnBudget)
@@ -361,20 +363,23 @@ function formatActivityFacts(input) {
     return activity || facts.length ? [activity, ...facts].filter(Boolean).join(" | ") : undefined;
 }
 function formatStepLine(step, privacySafe = false) {
-    const display = step.label ? `${step.label} (${step.agent})` : step.agent;
-    const phase = step.phase ? `[${step.phase}] ` : "";
+    const agent = safeTerminalText(step.agent);
+    const display = step.label ? `${safeTerminalText(step.label)} (${agent})` : agent;
+    const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
     const parts = [
         `${step.index + 1}. ${phase}${display}`,
-        step.interruptRequestedAt !== undefined && step.status === "running" ? "pausing" : step.status,
+        step.interruptRequestedAt !== undefined && step.status === "running"
+            ? "pausing"
+            : safeTerminalText(step.status),
     ];
     const activity = formatActivityFacts({ ...step, privacySafe });
     if (activity)
         parts.push(activity);
-    const modelThinking = formatModelThinking(step.model, step.thinking);
+    const modelThinking = safeTerminalText(formatModelThinking(step.model, step.thinking));
     if (modelThinking)
         parts.push(modelThinking);
     if (step.modelResolution?.reason)
-        parts.push(`model decision: ${step.modelResolution.reason}`);
+        parts.push(`model decision: ${safeTerminalText(step.modelResolution.reason)}`);
     if (step.durationMs !== undefined)
         parts.push(formatDuration(step.durationMs));
     if (step.tokens)
@@ -428,23 +433,25 @@ export function formatAsyncRunProgressLabel(run) {
 }
 function formatRunHeader(run) {
     const privacySafe = isProtectedPausedLifecycle(run);
-    const stepLabel = formatAsyncRunProgressLabel(run);
+    const stepLabel = safeTerminalText(formatAsyncRunProgressLabel(run));
     const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
     const activity = formatActivityFacts({ ...run, privacySafe });
+    const runId = safeTerminalText(run.id);
+    const mode = safeTerminalText(run.mode);
     const pending = run.pendingAppends
         ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
         : "";
     const lifecycleState = run.state === "pausing" || (run.interruptRequestedAt !== undefined && run.state === "running")
         ? "pausing"
-        : run.state;
+        : safeTerminalText(run.state);
     return privacySafe
-        ? `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending}`
-        : `${run.id} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${run.mode} | ${stepLabel}${pending} | ${cwd}`;
+        ? `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending}`
+        : `${runId} | ${lifecycleState}${activity ? ` | ${activity}` : ""} | ${mode} | ${stepLabel}${pending} | ${safeTerminalText(cwd)}`;
 }
 export function formatAsyncRunList(runs, heading = "Active async runs") {
     if (runs.length === 0)
-        return `No ${heading.toLowerCase()}.`;
-    const lines = [`${heading}: ${runs.length}`, ""];
+        return `No ${safeTerminalText(heading.toLowerCase())}.`;
+    const lines = [`${safeTerminalText(heading)}: ${runs.length}`, ""];
     for (const run of runs) {
         const privacySafe = isProtectedPausedLifecycle(run);
         lines.push(`- ${formatRunHeader(run)}`);
@@ -464,15 +471,15 @@ export function formatAsyncRunList(runs, heading = "Active async runs") {
             redactSensitiveDetails: privacySafe,
         }));
         if (run.error)
-            lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : run.error}`);
+            lines.push(`  Error: ${privacySafe ? protectedLifecycleText("error") : safeTerminalText(run.error)}`);
         for (const warning of run.nestedWarnings ?? [])
-            lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : warning}`);
+            lines.push(`  Warning: ${privacySafe ? protectedLifecycleText("nested_warning") : safeTerminalText(warning)}`);
         const outputPath = formatAsyncRunOutputPath(run);
         if (!privacySafe && outputPath)
-            lines.push(`  output: ${shortenPath(outputPath)}`);
+            lines.push(`  output: ${safeTerminalText(shortenPath(outputPath))}`);
         if (!privacySafe && run.sessionFile)
-            lines.push(`  session: ${shortenPath(run.sessionFile)}`);
+            lines.push(`  session: ${safeTerminalText(shortenPath(run.sessionFile))}`);
         lines.push("");
     }
-    return lines.join("\n").trimEnd();
+    return safeTerminalDocument(lines.join("\n").trimEnd());
 }

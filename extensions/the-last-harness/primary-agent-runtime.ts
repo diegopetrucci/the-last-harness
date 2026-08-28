@@ -26,7 +26,6 @@ import {
   allowedSubagentsForExperimentalConfig,
   collectSubagentTargets,
   isEmbeddedSubagentTarget,
-  isExperimentalFeatureEnabled,
   registerTlhStartupMode,
   validateSubagentToolInput,
 } from "../the-last-harness-subagent-safety.mjs";
@@ -42,14 +41,12 @@ import {
   TLH_NAME,
   TLH_PACKAGE_NAME,
 } from "./constants.js";
-import {
-  EMBEDDED_SUBAGENTS_FEATURE,
-  buildChildExperimentalPrompt,
-  buildPrimaryExperimentalPrompt,
-} from "./experimental.js";
+import { buildChildExperimentalPrompt, buildPrimaryExperimentalPrompt } from "./experimental.js";
 import { shouldAppendGnosisPrompt } from "./gnosis.js";
 import {
   applyProviderAwareSubagentModels,
+  formatProviderModelReference,
+  listAgentModelDefaultReferences,
   parseProviderModelReference,
   resolveProviderThinking,
   selectProviderAwareAgentDefaults,
@@ -89,7 +86,6 @@ import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-s
 import type {
   AgentPrompt,
   SubagentMetadata,
-  TlhExperimentalConfig,
   TlhPrimaryAgentConfig,
   TlhPrimaryAgentSelection,
   TlhPrimaryAgentSessionState,
@@ -136,6 +132,13 @@ export type TlhPrimaryAgentRuntime = {
     agentName: string,
   ): Promise<TlhPrimaryAgentWriteResult | undefined>;
 };
+
+const EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE =
+  "Extension runtime not initialized. Action methods cannot be called during extension loading.";
+
+function isExtensionRuntimeNotInitializedError(error: unknown): boolean {
+  return error instanceof Error && error.message === EXTENSION_RUNTIME_NOT_INITIALIZED_MESSAGE;
+}
 
 function getTlhGlobalSettings(cwd: string): TlhSettings {
   try {
@@ -441,10 +444,10 @@ function embeddedDelegationBlockedReason(
     return "TLH Rush may not delegate to embedded subagents. Rush must edit directly; use code-reviewer, repo-scout, diff-summarizer, librarian, or oracle only when Rush prompt rules allow it.";
   }
   if (selection === "product") {
-    return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+    return "TLH Product may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
   }
   if (selection === "bug-hunter") {
-    return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is reserved for the architect primary agent.";
+    return "TLH Bug-Hunter may not delegate to embedded subagents. Embedded subagent delegation is available only while architect or disabled mode is active.";
   }
   return undefined;
 }
@@ -645,7 +648,6 @@ function createTlhPrimaryAgentRuntime(
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
-  let sessionExperimentalSnapshot: TlhExperimentalConfig | undefined;
   let sessionProjectAgentGuidanceSnapshot: ProjectAgentGuidanceInventory | undefined;
 
   // Per-provider throttle for credential preflights.
@@ -894,17 +896,15 @@ function createTlhPrimaryAgentRuntime(
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
-      // Embedded-subagent guidance and project-agent guidance use once-per-session snapshots so
-      // they remain stable until /reload or a new session, while role changes select the matching
-      // entry from the same snapshot.
+      // Project-agent guidance uses a once-per-session snapshot so it remains stable until /reload
+      // or a new session, while role changes select the matching entry from the same snapshot.
       buildTlhSystemPrompt(
         primary,
         subagentMetadata,
         primaryEnabled,
-        sessionExperimentalSnapshot,
         sessionProjectAgentGuidanceSnapshot,
       ),
-      // Other experimental guidance reads settings fresh to preserve its existing mid-session behavior.
+      // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
       buildTlhCommitAttributionPrompt(commitAttributionState),
     ];
@@ -981,7 +981,7 @@ function createTlhPrimaryAgentRuntime(
 
   function getValidPrimaryTools(
     ctx: ExtensionContext,
-    primary: AgentPrompt,
+    primary: AgentPrompt | undefined,
     warnOnMissing = true,
   ): string[] {
     const desiredTools = primaryToolAllowlist(primary);
@@ -991,7 +991,7 @@ function createTlhPrimaryAgentRuntime(
     if (warnOnMissing && missingTools.length > 0) {
       warnOnce(
         ctx,
-        `missing-primary-tools-${primary.name}`,
+        `missing-primary-tools-${primary?.name ?? DISABLED_PRIMARY_AGENT}`,
         `TLH primary agent tools are not available yet: ${missingTools.join(", ")}`,
       );
     }
@@ -1000,7 +1000,7 @@ function createTlhPrimaryAgentRuntime(
 
   function applyPrimaryTools(
     ctx: ExtensionContext,
-    primary: AgentPrompt,
+    primary: AgentPrompt | undefined,
     warnOnMissing = true,
   ): void {
     const validTools = getValidPrimaryTools(ctx, primary, warnOnMissing);
@@ -1038,9 +1038,12 @@ function createTlhPrimaryAgentRuntime(
     model: ActiveModel | undefined,
   ): Promise<ActiveModel | undefined> {
     if (!model) {
-      const candidates = [primary.model, ...(primary.tlhOpenaiModels ?? [])]
-        .filter(Boolean)
-        .join(", ");
+      const candidateValues = [
+        primary.preferredModel ? formatProviderModelReference(primary.preferredModel) : undefined,
+        ...(primary.tlhModelDefaultsSource === "legacy" ? [primary.model] : []),
+        ...listAgentModelDefaultReferences(primary).map(formatProviderModelReference),
+      ].filter((candidate): candidate is string => Boolean(candidate));
+      const candidates = [...new Set(candidateValues)].join(", ");
       warnOnce(
         ctx,
         `missing-primary-model-${primary.name}`,
@@ -1153,7 +1156,19 @@ function createTlhPrimaryAgentRuntime(
     const { warnOnMissing = true } = options;
     const selection = currentPrimaryAgentSelection();
     if (!isEnabledPrimaryAgentSelection(selection)) {
-      restorePrimaryToolsIfAppropriate();
+      // Disabled mode keeps the architect capability surface (tools only) while
+      // omitting the architect persona and all of its model/thinking defaults.
+      try {
+        applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
+      } catch (error) {
+        // Resource-loader lifecycle smoke tests can invoke disabled session
+        // handlers before the action runtime is bound. Retry on the next
+        // lifecycle hook instead of failing the session; real runtime errors
+        // must still surface.
+        if (!isExtensionRuntimeNotInitializedError(error)) {
+          throw error;
+        }
+      }
       return;
     }
 
@@ -1451,7 +1466,6 @@ function createTlhPrimaryAgentRuntime(
     setTlhModelSelectionActiveModelResolver(() => ctx.model);
     updateSessionOnlyModel(undefined);
     activateTlhTicketSessionScope(ctx.cwd);
-    sessionExperimentalSnapshot = getTlhGlobalSettings(ctx.cwd).tlh?.experimental;
     sessionProjectAgentGuidanceSnapshot = inventoryProjectAgentGuidance(ctx.cwd, getAgentDir());
     notifyUndecidedProjectAgentGuidance(ctx, sessionProjectAgentGuidanceSnapshot);
     syncPrimaryAgentState(ctx);
@@ -1705,16 +1719,7 @@ function createTlhPrimaryAgentRuntime(
       capScoutSubagentTimeout(event.input);
       syncPrimaryAgentState(ctx);
       const selection = currentPrimaryAgentSelection();
-      const allowedSubagents = allowedSubagentsForExperimentalConfig(
-        getTlhGlobalSettings(ctx.cwd).tlh?.experimental,
-      );
-      if (!isEnabledPrimaryAgentSelection(selection)) {
-        if (!isSubagentResumeAction(event.input)) {
-          return undefined;
-        }
-        const disabledReason = validateSubagentToolInput(event.input, { allowedSubagents });
-        return disabledReason ? { block: true, reason: disabledReason } : undefined;
-      }
+      const allowedSubagents = allowedSubagentsForExperimentalConfig();
       if (selection === "rush" && isSubagentResumeAction(event.input)) {
         return { block: true, reason: rushResumeDelegationReason() };
       }
@@ -1724,17 +1729,12 @@ function createTlhPrimaryAgentRuntime(
       if (selection === "rush" && subagentCallTargetsAgent(event.input, "developer")) {
         return { block: true, reason: rushDeveloperDelegationReason() };
       }
-      const embeddedFeatureEnabled = isExperimentalFeatureEnabled(
-        sessionExperimentalSnapshot,
-        EMBEDDED_SUBAGENTS_FEATURE,
-      );
-      if (embeddedFeatureEnabled) {
-        const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
-        if (embeddedBlockReason) {
-          return { block: true, reason: embeddedBlockReason };
-        }
+      const embeddedBlockReason = embeddedDelegationBlockedReason(selection, event.input);
+      if (embeddedBlockReason) {
+        return { block: true, reason: embeddedBlockReason };
       }
-      const allowEmbeddedTargets = embeddedFeatureEnabled && selection === "architect";
+      const allowEmbeddedTargets =
+        selection === "architect" || selection === DISABLED_PRIMARY_AGENT;
       const reason = validateSubagentToolInput(event.input, {
         allowedSubagents,
         allowEmbeddedTargets,
@@ -1755,9 +1755,13 @@ function createTlhPrimaryAgentRuntime(
             (target) => !authorizedEmbeddedTargets.has(target),
           );
           if (unauthorizedTargets.length > 0) {
+            const authorizationSubject =
+              selection === DISABLED_PRIMARY_AGENT
+                ? "TLH primary-agent infrastructure"
+                : "TLH architect";
             return {
               block: true,
-              reason: `TLH architect may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
+              reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
             };
           }
         }

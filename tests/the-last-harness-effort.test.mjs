@@ -127,10 +127,21 @@ function rushPrimary() {
   return {
     name: "rush",
     description: "Rush primary",
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-    thinking: "low",
-    tlhOpenaiThinking: "medium",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+        effort: "medium",
+      },
+      { provider: "openrouter", effort: "low" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
     preferCurrentOpenaiModel: true,
     lockThinking: true,
     tools: [],
@@ -143,8 +154,21 @@ function productPrimary() {
   return {
     name: "product",
     description: "Product primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     lockThinking: true,
     tools: [],
     systemPrompt: "product",
@@ -156,8 +180,21 @@ function bugHunterPrimary() {
   return {
     name: "bug-hunter",
     description: "Bug-hunter primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     lockThinking: true,
     tools: [],
     systemPrompt: "bug-hunter",
@@ -169,8 +206,21 @@ function architectPrimary() {
   return {
     name: "architect",
     description: "Architect primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     minThinking: "medium",
     tools: [],
     systemPrompt: "architect",

@@ -58,13 +58,17 @@ A few quick-fire tips to get the most of the architect:
 
 These are smaller, laser-focused primary agents. I especially recommend `rush` for quicker fixes that the architect's workflow would be overkill for. `product` handles framing, tradeoffs, strategy, and ticket shaping — it doesn't write code. `bug-hunter` is read-only: reach for it when you want root cause before you've decided how to fix something.
 
+### Disabled mode
+
+`disabled` is a mode where no ad-hoc guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Disabled mode receives no primary-role guidance, while each newly launched minor agent still uses its own matching project guidance. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
+
 ## Everything else
 
 ### Subagents
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-User-owned embedded subagents are supported behind the default-off `embedded-subagents` experimental flag; see [docs/embedded-subagents.md](docs/embedded-subagents.md).
+Stable, always-available user-owned trusted custom subagents are available to the architect (and `disabled` mode) when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 
@@ -139,7 +143,7 @@ This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: 
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
-- User-owned trusted embedded subagents: [`docs/embedded-subagents.md`](docs/embedded-subagents.md)
+- User-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)

@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type AgentConfig, type AgentScope } from "../../agents/agents.ts";
+import {
+  type AgentConfig,
+  type AgentDiscoveryDiagnostic,
+  type AgentScope,
+} from "../../agents/agents.ts";
 import { getArtifactsDir } from "../../shared/artifacts.ts";
 import {
   FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
@@ -20,6 +24,7 @@ import {
   canonicalSubagentModelIdentity,
   modelReferenceFromIdentity,
   resolveSubagentModelOverride,
+  type ModelRegistryEvidence,
   sanitizeSubagentModelIdentity,
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
@@ -131,6 +136,7 @@ import {
   parseContextUsageDiagnostics,
   resolveEffectiveContextWindow,
 } from "../../shared/context-diagnostics.ts";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
@@ -250,7 +256,11 @@ interface ExecutorDeps {
   discoverAgents: (
     cwd: string,
     scope: AgentScope,
-  ) => { agents: AgentConfig[]; modelScope?: ModelScopeConfig };
+  ) => {
+    agents: AgentConfig[];
+    modelScope?: ModelScopeConfig;
+    agentDiagnostics?: AgentDiscoveryDiagnostic[];
+  };
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 }
 
@@ -280,6 +290,52 @@ interface ExecutionContextData {
   toolBudget?: ResolvedToolBudget;
   contextPolicy: AgentDefaultContextPolicy;
   modelScope?: ModelScopeConfig;
+}
+
+interface ModelRegistrySnapshot {
+  availableModels: ModelInfo[];
+  evidence: ModelRegistryEvidence;
+}
+
+/**
+ * Capture both registry views used by fallback policy. `getAvailable()` is an
+ * auth-filtered view; `getAll()` is the catalog needed to distinguish a model
+ * that is positively unavailable from one omitted by a partial/stale view.
+ * Test/legacy facades may expose only getAvailable(), so missing methods fail
+ * open and preserve configured fallbacks.
+ */
+function readModelRegistrySnapshot(ctx: ExtensionContext): ModelRegistrySnapshot {
+  // Test/legacy facades may expose only getAvailable(); keep the optional
+  // compatibility surface separate from the typed availability call.
+  type ModelRegistryEntry = Parameters<typeof toModelInfo>[0];
+  const optionalRegistry = ctx.modelRegistry as {
+    getAll?: () => ModelRegistryEntry[];
+    getError?: () => string | undefined;
+  };
+  const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
+  let allModels: ModelInfo[] | undefined;
+  let error: string | undefined;
+  if (typeof optionalRegistry.getAll === "function") {
+    try {
+      allModels = optionalRegistry.getAll().map(toModelInfo);
+    } catch {
+      error = "model catalog unavailable";
+    }
+  }
+  if (typeof optionalRegistry.getError === "function") {
+    try {
+      error ??= optionalRegistry.getError();
+    } catch {
+      error = "model availability status unavailable";
+    }
+  }
+  return {
+    availableModels,
+    evidence: {
+      ...(allModels ? { allModels } : {}),
+      ...(error ? { error } : {}),
+    },
+  };
 }
 
 function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefined): string {
@@ -2814,7 +2870,16 @@ async function resumeAsyncRun(input: {
   const agentConfig = agents.find((agent) => agent.name === target.agent);
   if (!agentConfig) {
     return {
-      content: [{ type: "text", text: `Unknown agent for resume: ${target.agent}` }],
+      content: [
+        {
+          type: "text",
+          text: unknownAgentMessage(
+            target.agent,
+            discovered.agentDiagnostics,
+            "Unknown agent for resume",
+          ),
+        },
+      ],
       isError: true,
       details: { mode: "management", results: [] },
     };
@@ -2846,7 +2911,8 @@ async function resumeAsyncRun(input: {
     };
   }
 
-  const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
+  const modelRegistrySnapshot = readModelRegistrySnapshot(input.ctx);
+  const { availableModels } = modelRegistrySnapshot;
   let modelContextWindow: number | undefined;
   if (target.kind === "revive") {
     const selectedModel =
@@ -2970,6 +3036,7 @@ async function resumeAsyncRun(input: {
         ? (agent, index) => resolveSubagentIntercomTarget(runId, agent, index)
         : undefined,
       availableModels,
+      modelRegistry: modelRegistrySnapshot.evidence,
       fallbackModels: input.params.fallbackModels,
       modelFallbackNotice: input.params.modelFallbackNotice,
     });
@@ -3102,16 +3169,16 @@ function resultNoticeForEarlierSuccessfulChainStep(result: SingleResult): string
 }
 
 function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string): string {
-  const error = result.error || "Failed";
-  const output = displayOutput.trim();
+  const error = safeTerminalText(result.error || "Failed");
+  const output = safeTerminalText(displayOutput).trim();
   const lines = [error];
   if (output && output !== error.trim()) {
     lines.push("", "Output:", output);
   }
   if (result.artifactPaths?.outputPath) {
-    lines.push("", `Output artifact: ${result.artifactPaths.outputPath}`);
+    lines.push("", `Output artifact: ${safeTerminalText(result.artifactPaths.outputPath)}`);
   }
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 function createForegroundControlNotifier(
@@ -3191,9 +3258,30 @@ function buildForegroundNativeResult(input: {
   };
 }
 
+function diagnosticMatchesAgent(diagnostic: AgentDiscoveryDiagnostic, agentName: string): boolean {
+  if (diagnostic.error.includes(`Agent '${agentName}'`)) return true;
+  const localName = diagnostic.error.match(/Agent '([^']+)'/)?.[1];
+  if (localName !== undefined && agentName.endsWith(`.${localName}`)) return true;
+  const fileName = path.basename(diagnostic.filePath, path.extname(diagnostic.filePath));
+  return agentName === fileName || agentName.endsWith(`.${fileName}`);
+}
+
+function unknownAgentMessage(
+  agentName: string,
+  agentDiagnostics: AgentDiscoveryDiagnostic[] | undefined,
+  prefix = "Unknown agent",
+): string {
+  const diagnostic = agentDiagnostics?.find((candidate) =>
+    diagnosticMatchesAgent(candidate, agentName),
+  );
+  if (!diagnostic) return `${prefix}: ${agentName}`;
+  return `${prefix}: ${agentName}. Malformed definition at '${diagnostic.filePath}': ${diagnostic.error}`;
+}
+
 function validateExecutionInput(
   params: SubagentParamsLike,
   agents: AgentConfig[],
+  agentDiagnostics: AgentDiscoveryDiagnostic[] | undefined,
   hasTasks: boolean,
   hasSingle: boolean,
 ): SubagentToolResult<Details> | null {
@@ -3221,7 +3309,7 @@ function validateExecutionInput(
 
   if (hasSingle && params.agent && !agents.find((agent) => agent.name === params.agent)) {
     return {
-      content: [{ type: "text", text: `Unknown agent: ${params.agent}` }],
+      content: [{ type: "text", text: unknownAgentMessage(params.agent, agentDiagnostics) }],
       isError: true,
       details: { mode: "single" as const, results: [] },
     };
@@ -3232,7 +3320,12 @@ function validateExecutionInput(
       const task = params.tasks[i]!;
       if (!agents.find((agent) => agent.name === task.agent)) {
         return {
-          content: [{ type: "text", text: `Unknown agent: ${task.agent} (task ${i + 1})` }],
+          content: [
+            {
+              type: "text",
+              text: `${unknownAgentMessage(task.agent, agentDiagnostics)} (task ${i + 1})`,
+            },
+          ],
           isError: true,
           details: { mode: "parallel" as const, results: [] },
         };
@@ -3596,7 +3689,8 @@ function runAsyncPath(
     currentModel: ctx.model,
     modelScope: data.modelScope,
   };
-  const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+  const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+  const { availableModels } = modelRegistrySnapshot;
   const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
   const currentProvider = ctx.model?.provider;
   const controlIntercomTarget = intercomBridge.active
@@ -3653,6 +3747,7 @@ function runAsyncPath(
       agents,
       ctx: asyncCtx,
       availableModels,
+      modelRegistry: modelRegistrySnapshot.evidence,
       cwd: effectiveCwd,
       maxOutput: params.maxOutput,
       artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
@@ -3713,6 +3808,7 @@ function runAsyncPath(
       agentConfig: a,
       ctx: asyncCtx,
       availableModels,
+      modelRegistry: modelRegistrySnapshot.evidence,
       cwd: effectiveCwd,
       maxOutput: params.maxOutput,
       artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
@@ -3774,6 +3870,7 @@ interface ForegroundParallelRunInput {
   paramsCwd: string;
   progressDir: string;
   availableModels: ModelInfo[];
+  modelRegistry: ModelRegistryEvidence;
   modelScope?: ModelScopeConfig;
   modelOverrides: (string | undefined)[];
   behaviors: ResolvedStepBehavior[];
@@ -4050,6 +4147,7 @@ async function runForegroundParallelTasks(
         modelFallbackNotice: behavior?.modelFallbackNotice,
         thinkingOverride: input.thinkingOverrideForTask(task.agent, index),
         availableModels: input.availableModels,
+        modelRegistry: input.modelRegistry,
         preferredModelProvider: input.ctx.model?.provider,
         modelScope: input.modelScope,
         ...(input.tkTicket && input.tkTicketIndex === index ? { tkTicket: input.tkTicket } : {}),
@@ -4211,7 +4309,8 @@ async function runParallelPath(
   }
 
   const currentProvider = ctx.model?.provider;
-  const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+  const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+  const { availableModels } = modelRegistrySnapshot;
   const taskTexts = tasks.map((t) => t.task);
   const behaviorOverrides: StepOverrides[] = tasks.map((task, index) => ({
     ...(task.output !== undefined
@@ -4307,6 +4406,7 @@ async function runParallelPath(
     paramsCwd: effectiveCwd,
     progressDir: parallelProgressDir,
     availableModels,
+    modelRegistry: modelRegistrySnapshot.evidence,
     modelScope: data.modelScope,
     modelOverrides,
     behaviors,
@@ -4498,7 +4598,8 @@ async function runSinglePath(
     return toExecutionErrorResult(params, new Error(effectiveToolBudget.error));
 
   const currentProvider = ctx.model?.provider;
-  const availableModels: ModelInfo[] = ctx.modelRegistry.getAvailable().map(toModelInfo);
+  const modelRegistrySnapshot = readModelRegistrySnapshot(ctx);
+  const { availableModels } = modelRegistrySnapshot;
   let task = params.task ?? "";
   const tkTicket = resolveTkTicketMetadata(params.task, { cwd: effectiveCwd });
   const modelOverride: string | undefined = resolveSubagentModelOverride(
@@ -4657,6 +4758,7 @@ async function runSinglePath(
       modelFallbackNotice,
       thinkingOverride: thinkingOverrideForTask(params.agent!, 0),
       availableModels,
+      modelRegistry: modelRegistrySnapshot.evidence,
       preferredModelProvider: currentProvider,
       modelScope: data.modelScope,
       ...(tkTicket ? { tkTicket } : {}),
@@ -4704,6 +4806,9 @@ async function runSinglePath(
     savedPath: r.savedOutputPath,
     outputReference: r.outputReference,
     saveError: r.outputSaveError,
+    // A saved deliverable remains useful when an otherwise-successful run is
+    // rejected by either inferred or explicit post-run acceptance.
+    acceptanceRejected: r.acceptance?.status === "rejected" && Boolean(r.savedOutputPath),
   });
   if (foregroundControl) {
     updateForegroundNestedProjection(foregroundControl);
@@ -4755,7 +4860,7 @@ async function runSinglePath(
       content: [
         {
           type: "text",
-          text:
+          text: safeTerminalDocument(
             r.pause?.kind === "awaiting_supervisor"
               ? formatForegroundSupervisorPauseMessage({
                   headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
@@ -4764,6 +4869,7 @@ async function runSinglePath(
                   requestSummary: r.pause.summary,
                 })
               : `Legacy detached result: ${params.agent}. Inspect status/artifacts, then resume or replace work explicitly if needed.`,
+          ),
         },
       ],
       details,
@@ -4775,12 +4881,14 @@ async function runSinglePath(
       content: [
         {
           type: "text",
-          text: formatForegroundSupervisorPauseMessage({
-            headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
-            runId,
-            agent: params.agent!,
-            requestSummary: r.pause.summary,
-          }),
+          text: safeTerminalDocument(
+            formatForegroundSupervisorPauseMessage({
+              headline: `Foreground run ${runId} paused awaiting supervisor (${params.agent}).`,
+              runId,
+              agent: params.agent!,
+              requestSummary: r.pause.summary,
+            }),
+          ),
         },
       ],
       details,
@@ -4792,19 +4900,23 @@ async function runSinglePath(
       content: [
         {
           type: "text",
-          text: formatForegroundPauseMessage({
-            headline: `Foreground run ${runId} paused after interrupt (${params.agent}).`,
-            runId,
-            resume: { kind: "single" },
-            redispatch: `subagent({ agent: "${params.agent}", task: "..." })`,
-          }),
+          text: safeTerminalDocument(
+            formatForegroundPauseMessage({
+              headline: `Foreground run ${runId} paused after interrupt (${params.agent}).`,
+              runId,
+              resume: { kind: "single" },
+              redispatch: `subagent({ agent: "${params.agent}", task: "..." })`,
+            }),
+          ),
         },
       ],
       details,
     };
   }
 
-  const noticePrefix = r.modelFallbackNotice ? `Notice: ${r.modelFallbackNotice}\n\n` : "";
+  const noticePrefix = r.modelFallbackNotice
+    ? `Notice: ${safeTerminalText(r.modelFallbackNotice)}\n\n`
+    : "";
   if (r.exitCode !== 0)
     return {
       content: [
@@ -5235,7 +5347,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const hasTasks = (effectiveParams.tasks?.length ?? 0) > 0;
     const hasSingle = !hasTasks && Boolean(effectiveParams.agent);
 
-    const validationError = validateExecutionInput(effectiveParams, agents, hasTasks, hasSingle);
+    const validationError = validateExecutionInput(
+      effectiveParams,
+      agents,
+      discovered.agentDiagnostics,
+      hasTasks,
+      hasSingle,
+    );
     if (validationError) return validationError;
 
     let forkSessionFileForIndex: (idx?: number) => string | undefined = () => undefined;

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   STRUCTURED_OUTPUT_CAPTURE_ENV,
   STRUCTURED_OUTPUT_SCHEMA_ENV,
+  STRUCTURED_OUTPUT_TOOL_NAME,
 } from "./structured-output.ts";
 import {
   TEMP_ROOT_DIR,
@@ -21,6 +22,9 @@ import {
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
 
 const TASK_ARG_LIMIT = 8000;
+export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
+export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR =
+  "Cannot combine lazy skills with extension-path-only tools: list each extension tool name alongside its extension path (read is injected automatically).";
 const RUNTIME_EXTENSION_SUFFIX =
   path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
@@ -62,7 +66,12 @@ interface BuildPiArgsInput {
   inheritProjectContext: boolean;
   inheritSkills: boolean;
   requireReadTool?: boolean;
-  tools?: string[];
+  /**
+   * Explicit child tool policy from parsing.
+   * `undefined` inherits Pi defaults; `null` is an explicit zero-tool policy; arrays are
+   * exact named allowlists with optional extension paths.
+   */
+  tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
   systemPrompt?: string | null;
@@ -88,6 +97,50 @@ interface BuildPiArgsResult {
   args: string[];
   env: Record<string, string | undefined>;
   tempDir?: string;
+}
+
+interface ResolvedToolPolicy {
+  namedToolNames: string[];
+  toolExtensionPaths: string[];
+  hasOnlyExtensionPaths: boolean;
+  error?: string;
+}
+
+function isExtensionToolPath(tool: string): boolean {
+  return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+
+function resolveToolPolicy(
+  tools: string[] | null | undefined,
+  requireReadTool = false,
+): ResolvedToolPolicy {
+  if (tools === undefined) {
+    return { namedToolNames: [], toolExtensionPaths: [], hasOnlyExtensionPaths: false };
+  }
+  const declaredTools = Array.isArray(tools)
+    ? tools
+        .filter((tool): tool is string => typeof tool === "string")
+        .map((tool) => tool.trim())
+        .filter((tool) => tool && !tool.startsWith("mcp:"))
+    : [];
+  const toolExtensionPaths = [...new Set(declaredTools.filter(isExtensionToolPath))];
+  const namedToolNames = [...new Set(declaredTools.filter((tool) => !isExtensionToolPath(tool)))];
+  const hasOnlyExtensionPaths = toolExtensionPaths.length > 0 && namedToolNames.length === 0;
+  return {
+    namedToolNames,
+    toolExtensionPaths,
+    hasOnlyExtensionPaths,
+    ...(hasOnlyExtensionPaths && requireReadTool
+      ? { error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR }
+      : {}),
+  };
+}
+
+export function validatePiToolPolicy(input: {
+  tools?: string[] | null;
+  requireReadTool?: boolean;
+}): string | undefined {
+  return resolveToolPolicy(input.tools, input.requireReadTool).error;
 }
 
 function sanitizeSupervisorChannelSegment(value: string): string {
@@ -159,6 +212,21 @@ export function applyThinkingSuffix(
 }
 
 export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
+  let tempDir: string | undefined;
+  try {
+    return buildPiArgsInternal(input, (createdTempDir) => {
+      tempDir = createdTempDir;
+    });
+  } catch (error) {
+    cleanupTempDir(tempDir);
+    throw error;
+  }
+}
+
+function buildPiArgsInternal(
+  input: BuildPiArgsInput,
+  onTempDirCreated: (tempDir: string) => void,
+): BuildPiArgsResult {
   const args = [...input.baseArgs];
 
   if (input.sessionFile) {
@@ -182,27 +250,35 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
     args.push("--model", modelArg);
   }
 
-  const declaredBuiltinToolsBase =
-    input.tools?.filter(
-      (tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")),
-    ) ?? [];
-  const declaredBuiltinTools =
-    input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
-      ? ["read", ...declaredBuiltinToolsBase]
-      : declaredBuiltinToolsBase;
-  const toolExtensionPaths: string[] = [];
-  if (input.tools?.length) {
-    const builtinTools = [...declaredBuiltinTools];
-    for (const tool of input.tools) {
-      if (
-        !declaredBuiltinTools.includes(tool) &&
-        (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))
-      ) {
-        toolExtensionPaths.push(tool);
+  const hasStructuredOutput = Boolean(input.structuredOutput);
+  const requiresContactSupervisor = Boolean(input.orchestratorIntercomTarget?.trim());
+  const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
+  const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
+  if (toolPolicy.error) throw new Error(toolPolicy.error);
+  const { namedToolNames, toolExtensionPaths, hasOnlyExtensionPaths } = toolPolicy;
+
+  if (input.tools !== undefined) {
+    if (hasOnlyExtensionPaths) {
+      // Pi's --no-builtin-tools suppresses only its default builtins. Unlike --no-tools, it
+      // leaves extension/custom tools (including the runtime structured_output tool) active.
+      args.push("--no-builtin-tools");
+    } else {
+      const allowedToolNames = [...namedToolNames];
+      if (requiresReadTool && !allowedToolNames.includes("read")) {
+        allowedToolNames.unshift("read");
       }
-    }
-    if (builtinTools.length > 0) {
-      args.push("--tools", builtinTools.join(","));
+      if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
+        allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
+      }
+      if (hasStructuredOutput && !allowedToolNames.includes(STRUCTURED_OUTPUT_TOOL_NAME)) {
+        allowedToolNames.push(STRUCTURED_OUTPUT_TOOL_NAME);
+      }
+      if (allowedToolNames.length > 0) {
+        args.push("--tools", allowedToolNames.join(","));
+      } else {
+        // Fail closed: an explicit policy that resolves to zero tools must not inherit Pi defaults.
+        args.push("--no-tools");
+      }
     }
   }
 
@@ -234,6 +310,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
   let tempDir: string | undefined;
   if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+    onTempDirCreated(tempDir);
     const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
     const promptPath = path.join(tempDir, `${stem}.md`);
     fs.writeFileSync(promptPath, input.systemPrompt, { mode: 0o600 });
@@ -246,6 +323,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
   if (input.task.length > TASK_ARG_LIMIT) {
     if (!tempDir) {
       tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+      onTempDirCreated(tempDir);
     }
     const taskFilePath = path.join(tempDir, "task.md");
     fs.writeFileSync(taskFilePath, `Task: ${input.task}`, { mode: 0o600 });

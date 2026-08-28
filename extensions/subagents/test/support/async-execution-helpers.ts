@@ -416,9 +416,29 @@ export function lifecycleLockDir(asyncDir: string): string {
   return path.join(asyncDir, ".lifecycle-transition.lock");
 }
 
-export function writeLifecycleLock(asyncDir: string): void {
+export async function writeLifecycleLock(asyncDir: string): Promise<void> {
   const lockDir = lifecycleLockDir(asyncDir);
-  fs.mkdirSync(lockDir, { recursive: true });
+  const timeoutMs = scaleTestTimeout(10_000);
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    try {
+      fs.mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? (error as NodeJS.ErrnoException).code
+          : undefined;
+      if (code !== "EEXIST") throw error;
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(`Timed out acquiring lifecycle lock '${lockDir}' after ${timeoutMs}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(50, remainingMs)));
+    }
+  }
+
   fs.writeFileSync(
     path.join(lockDir, "owner.json"),
     JSON.stringify({ pid: 999999, acquiredAt: Date.now() }, null, 2),

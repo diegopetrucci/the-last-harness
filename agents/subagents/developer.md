@@ -2,11 +2,15 @@
 name: developer
 description: Implements exactly one approved architect task at a time.
 tools: read, write, edit, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.6-luna
-tlhAnthropicModels: anthropic/claude-sonnet-4-6
-tlhAnthropicThinking: medium
-tlhOpenrouterThinking: medium
-tlhOpenaiThinking: max
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: max
+  - provider: anthropic
+    models: [claude-sonnet-4-6]
+    effort: medium
+  - provider: openrouter
+    effort: medium
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false

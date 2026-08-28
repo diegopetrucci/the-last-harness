@@ -1,6 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   type AgentConfig,
+  type AgentDiscoveryDiagnostic,
   type AgentScope,
   discoverAgentsAll,
   frontmatterNameForConfig,
@@ -58,6 +59,13 @@ function allAgents(d: {
   return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
+function isSourceVisibleInScope(
+  source: AgentDiscoveryDiagnostic["source"],
+  scope: AgentScope,
+): boolean {
+  return scope === "both" || source === "builtin" || source === "package" || source === scope;
+}
+
 function availableNames(cwd: string): string[] {
   return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) =>
     a.localeCompare(b),
@@ -76,7 +84,6 @@ function findAgents(name: string, cwd: string, scope: AgentScope = "both"): Agen
 }
 
 function formatAgentDetail(agent: AgentConfig): string {
-  const tools = [...(agent.tools ?? [])];
   const lines: string[] = [
     `Agent: ${agent.name} (${agent.source})`,
     `Path: ${agent.filePath}`,
@@ -89,7 +96,8 @@ function formatAgentDetail(agent: AgentConfig): string {
   if (agent.model) lines.push(`Model: ${agent.model}`);
   if (agent.fallbackModels?.length)
     lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
-  if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
+  if (agent.tools !== undefined)
+    lines.push(`Tools: ${agent.tools?.length ? agent.tools.join(", ") : "(none)"}`);
   if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
   lines.push(`System prompt mode: ${agent.systemPromptMode}`);
   lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
@@ -139,6 +147,16 @@ export function handleList(
         )
       : ["- (none)"]),
   ];
+  const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) =>
+    isSourceVisibleInScope(diagnostic.source, scope),
+  );
+  if (visibleDiagnostics.length > 0) {
+    lines.push(
+      "",
+      "Agent load warnings:",
+      ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`),
+    );
+  }
   return result(lines.join("\n"));
 }
 

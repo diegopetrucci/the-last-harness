@@ -10,7 +10,7 @@ const jiti = createJiti(import.meta.url);
 const {
   writeGuardedTlhStateFile,
   tlhStartupStatePath,
-  writeTlhStartupState,
+  updateTlhStartupState,
   readTlhStartupState,
   __testing,
 } = await jiti.import("../extensions/the-last-harness/profile-state.ts");
@@ -75,11 +75,11 @@ test("writeGuardedTlhStateFile returns false when outside isolated profile (PI_C
 // Startup-state write — existing behaviour preserved after adding containment check
 // ---------------------------------------------------------------------------
 
-test("writeTlhStartupState still writes inside the managed dir", async (t) => {
+test("updateTlhStartupState still writes inside the managed dir", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-profile-state-test-", { test: t });
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     // Must not throw and the read-back must match.
-    writeTlhStartupState({ reconciledAt: "2026-01-01T00:00:00.000Z" });
+    updateTlhStartupState({ reconciledAt: "2026-01-01T00:00:00.000Z" });
     const statePath = tlhStartupStatePath();
     assert.ok(statePath, "startup state path must be defined inside isolated profile");
     assert.equal(existsSync(statePath), true, "startup state file must exist after write");

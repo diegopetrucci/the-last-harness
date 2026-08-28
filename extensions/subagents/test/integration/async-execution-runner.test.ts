@@ -5,6 +5,7 @@
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
 
+import { spawn, spawnSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -22,7 +23,9 @@ import { deliverInterruptRequest } from "../../src/runs/background/control-chann
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
+import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import {
@@ -44,6 +47,25 @@ import {
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
+
+function inferredAcceptanceRejectionOutput(output: string): string {
+  return [
+    output,
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [],
+      changedFiles: [],
+      testsAddedOrUpdated: ["test/report.test.ts"],
+      commandsRun: [
+        { command: "true", result: "passed", summary: "Intentional rejection fixture." },
+      ],
+      residualRisks: [],
+      noStagedFiles: true,
+    }),
+    "```",
+  ].join("\n");
+}
 
 describe("async execution utilities", () => {
   let tempDir: string;
@@ -690,6 +712,38 @@ describe("async execution utilities", () => {
     assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
   });
 
+  it("async inferred acceptance rejection preserves a saved-output reference", async () => {
+    const outputPath = path.join(tempDir, "async-inferred-acceptance-rejected.md");
+    const savedContent = "saved async deliverable without a report";
+    mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
+    const executor = makeAsyncExecutor([makeAgent("worker", { completionGuard: false })]);
+
+    const result = await executor.execute(
+      "async-inferred-acceptance-rejected",
+      {
+        agent: "worker",
+        task: "Implement the approved async change",
+        output: outputPath,
+        async: true,
+      },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(tempDir),
+    );
+    const asyncId = result.details?.asyncId;
+    assert.ok(asyncId, "expected asyncId");
+    const resultPath = await waitForAsyncResultFile(asyncId);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const child = payload.results[0];
+
+    assert.equal(payload.success, true);
+    assert.equal(child?.exitCode, 0);
+    assert.equal(child?.acceptance?.explicit, false);
+    assert.equal(child?.acceptance?.status, "rejected");
+    assert.match(child?.output ?? "", /Output saved to:/);
+    assert.equal(fs.readFileSync(outputPath, "utf-8"), savedContent);
+  });
+
   it("async single rejects explicit reviewed acceptance before spawning a child", async () => {
     mockPi.onCall({ output: "should not run" });
     const artifactConfig = {
@@ -1060,6 +1114,157 @@ describe("async execution utilities", () => {
       assert.throws(() => readStatus(dir), /Failed to parse async status file/);
     } finally {
       removeTempDir(dir);
+    }
+  });
+
+  it("persists a failed runner result for invalid path-only lazy-skill policy", () => {
+    const id = `async-invalid-tool-policy-${Date.now().toString(36)}`;
+    const asyncDir = path.join(tempDir, id);
+    const artifactsDir = path.join(tempDir, `${id}-artifacts`);
+    const resultPath = path.join(tempDir, `${id}-result.json`);
+    const configPath = path.join(tempDir, `${id}-config.json`);
+    const config: SubagentRunConfig = {
+      id,
+      steps: [
+        {
+          agent: "worker",
+          task: "Inspect the task",
+          tools: ["./custom-tool.ts"],
+          skills: ["tmux"],
+          inheritProjectContext: false,
+          inheritSkills: false,
+          systemPrompt: "You are a test agent.",
+        },
+      ],
+      resultPath,
+      cwd: tempDir,
+      placeholder: "{previous}",
+      asyncDir,
+      artifactsDir,
+      artifactConfig: {
+        enabled: true,
+        includeInput: true,
+        includeOutput: true,
+        includeJsonl: true,
+        includeMetadata: true,
+        includeTranscript: true,
+        cleanupDays: 7,
+      },
+      sessionId: "session-invalid-tool-policy",
+    };
+    fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+
+    assert.equal(runner.status, 0, runner.stderr);
+    assert.equal(fs.existsSync(configPath), false, "runner should consume its persisted config");
+    assert.ok(fs.existsSync(resultPath), "runner should persist a result artifact");
+    assert.ok(fs.existsSync(path.join(asyncDir, "status.json")), "runner should persist status");
+
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.success, false);
+    assert.equal(payload.error, INVALID_LAZY_SKILL_TOOL_POLICY_ERROR);
+    assert.equal(status.state, "failed");
+    assert.equal(status.steps?.[0]?.status, "failed");
+    assert.equal(status.steps?.[0]?.error, INVALID_LAZY_SKILL_TOOL_POLICY_ERROR);
+    const artifactPaths = payload.results[0]?.artifactPaths;
+    assert.ok(artifactPaths, "failed runner result should retain artifact paths");
+    assert.ok(fs.existsSync(artifactPaths.inputPath));
+    assert.ok(fs.existsSync(artifactPaths.outputPath));
+    assert.ok(fs.existsSync(artifactPaths.metadataPath));
+    assert.ok(
+      fs
+        .readFileSync(artifactPaths.outputPath, "utf-8")
+        .includes(INVALID_LAZY_SKILL_TOOL_POLICY_ERROR),
+    );
+  });
+
+  it("sanitizes persisted fallback notices in both initial status step projections", async () => {
+    const id = `async-persisted-fallback-notice-${Date.now().toString(36)}`;
+    const asyncDir = path.join(tempDir, id);
+    const resultPath = path.join(tempDir, `${id}-result.json`);
+    const configPath = path.join(tempDir, `${id}-config.json`);
+    const releaseMarker = path.join(tempDir, `${id}-release`);
+    const persistedNotice = `\u0000${"Persisted fallback notice ".repeat(40)}\nwith control text`;
+    const expectedNotice = sanitizeModelFallbackNotice(persistedNotice);
+    assert.ok(expectedNotice);
+
+    mockPi.onCall({ waitForMarker: releaseMarker, output: "done" });
+    const model = "mock/test-model";
+    const step = {
+      agent: "worker",
+      task: "Inspect the task",
+      model,
+      modelCandidates: [model],
+      modelFallbackFilterNotice: persistedNotice,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    } satisfies SubagentRunConfig["steps"][number] & { modelFallbackFilterNotice: string };
+    const config: SubagentRunConfig = {
+      id,
+      steps: [step, { parallel: [{ ...step, task: "Inspect the parallel task" }] }],
+      resultPath,
+      cwd: tempDir,
+      placeholder: "{previous}",
+      asyncDir,
+      resultMode: "chain",
+      piArgv1: path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs"),
+      sessionId: "session-persisted-fallback-notice",
+    };
+    fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const runner = spawn(process.execPath, [runnerPath, configPath], {
+      cwd: process.cwd(),
+      env: { ...process.env },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const runnerStderr: Buffer[] = [];
+    runner.stderr?.on("data", (chunk: Buffer) => runnerStderr.push(chunk));
+    const runnerExited = new Promise<number | null>((resolve, reject) => {
+      runner.once("error", reject);
+      runner.once("close", resolve);
+    });
+
+    try {
+      const statusPath = path.join(asyncDir, "status.json");
+      const deadline = Date.now() + scaleTestTimeout(15_000);
+      while (!fs.existsSync(statusPath)) {
+        if (Date.now() > deadline) assert.fail("Timed out waiting for initial runner status");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const initialStatus = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+      assert.deepEqual(
+        initialStatus.steps?.map((entry) => entry.modelFallbackNotice),
+        [expectedNotice, expectedNotice],
+      );
+      assert.ok(expectedNotice.length <= 240);
+      assert.equal(
+        [...expectedNotice].some((character) => {
+          const code = character.codePointAt(0) ?? 0;
+          return code <= 0x1f || code === 0x7f;
+        }),
+        false,
+      );
+    } finally {
+      fs.writeFileSync(releaseMarker, "", "utf-8");
+      const exitCode = await runnerExited;
+      assert.equal(exitCode, 0, Buffer.concat(runnerStderr).toString("utf-8"));
     }
   });
 

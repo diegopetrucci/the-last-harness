@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_STEER_INBOX_ENV, } from "./pi-args.js";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, assertJsonSchemaObject, validateStructuredOutputValue, } from "./structured-output.js";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, STRUCTURED_OUTPUT_TOOL_NAME, assertJsonSchemaObject, validateStructuredOutputValue, } from "./structured-output.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
 import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS } from "../../../../shared/subagent-child-boundary.js";
 import { formatProjectAgentGuidance, inventoryProjectAgentGuidance, PACKAGED_MINOR_AGENT_ROLES, } from "../../../../shared/project-agent-guidance.js";
@@ -324,7 +324,7 @@ export default function registerSubagentPromptRuntime(pi) {
             additionalProperties: false,
         });
         pi.registerTool({
-            name: "structured_output",
+            name: STRUCTURED_OUTPUT_TOOL_NAME,
             label: "Structured Output",
             description: "Submit the required final structured output for this subagent step. This terminates the step.",
             parameters,

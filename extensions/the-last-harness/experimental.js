@@ -2,7 +2,6 @@ import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
-export const EMBEDDED_SUBAGENTS_FEATURE = "embedded-subagents";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 export const EXPERIMENTAL_COMMAND_HELP = [
     "Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -60,10 +59,6 @@ export const TLH_EXPERIMENTAL_FEATURES = [
         primaryAgentPrompts: {
             architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
         },
-    },
-    {
-        id: EMBEDDED_SUBAGENTS_FEATURE,
-        description: "Gates architect-only delegation to trusted user-owned embedded.<slug> subagents.",
     },
 ];
 const TLH_EXPERIMENTAL_FEATURES_BY_ID = new Map(TLH_EXPERIMENTAL_FEATURES.map((feature) => [feature.id, feature]));

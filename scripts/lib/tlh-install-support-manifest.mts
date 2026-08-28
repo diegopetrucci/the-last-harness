@@ -1,4 +1,4 @@
-export type SupportFileRequirement = "required" | "optional";
+type SupportFileRequirement = "required" | "optional";
 
 export interface SupportFileDescriptor {
   variable: string;
@@ -8,7 +8,7 @@ export interface SupportFileDescriptor {
   installName: string;
 }
 
-export interface SupportFileManifestOptions {
+interface SupportFileManifestOptions {
   noSettings?: boolean;
 }
 

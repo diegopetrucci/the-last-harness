@@ -2,11 +2,15 @@
 name: repo-scout
 description: Scans a repository and reports stack, conventions, commands, and hotspots.
 tools: read, grep, find, ls, bash, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.6-luna
-tlhAnthropicModels: anthropic/claude-haiku-4-5
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: medium
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: medium
+  - provider: anthropic
+    models: [claude-haiku-4-5]
+    effort: high
+  - provider: openrouter
+    effort: high
 toolBudget: {"soft":20,"hard":30}
 systemPromptMode: replace
 inheritProjectContext: true
