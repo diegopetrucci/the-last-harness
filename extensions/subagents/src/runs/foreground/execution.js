@@ -1722,6 +1722,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             usage: emptyUsage(),
             error: "Subagent did not produce a result.",
         };
+    if (options.projectAgent)
+        result.projectAgent = options.projectAgent;
     if (modelAttempts.length > 1 && result.modelIdentity) {
         modelResolution = appendRuntimeFallbackResolution({
             previous: modelResolution,
@@ -1892,6 +1894,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         writeMetadata(artifactPathsResult.metadataPath, {
             runId: options.runId,
             agent: agentName,
+            projectAgent: result.projectAgent,
             task,
             exitCode: result.exitCode,
             exitSignal: result.exitSignal,

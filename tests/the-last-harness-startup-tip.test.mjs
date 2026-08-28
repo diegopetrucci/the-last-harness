@@ -38,6 +38,18 @@ test("the curated startup tips include exactly one disabled-mode affordance", ()
   );
 });
 
+test("the curated startup list has exactly one project custom subagent tip", () => {
+  const projectTips = TLH_STARTUP_TIPS.filter((tip) => tip.includes(".tlh/agents"));
+  assert.deepEqual(projectTips, [
+    "Project custom subagents live in .tlh/agents; ask TLH to use one by name.",
+  ]);
+  assert.equal(
+    TLH_STARTUP_TIPS.some((tip) => /trust|\/reload/i.test(tip)),
+    false,
+    "the curated startup list must not add a trust or reload tip",
+  );
+});
+
 test("getTlhStartupTip returns one process-scoped selection from the curated list", () => {
   const startupTip = getTlhStartupTip();
 

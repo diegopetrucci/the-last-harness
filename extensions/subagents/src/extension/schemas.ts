@@ -58,6 +58,11 @@ const TaskItem = Type.Object(
   {
     agent: Type.String(),
     task: Type.String(),
+    cwd: Type.Optional(
+      Type.String({
+        description: "Task working directory; relative paths resolve against the run cwd.",
+      }),
+    ),
     count: Type.Optional(
       Type.Integer({
         minimum: 1,
@@ -86,7 +91,7 @@ const SubagentParamsSchema = Type.Object(
     tasks: Type.Optional(
       Type.Array(TaskItem, {
         description:
-          "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?, model?}, ...]",
+          "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, reads?, progress?, model?}, ...]",
       }),
     ),
     concurrency: Type.Optional(

@@ -83,7 +83,7 @@ Telemetry does **not** include:
 - provider base URLs or other endpoints,
 - auth state, credential/auth type, or headers,
 - account identifiers,
-- custom or embedded agent names,
+- custom-agent names or project paths,
 - attempted model history beyond the final selected privacy-filtered model value.
 
 TelemetryDeck also receives normal network metadata such as source IP address and request time.

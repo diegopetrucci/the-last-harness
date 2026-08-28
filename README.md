@@ -68,7 +68,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-Stable, always-available user-owned trusted custom subagents are available to the architect (and `disabled` mode) when a valid profile definition authorizes them; see [docs/custom-subagents.md](docs/custom-subagents.md).
+Stable, always-available user-owned profile custom subagents are available to the architect (and `disabled` mode) when a valid active-profile definition authorizes their `embedded.<slug>` runtime name. Project-owned custom subagents can be placed in `.tlh/agents/<slug>.md` and requested naturally by name after project approval; see [docs/custom-subagents.md](docs/custom-subagents.md) for both sources.
 
 All bundled subagents:
 
@@ -83,7 +83,7 @@ All bundled subagents:
 
 ### Customisation
 
-You can add your own skills, prompts, extensions, and packages to TLH.
+You can add your own skills, prompts, extensions, packages, and custom subagents to TLH. User-owned profile custom subagents use the active profile's `agents/` directory and `embedded.<slug>` runtime names; project custom subagents live in `.tlh/agents/<slug>.md` and can be requested naturally by name. Their separate authorization, trust, lifecycle, and removal rules are documented in [docs/custom-subagents.md](docs/custom-subagents.md).
 
 User-level:
 
@@ -105,7 +105,7 @@ After adding files, installing a package, or saving project trust, run `/reload`
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
-- User-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
+- Profile- and project-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)

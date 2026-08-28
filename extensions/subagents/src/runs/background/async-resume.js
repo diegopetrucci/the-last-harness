@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
+import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
 import { canonicalSubagentModelIdentity, sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
@@ -144,6 +145,7 @@ function validateResultFile(value, resultPath) {
                 !Array.isArray(child.acceptance)
                 ? child.acceptance
                 : undefined;
+            const projectAgent = parseProjectAgentCapture(child.projectAgent, resultPath, `results[${index}].projectAgent`);
             return {
                 agent,
                 sessionFile,
@@ -160,12 +162,23 @@ function validateResultFile(value, resultPath) {
                 ...(terminationReason ? { terminationReason } : {}),
                 ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
                 ...(acceptance ? { acceptance } : {}),
+                ...(projectAgent ? { projectAgent } : {}),
             };
         });
     }
     const success = data.success;
     if (success !== undefined && typeof success !== "boolean")
         throw new Error(`Invalid async result file '${resultPath}': success must be a boolean.`);
+    const projectAgent = data.projectAgent === undefined
+        ? undefined
+        : parseProjectAgentCapture(data.projectAgent, resultPath, "projectAgent");
+    const projectAgents = data.projectAgents;
+    if (projectAgents !== undefined && !Array.isArray(projectAgents)) {
+        throw new Error(`Invalid async result file '${resultPath}': projectAgents must be an array.`);
+    }
+    const normalizedProjectAgents = projectAgents
+        ?.map((capture, index) => parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`))
+        .filter((capture) => Boolean(capture));
     return {
         id: validateOptionalString(data, "id", resultPath),
         runId: validateOptionalString(data, "runId", resultPath),
@@ -191,7 +204,17 @@ function validateResultFile(value, resultPath) {
             : {}),
         ...(typeof success === "boolean" ? { success } : {}),
         ...(results ? { results } : {}),
+        ...(projectAgent ? { projectAgent } : {}),
+        ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
     };
+}
+function parseProjectAgentCapture(value, source, field) {
+    if (value === undefined)
+        return undefined;
+    const normalized = normalizeProjectAgentRunCapture(value);
+    if (!normalized)
+        throw new Error(`Invalid async result file '${source}': ${field} is invalid.`);
+    return normalized;
 }
 function readResultFile(resultPath) {
     let raw;
@@ -305,6 +328,76 @@ export function resolveAsyncRunLocation(params, asyncDirRoot, resultsDir) {
     }
     return matching[0].location;
 }
+function ownObjectProperty(value, key) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return { present: false, value: undefined };
+    }
+    const record = value;
+    return { present: Object.hasOwn(record, key), value: record[key] };
+}
+function hasPersistedProjectAgentMarker(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return false;
+    const record = value;
+    if (Object.hasOwn(record, "projectAgent") || Object.hasOwn(record, "projectAgents")) {
+        return true;
+    }
+    for (const field of ["steps", "results", "children", "nestedChildren"]) {
+        const children = record[field];
+        if (Array.isArray(children) &&
+            children.some((child) => hasPersistedProjectAgentMarker(child))) {
+            return true;
+        }
+    }
+    return false;
+}
+function persistedProjectAgentMarkerFromFile(filePath) {
+    let content;
+    try {
+        content = fs.readFileSync(filePath, "utf8");
+    }
+    catch (error) {
+        return error.code === "ENOENT" ? "absent" : "unavailable";
+    }
+    try {
+        return hasPersistedProjectAgentMarker(JSON.parse(content)) ? "present" : "absent";
+    }
+    catch {
+        return /["']projectAgents?["']\s*:/.test(content) ? "present" : "unavailable";
+    }
+}
+export function probeAsyncRunForProjectAgentMarker(params, deps = {}) {
+    let location;
+    try {
+        location = resolveAsyncRunLocation(params, deps.asyncDirRoot ?? ASYNC_DIR, deps.resultsDir ?? RESULTS_DIR);
+    }
+    catch {
+        return { status: "unavailable" };
+    }
+    try {
+        resolveAsyncResumeTarget(params, {
+            asyncDirRoot: deps.asyncDirRoot ?? ASYNC_DIR,
+            resultsDir: deps.resultsDir ?? RESULTS_DIR,
+        }, { requireSessionFile: false, readOnly: true });
+    }
+    catch {
+    }
+    const files = [
+        location.asyncDir ? path.join(location.asyncDir, "status.json") : undefined,
+        location.resultPath ?? undefined,
+    ].filter((filePath) => Boolean(filePath));
+    if (files.length === 0)
+        return { status: "absent" };
+    let unavailable = false;
+    for (const filePath of files) {
+        const result = persistedProjectAgentMarkerFromFile(filePath);
+        if (result === "present")
+            return { status: "present" };
+        if (result === "unavailable")
+            unavailable = true;
+    }
+    return { status: unavailable ? "unavailable" : "absent" };
+}
 function persistedModelIdentity(input) {
     return (sanitizeSubagentModelIdentity(input.identity) ??
         canonicalSubagentModelIdentity(input.model, parseThinkingLevel(input.thinking)));
@@ -333,6 +426,19 @@ function validateStatusForResume(status, source) {
         throw new Error(`Invalid async status '${source}': cwd must be a string.`);
     if (status.sessionFile !== undefined && typeof status.sessionFile !== "string")
         throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+    const statusProjectAgent = ownObjectProperty(status, "projectAgent");
+    if (statusProjectAgent.present) {
+        if (!normalizeProjectAgentRunCapture(statusProjectAgent.value))
+            throw new Error(`Invalid async status '${source}': projectAgent is invalid.`);
+    }
+    if (status.projectAgents !== undefined) {
+        if (!Array.isArray(status.projectAgents))
+            throw new Error(`Invalid async status '${source}': projectAgents must be an array.`);
+        for (const [index, capture] of status.projectAgents.entries()) {
+            if (!normalizeProjectAgentRunCapture(capture))
+                throw new Error(`Invalid async status '${source}': projectAgents[${index}] is invalid.`);
+        }
+    }
     if (status.steps !== undefined) {
         if (!Array.isArray(status.steps))
             throw new Error(`Invalid async status '${source}': steps must be an array.`);
@@ -343,6 +449,8 @@ function validateStatusForResume(status, source) {
                 throw new Error(`Invalid async status '${source}': steps[${index}].agent must be a string.`);
             if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
                 throw new Error(`Invalid async status '${source}': steps[${index}].sessionFile must be a string.`);
+            if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent))
+                throw new Error(`Invalid async status '${source}': steps[${index}].projectAgent is invalid.`);
             if (step.model !== undefined && typeof step.model !== "string")
                 throw new Error(`Invalid async status '${source}': steps[${index}].model must be a string.`);
             if (step.thinking !== undefined && typeof step.thinking !== "string")
@@ -440,6 +548,31 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds) ??
         parseContextPressureCrossedThresholds(result?.contextPressureCrossedThresholds);
     const terminationReasonForStep = (index, step = statusSteps[index]) => step?.terminationReason ?? resultSteps[index]?.terminationReason;
+    const projectAgentForStep = (index, step = statusSteps[index]) => {
+        const candidate = step?.projectAgent ?? resultSteps[index]?.projectAgent;
+        if (candidate === undefined)
+            return undefined;
+        const normalized = normalizeProjectAgentRunCapture(candidate);
+        if (!normalized) {
+            throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
+        }
+        return normalized;
+    };
+    const topLevelProjectAgent = normalizeProjectAgentRunCapture(ownObjectProperty(status, "projectAgent").value) ??
+        result?.projectAgent;
+    const explicitProjectAgents = status?.projectAgents ?? result?.projectAgents;
+    const childProjectAgents = [...statusSteps, ...resultSteps].flatMap((step) => {
+        const candidate = step?.projectAgent;
+        if (candidate === undefined)
+            return [];
+        const normalized = normalizeProjectAgentRunCapture(candidate);
+        return normalized ? [normalized] : [];
+    });
+    const projectAgents = explicitProjectAgents ?? (childProjectAgents.length > 0 ? childProjectAgents : undefined);
+    const topLevelProjectMarkerFields = {
+        ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
+        ...(projectAgents !== undefined ? { projectAgents } : {}),
+    };
     if (state === "running") {
         if (requestedIndex !== undefined) {
             if (requestedIndex < 0 || requestedIndex >= stepCount)
@@ -456,6 +589,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                     intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
                     cwd: status?.cwd ?? result?.cwd,
                     sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+                    ...topLevelProjectMarkerFields,
+                    ...(projectAgentForStep(requestedIndex, selectedStep)
+                        ? {
+                            projectAgent: projectAgentForStep(requestedIndex, selectedStep),
+                        }
+                        : {}),
                     ...(modelIdentityForStep(requestedIndex, selectedStep)
                         ? { modelIdentity: modelIdentityForStep(requestedIndex, selectedStep) }
                         : {}),
@@ -488,6 +627,12 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
                 intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
                 cwd: status?.cwd ?? result?.cwd,
                 sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
+                ...topLevelProjectMarkerFields,
+                ...(projectAgentForStep(selected.index, selected.step)
+                    ? {
+                        projectAgent: projectAgentForStep(selected.index, selected.step),
+                    }
+                    : {}),
                 ...(modelIdentityForStep(selected.index, selected.step)
                     ? { modelIdentity: modelIdentityForStep(selected.index, selected.step) }
                     : {}),
@@ -571,6 +716,10 @@ export function resolveAsyncResumeTarget(params, deps = {}, options = {}) {
         intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
         cwd: status?.cwd ?? result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+        ...topLevelProjectMarkerFields,
+        ...(projectAgentForStep(index, selectedStatusStep)
+            ? { projectAgent: projectAgentForStep(index, selectedStatusStep) }
+            : {}),
         ...(modelIdentityForStep(index, selectedStatusStep)
             ? { modelIdentity: modelIdentityForStep(index, selectedStatusStep) }
             : {}),

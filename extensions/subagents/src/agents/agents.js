@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { expandTildePath, getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 import { mergeAgentsForScope } from "./agent-selection.js";
+import { mergeProjectAgentSnapshot, projectAgentSnapshotDiscoveryMetadata, ProjectAgentSnapshotCapabilityError, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
@@ -303,9 +304,11 @@ function collectPackageSubagentPaths(cwd, options = {
     includeProject: true,
 }) {
     const agentDir = getAgentDir();
-    const projectRoot = findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd;
-    const packageRoots = [projectRoot];
-    if (options.includeProject) {
+    const projectRoot = options.includeProjectRootPackage === false
+        ? undefined
+        : (findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd);
+    const packageRoots = projectRoot ? [projectRoot] : [];
+    if (options.includeProject && projectRoot) {
         const projectConfigDir = getProjectConfigDir(projectRoot);
         packageRoots.push(...collectPackageRootsFromNodeModules(path.join(projectConfigDir, "npm", "node_modules")), ...collectSettingsPackageRoots(path.join(projectConfigDir, "settings.json"), projectConfigDir));
     }
@@ -678,7 +681,12 @@ function applyCustomAgentOverride(agent, override, meta) {
     let next;
     let anyFilled = false;
     const mutable = () => {
-        next ??= { ...agent };
+        if (!next) {
+            next = { ...agent };
+            const frontmatterFields = agentFrontmatterFields.get(agent);
+            if (frontmatterFields)
+                agentFrontmatterFields.set(next, frontmatterFields);
+        }
         return next;
     };
     const fill = (field, frontmatterFields, value) => {
@@ -1036,7 +1044,7 @@ function extraUserAgentDirs() {
         .map((dir) => dir.trim())
         .filter((dir) => dir.length > 0);
 }
-export function discoverAgents(cwd, scope) {
+export function discoverAgents(cwd, scope, options = {}) {
     const userDirOld = path.join(getAgentDir(), "agents");
     const userDirNew = getLegacyGlobalAgentsDir();
     const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
@@ -1052,6 +1060,7 @@ export function discoverAgents(cwd, scope) {
     const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
         includeUser: scope !== "project",
         includeProject: scope !== "user",
+        includeProjectRootPackage: !options.excludeProjectPackages,
     });
     const builtinAgents = [];
     const agentDiagnostics = [];
@@ -1074,6 +1083,49 @@ export function discoverAgents(cwd, scope) {
     const packageAgents = applyCustomAgentOverrides(applySubagentDefaultModel(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package", agentDiagnostics)), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents).filter((agent) => agent.disabled !== true);
     return { agents, projectAgentsDir, modelScope, agentDiagnostics };
+}
+export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
+    const manifest = resolveProjectAgentSnapshot(capability, expected);
+    let canonicalCwd;
+    let canonicalProjectRoot;
+    try {
+        canonicalCwd = fs.realpathSync(cwd);
+        canonicalProjectRoot = fs.realpathSync(manifest.provenance.projectRoot);
+    }
+    catch {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const relativeCwd = path.relative(canonicalProjectRoot, canonicalCwd);
+    if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+    const userSettingsPath = getUserAgentSettingsPath();
+    const userSettings = readSubagentSettings(userSettingsPath);
+    const userDefaultModel = resolveSubagentDefaultModel(userSettings, EMPTY_SUBAGENT_SETTINGS, userSettingsPath, null);
+    const snapshotAgents = manifest.entries.map((entry) => {
+        agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
+        return entry.agent;
+    });
+    const effectiveSnapshotAgents = applyCustomAgentOverrides(applySubagentDefaultModel(snapshotAgents, userDefaultModel), userSettings, EMPTY_SUBAGENT_SETTINGS, userSettingsPath, null);
+    const effectiveEntries = manifest.entries.map((entry, index) => ({
+        ...entry,
+        agent: effectiveSnapshotAgents[index],
+    }));
+    const disabledNames = effectiveEntries
+        .filter((entry) => entry.agent.disabled === true)
+        .map((entry) => entry.agent.name);
+    const activeEntries = effectiveEntries.filter((entry) => entry.agent.disabled !== true);
+    const mergeOptions = {
+        entries: activeEntries,
+        tombstones: [...manifest.tombstones, ...disabledNames],
+    };
+    return {
+        ...discovered,
+        agents: mergeProjectAgentSnapshot(discovered.agents, manifest, mergeOptions),
+        projectAgentsDir: null,
+        projectSnapshot: projectAgentSnapshotDiscoveryMetadata(manifest, disabledNames),
+    };
 }
 export function discoverAgentsAll(cwd) {
     const userDirOld = path.join(getAgentDir(), "agents");

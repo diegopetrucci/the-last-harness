@@ -3,12 +3,12 @@ export const COMPACT_SUBAGENT_TOOL_DESCRIPTION = `Delegate to subagents with the
 EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
 • SINGLE: { agent, task? }.
-• PARALLEL: { tasks:[{ agent, task, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }.
+• PARALLEL: { tasks:[{ agent, task, cwd?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }.
 • Optional execution fields: context:"fresh"|"fork", async:true, timeoutMs, cwd, artifacts, includeProgress.
 
 OUTPUT / MODELS
 • SINGLE also accepts output, outputMode, model, fallbackModels.
-• PARALLEL tasks accept output, outputMode, reads, progress, model.
+• PARALLEL tasks accept cwd, output, outputMode, reads, progress, model. Relative task cwd values resolve against the run cwd.
 • output can be a path string or false. outputMode can be "inline" or "file-only".
 • Agent acceptanceRole may be "read-only" or "writer" when configured through management or frontmatter. It affects inferred acceptance only, never tools; explicit task intent wins, omission keeps name heuristics, and false clears the override.
 

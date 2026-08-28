@@ -9,10 +9,13 @@ import type {
   TkTicketMetadata,
   WorkflowGraphSnapshot,
 } from "../../shared/types.ts";
+import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 
 export interface RunnerSubagentStep {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
+  /** Exact approved project-agent config/provenance; never includes a capability. */
+  projectAgent?: ProjectAgentRunCapture;
   agent: string;
   task: string;
   phase?: string;
@@ -95,7 +98,13 @@ export interface SubagentRunConfig {
   share?: boolean;
   sessionDir?: string;
   asyncDir: string;
-  continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+  continuationSource?: {
+    asyncDir: string;
+    runId: string;
+    index: number;
+    claimToken: string;
+    projectAgent?: ProjectAgentRunCapture;
+  };
   sessionId?: string | null;
   piPackageRoot?: string;
   piArgv1?: string;
@@ -112,6 +121,8 @@ export interface SubagentRunConfig {
     path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
   };
   tkTicket?: TkTicketMetadata;
+  /** Safe per-child captures mirrored from steps for artifact inspection. */
+  projectAgents?: ProjectAgentRunCapture[];
   timeoutMs?: number;
   deadlineAt?: number;
   turnBudget?: ResolvedTurnBudget;

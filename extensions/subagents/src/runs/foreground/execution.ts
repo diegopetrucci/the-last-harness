@@ -2125,6 +2125,11 @@ export async function runSync(
       error: "Subagent did not produce a result.",
     } satisfies SingleResult);
 
+  // Keep the exact approved project capture attached to every foreground
+  // checkpoint/result. The capture contains data only; capability authority
+  // remains in the process-private generation registry.
+  if (options.projectAgent) result.projectAgent = options.projectAgent;
+
   if (modelAttempts.length > 1 && result.modelIdentity) {
     modelResolution = appendRuntimeFallbackResolution({
       previous: modelResolution,
@@ -2332,6 +2337,7 @@ export async function runSync(
     writeMetadata(artifactPathsResult.metadataPath, {
       runId: options.runId,
       agent: agentName,
+      projectAgent: result.projectAgent,
       task,
       exitCode: result.exitCode,
       exitSignal: result.exitSignal,

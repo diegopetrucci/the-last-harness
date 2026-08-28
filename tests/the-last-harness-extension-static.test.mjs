@@ -231,6 +231,8 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const subagents = loadSubagentMetadata();
 
   const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
+  const projectNaturalLanguageClause =
+    /project agents are intentionally omitted.*list.*get.*user asks for the `xyz` project subagent.*`embedded\.xyz`.*exception.*management output omits it/is;
   const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
   const managementGuidance = /TLH minor agents are isolated to the user scope/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
@@ -239,6 +241,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(architectPrompt, sectionHeader);
   assert.match(architectPrompt, managementGuidance);
   assert.match(architectPrompt, embeddedClause);
+  assert.match(architectPrompt, projectNaturalLanguageClause);
   assert.doesNotMatch(architectPrompt, closingRule);
 
   for (const primary of [rush, product, bugHunter]) {

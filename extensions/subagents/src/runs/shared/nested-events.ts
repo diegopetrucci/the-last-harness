@@ -35,6 +35,7 @@ import {
   SUBAGENT_PARENT_RUN_ID_ENV,
 } from "./pi-args.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -309,8 +310,10 @@ function sanitizeStep(input: unknown, depth: number): NestedStepSummary | undefi
       ? raw.status
       : "pending";
   const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+  const projectAgent = normalizeProjectAgentRunCapture(raw.projectAgent);
   return {
     agent,
+    ...(projectAgent ? { projectAgent } : {}),
     status,
     ...(terminationReason
       ? { terminationReason: terminationReason as SubagentTerminationReason }
@@ -395,6 +398,9 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
     path: pathParts,
     state: sanitizeState(raw.state, "running"),
+    ...(normalizeProjectAgentRunCapture(raw.projectAgent)
+      ? { projectAgent: normalizeProjectAgentRunCapture(raw.projectAgent) }
+      : {}),
     ...(pathValue(raw.asyncDir, 2048) ? { asyncDir: pathValue(raw.asyncDir, 2048) } : {}),
     ...(clampNumber(raw.pid) !== undefined &&
     clampNumber(raw.pid)! > 0 &&
@@ -1038,11 +1044,13 @@ export function nestedSummaryFromAsyncStatus(
     ...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
     lastUpdate: status.lastUpdate ?? fallback.ts,
     ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
+    ...(status.projectAgents?.length ? { projectAgent: status.projectAgents[0] } : {}),
     ...(status.steps?.length
       ? {
           steps: status.steps
             .map((step) => ({
               agent: step.agent,
+              ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
               status: nestedStepStatusFromAsyncStepStatus(step.status),
               ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
               ...(step.activityState ? { activityState: step.activityState } : {}),
