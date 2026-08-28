@@ -13,6 +13,7 @@ import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncSt
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
@@ -87,7 +88,32 @@ export function validatePersistedAsyncStatus(asyncDir, status) {
         }
         status.tkTicket = normalizedTkTicket;
     }
+    if (status.projectAgents !== undefined) {
+        if (!Array.isArray(status.projectAgents)) {
+            throw createAsyncStatusValidationError({
+                asyncDir,
+                message: "projectAgents must be an array.",
+                fingerprint: fingerprintAsyncStatusFile(asyncDir),
+            });
+        }
+        for (const [index, capture] of status.projectAgents.entries()) {
+            if (!normalizeProjectAgentRunCapture(capture)) {
+                throw createAsyncStatusValidationError({
+                    asyncDir,
+                    message: `projectAgents[${index}] is invalid.`,
+                    fingerprint: fingerprintAsyncStatusFile(asyncDir),
+                });
+            }
+        }
+    }
     for (const step of status.steps ?? []) {
+        if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
+            throw createAsyncStatusValidationError({
+                asyncDir,
+                message: "step projectAgent capture is invalid.",
+                fingerprint: fingerprintAsyncStatusFile(asyncDir),
+            });
+        }
         step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
         step.contextPressure = parseContextPressureProjection(step.contextPressure);
         step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
@@ -120,6 +146,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
             ...(step.outputName ? { outputName: step.outputName } : {}),
             ...(step.structured ? { structured: step.structured } : {}),
             status: step.status,
+            ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
             ...(stepActivityState ? { activityState: stepActivityState } : {}),
             ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
             ...(step.currentTool ? { currentTool: step.currentTool } : {}),
@@ -209,6 +236,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
         ...(status.pause ? { pause: status.pause } : {}),
         ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
+        ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
     };
 }
 function sortRuns(runs) {

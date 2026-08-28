@@ -311,8 +311,10 @@ export function buildAsyncRunnerSteps(id, params) {
             return applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
         })
             .filter((candidate) => candidate !== undefined);
+        const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === s.agent);
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(projectAgent ? { projectAgent } : {}),
             agent: s.agent,
             task,
             phase: s.phase,
@@ -466,6 +468,7 @@ export function executeAsyncChain(id, params) {
         asyncDir,
         timeoutMs: params.timeoutMs,
         toolBudget: params.toolBudget,
+        projectAgentCaptures: params.projectAgentCaptures,
     });
     if ("error" in built) {
         try {
@@ -506,6 +509,9 @@ export function executeAsyncChain(id, params) {
             return [childIntercomTarget(step.agent, childTargetIndex++)];
         })
         : undefined;
+    const projectAgents = [
+        ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
+    ];
     let spawnResult;
     try {
         spawnResult = spawnRunner({
@@ -536,6 +542,7 @@ export function executeAsyncChain(id, params) {
             workflowGraph,
             tkTicket,
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             nestedSelf: inheritedNestedRoute && nestedAddress
                 ? {
                     parentRunId: nestedAddress.parentRunId,
@@ -630,6 +637,7 @@ export function executeAsyncChain(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,
@@ -791,6 +799,7 @@ export function executeAsyncSingle(id, params) {
             steps: [
                 {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+                    ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
                     agent,
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
@@ -869,6 +878,7 @@ export function executeAsyncSingle(id, params) {
             controlIntercomTarget,
             childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
             tkTicket,
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
             resultMode: "single",
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -939,6 +949,7 @@ export function executeAsyncSingle(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,

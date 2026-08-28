@@ -16,6 +16,15 @@ import type {
 import { expandTildePath, getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
+import {
+  mergeProjectAgentSnapshot,
+  projectAgentSnapshotDiscoveryMetadata,
+  ProjectAgentSnapshotCapabilityError,
+  resolveProjectAgentSnapshot,
+  type ProjectAgentSnapshotCapability,
+  type ProjectAgentSnapshotDiscoveryMetadata,
+  type ProjectAgentSnapshotExpected,
+} from "./project-agent-snapshot.ts";
 import { parseFrontmatter } from "./frontmatter.ts";
 import { buildRuntimeName, parsePackageName } from "./identity.ts";
 import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/model-scope.ts";
@@ -220,11 +229,15 @@ export interface AgentDiscoveryDiagnostic {
   error: string;
 }
 
-interface AgentDiscoveryResult {
+export interface AgentDiscoveryResult {
   agents: AgentConfig[];
   projectAgentsDir: string | null;
   modelScope?: ModelScopeConfig;
   agentDiagnostics?: AgentDiscoveryDiagnostic[];
+}
+
+export interface ProjectAgentSnapshotDiscoveryResult extends AgentDiscoveryResult {
+  projectSnapshot: ProjectAgentSnapshotDiscoveryMetadata;
 }
 
 function getUserChainDir(): string {
@@ -488,16 +501,23 @@ function findNearestPackageSubagentRoot(cwd: string): string | null {
 
 function collectPackageSubagentPaths(
   cwd: string,
-  options: { includeUser: boolean; includeProject: boolean } = {
+  options: {
+    includeUser: boolean;
+    includeProject: boolean;
+    includeProjectRootPackage?: boolean;
+  } = {
     includeUser: true,
     includeProject: true,
   },
 ): PackageSubagentPaths {
   const agentDir = getAgentDir();
-  const projectRoot = findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd;
-  const packageRoots = [projectRoot];
+  const projectRoot =
+    options.includeProjectRootPackage === false
+      ? undefined
+      : (findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd);
+  const packageRoots = projectRoot ? [projectRoot] : [];
 
-  if (options.includeProject) {
+  if (options.includeProject && projectRoot) {
     const projectConfigDir = getProjectConfigDir(projectRoot);
     packageRoots.push(
       ...collectPackageRootsFromNodeModules(path.join(projectConfigDir, "npm", "node_modules")),
@@ -959,7 +979,11 @@ function applyCustomAgentOverride(
   let anyFilled = false;
 
   const mutable = (): AgentConfig => {
-    next ??= { ...agent };
+    if (!next) {
+      next = { ...agent };
+      const frontmatterFields = agentFrontmatterFields.get(agent);
+      if (frontmatterFields) agentFrontmatterFields.set(next, frontmatterFields);
+    }
     return next;
   };
 
@@ -1417,7 +1441,11 @@ function extraUserAgentDirs(): string[] {
     .filter((dir) => dir.length > 0);
 }
 
-export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
+export function discoverAgents(
+  cwd: string,
+  scope: AgentScope,
+  options: { excludeProjectPackages?: boolean } = {},
+): AgentDiscoveryResult {
   const userDirOld = path.join(getAgentDir(), "agents");
   const userDirNew = getLegacyGlobalAgentsDir();
   const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } =
@@ -1441,6 +1469,7 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
   const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
     includeUser: scope !== "project",
     includeProject: scope !== "user",
+    includeProjectRootPackage: !options.excludeProjectPackages,
   });
 
   const builtinAgents: AgentConfig[] = [];
@@ -1512,6 +1541,69 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
   ).filter((agent) => agent.disabled !== true);
 
   return { agents, projectAgentsDir, modelScope, agentDiagnostics };
+}
+
+/**
+ * Internal-only discovery seam for an already validated project snapshot.
+ * This seam intentionally discovers only effective user/profile agents;
+ * public agentScope and ordinary project discovery remain unchanged.
+ */
+export function discoverAgentsWithProjectSnapshot(
+  cwd: string,
+  capability: ProjectAgentSnapshotCapability,
+  expected: ProjectAgentSnapshotExpected,
+): ProjectAgentSnapshotDiscoveryResult {
+  const manifest = resolveProjectAgentSnapshot(capability, expected);
+  let canonicalCwd: string;
+  let canonicalProjectRoot: string;
+  try {
+    canonicalCwd = fs.realpathSync(cwd);
+    canonicalProjectRoot = fs.realpathSync(manifest.provenance.projectRoot);
+  } catch {
+    throw new ProjectAgentSnapshotCapabilityError();
+  }
+  const relativeCwd = path.relative(canonicalProjectRoot, canonicalCwd);
+  if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
+    throw new ProjectAgentSnapshotCapabilityError();
+  }
+  const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+  const userSettingsPath = getUserAgentSettingsPath();
+  const userSettings = readSubagentSettings(userSettingsPath);
+  const userDefaultModel = resolveSubagentDefaultModel(
+    userSettings,
+    EMPTY_SUBAGENT_SETTINGS,
+    userSettingsPath,
+    null,
+  );
+  const snapshotAgents = manifest.entries.map((entry) => {
+    agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
+    return entry.agent;
+  });
+  const effectiveSnapshotAgents = applyCustomAgentOverrides(
+    applySubagentDefaultModel(snapshotAgents, userDefaultModel),
+    userSettings,
+    EMPTY_SUBAGENT_SETTINGS,
+    userSettingsPath,
+    null,
+  );
+  const effectiveEntries = manifest.entries.map((entry, index) => ({
+    ...entry,
+    agent: effectiveSnapshotAgents[index]!,
+  }));
+  const disabledNames = effectiveEntries
+    .filter((entry) => entry.agent.disabled === true)
+    .map((entry) => entry.agent.name);
+  const activeEntries = effectiveEntries.filter((entry) => entry.agent.disabled !== true);
+  const mergeOptions = {
+    entries: activeEntries,
+    tombstones: [...manifest.tombstones, ...disabledNames],
+  };
+  return {
+    ...discovered,
+    agents: mergeProjectAgentSnapshot(discovered.agents, manifest, mergeOptions),
+    projectAgentsDir: null,
+    projectSnapshot: projectAgentSnapshotDiscoveryMetadata(manifest, disabledNames),
+  };
 }
 
 export function discoverAgentsAll(cwd: string): {

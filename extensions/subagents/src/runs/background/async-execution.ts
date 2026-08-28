@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
+import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
 import {
   applyThinkingSuffix,
@@ -148,6 +149,8 @@ interface AsyncChainParams {
   timeoutMs?: number;
   turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
+  /** Exact approved project-agent captures for the detached runner steps. */
+  projectAgentCaptures?: readonly ProjectAgentRunCapture[];
 }
 
 interface AsyncSingleParams {
@@ -156,8 +159,16 @@ interface AsyncSingleParams {
   agentConfig: AgentConfig;
   ctx: AsyncExecutionContext;
   cwd?: string;
-  continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+  continuationSource?: {
+    asyncDir: string;
+    runId: string;
+    index: number;
+    claimToken: string;
+    projectAgent?: ProjectAgentRunCapture;
+  };
   inheritedTkTicket?: TkTicketMetadata;
+  /** Exact approved project-agent config/provenance for this child. */
+  projectAgent?: ProjectAgentRunCapture;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig: ArtifactConfig;
@@ -224,6 +235,7 @@ interface AsyncRunnerStepBuildParams {
   validateOutputBindings?: boolean;
   timeoutMs?: number;
   toolBudget?: ResolvedToolBudget;
+  projectAgentCaptures?: readonly ProjectAgentRunCapture[];
 }
 
 type AsyncRunnerStepBuildResult =
@@ -677,8 +689,12 @@ export function buildAsyncRunnerSteps(
         );
       })
       .filter((candidate): candidate is string => candidate !== undefined);
+    const projectAgent = params.projectAgentCaptures?.find(
+      (capture) => capture.provenance.agent === s.agent,
+    );
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+      ...(projectAgent ? { projectAgent } : {}),
       agent: s.agent,
       task,
       phase: s.phase,
@@ -887,6 +903,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
     asyncDir,
     timeoutMs: params.timeoutMs,
     toolBudget: params.toolBudget,
+    projectAgentCaptures: params.projectAgentCaptures,
   });
   if ("error" in built) {
     try {
@@ -926,6 +943,11 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
         return [childIntercomTarget(step.agent, childTargetIndex++)];
       })
     : undefined;
+  const projectAgents = [
+    ...new Map(
+      params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? [],
+    ).values(),
+  ];
 
   let spawnResult: { pid?: number; error?: string };
   try {
@@ -958,6 +980,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
         workflowGraph,
         tkTicket,
         nestedRoute: nestedRoute ?? inheritedNestedRoute,
+        ...(projectAgents.length > 0 ? { projectAgents } : {}),
         nestedSelf:
           inheritedNestedRoute && nestedAddress
             ? {
@@ -1063,6 +1086,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
       cwd: runnerCwd,
       asyncDir,
       ...(tkTicket ? { tkTicket } : {}),
+      ...(projectAgents.length > 0 ? { projectAgents } : {}),
       ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,
@@ -1324,6 +1348,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
         steps: [
           {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
             agent,
             task: taskWithOutputInstruction,
             cwd: runnerCwd,
@@ -1415,6 +1440,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
         controlIntercomTarget,
         childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
         tkTicket,
+        ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
         ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
         resultMode: "single",
         nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -1492,6 +1518,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
       cwd: runnerCwd,
       asyncDir,
       ...(tkTicket ? { tkTicket } : {}),
+      ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
       ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,

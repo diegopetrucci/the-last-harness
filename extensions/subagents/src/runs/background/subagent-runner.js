@@ -1460,6 +1460,7 @@ async function runSingleStep(step, ctx) {
     parentRegisterTimeout?.(undefined);
     return {
         agent: step.agent,
+        ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
         output: outputForSummary,
         exitCode: effectiveFinalExitCode,
         exitSignal: finalResult?.exitSignal,
@@ -1608,6 +1609,7 @@ async function runSubagent(config) {
                 });
                 initialStatusSteps.push({
                     agent: task.agent,
+                    ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
                     phase: task.phase,
                     label: task.label,
                     outputName: task.outputName,
@@ -1654,6 +1656,7 @@ async function runSubagent(config) {
             });
             initialStatusSteps.push({
                 agent: step.agent,
+                ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
                 phase: step.phase,
                 label: step.label,
                 outputName: step.outputName,
@@ -1712,6 +1715,7 @@ async function runSubagent(config) {
         workflowGraph: config.workflowGraph,
         steps: initialStatusSteps,
         ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
+        ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
         artifactsDir,
         sessionDir: config.sessionDir,
         outputFile: path.join(asyncDir, "output-0.log"),
@@ -1751,6 +1755,9 @@ async function runSubagent(config) {
                     results: [
                         {
                             agent: gateRejectAgent,
+                            ...(statusPayload.steps?.[0]?.projectAgent
+                                ? { projectAgent: statusPayload.steps[0].projectAgent }
+                                : {}),
                             output: statusPayload.error,
                             error: statusPayload.error,
                             success: false,
@@ -1762,6 +1769,7 @@ async function runSubagent(config) {
                     durationMs: 0,
                     asyncDir,
                     sessionId: config.sessionId,
+                    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
                 });
             }
             catch (err) {
@@ -2076,6 +2084,7 @@ async function runSubagent(config) {
         : undefined;
     const pausedStepResult = (task) => ({
         agent: task.agent,
+        ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
         output: "Paused after interrupt. Waiting for explicit next action.",
         exitCode: 0,
         interrupted: true,
@@ -2087,6 +2096,7 @@ async function runSubagent(config) {
     });
     const timedOutStepResult = (task) => ({
         agent: task.agent,
+        ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
         output: timeoutMessage ?? "Subagent timed out.",
         error: timeoutMessage ?? "Subagent timed out.",
         exitCode: 1,
@@ -2936,6 +2946,7 @@ async function runSubagent(config) {
                     }));
                     return {
                         agent: task.agent,
+                        ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
                         output: "(skipped — fail-fast)",
                         exitCode: -1,
                         skipped: true,
@@ -3154,6 +3165,7 @@ async function runSubagent(config) {
                 const fi = groupStartFlatIndex + t;
                 results.push({
                     agent: pr.agent,
+                    ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
                     output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
                     error: pr.error,
                     stderr: pr.stderr,
@@ -3301,6 +3313,7 @@ async function runSubagent(config) {
             previousOutput = singleResult.output;
             results.push({
                 agent: singleResult.agent,
+                ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
                 output: timedOut
                     ? (timeoutMessage ?? "Subagent timed out.")
                     : singleResult.interrupted
@@ -3689,6 +3702,11 @@ async function runSubagent(config) {
             if (results.length === 0) {
                 results.push({
                     agent: statusPayload.steps[supervisorPauseRequest.requesterIndex]?.agent ?? agentName,
+                    ...(statusPayload.steps[supervisorPauseRequest.requesterIndex]?.projectAgent
+                        ? {
+                            projectAgent: statusPayload.steps[supervisorPauseRequest.requesterIndex].projectAgent,
+                        }
+                        : {}),
                     output: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
                     error: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
                     success: false,
@@ -3838,6 +3856,7 @@ async function runSubagent(config) {
             ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
             results: results.map((r) => ({
                 agent: r.agent,
+                ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
                 output: r.output,
                 error: r.error,
                 stderr: r.stderr,
@@ -3891,6 +3910,7 @@ async function runSubagent(config) {
             cwd,
             asyncDir,
             sessionId: config.sessionId,
+            ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
             sessionFile: effectiveSessionFile,
             intercomTarget: config.controlIntercomTarget,
             shareUrl,

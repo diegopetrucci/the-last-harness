@@ -128,6 +128,90 @@ describe("async resume lookup", () => {
     }
   });
 
+  it("carries safe project provenance/config into resume targets and rejects corruption", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-project-agent-"));
+    try {
+      const asyncRoot = path.join(root, "runs");
+      const sessionFile = path.join(root, "session.jsonl");
+      fs.writeFileSync(sessionFile, "", "utf-8");
+      const projectAgent = {
+        provenance: {
+          projectRoot: root,
+          sessionId: "session-project",
+          generationId: "generation-project",
+          processInstanceId: "process-project",
+          source: "project" as const,
+          agent: "embedded.worker",
+          digest: "digest-project",
+        },
+        config: {
+          name: "embedded.worker",
+          description: "Captured project agent",
+          systemPrompt: "Captured prompt",
+          systemPromptMode: "replace" as const,
+          inheritProjectContext: false,
+          inheritSkills: false,
+          source: "project" as const,
+          filePath: path.join(root, ".tlh", "agents", "worker.md"),
+          packageName: "embedded",
+          tools: ["read"],
+        },
+      };
+      writeJson(path.join(asyncRoot, "run-project", "status.json"), {
+        runId: "run-project",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        endedAt: 200,
+        lastUpdate: 200,
+        cwd: root,
+        steps: [
+          {
+            agent: "embedded.worker",
+            status: "paused",
+            sessionFile,
+            projectAgent,
+            acceptance: skippedPausedAcceptanceLedger(),
+          },
+        ],
+      });
+      const target = resolveAsyncResumeTarget(
+        { id: "run-project" },
+        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+        { readOnly: true },
+      );
+      assert.deepEqual(target.projectAgent, projectAgent);
+
+      writeJson(path.join(asyncRoot, "run-corrupt", "status.json"), {
+        runId: "run-corrupt",
+        mode: "single",
+        state: "paused",
+        startedAt: 100,
+        cwd: root,
+        steps: [
+          {
+            agent: "embedded.worker",
+            status: "paused",
+            sessionFile,
+            projectAgent: { ...projectAgent, config: { ...projectAgent.config, source: "user" } },
+            acceptance: skippedPausedAcceptanceLedger(),
+          },
+        ],
+      });
+      assert.throws(
+        () =>
+          resolveAsyncResumeTarget(
+            { id: "run-corrupt" },
+            { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
+            { readOnly: true },
+          ),
+        /projectAgent is invalid|project-agent capture/i,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("restores canonical child model identity from status and result-only artifacts", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-model-identity-"));
     try {

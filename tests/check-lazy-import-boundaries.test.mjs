@@ -9,6 +9,8 @@
  * Cases covered:
  *  - Multiline dynamic import whose lazy target has a bare specifier → FAIL
  *  - Nested lazy boundary (outer -> inner -> bare specifier) → FAIL
+ *  - Computed and identifier-bound new URL targets → FAIL
+ *  - Declared runtime dependency allowed; peer/dev-only imports → FAIL
  *  - No false positive: import-looking text inside a comment → PASS
  *  - No false positive: import-looking text inside a template string → PASS
  *  - Clean fixture (no violations) → PASS
@@ -187,6 +189,76 @@ export function run() {}
     /@earendil-works\/pi-coding-agent/,
     `expected the bare specifier name in stderr; got: ${stderr}`,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Fixtures: statically computed file URLs must be followed
+// ---------------------------------------------------------------------------
+
+test("computed new URL dynamic target with an inline expression: exits 1", () => {
+  const dir = makeTempDir({
+    "entry.js": `
+const lazy = () => import(new URL(["./sub", "computed.js"].join("/"), import.meta.url).href);
+`,
+    "sub/computed.js": `
+import "@earendil-works/pi-coding-agent";
+export function run() {}
+`,
+  });
+
+  const { status, stderr } = runChecker(dir);
+  assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
+  assert.match(stderr, /computed\.js/, `expected computed URL target in stderr; got: ${stderr}`);
+  assert.match(stderr, /bare specifier/i, `expected bare-specifier violation; got: ${stderr}`);
+});
+
+test("identifier-bound new URL dynamic target: exits 1", () => {
+  const dir = makeTempDir({
+    "entry.js": `
+const targetUrl = new URL(["./sub", "identifier-bound.js"].join("/"), import.meta.url);
+const lazy = () => import(targetUrl.href);
+`,
+    "sub/identifier-bound.js": `
+import "@earendil-works/pi-coding-agent";
+export function run() {}
+`,
+  });
+
+  const { status, stderr } = runChecker(dir);
+  assert.equal(status, 1, `expected exit 1 (violation), got ${status}; stderr: ${stderr}`);
+  assert.match(
+    stderr,
+    /identifier-bound\.js/,
+    `expected identifier-bound URL target in stderr; got: ${stderr}`,
+  );
+  assert.match(stderr, /bare specifier/i, `expected bare-specifier violation; got: ${stderr}`);
+});
+
+// ---------------------------------------------------------------------------
+// Fixtures: only declared runtime dependencies are allowed in native graphs
+// ---------------------------------------------------------------------------
+
+test("declared runtime dependency is allowed but peer/dev-only imports fail", () => {
+  const dir = makeTempDir({
+    "package.json": JSON.stringify({
+      dependencies: { "declared-runtime": "1.0.0" },
+      peerDependencies: { "peer-only": "1.0.0" },
+      devDependencies: { "dev-only": "1.0.0" },
+    }),
+    "entry.js": `const lazy = () => import("./sub/declared.js");`,
+    "sub/declared.js": `
+import "declared-runtime/subpath";
+import "peer-only";
+import "dev-only";
+export function run() {}
+`,
+  });
+
+  const { status, stderr } = runChecker(dir);
+  assert.equal(status, 1, `expected peer/dev violations, got ${status}; stderr: ${stderr}`);
+  assert.match(stderr, /peer-only/, `expected peer-only violation; got: ${stderr}`);
+  assert.match(stderr, /dev-only/, `expected dev-only violation; got: ${stderr}`);
+  assert.doesNotMatch(stderr, /declared-runtime/, "declared runtime dependency must be allowed");
 });
 
 // ---------------------------------------------------------------------------
