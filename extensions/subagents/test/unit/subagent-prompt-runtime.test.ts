@@ -20,6 +20,10 @@ import {
   projectAgentGuidanceFilename,
 } from "../../../shared/project-agent-guidance.ts";
 import {
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+} from "../../../shared/subagent-child-boundary.ts";
+import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
@@ -840,13 +844,14 @@ describe("subagent prompt runtime", () => {
       CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
       "Continuation after the quoted child boundary.",
     ].join("\n\n");
+    const explicitRuntimeBlock = [
+      CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+      [snapshot, STRUCTURED_OUTPUT_INSTRUCTIONS].join("\n\n"),
+      CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+    ].join("\n");
     const promptWithRuntimeSuffix =
-      [
-        quotedPrompt,
-        snapshot,
-        STRUCTURED_OUTPUT_INSTRUCTIONS,
-        CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
-      ].join("\n\n") + "\n \t";
+      [quotedPrompt, explicitRuntimeBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n") +
+      "\n \t";
 
     const rewritten = rewriteSubagentPrompt(
       promptWithRuntimeSuffix,
@@ -856,8 +861,7 @@ describe("subagent prompt runtime", () => {
 
     const expected = [
       quotedPrompt,
-      snapshot,
-      STRUCTURED_OUTPUT_INSTRUCTIONS,
+      explicitRuntimeBlock,
       CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
     ].join("\n\n");
     assert.equal(rewritten, expected);

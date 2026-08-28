@@ -31,7 +31,10 @@ import {
   toolBudgetSoftNudge,
 } from "./tool-budget.ts";
 import type { JsonSchemaObject, ResolvedToolBudget } from "../../shared/types.ts";
-import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS } from "../../../../shared/subagent-child-boundary.ts";
+import {
+  CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+  composeChildPromptRuntime,
+} from "../../../../shared/subagent-child-boundary.ts";
 import {
   formatProjectAgentGuidance,
   inventoryProjectAgentGuidance,
@@ -114,35 +117,6 @@ export function stripSubagentOrchestrationSkill(prompt: string): string {
     );
 }
 
-const TRAILING_WHITESPACE_PATTERN = /\s*$/u;
-const RUNTIME_SEPARATOR_PATTERN = /[ \t]*(?:\r?\n[ \t]*)+$/u;
-
-function stripTerminalRuntimeBlock(prompt: string, block: string): string | undefined {
-  const trailingWhitespace = prompt.match(TRAILING_WHITESPACE_PATTERN)?.[0] ?? "";
-  const contentEnd = prompt.length - trailingWhitespace.length;
-  const blockStart = contentEnd - block.length;
-  if (blockStart < 0 || prompt.slice(blockStart, contentEnd) !== block) return undefined;
-
-  // Runtime blocks are joined with a blank line. Remove only that separator
-  // while preserving all preceding prompt text byte-for-byte.
-  return prompt.slice(0, blockStart).replace(RUNTIME_SEPARATOR_PATTERN, "");
-}
-
-function stripRuntimeOwnedSuffix(prompt: string, projectAgentGuidance: string): string {
-  // The child runtime owns a terminal boundary. Only after finding that
-  // boundary do the preceding structured-output and guidance blocks become
-  // eligible for removal as the rest of its known trailing sequence.
-  const withoutBoundary = stripTerminalRuntimeBlock(prompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS);
-  if (withoutBoundary === undefined) return prompt;
-
-  let rewritten = withoutBoundary;
-  rewritten = stripTerminalRuntimeBlock(rewritten, STRUCTURED_OUTPUT_INSTRUCTIONS) ?? rewritten;
-  if (projectAgentGuidance) {
-    rewritten = stripTerminalRuntimeBlock(rewritten, projectAgentGuidance) ?? rewritten;
-  }
-  return rewritten;
-}
-
 export function rewriteSubagentPrompt(
   prompt: string,
   options: { inheritProjectContext: boolean; inheritSkills: boolean },
@@ -156,13 +130,10 @@ export function rewriteSubagentPrompt(
     rewritten = stripInheritedSkills(rewritten);
   }
   rewritten = stripSubagentOrchestrationSkill(rewritten);
-  rewritten = stripRuntimeOwnedSuffix(rewritten, projectAgentGuidance);
   const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV]
     ? STRUCTURED_OUTPUT_INSTRUCTIONS
     : "";
-  return [rewritten, projectAgentGuidance, structured, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
-    .filter(Boolean)
-    .join("\n\n");
+  return composeChildPromptRuntime(rewritten, [projectAgentGuidance, structured], "explicit");
 }
 
 /**

@@ -24,14 +24,27 @@ const jiti = createJiti(import.meta.url);
 const { formatProjectAgentGuidance } = await jiti.import(
   "../extensions/the-last-harness/prompts.ts",
 );
-const { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, default: registerSubagentPromptRuntime } =
-  await jiti.import("../extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts");
-const { appendBeforeChildSubagentBoundary } = await jiti.import(
-  "../extensions/shared/subagent-child-boundary.ts",
-);
+const {
+  CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+  default: registerSubagentPromptRuntime,
+  rewriteSubagentPrompt,
+} = await jiti.import("../extensions/subagents/src/runs/shared/subagent-prompt-runtime.ts");
+const {
+  appendBeforeChildSubagentBoundary,
+  composeChildPromptRuntime,
+  CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
+  CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+  CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+} = await jiti.import("../extensions/shared/subagent-child-boundary.ts");
 const { estimateTlhLaunchContextAllocation } = await jiti.import(
   "../extensions/the-last-harness/launch-context.ts",
 );
+const STRUCTURED_OUTPUT_INSTRUCTIONS = [
+  "This subagent step has a strict structured output contract.",
+  "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
+  "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
+].join("\n");
 
 function writeProjectGuidance(cwd, role, content) {
   const directory = join(cwd, ".tlh", "agents", "builtin");
@@ -362,9 +375,14 @@ test("root hook relocates only a terminal child boundary", () => {
     "root child additions",
   );
 
+  const rootRuntimeBlock = [
+    CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
+    "root child additions",
+    CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
+  ].join("\n");
   assert.equal(
     rewritten,
-    [quotedPrompt, "root child additions", CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n"),
+    [quotedPrompt, rootRuntimeBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS].join("\n\n"),
   );
   assert.equal(
     (rewritten.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
@@ -374,23 +392,198 @@ test("root hook relocates only a terminal child boundary", () => {
   assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 });
 
-test("child hooks keep project guidance before terminal safety material in either registration order", async (t) => {
+test("root hook keeps its no-boundary append-only behavior", () => {
+  const prompt = "base prompt";
+  const rootRuntimeBlock = (content) =>
+    [CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, content, CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE].join("\n");
+  const rewritten = appendBeforeChildSubagentBoundary(prompt, "root child additions");
+  assert.equal(rewritten, [prompt, rootRuntimeBlock("root child additions")].join("\n\n"));
+  assert.doesNotMatch(rewritten, /You are a child subagent, not the parent orchestrator\./);
+
+  const replaced = appendBeforeChildSubagentBoundary(rewritten, "updated root additions");
+  assert.equal(replaced, [prompt, rootRuntimeBlock("updated root additions")].join("\n\n"));
+  assert.doesNotMatch(replaced, /root child additions/);
+
+  const cleared = appendBeforeChildSubagentBoundary(replaced, "");
+  assert.equal(cleared, prompt);
+  assert.doesNotMatch(cleared, /You are a child subagent, not the parent orchestrator\./);
+});
+
+test("malformed and duplicate-owner reserved-marker base text remains intact", () => {
+  const quotedExplicitBlock = [
+    CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+    "quoted explicit owner content",
+    CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+  ].join("\n");
+  const prompt = [
+    "## The Last Harness Defaults",
+    "This is unmarked role text at index zero.",
+    "Malformed root marker: <!-- tlh:child-root-runtime:start",
+    "Partial explicit marker: <!-- tlh:child-explicit-runtime:end --",
+    quotedExplicitBlock,
+  ].join("\n\n");
+
+  const onePass = composeChildPromptRuntime(prompt, ["actual explicit additions"], "explicit");
+  const twoPasses = composeChildPromptRuntime(onePass, ["actual explicit additions"], "explicit");
+
+  assert.equal(twoPasses, onePass);
+  assert.match(onePass, /This is unmarked role text at index zero\./);
+  assert.match(onePass, /Malformed root marker: <!-- tlh:child-root-runtime:start/);
+  assert.match(onePass, /Partial explicit marker: <!-- tlh:child-explicit-runtime:end --/);
+  assert.match(onePass, /quoted explicit owner content/);
+  assert.match(onePass, /actual explicit additions/);
+  assert.equal(
+    (onePass.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
+    2,
+    "the quoted explicit block and actual explicit block must both survive",
+  );
+  assert.ok(onePass.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+});
+
+test("marked root and explicit content replace when their text changes", async () => {
+  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: undefined }, async () => {
+    const options = { inheritProjectContext: true, inheritSkills: true };
+    const rootOnly = appendBeforeChildSubagentBoundary("base prompt", "root version one");
+    assert.doesNotMatch(rootOnly, /You are a child subagent, not the parent orchestrator\./);
+    const first = rewriteSubagentPrompt(rootOnly, options, "guidance version one");
+    assert.match(first, /root version one/);
+    assert.ok(first.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+    const second = rewriteSubagentPrompt(
+      appendBeforeChildSubagentBoundary(first, "root version two"),
+      options,
+      "guidance version two",
+    );
+
+    assert.match(second, /root version two/);
+    assert.match(second, /guidance version two/);
+    assert.doesNotMatch(second, /root version one|guidance version one/);
+    assert.equal((second.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length, 1);
+    assert.equal(
+      (second.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
+      1,
+    );
+    assert.equal(
+      (second.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
+      1,
+    );
+    assert.equal(
+      rewriteSubagentPrompt(
+        appendBeforeChildSubagentBoundary(second, "root version two"),
+        options,
+        "guidance version two",
+      ),
+      second,
+    );
+    const clearedRoot = appendBeforeChildSubagentBoundary(second, "");
+    assert.doesNotMatch(clearedRoot, /root version two/);
+    assert.match(clearedRoot, /guidance version two/);
+    assert.equal(
+      (clearedRoot.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length,
+      0,
+    );
+    assert.ok(clearedRoot.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  });
+});
+
+test("defangs reserved owner markers inside root and guidance additions", async () => {
+  const markerLookalikes = [
+    `balanced ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}`,
+    `nested ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN}outer ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE}`,
+    `partial ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN.slice(0, -4)} and ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE.slice(0, -4)}`,
+  ].join("\n\n");
+  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: undefined }, async () => {
+    const options = { inheritProjectContext: true, inheritSkills: true };
+    const rootAdditions = ["normal root guidance", markerLookalikes].join("\n\n");
+    const explicitAdditions = ["normal project guidance", markerLookalikes].join("\n\n");
+    const onePass = rewriteSubagentPrompt(
+      appendBeforeChildSubagentBoundary("base prompt", rootAdditions),
+      options,
+      explicitAdditions,
+    );
+    const twoPasses = rewriteSubagentPrompt(
+      appendBeforeChildSubagentBoundary(onePass, rootAdditions),
+      options,
+      explicitAdditions,
+    );
+
+    assert.equal(twoPasses, onePass);
+    assert.match(onePass, /normal root guidance/);
+    assert.match(onePass, /normal project guidance/);
+    assert.match(onePass, /\[tlh child-runtime marker:/);
+    for (const marker of [
+      CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
+      CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
+      CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+      CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+    ]) {
+      assert.equal((onePass.match(new RegExp(marker, "g")) ?? []).length, 1, marker);
+    }
+  });
+});
+
+test("structured-output additions toggle inside the explicit owner wrapper", async () => {
+  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: "structured-output.json" }, async () => {
+    const options = { inheritProjectContext: true, inheritSkills: true };
+    const guidance = "stable guidance";
+    const withStructured = rewriteSubagentPrompt("base prompt", options, guidance);
+    assert.equal(
+      (withStructured.match(/This subagent step has a strict structured output contract\./g) ?? [])
+        .length,
+      1,
+    );
+
+    delete process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
+    const withoutStructured = rewriteSubagentPrompt(withStructured, options, guidance);
+    assert.equal(
+      (
+        withoutStructured.match(/This subagent step has a strict structured output contract\./g) ??
+        []
+      ).length,
+      0,
+    );
+    assert.equal(
+      (withoutStructured.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
+      1,
+    );
+
+    process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE = "structured-output.json";
+    const restored = rewriteSubagentPrompt(withoutStructured, options, guidance);
+    assert.equal(
+      (restored.match(/This subagent step has a strict structured output contract\./g) ?? [])
+        .length,
+      1,
+    );
+    assert.ok(restored.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  });
+});
+
+test("child hook composition is idempotent in either registration order", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-child-project-guidance-", {
     cwd: true,
     test: t,
   });
-  writeProjectGuidance(fixture.cwd, "developer", "child launch guidance");
+  writeProjectGuidance(fixture.cwd, "code-reviewer", "child launch guidance");
   persistProjectTrust(fixture.agent, fixture.cwd);
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    `${JSON.stringify(
+      { tlh: { experimental: { enabledFeatures: [DELTA_FOLLOW_UP_REVIEWS_FEATURE] } } },
+      null,
+      2,
+    )}\n`,
+  );
 
   await withEnv(
     {
       HOME: fixture.home,
       PI_CODING_AGENT_DIR: fixture.agent,
       PI_SUBAGENT_CHILD: "1",
-      PI_SUBAGENT_CHILD_AGENT: "developer",
+      PI_SUBAGENT_CHILD_AGENT: "code-reviewer",
       PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: "1",
       PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "1",
       PI_SUBAGENT_INHERIT_SKILLS: "1",
+      PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: "structured-output.json",
+      PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: undefined,
       PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: undefined,
       PI_SUBAGENT_RUN_ID: undefined,
       PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: undefined,
@@ -398,7 +591,36 @@ test("child hooks keep project guidance before terminal safety material in eithe
       TICKETS_DIR: undefined,
     },
     async () => {
-      async function composePrompt(rootFirst) {
+      const quotedRootDefaults = [
+        "## The Last Harness Defaults",
+        "Quoted root defaults must remain intact.",
+        "## TLH Child Subagent Defaults",
+        "- If you learn something durable that should be recorded in project memory, report it to the parent primary agent or supervisor instead.",
+        "Continuation after the quoted root defaults.",
+      ].join("\n\n");
+      const quotedRuntimeLookalikes = [
+        "Quoted project guidance:",
+        [
+          "## TLH Project Agent Guidance",
+          "",
+          "Source: quoted/project-guidance.md",
+          "",
+          "<tlh_project_agent_guidance>",
+          "Quoted project guidance must remain intact.",
+          "</tlh_project_agent_guidance>",
+        ].join("\n"),
+        "Continuation after the quoted project guidance.",
+        "Quoted structured-output instructions:",
+        STRUCTURED_OUTPUT_INSTRUCTIONS,
+        "Continuation after the quoted structured-output instructions.",
+        "Quoted root defaults:",
+        quotedRootDefaults,
+        "Quoted child boundary:",
+        CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
+        "Continuation after the quoted child boundary.",
+      ].join("\n\n");
+
+      async function composePrompt(rootFirst, passes = 1) {
         const pi = createPiHarness();
         if (rootFirst) {
           registerTlhPrimaryAgentRuntime(pi, { env: process.env });
@@ -411,44 +633,97 @@ test("child hooks keep project guidance before terminal safety material in eithe
         for (const event of pi.events.filter((entry) => entry.name === "session_start")) {
           await event.handler({}, ctx);
         }
-        let event = { systemPrompt: "packaged developer role" };
-        for (const handler of pi.events
-          .filter((entry) => entry.name === "before_agent_start")
-          .map((entry) => entry.handler)) {
-          event = await handler(event, ctx);
+        let event = {
+          systemPrompt: ["packaged code-reviewer role", quotedRuntimeLookalikes].join("\n\n"),
+        };
+        for (let pass = 0; pass < passes; pass += 1) {
+          for (const handler of pi.events
+            .filter((entry) => entry.name === "before_agent_start")
+            .map((entry) => entry.handler)) {
+            const nextEvent = await handler(event, ctx);
+            if (nextEvent) event = nextEvent;
+          }
         }
         return event.systemPrompt;
       }
 
-      for (const [label, prompt] of [
-        ["actual child hook order", await composePrompt(false)],
-        ["reverse child hook order", await composePrompt(true)],
+      const prompts = [];
+      for (const [label, rootFirst] of [
+        ["actual child hook order", false],
+        ["reverse child hook order", true],
       ]) {
-        const roleIndex = prompt.indexOf("packaged developer role");
-        const guidanceIndex = prompt.indexOf("child launch guidance");
-        const childDefaultsIndex = prompt.indexOf("## TLH Child Subagent Defaults");
+        const onePass = await composePrompt(rootFirst);
+        const twoPasses = await composePrompt(rootFirst, 2);
+        prompts.push(onePass);
+        assert.equal(twoPasses, onePass, `${label}: repeating both hooks must be idempotent`);
+
+        const roleIndex = onePass.indexOf("packaged code-reviewer role");
+        const guidanceIndex = onePass.lastIndexOf("child launch guidance");
+        const childDefaultsIndex = onePass.indexOf("## TLH Child Subagent Defaults");
         assert.ok(roleIndex >= 0, `${label}: packaged role should remain`);
         assert.ok(guidanceIndex > roleIndex, `${label}: guidance should follow packaged role`);
         assert.ok(childDefaultsIndex > roleIndex, `${label}: child defaults should remain`);
         assert.ok(
-          prompt.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
+          onePass.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
           `${label}: child boundary must remain terminal`,
         );
         assert.equal(
-          (prompt.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
-          1,
-          `${label}: authoritative child boundary must be singular`,
+          (onePass.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
+          2,
+          `${label}: quoted and authoritative child boundaries must both survive`,
         );
         assert.equal(
-          (prompt.match(/<tlh_project_agent_guidance>/g) ?? []).length,
+          (onePass.match(/<tlh_project_agent_guidance>/g) ?? []).length,
+          2,
+          `${label}: quoted and authoritative project guidance must both survive`,
+        );
+        assert.equal(
+          (onePass.match(/This subagent step has a strict structured output contract\./g) ?? [])
+            .length,
+          2,
+          `${label}: quoted and authoritative structured output instructions must both survive`,
+        );
+        assert.equal(
+          (onePass.match(/## TLH Child Subagent Defaults/g) ?? []).length,
+          2,
+          `${label}: quoted and authoritative root defaults must both survive`,
+        );
+        assert.equal(
+          (onePass.match(/## TLH Experimental Feature: delta-follow-up-reviews/g) ?? []).length,
           1,
-          `${label}: project guidance should be singular`,
+          `${label}: optional root experimental content must be singular`,
+        );
+        assert.equal(
+          (onePass.match(/## TLH Git Commit Attribution/g) ?? []).length,
+          1,
+          `${label}: optional root attribution content must be singular`,
+        );
+        assert.equal(
+          (onePass.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length,
+          1,
+          `${label}: root runtime wrapper must be singular`,
+        );
+        assert.equal(
+          (onePass.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
+          1,
+          `${label}: explicit runtime wrapper must be singular`,
+        );
+        assert.equal(
+          (onePass.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE, "g")) ?? []).length,
+          1,
+          `${label}: explicit runtime wrapper must close once`,
+        );
+        assert.equal(
+          (onePass.match(/## TLH Child Subagent Defaults\n\nYou are running inside/g) ?? []).length,
+          1,
+          `${label}: authoritative root child defaults must be singular`,
         );
         assert.ok(
-          guidanceIndex < prompt.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
+          guidanceIndex < onePass.lastIndexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
           `${label}: guidance should precede safety boundary`,
         );
       }
+      assert.equal(prompts[1], prompts[0], "hook registration order should not change composition");
     },
   );
 });

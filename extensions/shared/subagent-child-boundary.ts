@@ -13,37 +13,164 @@ export const CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS = [
   "If you need to edit files, use the available editing tools. Do not print tool-call syntax, patches, or pseudo-tool calls as text.",
 ].join("\n");
 
+/** Stable reserved wrappers for the two independent child prompt owners. */
+export const CHILD_SUBAGENT_ROOT_RUNTIME_OPEN = "<!-- tlh:child-root-runtime:start -->";
+export const CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE = "<!-- tlh:child-root-runtime:end -->";
+export const CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN = "<!-- tlh:child-explicit-runtime:start -->";
+export const CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE = "<!-- tlh:child-explicit-runtime:end -->";
+
 const TRAILING_WHITESPACE_PATTERN = /\s*$/u;
-const RUNTIME_SEPARATOR_PATTERN = /[ \t]*(?:\r?\n[ \t]*)+$/u;
+const RESERVED_RUNTIME_MARKER_NAMESPACE_PATTERN =
+  /<!-- tlh:child-[^>\s]+-runtime(?::|(?=\s|-->|$))/gu;
+const DEFANGED_RUNTIME_MARKER_PREFIX = "[tlh child-runtime marker: ";
 
-function removeTerminalRuntimeBlock(prompt: string, block: string): string | undefined {
+type ChildPromptRuntimeOwner = "root" | "explicit";
+type RuntimeWrapperMarkers = { open: string; close: string };
+type TerminalRuntimeBlock = {
+  owner: ChildPromptRuntimeOwner;
+  block: string;
+  blockStart: number;
+};
+
+type ParsedChildPromptRuntime = {
+  base: string;
+  root?: string;
+  explicit?: string;
+};
+
+const RUNTIME_WRAPPER_MARKERS: Record<ChildPromptRuntimeOwner, RuntimeWrapperMarkers> = {
+  root: {
+    open: CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
+    close: CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
+  },
+  explicit: {
+    open: CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+    close: CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+  },
+};
+
+function terminalContentEnd(prompt: string): number {
   const trailingWhitespace = prompt.match(TRAILING_WHITESPACE_PATTERN)?.[0] ?? "";
-  const contentEnd = prompt.length - trailingWhitespace.length;
-  const blockStart = contentEnd - block.length;
-  if (blockStart < 0 || prompt.slice(blockStart, contentEnd) !== block) return undefined;
+  return prompt.length - trailingWhitespace.length;
+}
 
-  // Runtime blocks are joined with a blank line. Remove only that separator
-  // while preserving all preceding prompt text byte-for-byte.
-  return prompt.slice(0, blockStart).replace(RUNTIME_SEPARATOR_PATTERN, "");
+function removeTerminalRuntimeBlockAt(prompt: string, blockStart: number): string {
+  if (blockStart >= 2 && prompt.slice(blockStart - 2, blockStart) === "\n\n") {
+    return prompt.slice(0, blockStart - 2);
+  }
+  return prompt.slice(0, blockStart);
+}
+
+function stripTerminalBoundary(prompt: string): string | undefined {
+  const contentEnd = terminalContentEnd(prompt);
+  const boundaryStart = contentEnd - CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS.length;
+  if (
+    boundaryStart < 0 ||
+    prompt.slice(boundaryStart, contentEnd) !== CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS
+  ) {
+    return undefined;
+  }
+  return removeTerminalRuntimeBlockAt(prompt, boundaryStart);
+}
+
+function findTerminalRuntimeBlock(
+  prompt: string,
+  owner: ChildPromptRuntimeOwner,
+): TerminalRuntimeBlock | undefined {
+  const { open, close } = RUNTIME_WRAPPER_MARKERS[owner];
+  const contentEnd = terminalContentEnd(prompt);
+  const closeStart = contentEnd - close.length;
+  if (closeStart < 0 || prompt.slice(closeStart, contentEnd) !== close) return undefined;
+
+  const blockStart = prompt.lastIndexOf(open, closeStart);
+  if (blockStart < 0) return undefined;
+  if (blockStart !== 0 && !prompt.slice(0, blockStart).endsWith("\n\n")) return undefined;
+
+  const contentStart = blockStart + open.length;
+  if (prompt[contentStart] !== "\n" || prompt[closeStart - 1] !== "\n") return undefined;
+  return { owner, block: prompt.slice(blockStart, contentEnd), blockStart };
+}
+
+function parseTerminalChildPromptRuntime(prompt: string): ParsedChildPromptRuntime | undefined {
+  const withoutBoundary = stripTerminalBoundary(prompt);
+  if (withoutBoundary === undefined) return undefined;
+
+  let base = withoutBoundary;
+  // The emitted suffix is root → explicit → boundary. Remove at most one
+  // terminal explicit block, then at most one terminal root block, so a quoted
+  // duplicate-owner block remains part of the base prompt.
+  const explicit = findTerminalRuntimeBlock(base, "explicit");
+  if (explicit !== undefined) {
+    base = removeTerminalRuntimeBlockAt(base, explicit.blockStart);
+  }
+  const root = findTerminalRuntimeBlock(base, "root");
+  if (root !== undefined) {
+    base = removeTerminalRuntimeBlockAt(base, root.blockStart);
+  }
+  return { base, root: root?.block, explicit: explicit?.block };
+}
+
+function defangReservedRuntimeMarkers(content: string): string {
+  return content.replace(RESERVED_RUNTIME_MARKER_NAMESPACE_PATTERN, DEFANGED_RUNTIME_MARKER_PREFIX);
+}
+
+function wrapRuntimeBlock(owner: ChildPromptRuntimeOwner, additions: readonly string[]): string {
+  const content = additions.filter(Boolean).map(defangReservedRuntimeMarkers).join("\n\n");
+  if (!content) return "";
+  const { open, close } = RUNTIME_WRAPPER_MARKERS[owner];
+  return [open, content, close].join("\n");
+}
+
+/**
+ * Compose one child runtime owner around an exact terminal runtime suffix.
+ *
+ * The child-runtime marker namespace is reserved for runtime-owned blocks.
+ * With an authoritative child boundary, only terminal reserved-marker blocks
+ * in the emitted root → explicit order are recognized. The root no-boundary
+ * path separately recognizes only a terminal marked root block. Content outside
+ * those terminal reserved-marker blocks, including quoted or interior lookalikes,
+ * remains untouched.
+ */
+export function composeChildPromptRuntime(
+  prompt: string,
+  additions: readonly string[],
+  owner: ChildPromptRuntimeOwner,
+): string {
+  const currentBlock = wrapRuntimeBlock(owner, additions);
+  const parsed = parseTerminalChildPromptRuntime(prompt);
+
+  // The root hook historically appends without installing the boundary when it
+  // runs first. It may still replace a terminal marked root block from an
+  // earlier no-boundary pass; unmarked base text is never inspected.
+  if (parsed === undefined) {
+    if (owner === "root") {
+      const existingRoot = findTerminalRuntimeBlock(prompt, "root");
+      if (existingRoot !== undefined) {
+        const base = removeTerminalRuntimeBlockAt(prompt, existingRoot.blockStart);
+        return [base, currentBlock].filter(Boolean).join("\n\n");
+      }
+      return [prompt, currentBlock].filter(Boolean).join("\n\n");
+    }
+    // The explicit hook owns boundary installation on this path.
+    return [prompt, currentBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  const rootBlock = owner === "root" ? currentBlock : (parsed.root ?? "");
+  const explicitBlock = owner === "explicit" ? currentBlock : (parsed.explicit ?? "");
+  return [parsed.base, rootBlock, explicitBlock, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
  * Add root child prompt material before an already-installed child boundary.
  *
- * The explicit subagent runtime is registered before the packaged TLH root
- * runtime in child processes. When it runs first, it leaves the boundary at
- * the end of the prompt. When it runs second, this helper removes only that
- * terminal boundary and reinstates it after the root additions. If no
- * boundary exists, preserve the root runtime's historical behavior and append
- * only the additions; the explicit runtime will install the boundary later.
+ * When no boundary exists, preserve the root runtime's historical behavior and
+ * append only its marked additions; the explicit runtime installs the boundary
+ * later.
  */
 export function appendBeforeChildSubagentBoundary(prompt: string, additions: string): string {
-  if (!additions) return prompt;
-  const withoutBoundary = removeTerminalRuntimeBlock(prompt, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS);
-  if (withoutBoundary === undefined) {
-    return [prompt, additions].filter(Boolean).join("\n\n");
-  }
-  return [withoutBoundary, additions, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS]
-    .filter(Boolean)
-    .join("\n\n");
+  return composeChildPromptRuntime(prompt, [additions], "root");
 }

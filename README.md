@@ -100,7 +100,7 @@ Repo settings:
 - `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
 - `.tlh/agents/custom/<UPPERCASE-SLUG>.md` — direct, Git-root-only project custom-agent definitions; see [Project custom subagents](docs/custom-subagents.md) for the exact contract and persisted-trust requirement.
 
-After adding builtin append files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so those resources are picked up. Project custom-agent authorization is checked on each new delegation attempt and does not require `/reload`.
+After adding built-in append files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so those resources are picked up. Project custom-agent authorization is checked on each new delegation attempt and does not require `/reload`.
 
 #### Per-agent project guidance
 
