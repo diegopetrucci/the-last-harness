@@ -385,7 +385,7 @@ describe("createHeartbeatWiring — enabled: disarm on last live completion", ()
     const wiring = createHeartbeatWiring(
       pi,
       { heartbeat: { enabled: true } },
-      makeTestDeps({ written }),
+      makeTestDeps({ written, nowFn: () => 1_234_567_890 }),
     );
 
     wiring.onIdle(true);
@@ -398,6 +398,11 @@ describe("createHeartbeatWiring — enabled: disarm on last live completion", ()
 
     const summaries = parseSummaryLines(written);
     assert.ok(summaries.length > 0, "JSONL gap_summary record should be written");
+    assert.equal(
+      summaries[0]!.ts,
+      1_234_567_890,
+      "summary timestamp should use the injected clock",
+    );
     assert.equal(summaries[0]!.sessionId, "session-abc");
     assert.equal(typeof summaries[0]!.verdict, "string");
 
@@ -507,7 +512,7 @@ describe("createHeartbeatWiring — enabled: destroy()", () => {
     const wiring = createHeartbeatWiring(
       pi,
       { heartbeat: { enabled: true } },
-      makeTestDeps({ written }),
+      makeTestDeps({ written, nowFn: () => 9_876_543_210 }),
     );
 
     wiring.notifyAsyncStarted(0, "session-destroy");
@@ -515,6 +520,11 @@ describe("createHeartbeatWiring — enabled: destroy()", () => {
 
     const summaries = parseSummaryLines(written);
     assert.ok(summaries.length > 0, "JSONL summary should be written on destroy");
+    assert.equal(
+      summaries[0]!.ts,
+      9_876_543_210,
+      "destroy summary timestamp should use the injected clock",
+    );
     assert.equal(
       pi.entries.length,
       0,

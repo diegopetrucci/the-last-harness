@@ -218,6 +218,12 @@ Paused/interrupted runs record acceptance as skipped rather than rejected. A con
 
 A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. The native child runtime does not register or advertise an `intercom` fallback, and the parent supervisor tool has no legacy list/send/ask/reply actions. Separately installed external intercom tools remain user-owned and are not overridden when TLH primary-agent filtering is disabled.
 
+### Child protocol and display boundaries
+
+Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
+
+Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
+
 ## Prompt-cache heartbeat
 
 When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
@@ -348,12 +354,6 @@ When disabled:
 Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
 
 To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
-
-### Child protocol and display boundaries
-
-Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
-
-Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
 
 ## Acceptance and artifacts
 

@@ -34,11 +34,11 @@ function verdictFrom(acc) {
         return "wasted";
     return "unneeded";
 }
-function appendGapSummaryRecord(acc, logPath, appendFile, mkdir) {
+function appendGapSummaryRecord(acc, logPath, appendFile, mkdir, now) {
     const verdict = verdictFrom(acc);
     const record = {
         type: "gap_summary",
-        ts: Date.now(),
+        ts: now(),
         sessionId: acc.sessionId,
         gapId: acc.gapId,
         beats: acc.executedBeats,
@@ -185,7 +185,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         const acc = currentGap;
         currentGap = null;
         controller.endGap();
-        const record = appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase);
+        const record = appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase, nowFn);
         sessionTotalBeats += acc.executedBeats;
         sessionTotalCacheReadTokens += acc.totalCacheReadTokens;
         sessionTotalBeatCostUsd += acc.totalBeatCostUsd;
@@ -258,7 +258,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             if (currentGap) {
                 const acc = currentGap;
                 currentGap = null;
-                appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase);
+                appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase, nowFn);
                 sessionTotalBeats += acc.executedBeats;
                 sessionTotalCacheReadTokens += acc.totalCacheReadTokens;
                 sessionTotalBeatCostUsd += acc.totalBeatCostUsd;

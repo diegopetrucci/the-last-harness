@@ -259,11 +259,12 @@ function appendGapSummaryRecord(
   logPath: string | undefined,
   appendFile: (file: string, data: string) => void,
   mkdir: (dir: string, opts: { recursive: true }) => void,
+  now: () => number,
 ): HeartbeatGapSummaryRecord {
   const verdict = verdictFrom(acc);
   const record: HeartbeatGapSummaryRecord = {
     type: "gap_summary",
-    ts: Date.now(),
+    ts: now(),
     sessionId: acc.sessionId,
     gapId: acc.gapId,
     beats: acc.executedBeats,
@@ -473,7 +474,13 @@ export function createHeartbeatWiring(
     controller.endGap();
 
     // Write JSONL summary record.
-    const record = appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase);
+    const record = appendGapSummaryRecord(
+      acc,
+      resolvedLogPath,
+      appendFileSyncBase,
+      mkdirSyncBase,
+      nowFn,
+    );
 
     // Update session totals.
     sessionTotalBeats += acc.executedBeats;
@@ -567,7 +574,7 @@ export function createHeartbeatWiring(
         currentGap = null;
         // Abort in-flight via controller.destroy() below — endGap is not called
         // here because we're going to destroy immediately after.
-        appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase);
+        appendGapSummaryRecord(acc, resolvedLogPath, appendFileSyncBase, mkdirSyncBase, nowFn);
         // Update session totals even on destroy (for doctor if called before destroy).
         sessionTotalBeats += acc.executedBeats;
         sessionTotalCacheReadTokens += acc.totalCacheReadTokens;
