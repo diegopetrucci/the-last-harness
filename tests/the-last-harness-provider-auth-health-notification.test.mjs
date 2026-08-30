@@ -40,6 +40,13 @@ const ARCHITECT_BRANCH = [
     data: { selected: "architect" },
   },
 ];
+const DISABLED_BRANCH = [
+  {
+    type: "custom",
+    customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+    data: { selected: "disabled" },
+  },
+];
 
 /**
  * Create a test ctx that records notify calls and supports provider auth injection.
@@ -119,6 +126,40 @@ function subagentToolResultWithAuthFallback(provider, model) {
 // ---------------------------------------------------------------------------
 // Dispatch-path notification (scheduleProviderPreflight → reauth-required)
 // ---------------------------------------------------------------------------
+
+test("disabled primary mode preflights accepted subagent dispatches", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-notify-test-", { cwd: true, test: t });
+  const store = createProviderAuthHealthStore();
+  let probeCount = 0;
+  const getProviderAuth = async () => {
+    probeCount += 1;
+  };
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    registerTlhPrimaryAgentRuntime(pi, {
+      env: {},
+      subagentMetadata: [],
+      getProviderAuthHealthStore: () => store,
+    });
+
+    const toolCall = pi.events.find((e) => e.name === "tool_call")?.handler;
+    assert.ok(toolCall, "tool_call handler must be registered");
+    const { ctx } = createNotifyCtx({ getProviderAuth });
+    ctx.sessionManager = { getBranch: () => DISABLED_BRANCH };
+
+    const event = subagentEvent("anthropic/claude-opus-4");
+    assert.equal(await toolCall(event, ctx), undefined);
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(probeCount, 1, "accepted disabled-mode dispatch must preflight its provider");
+    assert.equal(store.getEntry("anthropic")?.status, "healthy");
+    assert.equal(event.input.agentScope, "user");
+    assert.equal(event.input.context, "fresh");
+  });
+
+  cleanupTempDir(fixture);
+});
 
 test("emits exactly one notification when provider first transitions into reauth-required", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-notify-test-", { cwd: true, test: t });

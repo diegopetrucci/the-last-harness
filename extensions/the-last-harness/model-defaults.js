@@ -16,6 +16,33 @@ export function parseProviderModelReference(model) {
 export function formatProviderModelReference(model) {
     return `${model.provider}/${model.id}`;
 }
+export function listAgentModelDefaultReferences(agent) {
+    const seen = new Set();
+    const references = [];
+    for (const entry of agent?.tlhModelDefaults ?? []) {
+        for (const model of entry.models ?? []) {
+            if (model.provider !== entry.provider) {
+                continue;
+            }
+            const key = formatProviderModelReference(model);
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            references.push(model);
+        }
+    }
+    return references;
+}
+function agentModelsForProvider(agent, provider) {
+    if (!provider) {
+        return [];
+    }
+    return listAgentModelDefaultReferences(agent).filter((model) => model.provider === provider);
+}
+function agentModelsForFamily(agent, family) {
+    return listAgentModelDefaultReferences(agent).filter((model) => family === "openai" ? isOpenaiProvider(model.provider) : isAnthropicProvider(model.provider));
+}
 export function formatResolvedProviderModelReference(model, thinking) {
     if (!thinking || !THINKING_LEVELS.includes(thinking)) {
         return formatProviderModelReference(model);
@@ -54,6 +81,9 @@ function isAnthropicProvider(provider) {
 }
 function isOpenrouterProvider(provider) {
     return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
+}
+export function followsOpenrouterSession(agent, provider) {
+    return isOpenrouterProvider(provider) && !agent?.preferOppositeProvider;
 }
 function providerFamily(provider, modelId) {
     if (isOpenaiProvider(provider)) {
@@ -113,15 +143,32 @@ function currentProviderOpenaiCandidate(agent, availableModels, currentProvider)
     if (!isOpenaiProvider(currentProvider)) {
         return undefined;
     }
-    const currentProviderCandidate = agent?.tlhOpenaiModels?.find((candidate) => parseProviderModelReference(candidate)?.provider === currentProvider);
-    return availableOpenaiCandidate(availableModels, currentProviderCandidate);
+    const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find((candidate) => candidate.provider === currentProvider);
+    return availableOpenaiCandidate(availableModels, currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined);
 }
 function currentProviderAnthropicCandidate(agent, availableModels, currentProvider) {
     if (!isAnthropicProvider(currentProvider)) {
         return undefined;
     }
-    const currentProviderCandidate = agent?.tlhAnthropicModels?.find((candidate) => parseProviderModelReference(candidate)?.provider === currentProvider);
-    return availableAnthropicCandidate(availableModels, currentProviderCandidate);
+    const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find((candidate) => candidate.provider === currentProvider);
+    return availableAnthropicCandidate(availableModels, currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined);
+}
+function currentProviderCustomCandidate(agent, availableModels, currentProvider) {
+    if (agent?.tlhModelDefaultsSource !== "frontmatter" ||
+        agent?.preferOppositeProvider ||
+        !currentProvider ||
+        isOpenaiProvider(currentProvider) ||
+        isAnthropicProvider(currentProvider) ||
+        isOpenrouterProvider(currentProvider)) {
+        return undefined;
+    }
+    for (const candidate of agentModelsForProvider(agent, currentProvider)) {
+        const model = findAvailableProviderModel(availableModels, formatProviderModelReference(candidate));
+        if (model) {
+            return model;
+        }
+    }
+    return undefined;
 }
 function selectOppositeProviderPreferredAgentModel(agent, availableModels, currentProvider, currentModel) {
     if (!agent?.preferOppositeProvider) {
@@ -135,11 +182,11 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
                 ? ["anthropic", "openai"]
                 : ["openai", "anthropic"];
         for (const family of families) {
-            const candidates = family === "openai" ? agent.tlhOpenaiModels : agent.tlhAnthropicModels;
-            for (const candidate of candidates ?? []) {
+            const candidates = agentModelsForFamily(agent, family);
+            for (const candidate of candidates) {
                 const model = family === "openai"
-                    ? availableOpenaiCandidate(availableModels, candidate)
-                    : availableAnthropicCandidate(availableModels, candidate);
+                    ? availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate))
+                    : availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
                 if (model) {
                     return model;
                 }
@@ -148,8 +195,8 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
         return undefined;
     }
     if (isAnthropicProvider(currentProvider)) {
-        for (const candidate of agent.tlhOpenaiModels ?? []) {
-            const model = availableCodexCandidate(availableModels, candidate);
+        for (const candidate of agentModelsForFamily(agent, "openai")) {
+            const model = availableCodexCandidate(availableModels, formatProviderModelReference(candidate));
             if (model) {
                 return model;
             }
@@ -157,8 +204,8 @@ function selectOppositeProviderPreferredAgentModel(agent, availableModels, curre
         return undefined;
     }
     if (isOpenaiProvider(currentProvider)) {
-        for (const candidate of agent.tlhAnthropicModels ?? []) {
-            const model = availableAnthropicCandidate(availableModels, candidate);
+        for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+            const model = availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
             if (model) {
                 return model;
             }
@@ -186,23 +233,27 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     if (!agent) {
         return undefined;
     }
-    const defaultModel = findAvailableProviderModel(availableModels, agent.model);
+    const defaultModel = findAvailableProviderModelReference(availableModels, agent.preferredModel) ??
+        (agent.tlhModelDefaultsSource === "legacy"
+            ? findAvailableProviderModel(availableModels, agent.model)
+            : undefined);
     if (defaultModel) {
         return defaultModel;
     }
     const currentProviderModel = currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
-        currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+        currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+        currentProviderCustomCandidate(agent, availableModels, currentProvider);
     if (currentProviderModel) {
         return currentProviderModel;
     }
-    for (const candidate of agent.tlhOpenaiModels ?? []) {
-        const model = availableOpenaiCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "openai")) {
+        const model = availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
             return model;
         }
     }
-    for (const candidate of agent.tlhAnthropicModels ?? []) {
-        const model = availableAnthropicCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+        const model = availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
             return model;
         }
@@ -210,7 +261,7 @@ function selectStandardProviderAwareAgentModel(agent, availableModels, currentPr
     return undefined;
 }
 function resolveOpenrouterFollowDefaults(agent, availableModels, currentProvider, currentModel) {
-    if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
+    if (!followsOpenrouterSession(agent, currentProvider)) {
         return undefined;
     }
     const followedModel = findAvailableProviderModelReference(availableModels, currentModel) ??
@@ -218,21 +269,25 @@ function resolveOpenrouterFollowDefaults(agent, availableModels, currentProvider
     if (!followedModel) {
         return undefined;
     }
-    return { model: followedModel, thinking: agent?.tlhOpenrouterThinking };
+    return { model: followedModel, thinking: resolveProviderThinking(agent, "openrouter") };
 }
 export function resolveProviderThinking(agent, provider) {
     if (!agent)
         return undefined;
-    if (isOpenaiProvider(provider) && agent.tlhOpenaiThinking) {
-        return agent.tlhOpenaiThinking;
+    const providerEntry = agent.tlhModelDefaults?.find((entry) => entry.provider === provider);
+    if (providerEntry) {
+        return providerEntry.effort;
     }
-    if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
-        return agent.tlhAnthropicThinking;
+    if (isOpenaiProvider(provider)) {
+        const openaiEntry = agent.tlhModelDefaults?.find((entry) => isOpenaiProvider(entry.provider));
+        if (openaiEntry) {
+            return openaiEntry.effort;
+        }
     }
     if (isOpenrouterProvider(provider)) {
-        return agent.tlhOpenrouterThinking;
+        return undefined;
     }
-    return agent.thinking;
+    return agent.tlhModelDefaultsSource === "legacy" ? agent.thinking : undefined;
 }
 function resolveThinkingForProvider(agent, provider) {
     return resolveProviderThinking(agent, provider);
@@ -251,17 +306,22 @@ export function selectProviderAwareAgentDefaults(agent, availableModels, current
     const thinking = resolveProviderThinking(agent, model?.provider ?? currentProvider);
     return { model, thinking };
 }
-function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback) {
+function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback, effortSource) {
     const storedThinking = rawThinking === false ? "off" : String(rawThinking);
     const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
     const standardStoredThinking = rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
-    const subject = standardStoredThinking
-        ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : (agent?.name ?? "this subagent")}`;
+    const roleLabel = generatedFallback ? modelLabel : (agent?.name ?? "this subagent");
+    const subject = effortSource === "project"
+        ? standardStoredThinking
+            ? `TLH project default effort "${storedThinking}" from .tlh/defaults.json is not supported by ${modelLabel}`
+            : `TLH ignored unsupported project default effort "${storedThinking}" from .tlh/defaults.json for ${roleLabel}`
+        : standardStoredThinking
+            ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
+            : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${roleLabel}`;
     if (neutralizingThinking === undefined) {
         const residual = rawThinking === false
             ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-            : "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
+            : `no supported suffix can neutralize it, so the subagents runtime will drop the ${effortSource === "project" ? "project" : "stored"} value for this run`;
         return `${subject}; ${residual}.`;
     }
     if (neutralizingThinking === "off") {
@@ -275,13 +335,19 @@ function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThin
         : "using bundled defaults for this run";
     return `${subject}; ${action}.`;
 }
-function formatUnresolvedStoredThinkingWarning(agent, rawThinking) {
+function formatUnresolvedStoredThinkingWarning(agent, rawThinking, effortSource) {
+    if (effortSource === "project") {
+        return `TLH ignored unsupported project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
+    }
     return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
 }
-function formatUnresolvedStoredThinkingCapabilityWarning(agent, rawThinking) {
+function formatUnresolvedStoredThinkingCapabilityWarning(agent, rawThinking, effortSource) {
+    if (effortSource === "project") {
+        return `TLH project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
+    }
     return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
 }
-function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false) {
+function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false, effortSource = "stored") {
     const rawThinking = override?.thinking;
     const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
     const requestedThinking = rawThinking === false
@@ -310,7 +376,7 @@ function resolveStoredSubagentThinking(agent, model, override, generatedFallback
             return { thinking: requestedThinking };
         }
         return {
-            warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking)),
+            warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking), effortSource),
         };
     }
     if (!Object.hasOwn(model, "reasoning")) {
@@ -327,7 +393,7 @@ function resolveStoredSubagentThinking(agent, model, override, generatedFallback
             : undefined;
     return {
         thinking: neutralizingThinking,
-        warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback),
+        warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback, effortSource),
     };
 }
 function resolveIndependence(agent, model, currentProvider, currentModel) {
@@ -349,10 +415,56 @@ export function formatUnavailableStoredModelWarning(agentName, model) {
     const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
     return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
-export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override) {
+export function formatUnavailableProjectModelWarning(agentName, model) {
+    const roleLabel = agentName ?? "this minor-agent role";
+    return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
+}
+function mergeProjectDefaultsWithOverride(override, projectEntry, availableModels, projectModelEligible, agentName, onWarning) {
+    if (!projectEntry) {
+        return {
+            override,
+            effortSource: override?.thinking !== undefined ? "stored" : undefined,
+        };
+    }
+    let effectiveModel = override?.model;
+    if (projectModelEligible && projectEntry.model !== undefined) {
+        const available = findAvailableProviderModel(availableModels, projectEntry.model);
+        if (available) {
+            effectiveModel = projectEntry.model;
+        }
+        else {
+            if (agentName && onWarning) {
+                onWarning({
+                    agent: agentName,
+                    message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+                });
+            }
+        }
+    }
+    const effectiveThinking = projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
+    if (effectiveModel === undefined && effectiveThinking === undefined) {
+        return { override: undefined };
+    }
+    const result = {};
+    if (effectiveModel !== undefined) {
+        result.model = effectiveModel;
+    }
+    if (effectiveThinking !== undefined) {
+        result.thinking = effectiveThinking;
+    }
+    return {
+        override: result,
+        effortSource: projectEntry.effort !== undefined
+            ? "project"
+            : override?.thinking !== undefined
+                ? "stored"
+                : undefined,
+    };
+}
+export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override, effortSource = "stored") {
     const overrideModel = findAvailableProviderModel(availableModels, override?.model);
     if (overrideModel) {
-        const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override, false, effortSource);
         return {
             model: overrideModel,
             thinking: thinkingResolution.thinking,
@@ -362,7 +474,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     }
     if (typeof override?.model === "string") {
         const parsedOverrideModel = parseProviderModelReference(splitKnownThinkingSuffix(override.model).baseModel);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override, false, effortSource);
         return {
             unavailableModel: override.model,
             independence: resolveIndependence(agent, parsedOverrideModel, currentProvider, currentModel),
@@ -371,7 +483,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     }
     if (override?.model === false) {
         const inheritedModel = findAvailableProviderModelReference(availableModels, currentModel);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override, false, effortSource);
         return {
             model: inheritedModel,
             thinking: thinkingResolution.thinking,
@@ -383,7 +495,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     if (openrouterFollow?.model) {
         const thinkingResolution = override === undefined
             ? { thinking: openrouterFollow.thinking }
-            : resolveStoredSubagentThinking(agent, openrouterFollow.model, override);
+            : resolveStoredSubagentThinking(agent, openrouterFollow.model, override, false, effortSource);
         return {
             model: openrouterFollow.model,
             fallbackModels: [],
@@ -402,14 +514,14 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     if (!selectedModel && override?.thinking !== undefined) {
         const currentSessionModel = findAvailableProviderModelReference(availableModels, currentModel);
         if (currentSessionModel) {
-            currentSessionThinkingResolution = resolveStoredSubagentThinking(agent, currentSessionModel, override);
+            currentSessionThinkingResolution = resolveStoredSubagentThinking(agent, currentSessionModel, override, false, effortSource);
             if (currentSessionThinkingResolution.thinking) {
                 selectedModel = currentSessionModel;
             }
         }
         else if (typeof override.thinking === "string" && override.thinking !== "off") {
             currentSessionThinkingResolution = {
-                warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking),
+                warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking, effortSource),
             };
         }
     }
@@ -423,7 +535,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         : [];
     const resolveThinkingResult = (m, generatedFallback = false) => override === undefined
         ? { thinking: resolveThinkingForProvider(agent, m?.provider ?? currentProvider) }
-        : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
+        : resolveStoredSubagentThinking(agent, m, override, generatedFallback, effortSource);
     const primaryThinkingResolution = selectedModel
         ? resolveThinkingResult(selectedModel)
         : (currentSessionThinkingResolution ?? {});
@@ -473,15 +585,22 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     }
     const agentName = agentNameForTarget(target);
     const agent = agentName ? agents.get(agentName) : undefined;
-    const override = agentName ? options.agentOverrides?.get(agentName) : undefined;
-    if (hasExplicitModel(target)) {
+    const explicitModel = hasExplicitModel(target);
+    const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
+    const projectEntry = agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
+        ? options.projectDefaults[agentName]
+        : undefined;
+    const mergedOverride = mergeProjectDefaultsWithOverride(persistedOverride, projectEntry, availableModels, !explicitModel, agentName, options.onWarning);
+    const override = mergedOverride.override;
+    const effortSource = mergedOverride.effortSource;
+    if (explicitModel) {
         if (typeof target.model !== "string" ||
             splitKnownThinkingSuffix(target.model).thinkingSuffix ||
             override?.thinking === undefined) {
             return 0;
         }
         const explicitModel = findAvailableProviderModel(availableModels, target.model);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override, false, effortSource);
         if (thinkingResolution.warning && agentName) {
             options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
         }
@@ -495,7 +614,8 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (override === undefined) {
         const defaults = selectProviderAwareAgentDefaults(agent, availableModels, currentProvider, currentModel);
         const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
-        if (!selectedModel || selectedModel === agent?.model) {
+        const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
+        if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
             return 0;
         }
         const thinking = defaults.thinking;
@@ -527,7 +647,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (override.model === false && override.thinking === undefined) {
         return 0;
     }
-    const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override);
+    const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override, effortSource);
     if (resolution.unavailableModel && agentName) {
         options.onWarning?.({
             agent: agentName,
@@ -542,7 +662,10 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
     }
     const selectedModel = formatEffectiveModelAndThinking(resolution.unavailableModel ?? resolution.model, resolution.unavailableModel ? undefined : resolution.thinking);
-    if (!selectedModel || (!resolution.unavailableModel && selectedModel === agent?.model)) {
+    if (!selectedModel ||
+        (!resolution.unavailableModel &&
+            agent?.tlhModelDefaultsSource === "legacy" &&
+            selectedModel === agent?.model)) {
         return 0;
     }
     target.model = selectedModel;

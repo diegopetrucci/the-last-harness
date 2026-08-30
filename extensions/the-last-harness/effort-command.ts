@@ -9,6 +9,7 @@ import {
   persistTlhStandaloneThinkingDefaults,
   persistTlhThinkingLevelSelection,
   replayTlhUnmatchedModelSelectionDefaults,
+  runTlhThinkingChangeContext,
 } from "./model-selection-scope.js";
 import { selectProviderAwareAgentDefaults } from "./model-defaults.js";
 import type { TlhPrimaryAgentRuntime } from "./primary-agent-runtime.js";
@@ -65,6 +66,7 @@ export async function handleThinkingLevelCommand(
       return;
     }
     setExtensionThinkingLevel(pi, requestedLevel);
+    runtime?.recordUserThinkingLevel?.(pi.getThinkingLevel());
     ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()}.`, "info");
     return;
   }
@@ -100,7 +102,9 @@ export async function handleThinkingLevelCommand(
   let thinkingSelection = thinkingCapture;
   try {
     try {
-      setExtensionThinkingLevel(pi, selectedLevel);
+      runTlhThinkingChangeContext("interactive", () =>
+        setExtensionThinkingLevel(pi, selectedLevel),
+      );
     } finally {
       // Never leave process-global capture state open while awaiting the scope
       // picker. The bounded claim remains local to this command invocation.
@@ -117,6 +121,7 @@ export async function handleThinkingLevelCommand(
     // If the persistence shim is unavailable, preserve upstream behavior rather
     // than pretending a session-only choice can be made safely.
     if (!thinkingSelection) {
+      runtime?.recordUserThinkingLevel?.(nextLevel);
       ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
       return;
     }
@@ -128,7 +133,9 @@ export async function handleThinkingLevelCommand(
       const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
       try {
         try {
-          setExtensionThinkingLevel(pi, currentLevel);
+          runTlhThinkingChangeContext("internal", () =>
+            setExtensionThinkingLevel(pi, currentLevel),
+          );
         } catch {
           // Verify the active level below even when the upstream setter fails or
           // applies only part of the restoration.
@@ -161,11 +168,13 @@ export async function handleThinkingLevelCommand(
     }
     if (scope === "session-only") {
       discardTlhThinkingLevelSelection(thinkingSelection);
+      runtime?.recordUserThinkingLevel?.(nextLevel);
       ctx.ui.notify(`Thinking level set to ${nextLevel} for this session.`, "info");
       return;
     }
 
     const persisted = await persistTlhThinkingLevelSelection(thinkingSelection);
+    runtime?.recordUserThinkingLevel?.(nextLevel);
     if (!persisted) {
       ctx.ui.notify(
         `Thinking level set to ${nextLevel} for this session, but TLH could not update the persistent default.`,

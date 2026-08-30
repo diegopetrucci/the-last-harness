@@ -2,11 +2,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, } from "./structured-output.js";
+import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, STRUCTURED_OUTPUT_TOOL_NAME, } from "./structured-output.js";
 import { TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
 const TASK_ARG_LIMIT = 8000;
+export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
+export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR = "Cannot combine lazy skills with extension-path-only tools: list each extension tool name alongside its extension path (read is injected automatically).";
 const RUNTIME_EXTENSION_SUFFIX = path.extname(fileURLToPath(import.meta.url)) === ".ts" ? ".ts" : ".js";
 const PROMPT_RUNTIME_EXTENSION_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
@@ -26,6 +28,34 @@ export const SUBAGENT_PARENT_PATH_ENV = "PI_SUBAGENT_PARENT_PATH";
 export const SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV = "PI_SUBAGENT_PARENT_CAPABILITY_TOKEN";
 export const SUBAGENT_PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 export const SUBAGENT_STEER_INBOX_ENV = "PI_SUBAGENT_STEER_INBOX";
+function isExtensionToolPath(tool) {
+    return tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js");
+}
+function resolveToolPolicy(tools, requireReadTool = false) {
+    if (tools === undefined) {
+        return { namedToolNames: [], toolExtensionPaths: [], hasOnlyExtensionPaths: false };
+    }
+    const declaredTools = Array.isArray(tools)
+        ? tools
+            .filter((tool) => typeof tool === "string")
+            .map((tool) => tool.trim())
+            .filter((tool) => tool && !tool.startsWith("mcp:"))
+        : [];
+    const toolExtensionPaths = [...new Set(declaredTools.filter(isExtensionToolPath))];
+    const namedToolNames = [...new Set(declaredTools.filter((tool) => !isExtensionToolPath(tool)))];
+    const hasOnlyExtensionPaths = toolExtensionPaths.length > 0 && namedToolNames.length === 0;
+    return {
+        namedToolNames,
+        toolExtensionPaths,
+        hasOnlyExtensionPaths,
+        ...(hasOnlyExtensionPaths && requireReadTool
+            ? { error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR }
+            : {}),
+    };
+}
+export function validatePiToolPolicy(input) {
+    return resolveToolPolicy(input.tools, input.requireReadTool).error;
+}
 function sanitizeSupervisorChannelSegment(value) {
     return (value
         .trim()
@@ -67,6 +97,18 @@ export function applyThinkingSuffix(model, thinking, replaceExisting = false, op
     return `${model}:${thinking}`;
 }
 export function buildPiArgs(input) {
+    let tempDir;
+    try {
+        return buildPiArgsInternal(input, (createdTempDir) => {
+            tempDir = createdTempDir;
+        });
+    }
+    catch (error) {
+        cleanupTempDir(tempDir);
+        throw error;
+    }
+}
+function buildPiArgsInternal(input, onTempDirCreated) {
     const args = [...input.baseArgs];
     if (input.sessionFile) {
         fs.mkdirSync(path.dirname(input.sessionFile), { recursive: true });
@@ -88,21 +130,34 @@ export function buildPiArgs(input) {
     if (modelArg) {
         args.push("--model", modelArg);
     }
-    const declaredBuiltinToolsBase = input.tools?.filter((tool) => !(tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) ?? [];
-    const declaredBuiltinTools = input.requireReadTool && input.tools?.length && !declaredBuiltinToolsBase.includes("read")
-        ? ["read", ...declaredBuiltinToolsBase]
-        : declaredBuiltinToolsBase;
-    const toolExtensionPaths = [];
-    if (input.tools?.length) {
-        const builtinTools = [...declaredBuiltinTools];
-        for (const tool of input.tools) {
-            if (!declaredBuiltinTools.includes(tool) &&
-                (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js"))) {
-                toolExtensionPaths.push(tool);
-            }
+    const hasStructuredOutput = Boolean(input.structuredOutput);
+    const requiresContactSupervisor = Boolean(input.orchestratorIntercomTarget?.trim());
+    const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
+    const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
+    if (toolPolicy.error)
+        throw new Error(toolPolicy.error);
+    const { namedToolNames, toolExtensionPaths, hasOnlyExtensionPaths } = toolPolicy;
+    if (input.tools !== undefined) {
+        if (hasOnlyExtensionPaths) {
+            args.push("--no-builtin-tools");
         }
-        if (builtinTools.length > 0) {
-            args.push("--tools", builtinTools.join(","));
+        else {
+            const allowedToolNames = [...namedToolNames];
+            if (requiresReadTool && !allowedToolNames.includes("read")) {
+                allowedToolNames.unshift("read");
+            }
+            if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
+                allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
+            }
+            if (hasStructuredOutput && !allowedToolNames.includes(STRUCTURED_OUTPUT_TOOL_NAME)) {
+                allowedToolNames.push(STRUCTURED_OUTPUT_TOOL_NAME);
+            }
+            if (allowedToolNames.length > 0) {
+                args.push("--tools", allowedToolNames.join(","));
+            }
+            else {
+                args.push("--no-tools");
+            }
         }
     }
     const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];
@@ -132,6 +187,7 @@ export function buildPiArgs(input) {
     let tempDir;
     if (input.systemPrompt !== undefined && input.systemPrompt !== null) {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+        onTempDirCreated(tempDir);
         const stem = (input.promptFileStem ?? "prompt").replace(/[^\w.-]/g, "_");
         const promptPath = path.join(tempDir, `${stem}.md`);
         fs.writeFileSync(promptPath, input.systemPrompt, { mode: 0o600 });
@@ -140,6 +196,7 @@ export function buildPiArgs(input) {
     if (input.task.length > TASK_ARG_LIMIT) {
         if (!tempDir) {
             tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+            onTempDirCreated(tempDir);
         }
         const taskFilePath = path.join(tempDir, "task.md");
         fs.writeFileSync(taskFilePath, `Task: ${input.task}`, { mode: 0o600 });

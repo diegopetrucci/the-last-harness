@@ -22,6 +22,13 @@ import type { MockPi } from "../support/helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
+import {
+  createProjectAgentRunCapture,
+  getProjectAgentSnapshotProvenance,
+  registerProjectAgentSnapshot,
+  resolveProjectAgentSnapshot,
+  revokeProjectAgentSnapshot,
+} from "../../src/agents/project-agent-snapshot.ts";
 import { writeNormalizedLifecycleStatus } from "../../src/runs/shared/lifecycle-state.ts";
 import {
   ASYNC_DIR,
@@ -82,6 +89,63 @@ describe("async execution utilities", () => {
       discoverAgents: () => ({ agents }),
     });
   }
+
+  it("persists project provenance/config in async status and result artifacts", async () => {
+    const id = `async-project-provenance-${Date.now().toString(36)}`;
+    const projectAgent = makeAgent("embedded.worker", {
+      packageName: "embedded",
+      source: "project",
+      filePath: path.join(tempDir, ".tlh", "agents", "worker.md"),
+      systemPrompt: "Captured project prompt",
+      tools: ["read"],
+    });
+    const capability = registerProjectAgentSnapshot({
+      projectRoot: tempDir,
+      sessionId: "session-1",
+      generationId: "generation-async-provenance",
+      entries: [
+        { agent: projectAgent, digest: "digest-async-provenance", frontmatterFields: ["tools"] },
+      ],
+    });
+    const manifest = resolveProjectAgentSnapshot(
+      capability,
+      getProjectAgentSnapshotProvenance(capability),
+    );
+    const capture = createProjectAgentRunCapture(manifest, projectAgent);
+    mockPi.onCall({ output: "captured async result" });
+    executeAsyncSingle!(id, {
+      agent: projectAgent.name,
+      task: "capture this run",
+      agentConfig: projectAgent,
+      projectAgent: capture,
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      sessionRoot: path.join(tempDir, "sessions"),
+      maxSubagentDepth: 2,
+    });
+    const statusPath = path.join(ASYNC_DIR, id, "status.json");
+    await waitForAsyncStatusPredicate(
+      path.join(ASYNC_DIR, id),
+      (status) => status.state === "complete",
+      "project provenance async completion",
+    );
+    const status = JSON.parse(fs.readFileSync(statusPath, "utf8")) as any;
+    const payload = await readAsyncPayload(id);
+    assert.deepEqual(status.steps?.[0]?.projectAgent, capture);
+    assert.deepEqual(payload.results?.[0]?.projectAgent, capture);
+    assert.deepEqual(payload.projectAgents, [capture]);
+    assert.equal(JSON.stringify(status).includes("capability"), false);
+    assert.equal(JSON.stringify(payload).includes("capability"), false);
+    revokeProjectAgentSnapshot(capability);
+  });
 
   it(
     "pauses async supervisor requests durably and reload resume stays single-claim",
@@ -970,7 +1034,7 @@ describe("async execution utilities", () => {
       await waitForMockPiCall(mockPi, 0);
       const childPids = startedMockPiPids(mockPi);
       assert.equal(childPids.length, 1);
-      writeLifecycleLock(asyncDir);
+      await writeLifecycleLock(asyncDir);
       const payload = await readAsyncPayload(id);
       const lockedStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
@@ -1043,7 +1107,7 @@ describe("async execution utilities", () => {
       // post-child status writes are skipped while the lock is held. We therefore
       // write the cancelled status immediately without waiting for the step-update
       // write — the adopted cancelled status already carries the correct step state.
-      writeLifecycleLock(asyncDir);
+      await writeLifecycleLock(asyncDir);
       // Write the concurrent terminal status immediately; writeNormalizedLifecycleStatus
       // bypasses the lifecycle lock so this write succeeds even while the lock is held.
       writeNormalizedLifecycleStatus(asyncDir, {

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { CONFIG_DIR_NAME, defineTool, getAgentDir, keyText, } from "@earendil-works/pi-coding-agent";
 import { Text, isKeyRelease, matchesKey, visibleWidth, wrapTextWithAnsi, } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.js";
+import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
 import { cleanupOldChainDirs } from "../shared/settings.js";
@@ -16,9 +17,10 @@ import { clearLegacyResultAnimationTimer, renderWidget, renderSubagentResult, } 
 import { SubagentParams } from "./schemas.js";
 import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.js";
 import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.js";
-import { createSubagentExecutor, } from "../runs/foreground/subagent-executor.js";
+import { createSubagentExecutor, normalizeProjectAgentAccess, } from "../runs/foreground/subagent-executor.js";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
+import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
 import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
@@ -274,7 +276,7 @@ export default function registerSubagentExtension(pi) {
         });
     };
     const supervisorChannel = createNativeSupervisorChannel(pi, state);
-    const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(pi, state, RESULTS_DIR, 10 * 60 * 1000);
+    const { startResultWatcher, primeExistingResults, stopResultWatcher } = createResultWatcher(pi, state, RESULTS_DIR, PROJECT_AGENT_TERMINAL_RETENTION_MS);
     startResultWatcher();
     primeExistingResults();
     const runtimeCleanup = () => {
@@ -302,6 +304,7 @@ export default function registerSubagentExtension(pi) {
         expandTilde,
         discoverAgents,
         getHeartbeatSummary: () => hbWiring.getSessionSummary(),
+        getProjectAgentAccess: (request) => normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
     });
     pi.registerMessageRenderer(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
         const content = typeof message.content === "string"

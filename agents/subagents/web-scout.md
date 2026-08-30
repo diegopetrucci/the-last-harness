@@ -2,11 +2,15 @@
 name: web-scout
 description: Performs Exa-backed web research and URL fetch in an isolated read-only context.
 tools: web_search, fetch_content, get_search_content, read, grep, find, ls, contact_supervisor
-tlhOpenaiModels: openai-codex/gpt-5.6-luna
-tlhAnthropicModels: anthropic/claude-haiku-4-5
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: medium
+tlhModelDefaults:
+  - provider: openai-codex
+    models: [gpt-5.6-luna]
+    effort: medium
+  - provider: anthropic
+    models: [claude-haiku-4-5]
+    effort: high
+  - provider: openrouter
+    effort: high
 toolBudget: {"soft":5,"hard":7}
 systemPromptMode: replace
 inheritProjectContext: true

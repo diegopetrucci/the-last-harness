@@ -5,7 +5,24 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { createResultWatcher } from "../../src/runs/background/result-watcher.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
+import {
+  createProjectAgentRunCapture,
+  getProjectAgentSnapshotProvenance,
+  lookupProjectAgentRunReference,
+  registerProjectAgentSnapshot,
+  releaseProjectAgentRunReference,
+  revokeProjectAgentSnapshot,
+  resolveProjectAgentSnapshot,
+  retainProjectAgentRunReference,
+  retainProjectAgentSnapshotReference,
+  releaseProjectAgentSnapshotReference,
+} from "../../src/agents/project-agent-snapshot.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
+
+function writeJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value), "utf8");
+}
 
 function createState(): SubagentState {
   return {
@@ -28,6 +45,266 @@ function createState(): SubagentState {
 }
 
 describe("result watcher", () => {
+  it("keeps a project generation while a continued child still has a paused sibling", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-project-")),
+    );
+    const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-project-results-"));
+    const asyncDir = path.join(root, "async-run");
+    const runId = `project-watcher-${Date.now().toString(36)}`;
+    const agent = {
+      name: "embedded.worker",
+      packageName: "embedded",
+      description: "Project worker",
+      systemPrompt: "Project worker prompt",
+      systemPromptMode: "replace" as const,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      source: "project" as const,
+      filePath: path.join(root, ".tlh", "agents", "worker.md"),
+    };
+    const capability = registerProjectAgentSnapshot({
+      projectRoot: root,
+      sessionId: "watcher-session",
+      generationId: "watcher-generation",
+      entries: [{ agent, digest: "watcher-digest", frontmatterFields: [] }],
+    });
+    const capture = createProjectAgentRunCapture(
+      resolveProjectAgentSnapshot(capability, getProjectAgentSnapshotProvenance(capability)),
+      agent,
+    );
+    retainProjectAgentRunReference(capability, runId, [capture]);
+    fs.mkdirSync(asyncDir, { recursive: true });
+    const siblingSession = path.join(asyncDir, "sibling.jsonl");
+    fs.writeFileSync(siblingSession, "", "utf8");
+    writeJson(path.join(asyncDir, "status.json"), {
+      runId,
+      mode: "parallel",
+      state: "paused",
+      sessionId: "watcher-session",
+      cwd: root,
+      steps: [
+        { agent: capture.provenance.agent, status: "continued", projectAgent: capture },
+        { agent: "ordinary", status: "paused", sessionFile: siblingSession },
+      ],
+    });
+    const emitted: unknown[] = [];
+    const watcher = createResultWatcher(
+      {
+        events: {
+          on: () => () => {},
+          emit: (_event, data) => emitted.push(data),
+        },
+      },
+      Object.assign(createState(), { currentSessionId: "watcher-session" }),
+      resultsDir,
+      60_000,
+    );
+    const resultPath = path.join(resultsDir, `${runId}.json`);
+    fs.writeFileSync(
+      resultPath,
+      JSON.stringify({
+        id: runId,
+        runId,
+        state: "continued",
+        success: false,
+        summary: "continued child",
+        asyncDir,
+        sessionId: "watcher-session",
+        results: [{ agent: capture.provenance.agent, output: "continued", success: false }],
+      }),
+      "utf8",
+    );
+    try {
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(emitted.length, 1);
+      assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+
+      writeJson(path.join(asyncDir, "status.json"), {
+        runId,
+        mode: "parallel",
+        state: "continued",
+        sessionId: "watcher-session",
+        cwd: root,
+        steps: [
+          { agent: capture.provenance.agent, status: "continued", projectAgent: capture },
+          { agent: "ordinary", status: "continued", sessionFile: siblingSession },
+        ],
+      });
+      const finalResultPath = path.join(resultsDir, "final.json");
+      fs.writeFileSync(
+        finalResultPath,
+        JSON.stringify({
+          id: `${runId}-final`,
+          runId,
+          state: "continued",
+          success: false,
+          summary: "all children continued",
+          asyncDir,
+          sessionId: "watcher-session",
+          results: [{ agent: capture.provenance.agent, output: "continued", success: false }],
+        }),
+        "utf8",
+      );
+      watcher.primeExistingResults();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
+    } finally {
+      watcher.stopResultWatcher();
+      releaseProjectAgentRunReference(runId);
+      try {
+        revokeProjectAgentSnapshot(capability);
+      } catch {
+        // Releasing the run may already collect the unreferenced generation.
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains continued/cancelled results for terminal project siblings with usable sessions", async () => {
+    const root = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-terminal-sibling-")),
+    );
+    const resultsDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-result-watcher-terminal-results-"),
+    );
+    const firstAgent = {
+      name: "embedded.worker",
+      packageName: "embedded",
+      description: "Selected project worker",
+      systemPrompt: "Selected project prompt",
+      systemPromptMode: "replace" as const,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      source: "project" as const,
+      filePath: path.join(root, ".tlh", "agents", "worker.md"),
+    };
+    const siblingAgent = {
+      ...firstAgent,
+      name: "embedded.reviewer",
+      description: "Terminal project reviewer",
+      systemPrompt: "Terminal reviewer prompt",
+      filePath: path.join(root, ".tlh", "agents", "reviewer.md"),
+    };
+    const capability = registerProjectAgentSnapshot({
+      projectRoot: root,
+      sessionId: "watcher-terminal-session",
+      generationId: "watcher-terminal-generation",
+      entries: [
+        { agent: firstAgent, digest: "watcher-worker-digest", frontmatterFields: [] },
+        { agent: siblingAgent, digest: "watcher-reviewer-digest", frontmatterFields: [] },
+      ],
+    });
+    const manifest = resolveProjectAgentSnapshot(
+      capability,
+      getProjectAgentSnapshotProvenance(capability),
+    );
+    const captures = [
+      createProjectAgentRunCapture(manifest, firstAgent),
+      createProjectAgentRunCapture(manifest, siblingAgent),
+    ];
+    retainProjectAgentSnapshotReference(capability, "watcher-terminal-sibling-owner");
+    const state = Object.assign(createState(), {
+      currentSessionId: "watcher-terminal-session",
+    });
+    const emitted: unknown[] = [];
+    const watcher = createResultWatcher(
+      {
+        events: {
+          on: () => () => {},
+          emit: (_event, data) => emitted.push(data),
+        },
+      },
+      state,
+      resultsDir,
+      60_000,
+      { projectAgentTerminalRetentionMs: 100 },
+    );
+    const runIds: string[] = [];
+    try {
+      for (const terminalState of ["continued", "cancelled"] as const) {
+        for (const siblingState of ["complete", "failed"] as const) {
+          const runId = `watcher-terminal-sibling-${terminalState}-${siblingState}-${Date.now().toString(36)}`;
+          runIds.push(runId);
+          const asyncDir = path.join(root, runId);
+          const selectedSession = path.join(asyncDir, "worker.jsonl");
+          const siblingSession = path.join(asyncDir, "reviewer.jsonl");
+          fs.mkdirSync(asyncDir, { recursive: true });
+          fs.writeFileSync(selectedSession, "", "utf8");
+          fs.writeFileSync(siblingSession, "", "utf8");
+          writeJson(path.join(asyncDir, "status.json"), {
+            runId,
+            mode: "parallel",
+            state: terminalState,
+            sessionId: "watcher-terminal-session",
+            cwd: root,
+            startedAt: Date.now(),
+            lastUpdate: Date.now(),
+            steps: [
+              {
+                agent: captures[0].provenance.agent,
+                status: terminalState,
+                sessionFile: selectedSession,
+                projectAgent: captures[0],
+              },
+              {
+                agent: captures[1].provenance.agent,
+                status: siblingState,
+                sessionFile: siblingSession,
+                projectAgent: captures[1],
+              },
+            ],
+          });
+          retainProjectAgentRunReference(capability, runId, captures);
+          fs.writeFileSync(
+            path.join(resultsDir, `${runId}.json`),
+            JSON.stringify({
+              id: runId,
+              runId,
+              state: terminalState,
+              success: false,
+              summary: `${terminalState} selected child`,
+              asyncDir,
+              sessionId: "watcher-terminal-session",
+              cwd: root,
+              results: [
+                {
+                  agent: captures[0].provenance.agent,
+                  output: `${terminalState} selected child`,
+                  success: false,
+                },
+              ],
+            }),
+            "utf8",
+          );
+          watcher.primeExistingResults();
+          for (let attempt = 0; attempt < 30; attempt++) {
+            if (emitted.length >= runIds.length) break;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          assert.equal(emitted.length, runIds.length);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          assert.equal(lookupProjectAgentRunReference(runId).status, "found");
+          await new Promise((resolve) => setTimeout(resolve, 110));
+          assert.equal(lookupProjectAgentRunReference(runId).status, "missing");
+        }
+      }
+    } finally {
+      watcher.stopResultWatcher();
+      for (const runId of runIds) releaseProjectAgentRunReference(runId);
+      releaseProjectAgentSnapshotReference("watcher-terminal-sibling-owner");
+      try {
+        revokeProjectAgentSnapshot(capability);
+      } catch {
+        // Releasing the owner may already collect the unreferenced generation.
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(resultsDir, { recursive: true, force: true });
+    }
+  });
+
   it("processes deferred session-scoped results after session identity is restored", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-session-"));
     try {

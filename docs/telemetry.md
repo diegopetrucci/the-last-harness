@@ -19,7 +19,6 @@ Custom dimensions sent on this event:
 - `Tlh.Device.osArch`
 - `Tlh.Experimental.delta-follow-up-reviews`
 - `Tlh.Experimental.ci-failure-investigation`
-- `Tlh.Experimental.embedded-subagents`
 - `Tlh.Subagent.code-reviewer.modelEffort`
 - `Tlh.Subagent.contrarian.modelEffort`
 - `Tlh.Subagent.developer.modelEffort`
@@ -49,11 +48,10 @@ Privacy filtering is conservative:
     - A bare, unqualified model name (e.g. `claude-opus-4-5`, no slash) cannot be looked up against the registry and is only used as a fallback when no registry-backed candidate was selected. In that case it is reported as-is after the standard privacy filter; the value reflects what is written in configuration rather than a confirmed effective selection.
   - Model resolution follows this precedence (highest first):
     1. **`preferOppositeProvider`** — if set to `true` and an opposite-provider candidate is available, it wins immediately.
-    2. **`preferCurrentOpenaiModel`** — if set to `true`, the current-provider OpenAI candidate is tried before the standard sequence, outranking the generic `model:` field.
-    3. **Generic `model:` field** — provider-qualified (e.g. `anthropic/claude-opus-5`), matched against the available-models list.
-    4. **Current-provider candidate** — the current-provider OpenAI candidate first, then the current-provider Anthropic candidate.
-    5. **`tlhOpenaiModels`** entries — each checked against the available-models list.
-    6. **`tlhAnthropicModels`** entries — each checked against the available-models list.
+    2. **`preferCurrentOpenaiModel`** — if set to `true`, the current-provider OpenAI candidate is tried before the standard sequence.
+    3. **Legacy generic `model:` compatibility** — when no `tlhModelDefaults` block is present, a provider-qualified value is normalized into preferred-model compatibility metadata and matched before provider candidates.
+    4. **Current-provider candidate** — the current-provider OpenAI candidate first, then the current-provider Anthropic candidate, using normalized entries.
+    5. **Remaining normalized `tlhModelDefaults` entries** — OpenAI-family models are searched first, followed by Anthropic-family models; declaration order is used only within each family. Legacy provider model fields (`tlhOpenaiModels` and `tlhAnthropicModels`) are normalized into this same collection before selection, not as a separate final stage.
 - When a subagent is disabled via `subagents.agentOverrides`, its `modelEffort` key is reported as the single token `disabled` (not `disabled:disabled`). This value does not collide with any canonical thinking level and signals clearly that the agent is turned off.
 - When an individual side is explicitly cleared via `model: false` or `thinking: false` in `subagents.agentOverrides`, the affected side is reported as `cleared` while the other side is still resolved normally — for example `cleared:medium` or `claude-opus-4-5:cleared`. This sentinel does not collide with any canonical thinking level or public model ID pattern and signals that the user explicitly removed the bundled default without disabling the agent entirely.
 
@@ -85,7 +83,7 @@ Telemetry does **not** include:
 - provider base URLs or other endpoints,
 - auth state, credential/auth type, or headers,
 - account identifiers,
-- custom or embedded agent names,
+- custom-agent names or project paths,
 - attempted model history beyond the final selected privacy-filtered model value.
 
 TelemetryDeck also receives normal network metadata such as source IP address and request time.

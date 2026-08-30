@@ -1,6 +1,12 @@
 import { THINKING_LEVELS } from "./constants.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
-import type { ReasoningModel, ThinkingLevel, TlhSubagentOverride } from "./types.js";
+import type {
+  ReasoningModel,
+  ThinkingLevel,
+  TlhModelDefault,
+  TlhModelDefaultsSource,
+  TlhSubagentOverride,
+} from "./types.js";
 
 import { isRecord } from "./common.js";
 
@@ -12,12 +18,14 @@ export type ProviderModelReference = {
 export type AgentModelDefaults = {
   name: string;
   model?: string;
-  tlhOpenaiModels?: string[];
-  tlhAnthropicModels?: string[];
+  /** Primary-only preferred model preserving the former generic default precedence. */
+  preferredModel?: ProviderModelReference;
+  /** Normalized provider entries produced by the frontmatter loader. */
+  tlhModelDefaults: readonly TlhModelDefault[];
+  /** Required provenance prevents direct constructors from silently changing semantics. */
+  tlhModelDefaultsSource: TlhModelDefaultsSource;
+  /** Generic compatibility fields are retained for legacy frontmatter only. */
   thinking?: ThinkingLevel;
-  tlhOpenaiThinking?: ThinkingLevel;
-  tlhAnthropicThinking?: ThinkingLevel;
-  tlhOpenrouterThinking?: ThinkingLevel;
   preferCurrentOpenaiModel?: boolean;
   preferOppositeProvider?: boolean;
 };
@@ -43,9 +51,28 @@ type ProviderAwareSubagentResolution<T extends ProviderModelReference = Provider
   fallbackWarning?: string;
 };
 
+/** Per-role project defaults shape consumed by the subagent dispatch layer. */
+export type SubagentProjectDefaultsEntry = {
+  readonly model?: string;
+  readonly effort?: ThinkingLevel;
+};
+
 type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
+  /**
+   * Per-role project defaults from .tlh/defaults.json (loaded and trusted by
+   * the project-defaults-loader). Applied per field as `project-value ?? persisted-value`.
+   * Only "loaded" results should be forwarded; "denied"/"unavailable" must be omitted.
+   */
+  projectDefaults?: Readonly<Partial<Record<string, SubagentProjectDefaultsEntry>>>;
   onWarning?: (warning: { agent: string; message: string }) => void;
+};
+
+type SubagentEffortSource = "project" | "stored";
+
+type MergedSubagentOverride = {
+  override: TlhSubagentOverride | undefined;
+  effortSource?: SubagentEffortSource;
 };
 
 type ReasoningProviderModelReference = ProviderModelReference & Partial<ReasoningModel>;
@@ -70,6 +97,51 @@ export function parseProviderModelReference(
 
 export function formatProviderModelReference(model: ProviderModelReference): string {
   return `${model.provider}/${model.id}`;
+}
+
+/**
+ * Return the validated provider/model references declared by an agent, in
+ * frontmatter order and without duplicates. Consumers must use this normalized
+ * collection rather than the legacy provider-specific frontmatter fields.
+ */
+export function listAgentModelDefaultReferences(
+  agent: { tlhModelDefaults?: readonly TlhModelDefault[] } | undefined,
+): ProviderModelReference[] {
+  const seen = new Set<string>();
+  const references: ProviderModelReference[] = [];
+  for (const entry of agent?.tlhModelDefaults ?? []) {
+    for (const model of entry.models ?? []) {
+      if (model.provider !== entry.provider) {
+        continue;
+      }
+      const key = formatProviderModelReference(model);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      references.push(model);
+    }
+  }
+  return references;
+}
+
+function agentModelsForProvider(
+  agent: AgentModelDefaults | undefined,
+  provider: string | undefined,
+): ProviderModelReference[] {
+  if (!provider) {
+    return [];
+  }
+  return listAgentModelDefaultReferences(agent).filter((model) => model.provider === provider);
+}
+
+function agentModelsForFamily(
+  agent: AgentModelDefaults | undefined,
+  family: ProviderFamily,
+): ProviderModelReference[] {
+  return listAgentModelDefaultReferences(agent).filter((model) =>
+    family === "openai" ? isOpenaiProvider(model.provider) : isAnthropicProvider(model.provider),
+  );
 }
 
 /**
@@ -137,6 +209,17 @@ function isAnthropicProvider(provider: string | undefined): boolean {
 
 function isOpenrouterProvider(provider: string | undefined): boolean {
   return Boolean(provider && OPENROUTER_PROVIDERS.has(provider));
+}
+
+/**
+ * Whether an agent follows the active session model for the OpenRouter provider.
+ * This predicate is shared by default resolution and primary override persistence.
+ */
+export function followsOpenrouterSession(
+  agent: AgentModelDefaults | undefined,
+  provider: string | undefined,
+): boolean {
+  return isOpenrouterProvider(provider) && !agent?.preferOppositeProvider;
 }
 
 type ProviderFamily = "openai" | "anthropic";
@@ -231,10 +314,13 @@ function currentProviderOpenaiCandidate<T extends ProviderModelReference>(
   if (!isOpenaiProvider(currentProvider)) {
     return undefined;
   }
-  const currentProviderCandidate = agent?.tlhOpenaiModels?.find(
-    (candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+  const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find(
+    (candidate) => candidate.provider === currentProvider,
   );
-  return availableOpenaiCandidate(availableModels, currentProviderCandidate);
+  return availableOpenaiCandidate(
+    availableModels,
+    currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined,
+  );
 }
 
 function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
@@ -245,10 +331,40 @@ function currentProviderAnthropicCandidate<T extends ProviderModelReference>(
   if (!isAnthropicProvider(currentProvider)) {
     return undefined;
   }
-  const currentProviderCandidate = agent?.tlhAnthropicModels?.find(
-    (candidate) => parseProviderModelReference(candidate)?.provider === currentProvider,
+  const currentProviderCandidate = agentModelsForProvider(agent, currentProvider).find(
+    (candidate) => candidate.provider === currentProvider,
   );
-  return availableAnthropicCandidate(availableModels, currentProviderCandidate);
+  return availableAnthropicCandidate(
+    availableModels,
+    currentProviderCandidate ? formatProviderModelReference(currentProviderCandidate) : undefined,
+  );
+}
+
+function currentProviderCustomCandidate<T extends ProviderModelReference>(
+  agent: AgentModelDefaults | undefined,
+  availableModels: readonly T[],
+  currentProvider?: string,
+): T | undefined {
+  if (
+    agent?.tlhModelDefaultsSource !== "frontmatter" ||
+    agent?.preferOppositeProvider ||
+    !currentProvider ||
+    isOpenaiProvider(currentProvider) ||
+    isAnthropicProvider(currentProvider) ||
+    isOpenrouterProvider(currentProvider)
+  ) {
+    return undefined;
+  }
+  for (const candidate of agentModelsForProvider(agent, currentProvider)) {
+    const model = findAvailableProviderModel(
+      availableModels,
+      formatProviderModelReference(candidate),
+    );
+    if (model) {
+      return model;
+    }
+  }
+  return undefined;
 }
 
 function selectOppositeProviderPreferredAgentModel<T extends ProviderModelReference>(
@@ -270,12 +386,12 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
           ? ["anthropic", "openai"]
           : ["openai", "anthropic"];
     for (const family of families) {
-      const candidates = family === "openai" ? agent.tlhOpenaiModels : agent.tlhAnthropicModels;
-      for (const candidate of candidates ?? []) {
+      const candidates = agentModelsForFamily(agent, family);
+      for (const candidate of candidates) {
         const model =
           family === "openai"
-            ? availableOpenaiCandidate(availableModels, candidate)
-            : availableAnthropicCandidate(availableModels, candidate);
+            ? availableOpenaiCandidate(availableModels, formatProviderModelReference(candidate))
+            : availableAnthropicCandidate(availableModels, formatProviderModelReference(candidate));
         if (model) {
           return model;
         }
@@ -285,8 +401,11 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   }
 
   if (isAnthropicProvider(currentProvider)) {
-    for (const candidate of agent.tlhOpenaiModels ?? []) {
-      const model = availableCodexCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "openai")) {
+      const model = availableCodexCandidate(
+        availableModels,
+        formatProviderModelReference(candidate),
+      );
       if (model) {
         return model;
       }
@@ -295,8 +414,11 @@ function selectOppositeProviderPreferredAgentModel<T extends ProviderModelRefere
   }
 
   if (isOpenaiProvider(currentProvider)) {
-    for (const candidate of agent.tlhAnthropicModels ?? []) {
-      const model = availableAnthropicCandidate(availableModels, candidate);
+    for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+      const model = availableAnthropicCandidate(
+        availableModels,
+        formatProviderModelReference(candidate),
+      );
       if (model) {
         return model;
       }
@@ -349,27 +471,41 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
     return undefined;
   }
 
-  const defaultModel = findAvailableProviderModel(availableModels, agent.model);
+  // Primary agents expose preferredModel so the new provider list retains the
+  // former generic `model:` precedence. New-format subagents intentionally omit
+  // this field and begin with current-provider/provider-list selection below.
+  const defaultModel =
+    findAvailableProviderModelReference(availableModels, agent.preferredModel) ??
+    (agent.tlhModelDefaultsSource === "legacy"
+      ? findAvailableProviderModel(availableModels, agent.model)
+      : undefined);
   if (defaultModel) {
     return defaultModel;
   }
 
   const currentProviderModel =
     currentProviderOpenaiCandidate(agent, availableModels, currentProvider) ??
-    currentProviderAnthropicCandidate(agent, availableModels, currentProvider);
+    currentProviderAnthropicCandidate(agent, availableModels, currentProvider) ??
+    currentProviderCustomCandidate(agent, availableModels, currentProvider);
   if (currentProviderModel) {
     return currentProviderModel;
   }
 
-  for (const candidate of agent.tlhOpenaiModels ?? []) {
-    const model = availableOpenaiCandidate(availableModels, candidate);
+  for (const candidate of agentModelsForFamily(agent, "openai")) {
+    const model = availableOpenaiCandidate(
+      availableModels,
+      formatProviderModelReference(candidate),
+    );
     if (model) {
       return model;
     }
   }
 
-  for (const candidate of agent.tlhAnthropicModels ?? []) {
-    const model = availableAnthropicCandidate(availableModels, candidate);
+  for (const candidate of agentModelsForFamily(agent, "anthropic")) {
+    const model = availableAnthropicCandidate(
+      availableModels,
+      formatProviderModelReference(candidate),
+    );
     if (model) {
       return model;
     }
@@ -383,8 +519,8 @@ function selectStandardProviderAwareAgentModel<T extends ProviderModelReference>
  * preferOppositeProvider follow the current session model instead of falling
  * through to bundled codex/anthropic candidates.
  *
- * Thinking comes exclusively from tlhOpenrouterThinking; the generic `thinking`
- * key does NOT leak through on this path. Returns undefined when the rule does
+ * Thinking comes exclusively from the normalized OpenRouter entry; the generic
+ * `thinking` key does NOT leak through on this path. Returns undefined when the rule does
  * not apply (provider is not openrouter or agent prefers opposite provider).
  *
  * The current model is a session identity, not necessarily a registry entry. Keep
@@ -397,7 +533,7 @@ function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   currentProvider: string | undefined,
   currentModel: ProviderModelReference | undefined,
 ): ProviderAwareAgentDefaults<T> | undefined {
-  if (!isOpenrouterProvider(currentProvider) || agent?.preferOppositeProvider) {
+  if (!followsOpenrouterSession(agent, currentProvider)) {
     return undefined;
   }
   // Prefer registry metadata when present, but follow a valid session identity even
@@ -409,30 +545,41 @@ function resolveOpenrouterFollowDefaults<T extends ProviderModelReference>(
   if (!followedModel) {
     return undefined;
   }
-  // Explicitly use tlhOpenrouterThinking only — do not fall through to agent.thinking.
-  return { model: followedModel, thinking: agent?.tlhOpenrouterThinking };
+  // OpenRouter effort is scoped to its normalized provider entry. Generic
+  // thinking never leaks onto this follow path.
+  return { model: followedModel, thinking: resolveProviderThinking(agent, "openrouter") };
 }
 
 /**
  * Resolve the bundled thinking level for the given agent and provider.
- * Checks provider-specific overrides (`tlhOpenaiThinking`, `tlhAnthropicThinking`)
- * before falling back to the generic `thinking` field.
+ * A matching normalized provider entry is authoritative, even when it omits
+ * effort. Generic thinking is retained only for legacy-normalized agents when
+ * no matching provider entry exists (and never for OpenRouter).
  */
 export function resolveProviderThinking(
   agent: AgentModelDefaults | undefined,
   provider: string | undefined,
 ): ThinkingLevel | undefined {
   if (!agent) return undefined;
-  if (isOpenaiProvider(provider) && agent.tlhOpenaiThinking) {
-    return agent.tlhOpenaiThinking;
+  const providerEntry = agent.tlhModelDefaults?.find((entry) => entry.provider === provider);
+  if (providerEntry) {
+    return providerEntry.effort;
   }
-  if (isAnthropicProvider(provider) && agent.tlhAnthropicThinking) {
-    return agent.tlhAnthropicThinking;
+  if (isOpenaiProvider(provider)) {
+    // The legacy `tlhOpenaiThinking` value covered both OpenAI API and Codex
+    // providers. Preserve that family behavior when the new block declares only
+    // one of those provider names.
+    const openaiEntry = agent.tlhModelDefaults?.find((entry) => isOpenaiProvider(entry.provider));
+    if (openaiEntry) {
+      return openaiEntry.effort;
+    }
   }
   if (isOpenrouterProvider(provider)) {
-    return agent.tlhOpenrouterThinking;
+    return undefined;
   }
-  return agent.thinking;
+  // New-format entries do not synthesize a generic effort for unknown providers.
+  // Only legacy-normalized files retain their old generic thinking fallback.
+  return agent.tlhModelDefaultsSource === "legacy" ? agent.thinking : undefined;
 }
 
 // Keep the internal name for model-default resolution paths; primary runtime
@@ -501,19 +648,26 @@ function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
   rawThinking: string | false,
   neutralizingThinking: ThinkingLevel | undefined,
   generatedFallback: boolean,
+  effortSource: SubagentEffortSource,
 ): string {
   const storedThinking = rawThinking === false ? "off" : String(rawThinking);
   const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
   const standardStoredThinking =
     rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
-  const subject = standardStoredThinking
-    ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-    : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : (agent?.name ?? "this subagent")}`;
+  const roleLabel = generatedFallback ? modelLabel : (agent?.name ?? "this subagent");
+  const subject =
+    effortSource === "project"
+      ? standardStoredThinking
+        ? `TLH project default effort "${storedThinking}" from .tlh/defaults.json is not supported by ${modelLabel}`
+        : `TLH ignored unsupported project default effort "${storedThinking}" from .tlh/defaults.json for ${roleLabel}`
+      : standardStoredThinking
+        ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
+        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${roleLabel}`;
   if (neutralizingThinking === undefined) {
     const residual =
       rawThinking === false
         ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-        : "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
+        : `no supported suffix can neutralize it, so the subagents runtime will drop the ${effortSource === "project" ? "project" : "stored"} value for this run`;
     return `${subject}; ${residual}.`;
   }
   if (neutralizingThinking === "off") {
@@ -531,14 +685,22 @@ function formatStoredThinkingWarning<T extends ReasoningProviderModelReference>(
 function formatUnresolvedStoredThinkingWarning(
   agent: AgentModelDefaults | undefined,
   rawThinking: string,
+  effortSource: SubagentEffortSource,
 ): string {
+  if (effortSource === "project") {
+    return `TLH ignored unsupported project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
+  }
   return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
 }
 
 function formatUnresolvedStoredThinkingCapabilityWarning(
   agent: AgentModelDefaults | undefined,
   rawThinking: string,
+  effortSource: SubagentEffortSource,
 ): string {
+  if (effortSource === "project") {
+    return `TLH project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
+  }
   return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
 }
 
@@ -547,6 +709,7 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
   model: T | undefined,
   override: TlhSubagentOverride | undefined,
   generatedFallback = false,
+  effortSource: SubagentEffortSource = "stored",
 ): { thinking?: ThinkingLevel; warning?: string } {
   const rawThinking = override?.thinking;
   const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
@@ -581,7 +744,7 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
       return { thinking: requestedThinking };
     }
     return {
-      warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking)),
+      warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking), effortSource),
     };
   }
 
@@ -613,6 +776,7 @@ function resolveStoredSubagentThinking<T extends ReasoningProviderModelReference
       rawThinking,
       neutralizingThinking,
       generatedFallback,
+      effortSource,
     ),
   };
 }
@@ -649,6 +813,95 @@ export function formatUnavailableStoredModelWarning(
   return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
 
+export function formatUnavailableProjectModelWarning(
+  agentName: string | undefined,
+  model: string,
+): string {
+  const roleLabel = agentName ?? "this minor-agent role";
+  return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
+}
+
+/**
+ * Compute the effective subagent override by merging project defaults (layer 2) with
+ * persisted overrides (layer 3) on a per-field basis.
+ *
+ * Rules:
+ * - Project model (layer 2) wins over any persisted model value (layer 3), including
+ *   `model: false` (inherit-session). `false` is a persisted value for the model field,
+ *   not a separate axis, so it yields to the project exactly as a model string would.
+ *   When the project model is unavailable in the registry, a warning is emitted and the
+ *   persisted model value (including `false`) is kept. When `projectModelEligible` is false,
+ *   the project model is ignored without an availability lookup or warning (explicit dispatch).
+ * - When the project entry has no `model` field, the persisted model value (including
+ *   `false`) is preserved unchanged.
+ * - Project effort wins over persisted thinking with no special guards.
+ * Returns a `MergedSubagentOverride` result:
+ * - `override` is undefined when both merged fields are absent.
+ * - `effortSource` is `"project"` when the effective effort comes from the project entry,
+ *   `"stored"` when it comes from the persisted override, and undefined when no effort is in play.
+ */
+function mergeProjectDefaultsWithOverride(
+  override: TlhSubagentOverride | undefined,
+  projectEntry: SubagentProjectDefaultsEntry | undefined,
+  availableModels: readonly ProviderModelReference[],
+  projectModelEligible: boolean,
+  agentName: string | undefined,
+  onWarning: ((w: { agent: string; message: string }) => void) | undefined,
+): MergedSubagentOverride {
+  if (!projectEntry) {
+    return {
+      override,
+      effortSource: override?.thinking !== undefined ? "stored" : undefined,
+    };
+  }
+
+  // Per-field merge: project value ?? persisted value.
+  // model:false is a persisted value for the model field; it is overridden by a project
+  // model pin exactly like a persisted model string, subject to the same availability check.
+  let effectiveModel: string | false | undefined = override?.model;
+
+  if (projectModelEligible && projectEntry.model !== undefined) {
+    const available = findAvailableProviderModel(availableModels, projectEntry.model);
+    if (available) {
+      effectiveModel = projectEntry.model; // project model wins (including over model:false)
+    } else {
+      // Project model unavailable: warn and fall through to persisted value (string or false).
+      if (agentName && onWarning) {
+        onWarning({
+          agent: agentName,
+          message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+        });
+      }
+      // effectiveModel stays as the persisted value (override?.model, which may be false)
+    }
+  }
+
+  // Effort from project maps directly to thinking level (same value set).
+  const effectiveThinking: string | false | undefined =
+    projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
+
+  if (effectiveModel === undefined && effectiveThinking === undefined) {
+    return { override: undefined };
+  }
+
+  const result: TlhSubagentOverride = {};
+  if (effectiveModel !== undefined) {
+    result.model = effectiveModel;
+  }
+  if (effectiveThinking !== undefined) {
+    result.thinking = effectiveThinking;
+  }
+  return {
+    override: result,
+    effortSource:
+      projectEntry.effort !== undefined
+        ? "project"
+        : override?.thinking !== undefined
+          ? "stored"
+          : undefined,
+  };
+}
+
 /**
  * Resolve the full provider-aware model and thinking for a subagent, incorporating
  * any stored per-agent override from settings.
@@ -669,11 +922,18 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
   currentProvider?: string,
   currentModel?: ProviderModelReference,
   override?: TlhSubagentOverride,
+  effortSource: SubagentEffortSource = "stored",
 ): ProviderAwareSubagentResolution<T> {
   // 1. Stored model pin — available in the registry
   const overrideModel = findAvailableProviderModel(availableModels, override?.model);
   if (overrideModel) {
-    const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override);
+    const thinkingResolution = resolveStoredSubagentThinking(
+      agent,
+      overrideModel,
+      override,
+      false,
+      effortSource,
+    );
     return {
       model: overrideModel,
       thinking: thinkingResolution.thinking,
@@ -687,7 +947,13 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     const parsedOverrideModel = parseProviderModelReference(
       splitKnownThinkingSuffix(override.model).baseModel,
     );
-    const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override);
+    const thinkingResolution = resolveStoredSubagentThinking(
+      agent,
+      undefined,
+      override,
+      false,
+      effortSource,
+    );
     return {
       unavailableModel: override.model,
       independence: resolveIndependence(agent, parsedOverrideModel, currentProvider, currentModel),
@@ -698,7 +964,13 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
   // 3. Stored model: false → inherit current session model
   if (override?.model === false) {
     const inheritedModel = findAvailableProviderModelReference(availableModels, currentModel);
-    const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override);
+    const thinkingResolution = resolveStoredSubagentThinking(
+      agent,
+      inheritedModel,
+      override,
+      false,
+      effortSource,
+    );
     return {
       model: inheritedModel,
       thinking: thinkingResolution.thinking,
@@ -711,7 +983,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
 
   // OpenRouter follow rule (non-opposite-role agents only): follow the session model.
   // Thinking-only overrides are capability-gated; the pure no-override path uses
-  // tlhOpenrouterThinking exclusively — the generic thinking key does not leak.
+  // The normalized OpenRouter entry exclusively — the generic thinking key does not leak.
   const openrouterFollow = resolveOpenrouterFollowDefaults(
     agent,
     availableModels,
@@ -722,7 +994,13 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
     const thinkingResolution =
       override === undefined
         ? { thinking: openrouterFollow.thinking }
-        : resolveStoredSubagentThinking(agent, openrouterFollow.model, override);
+        : resolveStoredSubagentThinking(
+            agent,
+            openrouterFollow.model,
+            override,
+            false,
+            effortSource,
+          );
     return {
       model: openrouterFollow.model,
       fallbackModels: [],
@@ -762,13 +1040,19 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
         agent,
         currentSessionModel,
         override,
+        false,
+        effortSource,
       );
       if (currentSessionThinkingResolution.thinking) {
         selectedModel = currentSessionModel;
       }
     } else if (typeof override.thinking === "string" && override.thinking !== "off") {
       currentSessionThinkingResolution = {
-        warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking),
+        warning: formatUnresolvedStoredThinkingCapabilityWarning(
+          agent,
+          override.thinking,
+          effortSource,
+        ),
       };
     }
   }
@@ -794,7 +1078,7 @@ export function resolveProviderAwareSubagentResolution<T extends ReasoningProvid
   ): ReturnType<typeof resolveStoredSubagentThinking> =>
     override === undefined
       ? { thinking: resolveThinkingForProvider(agent, m?.provider ?? currentProvider) }
-      : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
+      : resolveStoredSubagentThinking(agent, m, override, generatedFallback, effortSource);
 
   const primaryThinkingResolution = selectedModel
     ? resolveThinkingResult(selectedModel)
@@ -865,12 +1149,33 @@ function applyModelToRunnableTarget(
 
   const agentName = agentNameForTarget(target);
   const agent = agentName ? agents.get(agentName) : undefined;
-  const override = agentName ? options.agentOverrides?.get(agentName) : undefined;
+  const explicitModel = hasExplicitModel(target);
+  const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
+
+  // Merge project defaults (layer 2) with persisted override (layer 3) per field.
+  // `agentName` comes from dispatch input, so do not traverse the project-defaults
+  // object's prototype for names such as `__proto__` or `constructor`.
+  const projectEntry =
+    agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
+      ? options.projectDefaults[agentName]
+      : undefined;
+  const mergedOverride = mergeProjectDefaultsWithOverride(
+    persistedOverride,
+    projectEntry,
+    availableModels,
+    !explicitModel,
+    agentName,
+    options.onWarning,
+  );
+  const override = mergedOverride.override;
+  const effortSource = mergedOverride.effortSource;
 
   // Explicit dispatch: target already has a model set by the caller.
-  if (hasExplicitModel(target)) {
+  // Human-only model-choice rule: project model cannot override an explicit dispatch model.
+  // Project effort (thinking) CAN still apply to an explicit dispatch.
+  if (explicitModel) {
     // If the model already carries a known thinking suffix, or there is no
-    // stored thinking preference, leave it untouched.
+    // effective thinking preference, leave it untouched.
     if (
       typeof target.model !== "string" ||
       splitKnownThinkingSuffix(target.model).thinkingSuffix ||
@@ -878,9 +1183,15 @@ function applyModelToRunnableTarget(
     ) {
       return 0;
     }
-    // Explicit model without suffix + stored thinking preference → append suffix.
+    // Explicit model without suffix + effective thinking preference → append suffix.
     const explicitModel = findAvailableProviderModel(availableModels, target.model);
-    const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override);
+    const thinkingResolution = resolveStoredSubagentThinking(
+      agent,
+      explicitModel,
+      override,
+      false,
+      effortSource,
+    );
     if (thinkingResolution.warning && agentName) {
       options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
     }
@@ -892,7 +1203,7 @@ function applyModelToRunnableTarget(
     return 1;
   }
 
-  // No stored override — fast path preserving main's bundled-defaults behavior:
+  // No effective override — fast path preserving main's bundled-defaults behavior:
   // resolveThinkingForProvider's result is appended directly without
   // model-capability gating.
   if (override === undefined) {
@@ -903,7 +1214,8 @@ function applyModelToRunnableTarget(
       currentModel,
     );
     const selectedModel = defaults.model ? formatProviderModelReference(defaults.model) : undefined;
-    if (!selectedModel || selectedModel === agent?.model) {
+    const isLegacyGenericModel = agent?.tlhModelDefaultsSource === "legacy";
+    if (!selectedModel || (isLegacyGenericModel && selectedModel === agent?.model)) {
       return 0;
     }
     const thinking = defaults.thinking;
@@ -957,6 +1269,7 @@ function applyModelToRunnableTarget(
     currentProvider,
     currentModel,
     override,
+    effortSource,
   );
 
   if (resolution.unavailableModel && agentName) {
@@ -978,7 +1291,12 @@ function applyModelToRunnableTarget(
     resolution.unavailableModel ?? resolution.model,
     resolution.unavailableModel ? undefined : resolution.thinking,
   );
-  if (!selectedModel || (!resolution.unavailableModel && selectedModel === agent?.model)) {
+  if (
+    !selectedModel ||
+    (!resolution.unavailableModel &&
+      agent?.tlhModelDefaultsSource === "legacy" &&
+      selectedModel === agent?.model)
+  ) {
     return 0;
   }
 

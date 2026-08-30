@@ -12,7 +12,10 @@ const REVIEW_TITLE = "Choose a review mode";
 const REVIEW_PICKER_HINT = "↑/↓ to move  Enter to confirm  Esc to cancel";
 const REVIEW_DEFAULT_BRANCH_BASE = "main";
 const REVIEW_TUI_REQUIRED_MESSAGE = "/review requires the interactive TUI picker. Re-run /review in the TLH UI.";
-const REVIEW_REQUIRED_PRIMARY = "architect";
+const REVIEW_ALLOWED_PRIMARY_AGENTS = new Set([
+    "architect",
+    "disabled",
+]);
 function isRecord(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -32,7 +35,7 @@ function currentReviewPrimaryAgentSelection(ctx) {
     return sessionResolution.selection ?? defaultResolution.selection;
 }
 function reviewPrimaryBlockedMessage(activePrimary) {
-    return `/review only works while the architect primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.`;
+    return `/review only works while the architect or disabled primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect or disabled with /switch-primary-agent disabled (or Shift+Tab), then rerun /review.`;
 }
 function makePickedArgs(mode) {
     return { mode, extra: undefined };
@@ -555,7 +558,7 @@ async function dispatchReviewMode(pi, cmdCtx, parsed) {
 export function createReviewCommandHandler(pi) {
     return async (args, ctx) => {
         const activePrimary = currentReviewPrimaryAgentSelection(ctx);
-        if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
+        if (!REVIEW_ALLOWED_PRIMARY_AGENTS.has(activePrimary)) {
             ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
             return;
         }

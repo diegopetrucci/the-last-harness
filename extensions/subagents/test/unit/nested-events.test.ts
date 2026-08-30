@@ -5,7 +5,6 @@ import { afterEach, describe, it } from "node:test";
 import type { AsyncJobState, NestedRunSummary, SubagentState } from "../../src/shared/types.ts";
 import {
   buildNestedRouteIndex,
-  type NestedEventRecord,
   createNestedRoute,
   hasLiveNestedDescendants,
   parseNestedEventRecords,
@@ -395,7 +394,7 @@ describe("nested event parsing and projection", () => {
     Reflect.set(invalidPressureStep, "contextUsage", { contextTokens: "bad" });
     Reflect.set(invalidPressureStep, "contextPressure", { severity: "warning" });
     Reflect.set(invalidPressureStep, "contextPressureCrossedThresholds", ["warning", "bogus"]);
-    const invalidPressureEvent: Omit<NestedEventRecord, "rootRunId" | "capabilityToken"> = {
+    const invalidPressureEvent: Parameters<typeof writeNestedEvent>[1] = {
       type: "subagent.nested.updated",
       ts: 200,
       parentRunId: "root-run",

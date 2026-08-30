@@ -1,14 +1,17 @@
 ---
 name: bug-hunter
 description: Investigates reported bugs, identifies root causes, and recommends fixes without changing code.
-model: anthropic/claude-opus-5
-tlhOpenaiModels: openai-codex/gpt-5.6-sol
-tlhAnthropicThinking: high
-tlhOpenrouterThinking: high
-tlhOpenaiThinking: high
+tlhModelDefaults:
+  - provider: anthropic
+    models: [claude-opus-5]
+    effort: high
+  - provider: openai-codex
+    models: [gpt-5.6-sol]
+    effort: high
+  - provider: openrouter
+    effort: high
 applyModel: true
 applyThinking: true
-lockThinking: true
 tools: read, grep, find, ls, bash, subagent, subagent_supervisor
 systemPromptMode: append
 inheritProjectContext: true

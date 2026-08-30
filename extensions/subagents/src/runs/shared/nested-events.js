@@ -5,6 +5,7 @@ import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -208,8 +209,10 @@ function sanitizeStep(input, depth) {
         ? raw.status
         : "pending";
     const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+    const projectAgent = normalizeProjectAgentRunCapture(raw.projectAgent);
     return {
         agent,
+        ...(projectAgent ? { projectAgent } : {}),
         status,
         ...(terminationReason
             ? { terminationReason: terminationReason }
@@ -291,6 +294,9 @@ export function sanitizeSummary(input, depth = 0) {
         depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
         path: pathParts,
         state: sanitizeState(raw.state, "running"),
+        ...(normalizeProjectAgentRunCapture(raw.projectAgent)
+            ? { projectAgent: normalizeProjectAgentRunCapture(raw.projectAgent) }
+            : {}),
         ...(pathValue(raw.asyncDir, 2048) ? { asyncDir: pathValue(raw.asyncDir, 2048) } : {}),
         ...(clampNumber(raw.pid) !== undefined &&
             clampNumber(raw.pid) > 0 &&
@@ -867,11 +873,13 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
         lastUpdate: status.lastUpdate ?? fallback.ts,
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
+        ...(status.projectAgents?.length ? { projectAgent: status.projectAgents[0] } : {}),
         ...(status.steps?.length
             ? {
                 steps: status.steps
                     .map((step) => ({
                     agent: step.agent,
+                    ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
                     status: nestedStepStatusFromAsyncStepStatus(step.status),
                     ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
                     ...(step.activityState ? { activityState: step.activityState } : {}),

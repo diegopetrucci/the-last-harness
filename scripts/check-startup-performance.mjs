@@ -26,6 +26,8 @@ import { renderWrapper } from "./tlh-wrapper.mjs";
 const DEFAULT_BUDGET_MS = 1000;
 const DEFAULT_RUNS = 6;
 const DEFAULT_TIMEOUT_MS = 15000;
+// Leave more than the bridge's worst-case TERM/KILL cleanup budget before escalation.
+const BRIDGE_CLEANUP_GRACE_MS = 2500;
 const DEFAULT_COMMAND = "tlh";
 const CONTROLLED_ENV = {
   PI_OFFLINE: "1",
@@ -52,6 +54,7 @@ const FOOTER_MARKER = "agent: ";
 const FOOTER_CWD_PATTERN = /(^|\n)(?:~|\/)[^\n]* \([^\n()]+\)(?=\n|$)/u;
 let interruptSignal;
 const PYTHON_PTY_BRIDGE = String.raw`
+import errno
 import os
 import pty
 import select
@@ -71,37 +74,16 @@ if len(sys.argv) < 2:
     raise SystemExit(2)
 
 master_fd, slave_fd = pty.openpty()
-popen_kwargs = {
-    "stdin": slave_fd,
-    "stdout": slave_fd,
-    "stderr": slave_fd,
-    "close_fds": True,
-}
-if hasattr(os, "setsid"):
-    popen_kwargs["start_new_session"] = True
-try:
-    child = subprocess.Popen(sys.argv[1:], **popen_kwargs)
-except FileNotFoundError as error:
-    os.close(master_fd)
-    os.close(slave_fd)
-    print(f"error: {error}", file=sys.stderr)
-    raise SystemExit(127)
-
-os.close(slave_fd)
-stdin_fd = sys.stdin.fileno()
-stdout = sys.stdout.buffer
+child = None
+child_process_group = None
 termination_signal = None
-child_process_group = child.pid if popen_kwargs.get("start_new_session") and hasattr(os, "killpg") else None
+cleanup_complete = False
 
 
 def request_termination(signum, _frame):
     global termination_signal
     if termination_signal is None:
         termination_signal = signum
-
-
-signal.signal(signal.SIGINT, request_termination)
-signal.signal(signal.SIGTERM, request_termination)
 
 
 def process_group_exists():
@@ -112,7 +94,10 @@ def process_group_exists():
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        # macOS can report EPERM for an exiting-only group until its direct
+        # child is reaped. A live direct child keeps the group present so a
+        # genuinely unexpected permission failure remains visible.
+        return child.poll() is None
     return True
 
 
@@ -144,6 +129,13 @@ def send_child_signal(signum):
             os.killpg(child_process_group, signum)
         except ProcessLookupError:
             pass
+        except PermissionError as error:
+            # macOS can report EPERM for an exiting-only group. Reap the direct
+            # child if possible; a live child must still surface the failure.
+            try:
+                child.wait(timeout=KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                raise error
         return
     if child.poll() is not None:
         return
@@ -184,43 +176,115 @@ def bridge_exit_status(returncode):
     return returncode
 
 
-while True:
-    if termination_signal is not None:
-        break
+def forward_output(data):
+    pending = memoryview(data)
+    while pending:
+        try:
+            written = os.write(stdout_fd, pending)
+        except BrokenPipeError:
+            return False
+        if written <= 0:
+            raise OSError(errno.EIO, "stdout write made no progress")
+        pending = pending[written:]
+    return True
 
-    read_fds = [master_fd, stdin_fd]
+
+try:
+    signal.signal(signal.SIGINT, request_termination)
+    signal.signal(signal.SIGTERM, request_termination)
+
+    popen_kwargs = {
+        "stdin": slave_fd,
+        "stdout": slave_fd,
+        "stderr": slave_fd,
+        "close_fds": True,
+    }
+    if hasattr(os, "setsid"):
+        popen_kwargs["start_new_session"] = True
     try:
-        ready, _, _ = select.select(read_fds, [], [], READ_TIMEOUT_SECONDS)
-    except InterruptedError:
-        ready = []
+        child = subprocess.Popen(sys.argv[1:], **popen_kwargs)
+    except FileNotFoundError as error:
+        print(f"error: {error}", file=sys.stderr)
+        raise SystemExit(127)
 
-    if master_fd in ready:
-        try:
-            data = os.read(master_fd, 4096)
-        except OSError:
-            data = b""
-        if not data:
+    child_process_group = (
+        child.pid if popen_kwargs.get("start_new_session") and hasattr(os, "killpg") else None
+    )
+    os.close(slave_fd)
+    slave_fd = None
+    stdin_fd = sys.stdin.fileno()
+    stdout_fd = sys.stdout.fileno()
+
+    while True:
+        if termination_signal is not None:
             break
-        stdout.write(data)
-        stdout.flush()
 
-    if stdin_fd in ready:
+        read_fds = [master_fd, stdin_fd]
         try:
+            ready, _, _ = select.select(read_fds, [], [], READ_TIMEOUT_SECONDS)
+        except InterruptedError:
+            ready = []
+
+        if master_fd in ready:
+            try:
+                data = os.read(master_fd, 4096)
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                data = b""
+            if not data:
+                break
+            # The checker is gone when the unbuffered forwarding write breaks;
+            # synchronously clean up the fixture group without finalizer noise.
+            if not forward_output(data):
+                break
+
+        if stdin_fd in ready:
             incoming = os.read(stdin_fd, 1024)
-        except OSError:
-            incoming = b""
-        if incoming:
+            if not incoming:
+                # EOF means the checker is gone; do not leave the fixture group.
+                break
             try:
                 os.write(master_fd, incoming)
-            except OSError:
-                pass
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                break
 
-    if child.poll() is not None and master_fd not in ready:
-        break
+        if child.poll() is not None and master_fd not in ready:
+            break
 
-status = child.wait() if termination_signal is None else terminate_child(termination_signal)
-os.close(master_fd)
-raise SystemExit(bridge_exit_status(status))
+    cleanup_signal = termination_signal if termination_signal is not None else signal.SIGTERM
+    status = terminate_child(cleanup_signal)
+    cleanup_complete = True
+    raise SystemExit(bridge_exit_status(status))
+finally:
+    # Cleanup also runs for unexpected exceptions. Preserve an active exception
+    # if cleanup fails, but always attempt both PTY closes in order.
+    active_exception = sys.exc_info()[1]
+    cleanup_error = None
+    try:
+        if child is not None and not cleanup_complete:
+            try:
+                terminate_child(signal.SIGTERM)
+            except BaseException as error:
+                cleanup_error = error
+    finally:
+        try:
+            if slave_fd is not None:
+                try:
+                    os.close(slave_fd)
+                except BaseException as error:
+                    if cleanup_error is None:
+                        cleanup_error = error
+        finally:
+            try:
+                os.close(master_fd)
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+    if active_exception is None and cleanup_error is not None:
+        raise cleanup_error
 `;
 
 function usage() {
@@ -486,7 +550,7 @@ async function stopChildProcess(child, closePromise) {
   }
 
   safeKill(child.pid, "SIGTERM");
-  if (await exitsWithin(closePromise, 1000)) {
+  if (await exitsWithin(closePromise, BRIDGE_CLEANUP_GRACE_MS)) {
     return;
   }
 
@@ -943,9 +1007,11 @@ if (isMainModule()) {
   });
 }
 
+// Deliberately test-only; direct bridge regressions should not launch the checker.
 export {
   CONTROLLED_ENV,
   DEFAULT_BUDGET_MS,
+  PYTHON_PTY_BRIDGE as PYTHON_PTY_BRIDGE_FOR_TESTS,
   DEFAULT_COMMAND,
   DEFAULT_RUNS,
   DEFAULT_TIMEOUT_MS,

@@ -5,6 +5,7 @@ import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.ts";
 import {
   type AsyncJobState,
+  type AsyncStatus,
   type AsyncStartedEvent,
   type ControlEvent,
   type SubagentState,
@@ -26,9 +27,17 @@ import {
   type AsyncStatusQuarantineOptions,
 } from "./async-status-quarantine.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import {
+  PROJECT_AGENT_TERMINAL_RETENTION_MS,
+  lookupProjectAgentRunReference,
+  releaseProjectAgentRunReference,
+  type ProjectAgentRunCapture,
+} from "../../agents/project-agent-snapshot.ts";
 
 interface AsyncJobTrackerOptions {
   completionRetentionMs?: number;
+  /** Test seam; production defaults to the shared project terminal retention window. */
+  projectAgentTerminalRetentionMs?: number;
   pollIntervalMs?: number;
   resultsDir?: string;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
@@ -49,6 +58,49 @@ const COMPLETION_RETENTION_STATES = new Set<string>([
   "continued",
 ]);
 
+function hasUsableProjectSessionFile(sessionFile: unknown): boolean {
+  if (typeof sessionFile !== "string" || sessionFile.trim().length === 0) return false;
+  const resolved = path.resolve(sessionFile);
+  return path.extname(resolved) === ".jsonl" && fs.existsSync(resolved);
+}
+
+function hasResumableProjectSibling(
+  asyncDir: string | undefined,
+  includeTerminalProjectSibling = true,
+): boolean {
+  if (!asyncDir) return true;
+  let status: AsyncStatus | null;
+  try {
+    status = readStatus(asyncDir);
+  } catch {
+    return true;
+  }
+  if (!status || !status.steps || status.steps.length === 0) return true;
+  return status.steps.some((step) => {
+    const stepStatus = step.status as string;
+    if (
+      stepStatus === "paused" ||
+      stepStatus === "pausing" ||
+      stepStatus === "pending" ||
+      stepStatus === "running" ||
+      stepStatus === "queued"
+    ) {
+      return true;
+    }
+    if (stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed") {
+      return (
+        includeTerminalProjectSibling &&
+        step.projectAgent !== undefined &&
+        hasUsableProjectSessionFile(step.sessionFile)
+      );
+    }
+    if (stepStatus === "continued" || stepStatus === "cancelled") return false;
+    // Unknown status is retained conservatively rather than allowing an
+    // unrecognized persisted state to release a project generation.
+    return true;
+  });
+}
+
 export function createAsyncJobTracker(
   pi: Pick<ExtensionAPI, "events">,
   state: SubagentState,
@@ -62,10 +114,16 @@ export function createAsyncJobTracker(
   restoreActiveJobs: (ctx?: ExtensionContext) => void;
 } {
   const completionRetentionMs = options.completionRetentionMs ?? 10000;
+  const projectAgentTerminalRetentionMs =
+    options.projectAgentTerminalRetentionMs ?? PROJECT_AGENT_TERMINAL_RETENTION_MS;
   const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
   const resultsDir = options.resultsDir ?? RESULTS_DIR;
   const restoreWarningDedupe = new Set<string>();
   const restoreControlEventProbeFailures = new Set<string>();
+  const projectReferenceCleanupTimers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; captures: readonly ProjectAgentRunCapture[] }
+  >();
   const eventFs = options.fs ?? fs;
   const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
     renderWidget(ctx, jobs, state.liveDetailController);
@@ -176,6 +234,7 @@ export function createAsyncJobTracker(
       })(),
       nestedChildren: run.nestedChildren,
       tkTicket: run.tkTicket,
+      projectAgents: run.projectAgents,
     };
   };
   const cancelCleanup = (asyncId: string) => {
@@ -184,10 +243,79 @@ export function createAsyncJobTracker(
     clearTimeout(existingTimer);
     state.cleanupTimers.delete(asyncId);
   };
+  const cancelProjectReferenceCleanup = (asyncId: string) => {
+    const existingTimer = projectReferenceCleanupTimers.get(asyncId);
+    if (!existingTimer) return;
+    clearTimeout(existingTimer.timer);
+    projectReferenceCleanupTimers.delete(asyncId);
+  };
+  const scheduleProjectReferenceCleanup = (
+    asyncId: string,
+    asyncDir: string | undefined,
+    options: { siblingSafe: boolean; delayMs?: number },
+  ) => {
+    const lookup = lookupProjectAgentRunReference(asyncId);
+    if (lookup.status !== "found" || lookup.runId !== asyncId) return;
+    cancelProjectReferenceCleanup(asyncId);
+    const expectedCaptures = lookup.captures;
+    const timer = setTimeout(() => {
+      const pending = projectReferenceCleanupTimers.get(asyncId);
+      if (!pending || pending.timer !== timer) return;
+      projectReferenceCleanupTimers.delete(asyncId);
+      const current = lookupProjectAgentRunReference(asyncId);
+      // Do not let a stale timer release a newer reference that reused this
+      // run id after the original reference was released.
+      if (
+        current.status !== "found" ||
+        current.runId !== asyncId ||
+        current.captures !== expectedCaptures
+      )
+        return;
+      if (options.siblingSafe) {
+        // A missing directory is an uninspectable cohort, not proof that all
+        // siblings are terminal. Never release a sibling-safe reference from
+        // an undefined path.
+        if (!asyncDir) return;
+        // Terminal project siblings are protected by this timer only. Active,
+        // paused, and unknown siblings remain conservatively retained and are
+        // checked again after the next retention window.
+        if (hasResumableProjectSibling(asyncDir, false)) {
+          scheduleProjectReferenceCleanup(asyncId, asyncDir, options);
+          return;
+        }
+      }
+      releaseProjectAgentRunReference(asyncId);
+    }, options.delayMs ?? projectAgentTerminalRetentionMs);
+    timer.unref?.();
+    projectReferenceCleanupTimers.set(asyncId, { timer, captures: expectedCaptures });
+  };
+  const retainOrReleaseProjectReference = (asyncId: string, asyncDir: string | undefined): void => {
+    const lookup = lookupProjectAgentRunReference(asyncId);
+    if (lookup.status !== "found" || lookup.runId !== asyncId) return;
+    if (hasResumableProjectSibling(asyncDir)) {
+      scheduleProjectReferenceCleanup(asyncId, asyncDir, { siblingSafe: true });
+      return;
+    }
+    cancelProjectReferenceCleanup(asyncId);
+    releaseProjectAgentRunReference(asyncId);
+  };
   const scheduleCleanup = (asyncId: string) => {
     cancelCleanup(asyncId);
     const timer = setTimeout(() => {
       state.cleanupTimers.delete(asyncId);
+      const job = state.asyncJobs.get(asyncId);
+      if (job && job.status !== "paused") {
+        if (
+          (job.status === "cancelled" || job.status === "continued") &&
+          !projectReferenceCleanupTimers.has(asyncId)
+        ) {
+          retainOrReleaseProjectReference(asyncId, job.asyncDir);
+        } else if (!projectReferenceCleanupTimers.has(asyncId)) {
+          // This is only a fallback for terminal jobs whose project retention
+          // was deferred while nested descendants were still live.
+          scheduleProjectReferenceCleanup(asyncId, job.asyncDir, { siblingSafe: false });
+        }
+      }
       state.asyncJobs.delete(asyncId);
       if (state.lastUiContext) {
         rerenderWidget(state.lastUiContext);
@@ -404,6 +532,7 @@ export function createAsyncJobTracker(
               parallelGroups: job.parallelGroups,
               startedAt: job.startedAt,
               sessionFile: job.sessionFile,
+              projectAgents: job.projectAgents,
             },
           });
           const status = reconciliation.status ?? readStatus(job.asyncDir);
@@ -424,6 +553,14 @@ export function createAsyncJobTracker(
             job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
             job.startedAt = status.startedAt ?? job.startedAt;
             if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
+            if (
+              job.status !== "complete" &&
+              job.status !== "failed" &&
+              job.status !== "continued" &&
+              job.status !== "cancelled"
+            ) {
+              cancelProjectReferenceCleanup(job.asyncId);
+            }
             if (status.steps?.length) {
               const groups = normalizeParallelGroups(
                 status.parallelGroups,
@@ -471,7 +608,16 @@ export function createAsyncJobTracker(
             job.sessionFile = status.sessionFile ?? job.sessionFile;
             if (status.tkTicket !== undefined)
               job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
+            if (status.projectAgents !== undefined) job.projectAgents = status.projectAgents;
             const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
+            if (
+              (job.status === "complete" || job.status === "failed") &&
+              !nestedRefreshFailed &&
+              !liveNestedDescendants &&
+              !projectReferenceCleanupTimers.has(job.asyncId)
+            ) {
+              scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
+            }
             if (liveNestedDescendants) cancelCleanup(job.asyncId);
             if (
               COMPLETION_RETENTION_STATES.has(job.status) &&
@@ -485,6 +631,13 @@ export function createAsyncJobTracker(
             continue;
           }
           const liveNestedDescendants = hasLiveNestedDescendants(job.nestedChildren);
+          if (
+            (job.status === "complete" || job.status === "failed") &&
+            !liveNestedDescendants &&
+            !projectReferenceCleanupTimers.has(job.asyncId)
+          ) {
+            scheduleProjectReferenceCleanup(job.asyncId, job.asyncDir, { siblingSafe: false });
+          }
           if (liveNestedDescendants) {
             cancelCleanup(job.asyncId);
           } else if (
@@ -523,6 +676,7 @@ export function createAsyncJobTracker(
     if (typeof state.currentSessionId === "string" && info.sessionId !== state.currentSessionId)
       return;
     const now = Date.now();
+    cancelProjectReferenceCleanup(info.id);
     const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
     const rawAgents = info.agents?.length
       ? info.agents
@@ -562,6 +716,7 @@ export function createAsyncJobTracker(
       turnBudget: info.turnBudget,
       controlEventCursor: 0,
       tkTicket: normalizedTkTicket,
+      projectAgents: info.projectAgents,
     });
     ensurePoller();
     if (state.lastUiContext) {
@@ -599,6 +754,18 @@ export function createAsyncJobTracker(
         console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
       }
     }
+    if (result.state === "cancelled" || result.state === "continued") {
+      retainOrReleaseProjectReference(asyncId, job?.asyncDir ?? result.asyncDir);
+    } else if (
+      (job?.status === "complete" || job?.status === "failed") &&
+      !nestedRefreshFailed &&
+      !hasLiveNestedDescendants(job?.nestedChildren) &&
+      !projectReferenceCleanupTimers.has(asyncId)
+    ) {
+      scheduleProjectReferenceCleanup(asyncId, job?.asyncDir ?? result.asyncDir, {
+        siblingSafe: false,
+      });
+    }
     if (state.lastUiContext) {
       rerenderWidget(state.lastUiContext);
     }
@@ -614,6 +781,23 @@ export function createAsyncJobTracker(
       clearTimeout(timer);
     }
     state.cleanupTimers.clear();
+    // Keep same-session project retention timers alive across /reload. They
+    // are private registry ownership, not UI state; clearing them here would
+    // strand terminal references after their result/status files are removed.
+    // A timer from another session is stale and must not survive into an id
+    // reuse in the new session.
+    for (const [asyncId, pending] of projectReferenceCleanupTimers) {
+      const sameSession =
+        typeof state.currentSessionId === "string" &&
+        pending.captures.length > 0 &&
+        pending.captures.every(
+          (capture) => capture.provenance.sessionId === state.currentSessionId,
+        );
+      if (!sameSession) {
+        clearTimeout(pending.timer);
+        projectReferenceCleanupTimers.delete(asyncId);
+      }
+    }
     state.asyncJobs.clear();
     state.foregroundControls?.clear();
     state.lastForegroundControlId = null;

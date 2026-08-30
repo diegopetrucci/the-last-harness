@@ -6,6 +6,8 @@ import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
 import { attachNestedChildrenToResultChildren, compactNestedResultChildren, resolveSubagentResultStatus, } from "../../intercom/result-intercom.js";
 import { lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.js";
+import { readStatus } from "../../shared/utils.js";
+import { PROJECT_AGENT_TERMINAL_RETENTION_MS, lookupProjectAgentRunReference, releaseProjectAgentRunReference, } from "../../agents/project-agent-snapshot.js";
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
 function sanitizeNestedResultChildren(value, resultPath, label) {
@@ -66,6 +68,44 @@ function resolvePausedArtifactTargetIndex(data) {
         child.sessionFile.length > 0);
     return pausedChild ? children.indexOf(pausedChild) : undefined;
 }
+function hasUsableProjectSessionFile(sessionFile, fsApi) {
+    if (typeof sessionFile !== "string" || sessionFile.trim().length === 0)
+        return false;
+    const resolved = path.resolve(sessionFile);
+    return path.extname(resolved) === ".jsonl" && fsApi.existsSync(resolved);
+}
+function hasResumableProjectSibling(data, fsApi, includeTerminalProjectSibling = true) {
+    if (typeof data.asyncDir !== "string" || data.asyncDir.length === 0) {
+        return true;
+    }
+    let status;
+    try {
+        status = readStatus(data.asyncDir);
+    }
+    catch {
+        return true;
+    }
+    if (!status || !status.steps || status.steps.length === 0)
+        return true;
+    return status.steps.some((step) => {
+        const stepStatus = step.status;
+        if (stepStatus === "paused" ||
+            stepStatus === "pausing" ||
+            stepStatus === "pending" ||
+            stepStatus === "running" ||
+            stepStatus === "queued") {
+            return true;
+        }
+        if (stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed") {
+            return (includeTerminalProjectSibling &&
+                step.projectAgent !== undefined &&
+                hasUsableProjectSessionFile(step.sessionFile, fsApi));
+        }
+        if (stepStatus === "continued" || stepStatus === "cancelled")
+            return false;
+        return true;
+    });
+}
 function resolvePausedArtifactDecision(data) {
     if (data.state !== "paused")
         return "compat";
@@ -108,6 +148,43 @@ function resolvePausedArtifactDecision(data) {
 export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps = {}) {
     const fsApi = deps.fs ?? fs;
     const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
+    const projectAgentTerminalRetentionMs = deps.projectAgentTerminalRetentionMs ?? PROJECT_AGENT_TERMINAL_RETENTION_MS;
+    const projectReferenceReleaseTimers = new Map();
+    const cancelProjectReferenceRelease = (runId) => {
+        const timer = projectReferenceReleaseTimers.get(runId);
+        if (!timer)
+            return;
+        timers.clearTimeout(timer);
+        projectReferenceReleaseTimers.delete(runId);
+    };
+    const scheduleProjectReferenceRelease = (data, runId) => {
+        const lookup = lookupProjectAgentRunReference(runId);
+        if (lookup.status !== "found" || lookup.runId !== runId)
+            return;
+        cancelProjectReferenceRelease(runId);
+        const timer = timers.setTimeout(() => {
+            projectReferenceReleaseTimers.delete(runId);
+            if (!data.asyncDir)
+                return;
+            if (hasResumableProjectSibling(data, fsApi, false)) {
+                scheduleProjectReferenceRelease(data, runId);
+                return;
+            }
+            releaseProjectAgentRunReference(runId);
+        }, projectAgentTerminalRetentionMs);
+        timer.unref?.();
+        projectReferenceReleaseTimers.set(runId, timer);
+    };
+    const retainOrReleaseProjectReference = (data, runId) => {
+        const lookup = lookupProjectAgentRunReference(runId);
+        if (lookup.status !== "found" || lookup.runId !== runId)
+            return;
+        if (hasResumableProjectSibling(data, fsApi)) {
+            scheduleProjectReferenceRelease(data, runId);
+            return;
+        }
+        releaseProjectAgentRunReference(runId);
+    };
     const handleResult = (file) => {
         const resultPath = path.join(resultsDir, file);
         if (!fsApi.existsSync(resultPath))
@@ -133,6 +210,7 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             if (pausedDecision === "retry")
                 return;
             if (pausedDecision === "discard") {
+                retainOrReleaseProjectReference(data, runId);
                 fsApi.unlinkSync(resultPath);
                 return;
             }
@@ -170,6 +248,9 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
             }), nestedChildren);
             const completionKey = buildCompletionKey(data, `result:${file}`);
             if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
+                if (data.state === "cancelled" || data.state === "continued") {
+                    retainOrReleaseProjectReference(data, runId);
+                }
                 fsApi.unlinkSync(resultPath);
                 return;
             }
@@ -194,6 +275,12 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     }
                     : {}),
             });
+            if (data.state === "cancelled" || data.state === "continued") {
+                retainOrReleaseProjectReference(data, runId);
+            }
+            else if (data.state === "complete" || data.state === "failed") {
+                scheduleProjectReferenceRelease(data, runId);
+            }
             fsApi.unlinkSync(resultPath);
         }
         catch (error) {

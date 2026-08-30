@@ -27,6 +27,29 @@ test("the curated startup tips explain pi-transcribe setup and microphone usage"
   );
 });
 
+test("the curated startup tips include exactly one disabled-mode affordance", () => {
+  const disabledModeTip =
+    "Use “disabled” mode (Shift+Tab) to keep TLH’s tools and subagents without architect-specific guidance.";
+
+  assert.equal(
+    TLH_STARTUP_TIPS.filter((tip) => tip === disabledModeTip).length,
+    1,
+    "expected exactly one approved disabled-mode startup tip",
+  );
+});
+
+test("the curated startup list has exactly one project custom subagent tip", () => {
+  const projectTips = TLH_STARTUP_TIPS.filter((tip) => tip.includes(".tlh/agents"));
+  assert.deepEqual(projectTips, [
+    "Project custom subagents live in .tlh/agents; ask TLH to use one by name.",
+  ]);
+  assert.equal(
+    TLH_STARTUP_TIPS.some((tip) => /trust|\/reload/i.test(tip)),
+    false,
+    "the curated startup list must not add a trust or reload tip",
+  );
+});
+
 test("getTlhStartupTip returns one process-scoped selection from the curated list", () => {
   const startupTip = getTlhStartupTip();
 

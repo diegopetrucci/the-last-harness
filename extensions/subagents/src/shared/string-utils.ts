@@ -33,9 +33,9 @@ export function truncateWithMarker(value: string, maxChars: number, marker: stri
 
 /**
  * Maximum UTF-16 code units allowed for a rendered rejection reason.
- * Shared between run-status.ts and notify.ts so both render sites stay in sync.
+ * Consumed by formatRejectionReason when bounding child-controlled display text.
  */
-export const REJECTION_REASON_MAX_LENGTH = 200;
+const REJECTION_REASON_MAX_LENGTH = 200;
 
 /**
  * Collapse whitespace characters in a child-controlled reason string so it
@@ -48,7 +48,7 @@ export const REJECTION_REASON_MAX_LENGTH = 200;
  * Normalization MUST precede truncation so a newline cannot survive inside
  * the truncated result.
  */
-export function normalizeRejectionReason(reason: string): string {
+function normalizeRejectionReason(reason: string): string {
   return reason
     .replace(/[\r\n\t\v\f]+/g, " ")
     .replace(/ {2,}/g, " ")

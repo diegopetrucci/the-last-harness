@@ -1,5 +1,6 @@
 import {} from "../shared/types.js";
 import { truncateWithMarker } from "../shared/string-utils.js";
+import { safeTerminalText } from "../shared/display-text.js";
 export function resolveSubagentResultStatus(input) {
     if (input.detached)
         return "detached";
@@ -161,16 +162,16 @@ const MAX_NATIVE_FOREGROUND_ERROR_CHARS = 1_200;
 const MAX_NATIVE_FOREGROUND_NESTED_ENTRIES = 8;
 const MAX_NATIVE_FOREGROUND_NESTED_DEPTH = 2;
 function boundedNativeForegroundLabel(value) {
-    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
+    return truncateWithMarker(safeTerminalText(value), MAX_NATIVE_FOREGROUND_LABEL_CHARS, "… [label truncated]");
 }
 function boundedNativeForegroundReference(value) {
-    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_REFERENCE_CHARS, "… [reference truncated]");
+    return truncateWithMarker(safeTerminalText(value), MAX_NATIVE_FOREGROUND_REFERENCE_CHARS, "… [reference truncated]");
 }
 function boundedNativeForegroundError(value) {
-    return truncateWithMarker(value, MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
+    return truncateWithMarker(safeTerminalText(value), MAX_NATIVE_FOREGROUND_ERROR_CHARS, "… [error truncated; full text is unavailable]");
 }
 function boundedNativeForegroundSummary(child, maxChars) {
-    const raw = child.summary.trim() || "(no output)";
+    const raw = safeTerminalText(child.summary).trim() || "(no output)";
     if (raw.length <= maxChars)
         return raw;
     const marker = child.artifactPath || child.sessionPath

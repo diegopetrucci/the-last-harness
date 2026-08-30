@@ -33,6 +33,7 @@ import {
   type Component,
 } from "@earendil-works/pi-tui";
 import { discoverAgents } from "../agents/agents.ts";
+import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
 import {
   cleanupAllArtifactDirs,
   cleanupOldArtifacts,
@@ -62,10 +63,12 @@ import { createHeartbeatWiring, countLiveAsyncRuns } from "./heartbeat-wiring.ts
 import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.ts";
 import {
   createSubagentExecutor,
+  normalizeProjectAgentAccess,
   type SubagentParamsLike,
 } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
+import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import registerSubagentNotify, {
@@ -421,7 +424,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     pi,
     state,
     RESULTS_DIR,
-    10 * 60 * 1000,
+    PROJECT_AGENT_TERMINAL_RETENTION_MS,
   );
   startResultWatcher();
   primeExistingResults();
@@ -457,6 +460,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     expandTilde,
     discoverAgents,
     getHeartbeatSummary: () => hbWiring.getSessionSummary(),
+    getProjectAgentAccess: (request) =>
+      normalizeProjectAgentAccess(getTlhProjectAgentAccess(request)),
   });
 
   pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {

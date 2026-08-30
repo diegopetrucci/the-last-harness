@@ -66,7 +66,10 @@ type ReviewSettings = {
   };
 };
 
-const REVIEW_REQUIRED_PRIMARY: ReviewPrimaryAgentSelection = "architect";
+const REVIEW_ALLOWED_PRIMARY_AGENTS: ReadonlySet<ReviewPrimaryAgentSelection> = new Set([
+  "architect",
+  "disabled",
+]);
 
 // Intentionally not imported from "./common.js" (see issue #296): keep review.ts
 // source-level tests isolated from unrelated shared-runtime dependencies.
@@ -100,7 +103,7 @@ function currentReviewPrimaryAgentSelection(
 }
 
 function reviewPrimaryBlockedMessage(activePrimary: ReviewPrimaryAgentSelection): string {
-  return `/review only works while the architect primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.`;
+  return `/review only works while the architect or disabled primary agent is active. Current primary agent: ${activePrimary}. Switch to architect with /switch-primary-agent architect or disabled with /switch-primary-agent disabled (or Shift+Tab), then rerun /review.`;
 }
 
 // --- Helpers for picker integration ---
@@ -893,7 +896,7 @@ async function dispatchReviewMode(
 export function createReviewCommandHandler(pi: ExtensionAPI) {
   return async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
     const activePrimary = currentReviewPrimaryAgentSelection(ctx);
-    if (activePrimary !== REVIEW_REQUIRED_PRIMARY) {
+    if (!REVIEW_ALLOWED_PRIMARY_AGENTS.has(activePrimary)) {
       ctx.ui.notify(reviewPrimaryBlockedMessage(activePrimary), "error");
       return;
     }

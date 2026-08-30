@@ -2,15 +2,37 @@
 
 ## Model and thinking defaults
 
-TLH applies bundled model/thinking defaults per primary agent. Architect, Product, and Bug-hunter use Anthropic Claude Opus 5 with high thinking on Anthropic and OpenAI Codex GPT-5.6 Sol with high thinking on OpenAI Codex. Rush uses Anthropic Claude Sonnet 4.6 with low thinking on Anthropic and OpenAI Codex GPT-5.6 Luna with medium thinking on OpenAI Codex. For active non-locked primaries, persistent model choices are respected and stored per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. On direct Anthropic and OpenAI Codex paths, locked primaries such as Rush keep their fixed defaults; OpenRouter is the exception, where every primary follows the active session model. The native model-picker scope is documented below. The bundled `developer` subagent follows the active primary session provider with Anthropic Claude Sonnet 4.6 at medium thinking or OpenAI Codex GPT-5.6 Luna at max thinking. Other bundled subagents — `web-scout`, `repo-scout`, `librarian`, and `diff-summarizer` — default to OpenAI Codex GPT-5.6 Luna with medium thinking on the OpenAI Codex path and follow the active primary session provider when TLH injects model defaults. Model IDs may contain vendor path segments (for example, `openrouter/anthropic/...`), so use the complete `provider/model` ID in explicit settings.
+TLH loads bundled model/effort defaults from each agent's `tlhModelDefaults` frontmatter block. Each list item names one exact provider, optionally lists provider-local model IDs, and may set an `effort` level. For example:
+
+```yaml
+tlhModelDefaults:
+  - provider: anthropic
+    models: [claude-opus-5]
+    effort: high
+  - provider: openai-codex
+    models: [gpt-5.6-sol]
+    effort: high
+  - provider: openrouter
+    effort: high
+```
+
+The `models` values are local IDs for the provider named by the same entry; model IDs may contain vendor path segments (for example, `openrouter/anthropic/...`). TLH tries declared models in list order when selecting an available direct-provider model. OpenRouter entries intentionally omit `models`: the runtime follows the active OpenRouter session model and applies the entry's effort. A present `tlhModelDefaults` block is authoritative, including when it is empty.
+
+The bundled primaries use Anthropic Claude Opus 5 with high effort and OpenAI Codex GPT-5.6 Sol with high effort, except Rush, which uses Anthropic Claude Sonnet 4.6 with low effort and OpenAI Codex GPT-5.6 Luna with medium effort. Their OpenRouter effort entries mirror the Anthropic effort. To preserve the former generic primary `model:` precedence, the loader records the first declared model in each new-format primary as its internal preferred model; Rush's `preferCurrentOpenaiModel` still opts into current OpenAI precedence. All four bundled primaries remain unlocked: Architect retains its medium minimum floor, while Rush, Product, and Bug-hunter accept every level supported by the active model. Persistent model choices for active primaries are respected and stored per primary under `tlh.primaryAgent.modelOverrides.<primary>`; reset the current primary's override with `/switch-primary-agent model reset`. The bundled `developer` subagent follows the active primary session provider with Anthropic Claude Sonnet 4.6 at medium effort or OpenAI Codex GPT-5.6 Luna at max effort. Other bundled subagents — `web-scout`, `repo-scout`, `librarian`, and `diff-summarizer` — use OpenAI Codex GPT-5.6 Luna at medium effort and Anthropic Claude Haiku 4.5 at high effort. Review roles (`code-reviewer`, `oracle`, and `contrarian`) use OpenAI Codex GPT-5.6 Sol and Anthropic Claude Opus 5, both at high effort.
+
+For compatibility with older installed or user-edited agent files, TLH falls back only when `tlhModelDefaults` is absent: legacy provider model fields are normalized at load time, while generic `model:` and `thinking:` fields retain their documented legacy behavior. Bundled agent files use only `tlhModelDefaults`; generic and flattened provider-specific declarations are not bundled defaults. Legacy fields are ignored when a provider-default block is present.
+
+The native model-picker scope is documented below. The runtime retains `lockThinking` support for fixed primary definitions, but none of the bundled primaries is locked.
+
+Disabled mode is not a model role: it applies no primary model/effort default or override, leaves the current session's model and effort unchanged, and does not enforce the architect's minimum effort floor. Explicit `/model`, `/thinking`, and `/effort` controls remain available, and bundled minor-agent dispatches still receive provider-aware defaults.
 
 ### OpenRouter sessions
 
-The upstream Pi runtime provides OpenRouter authentication and transport: use `/login openrouter` for OAuth or set `OPENROUTER_API_KEY`. TLH does not implement that provider's transport or authentication. Instead, all TLH primaries and non-opposite subagents follow the active OpenRouter session model. Their OpenRouter thinking default is `tlhOpenrouterThinking`; bundled values mirror each role's Anthropic thinking level. Primary `lockThinking` and `minThinking` rules apply through that OpenRouter value. Unknown versus explicitly non-reasoning capability checks apply to stored minor-agent effort overrides and generated fallback handling, not pure bundled or primary defaults. A pure bundled `tlhOpenrouterThinking` remains runtime-authoritative and is forwarded as the bundled target when appropriate.
+The upstream Pi runtime provides OpenRouter authentication and transport: use `/login openrouter` for OAuth or set `OPENROUTER_API_KEY`. TLH does not implement that provider's transport or authentication. All non-opposite TLH primaries and subagents follow the active OpenRouter session model by default. For an active primary, a persisted `tlh.primaryAgent.modelOverrides.<primary>` entry takes precedence and is reapplied at the next session or primary-mode boundary; otherwise the primary follows the current session model. Their effort comes from each role's effort-only `openrouter` entry; generic or legacy thinking values do not leak onto this path. Primary `lockThinking` and `minThinking` rules apply through that OpenRouter effort. Unknown versus explicitly non-reasoning capability checks apply to stored minor-agent effort overrides and generated fallback handling, not pure bundled or primary defaults.
 
 For `code-reviewer`, `oracle`, and `contrarian` (`preferOppositeProvider`), TLH first looks for an available direct OpenAI/Codex or Anthropic candidate (both the Codex subscription provider and plain OpenAI API candidates qualify). For known `openrouter/anthropic/*` models it tries the opposite OpenAI/Codex family first, then an available Anthropic-family direct candidate; for known `openrouter/openai/*` models it tries Anthropic first, then an available OpenAI/Codex-family direct candidate. A same-family fallback reports degraded review independence. For unknown vendors it tries the OpenAI/Codex family first, but independence is unknown. The active OpenRouter session model remains the retry fallback, also with a reduced-independence notice. Stored or explicitly supplied model and effort overrides retain precedence over these defaults.
 
-OpenRouter has no packaged model frontmatter catalog. Consequently, `/reconcile` cannot dynamically drift-check the OpenRouter session model or dynamically selected opposite-provider candidates; this is an accepted limitation. OpenRouter credit usage is not a subscription-window footer provider.
+OpenRouter has no packaged model frontmatter catalog beyond effort-only entries. Consequently, `/reconcile` cannot dynamically drift-check the OpenRouter session model or dynamically selected opposite-provider candidates; this is an accepted limitation. OpenRouter credit usage is not a subscription-window footer provider.
 
 ## Model selection scope
 
@@ -23,16 +45,16 @@ Choosing the model that is already active is a native reselection: it emits no `
 
 The two choices mean:
 
-- **`This session only — default`** changes the current session but does not persist the model/provider or thinking-level defaults and does not write a per-primary model override. For a non-locked primary, the choice is retained across turns and session-tree reapplication in this session; on direct Anthropic/OpenAI-Codex paths, locked primaries reapply their fixed model at the next turn/session boundary, while OpenRouter primaries retain and follow the active session model. The choice is cleared at a new session start (including the runtime boundary caused by `/reload`) or an explicit primary-agent mode change. It does not affect future/default launches.
-- **`All sessions`** keeps the upstream persistent model/provider (and any model-switch thinking-level) default in the isolated TLH profile. For an active non-locked primary, TLH also stores the selected model at `tlh.primaryAgent.modelOverrides.<primary>` when it differs from that primary's bundled default; selecting the bundled default clears that primary's override. The override is per primary, so another primary follows its own default or override. With no active primary, the profile default is the setting used by future launches.
+- **`This session only — default`** changes the current session but does not persist the model/provider or thinking-level defaults and does not write a per-primary model override. For an active primary, the choice is retained across turns and session-tree reapplication in this session. The choice is cleared at a new session start (including the runtime boundary caused by `/reload`) or an explicit primary-agent mode change. It does not affect future/default launches.
+- **`All sessions`** keeps the upstream persistent model/provider (and any model-switch thinking-level) default in the isolated TLH profile. For an active primary, TLH stores the selected model at `tlh.primaryAgent.modelOverrides.<primary>` when it differs from that primary's bundled default; selecting the bundled default clears that primary's override. Because OpenRouter has no packaged primary model, an OpenRouter selection always creates or updates the active primary's override, even though that primary follows the current OpenRouter session model by default. The override is per primary, so another primary follows its own default or override. Stored primary overrides are reapplied when that primary is applied at a new session or mode boundary; they do not follow whichever OpenRouter model happens to be current in the new session. With no active primary, the profile default is the setting used by future launches.
 
-`All sessions` controls future/default launches; it does not switch or rewrite other existing/running sessions or their session files. The current session has already switched to the chosen model when this scope picker appears. On direct Anthropic/OpenAI-Codex paths, locked primaries (including Rush, Product, and Bug-hunter) retain their forced model behavior: `All sessions` writes the upstream profile default but does not create a primary override, and the locked primary reapplies its fixed model on the next turn/session boundary. On OpenRouter, they still do not create a primary override, but reapplication resolves to the active session model and is a no-op.
+`All sessions` controls future/default launches; its persisted `defaultThinkingLevel` is also honored by TLH for active primaries at new-session and explicit primary-mode boundaries, subject to model capabilities and Architect's floor. It does not switch or rewrite other existing/running sessions or their session files. The current session has already switched to the chosen model when this scope picker appears. On direct Anthropic/OpenAI-Codex paths, an active primary keeps the selected model for this session and `All sessions` creates or clears that primary's model override according to whether the selection differs from its packaged default. On the OpenRouter path, the active primary keeps the selected model for this session and `All sessions` always creates or updates that primary's override because OpenRouter has no packaged primary model; that stored override is reapplied rather than replaced by the current session model at a later boundary.
 
 The scope prompt applies only to the native interactive picker. `/model <exact-name>` when it resolves directly, provider-auth or other direct/programmatic model applications, and model cycling retain their persistent upstream path without this prompt; model cycling does not create or edit a TLH per-primary override. A non-exact `/model` search that falls back to the interactive picker is subject to the scope prompt after a model change.
 
 Canceling the scope picker (for example, with `Esc`) discards both the attempted model's default writes and any primary override, restores the previous active model, and leaves persistent settings unchanged. If restoration fails, TLH reports the warning and still does not persist the attempted model.
 
-To undo a persistent choice, choose the desired model again through the native picker and select `All sessions`. For an active non-locked primary, `/switch-primary-agent model reset` clears that primary's persisted override and attempts to reapply its packaged default, subject to `tlh.primaryAgent.applyModel`. When it actually applies a different packaged model, upstream also updates the global profile default to that model. The global default stays unchanged if `applyModel` prevents application or the packaged model is already active; change the global default independently through the native picker as needed. Settings writes may show a `settings.json.bak-*` backup path; inspect a backup before restoring it over the active isolated profile settings file.
+To undo a persistent choice, choose the desired model again through the native picker and select `All sessions`. For an active primary, `/switch-primary-agent model reset` clears that primary's persisted override and attempts to reapply its packaged default, subject to `tlh.primaryAgent.applyModel`. When it actually applies a different packaged model, upstream also updates the global profile default to that model. The global default stays unchanged if `applyModel` prevents application or the packaged model is already active; change the global default independently through the native picker as needed. Settings writes may show a `settings.json.bak-*` backup path; inspect a backup before restoring it over the active isolated profile settings file.
 
 ### Staying in sync when TLH updates its defaults
 
@@ -74,11 +96,69 @@ When existing settings content is replaced, TLH creates a `settings.json.bak-*` 
 
 See [`commands.md`](commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
 
+## Project model/effort defaults
+
+A project can provide model and effort defaults for the active session without requiring every contributor to set personal overrides. Place `.tlh/defaults.json` at the canonical Git worktree root:
+
+```json
+{
+  "primaryAgents": {
+    "architect": { "model": "anthropic/claude-opus-5", "effort": "high" },
+    "rush": { "effort": "medium" }
+  },
+  "subagents": {
+    "developer": { "model": "anthropic/claude-sonnet-4-6" },
+    "code-reviewer": { "effort": "xhigh" }
+  }
+}
+```
+
+Both `model` and `effort` are optional per entry, but at least one must be present. The `model` value uses the `provider/model-id` vocabulary (for example `anthropic/claude-opus-5` or `openai-codex/gpt-5.6-sol`). The `effort` value is one of the seven canonical levels — `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — and is case-sensitive.
+
+Valid primary agent names: `architect`, `rush`, `product`, `bug-hunter`. Valid subagent role names: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, `web-scout`.
+
+Unknown role names, unknown keys within an entry, invalid model/effort values, and entries missing both fields all produce a warning and skip that entry; the rest of the file still applies. Malformed JSON warns and applies nothing. Loaded validation warnings are surfaced with bounded, deduplicated notifications (plus one overflow summary when needed). The file is read with fail-closed safety: symlinks anywhere on the `.tlh` path, non-regular files, and files exceeding 64 KB are rejected entirely.
+
+### Trust
+
+Project defaults share the same worktree-level trust decision as `.tlh/agents`. Approving once covers both, for the session. The confirmation prompt reads **"Trust project-local TLH configuration?"** and describes repository-owned content under `.tlh` (agent definitions and model/effort defaults) for this session only. A denial, unavailable confirmation, or failed trust check applies nothing, non-fatally.
+
+### Precedence
+
+Model and effort resolve independently per role. For each field, the order is (highest wins):
+
+1. **Explicit in-session user action** — a session-only model choice (`This session only — default` from the model picker) or a session thinking override; for subagents, an explicitly user-directed per-dispatch model.
+2. **Project defaults** — `.tlh/defaults.json` (this section).
+3. **Persisted user overrides** — `tlh.primaryAgent.modelOverrides.<primary>` for primaries, `subagents.agentOverrides.<role>` for subagents.
+4. **Bundled `tlhModelDefaults` frontmatter**.
+
+Because fields are independent, a session-only model pin does not suppress a project effort default, and vice versa. For primary agents, the effort precedence is literally `session ?? project ?? durable ?? bundled`.
+
+Project defaults are applied at runtime only and are never written into the user's persisted settings. The informational notice `TLH applied project defaults for <role>: model <x>, effort <y>` is primary-agent-only and appears at most once per primary per session. It lists only project fields that win precedence and become effective; an effort value is shown after any model-capability or primary-floor clamping. Subagent defaults apply silently at dispatch, while unavailable project models still produce warnings.
+
+If a project model is not available in the current registry, TLH warns once and falls through to layer 3/4 for that field; the effort field is still applied independently.
+
+### Opposite-provider subagents and project defaults
+
+`code-reviewer`, `oracle`, and `contrarian` derive their provider dynamically from the active session model (see [Review independence](#review-independence-for-code-reviewer-oracle-and-contrarian)). Project defaults interact with this in two ways:
+
+- **Primary project model default**: changes the active session model, so opposite-role subagents pick up the new provider automatically.
+- **Subagent effort-only entry** (`{ "effort": "..." }` with no `model` field): dynamic opposite-provider selection is preserved; only the effort level is overridden.
+- **Subagent model pin** (`{ "model": "..." }`): bypasses dynamic opposite-provider selection for that role, the same way a persisted `/subagent-settings` model pin does.
+
+**Recommend effort-only entries for `code-reviewer`, `oracle`, and `contrarian`** when you want to keep opposite-provider behavior.
+
+A project model pin also overrides a persisted `model: false` (session-inherit) setting, since `model: false` is a persisted value for the model field; an effort-only project entry leaves `model: false` intact. If the project model is unavailable, TLH falls back to the persisted value (including `model: false`).
+
+### Undo
+
+Delete `.tlh/defaults.json` or remove the specific entry. To override a project model for the active session, choose the desired model through the native picker and select `This session only — default`; that session-only choice is layer 1. Choosing `All sessions` persists the model as layer 3, but an existing project model remains higher precedence and can re-override it at the next `before_agent_start` or `session_tree` boundary while that project entry exists. Explicit session thinking/effort choices remain layer 1 and continue to win over project effort.
+
 ## Thinking selection scope
 
-In the interactive TUI, `/thinking` and its `/effort` alias without a level first show the available thinking levels. After a changed selection, TLH opens `Thinking selection scope` with the same approved options as the native model picker: `This session only — default` or `All sessions`. The selected level stays active in the current session either way. The session-only choice leaves `defaultThinkingLevel` in the isolated profile unchanged; All sessions persists the level for future/default sessions. Locked primary-agent levels and the architect's minimum floor are enforced before this scope picker appears.
+In the interactive TUI, `/thinking` and its `/effort` alias without a level first show the available thinking levels. After a changed selection, TLH opens `Thinking selection scope` with the same approved options as the native model picker: `This session only — default` or `All sessions`. The selected level stays active in the current session either way. The session-only choice leaves the upstream `defaultThinkingLevel` in the isolated profile unchanged; All sessions persists the level through that upstream setting for future/default sessions. Native thinking cycling/shortcuts and typed thinking choices use the same upstream durable setting and remain retained across later turns for the active unlocked primary. Architect's minimum floor is enforced before this scope picker appears; Rush, Product, and Bug-hunter accept every level supported by the current model.
 
-Canceling the scope picker restores the level that was active before the thinking picker and leaves the persistent default unchanged. Selecting the already-active level still reports it but does not open the scope picker; dismissing the level picker or selecting a rejected/unavailable level also does not open it. Typed `/thinking <level>` and `/effort <level>` arguments, plus thinking cycling/shortcuts, retain their persistent behavior. Pi persists a typed level only when it changes the active level, so to persist a session-only level that is already active, first change to another allowed level and then type the desired level. A session-only level is not a lock: it remains active until a later model or thinking-level operation changes it; a new session also returns to its resolved default.
+Canceling the scope picker restores the level that was active before the thinking picker and leaves the persistent default unchanged. Selecting the already-active level still reports it but does not open the scope picker; dismissing the level picker or selecting a rejected/unavailable level also does not open it. Typed `/thinking <level>` and `/effort <level>` arguments, plus thinking cycling/shortcuts, retain their persistent upstream behavior. Pi persists a typed level only when it changes the active level, so to persist a session-only level that is already active, first change to another allowed level and then type the desired level. For an unlocked primary, an explicit selection remains active through later turns and session-tree reapplication while that primary remains selected. A model switch clamps the retained level to a supported level when necessary and updates that session intent; a new session or explicit primary-agent mode change clears session-only intent, then applies the persisted upstream default when present or the packaged provider-aware default otherwise.
 
 ## Hidden model defaults in the TLH profile
 

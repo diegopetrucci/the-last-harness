@@ -6,6 +6,14 @@ import {
   resolveAsyncRunnerLogPaths,
 } from "../../src/runs/background/async-execution.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import { INVALID_LAZY_SKILL_TOOL_POLICY_ERROR } from "../../src/runs/shared/pi-args.ts";
+import {
+  createProjectAgentRunCapture,
+  getProjectAgentSnapshotProvenance,
+  registerProjectAgentSnapshot,
+  resolveProjectAgentSnapshot,
+  revokeProjectAgentSnapshot,
+} from "../../src/agents/project-agent-snapshot.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
 import { makeAsyncCtx } from "../support/helpers.ts";
 
@@ -39,6 +47,35 @@ describe("async runner execution", () => {
 
   it("omits runner log paths when asyncDir is unavailable", () => {
     assert.equal(resolveAsyncRunnerLogPaths({}), undefined);
+  });
+
+  it("carries the exact project-agent capture into detached runner config steps", () => {
+    const selected = agent("embedded.worker");
+    const capability = registerProjectAgentSnapshot({
+      projectRoot: process.cwd(),
+      sessionId: "session-1",
+      generationId: "generation-config",
+      entries: [{ agent: selected, digest: "digest-config", frontmatterFields: ["tools"] }],
+    });
+    const manifest = resolveProjectAgentSnapshot(
+      capability,
+      getProjectAgentSnapshotProvenance(capability),
+    );
+    const capture = createProjectAgentRunCapture(manifest, selected);
+    const result = buildAsyncRunnerSteps("run-project-config", {
+      chain: [{ agent: selected.name, task: "use captured config" }],
+      agents: [selected],
+      ctx,
+      asyncDir: path.join("tmp", "async-project-config"),
+      maxSubagentDepth: 2,
+      projectAgentCaptures: [capture],
+    });
+    assert.ok("steps" in result, "expected successful step build");
+    const step = result.steps[0] as RunnerSubagentStep;
+    assert.deepEqual(step.projectAgent?.provenance, capture.provenance);
+    assert.deepEqual(step.projectAgent?.config, capture.config);
+    assert.equal(JSON.stringify(step).includes("capability"), false);
+    revokeProjectAgentSnapshot(capability);
   });
 
   it("resolves async step tool budgets with step over run over agent precedence", () => {
@@ -83,6 +120,46 @@ describe("async runner execution", () => {
     });
   });
 
+  it("carries omitted, explicit-empty, and named tool policies through runner serialization", () => {
+    const policies: Array<AgentConfig["tools"]> = [undefined, null, ["read"]];
+    const agents = policies.map((tools, index) => ({
+      ...agent(`tool-policy-${index}`),
+      tools,
+    }));
+    const result = buildAsyncRunnerSteps("run-tool-policies", {
+      chain: policies.map((_tools, index) => ({
+        agent: `tool-policy-${index}`,
+        task: "Inspect the task",
+      })),
+      agents,
+      ctx,
+      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+      maxSubagentDepth: 2,
+    });
+
+    assert.ok("steps" in result, "expected successful step build");
+    const steps = result.steps as RunnerSubagentStep[];
+    assert.deepEqual(
+      steps.map((step) => step.tools),
+      policies,
+    );
+    const restored: unknown = JSON.parse(JSON.stringify(steps));
+    if (!Array.isArray(restored)) throw new Error("Expected serialized steps to be an array");
+    const restoredPolicies = restored.map((step: unknown) => {
+      if (typeof step !== "object" || step === null || Array.isArray(step)) {
+        throw new Error("Expected each serialized step to be an object");
+      }
+      if (!("tools" in step)) return undefined;
+      const tools = step.tools;
+      if (tools === null) return null;
+      if (!Array.isArray(tools) || !tools.every((tool) => typeof tool === "string")) {
+        throw new Error("Expected serialized tools to be null or an array of strings");
+      }
+      return tools;
+    });
+    assert.deepEqual(restoredPolicies, policies);
+  });
+
   it("preserves independent agent ceilings while a shorter caller timeout remains global", () => {
     const result = buildAsyncRunnerSteps("run-mixed-ceilings", {
       chain: [
@@ -112,5 +189,43 @@ describe("async runner execution", () => {
       parallel.parallel.map((step) => step.timeoutMs),
       [100, undefined, undefined],
     );
+  });
+
+  it("returns an actionable preflight error for extension-only tools with lazy skills", () => {
+    const result = buildAsyncRunnerSteps("run-invalid-tool-policy", {
+      chain: [{ agent: "worker", task: "Inspect the task" }],
+      agents: [agent("worker")].map((value) => ({
+        ...value,
+        tools: ["./custom-tool.ts"],
+        skills: ["tmux"],
+      })),
+      ctx,
+      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+      maxSubagentDepth: 2,
+    });
+
+    assert.deepEqual(result, {
+      error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
+    });
+  });
+
+  it("returns an actionable preflight error for extension-only tools with inherited skills", () => {
+    const result = buildAsyncRunnerSteps("run-invalid-inherited-tool-policy", {
+      chain: [{ agent: "worker", task: "Inspect the task" }],
+      agents: [
+        {
+          ...agent("worker"),
+          inheritSkills: true,
+          tools: ["./custom-tool.ts"],
+        },
+      ],
+      ctx,
+      asyncDir: path.join(process.cwd(), ".tmp-async-test"),
+      maxSubagentDepth: 2,
+    });
+
+    assert.deepEqual(result, {
+      error: INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
+    });
   });
 });

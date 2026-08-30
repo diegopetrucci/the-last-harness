@@ -10,8 +10,8 @@ export function truncateWithMarker(value, maxChars, marker) {
         return sliceSafe(marker, maxChars);
     return `${sliceSafe(value, maxChars - marker.length)}${marker}`;
 }
-export const REJECTION_REASON_MAX_LENGTH = 200;
-export function normalizeRejectionReason(reason) {
+const REJECTION_REASON_MAX_LENGTH = 200;
+function normalizeRejectionReason(reason) {
     return reason
         .replace(/[\r\n\t\v\f]+/g, " ")
         .replace(/ {2,}/g, " ")

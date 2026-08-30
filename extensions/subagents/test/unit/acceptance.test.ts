@@ -7,6 +7,7 @@ import {
   acceptanceFailureMessage,
   appendAcceptanceReportDigest,
   buildAcceptanceReportDigest,
+  composeAcceptanceFailureError,
   evaluateAcceptance,
   formatAcceptancePrompt,
   mergeContinuationAcceptance,
@@ -18,6 +19,7 @@ import {
   validateDispatchAcceptanceInput,
 } from "../../src/runs/shared/acceptance.ts";
 import type { AcceptanceReport } from "../../src/shared/types.ts";
+import { MAX_CHILD_ERROR_BYTES } from "../../src/runs/shared/child-protocol.ts";
 
 function reportData(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -226,6 +228,50 @@ describe("acceptance gates", () => {
         `${agentName} :: ${task}`,
       );
     }
+  });
+
+  it("does not infer a write gate from a must-fix severity compound", () => {
+    assert.equal(
+      resolveEffectiveAcceptance({
+        agentName: "custom-agent",
+        task: "Review findings and report must-fix items",
+        mode: "single",
+      }).level,
+      "attested",
+    );
+    assert.equal(
+      resolveEffectiveAcceptance({
+        agentName: "custom-agent",
+        task: "Review findings and report no-fix items",
+        mode: "single",
+      }).level,
+      "attested",
+    );
+    assert.equal(
+      resolveEffectiveAcceptance({
+        agentName: "custom-agent",
+        task: "Review findings and report fix items",
+        mode: "single",
+      }).level,
+      "checked",
+    );
+    assert.equal(
+      resolveEffectiveAcceptance({
+        agentName: "worker",
+        acceptanceRole: "read-only",
+        task: "Review findings and report must-fix and no-fix items",
+        mode: "single",
+      }).level,
+      "attested",
+    );
+    assert.equal(
+      resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Review findings and report must-fix items",
+        mode: "single",
+      }).level,
+      "checked",
+    );
   });
 
   it("merge continuation retains inferred provenance for empty or auto overrides", () => {
@@ -490,6 +536,51 @@ describe("acceptance gates", () => {
     assert.equal(parsed.report?.commandsRun?.[0]?.result, "failed as expected");
   });
 
+  it("normalizes empty and whitespace-only report string-array entries", () => {
+    const parsed = parseAcceptanceReport(
+      report({
+        changedFiles: ["", "src/file.ts", "  "],
+        testsAddedOrUpdated: ["\t", "test/file.test.ts"],
+        validationOutput: ["validation passed", "\n"],
+        residualRisks: ["", "potential flakiness"],
+        reviewFindings: ["no blockers", "  "],
+      }),
+    );
+
+    assert.ok(parsed.report);
+    assert.deepEqual(parsed.report.changedFiles, ["src/file.ts"]);
+    assert.deepEqual(parsed.report.testsAddedOrUpdated, ["test/file.test.ts"]);
+    assert.deepEqual(parsed.report.validationOutput, ["validation passed"]);
+    assert.deepEqual(parsed.report.residualRisks, ["potential flakiness"]);
+    assert.deepEqual(parsed.report.reviewFindings, ["no blockers"]);
+  });
+
+  it("does not let blank-only string arrays satisfy checked evidence", async () => {
+    const cwd = tempRepo();
+    try {
+      const acceptance = resolveEffectiveAcceptance({
+        agentName: "worker",
+        task: "Implement a fix",
+        explicit: {
+          level: "checked",
+          criteria: ["Ship the fix"],
+          evidence: ["changed-files", "residual-risks"],
+        },
+      });
+      const ledger = await evaluateAcceptance({
+        acceptance,
+        output: report({ changedFiles: [""], residualRisks: ["  "] }),
+        cwd,
+      });
+
+      assert.equal(ledger.status, "rejected");
+      assert.ok(ledger.runtimeChecks.some((check) => check.id === "evidence:changed-files"));
+      assert.ok(ledger.runtimeChecks.some((check) => check.id === "evidence:residual-risks"));
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("commandsRun[].result rejects non-string values (number, null, object)", () => {
     for (const badResult of [42, null, { status: "ok" }]) {
       const parsed = parseAcceptanceReport(
@@ -582,6 +673,20 @@ describe("acceptance gates", () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  it("keeps acceptance rejection visible after bounding a full child error", () => {
+    const error = composeAcceptanceFailureError(
+      `child diagnostic: ${"x".repeat(MAX_CHILD_ERROR_BYTES)}`,
+      "Acceptance rejected: required criterion 'criterion-1' was not-satisfied.",
+    );
+
+    assert.ok(Buffer.byteLength(error, "utf-8") <= MAX_CHILD_ERROR_BYTES);
+    assert.match(error, /child error truncated/);
+    assert.match(
+      error,
+      /Acceptance rejected: required criterion 'criterion-1' was not-satisfied\.$/,
+    );
   });
 
   it("surfaces parse validation details in acceptance failure messages", async () => {

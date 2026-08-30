@@ -10,6 +10,7 @@ import type { FSWatcher } from "node:fs";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ModelScopeConfig } from "../runs/shared/model-scope.ts";
 import type { SubagentLiveDetailController } from "./subagent-shortcuts.ts";
+import type { ProjectAgentRunCapture } from "../agents/project-agent-snapshot.ts";
 
 // ============================================================================
 // Basic Types
@@ -464,6 +465,16 @@ export interface ModelAttempt {
   usage?: Usage;
 }
 
+/** Bounded diagnostic emitted when a child protocol line cannot be retained safely. */
+export interface ProtocolOutputLimit {
+  code: "protocol_output_limit";
+  stream: "stdout" | "stderr";
+  limitBytes: number;
+  observedBytes: number;
+  diagnosticPrefix: string;
+  diagnosticTail: string;
+}
+
 export type ChildProcessCleanupSkippedReason =
   | "soft_pause"
   | "unsupported_platform"
@@ -630,6 +641,8 @@ export interface AcceptanceLedger {
 export interface SingleResult {
   agent: string;
   task: string;
+  /** Exact approved project-agent config/provenance; never includes a capability. */
+  projectAgent?: ProjectAgentRunCapture;
   exitCode: number;
   exitSignal?: NodeJS.Signals;
   detached?: boolean;
@@ -656,6 +669,10 @@ export interface SingleResult {
   modelFallbackNotice?: string;
   controlEvents?: ControlEvent[];
   error?: string;
+  /** Bounded stderr tail retained for diagnostics; durable raw stderr stays in the transcript. */
+  stderr?: string;
+  stderrTruncated?: boolean;
+  protocolOutputLimit?: ProtocolOutputLimit;
   sessionFile?: string;
   skills?: string[];
   skillsWarning?: string;
@@ -766,6 +783,7 @@ interface NestedRunAddress {
 
 export interface NestedStepSummary {
   agent: string;
+  projectAgent?: ProjectAgentRunCapture;
   status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
@@ -794,6 +812,7 @@ export interface NestedStepSummary {
 }
 
 export interface NestedRunSummary extends NestedRunAddress {
+  projectAgent?: ProjectAgentRunCapture;
   asyncDir?: string;
   pid?: number;
   sessionId?: string;
@@ -865,6 +884,8 @@ export interface SubagentModelResolution {
 
 export interface AsyncStartedEvent {
   lifecycleArtifactVersion?: SubagentLifecycleArtifactVersion;
+  /** Safe per-child project-agent captures; no opaque capability crosses this event. */
+  projectAgents?: ProjectAgentRunCapture[];
   id?: string;
   asyncDir?: string;
   pid?: number;
@@ -982,6 +1003,9 @@ export interface AsyncStatus {
     steerCount?: number;
     lastSteerAt?: number;
     error?: string;
+    stderr?: string;
+    stderrTruncated?: boolean;
+    protocolOutputLimit?: ProtocolOutputLimit;
     processCleanup?: ChildProcessCleanupResult;
     structuredOutput?: unknown;
     structuredOutputPath?: string;
@@ -989,6 +1013,8 @@ export interface AsyncStatus {
     acceptance?: AcceptanceLedger;
     pause?: AsyncPauseMetadata;
     cancel?: AsyncCancellationMetadata;
+    /** Exact approved project-agent config/provenance; never includes a capability. */
+    projectAgent?: ProjectAgentRunCapture;
   }>;
   sessionDir?: string;
   outputFile?: string;
@@ -997,6 +1023,8 @@ export interface AsyncStatus {
   sessionFile?: string;
   outputs?: ChainOutputMap;
   tkTicket?: TkTicketMetadata;
+  /** Safe per-child project-agent captures retained for status/control display. */
+  projectAgents?: ProjectAgentRunCapture[];
 }
 
 export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -1013,9 +1041,14 @@ export type AsyncJobStep = NonNullable<AsyncStatus["steps"]>[number] & {
  */
 export interface AsyncResultArtifactResultItem {
   agent: string;
+  /** Exact approved project-agent config/provenance; never includes a capability. */
+  projectAgent?: ProjectAgentRunCapture;
   success: boolean;
   output: string;
   error?: string;
+  stderr?: string;
+  stderrTruncated?: boolean;
+  protocolOutputLimit?: ProtocolOutputLimit;
   exitCode?: number | null;
   exitSignal?: NodeJS.Signals;
   skipped?: boolean;
@@ -1094,6 +1127,8 @@ export interface AsyncResultArtifact {
   asyncDir: string;
   sessionId?: string | null;
   sessionFile?: string;
+  /** Safe per-child captures mirrored into the result artifact. */
+  projectAgents?: ProjectAgentRunCapture[];
   intercomTarget?: string;
   shareUrl?: string;
   gistUrl?: string;
@@ -1151,10 +1186,14 @@ export interface AsyncJobState {
   nestedRoute?: NestedRouteInfo;
   nestedChildren?: NestedRunSummary[];
   tkTicket?: TkTicketMetadata;
+  /** Safe per-child captures retained for the run lifecycle. */
+  projectAgents?: ProjectAgentRunCapture[];
 }
 
 export interface ForegroundResumeChild {
   agent: string;
+  /** Exact approved project-agent config/provenance; never includes a capability. */
+  projectAgent?: ProjectAgentRunCapture;
   index: number;
   sessionFile?: string;
   status: SubagentResultStatus;
@@ -1270,6 +1309,8 @@ export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export interface RunSyncOptions {
   /** Session id of the direct parent session for permission-system ask forwarding. */
   parentSessionId?: string;
+  /** Exact approved project-agent config/provenance; never includes a capability. */
+  projectAgent?: ProjectAgentRunCapture;
   tkTicket?: TkTicketMetadata;
   onSupervisorPauseTransition?: (
     input:
@@ -1314,12 +1355,14 @@ export interface RunSyncOptions {
   contextPressure?: ContextPressureProjection;
   /** Thresholds already crossed in this execution, used for restart-safe deduplication. */
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
-  /** Optional sanitized notice shown only if a fallback retry is used. */
+  /** Optional bounded notice for a supplied fallback retry and/or registry filtering. */
   modelFallbackNotice?: string;
   /** Override the agent's default thinking level for this run */
   thinkingOverride?: import("../agents/agents.ts").AgentConfig["thinking"];
   /** Registry models available for model resolution and thinking-capability checks */
   availableModels?: import("./model-info.ts").ModelInfo[];
+  /** Catalog/error evidence used to conservatively filter unavailable fallbacks. */
+  modelRegistry?: import("../runs/shared/model-fallback.ts").ModelRegistryEvidence;
   /** Current parent-session provider to prefer for ambiguous bare model ids */
   preferredModelProvider?: string;
   /** Optional subagent model-scope enforcement for fallback candidates */
