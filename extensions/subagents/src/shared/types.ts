@@ -1405,6 +1405,7 @@ export interface ExtensionConfig {
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
   intercomBridge?: IntercomBridgeConfig;
+  heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
 }
 
 // ============================================================================
