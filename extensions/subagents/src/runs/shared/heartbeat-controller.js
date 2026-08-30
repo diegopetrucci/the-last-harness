@@ -70,6 +70,15 @@ function estimateCost(usage, cost) {
         usage.output * cost.output) /
         1_000_000);
 }
+function classifyObservedUsage(usage, classifyFromUsage) {
+    if (!classifyFromUsage)
+        return "error";
+    if (usage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD)
+        return "cache_write_mismatch";
+    if (usage.cacheRead > 0)
+        return "cache_read";
+    return "error";
+}
 export function createHeartbeatController(config, deps = {}) {
     if (!config.enabled) {
         return {
@@ -144,6 +153,30 @@ export function createHeartbeatController(config, deps = {}) {
         let usage;
         let estCostUsd;
         let lifecycleCancelled = false;
+        let accountingPublished = false;
+        const publishBeatAccounting = () => {
+            if (accountingPublished ||
+                !usage ||
+                !isUsageBearing(usage) ||
+                destroyed ||
+                gapGeneration !== capturedGeneration ||
+                state.gap?.gapId !== capturedGapId) {
+                return;
+            }
+            accountingPublished = true;
+            try {
+                estCostUsd = estimateCost(usage, model.cost);
+            }
+            catch {
+            }
+            deps.onBeatAccounting?.({
+                gapId,
+                outcome: classifyObservedUsage(usage, classifyFromUsage),
+                usage,
+                ...(estCostUsd !== undefined ? { estCostUsd } : {}),
+                model,
+            });
+        };
         const abortCtrl = new AbortController();
         beatAbortController = abortCtrl;
         deps.onBeatIssued?.(gapId, model);
@@ -200,6 +233,7 @@ export function createHeartbeatController(config, deps = {}) {
                         usage = eventUsage;
                     }
                     classifyFromUsage = false;
+                    publishBeatAccounting();
                     abortCtrl.abort();
                     break;
                 }
@@ -211,11 +245,13 @@ export function createHeartbeatController(config, deps = {}) {
                     if (eventUsage.cacheWrite <= CACHE_WRITE_MISMATCH_THRESHOLD) {
                         classifyFromUsage = false;
                     }
+                    publishBeatAccounting();
                     abortCtrl.abort();
                     break;
                 }
                 if (isUsageBearing(eventUsage)) {
                     usage = eventUsage;
+                    publishBeatAccounting();
                     abortCtrl.abort();
                     break;
                 }
@@ -225,12 +261,7 @@ export function createHeartbeatController(config, deps = {}) {
                 }
             }
             if (classifyFromUsage && usage) {
-                if (usage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) {
-                    outcome = "cache_write_mismatch";
-                }
-                else if (usage.cacheRead > 0) {
-                    outcome = "cache_read";
-                }
+                outcome = classifyObservedUsage(usage, classifyFromUsage);
             }
             try {
                 if (usage) {
@@ -239,6 +270,7 @@ export function createHeartbeatController(config, deps = {}) {
             }
             catch {
             }
+            publishBeatAccounting();
         }
         catch {
             outcome = "error";

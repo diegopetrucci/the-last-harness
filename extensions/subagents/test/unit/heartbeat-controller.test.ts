@@ -1523,6 +1523,122 @@ describe("createHeartbeatController — onBeatResult callback (finding 7)", () =
     assert.equal(beatResultCalls, 1, "onBeatResult called exactly once per beat");
     ctrl.destroy();
   });
+
+  it("publishes usage accounting before delayed iterator cleanup and only once", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const accounting: Array<{
+      gapId: string;
+      outcome: string;
+      usage: { input: number; cacheRead: number; cacheWrite: number; output: number };
+      estCostUsd?: number;
+    }> = [];
+    let beatResultCalls = 0;
+    let releaseCleanup!: () => void;
+    let markCleanupStarted!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      onBeatAccounting: (value) => accounting.push(value),
+      onBeatResult: () => {
+        beatResultCalls++;
+      },
+      streamProvider() {
+        return (async function* () {
+          try {
+            yield makeStartEvent();
+            yield makeTextStartEvent({ input: 1000, cacheRead: 5000, output: 10 });
+            yield makeDoneEvent();
+          } finally {
+            // Breaking on the usage-bearing event invokes iterator.return().
+            // Hold its cleanup open so the test can inspect accounting before
+            // executeBeat reaches completeBeat.
+            markCleanupStarted();
+            await cleanupRelease;
+          }
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-accounting", "sess-accounting");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+
+    await cleanupStarted;
+    assert.equal(accounting.length, 1, "usage must be published before iterator cleanup settles");
+    assert.equal(accounting[0]!.gapId, "gap-accounting");
+    assert.equal(accounting[0]!.outcome, "cache_read");
+    assert.equal(accounting[0]!.usage.cacheRead, 5000);
+    assert.ok((accounting[0]!.estCostUsd ?? 0) > 0, "known usage must include estimated cost");
+
+    releaseCleanup();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(accounting.length, 1, "normal completion must not account usage twice");
+    assert.equal(beatResultCalls, 1, "normal completion still reports one result");
+    ctrl.destroy();
+  });
+
+  it("publishes observed usage for provider errors and cache-write mismatches", async () => {
+    const cases: Array<{
+      label: string;
+      event: AssistantMessageEvent;
+      outcome: "error" | "cache_write_mismatch";
+    }> = [
+      {
+        label: "provider-error",
+        event: makeErrorEvent({ input: 100, cacheRead: 5000, output: 1 }),
+        outcome: "error",
+      },
+      {
+        label: "cache-write-mismatch",
+        event: makeTextStartEvent({ input: 100, cacheRead: 0, cacheWrite: 1024, output: 0 }),
+        outcome: "cache_write_mismatch",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const accounting: import("../../src/runs/shared/heartbeat-controller.ts").BeatAccounting[] =
+        [];
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        onBeatAccounting: (value) => accounting.push(value),
+        streamProvider() {
+          return makeStream([makeStartEvent(), testCase.event]);
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${testCase.label}`, "sess-accounting");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 50));
+
+      assert.equal(accounting.length, 1, `${testCase.label} usage should be accounted once`);
+      assert.equal(accounting[0]!.outcome, testCase.outcome);
+      assert.ok((accounting[0]!.estCostUsd ?? 0) > 0, `${testCase.label} cost should be known`);
+      ctrl.destroy();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1684,6 +1800,8 @@ describe("createHeartbeatController — lifecycle cancellation (finding B)", () 
     const timer = makeTimerFake();
     const sink = makeLoggerSink();
     const beatResults: import("../../src/runs/shared/heartbeat-controller.ts").BeatResult[] = [];
+    const beatAccounting: import("../../src/runs/shared/heartbeat-controller.ts").BeatAccounting[] =
+      [];
     let capturedSignal: AbortSignal | undefined;
     // Signal when the stream generator has started so the test knows the beat
     // is in-flight before it calls endGap.
@@ -1695,6 +1813,7 @@ describe("createHeartbeatController — lifecycle cancellation (finding B)", () 
       clearTimeout: timer.clearTimeout,
       logPath: "/fake.jsonl",
       ...sink,
+      onBeatAccounting: (value) => beatAccounting.push(value),
       onBeatResult: (r) => beatResults.push(r),
       streamProvider(
         _model,
@@ -1761,6 +1880,11 @@ describe("createHeartbeatController — lifecycle cancellation (finding B)", () 
       beatResults.length,
       0,
       "onBeatResult must not be called for lifecycle-cancelled beats",
+    );
+    assert.equal(
+      beatAccounting.length,
+      0,
+      "onBeatAccounting must not be called when cancellation happens before usage",
     );
 
     ctrl.destroy();

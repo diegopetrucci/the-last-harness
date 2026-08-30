@@ -1058,11 +1058,11 @@ describe("createHeartbeatWiring — enabled: tryRearm (finding 4)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: onBeatResult stats (finding 7 — no appendFileSync interception)
+// Tests: beat accounting (finding 7 — no appendFileSync interception)
 // ---------------------------------------------------------------------------
 
-describe("createHeartbeatWiring — enabled: onBeatResult stats accumulation (finding 7)", () => {
-  it("accumulates beat cost from onBeatResult callback, not from JSONL interception", async () => {
+describe("createHeartbeatWiring — enabled: beat accounting (finding 7)", () => {
+  it("accumulates beat cost from controller accounting, not from JSONL interception", async () => {
     const written: string[] = [];
     const pi = makeFakePi();
     const capturedFns: Array<() => void> = [];
@@ -1102,7 +1102,7 @@ describe("createHeartbeatWiring — enabled: onBeatResult stats accumulation (fi
     // Disarm to close the gap and emit summary
     wiring.disarm();
 
-    // The gap summary should reflect non-zero beats (accumulated via onBeatResult)
+    // The gap summary should reflect non-zero beats (accumulated via controller accounting)
     const summaries = parseSummaryLines(written);
     const gapSummary = summaries[0];
     assert.ok(gapSummary, "gap summary must be written");
@@ -1110,6 +1110,87 @@ describe("createHeartbeatWiring — enabled: onBeatResult stats accumulation (fi
       (gapSummary!.beats as number) >= 1,
       `beats should be >= 1 in gap summary, got ${gapSummary!.beats}`,
     );
+  });
+
+  it("preserves observed usage when disarm races delayed iterator cleanup", async () => {
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const pi = makeFakePi();
+    const deps = makeTestDeps({ written, timers });
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+
+    deps.streamProvider = (): AsyncIterable<AssistantMessageEvent> =>
+      (async function* (): AsyncGenerator<AssistantMessageEvent> {
+        try {
+          yield {
+            type: "text_start",
+            contentIndex: 0,
+            partial: makeAssistantMessage({
+              content: [{ type: "text", text: "" }],
+              usage: makeUsage({ input: 1000, cacheRead: 5000, output: 10 }),
+            }),
+          };
+        } finally {
+          // The controller breaks after observing usage, which invokes
+          // iterator.return(). Hold cleanup open to race a lifecycle disarm.
+          markCleanupStarted();
+          await cleanupRelease;
+        }
+      })();
+
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true, intervalMs: 255_000 } },
+      deps,
+    );
+
+    wiring.onIdle(true);
+    wiring.onProviderRequest({ messages: [] }, makeModel());
+    wiring.notifyAsyncStarted(0, "session-delayed-cleanup");
+    const timer = timers.at(-1);
+    assert.ok(timer, "gap open must schedule a heartbeat timer");
+    timer.fn();
+
+    await cleanupStarted;
+    const active = wiring.getSessionSummary();
+    assert.equal(active.totalBeats, 1, "issued beat must be counted before cleanup settles");
+    assert.equal(active.totalCacheReadTokens, 5000, "observed cache-read tokens must be retained");
+    assert.equal(active.totalBeatCostUsd, 0.00465, "observed usage cost must be retained");
+
+    // Disarm while executeBeat is still waiting for iterator cleanup. The
+    // summary and entry must use the synchronously published accounting.
+    wiring.disarm();
+    const summaries = parseSummaryLines(written);
+    assert.equal(summaries.length, 1, "disarm must emit one gap summary");
+    assert.equal(summaries[0]!.beats, 1);
+    assert.equal(summaries[0]!.beatCostUsd, 0.00465);
+    assert.equal(summaries[0]!.avoidedCostUsd, 0.0135);
+    assert.equal(pi.entries.length, 1, "beat-bearing disarm must emit one session entry");
+    const entry = pi.entries[0]!.data as HeartbeatGapSummaryData;
+    assert.equal(entry.beats, 1);
+    assert.equal(entry.beatCostUsd, 0.00465);
+    assert.equal(entry.avoidedCostUsd, 0.0135);
+
+    releaseCleanup();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const settled = wiring.getSessionSummary();
+    assert.equal(settled.totalBeats, 1, "late completion must not double-count the beat");
+    assert.equal(settled.totalCacheReadTokens, 5000, "late completion must not double-count usage");
+    assert.equal(settled.totalBeatCostUsd, 0.00465, "late completion must not double-count cost");
+    assert.equal(
+      parseSummaryLines(written).length,
+      1,
+      "late completion must not emit another summary",
+    );
+    wiring.destroy();
   });
 
   it("avoided cost is not accumulated per beat (only one future miss avoidable, finding 7)", async () => {

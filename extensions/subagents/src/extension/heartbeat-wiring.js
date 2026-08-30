@@ -134,36 +134,38 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             return;
         currentGap.terminatedLost = true;
     }
+    function onBeatAccounting(accounting) {
+        if (!currentGap || accounting.gapId !== currentGap.gapId)
+            return;
+        const acc = currentGap;
+        if (accounting.outcome === "cache_read") {
+            acc.cacheReadBeats++;
+            acc.totalCacheReadTokens += accounting.usage.cacheRead;
+            const model = accounting.model;
+            if (model.cost) {
+                const savedPerToken = model.cost.input - model.cost.cacheRead;
+                if (savedPerToken > 0) {
+                    acc.avoidedCostUsd = (accounting.usage.cacheRead * savedPerToken) / 1_000_000;
+                }
+            }
+            if (typeof accounting.estCostUsd === "number") {
+                acc.totalBeatCostUsd += accounting.estCostUsd;
+            }
+        }
+        else if (accounting.outcome === "error") {
+            if (typeof accounting.estCostUsd === "number") {
+                acc.totalBeatCostUsd += accounting.estCostUsd;
+            }
+        }
+        else if (accounting.outcome === "cache_write_mismatch") {
+            if (typeof accounting.estCostUsd === "number") {
+                acc.totalBeatCostUsd += accounting.estCostUsd;
+            }
+        }
+    }
     function onBeatResult(result) {
         if (!currentGap || result.gapId !== currentGap.gapId)
             return;
-        const acc = currentGap;
-        if (result.outcome === "cache_read") {
-            acc.cacheReadBeats++;
-            if (result.usage) {
-                acc.totalCacheReadTokens += result.usage.cacheRead;
-                const model = result.model;
-                if (model.cost) {
-                    const savedPerToken = model.cost.input - model.cost.cacheRead;
-                    if (savedPerToken > 0) {
-                        acc.avoidedCostUsd = (result.usage.cacheRead * savedPerToken) / 1_000_000;
-                    }
-                }
-            }
-            if (typeof result.estCostUsd === "number") {
-                acc.totalBeatCostUsd += result.estCostUsd;
-            }
-        }
-        else if (result.outcome === "error") {
-            if (typeof result.estCostUsd === "number") {
-                acc.totalBeatCostUsd += result.estCostUsd;
-            }
-        }
-        else if (result.outcome === "cache_write_mismatch") {
-            if (typeof result.estCostUsd === "number") {
-                acc.totalBeatCostUsd += result.estCostUsd;
-            }
-        }
         if (result.sessionDisabled) {
             sessionBreakerDisabled = true;
         }
@@ -178,6 +180,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         ...(deps.streamProvider ? { streamProvider: deps.streamProvider } : {}),
         ...(deps.getModelRegistry ? { getModelRegistry: deps.getModelRegistry } : {}),
         onBeatIssued,
+        onBeatAccounting,
         onBeatResult,
         onBeatCancelled,
         onGapLost,

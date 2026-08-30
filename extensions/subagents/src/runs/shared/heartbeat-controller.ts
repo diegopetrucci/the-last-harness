@@ -72,7 +72,8 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 /**
  * Structured result emitted by the controller after each beat completes.
- * Consumed by the wiring to accumulate per-gap stats without file-I/O interception.
+ * The wiring uses it for completion-only state; usage accounting is published
+ * earlier through BeatAccounting.
  */
 export interface BeatResult {
   gapId: string;
@@ -85,6 +86,18 @@ export interface BeatResult {
    * of this beat or due to a prior error that finally tripped the threshold).
    */
   sessionDisabled: boolean;
+}
+
+/**
+ * Usage and cost observed before a provider iterator has finished cleaning up.
+ * Only outcomes that can be classified from the observed usage are allowed.
+ */
+export interface BeatAccounting {
+  gapId: string;
+  outcome: "cache_read" | "cache_write_mismatch" | "error";
+  usage: HeartbeatUsage;
+  estCostUsd?: number;
+  model: Model<Api>;
 }
 
 /**
@@ -126,19 +139,25 @@ export interface HeartbeatControllerDeps {
    * whether it completes normally or is cancelled by a lifecycle event.
    *
    * Called with the gap ID and model so the wiring can identify which gap to
-   * credit.  Lifecycle-cancelled beats will NOT be followed by an onBeatResult
-   * call — onBeatIssued is the only signal for those beats.
+   * credit.  A beat cancelled before usage is observed will not be followed by
+   * an onBeatAccounting or onBeatResult call — onBeatIssued is its only signal.
    */
   onBeatIssued?: (gapId: string, model: Model<Api>) => void;
   /**
+   * Callback invoked synchronously when the first usage-bearing event is
+   * observed, before aborting the stream can yield to iterator cleanup.
+   * Used by the wiring to account for usage and cost before a lifecycle event
+   * can close the gap.  It is invoked at most once per beat.
+   */
+  onBeatAccounting?: (accounting: BeatAccounting) => void;
+  /**
    * Callback invoked after each executed beat (not for timer-only skips).
-   * Used by the wiring to accumulate per-gap stats without intercepting file I/O.
-   * JSONL logging still happens inside the controller; this callback provides
-   * structured access to the same data.
+   * Used by the wiring to propagate completion-only state without intercepting
+   * file I/O.  JSONL logging still happens inside the controller.
    *
-   * NOTE: executedBeats accounting is done in onBeatIssued (optimistic).
-   * onBeatResult must NOT increment executedBeats again; it should only update
-   * outcome-specific fields (cost, cacheRead, mismatch).
+   * NOTE: executedBeats accounting is done in onBeatIssued (optimistic), and
+   * usage/cost accounting is done in onBeatAccounting.  onBeatResult must not
+   * account for either again; it only propagates outcome completion state.
    */
   onBeatResult?: (result: BeatResult) => void;
   /**
@@ -304,6 +323,17 @@ function estimateCost(
   );
 }
 
+/** Classify an observed usage snapshot without advancing controller state. */
+function classifyObservedUsage(
+  usage: HeartbeatUsage,
+  classifyFromUsage: boolean,
+): BeatAccounting["outcome"] {
+  if (!classifyFromUsage) return "error";
+  if (usage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) return "cache_write_mismatch";
+  if (usage.cacheRead > 0) return "cache_read";
+  return "error";
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -446,6 +476,34 @@ export function createHeartbeatController(
     let usage: HeartbeatUsage | undefined;
     let estCostUsd: number | undefined;
     let lifecycleCancelled = false;
+    /** Prevent normal completion from accounting usage a second time. */
+    let accountingPublished = false;
+
+    const publishBeatAccounting = (): void => {
+      if (
+        accountingPublished ||
+        !usage ||
+        !isUsageBearing(usage) ||
+        destroyed ||
+        gapGeneration !== capturedGeneration ||
+        state.gap?.gapId !== capturedGapId
+      ) {
+        return;
+      }
+      accountingPublished = true;
+      try {
+        estCostUsd = estimateCost(usage, model.cost);
+      } catch {
+        // Cost estimate is best-effort.
+      }
+      deps.onBeatAccounting?.({
+        gapId,
+        outcome: classifyObservedUsage(usage, classifyFromUsage),
+        usage,
+        ...(estCostUsd !== undefined ? { estCostUsd } : {}),
+        model,
+      });
+    };
 
     const abortCtrl = new AbortController();
     beatAbortController = abortCtrl;
@@ -539,6 +597,9 @@ export function createHeartbeatController(
           // outcome is already "error" (default); mark that it must not be
           // reclassified by the post-loop usage-based classifier.
           classifyFromUsage = false;
+          // Publish before aborting: closing the iterator may yield to a
+          // lifecycle disarm that flushes the current gap accumulator.
+          publishBeatAccounting();
           abortCtrl.abort();
           break;
         }
@@ -558,12 +619,18 @@ export function createHeartbeatController(
             // the same event happens to include cache-read or output usage.
             classifyFromUsage = false;
           }
+          // Publish before aborting: closing the iterator may yield to a
+          // lifecycle disarm that flushes the current gap accumulator.
+          publishBeatAccounting();
           abortCtrl.abort();
           break;
         }
 
         if (isUsageBearing(eventUsage)) {
           usage = eventUsage;
+          // Publish before aborting: closing the iterator may yield to a
+          // lifecycle disarm that flushes the current gap accumulator.
+          publishBeatAccounting();
           abortCtrl.abort();
           break;
         }
@@ -580,12 +647,7 @@ export function createHeartbeatController(
       // requires actual cacheRead evidence; zero-cacheRead usage is not a
       // successful TTL refresh and leaves outcome as the default "error".
       if (classifyFromUsage && usage) {
-        if (usage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) {
-          outcome = "cache_write_mismatch";
-        } else if (usage.cacheRead > 0) {
-          outcome = "cache_read";
-        }
-        // else: usage present but no cacheRead evidence — outcome remains "error"
+        outcome = classifyObservedUsage(usage, classifyFromUsage);
       }
       // If no usage was observed: outcome remains the default "error".
 
@@ -596,6 +658,10 @@ export function createHeartbeatController(
       } catch {
         // Cost estimate is best-effort.
       }
+      // Usage-bearing events publish before stream abort/iterator cleanup. Keep
+      // this completion-side call as an idempotent fallback for any future
+      // usage-bearing event path.
+      publishBeatAccounting();
     } catch {
       outcome = "error";
     } finally {
@@ -664,9 +730,8 @@ export function createHeartbeatController(
 
     const result = completeBeat(state, outcome, now());
 
-    // Notify the wiring of the beat result via structured callback.
-    // NOTE: wiring's executedBeats was already incremented in onBeatIssued;
-    // onBeatResult must only update outcome-specific fields (cost, cacheRead).
+    // Notify the wiring that the beat completed so it can propagate breaker
+    // state. Usage/cost was already accounted synchronously when first observed.
     deps.onBeatResult?.({
       gapId,
       outcome,

@@ -28,6 +28,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { resolveHeartbeatConfig } from "../runs/shared/heartbeat-config.ts";
 import {
   createHeartbeatController,
+  type BeatAccounting,
   type BeatResult,
   type HeartbeatControllerDeps,
 } from "../runs/shared/heartbeat-controller.ts";
@@ -373,9 +374,9 @@ export function createHeartbeatWiring(
   );
 
   // ---------------------------------------------------------------------------
-  // Beat-result callback: accumulate per-gap stats from the controller without
-  // intercepting file I/O.  Called once per executed beat (not for timer-only
-  // skips like lost/capped).
+  // Beat-accounting callback: accumulate per-gap stats synchronously when usage
+  // is first observed, before provider iterator cleanup can yield to a lifecycle
+  // disarm.  The controller invokes this at most once per executed beat.
   // ---------------------------------------------------------------------------
 
   // Optimistic accounting: called by the controller at beat-issue time (before
@@ -404,44 +405,47 @@ export function createHeartbeatWiring(
     currentGap.terminatedLost = true;
   }
 
-  function onBeatResult(result: BeatResult): void {
-    if (!currentGap || result.gapId !== currentGap.gapId) return;
+  function onBeatAccounting(accounting: BeatAccounting): void {
+    if (!currentGap || accounting.gapId !== currentGap.gapId) return;
 
     const acc = currentGap;
 
     // NOTE: executedBeats is already incremented in onBeatIssued (optimistic).
-    // onBeatResult must NOT increment it again.  Only update outcome-specific
-    // fields: cost, cache-read tokens, and avoided-cost.
-
-    if (result.outcome === "cache_read") {
+    // Usage/cost is accounted here exactly once, at first observation.  The
+    // completion callback below must not account for it again.
+    if (accounting.outcome === "cache_read") {
       acc.cacheReadBeats++;
-      if (result.usage) {
-        acc.totalCacheReadTokens += result.usage.cacheRead;
-        const model = result.model;
-        if (model.cost) {
-          const savedPerToken = model.cost.input - model.cost.cacheRead;
-          if (savedPerToken > 0) {
-            // Replace (not accumulate) avoided cost: only one future cache miss
-            // can be avoided per gap, so we record the most recent successful
-            // beat's value.
-            acc.avoidedCostUsd = (result.usage.cacheRead * savedPerToken) / 1_000_000;
-          }
+      acc.totalCacheReadTokens += accounting.usage.cacheRead;
+      const model = accounting.model;
+      if (model.cost) {
+        const savedPerToken = model.cost.input - model.cost.cacheRead;
+        if (savedPerToken > 0) {
+          // Replace (not accumulate) avoided cost: only one future cache miss
+          // can be avoided per gap, so we record the most recent successful
+          // beat's value.
+          acc.avoidedCostUsd = (accounting.usage.cacheRead * savedPerToken) / 1_000_000;
         }
       }
-      if (typeof result.estCostUsd === "number") {
-        acc.totalBeatCostUsd += result.estCostUsd;
+      if (typeof accounting.estCostUsd === "number") {
+        acc.totalBeatCostUsd += accounting.estCostUsd;
       }
-    } else if (result.outcome === "error") {
-      if (typeof result.estCostUsd === "number") {
-        acc.totalBeatCostUsd += result.estCostUsd;
+    } else if (accounting.outcome === "error") {
+      if (typeof accounting.estCostUsd === "number") {
+        acc.totalBeatCostUsd += accounting.estCostUsd;
       }
-    } else if (result.outcome === "cache_write_mismatch") {
-      if (typeof result.estCostUsd === "number") {
-        acc.totalBeatCostUsd += result.estCostUsd;
+    } else if (accounting.outcome === "cache_write_mismatch") {
+      if (typeof accounting.estCostUsd === "number") {
+        acc.totalBeatCostUsd += accounting.estCostUsd;
       }
     }
+  }
 
-    // Propagate session circuit-breaker state directly from the controller.
+  function onBeatResult(result: BeatResult): void {
+    if (!currentGap || result.gapId !== currentGap.gapId) return;
+
+    // Usage/cost accounting happens in onBeatAccounting before iterator cleanup.
+    // This completion callback only propagates circuit-breaker state; keeping
+    // the paths separate makes normal completion explicitly idempotent.
     if (result.sessionDisabled) {
       sessionBreakerDisabled = true;
     }
@@ -461,6 +465,7 @@ export function createHeartbeatWiring(
     ...(deps.streamProvider ? { streamProvider: deps.streamProvider } : {}),
     ...(deps.getModelRegistry ? { getModelRegistry: deps.getModelRegistry } : {}),
     onBeatIssued,
+    onBeatAccounting,
     onBeatResult,
     onBeatCancelled,
     onGapLost,
