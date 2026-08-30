@@ -124,7 +124,7 @@ Unknown role names, unknown keys within an entry, invalid model/effort values, a
 Project custom agents and project defaults use separate trust planes:
 
 - A persisted canonical `/trust` `saved-positive` decision for the validated Git worktree root enables both the exact `.tlh/agents/custom/<UPPERCASE-SLUG>.md` custom-agent contract and `.tlh/defaults.json`.
-- An upstream positive project-trust signal, `defaultProjectTrust: always`, or a session approval may enable `.tlh/defaults.json` only. None of those configuration-trust sources authorizes a project custom agent; custom-agent execution always requires persisted positive `/trust`.
+- An upstream positive project-trust signal, `defaultProjectTrust: always`, or a session approval may enable `.tlh/defaults.json` only. None of those configuration-trust sources authorizes a project custom agent; custom-agent execution always requires a persisted positive `/trust` decision.
 - The defaults prompt title is **"Trust project-local TLH defaults?"**. Its message scopes the decision to repository-owned model/effort defaults for the current session and states that project custom agents require persisted `/trust`; it is never a custom-agent authorization prompt.
 
 A denial, unavailable confirmation, or failed configuration-trust check applies no project defaults and does so non-fatally.

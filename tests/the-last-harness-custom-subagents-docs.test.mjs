@@ -69,7 +69,7 @@ const assertNoPositiveCustomAgentTrustClaim = (text, label) => {
     "gi",
   );
 
-  const sentences = text.split(/(?<=[.!?])\s+/);
+  const sentences = text.split(/(?<=[.!?])\s+/).flatMap((sentence) => sentence.split(/\s*;\s*/));
   for (const sentence of sentences) {
     if (!new RegExp(`\\b${TRUST_SOURCE_PATTERN}\\b`, "i").test(sentence)) {
       continue;
@@ -107,6 +107,10 @@ const CUSTOM_AGENT_TRUST_CLAIM_FIXTURES = [
   ["The custom agents are enabled by configuration trust.", true],
   ["Configuration trust never authorizes custom agents.", false],
   ["Configuration-trust does not permit a project custom agent.", false],
+  [
+    "Configuration trust does not authorize legacy agents; configuration trust permits custom agents.",
+    true,
+  ],
   [
     "A session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents.",
     false,
@@ -253,7 +257,7 @@ test("README and model docs preserve the split trust contract", () => {
       "An upstream positive project-trust signal",
       "or a session approval may enable `.tlh/defaults.json` only",
       "None of those configuration-trust sources authorizes a project custom agent",
-      "custom-agent execution always requires persisted positive `/trust`",
+      "custom-agent execution always requires a persisted positive `/trust` decision",
       'The defaults prompt title is **"Trust project-local TLH defaults?"**',
       "capped at 1,000,000 omitted issues",
     ],
