@@ -214,7 +214,7 @@ A child that needs a decision, structured interview, or meaningful progress upda
 
 ## Prompt-cache heartbeat
 
-When one or more async subagent runs are live and the parent session is idle, the heartbeat silently replays the last captured provider payload through the provider stream. Each replay is a ghost request — it costs only cache-read tokens but resets the provider's prompt-cache TTL before it can expire. Without it, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
+When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
 
 ### Why default-off
 
@@ -283,7 +283,7 @@ Outcome values:
 
 | Outcome | Meaning |
 |---|---|
-| `cache_read` | The beat succeeded; the cache TTL was refreshed at read prices. |
+| `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
 | `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
 | `error` | Stream or auth error. Three consecutive errors disable heartbeat for the session. |
 | `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
@@ -306,17 +306,17 @@ Verdict meanings:
 
 | Verdict | Meaning |
 |---|---|
-| `saved` | At least one beat resulted in `cache_read`; the TTL was refreshed at least once. |
+| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the TTL. |
 | `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
 | `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
-| `unneeded` | No beats were sent and no terminal-lost signal was received. The async run finished faster than the heartbeat interval; the gap closed before the first beat timer fired. The `gap_summary` record is still written (gap frequency and duration are useful trial signal). |
+| `unneeded` | No beats were sent and no terminal-lost signal was received. The async run finished faster than the heartbeat interval; the gap closed before the first beat timer fired. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
 
 ### Circuit breakers
 
 Two automatic circuit breakers limit runaway spending:
 
 1. **Error breaker**: Three consecutive `error` outcomes permanently disable heartbeat for the session (`disabled` state). The error count resets on any successful `cache_read`.
-2. **Mismatch breaker**: A single `cache_write_mismatch` outcome closes the current gap. The session continues and the next gap (if one opens) starts fresh.
+2. **Mismatch breaker**: A single `cache_write_mismatch` outcome (more than 256 cache-write tokens) closes the current gap to avoid further beat spend when the replay is causing a cache rewrite rather than the expected cache read. The session continues and the next gap (if one opens) starts fresh; this is the safeguard for the trial's unverified aborted-request TTL-refresh assumption.
 
 ### Doctor output
 
