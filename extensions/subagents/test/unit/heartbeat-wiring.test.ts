@@ -30,10 +30,12 @@ import {
 import type { AsyncJobState } from "../../src/shared/types.ts";
 import type {
   Api,
+  AssistantMessage,
   AssistantMessageEvent,
   Context,
   Model,
   StreamOptions,
+  Usage,
 } from "@earendil-works/pi-ai";
 import type { EntryRenderer, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -74,16 +76,7 @@ function makeModel(): Model<Api> {
   } as Model<Api>;
 }
 
-type SimpleUsage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-};
-
-function makeUsage(overrides: Partial<SimpleUsage> = {}): SimpleUsage {
+function makeUsage(overrides: Partial<Usage> = {}): Usage {
   return {
     input: 0,
     output: 5,
@@ -95,21 +88,26 @@ function makeUsage(overrides: Partial<SimpleUsage> = {}): SimpleUsage {
   };
 }
 
+function makeAssistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "anthropic-messages",
+    provider: "anthropic",
+    model: "claude-sonnet-4-20250514",
+    usage: makeUsage(),
+    stopReason: "pending",
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
 /** Fake beat stream using text_start event (same pattern as heartbeat-controller.test.ts). */
 async function* makeCacheReadStream(): AsyncIterable<AssistantMessageEvent> {
   yield {
     type: "text_start",
     contentIndex: 0,
-    partial: {
-      role: "assistant",
-      content: [],
-      api: "anthropic-messages" as Api,
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      usage: makeUsage(),
-      stopReason: "pending",
-      timestamp: 0,
-    },
+    partial: makeAssistantMessage({ content: [{ type: "text", text: "" }] }),
   };
 }
 

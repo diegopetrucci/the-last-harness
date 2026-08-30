@@ -250,7 +250,7 @@ Install and update do **not** provision `heartbeat` keys. A `heartbeat` block ad
 
 ### Cost model
 
-Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The break-even is roughly 11 beats: at that point the accumulated beat cost equals approximately one full cache rewrite at input-token prices. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
+Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and are not recorded as `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded attempts can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
 
 A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
 
@@ -275,7 +275,7 @@ Each line is a JSON record. There are two record shapes:
 | `model` | Model ID used for the ghost request. |
 | `provider` | Provider name. |
 | `outcome` | See outcome table below. |
-| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present for executed beats. |
+| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present when usage was reported; omitted when no usage arrived before a cutoff or error. |
 | `estCostUsd` | Estimated USD cost — present when usage and model cost rates are available. |
 | `latencyMs` | Round-trip latency for the ghost stream request. |
 
@@ -285,7 +285,7 @@ Outcome values:
 |---|---|
 | `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
 | `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
-| `error` | Stream or auth error. Three consecutive errors disable heartbeat for the session. |
+| `error` | Stream/auth error or generation cutoff before usable cache usage. Three consecutive errors disable heartbeat for the session. |
 | `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
 | `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
 | `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |

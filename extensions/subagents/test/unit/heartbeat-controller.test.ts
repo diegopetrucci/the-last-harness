@@ -10,8 +10,15 @@ import { describe, it } from "node:test";
 import { createHeartbeatController } from "../../src/runs/shared/heartbeat-controller.ts";
 import { MIN_REARM_DELAY_MS } from "../../src/runs/shared/heartbeat-state.ts";
 import type { ResolvedHeartbeatConfig } from "../../src/runs/shared/heartbeat-config.ts";
-import type { AssistantMessageEvent, Context, Model, StreamOptions } from "@earendil-works/pi-ai";
-import type { Api } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  AssistantMessage,
+  AssistantMessageEvent,
+  Context,
+  Model,
+  StreamOptions,
+  Usage,
+} from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
@@ -41,16 +48,7 @@ function makeModel(overrides: Partial<Model<Api>> = {}): Model<Api> {
   } as Model<Api>;
 }
 
-type SimpleUsage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-};
-
-function makeUsage(overrides: Partial<SimpleUsage> = {}): SimpleUsage {
+function makeUsage(overrides: Partial<Usage> = {}): Usage {
   return {
     input: 1000,
     output: 10,
@@ -58,6 +56,20 @@ function makeUsage(overrides: Partial<SimpleUsage> = {}): SimpleUsage {
     cacheWrite: 0,
     totalTokens: 6010,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    ...overrides,
+  };
+}
+
+function makeAssistantMessage(overrides: Partial<AssistantMessage> = {}): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: "anthropic-messages",
+    provider: "anthropic",
+    model: "claude-sonnet-4-20250514",
+    usage: makeUsage(),
+    stopReason: "pending",
+    timestamp: 0,
     ...overrides,
   };
 }
@@ -74,71 +86,108 @@ async function* makeStream(events: AssistantMessageEvent[]): AsyncIterable<Assis
 function makeStartEvent(): AssistantMessageEvent {
   return {
     type: "start",
-    partial: {
-      role: "assistant",
-      content: [],
-      api: "anthropic-messages" as Api,
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
+    partial: makeAssistantMessage({
       usage: makeUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 }),
-      stopReason: "pending",
-      timestamp: 0,
-    },
+    }),
   };
 }
 
 /** Build a text_start event with usage populated (first usage-bearing event). */
-function makeTextStartEvent(usageOverrides: Partial<SimpleUsage> = {}): AssistantMessageEvent {
+function makeTextStartEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
   return {
     type: "text_start",
     contentIndex: 0,
-    partial: {
-      role: "assistant",
-      content: [],
-      api: "anthropic-messages" as Api,
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
+    partial: makeAssistantMessage({
+      content: [{ type: "text", text: "" }],
+      usage: makeUsage({ totalTokens: 6010, ...usageOverrides }),
+    }),
+  };
+}
+
+function makeThinkingStartEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
+  return {
+    type: "thinking_start",
+    contentIndex: 0,
+    partial: makeAssistantMessage({
+      content: [{ type: "thinking", thinking: "" }],
+      usage: makeUsage({ totalTokens: 6010, ...usageOverrides }),
+    }),
+  };
+}
+
+function makeToolCallStartEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
+  return {
+    type: "toolcall_start",
+    contentIndex: 0,
+    partial: makeAssistantMessage({
+      content: [{ type: "toolCall", id: "call-1", name: "lookup", arguments: {} }],
+      usage: makeUsage({ totalTokens: 6010, ...usageOverrides }),
+    }),
+  };
+}
+
+function makeTextDeltaEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
+  return {
+    type: "text_delta",
+    contentIndex: 0,
+    delta: "generated text",
+    partial: makeAssistantMessage({
+      content: [{ type: "text", text: "generated text" }],
       usage: makeUsage(usageOverrides),
-      stopReason: "pending",
-      timestamp: 0,
-    },
+    }),
+  };
+}
+
+function makeThinkingDeltaEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
+  return {
+    type: "thinking_delta",
+    contentIndex: 0,
+    delta: "generated reasoning",
+    partial: makeAssistantMessage({
+      content: [{ type: "thinking", thinking: "generated reasoning" }],
+      usage: makeUsage(usageOverrides),
+    }),
+  };
+}
+
+function makeToolCallDeltaEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
+  return {
+    type: "toolcall_delta",
+    contentIndex: 0,
+    delta: '{"query":"value"}',
+    partial: makeAssistantMessage({
+      content: [{ type: "toolCall", id: "call-1", name: "lookup", arguments: { query: "value" } }],
+      usage: makeUsage(usageOverrides),
+    }),
   };
 }
 
 /** Build an error event (provider error response — carries a final AssistantMessage). */
-function makeErrorEvent(usageOverrides: Partial<SimpleUsage> = {}): AssistantMessageEvent {
+function makeErrorEvent(usageOverrides: Partial<Usage> = {}): AssistantMessageEvent {
   return {
     type: "error",
-    reason: "error" as const,
+    reason: "error",
     // The pi-ai error event carries the final AssistantMessage in the .error field.
-    error: {
-      role: "assistant",
-      content: [],
-      api: "anthropic-messages" as Api,
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
+    error: makeAssistantMessage({
       usage: makeUsage(usageOverrides),
-      stopReason: "error" as const,
-      timestamp: 0,
-    },
-  } as AssistantMessageEvent;
+      stopReason: "error",
+    }),
+  };
 }
 
 /** Build a done event. */
-function makeDoneEvent(usageOverrides: Partial<SimpleUsage> = {}): AssistantMessageEvent {
+function makeDoneEvent(
+  usageOverrides: Partial<Usage> = {},
+  content: AssistantMessage["content"] = [],
+): AssistantMessageEvent {
   return {
     type: "done",
     reason: "stop",
-    message: {
-      role: "assistant",
-      content: [],
-      api: "anthropic-messages" as Api,
-      provider: "anthropic",
-      model: "claude-sonnet-4-20250514",
+    message: makeAssistantMessage({
+      content,
       usage: makeUsage(usageOverrides),
       stopReason: "stop",
-      timestamp: 0,
-    },
+    }),
   };
 }
 
@@ -545,6 +594,327 @@ describe("createHeartbeatController — abort semantics", () => {
     // Should have consumed start and text_start, then aborted (done may or may not be consumed)
     assert.ok(eventsConsumed.includes("start"), "start must be consumed");
     assert.ok(eventsConsumed.includes("text_start"), "text_start must be consumed");
+    ctrl.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: early-generation cutoff
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatController — early-generation cutoff", () => {
+  it("aborts immediately at a zero-usage content start", async () => {
+    const startCases: Array<{ label: string; event: AssistantMessageEvent }> = [
+      {
+        label: "text_start",
+        event: makeTextStartEvent({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }),
+      },
+      {
+        label: "thinking_start",
+        event: makeThinkingStartEvent({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }),
+      },
+      {
+        label: "toolcall_start",
+        event: makeToolCallStartEvent({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0 }),
+      },
+    ];
+
+    for (const { label, event } of startCases) {
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const consumed: string[] = [];
+
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        streamProvider() {
+          return (async function* () {
+            consumed.push("start");
+            yield makeStartEvent();
+            consumed.push(label);
+            yield event;
+            consumed.push("done");
+            yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 0, totalTokens: 6000 });
+          })();
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "sess-cutoff");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assert.deepEqual(consumed, ["start", label], `${label} must be the first cutoff boundary`);
+      assert.equal(sink.records[0]?.["outcome"], "error");
+      ctrl.destroy();
+    }
+  });
+
+  it("keeps the normal classifier for cache usage on an empty content start", async () => {
+    const startCases: Array<{ label: string; event: AssistantMessageEvent; outcome: string }> = [
+      {
+        label: "cache-read",
+        event: makeTextStartEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0 }),
+        outcome: "cache_read",
+      },
+      {
+        label: "cache-write-mismatch",
+        event: makeThinkingStartEvent({ input: 1000, cacheRead: 0, cacheWrite: 1024, output: 0 }),
+        outcome: "cache_write_mismatch",
+      },
+    ];
+
+    for (const { label, event, outcome } of startCases) {
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const consumed: string[] = [];
+
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        streamProvider() {
+          return (async function* () {
+            consumed.push("start");
+            yield makeStartEvent();
+            consumed.push(label);
+            yield event;
+            consumed.push("done");
+            yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 0, totalTokens: 6000 });
+          })();
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "sess-usage");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assert.deepEqual(consumed, ["start", label]);
+      assert.equal(sink.records[0]?.["outcome"], outcome);
+      ctrl.destroy();
+    }
+  });
+
+  it("retains output cost when cache-read usage arrives at an empty block start", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const earlyUsage = {
+      input: 1000,
+      cacheRead: 5000,
+      cacheWrite: 0,
+      output: 1,
+      totalTokens: 6001,
+    };
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      streamProvider() {
+        return makeStream([makeStartEvent(), makeTextStartEvent(earlyUsage)]);
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-early-output", "sess-early-output");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.equal(sink.records[0]?.["outcome"], "cache_read");
+    assert.deepEqual(sink.records[0]?.["usage"], {
+      input: 1000,
+      cacheRead: 5000,
+      cacheWrite: 0,
+      output: 1,
+    });
+    assert.equal(sink.records[0]?.["estCostUsd"], 0.004515);
+    ctrl.destroy();
+  });
+
+  it("rejects generated deltas even when cache-read and output usage arrive together", async () => {
+    const deltaCases: Array<{ label: string; event: AssistantMessageEvent }> = [
+      {
+        label: "text_delta",
+        event: makeTextDeltaEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 5 }),
+      },
+      {
+        label: "thinking_delta",
+        event: makeThinkingDeltaEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 5 }),
+      },
+      {
+        label: "toolcall_delta",
+        event: makeToolCallDeltaEvent({ input: 1000, cacheRead: 5000, cacheWrite: 0, output: 5 }),
+      },
+    ];
+
+    for (const { label, event } of deltaCases) {
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const consumed: string[] = [];
+
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        streamProvider() {
+          return (async function* () {
+            consumed.push("start");
+            yield makeStartEvent();
+            consumed.push(label);
+            yield event;
+            consumed.push("done");
+            yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 5, totalTokens: 6005 });
+          })();
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "sess-delta");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assert.deepEqual(consumed, ["start", label]);
+      assert.equal(sink.records[0]?.["outcome"], "error");
+      ctrl.destroy();
+    }
+  });
+
+  it("rejects a generated done event instead of classifying final cache usage as a hit", async () => {
+    const doneCases: Array<{ label: string; event: AssistantMessageEvent }> = [
+      {
+        label: "done-output-usage",
+        event: makeDoneEvent({
+          input: 1000,
+          cacheRead: 5000,
+          cacheWrite: 0,
+          output: 5,
+          totalTokens: 6005,
+        }),
+      },
+      {
+        label: "done-generated-content",
+        event: makeDoneEvent(
+          { input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0, totalTokens: 6000 },
+          [{ type: "text", text: "generated content" }],
+        ),
+      },
+      {
+        label: "done-redacted-thinking",
+        event: makeDoneEvent(
+          { input: 1000, cacheRead: 5000, cacheWrite: 0, output: 0, totalTokens: 6000 },
+          [{ type: "thinking", thinking: "[Reasoning redacted]" }],
+        ),
+      },
+    ];
+
+    for (const { label, event } of doneCases) {
+      const timer = makeTimerFake();
+      const sink = makeLoggerSink();
+      const consumed: string[] = [];
+
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: "/fake.jsonl",
+        ...sink,
+        streamProvider() {
+          return (async function* () {
+            consumed.push("start");
+            yield makeStartEvent();
+            consumed.push(label);
+            yield event;
+          })();
+        },
+      });
+
+      ctrl.onProviderRequest({}, makeModel());
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "sess-done");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+
+      assert.deepEqual(consumed, ["start", label]);
+      assert.equal(sink.records[0]?.["outcome"], "error");
+      ctrl.destroy();
+    }
+  });
+
+  it("bounds repeated late-usage cutoffs with the existing error breaker", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const scheduledDelays: number[] = [];
+    let streamCalls = 0;
+    let finalUsageConsumed = false;
+    const config = { ...BASE_CONFIG, maxBeatsPerGap: 10 };
+
+    const ctrl = createHeartbeatController(config, {
+      now: timer.now,
+      setTimeout(fn, ms) {
+        scheduledDelays.push(ms);
+        return timer.setTimeout(fn, ms);
+      },
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      streamProvider() {
+        streamCalls++;
+        return (async function* () {
+          yield makeStartEvent();
+          yield makeTextStartEvent({
+            input: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            output: 0,
+            totalTokens: 0,
+          });
+          finalUsageConsumed = true;
+          yield makeDoneEvent({ input: 1000, cacheRead: 5000, output: 0, totalTokens: 6000 });
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-late-breaker", "sess-late-breaker");
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      timer.advance(attempt === 0 ? config.intervalMs + 1 : MIN_REARM_DELAY_MS);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 30));
+    }
+
+    assert.equal(streamCalls, 3, "three late-usage errors should reach the session breaker");
+    assert.equal(finalUsageConsumed, false, "late final usage must never be consumed");
+    assert.equal(sink.records.filter((record) => record["outcome"] === "error").length, 3);
+    assert.ok(
+      scheduledDelays.slice(1).every((delay) => delay >= MIN_REARM_DELAY_MS),
+      "late-usage errors must use positive backoff before the breaker trips",
+    );
+
+    timer.advance(config.intervalMs + MIN_REARM_DELAY_MS);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(streamCalls, 3, "the error breaker must stop further late-usage attempts");
     ctrl.destroy();
   });
 });

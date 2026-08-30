@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type {
   Api,
+  AssistantMessage,
   AssistantMessageEvent,
   Context,
   Model,
@@ -239,6 +240,56 @@ function isUsageBearing(usage: HeartbeatUsage): boolean {
   return usage.input > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0 || usage.output > 0;
 }
 
+/** True when a content block contains generated text, reasoning, or arguments. */
+function hasGeneratedContentBlock(block: AssistantMessage["content"][number] | undefined): boolean {
+  if (!block) return false;
+  if (block.type === "text") return block.text.length > 0;
+  if (block.type === "thinking") {
+    // The provider's [Reasoning redacted] marker represents a completed block,
+    // not an empty thinking start, so keep it on the non-success path.
+    return block.thinking.length > 0;
+  }
+  return Object.keys(block.arguments).length > 0;
+}
+
+/** True when a completed assistant message contains generated content. */
+function hasGeneratedContent(content: AssistantMessage["content"]): boolean {
+  return content.some((block) => block.type === "toolCall" || hasGeneratedContentBlock(block));
+}
+
+/**
+ * True when an event crosses the generation boundary for a heartbeat.
+ *
+ * A block start can still be the safe usage observation used by Anthropic: its
+ * partial message may carry cacheRead before any block content is present, and
+ * output usage may already be non-zero even when the block is empty.  A block
+ * start without that cache evidence is nevertheless the first boundary, so it
+ * must not wait for a later delta.  Deltas/ends are generation-bearing by
+ * event shape; done is generation-bearing when output or content exists.
+ */
+function isGenerationBearingEvent(event: AssistantMessageEvent, usage: HeartbeatUsage): boolean {
+  switch (event.type) {
+    case "text_start":
+    case "thinking_start":
+    case "toolcall_start":
+      return (
+        usage.cacheRead <= 0 || hasGeneratedContentBlock(event.partial.content[event.contentIndex])
+      );
+    case "text_delta":
+    case "text_end":
+    case "thinking_delta":
+    case "thinking_end":
+    case "toolcall_delta":
+    case "toolcall_end":
+      return true;
+    case "done":
+      return usage.output > 0 || hasGeneratedContent(event.message.content);
+    case "start":
+    case "error":
+      return false;
+  }
+}
+
 /** Estimate USD cost given usage and per-million-token rates. */
 function estimateCost(
   usage: HeartbeatUsage,
@@ -389,9 +440,8 @@ export function createHeartbeatController(
     const model = currentCapture.model;
 
     let outcome: HeartbeatOutcome = "error";
-    // When a provider error event is seen, outcome is already "error" and we
-    // must not reclassify based on usage.  All other paths (no error event)
-    // should classify from usage after the loop.
+    // Provider error events and generation cutoffs are bounded "error" paths;
+    // neither may be reclassified from any usage attached to the event.
     let classifyFromUsage = true;
     let usage: HeartbeatUsage | undefined;
     let estCostUsd: number | undefined;
@@ -495,23 +545,40 @@ export function createHeartbeatController(
 
         const eventUsage = extractEventUsage(event);
 
+        // A block start without cache-read evidence is already the generation
+        // boundary.  Deltas/ends and generated done messages are likewise too
+        // late to qualify as a cheap cache-read beat.  Preserve the existing
+        // mismatch classifier for cache-write evidence on any event.
+        if (isGenerationBearingEvent(event, eventUsage)) {
+          if (isUsageBearing(eventUsage)) {
+            usage = eventUsage;
+          }
+          if (eventUsage.cacheWrite <= CACHE_WRITE_MISMATCH_THRESHOLD) {
+            // A generation-boundary abort is a bounded non-success, even when
+            // the same event happens to include cache-read or output usage.
+            classifyFromUsage = false;
+          }
+          abortCtrl.abort();
+          break;
+        }
+
         if (isUsageBearing(eventUsage)) {
           usage = eventUsage;
           abortCtrl.abort();
           break;
         }
 
-        // For done terminal events, capture whatever usage is available.
+        // For an actually empty done event, capture whatever usage is available.
         if (event.type === "done") {
           usage = eventUsage;
           break;
         }
       }
 
-      // Classify the outcome from usage evidence when not already determined
-      // by a provider error event.  cache_read requires actual cacheRead
-      // evidence; zero-cacheRead usage is not a successful TTL refresh and
-      // leaves outcome as the default "error".
+      // Classify the outcome from usage evidence unless a provider error or
+      // generation cutoff already forced the bounded error outcome. cache_read
+      // requires actual cacheRead evidence; zero-cacheRead usage is not a
+      // successful TTL refresh and leaves outcome as the default "error".
       if (classifyFromUsage && usage) {
         if (usage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) {
           outcome = "cache_write_mismatch";

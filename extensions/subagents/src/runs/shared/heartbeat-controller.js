@@ -30,6 +30,39 @@ function extractEventUsage(event) {
 function isUsageBearing(usage) {
     return usage.input > 0 || usage.cacheRead > 0 || usage.cacheWrite > 0 || usage.output > 0;
 }
+function hasGeneratedContentBlock(block) {
+    if (!block)
+        return false;
+    if (block.type === "text")
+        return block.text.length > 0;
+    if (block.type === "thinking") {
+        return block.thinking.length > 0;
+    }
+    return Object.keys(block.arguments).length > 0;
+}
+function hasGeneratedContent(content) {
+    return content.some((block) => block.type === "toolCall" || hasGeneratedContentBlock(block));
+}
+function isGenerationBearingEvent(event, usage) {
+    switch (event.type) {
+        case "text_start":
+        case "thinking_start":
+        case "toolcall_start":
+            return (usage.cacheRead <= 0 || hasGeneratedContentBlock(event.partial.content[event.contentIndex]));
+        case "text_delta":
+        case "text_end":
+        case "thinking_delta":
+        case "thinking_end":
+        case "toolcall_delta":
+        case "toolcall_end":
+            return true;
+        case "done":
+            return usage.output > 0 || hasGeneratedContent(event.message.content);
+        case "start":
+        case "error":
+            return false;
+    }
+}
 function estimateCost(usage, cost) {
     return ((usage.input * cost.input +
         usage.cacheRead * cost.cacheRead +
@@ -171,6 +204,16 @@ export function createHeartbeatController(config, deps = {}) {
                     break;
                 }
                 const eventUsage = extractEventUsage(event);
+                if (isGenerationBearingEvent(event, eventUsage)) {
+                    if (isUsageBearing(eventUsage)) {
+                        usage = eventUsage;
+                    }
+                    if (eventUsage.cacheWrite <= CACHE_WRITE_MISMATCH_THRESHOLD) {
+                        classifyFromUsage = false;
+                    }
+                    abortCtrl.abort();
+                    break;
+                }
                 if (isUsageBearing(eventUsage)) {
                     usage = eventUsage;
                     abortCtrl.abort();
