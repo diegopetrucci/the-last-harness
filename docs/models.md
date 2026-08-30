@@ -96,6 +96,64 @@ When existing settings content is replaced, TLH creates a `settings.json.bak-*` 
 
 See [`commands.md`](commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
 
+## Project model/effort defaults
+
+A project can provide model and effort defaults for the active session without requiring every contributor to set personal overrides. Place `.tlh/defaults.json` at the canonical Git worktree root:
+
+```json
+{
+  "primaryAgents": {
+    "architect": { "model": "anthropic/claude-opus-5", "effort": "high" },
+    "rush": { "effort": "medium" }
+  },
+  "subagents": {
+    "developer": { "model": "anthropic/claude-sonnet-4-6" },
+    "code-reviewer": { "effort": "xhigh" }
+  }
+}
+```
+
+Both `model` and `effort` are optional per entry, but at least one must be present. The `model` value uses the `provider/model-id` vocabulary (for example `anthropic/claude-opus-5` or `openai-codex/gpt-5.6-sol`). The `effort` value is one of the seven canonical levels — `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — and is case-sensitive.
+
+Valid primary agent names: `architect`, `rush`, `product`, `bug-hunter`. Valid subagent role names: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, `web-scout`.
+
+Unknown role names, unknown keys within an entry, invalid model/effort values, and entries missing both fields all produce a warning and skip that entry; the rest of the file still applies. Malformed JSON warns and applies nothing. Loaded validation warnings are surfaced with bounded, deduplicated notifications (plus one overflow summary when needed). The file is read with fail-closed safety: symlinks anywhere on the `.tlh` path, non-regular files, and files exceeding 64 KB are rejected entirely.
+
+### Trust
+
+Project defaults share the same worktree-level trust decision as `.tlh/agents`. Approving once covers both, for the session. The confirmation prompt reads **"Trust project-local TLH configuration?"** and describes repository-owned content under `.tlh` (agent definitions and model/effort defaults) for this session only. A denial, unavailable confirmation, or failed trust check applies nothing, non-fatally.
+
+### Precedence
+
+Model and effort resolve independently per role. For each field, the order is (highest wins):
+
+1. **Explicit in-session user action** — a session-only model choice (`This session only — default` from the model picker) or a session thinking override; for subagents, an explicitly user-directed per-dispatch model.
+2. **Project defaults** — `.tlh/defaults.json` (this section).
+3. **Persisted user overrides** — `tlh.primaryAgent.modelOverrides.<primary>` for primaries, `subagents.agentOverrides.<role>` for subagents.
+4. **Bundled `tlhModelDefaults` frontmatter**.
+
+Because fields are independent, a session-only model pin does not suppress a project effort default, and vice versa. For primary agents, the effort precedence is literally `session ?? project ?? durable ?? bundled`.
+
+Project defaults are applied at runtime only and are never written into the user's persisted settings. The informational notice `TLH applied project defaults for <role>: model <x>, effort <y>` is primary-agent-only and appears at most once per primary per session. It lists only project fields that win precedence and become effective; an effort value is shown after any model-capability or primary-floor clamping. Subagent defaults apply silently at dispatch, while unavailable project models still produce warnings.
+
+If a project model is not available in the current registry, TLH warns once and falls through to layer 3/4 for that field; the effort field is still applied independently.
+
+### Opposite-provider subagents and project defaults
+
+`code-reviewer`, `oracle`, and `contrarian` derive their provider dynamically from the active session model (see [Review independence](#review-independence-for-code-reviewer-oracle-and-contrarian)). Project defaults interact with this in two ways:
+
+- **Primary project model default**: changes the active session model, so opposite-role subagents pick up the new provider automatically.
+- **Subagent effort-only entry** (`{ "effort": "..." }` with no `model` field): dynamic opposite-provider selection is preserved; only the effort level is overridden.
+- **Subagent model pin** (`{ "model": "..." }`): bypasses dynamic opposite-provider selection for that role, the same way a persisted `/subagent-settings` model pin does.
+
+**Recommend effort-only entries for `code-reviewer`, `oracle`, and `contrarian`** when you want to keep opposite-provider behavior.
+
+A project model pin also overrides a persisted `model: false` (session-inherit) setting, since `model: false` is a persisted value for the model field; an effort-only project entry leaves `model: false` intact. If the project model is unavailable, TLH falls back to the persisted value (including `model: false`).
+
+### Undo
+
+Delete `.tlh/defaults.json` or remove the specific entry. To override a project model for the active session, choose the desired model through the native picker and select `This session only — default`; that session-only choice is layer 1. Choosing `All sessions` persists the model as layer 3, but an existing project model remains higher precedence and can re-override it at the next `before_agent_start` or `session_tree` boundary while that project entry exists. Explicit session thinking/effort choices remain layer 1 and continue to win over project effort.
+
 ## Thinking selection scope
 
 In the interactive TUI, `/thinking` and its `/effort` alias without a level first show the available thinking levels. After a changed selection, TLH opens `Thinking selection scope` with the same approved options as the native model picker: `This session only — default` or `All sessions`. The selected level stays active in the current session either way. The session-only choice leaves the upstream `defaultThinkingLevel` in the isolated profile unchanged; All sessions persists the level through that upstream setting for future/default sessions. Native thinking cycling/shortcuts and typed thinking choices use the same upstream durable setting and remain retained across later turns for the active unlocked primary. Architect's minimum floor is enforced before this scope picker appears; Rush, Product, and Bug-hunter accept every level supported by the current model.

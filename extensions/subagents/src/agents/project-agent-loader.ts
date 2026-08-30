@@ -605,8 +605,8 @@ export async function resolveProjectAgentTrust(
         ? options.confirm(projectRoot)
         : options.ui
           ? options.ui.confirm(
-              "Trust project-local TLH agents?",
-              `This allows repository-owned agent definitions under ${path.join(projectRoot, PROJECT_AGENT_DIRECTORY)} to be loaded for this session only.`,
+              "Trust project-local TLH configuration?",
+              `This allows repository-owned content under ${path.join(projectRoot, ".tlh")} (agent definitions and model/effort defaults) to be loaded for this session only.`,
               { timeout: timeoutMs },
             )
           : undefined,
