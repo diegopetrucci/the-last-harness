@@ -749,7 +749,7 @@ describe(
         const args = readLastCallArgs();
         const taskArg = args.at(-1) ?? "";
         assert.ok(
-          taskArg.startsWith(`Task: [Read from: ${path.join(fs.realpathSync(tempDir), "a.md")}, ${path.join(fs.realpathSync(tempDir), "b.md")}]
+          taskArg.startsWith(`Task: [Read from: ${path.join(tempDir, "a.md")}, ${path.join(tempDir, "b.md")}]
 
 Inspect
 

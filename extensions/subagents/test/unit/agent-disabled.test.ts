@@ -97,9 +97,9 @@ describe("builtin agent disabling", () => {
     );
   });
 
-  // Negative hard-cutover coverage: the configured/profile/project agent fixtures below are
-  // intentionally present to prove that only the exact trusted Git-root custom file survives.
-  it("project-scope discovery uses only the trusted Git-root custom agent", () => {
+  // Negative hard-cutover coverage: generic profile/project sources and the root custom file
+  // are intentionally present to prove that public discovery stays generic-source-free.
+  it("project-scope discovery ignores generic and project-custom agent sources", () => {
     const userConfiguredDir = path.join(tempHome, ".pi", "agent", "configured-agents");
     writeAgent(path.join(tempHome, ".pi", "agent", "agents"), "user-helper", "User helper");
     writeAgent(userConfiguredDir, "configured-user-helper", "Configured user helper");
@@ -121,15 +121,7 @@ describe("builtin agent disabling", () => {
 
     const projectScoped = discoverAgents(tempProject, "project").agents;
     assert.equal(
-      projectScoped.find((agent) => agent.name === "embedded.project-helper")?.source,
-      "project",
-    );
-    assert.equal(
-      projectScoped.find((agent) => agent.name === "embedded.project-helper")?.filePath,
-      fs.realpathSync(customPath),
-    );
-    assert.equal(
-      projectScoped.find((agent) => agent.name === "embedded.project-helper")?.model,
+      projectScoped.find((agent) => agent.name === "embedded.project-helper"),
       undefined,
     );
     assert.equal(
@@ -172,7 +164,7 @@ describe("builtin agent disabling", () => {
     assert.equal(discovered.find((agent) => agent.name === "developer")?.source, "user");
   });
 
-  it("management list exposes only the trusted root custom project agent", () => {
+  it("management list does not expose project-custom agents", () => {
     const agentsDir = path.join(tempProject, ".pi", "agents");
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
@@ -191,7 +183,6 @@ describe("builtin agent disabling", () => {
 
     const text = readText(handleList({}, { cwd: tempProject }));
 
-    assert.match(text, /Executable agents:\n- embedded\.helper \(project\): Helper/);
-    assert.doesNotMatch(text, /- helper \(project\)/);
+    assert.equal(text, "Executable agents:\n- (none)");
   });
 });

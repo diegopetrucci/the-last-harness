@@ -1199,7 +1199,7 @@ async function installSupportFilesToProfile(config) {
             }
         }
         else {
-            log(config, "Would install TLH subagent prompts from the complete package checkout.");
+            throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
         }
         const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
         if (missingSubagentExtensionDefaults.length > 0) {

@@ -629,8 +629,6 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   ).length;
 
   assert.equal(result.status, 0, output);
-  // Negative cutover assertion: canonical copied prompts no longer need an installer
-  // `subagents.agentDirs` default; unrelated override data remains user-owned.
   assert.equal(repairedSettings.subagents.agentDirs, undefined);
   assert.deepEqual(repairedSettings.subagents.agentOverrides, { developer: { model: "kept" } });
   assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));

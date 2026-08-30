@@ -209,14 +209,9 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
   const childPrompt = buildChildSubagentSystemPrompt();
 
   assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
-  assert.match(primaryPrompt, /action: "list"`\/`"get"/);
-  assert.match(primaryPrompt, /action: "resume".*rebinds the persisted target/);
-  assert.match(primaryPrompt, /omit `agentScope` or use `"project"`/);
-  assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
-  assert.match(
-    primaryPrompt,
-    /project custom embedded agents are bound to the validated Git-root scope/,
-  );
+  assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
+  assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
+  assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
   assert.match(primaryPrompt, /- contrarian:/i);
 
   for (const prompt of [primaryPrompt, childPrompt]) {
@@ -235,19 +230,17 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const subagents = loadSubagentMetadata();
 
   const embeddedClause = /embedded\.<slug>.*agent.*explicitly names or asks/s;
-  const noProactiveEmbeddedChoice = /never proactively choose embedded agents on the user's behalf/;
-  const rootFileClause = /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/;
+  const projectNaturalLanguageClause =
+    /project agents are intentionally omitted.*list.*get.*user asks for the `xyz` project subagent.*`embedded\.xyz`.*exception.*management output omits it/is;
   const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
-  const managementGuidance =
-    /project custom embedded agents are bound to the validated Git-root scope/;
+  const managementGuidance = /TLH minor agents are isolated to the user scope/;
   const sectionHeader = /## TLH Allowed Minor Subagents/;
 
   const architectPrompt = buildTlhSystemPrompt(architect, subagents, true);
   assert.match(architectPrompt, sectionHeader);
   assert.match(architectPrompt, managementGuidance);
   assert.match(architectPrompt, embeddedClause);
-  assert.match(architectPrompt, noProactiveEmbeddedChoice);
-  assert.match(architectPrompt, rootFileClause);
+  assert.match(architectPrompt, projectNaturalLanguageClause);
   assert.doesNotMatch(architectPrompt, closingRule);
 
   for (const primary of [rush, product, bugHunter]) {
@@ -264,8 +257,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(disabledPrompt, sectionHeader, "disabled: section header present");
   assert.match(disabledPrompt, managementGuidance, "disabled: management guidance present");
   assert.match(disabledPrompt, embeddedClause, "disabled: embedded guidance present");
-  assert.match(disabledPrompt, noProactiveEmbeddedChoice, "disabled: no proactive embedded choice");
-  assert.match(disabledPrompt, rootFileClause, "disabled: root custom file guidance present");
+  assert.match(disabledPrompt, /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/);
   assert.match(disabledPrompt, /## \/review handoff/);
   assert.match(disabledPrompt, /`code-reviewer` subagent in a \*\*fresh \(isolated\) context\*\*/);
   assert.match(disabledPrompt, /passing the full envelope contents as the task input/);

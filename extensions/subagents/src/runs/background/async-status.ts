@@ -46,6 +46,7 @@ import {
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import {
   parseContextPressureCrossedThresholds,
   parseContextPressureProjection,
@@ -97,6 +98,7 @@ interface AsyncRunStepSummary {
   turnBudgetExceeded?: boolean;
   wrapUpRequested?: boolean;
   children?: NestedRunSummary[];
+  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }
 
 export interface AsyncRunSummary {
@@ -140,6 +142,7 @@ export interface AsyncRunSummary {
   nestedChildren?: NestedRunSummary[];
   nestedWarnings?: string[];
   tkTicket?: TkTicketMetadata;
+  projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
 }
 
 export interface AsyncRunCorruptEntryIssue {
@@ -252,7 +255,32 @@ export function validatePersistedAsyncStatus(
     }
     status.tkTicket = normalizedTkTicket;
   }
+  if (status.projectAgents !== undefined) {
+    if (!Array.isArray(status.projectAgents)) {
+      throw createAsyncStatusValidationError({
+        asyncDir,
+        message: "projectAgents must be an array.",
+        fingerprint: fingerprintAsyncStatusFile(asyncDir),
+      });
+    }
+    for (const [index, capture] of status.projectAgents.entries()) {
+      if (!normalizeProjectAgentRunCapture(capture)) {
+        throw createAsyncStatusValidationError({
+          asyncDir,
+          message: `projectAgents[${index}] is invalid.`,
+          fingerprint: fingerprintAsyncStatusFile(asyncDir),
+        });
+      }
+    }
+  }
   for (const step of status.steps ?? []) {
+    if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent)) {
+      throw createAsyncStatusValidationError({
+        asyncDir,
+        message: "step projectAgent capture is invalid.",
+        fingerprint: fingerprintAsyncStatusFile(asyncDir),
+      });
+    }
     step.contextUsage = parseContextUsageDiagnostics(step.contextUsage);
     step.contextPressure = parseContextPressureProjection(step.contextPressure);
     step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
@@ -299,6 +327,7 @@ function statusToSummary(
       ...(step.outputName ? { outputName: step.outputName } : {}),
       ...(step.structured ? { structured: step.structured } : {}),
       status: step.status,
+      ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
       ...(stepActivityState ? { activityState: stepActivityState } : {}),
       ...(stepLastActivityAt ? { lastActivityAt: stepLastActivityAt } : {}),
       ...(step.currentTool ? { currentTool: step.currentTool } : {}),
@@ -392,6 +421,7 @@ function statusToSummary(
     ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
     ...(status.pause ? { pause: status.pause } : {}),
     ...(normalizedTkTicket ? { tkTicket: normalizedTkTicket } : {}),
+    ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
   };
 }
 

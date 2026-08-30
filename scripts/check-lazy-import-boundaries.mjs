@@ -5,7 +5,8 @@
  * Enforce the lazy-import invariant over the extensions/ tree:
  *
  *   A dynamically import()-ed extension module's static dependency graph must:
- *   (a) contain no bare specifiers (fully transitive check), AND
+ *   (a) contain only Node builtins, relative files, and declared runtime
+ *       dependencies (fully transitive check), AND
  *   (b) contain no module that is also reachable from the eager entry graph
  *       of the same extension (fully transitive check, with a narrow allowlist
  *       for verified-stateless shared utilities — see SHARED_MODULE_ALLOWLIST).
@@ -22,22 +23,25 @@
  *
  * SCOPE: All .js/.mjs files under extensions/, analysed on the GENERATED .js
  * files (not .ts), so type-only imports erased during compilation are not
- * over-reported. Only string-literal import() targets are checked; dynamic
- * expressions (e.g. import(computedUrl)) are skipped.
+ * over-reported. String-literal dynamic imports and statically computable
+ * `new URL(..., import.meta.url).href` targets are checked.
  *
  * PARSING: Uses the TypeScript compiler API (ts.createSourceFile + AST walk)
  * to extract ImportDeclaration, ExportDeclaration (including `export * from`),
- * side-effect imports, and CallExpression with ImportKeyword. This eliminates
- * multiline, comment, and template-string classes of false negative at the root
- * rather than patching regexes. The `typescript` package is already a devDep.
+ * side-effect imports, and CallExpression with ImportKeyword. Static URL
+ * expressions are evaluated conservatively from literals, identifier-bound
+ * constants, array joins, and `new URL(..., import.meta.url).href`. This
+ * eliminates multiline, comment, template-string, and computed-URL classes of
+ * false negative at the root rather than patching regexes. The `typescript`
+ * package is already a devDep.
  *
  * Usage: node scripts/check-lazy-import-boundaries.mjs [--extensions-dir <dir>]
  */
 
-import { createRequire } from "node:module";
+import { builtinModules, createRequire } from "node:module";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import process from "node:process";
 
 const require = createRequire(import.meta.url);
@@ -108,6 +112,12 @@ function parseArgs(argv) {
 //     Verified 2026-08-15: shared between the eager graph of the-last-harness.js
 //     and the lazy static graphs of tokens.js and session-limit-report.js.
 //
+//   extensions/shared/project-agent-worktree.js
+//     Pure filesystem/path validation helpers with no peer imports or mutable
+//     module state. Shared by eager built-in guidance and the lazy custom-agent
+//     snapshot loader; allowing this overlap avoids a second root authority.
+//     Verified 2026-08-30.
+//
 //   the-last-harness/mcp-tools.js
 //     3 pure exported functions (getMcpToolKind, hasKnownPiMcpAdapterSource,
 //     hasPersistedDirectMcpResultDetails) + 1 readonly const array
@@ -122,6 +132,7 @@ function parseArgs(argv) {
 const SHARED_MODULE_ALLOWLIST = new Set([
   "the-last-harness/common.js",
   "the-last-harness/mcp-tools.js",
+  "shared/project-agent-worktree.js",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -129,35 +140,187 @@ const SHARED_MODULE_ALLOWLIST = new Set([
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the specifier is a bare (package) specifier —
- * i.e. not relative (./ or ../), not a Node built-in (node:*), and
- * not a file URL (file:*).
+ * Returns true if the specifier is a bare (package) specifier. Bare names are
+ * only allowed when their package root is declared in the published runtime
+ * dependencies; peer- and dev-only packages are deliberately excluded.
  */
 function isBareSpecifier(spec) {
-  return (
-    !spec.startsWith("./") &&
-    !spec.startsWith("../") &&
-    !spec.startsWith("node:") &&
-    !spec.startsWith("file:")
-  );
+  return !spec.startsWith("./") && !spec.startsWith("../") && !spec.startsWith("node:");
+}
+
+function isNodeBuiltinSpecifier(spec) {
+  return spec.startsWith("node:") || builtinModules.includes(spec);
+}
+
+function packageRootForSpecifier(spec) {
+  if (spec.startsWith("@")) {
+    const firstSlash = spec.indexOf("/");
+    const secondSlash = firstSlash === -1 ? -1 : spec.indexOf("/", firstSlash + 1);
+    return secondSlash === -1 ? spec : spec.slice(0, secondSlash);
+  }
+  const firstSlash = spec.indexOf("/");
+  return firstSlash === -1 ? spec : spec.slice(0, firstSlash);
+}
+
+function isAllowedNativeSpecifier(spec, declaredRuntimeDependencies) {
+  if (spec.startsWith("./") || spec.startsWith("../")) return true;
+  if (isNodeBuiltinSpecifier(spec)) return true;
+  return declaredRuntimeDependencies.has(packageRootForSpecifier(spec));
 }
 
 // ---------------------------------------------------------------------------
 // File parsing — AST-based static and dynamic import extraction
 // ---------------------------------------------------------------------------
 
+const STATIC_URL_VALUE = Symbol("static-url-value");
+
+function isStringLiteralLike(node) {
+  return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+}
+
+function isImportMetaUrl(node) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "url" &&
+    ts.isMetaProperty(node.expression) &&
+    node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+    node.expression.name.text === "meta"
+  );
+}
+
+function collectStaticBindings(sourceFile) {
+  const bindings = new Map();
+  const ambiguous = new Set();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const declarationList = node.parent;
+      if (
+        ts.isVariableDeclarationList(declarationList) &&
+        (declarationList.flags & ts.NodeFlags.Const) !== 0
+      ) {
+        if (ambiguous.has(node.name.text)) {
+          // Keep it unresolved after a duplicate declaration rather than
+          // guessing which lexical binding a dynamic import references.
+          ts.forEachChild(node, visit);
+          return;
+        }
+        if (bindings.has(node.name.text)) {
+          bindings.delete(node.name.text);
+          ambiguous.add(node.name.text);
+        } else if (node.initializer) {
+          bindings.set(node.name.text, node.initializer);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return bindings;
+}
+
+/**
+ * Evaluate only the small constant-expression subset used by generated native
+ * bridges. This is intentionally not a JavaScript evaluator: unknown calls,
+ * mutable bindings, and arbitrary globals remain unresolved and are skipped.
+ */
+function evaluateStaticValue(node, bindings, filePath, resolving = new Set()) {
+  if (isStringLiteralLike(node)) return node.text;
+  if (ts.isParenthesizedExpression(node)) {
+    return evaluateStaticValue(node.expression, bindings, filePath, resolving);
+  }
+  if (ts.isIdentifier(node)) {
+    if (resolving.has(node.text)) return undefined;
+    const initializer = bindings.get(node.text);
+    if (!initializer) return undefined;
+    const nextResolving = new Set(resolving);
+    nextResolving.add(node.text);
+    return evaluateStaticValue(initializer, bindings, filePath, nextResolving);
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    const values = [];
+    for (const element of node.elements) {
+      if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return undefined;
+      const value = evaluateStaticValue(element, bindings, filePath, resolving);
+      if (typeof value !== "string") return undefined;
+      values.push(value);
+    }
+    return values;
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = evaluateStaticValue(node.left, bindings, filePath, resolving);
+    const right = evaluateStaticValue(node.right, bindings, filePath, resolving);
+    return typeof left === "string" && typeof right === "string" ? left + right : undefined;
+  }
+  if (ts.isTemplateExpression(node)) {
+    let value = node.head.text;
+    for (const span of node.templateSpans) {
+      const expression = evaluateStaticValue(span.expression, bindings, filePath, resolving);
+      if (typeof expression !== "string") return undefined;
+      value += expression + span.literal.text;
+    }
+    return value;
+  }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    if (node.expression.name.text !== "join" || node.arguments.length > 1) return undefined;
+    const receiver = evaluateStaticValue(node.expression.expression, bindings, filePath, resolving);
+    if (!Array.isArray(receiver) || !receiver.every((value) => typeof value === "string")) {
+      return undefined;
+    }
+    const separator =
+      node.arguments.length === 0
+        ? ","
+        : evaluateStaticValue(node.arguments[0], bindings, filePath, resolving);
+    return typeof separator === "string" ? receiver.join(separator) : undefined;
+  }
+  if (ts.isPropertyAccessExpression(node)) {
+    const value = evaluateStaticValue(node.expression, bindings, filePath, resolving);
+    if (
+      node.name.text === "href" &&
+      value &&
+      typeof value === "object" &&
+      value[STATIC_URL_VALUE]
+    ) {
+      return value.href;
+    }
+    return undefined;
+  }
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "URL" &&
+    node.arguments?.length === 2 &&
+    isImportMetaUrl(node.arguments[1])
+  ) {
+    const specifier = evaluateStaticValue(node.arguments[0], bindings, filePath, resolving);
+    if (typeof specifier !== "string") return undefined;
+    try {
+      return {
+        [STATIC_URL_VALUE]: true,
+        href: new URL(specifier, pathToFileURL(filePath).href).href,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function staticImportSpecifier(node, bindings, filePath) {
+  const value = evaluateStaticValue(node, bindings, filePath);
+  return typeof value === "string" ? value : undefined;
+}
+
 /**
  * Parse a .js file with the TypeScript compiler and extract all import/export
  * specifiers. Returns `{ static: string[], dynamic: string[] }` where:
  *   - `static`  contains specifiers from ImportDeclaration, ExportDeclaration
  *               (including `export * from`), and side-effect-only imports.
- *   - `dynamic` contains string-literal arguments of CallExpression nodes
- *               whose expression is the `import` keyword.
+ *   - `dynamic` contains string-literal or statically computable URL arguments
+ *               of CallExpression nodes whose expression is the `import` keyword.
  *
- * Using the TypeScript AST instead of regexes means:
- *   - Multiline dynamic imports are found correctly.
- *   - Import-looking text inside comments or template strings is ignored.
- *   - Non-literal dynamic import(variable) calls are skipped intentionally.
+ * Using the TypeScript AST instead of regexes means multiline, comment,
+ * template-string, and identifier-bound computed URL cases are handled without
+ * false positives from text that merely resembles an import expression.
  */
 function parseImports(filePath) {
   let src;
@@ -168,7 +331,7 @@ function parseImports(filePath) {
   }
 
   const sf = ts.createSourceFile(filePath, src, ts.ScriptTarget.ESNext, /* setParentNodes */ true);
-
+  const bindings = collectStaticBindings(sf);
   const staticSpecs = new Set();
   const dynamicSpecs = [];
 
@@ -187,14 +350,15 @@ function parseImports(filePath) {
         staticSpecs.add(node.moduleSpecifier.text);
       }
     }
-    // import("string-literal")
-    else if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length > 0 &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      dynamicSpecs.push(node.arguments[0].text);
+    // import("string-literal") or import(staticUrl.href)
+    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const argument = node.arguments[0];
+      if (argument) {
+        const specifier = isStringLiteralLike(argument)
+          ? argument.text
+          : staticImportSpecifier(argument, bindings, filePath);
+        if (specifier !== undefined) dynamicSpecs.push(specifier);
+      }
     }
 
     ts.forEachChild(node, visit);
@@ -413,12 +577,81 @@ function tryReadPiExtensions(extensionsDir) {
   return null;
 }
 
+/**
+ * Read only packages that npm will ship as runtime dependencies. Peer and dev
+ * dependencies are intentionally absent: native lazy graphs cannot rely on
+ * the host's peer installation or on this repository's checkout.
+ */
+function readDeclaredRuntimeDependencies(extensionsDir) {
+  let dir = resolve(extensionsDir);
+  const root = resolve("/");
+  while (true) {
+    const packagePath = join(dir, "package.json");
+    if (existsSync(packagePath)) {
+      try {
+        const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
+        const dependencies = new Set();
+        for (const field of ["dependencies", "optionalDependencies"]) {
+          const value = packageJson?.[field];
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            for (const name of Object.keys(value)) dependencies.add(name);
+          }
+        }
+        for (const field of ["bundledDependencies", "bundleDependencies"]) {
+          const value = packageJson?.[field];
+          if (Array.isArray(value)) {
+            for (const name of value) {
+              if (typeof name === "string") dependencies.add(name);
+            }
+          }
+        }
+        return dependencies;
+      } catch {
+        return new Set();
+      }
+    }
+    const parent = resolve(dir, "..");
+    if (parent === dir || dir === root) break;
+    dir = parent;
+  }
+  return new Set();
+}
+
 // ---------------------------------------------------------------------------
 // Main check
 // ---------------------------------------------------------------------------
 
+function resolveDynamicSpecifier(sourceFile, spec, extensionsDir) {
+  if (spec.startsWith("./") || spec.startsWith("../")) {
+    return resolveRelativeSpecifier(sourceFile, spec);
+  }
+  if (!spec.startsWith("file:")) return null;
+  let candidate;
+  try {
+    candidate = fileURLToPath(spec);
+  } catch {
+    return null;
+  }
+  const absoluteCandidate = resolve(candidate);
+  const relativeCandidate = relative(extensionsDir, absoluteCandidate);
+  if (
+    relativeCandidate !== "" &&
+    (relativeCandidate === ".." ||
+      relativeCandidate.startsWith(`..${sep}`) ||
+      isAbsolute(relativeCandidate))
+  ) {
+    return null;
+  }
+  try {
+    return statSync(absoluteCandidate).isFile() ? absoluteCandidate : null;
+  } catch {
+    return null;
+  }
+}
+
 function runCheck(extensionsDir) {
   const violations = [];
+  const declaredRuntimeDependencies = readDeclaredRuntimeDependencies(extensionsDir);
 
   // Step 1: Discover extension entry files.
   const entryFiles = discoverEntryFiles(extensionsDir);
@@ -470,10 +703,12 @@ function runCheck(extensionsDir) {
     const visitedTargets = visitedDynTargets.get(ownerEntry);
 
     for (const dynSpec of dynSpecs) {
-      // Only check relative specifiers (our invariant is about extension-local lazy boundaries).
-      if (!dynSpec.startsWith("./") && !dynSpec.startsWith("../")) continue;
+      // Check relative imports and statically computed file URLs. Other dynamic
+      // expressions remain intentionally outside this static analysis boundary.
+      if (!dynSpec.startsWith("./") && !dynSpec.startsWith("../") && !dynSpec.startsWith("file:"))
+        continue;
 
-      const lazyTarget = resolveRelativeSpecifier(sourceFile, dynSpec);
+      const lazyTarget = resolveDynamicSpecifier(sourceFile, dynSpec, extensionsDir);
       if (!lazyTarget) {
         // Target file not found — reported as a violation (causes exit 1).
         // Dynamic import targets that cannot be resolved to a real file are
@@ -507,19 +742,24 @@ function runCheck(extensionsDir) {
         }
       }
 
-      // Condition (a): no bare specifiers in the lazy static graph.
+      // Condition (a): native lazy graphs may use only Node builtins, relative
+      // files, or packages declared in the published runtime dependencies.
+      // This rejects peer/dev-only imports even when the host checkout happens
+      // to make those packages resolvable.
       for (const [spec, inFile] of allLazyStaticSpecifiers) {
-        if (isBareSpecifier(spec)) {
+        if (!isAllowedNativeSpecifier(spec, declaredRuntimeDependencies)) {
+          const label = isBareSpecifier(spec) ? "Bare" : "Disallowed";
           violations.push({
-            kind: "bare-specifier",
+            kind: isBareSpecifier(spec) ? "bare-specifier" : "disallowed-specifier",
             sourceFile,
             dynSpec,
             lazyFile: inFile,
             bareSpec: spec,
             message:
-              `Bare specifier in lazy graph: ` +
+              `${label === "Bare" ? "Bare specifier" : "Disallowed specifier"} in lazy graph: ` +
               `import("${dynSpec}") at ${relative(extensionsDir, sourceFile)} ` +
-              `→ ${relative(extensionsDir, inFile)} imports bare specifier "${spec}"`,
+              `→ ${relative(extensionsDir, inFile)} imports "${spec}" ` +
+              `(only Node builtins, relative files, or declared runtime dependencies are allowed)`,
           });
         }
       }

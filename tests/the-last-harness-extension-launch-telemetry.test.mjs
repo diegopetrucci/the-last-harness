@@ -1721,12 +1721,11 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 
 // ── project-vs-user agentOverrides precedence tests ───────────────────────────
 //
-// Cutover boundary note: these tests use the canonical installer-managed files at
-// `<agent-dir>/tlh/agents/subagents/<name>.md`; they do not exercise project custom-agent
-// sources. Canonical roles are loaded through TLH's fixed path, without a `subagents.agentDirs`
-// default. Their effective settings still follow the two-rule precedence: project
-// `agentOverrides[name]`, else user `agentOverrides[name]`, else unmodified. Project custom
-// definitions intentionally do not receive these settings/default overrides.
+// TLH's eight subagents are installed under the fixed `tlh/agents/subagents` path and reach the
+// runtime as canonical USER-scope roles via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts).
+// That gives a two-rule precedence: project `agentOverrides[name]`, else user
+// `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
+// removed from the extension, so only the two-rule custom override precedence above applies.
 
 const { CONFIG_DIR_NAME: PI_CONFIG_DIR_NAME } = await import("@earendil-works/pi-coding-agent");
 

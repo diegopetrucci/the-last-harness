@@ -344,8 +344,6 @@ test("merge only repairs malformed non-installer object containers with --force"
   assert.deepEqual(readJson(fixture.settings).warnings, { anthropicExtraUsage: false });
 });
 
-// `otherAgentDirs` is unrelated user data; this guards the merge contract while the
-// installer-owned `subagents.agentDirs` default remains removed.
 test("merge keeps exact append semantics for unrelated arrays", () => {
   const fixture = tempFixture(
     {

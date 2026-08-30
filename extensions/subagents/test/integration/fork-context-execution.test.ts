@@ -266,21 +266,6 @@ describe("fork context execution wiring", () => {
     return { manager, openedPaths, branchedLeafIds };
   }
 
-  function writeAgent(projectRoot: string, name: string, model: string): void {
-    const filePath = path.join(projectRoot, "agents", `${name}.md`);
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(
-      filePath,
-      `---\nname: ${name}\ndescription: ${name} agent\nmodel: ${model}\n---\n\nUse ${model}.\n`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(projectRoot, "package.json"),
-      JSON.stringify({ "pi-subagents": { agents: ["./agents"] } }),
-      "utf-8",
-    );
-  }
-
   function writeProjectOverride(projectRoot: string, agentName: string, model: string): void {
     const settingsPath = path.join(projectRoot, ".pi", "settings.json");
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -1249,31 +1234,6 @@ describe("fork context execution wiring", () => {
     assert.equal(fs.existsSync(path.join(tempDir, ".pi", "agents", "local-helper.md")), false);
   });
 
-  it("uses request cwd for execution-time agent discovery", async () => {
-    const worktreeDir = path.join(tempDir, "worktree");
-    writeAgent(tempDir, "echo", "openai/gpt-5-main");
-    writeAgent(worktreeDir, "echo", "anthropic/claude-haiku-4-5");
-    const executor = makeExecutorWithDiscoverAgents(discoverAgents);
-    const task = `test ${path.basename(tempDir)}`;
-
-    const result = await executor.execute(
-      "id",
-      { agent: "echo", task, cwd: "worktree" },
-      new AbortController().signal,
-      undefined,
-      makeCtx(makeSessionManagerRecorder().manager),
-    );
-
-    assert.equal(result.isError, undefined);
-    const args = readAllCallArgs().find((callArgs) =>
-      (callArgs.at(-1) ?? "").startsWith(`Task: ${task}\n\n## Acceptance Contract`),
-    );
-    assert.ok(args, "expected a recorded mock pi call for this test task");
-    const modelIndex = args.indexOf("--model");
-    assert.notEqual(modelIndex, -1);
-    assert.equal(args[modelIndex + 1], "anthropic/claude-haiku-4-5");
-  });
-
   it("resolves parallel task cwd values relative to the request cwd", async () => {
     const worktreeDir = path.join(tempDir, "worktree");
     writePackageSkill(path.join(worktreeDir, "packages", "app"), "parallel-step-skill");
@@ -1299,7 +1259,7 @@ describe("fork context execution wiring", () => {
     assert.deepEqual(result.details?.results?.[0]?.skills, ["parallel-step-skill"]);
   });
 
-  it("uses request cwd for root custom-agent management without applying settings overrides", async () => {
+  it("keeps request cwd root custom-agent definitions out of management", async () => {
     const tempHome = createTempDir("pi-subagent-home-");
     const previousHome = process.env.HOME;
     const previousUserProfile = process.env.USERPROFILE;
@@ -1332,10 +1292,13 @@ describe("fork context execution wiring", () => {
         makeCtx(makeSessionManagerRecorder().manager),
       );
 
-      assert.equal(result.isError, false);
-      assert.match(result.content[0]?.text ?? "", /Model: openai\/gpt-5-worktree/);
-      assert.doesNotMatch(result.content[0]?.text ?? "", /Model: openai\/gpt-5-main|gpt-5-other/);
-      assert.equal((result.content[0]?.text ?? "").includes(fs.realpathSync(customPath)), true);
+      assert.equal(result.isError, true);
+      assert.match(result.content[0]?.text ?? "", /not found/i);
+      assert.doesNotMatch(
+        result.content[0]?.text ?? "",
+        /openai\/gpt-5-worktree|gpt-5-main|gpt-5-other/,
+      );
+      assert.equal((result.content[0]?.text ?? "").includes(fs.realpathSync(customPath)), false);
     } finally {
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;

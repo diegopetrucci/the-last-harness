@@ -22,8 +22,7 @@ import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
-import { isCanonicalPackagedMinorAgent, resolveValidatedGitWorktreeRoot, } from "../../../../shared/project-agent-guidance.js";
-import { isProjectCustomAgentBinding, isProjectCustomAgentRuntimeName, validateProjectCustomAgentBinding, } from "../../../../shared/project-custom-agent.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -201,28 +200,6 @@ function validateAsyncExecutionAcceptance(params) {
     errors.push(...validateDispatchAcceptanceInput(params.acceptance, "acceptance"));
     return errors;
 }
-function validateAsyncProjectCustomBinding(agentName, binding, parentCwd, childCwd) {
-    if (!isProjectCustomAgentRuntimeName(agentName))
-        return undefined;
-    if (!isProjectCustomAgentBinding(binding)) {
-        return `Project custom agent '${agentName}' has no valid exact-file binding; refusing async execution.`;
-    }
-    if (binding.runtimeName !== agentName) {
-        return `Project custom agent '${agentName}' exact-file binding names a different runtime target.`;
-    }
-    const parentRoot = resolveValidatedGitWorktreeRoot(parentCwd);
-    const childRoot = resolveValidatedGitWorktreeRoot(childCwd);
-    if (!parentRoot || !childRoot || parentRoot !== childRoot) {
-        return `Project custom agent '${agentName}' resolved to cwd '${childCwd}' outside the effective Git root; cwd overrides must remain in one validated Git worktree.`;
-    }
-    if (binding.worktreeRoot !== childRoot) {
-        return `Project custom agent '${agentName}' exact-file binding root '${binding.worktreeRoot}' does not match effective Git root '${childRoot}'.`;
-    }
-    const bindingCheck = validateProjectCustomAgentBinding(binding, childCwd);
-    return bindingCheck.valid
-        ? undefined
-        : `Project custom agent '${agentName}' exact-file binding is invalid: ${bindingCheck.error}`;
-}
 export function buildAsyncRunnerSteps(id, params) {
     const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir, } = params;
     const outputBaseDir = params.outputBaseDir;
@@ -284,9 +261,6 @@ export function buildAsyncRunnerSteps(id, params) {
         if (resolvedToolBudget.error)
             throw new AsyncStartValidationError(resolvedToolBudget.error);
         const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
-        const customBindingError = validateAsyncProjectCustomBinding(s.agent, a.projectCustomBinding, ctx.cwd, stepCwd);
-        if (customBindingError)
-            throw new AsyncStartValidationError(customBindingError);
         const instructionCwd = behaviorCwd ?? stepCwd;
         const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s)), s.task, originalTask);
         const skillNames = behavior.skills === false ? [] : behavior.skills;
@@ -338,11 +312,12 @@ export function buildAsyncRunnerSteps(id, params) {
             return applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
         })
             .filter((candidate) => candidate !== undefined);
+        const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === s.agent);
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(projectAgent ? { projectAgent } : {}),
             agent: s.agent,
             projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
-            ...(a.projectCustomBinding ? { projectCustomBinding: a.projectCustomBinding } : {}),
             task,
             phase: s.phase,
             label: s.label,
@@ -495,6 +470,7 @@ export function executeAsyncChain(id, params) {
         asyncDir,
         timeoutMs: params.timeoutMs,
         toolBudget: params.toolBudget,
+        projectAgentCaptures: params.projectAgentCaptures,
     });
     if ("error" in built) {
         try {
@@ -535,6 +511,9 @@ export function executeAsyncChain(id, params) {
             return [childIntercomTarget(step.agent, childTargetIndex++)];
         })
         : undefined;
+    const projectAgents = [
+        ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
+    ];
     let spawnResult;
     try {
         spawnResult = spawnRunner({
@@ -565,6 +544,7 @@ export function executeAsyncChain(id, params) {
             workflowGraph,
             tkTicket,
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             nestedSelf: inheritedNestedRoute && nestedAddress
                 ? {
                     parentRunId: nestedAddress.parentRunId,
@@ -616,6 +596,7 @@ export function executeAsyncChain(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -659,6 +640,7 @@ export function executeAsyncChain(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,
@@ -696,9 +678,6 @@ export function executeAsyncSingle(id, params) {
     if (acceptanceErrors.length > 0)
         return formatAsyncStartError("single", acceptanceErrors.join(" "));
     const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
-    const customBindingError = validateAsyncProjectCustomBinding(agent, agentConfig.projectCustomBinding, ctx.cwd, runnerCwd);
-    if (customBindingError)
-        return formatAsyncStartError("single", customBindingError);
     const skillNames = params.skills ?? agentConfig.skills ?? [];
     const availableModels = params.availableModels;
     const thinkingSuffixOptions = {
@@ -823,11 +802,9 @@ export function executeAsyncSingle(id, params) {
             steps: [
                 {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+                    ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
                     agent,
                     projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
-                    ...(agentConfig.projectCustomBinding
-                        ? { projectCustomBinding: agentConfig.projectCustomBinding }
-                        : {}),
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
                     model,
@@ -905,6 +882,7 @@ export function executeAsyncSingle(id, params) {
             controlIntercomTarget,
             childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
             tkTicket,
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
             resultMode: "single",
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -940,6 +918,7 @@ export function executeAsyncSingle(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -975,6 +954,7 @@ export function executeAsyncSingle(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,

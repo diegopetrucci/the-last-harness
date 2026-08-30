@@ -5,6 +5,7 @@ import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
   SUBAGENT_ASYNC_COMPLETE_EVENT,
   type IntercomEventBus,
+  type AsyncStatus,
   type NestedRunSummary,
   type SubagentResultIntercomChild,
   type SubagentState,
@@ -19,6 +20,12 @@ import {
   withLifecycleStatusLock,
 } from "../shared/lifecycle-state.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
+import { readStatus } from "../../shared/utils.ts";
+import {
+  PROJECT_AGENT_TERMINAL_RETENTION_MS,
+  lookupProjectAgentRunReference,
+  releaseProjectAgentRunReference,
+} from "../../agents/project-agent-snapshot.ts";
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -44,6 +51,8 @@ type ResultWatcherTimers = {
 type ResultWatcherDeps = {
   fs?: ResultWatcherFs;
   timers?: ResultWatcherTimers;
+  /** Test seam; production uses the shared project terminal retention window. */
+  projectAgentTerminalRetentionMs?: number;
 };
 
 type ResultFileChild = {
@@ -157,6 +166,53 @@ function resolvePausedArtifactTargetIndex(data: ResultFileData): number | undefi
   return pausedChild ? children.indexOf(pausedChild) : undefined;
 }
 
+function hasUsableProjectSessionFile(sessionFile: unknown, fsApi: ResultWatcherFs): boolean {
+  if (typeof sessionFile !== "string" || sessionFile.trim().length === 0) return false;
+  const resolved = path.resolve(sessionFile);
+  return path.extname(resolved) === ".jsonl" && fsApi.existsSync(resolved);
+}
+
+function hasResumableProjectSibling(
+  data: ResultFileData,
+  fsApi: ResultWatcherFs,
+  includeTerminalProjectSibling = true,
+): boolean {
+  if (typeof data.asyncDir !== "string" || data.asyncDir.length === 0) {
+    // Without a status file we cannot prove that a multi-child artifact has no
+    // resumable sibling. Keep the private generation rather than releasing it
+    // on mutable/incomplete result metadata.
+    return true;
+  }
+  let status: AsyncStatus | null;
+  try {
+    status = readStatus(data.asyncDir);
+  } catch {
+    return true;
+  }
+  if (!status || !status.steps || status.steps.length === 0) return true;
+  return status.steps.some((step) => {
+    const stepStatus = step.status as string;
+    if (
+      stepStatus === "paused" ||
+      stepStatus === "pausing" ||
+      stepStatus === "pending" ||
+      stepStatus === "running" ||
+      stepStatus === "queued"
+    ) {
+      return true;
+    }
+    if (stepStatus === "complete" || stepStatus === "completed" || stepStatus === "failed") {
+      return (
+        includeTerminalProjectSibling &&
+        step.projectAgent !== undefined &&
+        hasUsableProjectSessionFile(step.sessionFile, fsApi)
+      );
+    }
+    if (stepStatus === "continued" || stepStatus === "cancelled") return false;
+    return true;
+  });
+}
+
 function resolvePausedArtifactDecision(data: ResultFileData): PausedArtifactDecision {
   if (data.state !== "paused") return "compat";
   if (
@@ -209,6 +265,47 @@ export function createResultWatcher(
 } {
   const fsApi = deps.fs ?? fs;
   const timers = deps.timers ?? { setTimeout, clearTimeout, setInterval, clearInterval };
+  const projectAgentTerminalRetentionMs =
+    deps.projectAgentTerminalRetentionMs ?? PROJECT_AGENT_TERMINAL_RETENTION_MS;
+  const projectReferenceReleaseTimers = new Map<
+    string,
+    ReturnType<ResultWatcherTimers["setTimeout"]>
+  >();
+  const cancelProjectReferenceRelease = (runId: string): void => {
+    const timer = projectReferenceReleaseTimers.get(runId);
+    if (!timer) return;
+    timers.clearTimeout(timer);
+    projectReferenceReleaseTimers.delete(runId);
+  };
+  const scheduleProjectReferenceRelease = (data: ResultFileData, runId: string): void => {
+    const lookup = lookupProjectAgentRunReference(runId);
+    if (lookup.status !== "found" || lookup.runId !== runId) return;
+    cancelProjectReferenceRelease(runId);
+    const timer = timers.setTimeout(() => {
+      projectReferenceReleaseTimers.delete(runId);
+      // A missing directory is an uninspectable cohort, not proof that all
+      // siblings are terminal. Never release a project reference unguarded.
+      if (!data.asyncDir) return;
+      // Terminal project siblings are retained only through this timer. Active,
+      // paused, and unknown siblings remain protected and are checked again.
+      if (hasResumableProjectSibling(data, fsApi, false)) {
+        scheduleProjectReferenceRelease(data, runId);
+        return;
+      }
+      releaseProjectAgentRunReference(runId);
+    }, projectAgentTerminalRetentionMs);
+    timer.unref?.();
+    projectReferenceReleaseTimers.set(runId, timer);
+  };
+  const retainOrReleaseProjectReference = (data: ResultFileData, runId: string): void => {
+    const lookup = lookupProjectAgentRunReference(runId);
+    if (lookup.status !== "found" || lookup.runId !== runId) return;
+    if (hasResumableProjectSibling(data, fsApi)) {
+      scheduleProjectReferenceRelease(data, runId);
+      return;
+    }
+    releaseProjectAgentRunReference(runId);
+  };
 
   const handleResult = (file: string) => {
     const resultPath = path.join(resultsDir, file);
@@ -243,6 +340,7 @@ export function createResultWatcher(
       const pausedDecision = resolvePausedArtifactDecision(data);
       if (pausedDecision === "retry") return;
       if (pausedDecision === "discard") {
+        retainOrReleaseProjectReference(data, runId);
         fsApi.unlinkSync(resultPath);
         return;
       }
@@ -292,10 +390,12 @@ export function createResultWatcher(
 
       const completionKey = buildCompletionKey(data, `result:${file}`);
       if (markSeenWithTtl(state.completionSeen, completionKey, now, completionTtlMs)) {
+        if (data.state === "cancelled" || data.state === "continued") {
+          retainOrReleaseProjectReference(data, runId);
+        }
         fsApi.unlinkSync(resultPath);
         return;
       }
-
       pi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, {
         ...data,
         runId,
@@ -317,6 +417,15 @@ export function createResultWatcher(
             }
           : {}),
       });
+      // Complete/failed project results remain resumable through the terminal
+      // retention window. Cancelled/continued sources release immediately only
+      // when every sibling is terminal and non-resumable; a terminal project
+      // sibling with a usable session gets the same bounded window.
+      if (data.state === "cancelled" || data.state === "continued") {
+        retainOrReleaseProjectReference(data, runId);
+      } else if (data.state === "complete" || data.state === "failed") {
+        scheduleProjectReferenceRelease(data, runId);
+      }
       fsApi.unlinkSync(resultPath);
     } catch (error) {
       if (isNotFoundError(error)) return;
@@ -418,6 +527,9 @@ export function createResultWatcher(
     }
     state.watcherRestartTimer = null;
     state.resultFileCoalescer.clear();
+    // Keep project-reference timers alive across extension reloads. The
+    // process-private registry intentionally survives reload, and clearing a
+    // fallback result timer here would retain that reference indefinitely.
   };
 
   return { startResultWatcher, primeExistingResults, stopResultWatcher };

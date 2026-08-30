@@ -5,9 +5,8 @@
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
 
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -28,7 +27,6 @@ import {
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
 import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
-import { discoverAgents } from "../../src/agents/agents.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import {
   ASYNC_DIR,
@@ -50,11 +48,6 @@ import {
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
-import {
-  authorizeProjectCustomAgentInput,
-  inventoryProjectCustomAgents,
-  setProjectCustomAgentAuthorization,
-} from "../../../shared/project-custom-agent.ts";
 
 function inferredAcceptanceRejectionOutput(output: string): string {
   return [
@@ -120,154 +113,6 @@ describe("async execution utilities", () => {
 
   it("reports the required async runner as available", () => {
     assert.equal(isAsyncAvailable(), true);
-  });
-
-  it("rejects async custom bindings whose effective cwd crosses Git roots", () => {
-    const repoA = path.join(tempDir, "repo-a");
-    const repoB = path.join(tempDir, "repo-b");
-    fs.mkdirSync(repoA, { recursive: true });
-    fs.mkdirSync(repoB, { recursive: true });
-    execFileSync("git", ["init", "--quiet"], { cwd: repoA });
-    execFileSync("git", ["init", "--quiet"], { cwd: repoB });
-    const agentDir = path.join(tempDir, "agent");
-    const customPath = path.join(repoA, ".tlh", "agents", "custom", "HELPER.md");
-    fs.mkdirSync(path.dirname(customPath), { recursive: true });
-    fs.writeFileSync(
-      customPath,
-      "---\nname: helper\npackage: embedded\ndescription: Helper\n---\n\nHelper.\n",
-      "utf-8",
-    );
-    fs.mkdirSync(agentDir, { recursive: true });
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    new ProjectTrustStore(agentDir).set(repoA, true);
-    const binding = inventoryProjectCustomAgents(repoA, agentDir).files[0]?.binding;
-    assert.ok(binding);
-
-    const result = executeAsyncSingle("custom-root-mismatch", {
-      agent: "embedded.helper",
-      task: "inspect",
-      agentConfig: makeAgent("embedded.helper", {
-        source: "project",
-        filePath: customPath,
-        projectCustomBinding: binding,
-      }),
-      ctx: { pi: { events: { emit() {} } }, cwd: repoA, currentSessionId: "session-1" },
-      cwd: repoB,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /outside the effective Git root|binding root/i);
-  });
-
-  it("accepts an authorized project custom task cwd through an in-root symlink and rejects root changes", async (t) => {
-    const repo = path.join(tempDir, "repo");
-    const taskRoot = path.join(repo, "task");
-    const linkedTask = path.join(repo, "task-link");
-    const outsideRoot = path.join(tempDir, "outside");
-    const differentRepo = path.join(tempDir, "different-repo");
-    const agentDir = path.join(tempDir, "agent");
-    fs.mkdirSync(taskRoot, { recursive: true });
-    fs.mkdirSync(outsideRoot, { recursive: true });
-    fs.mkdirSync(differentRepo, { recursive: true });
-    fs.mkdirSync(agentDir, { recursive: true });
-    execFileSync("git", ["init", "--quiet"], { cwd: repo });
-    execFileSync("git", ["init", "--quiet"], { cwd: differentRepo });
-    try {
-      fs.symlinkSync(taskRoot, linkedTask, process.platform === "win32" ? "junction" : "dir");
-    } catch (error) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error
-          ? (error as { code?: unknown }).code
-          : undefined;
-      if (code === "EACCES" || code === "EINVAL" || code === "ENOTSUP" || code === "EPERM") {
-        t.skip(`directory symlink creation is unavailable on this platform (${code})`);
-        return;
-      }
-      throw error;
-    }
-
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    new ProjectTrustStore(agentDir).set(repo, true);
-    const customPath = path.join(repo, ".tlh", "agents", "custom", "HELPER.md");
-    fs.mkdirSync(path.dirname(customPath), { recursive: true });
-    fs.writeFileSync(
-      customPath,
-      "---\nname: helper\npackage: embedded\ndescription: Helper\ntools: read\nmodel: mock/test-model\n---\nHelper.\n",
-      "utf-8",
-    );
-    const discovered = discoverAgents(repo, "project");
-    const customAgent = discovered.agents.find((agent) => agent.name === "embedded.helper");
-    assert.ok(customAgent?.projectCustomBinding, "expected a trusted project custom binding");
-
-    const linkedParams = {
-      agentScope: "project" as const,
-      tasks: [{ agent: "embedded.helper", task: "Inspect the linked task cwd.", cwd: linkedTask }],
-    };
-    const authorization = authorizeProjectCustomAgentInput(linkedParams, repo, agentDir);
-    assert.equal(authorization.error, undefined);
-    assert.ok(authorization.authorization, "expected primary-gate authorization");
-    assert.equal(authorization.authorization.bindings[0]?.cwd, fs.realpathSync(taskRoot));
-    setProjectCustomAgentAuthorization(
-      "custom-symlink-task",
-      linkedParams,
-      authorization.authorization,
-    );
-
-    mockPi.onCall({ output: "linked task completed" });
-    const executor = makeAsyncExecutor([customAgent]);
-    const linkedResult = await executor.execute(
-      "custom-symlink-task",
-      linkedParams,
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(repo),
-    );
-    assert.equal(linkedResult.isError, undefined);
-    assert.match(linkedResult.content[0]?.text ?? "", /linked task completed/);
-
-    const escapedParams = {
-      agentScope: "project" as const,
-      tasks: [{ agent: "embedded.helper", task: "Escape the root.", cwd: outsideRoot }],
-    };
-    const escapedResult = await executor.execute(
-      "custom-escaped-task",
-      escapedParams,
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(repo),
-    );
-    assert.equal(escapedResult.isError, true);
-    assert.match(
-      escapedResult.content[0]?.text ?? "",
-      /outside the effective Git root|cwd overrides/i,
-    );
-
-    const differentRootParams = {
-      agentScope: "project" as const,
-      tasks: [{ agent: "embedded.helper", task: "Select another root.", cwd: differentRepo }],
-    };
-    const differentRootResult = await executor.execute(
-      "custom-different-root-task",
-      differentRootParams,
-      new AbortController().signal,
-      undefined,
-      makeMinimalCtx(repo),
-    );
-    assert.equal(differentRootResult.isError, true);
-    assert.match(
-      differentRootResult.content[0]?.text ?? "",
-      /outside the effective Git root|cwd overrides/i,
-    );
   });
 
   it("spawns the async runner with node when process.execPath is not node", async () => {
@@ -863,7 +708,7 @@ describe("async execution utilities", () => {
       asyncId,
       "progress.md",
     );
-    assert.ok(taskArg.includes(`[Read from: ${path.join(fs.realpathSync(tempDir), "input.md")}]`));
+    assert.ok(taskArg.includes(`[Read from: ${path.join(tempDir, "input.md")}]`));
     assert.ok(taskArg.includes(`Update progress at: ${progressPath}`));
     assert.ok(taskArg.includes(`Write your findings to exactly this path: ${outputPath}`));
     assert.equal(fs.existsSync(progressPath), true);

@@ -112,22 +112,22 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
   assert.equal(batched.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved management calls and keeps opaque resume normalization", () => {
+test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
   const list = { action: "list" };
   assertAllowed(list);
-  assert.equal(list.agentScope, "project");
+  assert.equal(list.agentScope, "user");
 
   const get = { action: "get", agentScope: "" };
   assertAllowed(get);
-  assert.equal(get.agentScope, "project");
+  assert.equal(get.agentScope, "user");
 
   const listBoth = { action: "list", agentScope: "both" };
   assertAllowed(listBoth);
-  assert.equal(listBoth.agentScope, "project");
+  assert.equal(listBoth.agentScope, "user");
 
   const getBoth = { action: "get", agentScope: "both" };
   assertAllowed(getBoth);
-  assert.equal(getBoth.agentScope, "project");
+  assert.equal(getBoth.agentScope, "user");
 
   const resume = {
     action: "resume",
@@ -176,7 +176,10 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
     validateSubagentToolInput({ agent: "oracle", context: "resume" }),
     /may not use context: "resume"/,
   );
-  assert.equal(validateSubagentToolInput({ action: "list", agentScope: "project" }), undefined);
+  assert.match(
+    validateSubagentToolInput({ action: "list", agentScope: "project" }),
+    /may not use agentScope: "project"/,
+  );
   assert.match(
     validateSubagentToolInput({ action: "list", agentScope: "system" }),
     /may not use agentScope: "system"/,
@@ -185,9 +188,10 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
     validateSubagentToolInput({ action: "get", agentScope: "invalid" }),
     /may not use agentScope: "invalid"/,
   );
-  const projectResume = { action: "resume", agentScope: "project" };
-  assert.equal(validateSubagentToolInput(projectResume), undefined);
-  assert.equal(projectResume.agentScope, "project");
+  assert.match(
+    validateSubagentToolInput({ action: "resume", agentScope: "project" }),
+    /resume calls may not use agentScope: "project"/,
+  );
   assert.match(
     validateSubagentToolInput({ action: "resume", agentScope: "system" }),
     /resume calls may not use agentScope: "system"/,
@@ -330,6 +334,21 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
     ],
   };
   assertAllowed(mixed, opts);
+  assert.equal(mixed.agentScope, "project");
+  assert.equal(mixed.context, "fresh");
+
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "user" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", context: "fork" }, opts),
+    /may not use context: "fork"/,
+  );
 });
 
 test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed embedded names", () => {
@@ -388,11 +407,11 @@ test("validateSubagentToolInput: allowEmbeddedTargets does not affect management
   // list/get/resume/status/interrupt/doctor behave identically regardless of flag
   const list = { action: "list" };
   assertAllowed(list, opts);
-  assert.equal(list.agentScope, "project");
+  assert.equal(list.agentScope, "user");
 
   const get = { action: "get", agentScope: "" };
   assertAllowed(get, opts);
-  assert.equal(get.agentScope, "project");
+  assert.equal(get.agentScope, "user");
 
   for (const action of ["status", "interrupt", "doctor"]) {
     assertAllowed({ action }, opts);

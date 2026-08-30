@@ -143,7 +143,6 @@ function rushPrimary() {
     tlhModelDefaultsSource: "frontmatter",
     preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
     preferCurrentOpenaiModel: true,
-    lockThinking: true,
     tools: [],
     systemPrompt: "rush",
     filePath: "agents/primary/rush.md",
@@ -169,7 +168,6 @@ function productPrimary() {
     ],
     tlhModelDefaultsSource: "frontmatter",
     preferredModel: { provider: "anthropic", id: "claude-opus-5" },
-    lockThinking: true,
     tools: [],
     systemPrompt: "product",
     filePath: "agents/primary/product.md",
@@ -195,7 +193,6 @@ function bugHunterPrimary() {
     ],
     tlhModelDefaultsSource: "frontmatter",
     preferredModel: { provider: "anthropic", id: "claude-opus-5" },
-    lockThinking: true,
     tools: [],
     systemPrompt: "bug-hunter",
     filePath: "agents/primary/bug-hunter.md",
@@ -239,109 +236,36 @@ function reasoningModel(provider = "anthropic") {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Locked primaries — rush, product, bug-hunter
+// 1. Overrideable primaries — rush, product, bug-hunter
 // ---------------------------------------------------------------------------
 
-test("getArgumentCompletions returns empty list for locked primary: rush", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary: product", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(productPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary: bug-hunter", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(bugHunterPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary regardless of prefix", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const command = pi.commands.get("effort");
-  assert.deepEqual(command.getArgumentCompletions("m"), []);
-  assert.deepEqual(command.getArgumentCompletions("hi"), []);
-});
-
-test("handler errors with exact message for rush on anthropic (thinking: low)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "low" for the rush primary agent.',
-    type: "error",
+for (const [name, createPrimary] of [
+  ["rush", rushPrimary],
+  ["product", productPrimary],
+  ["bug-hunter", bugHunterPrimary],
+]) {
+  test(`${name} exposes every supported thinking level`, () => {
+    const pi = createPiHarness();
+    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
+    const completions = pi.commands.get("effort").getArgumentCompletions("");
+    assert.deepEqual(
+      completions.map((completion) => completion.value),
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    );
   });
-});
 
-test("handler errors with 'medium' for rush on OpenAI", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "openai" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "medium" for the rush primary agent.',
-    type: "error",
+  test(`${name} accepts a supported thinking selection without a primary floor`, async () => {
+    const pi = createPiHarness();
+    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
+    const { notifications, ctx } = createCtx({ model: reasoningModel() });
+    await pi.commands.get("effort").handler("off", ctx);
+    assert.equal(pi.thinkingLevel, "off");
+    assert.deepEqual(notifications.at(-1), {
+      message: "Thinking level set to off.",
+      type: "info",
+    });
   });
-});
-
-test("handler errors with 'medium' for rush on openai-codex provider", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "openai-codex" });
-  await pi.commands.get("effort").handler("high", ctx);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "medium" for the rush primary agent.',
-    type: "error",
-  });
-});
-
-test("handler errors with exact message for product (thinking: high)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(productPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "high" for the product primary agent.',
-    type: "error",
-  });
-});
-
-test("handler errors with exact message for bug-hunter (thinking: high)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(bugHunterPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("off", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "high" for the bug-hunter primary agent.',
-    type: "error",
-  });
-});
-
-test("locked handler also fires with no args (handler called without a level)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("", ctx);
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0].type, "error");
-  assert.match(
-    notifications[0].message,
-    /Thinking is locked at "low" for the rush primary agent\./,
-  );
-});
+}
 
 // ---------------------------------------------------------------------------
 // 2. minThinking floor — architect (minThinking: medium)

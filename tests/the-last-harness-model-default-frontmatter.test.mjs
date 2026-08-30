@@ -198,6 +198,12 @@ test("loaded primaries preserve preferred selection relationships", () => {
   const primaryAgents = [...loadPrimaryAgents().values()];
   assert.ok(primaryAgents.length > 0, "production loader must return primary agents");
 
+  for (const name of ["architect", "rush", "product", "bug-hunter"]) {
+    const primary = primaryAgents.find((agent) => agent.name === name);
+    assert.ok(primary, `production loader must return ${name}`);
+    assert.notEqual(primary.lockThinking, true, `${name} must remain unlocked`);
+  }
+
   let currentOpenaiOptInCount = 0;
   for (const agent of primaryAgents) {
     const declaredModels = loadedModelEntries(agent);

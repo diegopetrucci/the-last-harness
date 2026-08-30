@@ -92,7 +92,7 @@ describe("Path resolution for skills and removed generic agent sources", () => {
     assert.strictEqual(resolved?.path, path.join(userSkillsDir, "test-skill-2.md"));
   });
 
-  test("negative hard-cutover: ignore generic project agent trees and use the trusted Git-root custom path", () => {
+  test("negative hard-cutover: ignore generic project and project-custom agent trees", () => {
     const legacyDir = path.join(cwdDir, ".agents");
     const agentsDir = path.join(cwdDir, ".pi", "agents");
     fs.mkdirSync(path.join(cwdDir, ".agents", "skills"), { recursive: true });
@@ -120,8 +120,7 @@ describe("Path resolution for skills and removed generic agent sources", () => {
 
     const result = discoverAgents(cwdDir, "project");
     const custom = result.agents.find((a) => a.name === "embedded.test-agent-1");
-    assert.ok(custom);
-    assert.strictEqual(custom?.filePath, fs.realpathSync(customPath));
+    assert.equal(custom, undefined);
     assert.equal(
       result.agents.some((a) => a.name === "test-agent-legacy"),
       false,

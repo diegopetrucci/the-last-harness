@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -84,13 +83,13 @@ test("packed TLH generated JavaScript resolves from profile settings and reloads
   });
   assert.equal(extractResult.status, 0, extractResult.stderr || extractResult.stdout);
   const packageRoot = realpathSync(join(extractDir, "package"));
-  const smokeAgentsDir = join(packageRoot, "package-smoke-agents");
-  mkdirSync(smokeAgentsDir, { recursive: true });
+  const canonicalSubagentsDir = join(agentDir, "tlh", "agents", "subagents");
+  mkdirSync(canonicalSubagentsDir, { recursive: true });
   writeFileSync(
-    join(smokeAgentsDir, "worker.md"),
+    join(canonicalSubagentsDir, "developer.md"),
     `---
-name: worker
-description: deterministic packed package smoke worker
+name: developer
+description: deterministic packed package smoke developer
 tools: read
 systemPromptMode: replace
 inheritProjectContext: false
@@ -101,10 +100,6 @@ acceptanceRole: read-only
 Return the deterministic faux child marker exactly.
 `,
   );
-  const packedManifestPath = join(packageRoot, "package.json");
-  const packedManifest = JSON.parse(readFileSync(packedManifestPath, "utf8"));
-  packedManifest["pi-subagents"] = { agents: ["./package-smoke-agents"] };
-  writeFileSync(packedManifestPath, `${JSON.stringify(packedManifest, null, 2)}\n`);
   writeFileSync(
     join(agentDir, "settings.json"),
     `${JSON.stringify(

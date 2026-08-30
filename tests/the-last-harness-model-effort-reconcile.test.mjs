@@ -95,9 +95,58 @@ const rushAgent = {
     { provider: "openrouter", effort: "low" },
   ],
   preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
+  preferCurrentOpenaiModel: true,
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/rush.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const productAgent = {
+  name: "product",
+  description: "Product primary agent",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/product.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const bugHunterAgent = {
+  name: "bug-hunter",
+  description: "Bug-hunter primary agent",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/bug-hunter.md",
 };
 
 /** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
@@ -174,6 +223,8 @@ const rushOpenaiAgent = {
 const primaryAgents = new Map([
   ["architect", architectAgent],
   ["rush", rushAgent],
+  ["product", productAgent],
+  ["bug-hunter", bugHunterAgent],
   ["rush-openai", rushOpenaiAgent],
 ]);
 
@@ -262,6 +313,55 @@ test("primary override drift — empty or invalid override values are skipped", 
   const result = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
   assert.equal(result.length, 1);
   assert.equal(result[0].name, "rush");
+});
+
+test("unlocked primary overrides for Rush, Product, and Bug-hunter are surfaced after packaged drift", () => {
+  const settings = {
+    tlh: {
+      primaryAgent: {
+        modelOverrides: {
+          rush: "anthropic/claude-opus-5",
+          product: "anthropic/claude-sonnet-4-6",
+          "bug-hunter": "anthropic/claude-sonnet-4-6",
+        },
+      },
+    },
+  };
+  const acknowledgedSnapshot = {
+    rush: { byProvider: { anthropic: { model: "anthropic/old-rush", thinking: "medium" } } },
+    product: {
+      byProvider: { anthropic: { model: "anthropic/old-product", thinking: "low" } },
+    },
+    "bug-hunter": {
+      byProvider: { anthropic: { model: "anthropic/old-bug-hunter", thinking: "low" } },
+    },
+  };
+
+  const result = computeModelEffortDrift(
+    primaryAgents,
+    subagentMetadata,
+    settings,
+    "anthropic",
+    acknowledgedSnapshot,
+  );
+  const byName = new Map(result.map((entry) => [entry.name, entry]));
+  assert.deepEqual([...byName.keys()], ["rush", "product", "bug-hunter"]);
+  assert.deepEqual(byName.get("rush")?.packaged, {
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+  });
+  assert.deepEqual(byName.get("product")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  assert.deepEqual(byName.get("bug-hunter")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  for (const name of ["rush", "product", "bug-hunter"]) {
+    assert.equal(byName.get(name)?.role, "primary");
+    assert.equal(byName.get(name)?.packagedDefaultsChanged, true);
+  }
 });
 
 // --- Subagent overrides ---

@@ -105,18 +105,16 @@ async function prepareSupportFilesFromRemote(config, io = {}) {
             warnMissingOptionalSupportFile(config, file.variable, file.relativePath, io);
         }
     }
-    {
-        const targetDir = join(config.tmpDir, "agents", "subagents");
-        mkdirSync(targetDir, { recursive: true });
-        for (const prompt of config.subagentPrompts) {
-            const targetPath = join(targetDir, prompt);
-            try {
-                await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
-            }
-            catch {
-                callWarn(`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`, io);
-                rmSync(targetPath, { force: true });
-            }
+    const targetDir = join(config.tmpDir, "agents", "subagents");
+    mkdirSync(targetDir, { recursive: true });
+    for (const prompt of config.subagentPrompts) {
+        const targetPath = join(targetDir, prompt);
+        try {
+            await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
+        }
+        catch {
+            callWarn(`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`, io);
+            rmSync(targetPath, { force: true });
         }
     }
 }

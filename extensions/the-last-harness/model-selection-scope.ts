@@ -17,6 +17,7 @@ export const MODEL_SELECTION_SCOPE_OPTIONS = [
 ] as const;
 
 type TlhModelSelectionScope = "session-only" | "all-sessions" | "cancel";
+type TlhThinkingChangeOrigin = "internal" | "interactive";
 type TlhModelSelection = Pick<NonNullable<ExtensionContext["model"]>, "provider" | "id">;
 type DefaultThinkingLevel = Parameters<typeof SettingsManager.prototype.setDefaultThinkingLevel>[0];
 
@@ -54,6 +55,7 @@ type TlhModelSelectionPersistenceState = {
   standaloneThinkingWrites: ThinkingWrite[];
   interactiveThinkingSelection: TlhThinkingLevelSelectionClaim | undefined;
   suppressionDepth: number;
+  thinkingSuppressionDepth: number;
 };
 
 type ModelSelectorRuntimePrototype = {
@@ -74,6 +76,7 @@ function isModelSelectorRuntimePrototype(value: unknown): value is ModelSelector
 
 type TlhModelSelectionPersistencePatch = {
   nativeSelectorContext: AsyncLocalStorage<boolean>;
+  thinkingChangeContext: AsyncLocalStorage<TlhThinkingChangeOrigin>;
   originals: {
     handleModelSelect: ModelSelectorRuntimePrototype["handleSelect"];
     setDefaultModelAndProvider: typeof SettingsManager.prototype.setDefaultModelAndProvider;
@@ -388,9 +391,11 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     standaloneThinkingWrites: [],
     interactiveThinkingSelection: undefined,
     suppressionDepth: 0,
+    thinkingSuppressionDepth: 0,
   };
   const patch: TlhModelSelectionPersistencePatch = {
     nativeSelectorContext: new AsyncLocalStorage<boolean>(),
+    thinkingChangeContext: new AsyncLocalStorage<TlhThinkingChangeOrigin>(),
     originals,
     state,
   };
@@ -425,7 +430,7 @@ export function installTlhModelSelectionPersistenceOverride(): boolean {
     originals.setDefaultProvider.call(this, provider);
   };
   prototype.setDefaultThinkingLevel = function (level: DefaultThinkingLevel): void {
-    if (state.suppressionDepth > 0) {
+    if (state.suppressionDepth > 0 || state.thinkingSuppressionDepth > 0) {
       return;
     }
     const interactiveThinkingSelection = state.interactiveThinkingSelection;
@@ -474,6 +479,37 @@ export function setTlhModelSelectionActiveModelResolver(
   if (patch) {
     patch.state.activeModelResolver = resolver;
   }
+}
+
+/** Run a TLH-owned or interactive thinking setter with source context preserved for async events. */
+export function runTlhThinkingChangeContext<T>(
+  origin: TlhThinkingChangeOrigin,
+  callback: () => T,
+): T {
+  const patch = getInstalledPatch();
+  return patch ? patch.thinkingChangeContext.run(origin, callback) : callback();
+}
+
+/** Return the source of the current thinking setter/event dispatch, when known. */
+export function getTlhThinkingChangeContext(): TlhThinkingChangeOrigin | undefined {
+  return getInstalledPatch()?.thinkingChangeContext.getStore();
+}
+
+/** Temporarily suppress only upstream thinking-default writes from TLH-owned changes. */
+export function beginTlhThinkingDefaultSuppression(): () => void {
+  const patch = getInstalledPatch();
+  if (!patch) {
+    return () => {};
+  }
+  patch.state.thinkingSuppressionDepth += 1;
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    patch.state.thinkingSuppressionDepth = Math.max(0, patch.state.thinkingSuppressionDepth - 1);
+  };
 }
 
 /** Keep no-op native re-selections from persisting the active session-only model. */

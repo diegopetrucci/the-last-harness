@@ -27,7 +27,7 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("keeps saved chain paths stable while using only the trusted root custom agent", () => {
+  it("keeps saved chain paths stable while ignoring generic agent sources", () => {
     execFileSync("git", ["init", "--quiet"], { cwd: tempDir });
     new ProjectTrustStore(path.join(tempDir, "agent-home")).set(tempDir, true);
     writeFile(
@@ -68,7 +68,10 @@ describe("discoverAgentsAll saved-chain exclusion", () => {
       discovered.project.some((agent) => agent.name === "project-agent"),
       false,
     );
-    assert.ok(discovered.project.some((agent) => agent.name === "embedded.project-agent"));
+    assert.equal(
+      discovered.project.some((agent) => agent.name === "embedded.project-agent"),
+      false,
+    );
     assert.deepEqual(discovered.chains, []);
     assert.deepEqual(discovered.chainDiagnostics, []);
     assert.equal(discovered.userChainDir, path.join(tempDir, "agent-home", "chains"));

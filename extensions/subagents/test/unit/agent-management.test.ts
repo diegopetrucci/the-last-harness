@@ -28,6 +28,16 @@ function writeCustom(filename: string, name: string, extra = ""): void {
   );
 }
 
+function writeCanonicalRole(name: string): void {
+  const filePath = path.join(tempDir, "agent-home", "tlh", "agents", "subagents", `${name}.md`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    `---\nname: ${name}\ndescription: Canonical ${name}\n---\n\nCanonical role.\n`,
+    "utf-8",
+  );
+}
+
 function readText(result: { content: Array<{ type: string; text?: string }> }): string {
   const first = result.content[0];
   assert.ok(first);
@@ -93,28 +103,36 @@ describe("agent management config parsing", () => {
     assert.deepEqual(discovered.builtin, [], "builtin agents must be empty after removal");
   });
 
-  it("formats omitted tools differently from explicit empty and named root custom policies", () => {
+  it("shows canonical roles for project scope without exposing project custom agents", () => {
+    writeCanonicalRole("developer");
+    trustProject();
+    writeCustom("HELPER.md", "helper");
+
+    const result = handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir });
+    assert.equal(result.isError, false);
+    const text = readText(result);
+    assert.match(text, /- developer \(user\): Canonical developer/);
+    assert.doesNotMatch(text, /embedded\.helper|HELPER\.md/);
+  });
+
+  it("does not expose project-custom definitions through management get", () => {
     trustProject();
     writeCustom("OMITTED.md", "omitted");
     writeCustom("EMPTY.md", "empty", "tools:\n");
     writeCustom("NAMED.md", "named", "tools: read, bash\n");
 
-    const getAgent = (agent: string): string => {
+    for (const agent of ["omitted", "empty", "named"]) {
       const result = handleManagementAction(
         "get",
         { agent: `embedded.${agent}` },
         { cwd: tempDir },
       );
-      assert.equal(result.isError, false);
-      return readText(result);
-    };
-
-    assert.doesNotMatch(getAgent("omitted"), /^Tools:/m);
-    assert.match(getAgent("empty"), /^Tools: \(none\)$/m);
-    assert.match(getAgent("named"), /^Tools: read, bash$/m);
+      assert.equal(result.isError, true);
+      assert.match(readText(result), /not found/i);
+    }
   });
 
-  it("lists malformed root custom warnings without hiding valid agents", () => {
+  it("does not inspect malformed root custom definitions", () => {
     trustProject();
     writeCustom("BROKEN.md", "broken", "acceptanceRole: observer\n");
     writeCustom("VALID.md", "valid");
@@ -122,10 +140,7 @@ describe("agent management config parsing", () => {
     const listed = handleManagementAction("list", {}, { cwd: tempDir });
     assert.equal(listed.isError, false);
     const text = readText(listed);
-    assert.match(text, /- embedded\.valid \(project\): valid/);
-    assert.match(text, /Agent load warnings:/);
-    assert.match(text, /BROKEN\.md/);
-    assert.match(text, /acceptanceRole/);
+    assert.equal(text, "Executable agents:\n- (none)");
   });
 
   it("keeps root custom warnings aligned with user and project list scopes", () => {
@@ -146,7 +161,7 @@ describe("agent management config parsing", () => {
     const projectText = readText(
       handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir }),
     );
-    assert.match(projectText, /PROJECT-BROKEN\.md/);
-    assert.doesNotMatch(projectText, /user-broken\.md/);
+    assert.doesNotMatch(projectText, /PROJECT-BROKEN\.md|user-broken\.md/);
+    assert.equal(projectText, "Executable agents:\n- (none)");
   });
 });

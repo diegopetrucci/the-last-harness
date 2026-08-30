@@ -68,7 +68,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-Stable, always-available trusted project custom subagents are available to the architect (and `disabled` mode) when an exact, persisted-trust-approved file at `<git-worktree-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md` authorizes them. TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides; those definitions do not appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths; see [docs/custom-subagents.md](docs/custom-subagents.md).
+Stable, always-available trusted project custom subagents are available to the architect (and `disabled` mode) when an exact, persisted-trust-approved file at `<git-worktree-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md` authorizes them. TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides (except an active-profile `disabled: true` deny-only tombstone); those definitions do not appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
 All bundled subagents:
 
@@ -100,7 +100,7 @@ Repo settings:
 - `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
 - `.tlh/agents/custom/<UPPERCASE-SLUG>.md` — direct, Git-root-only project custom-agent definitions; see [Project custom subagents](docs/custom-subagents.md) for the exact contract and persisted-trust requirement.
 
-After adding built-in append files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so those resources are picked up. Project custom-agent authorization is checked on each new delegation attempt and does not require `/reload`.
+After adding built-in append files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so those resources are picked up. Project custom-agent changes become active in a new snapshot after `/reload` or a new session.
 
 #### Per-agent project guidance
 

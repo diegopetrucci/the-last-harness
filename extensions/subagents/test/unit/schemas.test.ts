@@ -82,10 +82,21 @@ describe("SubagentParams schema", () => {
     assert.equal(taskItemsSchema?.additionalProperties, false, "tasks[] items must be fail-closed");
     assert.deepEqual(
       Object.keys(taskSchema ?? {}).sort(),
-      ["agent", "task", "count", "output", "outputMode", "reads", "progress", "model"].sort(),
+      [
+        "agent",
+        "task",
+        "cwd",
+        "count",
+        "output",
+        "outputMode",
+        "reads",
+        "progress",
+        "model",
+      ].sort(),
       "tasks[] allowlist mismatch",
     );
-    assert.equal(taskSchema?.cwd, undefined, "tasks[] must not expose cwd");
+    const taskCwdSchema = isSchemaObject(taskSchema?.cwd) ? taskSchema.cwd : undefined;
+    assert.equal(taskCwdSchema?.type, "string");
     const outputSchema = isSchemaObject(taskSchema?.output) ? taskSchema.output : undefined;
     assert.equal(outputSchema?.type, undefined);
     assert.equal(hasAnyOfType(outputSchema, "string"), true);
@@ -322,7 +333,7 @@ describe("SubagentParams schema", () => {
     const validator = CompileSchema(SubagentParams);
     const validValues = [
       { agent: "reviewer", task: "check this" },
-      { tasks: [{ agent: "reviewer", task: "check this", reads: false }] },
+      { tasks: [{ agent: "reviewer", task: "check this", cwd: "packages/app", reads: false }] },
       {
         tasks: [
           {
@@ -359,7 +370,7 @@ describe("SubagentParams schema", () => {
       { output: 123 },
       { timeoutMs: 0 },
       { tasks: [{ agent: "reviewer", task: "check this", reads: "input.md" }] },
-      { tasks: [{ agent: "reviewer", task: "check this", cwd: "/tmp" }] },
+      { tasks: [{ agent: "reviewer", task: "check this", arbitrary: "/tmp" }] },
       { tasks: [{ agent: "reviewer", task: "check this", arbitrary: true }] },
       {
         tasks: [
@@ -479,7 +490,6 @@ describe("SubagentParams schema", () => {
       "__unknown__",
     ];
     const removedNestedTaskKeys = [
-      "cwd",
       "clarify",
       "share",
       "chain",

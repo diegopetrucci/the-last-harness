@@ -1,15 +1,14 @@
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 import { mergeAgentsForScope } from "./agent-selection.js";
+import { mergeProjectAgentSnapshot, projectAgentSnapshotDiscoveryMetadata, ProjectAgentSnapshotCapabilityError, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
-import { inventoryProjectCustomAgents, } from "../../../shared/project-custom-agent.js";
 import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
@@ -58,284 +57,6 @@ class AgentDefinitionValidationError extends Error {
 }
 function getUserChainDir() {
     return path.join(getAgentDir(), "chains");
-}
-let cachedGlobalNpmRoot = null;
-function isJsonValue(value) {
-    if (value === null)
-        return true;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-        return true;
-    if (Array.isArray(value))
-        return value.every(isJsonValue);
-    if (typeof value !== "object")
-        return false;
-    return Object.values(value).every(isJsonValue);
-}
-function readJsonFileBestEffort(filePath) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-        return isJsonValue(parsed) ? parsed : null;
-    }
-    catch {
-        return null;
-    }
-}
-function readOptionalJsonFile(filePath) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-        return isJsonValue(parsed) ? parsed : null;
-    }
-    catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
-            return null;
-        throw error;
-    }
-}
-function isSafePackagePath(value) {
-    return (value.length > 0 &&
-        !path.isAbsolute(value) &&
-        value.split(/[\\/]/).every((part) => part.length > 0 && part !== "." && part !== ".."));
-}
-function parseNpmPackageName(source) {
-    const spec = source.slice(4).trim();
-    if (!spec)
-        return undefined;
-    const match = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@(.+))?$/);
-    const packageName = match?.[1] ?? spec;
-    return isSafePackagePath(packageName) ? packageName : undefined;
-}
-function stripGitRef(repoPath) {
-    const atIndex = repoPath.indexOf("@");
-    const hashIndex = repoPath.indexOf("#");
-    const refIndex = [atIndex, hashIndex].filter((index) => index >= 0).sort((a, b) => a - b)[0];
-    return refIndex === undefined ? repoPath : repoPath.slice(0, refIndex);
-}
-function parseGitPackagePath(source) {
-    const spec = source.slice(4).trim();
-    if (!spec)
-        return undefined;
-    let host;
-    let repoPath;
-    const scpLike = spec.match(/^git@([^:]+):(.+)$/);
-    if (scpLike) {
-        host = scpLike[1] ?? "";
-        repoPath = scpLike[2] ?? "";
-    }
-    else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(spec)) {
-        try {
-            const url = new URL(spec);
-            host = url.hostname;
-            repoPath = url.pathname.replace(/^\/+/, "");
-        }
-        catch {
-            return undefined;
-        }
-    }
-    else {
-        const slashIndex = spec.indexOf("/");
-        if (slashIndex < 0)
-            return undefined;
-        host = spec.slice(0, slashIndex);
-        repoPath = spec.slice(slashIndex + 1);
-    }
-    const normalizedPath = stripGitRef(repoPath)
-        .replace(/\.git$/, "")
-        .replace(/^\/+/, "");
-    if (!host ||
-        !isSafePackagePath(host) ||
-        !isSafePackagePath(normalizedPath) ||
-        normalizedPath.split(/[\\/]/).length < 2) {
-        return undefined;
-    }
-    return { host, repoPath: normalizedPath };
-}
-function resolveSettingsPackageRoot(source, baseDir) {
-    const trimmed = source.trim();
-    if (!trimmed)
-        return undefined;
-    if (trimmed.startsWith("git:")) {
-        const parsed = parseGitPackagePath(trimmed);
-        return parsed ? path.join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
-    }
-    if (trimmed.startsWith("npm:")) {
-        const packageName = parseNpmPackageName(trimmed);
-        return packageName ? path.join(baseDir, "npm", "node_modules", packageName) : undefined;
-    }
-    const normalized = trimmed.startsWith("file:") ? trimmed.slice(5) : trimmed;
-    if (normalized === "~")
-        return os.homedir();
-    if (normalized.startsWith("~/"))
-        return path.join(os.homedir(), normalized.slice(2));
-    if (path.isAbsolute(normalized))
-        return normalized;
-    if (normalized === "." ||
-        normalized === ".." ||
-        normalized.startsWith("./") ||
-        normalized.startsWith("../")) {
-        return path.resolve(baseDir, normalized);
-    }
-    return undefined;
-}
-function getGlobalNpmRoot() {
-    if (cachedGlobalNpmRoot !== null)
-        return cachedGlobalNpmRoot;
-    try {
-        cachedGlobalNpmRoot = fs.realpathSync(execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim());
-        return cachedGlobalNpmRoot;
-    }
-    catch {
-        cachedGlobalNpmRoot = "";
-        return null;
-    }
-}
-function stringArray(value) {
-    if (!Array.isArray(value))
-        return [];
-    return value.filter((entry) => typeof entry === "string" && entry.trim().length > 0);
-}
-function getPackageSubagentConfigRoots(packageRoot) {
-    const packageJsonPath = path.join(packageRoot, "package.json");
-    const pkg = readJsonFileBestEffort(packageJsonPath);
-    if (!pkg || typeof pkg !== "object" || Array.isArray(pkg))
-        return [];
-    const roots = [];
-    const piSubagents = pkg["pi-subagents"];
-    if (piSubagents && typeof piSubagents === "object" && !Array.isArray(piSubagents)) {
-        roots.push(piSubagents);
-    }
-    const pi = pkg.pi;
-    if (pi && typeof pi === "object" && !Array.isArray(pi)) {
-        const subagents = pi.subagents;
-        if (subagents && typeof subagents === "object" && !Array.isArray(subagents)) {
-            roots.push(subagents);
-        }
-    }
-    return roots;
-}
-function hasPackageSubagentConfig(packageRoot) {
-    return getPackageSubagentConfigRoots(packageRoot).some((root) => stringArray(root.agents).length > 0);
-}
-function extractSubagentPathsFromPackageRoot(packageRoot) {
-    const roots = getPackageSubagentConfigRoots(packageRoot);
-    const agents = [];
-    for (const root of roots) {
-        for (const entry of stringArray(root.agents))
-            agents.push(path.resolve(packageRoot, entry));
-    }
-    return { agents };
-}
-function collectPackageRootsFromNodeModules(nodeModulesDir) {
-    const roots = [];
-    if (!fs.existsSync(nodeModulesDir))
-        return roots;
-    let entries;
-    try {
-        entries = fs.readdirSync(nodeModulesDir, { withFileTypes: true });
-    }
-    catch {
-        return roots;
-    }
-    for (const entry of entries) {
-        if (entry.name.startsWith("."))
-            continue;
-        if (!entry.isDirectory() && !entry.isSymbolicLink())
-            continue;
-        if (entry.name.startsWith("@")) {
-            const scopeDir = path.join(nodeModulesDir, entry.name);
-            let scopeEntries;
-            try {
-                scopeEntries = fs.readdirSync(scopeDir, { withFileTypes: true });
-            }
-            catch {
-                continue;
-            }
-            for (const scopeEntry of scopeEntries) {
-                if (scopeEntry.name.startsWith("."))
-                    continue;
-                if (!scopeEntry.isDirectory() && !scopeEntry.isSymbolicLink())
-                    continue;
-                roots.push(path.join(scopeDir, scopeEntry.name));
-            }
-            continue;
-        }
-        roots.push(path.join(nodeModulesDir, entry.name));
-    }
-    return roots;
-}
-function collectSettingsPackageRoots(settingsFile, baseDir) {
-    const settings = readOptionalJsonFile(settingsFile);
-    if (!settings || typeof settings !== "object" || Array.isArray(settings))
-        return [];
-    const packages = settings.packages;
-    if (!Array.isArray(packages))
-        return [];
-    const roots = [];
-    for (const entry of packages) {
-        const packageSource = typeof entry === "string"
-            ? entry
-            : typeof entry === "object" &&
-                entry !== null &&
-                typeof entry.source === "string"
-                ? entry.source
-                : undefined;
-        if (!packageSource)
-            continue;
-        const packageRoot = resolveSettingsPackageRoot(packageSource, baseDir);
-        if (packageRoot)
-            roots.push(packageRoot);
-    }
-    return roots;
-}
-function findNearestPackageSubagentRoot(cwd) {
-    let currentDir = cwd;
-    while (true) {
-        if (hasPackageSubagentConfig(currentDir))
-            return currentDir;
-        const parentDir = path.dirname(currentDir);
-        if (parentDir === currentDir)
-            return null;
-        currentDir = parentDir;
-    }
-}
-function collectPackageSubagentPaths(cwd, options = {
-    includeUser: true,
-    includeProject: true,
-}) {
-    const agentDir = getAgentDir();
-    const projectRoot = findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd;
-    const packageRoots = [projectRoot];
-    if (options.includeProject) {
-        const projectConfigDir = getProjectConfigDir(projectRoot);
-        packageRoots.push(...collectPackageRootsFromNodeModules(path.join(projectConfigDir, "npm", "node_modules")), ...collectSettingsPackageRoots(path.join(projectConfigDir, "settings.json"), projectConfigDir));
-    }
-    if (options.includeUser) {
-        packageRoots.push(...collectPackageRootsFromNodeModules(path.join(agentDir, "npm", "node_modules")), ...collectSettingsPackageRoots(path.join(agentDir, "settings.json"), agentDir));
-    }
-    if (options.includeUser) {
-        const globalRoot = getGlobalNpmRoot();
-        if (globalRoot)
-            packageRoots.push(...collectPackageRootsFromNodeModules(globalRoot));
-    }
-    const seenRoots = new Set();
-    const seenAgents = new Set();
-    const agents = [];
-    for (const packageRoot of packageRoots) {
-        const resolvedRoot = path.resolve(packageRoot);
-        if (seenRoots.has(resolvedRoot))
-            continue;
-        seenRoots.add(resolvedRoot);
-        const paths = extractSubagentPathsFromPackageRoot(resolvedRoot);
-        for (const agentDir of paths.agents) {
-            if (seenAgents.has(agentDir))
-                continue;
-            seenAgents.add(agentDir);
-            agents.push(agentDir);
-        }
-    }
-    return { agents };
 }
 function splitToolList(rawTools) {
     if (rawTools === undefined)
@@ -627,7 +348,7 @@ function applySubagentDefaultModel(agents, defaultModel) {
     if (!defaultModel)
         return agents;
     return agents.map((agent) => {
-        if (agent.projectCustomBinding || agent.model !== undefined)
+        if (agent.model !== undefined)
             return agent;
         const next = { ...agent, model: defaultModel.model, modelSource: defaultModel };
         const frontmatterFields = agentFrontmatterFields.get(agent);
@@ -641,12 +362,15 @@ function customAgentHasFrontmatterField(agent, ...fields) {
     return frontmatterFields ? fields.some((field) => frontmatterFields.has(field)) : false;
 }
 function applyCustomAgentOverride(agent, override, meta) {
-    if (agent.projectCustomBinding)
-        return agent;
     let next;
     let anyFilled = false;
     const mutable = () => {
-        next ??= { ...agent };
+        if (!next) {
+            next = { ...agent };
+            const frontmatterFields = agentFrontmatterFields.get(agent);
+            if (frontmatterFields)
+                agentFrontmatterFields.set(next, frontmatterFields);
+        }
         return next;
     };
     const fill = (field, frontmatterFields, value) => {
@@ -728,7 +452,7 @@ function applyCustomAgentOverrides(agents, userSettings, projectSettings, userSe
         return agent;
     });
 }
-function listFilesRecursive(dir, predicate, recursive = true) {
+function listFilesRecursive(dir, predicate) {
     const files = [];
     if (!fs.existsSync(dir))
         return files;
@@ -744,8 +468,7 @@ function listFilesRecursive(dir, predicate, recursive = true) {
     for (const entry of entries) {
         const filePath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
-            if (recursive)
-                files.push(...listFilesRecursive(filePath, predicate, recursive));
+            files.push(...listFilesRecursive(filePath, predicate));
             continue;
         }
         if (!entry.isFile() && !entry.isSymbolicLink())
@@ -764,23 +487,15 @@ function isLegacyAgentSkillPath(rootDir, filePath) {
     }
     return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
-function loadAgentsFromDir(dir, source, agentDiagnosticsOut, options = {}) {
+function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
     const agents = [];
-    for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"), options.recursive ?? true)) {
-        const normalizedFilePath = path.resolve(filePath);
-        if (options.allowedPaths && !options.allowedPaths.has(normalizedFilePath))
-            continue;
-        if (options.allowedPaths &&
-            options.contentByPath &&
-            !options.contentByPath.has(normalizedFilePath))
-            continue;
+    for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
         if (isLegacyAgentSkillPath(dir, filePath)) {
             continue;
         }
         let content;
         try {
-            content =
-                options.contentByPath?.get(normalizedFilePath) ?? fs.readFileSync(filePath, "utf-8");
+            content = fs.readFileSync(filePath, "utf-8");
         }
         catch {
             continue;
@@ -805,19 +520,6 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut, options = {}) {
             }
             const packageName = parsedPackage.packageName;
             const runtimeName = buildRuntimeName(localName, packageName);
-            if (options.projectCustomBindings) {
-                const binding = options.projectCustomBindings.get(normalizedFilePath);
-                if (!binding ||
-                    !runtimeName.startsWith("embedded.") ||
-                    runtimeName !== binding.runtimeName) {
-                    agentDiagnosticsOut?.push({
-                        source,
-                        filePath,
-                        error: "Project custom-agent parser identity diverged from its validated exact-file binding; the file was rejected.",
-                    });
-                    continue;
-                }
-            }
             const hasDeclaredToolsField = "tools" in frontmatter;
             const tools = frontmatter.tools
                 ?.split(",")
@@ -926,9 +628,6 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut, options = {}) {
                 systemPrompt: body,
                 source,
                 filePath,
-                ...(options.projectCustomBindings?.get(normalizedFilePath)
-                    ? { projectCustomBinding: options.projectCustomBindings.get(normalizedFilePath) }
-                    : {}),
                 skills: skills && skills.length > 0 ? skills : undefined,
                 extensions,
                 subagentOnlyExtensions,
@@ -955,40 +654,6 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut, options = {}) {
     }
     return agents;
 }
-function customAgentDiagnosticsToDiscovery(diagnostics) {
-    return diagnostics.map((diagnostic) => ({
-        source: "project",
-        filePath: diagnostic.path ?? "<project-custom-agent>",
-        error: diagnostic.message,
-    }));
-}
-function loadProjectCustomAgents(cwd, agentDir, agentDiagnosticsOut) {
-    const inventory = inventoryProjectCustomAgents(cwd, agentDir);
-    agentDiagnosticsOut.push(...customAgentDiagnosticsToDiscovery(inventory.diagnostics));
-    if (!inventory.worktreeRoot || inventory.files.length === 0)
-        return [];
-    const directCustomDir = path.join(inventory.worktreeRoot, ".tlh", "agents", "custom");
-    const allowedPaths = new Set(inventory.files
-        .filter((file) => file.content !== undefined && file.binding !== undefined)
-        .map((file) => path.resolve(file.path)));
-    if (allowedPaths.size === 0)
-        return [];
-    const contentByPath = new Map();
-    const projectCustomBindings = new Map();
-    for (const file of inventory.files) {
-        const normalizedPath = path.resolve(file.path);
-        if (file.content !== undefined && file.binding !== undefined) {
-            contentByPath.set(normalizedPath, file.content);
-            projectCustomBindings.set(normalizedPath, file.binding);
-        }
-    }
-    return loadAgentsFromDir(directCustomDir, "project", agentDiagnosticsOut, {
-        recursive: false,
-        allowedPaths,
-        contentByPath,
-        projectCustomBindings,
-    });
-}
 function isDirectory(p) {
     try {
         return fs.statSync(p).isDirectory();
@@ -1000,74 +665,27 @@ function isDirectory(p) {
 function resolveNearestProjectAgentDirs(cwd) {
     const projectRoot = findNearestProjectRoot(cwd);
     if (!projectRoot)
-        return { readDirs: [], preferredDir: null };
-    const legacyDir = path.join(projectRoot, ".agents");
-    const preferredDir = path.join(getProjectConfigDir(projectRoot), "agents");
-    const readDirs = [];
-    if (isDirectory(legacyDir) && !isGlobalAgentsDir(legacyDir))
-        readDirs.push(legacyDir);
-    if (isDirectory(preferredDir))
-        readDirs.push(preferredDir);
-    return {
-        readDirs,
-        preferredDir,
-    };
+        return { preferredDir: null };
+    return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
 function resolveNearestProjectChainDirs(cwd) {
     const projectRoot = findNearestProjectRoot(cwd);
     if (!projectRoot)
-        return { readDirs: [], preferredDir: null };
-    const preferredDir = path.join(getProjectConfigDir(projectRoot), "chains");
-    return {
-        readDirs: isDirectory(preferredDir) ? [preferredDir] : [],
-        preferredDir,
-    };
-}
-function uniqueResolvedDirs(dirs) {
-    const seen = new Set();
-    const result = [];
-    for (const dir of dirs) {
-        const resolved = path.resolve(dir);
-        if (seen.has(resolved))
-            continue;
-        seen.add(resolved);
-        result.push(resolved);
-    }
-    return result;
+        return { preferredDir: null };
+    return { preferredDir: path.join(getProjectConfigDir(projectRoot), "chains") };
 }
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
-function extraUserAgentDirs() {
-    const raw = process.env[EXTRA_AGENT_DIRS_ENV];
-    if (!raw)
-        return [];
-    return raw
-        .split(path.delimiter)
-        .map((dir) => dir.trim())
-        .filter((dir) => dir.length > 0);
-}
-const EMBEDDED_RUNTIME_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
-function isEmbeddedRuntimeName(name) {
-    return EMBEDDED_RUNTIME_NAME_PATTERN.test(name);
-}
 function loadCanonicalPackagedAgents(agentDiagnostics) {
     const canonicalDir = path.resolve(getAgentDir(), "tlh", "agents", "subagents");
-    const dirs = [
-        canonicalDir,
-        ...extraUserAgentDirs()
-            .map((dir) => path.resolve(dir))
-            .filter((dir) => dir === canonicalDir),
-    ];
     const byName = new Map();
-    for (const dir of uniqueResolvedDirs(dirs)) {
-        for (const agent of loadAgentsFromDir(dir, "user", agentDiagnostics)) {
-            if (!isCanonicalPackagedMinorAgent(agent))
-                continue;
-            byName.set(agent.name, agent);
-        }
+    for (const agent of loadAgentsFromDir(canonicalDir, "user", agentDiagnostics)) {
+        if (!isCanonicalPackagedMinorAgent(agent))
+            continue;
+        byName.set(agent.name, agent);
     }
     return Array.from(byName.values());
 }
-export function discoverAgents(cwd, scope) {
+export function discoverAgents(cwd, scope, _options = {}) {
     const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
@@ -1075,17 +693,46 @@ export function discoverAgents(cwd, scope) {
     const projectSettings = scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-    const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
-        includeUser: scope !== "project",
-        includeProject: scope !== "user",
-    });
     const agentDiagnostics = [];
     const canonicalAgents = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageAgents = applyCustomAgentOverrides(applySubagentDefaultModel(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package", agentDiagnostics)), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath).filter((agent) => !isEmbeddedRuntimeName(agent.name) &&
-        !canonicalAgents.some((canonical) => canonical.name === agent.name));
-    const projectAgents = scope === "user" ? [] : loadProjectCustomAgents(cwd, getAgentDir(), agentDiagnostics);
-    const agents = mergeAgentsForScope(scope, [], projectAgents, canonicalAgents, packageAgents).filter((agent) => agent.disabled !== true);
+    const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter((agent) => agent.disabled !== true);
     return { agents, projectAgentsDir, modelScope, agentDiagnostics };
+}
+export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
+    const manifest = resolveProjectAgentSnapshot(capability, expected);
+    let canonicalCwd;
+    let canonicalProjectRoot;
+    try {
+        canonicalCwd = fs.realpathSync(cwd);
+        canonicalProjectRoot = fs.realpathSync(manifest.provenance.projectRoot);
+    }
+    catch {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const relativeCwd = path.relative(canonicalProjectRoot, canonicalCwd);
+    if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+    const userSettings = readSubagentSettings(getUserAgentSettingsPath());
+    for (const entry of manifest.entries) {
+        agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
+    }
+    const disabledNames = manifest.entries
+        .filter((entry) => userSettings.overrides[entry.agent.name]?.disabled === true)
+        .map((entry) => entry.agent.name);
+    const disabledNameSet = new Set(disabledNames);
+    const activeEntries = manifest.entries.filter((entry) => !disabledNameSet.has(entry.agent.name));
+    const mergeOptions = {
+        entries: activeEntries,
+        tombstones: [...manifest.tombstones, ...disabledNames],
+    };
+    return {
+        ...discovered,
+        agents: mergeProjectAgentSnapshot(discovered.agents, manifest, mergeOptions),
+        projectAgentsDir: null,
+        projectSnapshot: projectAgentSnapshotDiscoveryMetadata(manifest, disabledNames),
+    };
 }
 export function discoverAgentsAll(cwd) {
     const userDirOld = path.join(getAgentDir(), "agents");
@@ -1098,20 +745,11 @@ export function discoverAgentsAll(cwd) {
     const userSettings = readSubagentSettings(userSettingsPath);
     const projectSettings = readSubagentSettings(projectSettingsPath);
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageSubagentPaths = collectPackageSubagentPaths(cwd);
-    const agentDiagnostics = [];
     const builtin = [];
+    const agentDiagnostics = [];
     const user = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageMap = new Map();
-    for (const dir of packageSubagentPaths.agents) {
-        for (const agent of loadAgentsFromDir(dir, "package", agentDiagnostics)) {
-            if (!packageMap.has(agent.name))
-                packageMap.set(agent.name, agent);
-        }
-    }
-    const packageAgents = applyCustomAgentOverrides(applySubagentDefaultModel(Array.from(packageMap.values()), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath).filter((agent) => !isEmbeddedRuntimeName(agent.name) &&
-        !user.some((canonical) => canonical.name === agent.name));
-    const project = loadProjectCustomAgents(cwd, getAgentDir(), agentDiagnostics);
+    const packageAgents = [];
+    const project = [];
     const chains = [];
     const chainDiagnostics = [];
     const userDir = userDirNew && fs.existsSync(userDirNew) ? userDirNew : userDirOld;

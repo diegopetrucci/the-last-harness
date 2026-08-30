@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { findValidatedGitWorktree, } from "./project-agent-worktree.js";
 import { getAgentDir, ProjectTrustStore, } from "@earendil-works/pi-coding-agent";
+export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
 export const PROJECT_AGENT_GUIDANCE_DIRECTORY = ".tlh";
 const PROJECT_AGENT_GUIDANCE_AGENTS_DIRECTORY = "agents";
@@ -74,165 +76,8 @@ function resolveInputPath(value, label, diagnostics) {
         return undefined;
     }
 }
-const GIT_MARKER_MAX_BYTES = 8 * 1024;
-function isSafeDirectory(path) {
-    try {
-        const stat = fs.lstatSync(path);
-        return stat.isDirectory() && !stat.isSymbolicLink();
-    }
-    catch {
-        return false;
-    }
-}
-function isSafeRegularFile(path) {
-    try {
-        const stat = fs.lstatSync(path);
-        return stat.isFile() && !stat.isSymbolicLink();
-    }
-    catch {
-        return false;
-    }
-}
-function readGitMarkerLine(path) {
-    try {
-        const stat = fs.lstatSync(path);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > GIT_MARKER_MAX_BYTES) {
-            return undefined;
-        }
-        let value = fs.readFileSync(path, "utf8");
-        if (Buffer.byteLength(value, "utf8") > GIT_MARKER_MAX_BYTES)
-            return undefined;
-        if (value.endsWith("\n"))
-            value = value.slice(0, -1);
-        if (value.endsWith("\r"))
-            value = value.slice(0, -1);
-        return value.includes("\n") || value.includes("\r") ? undefined : value;
-    }
-    catch {
-        return undefined;
-    }
-}
-function hasValidGitHead(gitDirectory) {
-    const head = readGitMarkerLine(join(gitDirectory, "HEAD"));
-    if (!head)
-        return false;
-    return /^ref: refs\/\S+$/.test(head) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head);
-}
-function hasGitDirectoryLayout(gitDirectory) {
-    return (isSafeDirectory(gitDirectory) &&
-        hasValidGitHead(gitDirectory) &&
-        isSafeRegularFile(join(gitDirectory, "config")) &&
-        isSafeDirectory(join(gitDirectory, "objects")) &&
-        isSafeDirectory(join(gitDirectory, "refs")));
-}
-function readGitDirectoryTarget(path) {
-    const marker = readGitMarkerLine(path);
-    if (!marker?.startsWith("gitdir: "))
-        return undefined;
-    const target = marker.slice("gitdir: ".length);
-    return target.length > 0 ? target : undefined;
-}
-function isValidLinkedWorktreeDirectory(adminDirectory, markerPath) {
-    if (!isSafeDirectory(adminDirectory) || !hasValidGitHead(adminDirectory)) {
-        return false;
-    }
-    const linkedMarker = readGitMarkerLine(join(adminDirectory, "gitdir"));
-    const commonMarker = readGitMarkerLine(join(adminDirectory, "commondir"));
-    if (!linkedMarker || !commonMarker)
-        return false;
-    let linkedMarkerPath;
-    let commonDirectory;
-    try {
-        linkedMarkerPath = resolve(adminDirectory, linkedMarker);
-        commonDirectory = resolve(adminDirectory, commonMarker);
-    }
-    catch {
-        return false;
-    }
-    return (canonicalPathForCompare(linkedMarkerPath) === canonicalPathForCompare(markerPath) &&
-        hasGitDirectoryLayout(commonDirectory));
-}
-function inspectGitWorktreeMarker(directory) {
-    const markerPath = join(directory, ".git");
-    let stat;
-    try {
-        stat = fs.lstatSync(markerPath);
-    }
-    catch (error) {
-        return isMissingError(error) ? "absent" : "malformed";
-    }
-    if (stat.isSymbolicLink())
-        return "malformed";
-    if (stat.isDirectory())
-        return hasGitDirectoryLayout(markerPath) ? "valid" : "malformed";
-    if (!stat.isFile())
-        return "malformed";
-    const target = readGitDirectoryTarget(markerPath);
-    if (!target)
-        return "malformed";
-    let gitDirectory;
-    try {
-        gitDirectory = resolve(dirname(markerPath), target);
-    }
-    catch {
-        return "malformed";
-    }
-    if (!isSafeDirectory(gitDirectory))
-        return "malformed";
-    return hasGitDirectoryLayout(gitDirectory) ||
-        isValidLinkedWorktreeDirectory(gitDirectory, markerPath)
-        ? "valid"
-        : "malformed";
-}
-function findValidatedGitWorktreeRoot(cwd) {
-    let directory = cwd;
-    while (true) {
-        const markerState = inspectGitWorktreeMarker(directory);
-        if (markerState === "valid")
-            return directory;
-        if (markerState === "malformed")
-            return undefined;
-        const parent = dirname(directory);
-        if (parent === directory)
-            return undefined;
-        directory = parent;
-    }
-}
 function findGitWorktree(cwd) {
-    let canonicalCwd;
-    try {
-        canonicalCwd = fs.realpathSync(cwd);
-    }
-    catch {
-        const lexicalRoot = findValidatedGitWorktreeRoot(cwd);
-        return lexicalRoot ? { searchCwd: cwd, root: lexicalRoot } : { searchCwd: cwd };
-    }
-    const canonicalRoot = findValidatedGitWorktreeRoot(canonicalCwd);
-    if (!canonicalRoot)
-        return { searchCwd: cwd };
-    const lexicalRoot = findValidatedGitWorktreeRoot(cwd);
-    if (lexicalRoot !== undefined &&
-        canonicalPathForCompare(lexicalRoot) === canonicalPathForCompare(canonicalRoot) &&
-        relative(lexicalRoot, cwd) === relative(canonicalRoot, canonicalCwd)) {
-        return { searchCwd: cwd, root: lexicalRoot };
-    }
-    return { searchCwd: canonicalCwd, root: canonicalRoot };
-}
-export function resolveValidatedGitWorktreeRoot(cwdInput) {
-    if (typeof cwdInput !== "string" || cwdInput.trim().length === 0)
-        return undefined;
-    let cwd;
-    try {
-        cwd = resolve(cwdInput);
-        if (cwd.includes("\0"))
-            return undefined;
-        cwd = fs.realpathSync(cwd);
-    }
-    catch {
-        return undefined;
-    }
-    const root = findValidatedGitWorktreeRoot(cwd);
-    return root ? strictCanonicalPath(root) : undefined;
+    return findValidatedGitWorktree(cwd);
 }
 function searchDirectories(cwd, worktreeRoot) {
     if (!worktreeRoot)

@@ -208,18 +208,13 @@ import {
   formatContextPressureGuidance,
 } from "../../shared/context-diagnostics.ts";
 import { splitKnownThinkingSuffix } from "../../shared/model-info.ts";
-import {
-  isProjectCustomAgentBinding,
-  validateProjectCustomAgentBinding,
-  isProjectCustomAgentRuntimeName,
-} from "../../../../shared/project-custom-agent.ts";
-import { resolveValidatedGitWorktreeRoot } from "../../../../shared/project-agent-guidance.ts";
 
 const ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE =
   "Async supervisor lifecycle update failed. The run was stopped safely and marked failed.";
 
 interface StepResult {
   agent: string;
+  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
   output: string;
   error?: string;
   stderr?: string;
@@ -1330,45 +1325,8 @@ async function runSingleStep(
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
+  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }> {
-  if (isProjectCustomAgentRuntimeName(step.agent)) {
-    const binding = step.projectCustomBinding;
-    if (!binding || !isProjectCustomAgentBinding(binding)) {
-      return {
-        agent: step.agent,
-        output: "",
-        exitCode: 1,
-        error: `Project custom agent '${step.agent}' has no valid serialized exact-file binding; refusing to start it.`,
-      };
-    }
-    if (binding.runtimeName !== step.agent) {
-      return {
-        agent: step.agent,
-        output: "",
-        exitCode: 1,
-        error: `Project custom agent '${step.agent}' serialized an exact-file binding for '${binding.runtimeName}'; refusing to start it.`,
-      };
-    }
-    const runnerRoot = resolveValidatedGitWorktreeRoot(ctx.cwd);
-    const stepRoot = resolveValidatedGitWorktreeRoot(step.cwd ?? ctx.cwd);
-    if (!runnerRoot || !stepRoot || runnerRoot !== stepRoot || binding.worktreeRoot !== stepRoot) {
-      return {
-        agent: step.agent,
-        output: "",
-        exitCode: 1,
-        error: `Project custom agent '${step.agent}' exact-file binding root does not match its serialized execution cwd; refusing to start it.`,
-      };
-    }
-    const bindingCheck = validateProjectCustomAgentBinding(binding, step.cwd ?? ctx.cwd);
-    if (!bindingCheck.valid) {
-      return {
-        agent: step.agent,
-        output: "",
-        exitCode: 1,
-        error: `Project custom agent '${step.agent}' exact-file binding was not revalidated before async execution: ${bindingCheck.error}`,
-      };
-    }
-  }
   const segmentStartedAt = ctx.startedAt ?? Date.now();
   const priorActiveRuntimeMs = Math.max(0, step.activeRuntimeMs ?? 0);
   const stepTimeoutController = new AbortController();
@@ -2044,6 +2002,7 @@ async function runSingleStep(
 
   return {
     agent: step.agent,
+    ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
     output: outputForSummary,
     exitCode: effectiveFinalExitCode,
     exitSignal: finalResult?.exitSignal,
@@ -2280,6 +2239,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         });
         initialStatusSteps.push({
           agent: task.agent,
+          ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
           phase: task.phase,
           label: task.label,
           outputName: task.outputName,
@@ -2326,6 +2286,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       });
       initialStatusSteps.push({
         agent: step.agent,
+        ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
         phase: step.phase,
         label: step.label,
         outputName: step.outputName,
@@ -2386,6 +2347,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     workflowGraph: config.workflowGraph,
     steps: initialStatusSteps,
     ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
+    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
     artifactsDir,
     sessionDir: config.sessionDir,
     outputFile: path.join(asyncDir, "output-0.log"),
@@ -2455,6 +2417,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           results: [
             {
               agent: gateRejectAgent,
+              ...(statusPayload.steps?.[0]?.projectAgent
+                ? { projectAgent: statusPayload.steps[0].projectAgent }
+                : {}),
               output: statusPayload.error,
               error: statusPayload.error,
               success: false,
@@ -2466,6 +2431,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           durationMs: 0,
           asyncDir,
           sessionId: config.sessionId,
+          ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
         } satisfies AsyncResultArtifact);
       } catch (err) {
         console.error(`Failed to write gate-rejection result file ${resultPath}:`, err);
@@ -2858,10 +2824,16 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   const pausedStepResult = (
     task: Pick<
       SubagentStep,
-      "agent" | "effectiveAcceptance" | "model" | "modelIdentity" | "modelResolution"
+      | "agent"
+      | "effectiveAcceptance"
+      | "model"
+      | "modelIdentity"
+      | "modelResolution"
+      | "projectAgent"
     >,
   ): SingleStepResult => ({
     agent: task.agent,
+    ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
     output: "Paused after interrupt. Waiting for explicit next action.",
     exitCode: 0,
     interrupted: true,
@@ -2872,9 +2844,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     acceptance: pausedAcceptanceLedger(task.effectiveAcceptance),
   });
   const timedOutStepResult = (
-    task: Pick<SubagentStep, "agent" | "model" | "modelIdentity" | "modelResolution">,
+    task: Pick<
+      SubagentStep,
+      "agent" | "model" | "modelIdentity" | "modelResolution" | "projectAgent"
+    >,
   ): SingleStepResult => ({
     agent: task.agent,
+    ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
     output: timeoutMessage ?? "Subagent timed out.",
     error: timeoutMessage ?? "Subagent timed out.",
     exitCode: 1,
@@ -3866,6 +3842,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
             );
             return {
               agent: task.agent,
+              ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
               output: "(skipped — fail-fast)",
               exitCode: -1 as number | null,
               skipped: true,
@@ -4103,6 +4080,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         const fi = groupStartFlatIndex + t;
         results.push({
           agent: pr.agent,
+          ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
           output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
           error: pr.error,
           stderr: pr.stderr,
@@ -4277,6 +4255,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       previousOutput = singleResult.output;
       results.push({
         agent: singleResult.agent,
+        ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
         output: timedOut
           ? (timeoutMessage ?? "Subagent timed out.")
           : singleResult.interrupted
@@ -4688,6 +4667,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       if (results.length === 0) {
         results.push({
           agent: statusPayload.steps[supervisorPauseRequest.requesterIndex]?.agent ?? agentName,
+          ...(statusPayload.steps[supervisorPauseRequest.requesterIndex]?.projectAgent
+            ? {
+                projectAgent:
+                  statusPayload.steps[supervisorPauseRequest.requesterIndex].projectAgent,
+              }
+            : {}),
           output: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
           error: ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
           success: false,
@@ -4846,6 +4831,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
       results: results.map((r) => ({
         agent: r.agent,
+        ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
         output: r.output,
         error: r.error,
         stderr: r.stderr,
@@ -4899,6 +4885,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       cwd,
       asyncDir,
       sessionId: config.sessionId,
+      ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
       sessionFile: effectiveSessionFile,
       intercomTarget: config.controlIntercomTarget,
       shareUrl,

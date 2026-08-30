@@ -69,11 +69,11 @@ defaultContext: fresh
 Inspect the repository and report concise findings.
 ```
 
-`package: embedded`, the exact lowercase `name`, and a non-empty `description` are required. The runtime name is `embedded.<name>`; only lowercase letters, digits, and hyphens are accepted in the slug.
+`package: embedded`, the exact lowercase `name`, a non-empty `description`, and an explicit usable `tools` list are required. The runtime name is `embedded.<name>`; only lowercase letters, digits, and hyphens are accepted in the slug.
 
 After the required fields, project custom definitions may declare the optional child-agent fields `tools`, `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `skill`/`skills`, `output`, `defaultReads`, `defaultProgress`, `interactive`, `maxSubagentDepth`, `completionGuard`, `maxExecutionTimeMs`, and `toolBudget`. These optional fields use existing child-runtime semantics; see the [first-party dispatch reference](subagents.md) for related dispatch, tool, skill, and lifecycle behavior. The frontmatter parser accepts `defaultContext: fresh` and `defaultContext: fork`, but every project custom embedded execution is runtime-forced to `context: fresh`; `defaultContext: fork` therefore does not produce a forked child. Omitted fields use the runtime's ordinary agent defaults; TLH does not fill them from settings/default overrides. Unsupported YAML shapes and unknown fields are not a way to extend this contract.
 
-`tools` is optional. When omitted, the child keeps the runtime's ordinary tool defaults. When present, named entries become the explicit tool policy; `bash`, `write`, and `edit` are valid entries and are not stripped merely because the definition is project-controlled. For example, a trusted developer-like agent may declare:
+`tools` must be explicit and contain at least one usable entry. Named entries become the explicit tool policy; `bash`, `write`, and `edit` are valid entries and are not stripped merely because the definition is project-controlled. For example, a trusted developer-like agent may declare:
 
 ```yaml
 tools: read, write, edit, grep, find, ls, bash, contact_supervisor
@@ -85,13 +85,16 @@ Use the smallest allowlist that fits the job. This extension point is trusted ra
 
 Project custom definitions **must not declare** `extensions` or `subagentOnlyExtensions`. Either field rejects the definition, including an empty field; project-root custom agents cannot register an extension surface. Package/extra and legacy definitions are outside this inventory and cannot authorize, replace, or shadow the exact root file.
 
-### No settings or default overrides
+### No settings or default overrides except deny-only disable
 
 A project custom definition is not completed or modified by settings. TLH does not apply any of these to it:
 
 - `subagents.defaultModel` from the active profile or project settings;
-- `subagents.agentOverrides` from the active profile or project settings;
+- model, effort, prompt, tool, or other fields in active-profile `subagents.agentOverrides`;
+- every project-setting default or `subagents.agentOverrides` field;
 - other profile/default agent overrides or configured agent-directory precedence.
+
+The one profile-local safety exception is an exact active-profile entry such as `subagents.agentOverrides["embedded.<slug>"].disabled: true`. It creates a deny-only tombstone for that captured project target; it never modifies the project agent or creates a replacement. `disabled: false` and all other fields are inert for project targets. A project-settings `disabled` entry is also inert. Removing the root definition remains the repository-owned way to remove it.
 
 Declare the desired configuration in the root file. An explicit model, output, or other option supplied on the individual `subagent` dispatch is still a caller control; this rule prevents settings/default data from substituting for the authorized file. One live-provider exception preserves TLH's primary-agent behavior: when the current session provider is OpenRouter and the caller omits `model`, TLH injects the current `openrouter/<session-model-id>` for an embedded target, overriding that file's `model`. Other providers leave the file's `model` effective unless the caller explicitly supplies one, and an explicit caller model wins on OpenRouter too.
 
@@ -115,7 +118,7 @@ This is a hard cutover. Existing profile definitions are not automatically copie
 
 A project custom file is executable only after TLH finds a **persisted** positive project-trust decision covering the validated Git root. In the TLH TUI, run `/trust` from the repository root (or another path whose persisted decision covers that root), choose the persistent `Trust` option, save it, and retry. A session-only decision is not authorization, and a decision saved only for a nested cwd does not authorize the root custom directory. No custom-file content is used while trust is missing, denied, or unreadable.
 
-Every custom definition is read with the same fail-closed limits used for its authorization binding:
+Every custom definition is read with the same fail-closed limits used for project-agent authorization:
 
 - maximum **64 KiB (65,536 UTF-8 bytes)**;
 - a regular, non-symlink file only;
@@ -129,14 +132,13 @@ A file that is oversized, replaced, swapped, non-regular, symlinked, malformed, 
 
 Only `architect` and `disabled` may **initiate** a new `embedded.<slug>` execution. The user-facing primary prompt asks the active primary to use a trusted custom agent only when the user explicitly names or requests it; that is prompt policy, not a substitute for the runtime authorization gate.
 
-- `product` and `bug-hunter` cannot initiate embedded custom delegation.
+- `product` and `bug-hunter` cannot initiate embedded custom delegation. Their opaque controls remain available only for eligible non-project runs; they cannot control a retained or persisted project-agent run.
 - `rush` cannot initiate embedded delegation, cannot use opaque `resume` or `steer`, and cannot delegate implementation to `developer`; it must edit directly for implementation work.
-- `product` and `bug-hunter` remain unable to initiate new embedded runs, but the opaque resume/steer limitation accepted in issue #330 means they can still control an already-started embedded run when the underlying runtime accepts the opaque operation. This is defense in depth around a trusted repository-owned project custom agent, not a sandbox boundary.
-- `disabled` retains TLH's infrastructure, subagent safety/authorization checks, and access to canonical minor agents while omitting the architect persona and primary-agent guidance/model/thinking defaults. It may initiate a freshly scoped, user-requested project custom run.
+- Only `architect` may `resume` or `steer` a retained or persisted project-agent run. These project-agent controls are blocked for every other primary, including `disabled`; `disabled` may initiate a freshly scoped, user-requested project custom run but cannot resume or steer a retained or persisted project-agent run.
 
 For an execution containing an embedded target, TLH forces `agentScope: "project"` and `context: "fresh"`; `agentScope: "user"` and forked context are rejected. This runtime policy also overrides a project file's parsed `defaultContext`, so `defaultContext: fork` never produces a forked child. A mixed batch containing canonical TLH roles and an embedded target is therefore resolved in project scope, but the canonical packaged roles remain available. Every embedded target in one dispatch must resolve to the same validated Git root, and a task-level `cwd` override must remain inside that root. A cwd override cannot select a second repository or turn an outside-Git directory into an authorized custom source.
 
-The runtime binds the exact authorized path and filesystem identity to the tool call, then checks the same binding again before a foreground, parallel, or asynchronous child starts. A missing or changed binding fails closed with an actionable project-custom-agent error rather than silently selecting a same-name profile or package definition.
+The runtime captures the exact authorized path and filesystem identity in the project snapshot, then checks that snapshot capability again before a foreground, parallel, or asynchronous child starts. A missing or changed capability fails closed with an actionable project-agent authorization error rather than silently selecting a same-name profile or package definition.
 
 ## Invocation, reload, and process timing
 
@@ -146,7 +148,7 @@ Ask for the exact runtime name:
 Use embedded.repo-helper to inspect the authentication flow.
 ```
 
-The authorization inventory is evaluated on every new embedded delegation attempt. Adding, editing, moving, or deleting the root file does not require changing an experimental flag or running `/reload` before the next authorization attempt. `/reload` remains useful for ordinary TLH resources and for starting a new primary/minor prompt snapshot.
+The project custom-agent inventory is captured at session start or `/reload` as an immutable project snapshot. For new embedded executions in the same process, adding, editing, moving, or deleting the root file takes effect only after `/reload` or a new session; it does not change the active generation or a live child. Changing persisted project trust is different: same-process `resume` and `steer` reauthorize current persisted project trust before acting, so revoking persisted project trust blocks those controls even though it does not mutate a live child. A process-restarted resume/revival is a separate operation that independently revalidates the current root file and trust under the checks in the table below. `/reload` remains useful for ordinary TLH resources and for starting a new primary/minor prompt snapshot.
 
 The timing boundaries are intentionally different for each surface:
 
@@ -154,7 +156,7 @@ The timing boundaries are intentionally different for each surface:
 | --- | --- | --- |
 | Primary role append | At primary session start; all twelve role candidates share one inventory snapshot, and switching primary roles selects from that snapshot | Edits or newly persisted trust take effect after `/reload`/new session, not in the current primary snapshot |
 | Minor role append | When each child process starts, for foreground, parallel, async, and any resume/revival that starts a new process | A live async `resume`/`steer` that keeps the same child process keeps its session-start append snapshot; a new process reads current content |
-| Project custom definition | At each authorization/discovery and again for the child process's exact binding | A live child keeps the configuration it started with; a revival/new-process resume revalidates the current root file and reads current configuration, and fails if the binding no longer matches |
+| Project custom definition | At project snapshot capture and through the private snapshot capability when a child starts | A live child and same-process resume keep the captured configuration, but same-process `resume`/`steer` reauthorize current persisted project trust; a process-restarted resume/revival revalidates the current trusted root file and reads current configuration, while a resume from a genuine new session fails closed |
 
 The primary snapshot is used only for the active packaged primary role; `disabled` receives no primary-role append. A minor append is added only to its matching canonical packaged TLH minor role. A custom agent's own Markdown prompt is its child configuration and is not a role append.
 
@@ -187,7 +189,7 @@ To undo a builtin append, remove its exact `.tlh/agents/builtin/<ROLE>_PROMPT_AP
 
 The upstream global/project `APPEND_SYSTEM.md` mechanism appends **general system instructions**. In a default TLH install, the global file is `<agent-dir>/APPEND_SYSTEM.md` (normally `~/.the-last-harness/agent/APPEND_SYSTEM.md`) and the project file is `.pi/APPEND_SYSTEM.md` when the project is trusted. Those files do not authorize custom agents and do not select a role.
 
-Conversely, `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` is an append for one of the twelve packaged TLH roles only. It does not replace or reconfigure the packaged system prompt. A project custom definition at `.tlh/agents/custom/<UPPERCASE-SLUG>.md` is a separate child-agent definition and must satisfy its own exact-path, trust, frontmatter, and binding checks.
+Conversely, `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` is an append for one of the twelve packaged TLH roles only. It does not replace or reconfigure the packaged system prompt. A project custom definition at `.tlh/agents/custom/<UPPERCASE-SLUG>.md` is a separate child-agent definition and must satisfy its own exact-path, trust, frontmatter, and snapshot-capability checks.
 
 ## Diagnostics and safety reminders
 

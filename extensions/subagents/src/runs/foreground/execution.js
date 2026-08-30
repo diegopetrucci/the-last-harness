@@ -18,8 +18,7 @@ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, getThinkingLevelDropN
 import { readStructuredOutput } from "../shared/structured-output.js";
 import { captureSingleOutputSnapshot, formatSavedOutputReference, injectOutputPathSystemPrompt, resolveSingleOutput, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
-import { isCanonicalPackagedMinorAgent, resolveValidatedGitWorktreeRoot, } from "../../../../shared/project-agent-guidance.js";
-import { isProjectCustomAgentBinding, isProjectCustomAgentRuntimeName, validateProjectCustomAgentBinding, } from "../../../../shared/project-custom-agent.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
 import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
@@ -1563,50 +1562,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             error: `Unknown agent: ${agentName}`,
         };
     }
-    if (isProjectCustomAgentRuntimeName(agent.name)) {
-        if (!isProjectCustomAgentBinding(agent.projectCustomBinding)) {
-            return {
-                agent: agentName,
-                task,
-                exitCode: 1,
-                messages: [],
-                usage: emptyUsage(),
-                error: `Project custom agent '${agentName}' has no exact-file binding; refusing to execute it.`,
-            };
-        }
-        if (agent.projectCustomBinding.runtimeName !== agent.name) {
-            return {
-                agent: agentName,
-                task,
-                exitCode: 1,
-                messages: [],
-                usage: emptyUsage(),
-                error: `Project custom agent '${agentName}' exact-file binding names a different runtime target.`,
-            };
-        }
-        const executionRoot = resolveValidatedGitWorktreeRoot(options.cwd ?? runtimeCwd);
-        if (!executionRoot || agent.projectCustomBinding.worktreeRoot !== executionRoot) {
-            return {
-                agent: agentName,
-                task,
-                exitCode: 1,
-                messages: [],
-                usage: emptyUsage(),
-                error: `Project custom agent '${agentName}' exact-file binding root does not match execution cwd '${options.cwd ?? runtimeCwd}'.`,
-            };
-        }
-        const bindingCheck = validateProjectCustomAgentBinding(agent.projectCustomBinding, options.cwd ?? runtimeCwd);
-        if (!bindingCheck.valid) {
-            return {
-                agent: agentName,
-                task,
-                exitCode: 1,
-                messages: [],
-                usage: emptyUsage(),
-                error: `Project custom agent '${agentName}' exact-file binding is invalid: ${bindingCheck.error}`,
-            };
-        }
-    }
     const effectiveTimeoutMs = resolveEffectiveSingleTimeout(options.timeoutMs, agent.maxExecutionTimeMs);
     options = {
         ...options,
@@ -1769,6 +1724,8 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             usage: emptyUsage(),
             error: "Subagent did not produce a result.",
         };
+    if (options.projectAgent)
+        result.projectAgent = options.projectAgent;
     if (modelAttempts.length > 1 && result.modelIdentity) {
         modelResolution = appendRuntimeFallbackResolution({
             previous: modelResolution,
@@ -1939,6 +1896,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         writeMetadata(artifactPathsResult.metadataPath, {
             runId: options.runId,
             agent: agentName,
+            projectAgent: result.projectAgent,
             task,
             exitCode: result.exitCode,
             exitSignal: result.exitSignal,

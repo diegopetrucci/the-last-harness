@@ -86,6 +86,7 @@ interface ForegroundSubagentArtifactMetadata extends Pick<
   SingleResult,
   | "agent"
   | "task"
+  | "projectAgent"
   | "exitCode"
   | "exitSignal"
   | "timedOut"

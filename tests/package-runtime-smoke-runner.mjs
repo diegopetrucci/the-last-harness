@@ -108,7 +108,7 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
     const result = await subagentTool.execute(
       "packed-child-execution",
       {
-        agent: "worker",
+        agent: "developer",
         task: "Return the deterministic faux child marker",
         context: "fresh",
         agentScope: "user",

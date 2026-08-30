@@ -98,15 +98,7 @@ import {
   isRetryableModelFailure,
   sanitizeModelFallbackNotice,
 } from "../shared/model-fallback.ts";
-import {
-  isCanonicalPackagedMinorAgent,
-  resolveValidatedGitWorktreeRoot,
-} from "../../../../shared/project-agent-guidance.ts";
-import {
-  isProjectCustomAgentBinding,
-  isProjectCustomAgentRuntimeName,
-  validateProjectCustomAgentBinding,
-} from "../../../../shared/project-custom-agent.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
   createMutatingFailureState,
   didMutatingToolFail,
@@ -1925,53 +1917,6 @@ export async function runSync(
       error: `Unknown agent: ${agentName}`,
     };
   }
-  if (isProjectCustomAgentRuntimeName(agent.name)) {
-    if (!isProjectCustomAgentBinding(agent.projectCustomBinding)) {
-      return {
-        agent: agentName,
-        task,
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        error: `Project custom agent '${agentName}' has no exact-file binding; refusing to execute it.`,
-      };
-    }
-    if (agent.projectCustomBinding.runtimeName !== agent.name) {
-      return {
-        agent: agentName,
-        task,
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        error: `Project custom agent '${agentName}' exact-file binding names a different runtime target.`,
-      };
-    }
-    const executionRoot = resolveValidatedGitWorktreeRoot(options.cwd ?? runtimeCwd);
-    if (!executionRoot || agent.projectCustomBinding.worktreeRoot !== executionRoot) {
-      return {
-        agent: agentName,
-        task,
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        error: `Project custom agent '${agentName}' exact-file binding root does not match execution cwd '${options.cwd ?? runtimeCwd}'.`,
-      };
-    }
-    const bindingCheck = validateProjectCustomAgentBinding(
-      agent.projectCustomBinding,
-      options.cwd ?? runtimeCwd,
-    );
-    if (!bindingCheck.valid) {
-      return {
-        agent: agentName,
-        task,
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        error: `Project custom agent '${agentName}' exact-file binding is invalid: ${bindingCheck.error}`,
-      };
-    }
-  }
   const effectiveTimeoutMs = resolveEffectiveSingleTimeout(
     options.timeoutMs,
     agent.maxExecutionTimeMs,
@@ -2182,6 +2127,11 @@ export async function runSync(
       error: "Subagent did not produce a result.",
     } satisfies SingleResult);
 
+  // Keep the exact approved project capture attached to every foreground
+  // checkpoint/result. The capture contains data only; capability authority
+  // remains in the process-private generation registry.
+  if (options.projectAgent) result.projectAgent = options.projectAgent;
+
   if (modelAttempts.length > 1 && result.modelIdentity) {
     modelResolution = appendRuntimeFallbackResolution({
       previous: modelResolution,
@@ -2389,6 +2339,7 @@ export async function runSync(
     writeMetadata(artifactPathsResult.metadataPath, {
       runId: options.runId,
       agent: agentName,
+      projectAgent: result.projectAgent,
       task,
       exitCode: result.exitCode,
       exitSignal: result.exitSignal,

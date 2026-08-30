@@ -1,21 +1,14 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import {
   createEventBus,
   createTempDir,
-  makeAgent,
   makeMinimalCtx,
   removeTempDir,
   tryImport,
 } from "../support/helpers.ts";
-import {
-  inventoryProjectCustomAgents,
-  type ProjectCustomAgentBinding,
-} from "../../../shared/project-custom-agent.ts";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -112,66 +105,6 @@ describe(
         text,
         /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/,
       );
-    });
-
-    it("rejects direct and nested custom targets when cwd roots differ without primary authorization", async () => {
-      const repoA = path.join(tempDir, "repo-a");
-      const repoB = path.join(tempDir, "repo-b");
-      fs.mkdirSync(repoA, { recursive: true });
-      fs.mkdirSync(repoB, { recursive: true });
-      execFileSync("git", ["init", "--quiet"], { cwd: repoA });
-      execFileSync("git", ["init", "--quiet"], { cwd: repoB });
-      const agentDir = path.join(tempHome, "agent");
-      const filePath = path.join(repoA, ".tlh", "agents", "custom", "HELPER.md");
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(
-        filePath,
-        "---\nname: helper\npackage: embedded\ndescription: Helper\n---\n\nHelper.\n",
-        "utf-8",
-      );
-      fs.mkdirSync(agentDir, { recursive: true });
-      process.env.PI_CODING_AGENT_DIR = agentDir;
-      new ProjectTrustStore(agentDir).set(repoA, true);
-      const binding = inventoryProjectCustomAgents(repoA, agentDir).files[0]?.binding;
-      assert.ok(binding);
-      const agent = makeAgent("embedded.helper", {
-        source: "project",
-        filePath,
-        projectCustomBinding: binding as ProjectCustomAgentBinding,
-      });
-      const executor = createSubagentExecutor({
-        pi: { events: createEventBus(), getSessionName: () => undefined },
-        state: makeState(repoA),
-        config: {},
-        tempArtifactsDir: tempDir,
-        getSubagentSessionRoot: () => tempDir,
-        expandTilde: (value: string) => value,
-        discoverAgents: () => ({ agents: [agent] }),
-      });
-      const ctx = makeMinimalCtx(repoA);
-      const direct = await executor.execute(
-        "direct-mismatch",
-        { agent: "embedded.helper", task: "inspect", cwd: repoB, agentScope: "project" },
-        new AbortController().signal,
-        undefined,
-        ctx,
-      );
-      assert.equal(direct.isError, true);
-      assert.match(direct.content[0]?.text ?? "", /outside the effective Git root|binding root/i);
-
-      const nested = await executor.execute(
-        "nested-mismatch",
-        {
-          tasks: [{ agent: "embedded.helper", task: "inspect", cwd: repoB }],
-          cwd: repoA,
-          agentScope: "project",
-        },
-        new AbortController().signal,
-        undefined,
-        ctx,
-      );
-      assert.equal(nested.isError, true);
-      assert.match(nested.content[0]?.text ?? "", /outside the effective Git root|cwd overrides/i);
     });
 
     it("reports session manager failures without failing the doctor action", async () => {

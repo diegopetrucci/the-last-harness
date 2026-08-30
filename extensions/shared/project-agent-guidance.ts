@@ -1,10 +1,16 @@
 import * as fs from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
+  findValidatedGitWorktree,
+  type ValidatedGitWorktreeSearch,
+} from "./project-agent-worktree.js";
+import {
   getAgentDir,
   ProjectTrustStore,
   type ProjectTrustDecision,
 } from "@earendil-works/pi-coding-agent";
+
+export { resolveValidatedGitWorktreeRoot } from "./project-agent-worktree.js";
 
 /** Maximum UTF-8 bytes accepted from one project-agent guidance file. */
 export const PROJECT_AGENT_GUIDANCE_MAX_BYTES = 64 * 1024;
@@ -157,194 +163,8 @@ function resolveInputPath(
   }
 }
 
-const GIT_MARKER_MAX_BYTES = 8 * 1024;
-
-function isSafeDirectory(path: string): boolean {
-  try {
-    const stat = fs.lstatSync(path);
-    return stat.isDirectory() && !stat.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function isSafeRegularFile(path: string): boolean {
-  try {
-    const stat = fs.lstatSync(path);
-    return stat.isFile() && !stat.isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function readGitMarkerLine(path: string): string | undefined {
-  try {
-    const stat = fs.lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > GIT_MARKER_MAX_BYTES) {
-      return undefined;
-    }
-
-    let value = fs.readFileSync(path, "utf8");
-    if (Buffer.byteLength(value, "utf8") > GIT_MARKER_MAX_BYTES) return undefined;
-    if (value.endsWith("\n")) value = value.slice(0, -1);
-    if (value.endsWith("\r")) value = value.slice(0, -1);
-    return value.includes("\n") || value.includes("\r") ? undefined : value;
-  } catch {
-    return undefined;
-  }
-}
-
-function hasValidGitHead(gitDirectory: string): boolean {
-  const head = readGitMarkerLine(join(gitDirectory, "HEAD"));
-  if (!head) return false;
-  return /^ref: refs\/\S+$/.test(head) || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(head);
-}
-
-function hasGitDirectoryLayout(gitDirectory: string): boolean {
-  return (
-    isSafeDirectory(gitDirectory) &&
-    hasValidGitHead(gitDirectory) &&
-    isSafeRegularFile(join(gitDirectory, "config")) &&
-    isSafeDirectory(join(gitDirectory, "objects")) &&
-    isSafeDirectory(join(gitDirectory, "refs"))
-  );
-}
-
-function readGitDirectoryTarget(path: string): string | undefined {
-  const marker = readGitMarkerLine(path);
-  if (!marker?.startsWith("gitdir: ")) return undefined;
-  const target = marker.slice("gitdir: ".length);
-  return target.length > 0 ? target : undefined;
-}
-
-function isValidLinkedWorktreeDirectory(adminDirectory: string, markerPath: string): boolean {
-  if (!isSafeDirectory(adminDirectory) || !hasValidGitHead(adminDirectory)) {
-    return false;
-  }
-
-  const linkedMarker = readGitMarkerLine(join(adminDirectory, "gitdir"));
-  const commonMarker = readGitMarkerLine(join(adminDirectory, "commondir"));
-  if (!linkedMarker || !commonMarker) return false;
-
-  let linkedMarkerPath: string;
-  let commonDirectory: string;
-  try {
-    linkedMarkerPath = resolve(adminDirectory, linkedMarker);
-    commonDirectory = resolve(adminDirectory, commonMarker);
-  } catch {
-    return false;
-  }
-
-  return (
-    canonicalPathForCompare(linkedMarkerPath) === canonicalPathForCompare(markerPath) &&
-    hasGitDirectoryLayout(commonDirectory)
-  );
-}
-
-type GitWorktreeMarkerState = "absent" | "valid" | "malformed";
-
-function inspectGitWorktreeMarker(directory: string): GitWorktreeMarkerState {
-  const markerPath = join(directory, ".git");
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(markerPath);
-  } catch (error) {
-    // Only a genuinely absent marker permits discovery to continue through an
-    // ancestor. An unreadable marker is fail-closed and shadows outer roots.
-    return isMissingError(error) ? "absent" : "malformed";
-  }
-
-  if (stat.isSymbolicLink()) return "malformed";
-  if (stat.isDirectory()) return hasGitDirectoryLayout(markerPath) ? "valid" : "malformed";
-  if (!stat.isFile()) return "malformed";
-
-  const target = readGitDirectoryTarget(markerPath);
-  if (!target) return "malformed";
-
-  let gitDirectory: string;
-  try {
-    gitDirectory = resolve(dirname(markerPath), target);
-  } catch {
-    return "malformed";
-  }
-  if (!isSafeDirectory(gitDirectory)) return "malformed";
-
-  return hasGitDirectoryLayout(gitDirectory) ||
-    isValidLinkedWorktreeDirectory(gitDirectory, markerPath)
-    ? "valid"
-    : "malformed";
-}
-
-function findValidatedGitWorktreeRoot(cwd: string): string | undefined {
-  let directory = cwd;
-  while (true) {
-    // A worktree root is identified without invoking an executable. Validate
-    // Git's ordinary directory layout or its linked-worktree gitdir marker so
-    // an arbitrary .git entry cannot widen the guidance search boundary.
-    const markerState = inspectGitWorktreeMarker(directory);
-    if (markerState === "valid") return directory;
-    if (markerState === "malformed") return undefined;
-    const parent = dirname(directory);
-    if (parent === directory) return undefined;
-    directory = parent;
-  }
-}
-
-interface GitWorktreeSearch {
-  /** Canonical path used only to search the physical worktree. */
-  searchCwd: string;
-  root?: string;
-}
-
-function findGitWorktree(cwd: string): GitWorktreeSearch {
-  let canonicalCwd: string;
-  try {
-    // Canonicalize before discovery so a symlink path nested in another
-    // repository cannot make that lexical host repository win over the target.
-    canonicalCwd = fs.realpathSync(cwd);
-  } catch {
-    // A not-yet-existing cwd cannot be canonicalized; retain the prior
-    // cwd-only/ancestor behavior for that input.
-    const lexicalRoot = findValidatedGitWorktreeRoot(cwd);
-    return lexicalRoot ? { searchCwd: cwd, root: lexicalRoot } : { searchCwd: cwd };
-  }
-
-  const canonicalRoot = findValidatedGitWorktreeRoot(canonicalCwd);
-  if (!canonicalRoot) return { searchCwd: cwd };
-
-  // Keep lexical paths for an ordinary cwd (including platform aliases such
-  // as macOS /var) when they identify the same physical root and directory
-  // within that root. A symlinked cwd can otherwise have the same root while
-  // pointing at a different physical ancestor (for example /repo/link ->
-  // /repo/sub); in that case canonical paths must drive the search.
-  const lexicalRoot = findValidatedGitWorktreeRoot(cwd);
-  if (
-    lexicalRoot !== undefined &&
-    canonicalPathForCompare(lexicalRoot) === canonicalPathForCompare(canonicalRoot) &&
-    relative(lexicalRoot, cwd) === relative(canonicalRoot, canonicalCwd)
-  ) {
-    return { searchCwd: cwd, root: lexicalRoot };
-  }
-  return { searchCwd: canonicalCwd, root: canonicalRoot };
-}
-
-/**
- * Resolve an existing cwd to the canonical root of a validated Git worktree.
- * Custom embedded agents use this stricter physical-root result rather than
- * the lexical ancestor search used by packaged prompt guidance.
- */
-export function resolveValidatedGitWorktreeRoot(cwdInput: unknown): string | undefined {
-  if (typeof cwdInput !== "string" || cwdInput.trim().length === 0) return undefined;
-  let cwd: string;
-  try {
-    cwd = resolve(cwdInput);
-    if (cwd.includes("\0")) return undefined;
-    cwd = fs.realpathSync(cwd);
-  } catch {
-    return undefined;
-  }
-  const root = findValidatedGitWorktreeRoot(cwd);
-  return root ? strictCanonicalPath(root) : undefined;
+function findGitWorktree(cwd: string): ValidatedGitWorktreeSearch {
+  return findValidatedGitWorktree(cwd);
 }
 
 function searchDirectories(cwd: string, worktreeRoot: string | undefined): string[] {

@@ -21,7 +21,6 @@ import {
   selectablePrimaryAgents,
   contrarianMetadata,
   rushLikePrimary,
-  lockedRushPrimary,
   createCommandContext,
   EMBEDDED_SUBAGENTS_FEATURE,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
@@ -250,6 +249,46 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
   });
 });
 
+test("provider-aware defaults still apply to a single target when tasks is empty", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const ctx = createToolCallContext(
+    [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ],
+    undefined,
+    {
+      cwd: fixture.cwd,
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "openai-codex", id: "gpt-5.4" },
+          { provider: "anthropic", id: "claude-opus-5" },
+        ],
+      },
+      model: { provider: "openai-codex", id: "gpt-5.4" },
+    },
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { toolCall } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [contrarianMetadata()],
+    });
+    const event = {
+      toolName: "subagent",
+      input: { agent: "contrarian", task: "stress-test this plan", tasks: [] },
+    };
+
+    assert.equal(await toolCall(event, ctx), undefined);
+    assert.equal(event.input.model, "anthropic/claude-opus-5:high");
+    assert.equal(event.input.agentScope, "user");
+    assert.equal(event.input.context, "fresh");
+  });
+});
+
 test("enabled primary mode blocks disallowed task delegation targets after forcing safe defaults", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const ctx = createToolCallContext(
@@ -318,7 +357,7 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
       agentScope: "both",
     },
   };
-  const blockedGetEvent = { toolName: "subagent", input: { action: "get", agentScope: "user" } };
+  const blockedGetEvent = { toolName: "subagent", input: { action: "get", agentScope: "project" } };
   const blockedResumeScopeEvent = {
     toolName: "subagent",
     input: { action: "resume", id: "run-123", agentScope: "system" },
@@ -329,13 +368,13 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
   };
 
   assert.equal(await toolCall(listEvent, ctx), undefined);
-  assert.equal(listEvent.input.agentScope, "project");
+  assert.equal(listEvent.input.agentScope, "user");
   assert.equal(await toolCall(listBothEvent, ctx), undefined);
-  assert.equal(listBothEvent.input.agentScope, "project");
+  assert.equal(listBothEvent.input.agentScope, "user");
   assert.equal(await toolCall(getEvent, ctx), undefined);
-  assert.equal(getEvent.input.agentScope, "project");
+  assert.equal(getEvent.input.agentScope, "user");
   assert.equal(await toolCall(getBothEvent, ctx), undefined);
-  assert.equal(getBothEvent.input.agentScope, "project");
+  assert.equal(getBothEvent.input.agentScope, "user");
   assert.equal(await toolCall(resumeEvent, ctx), undefined);
   assert.equal(resumeEvent.input.agentScope, "user");
   assert.equal(resumeEvent.input.context, "fresh");
@@ -345,12 +384,12 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
   assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
     block: true,
     reason:
-      'TLH primary-agent subagent get calls may not use agentScope: "user". Project custom agents run only from the validated Git-root project scope.',
+      'TLH primary-agent subagent get calls may not use agentScope: "project". TLH minor agents must run from the isolated user scope.',
   });
   assert.deepEqual(await toolCall(blockedResumeScopeEvent, ctx), {
     block: true,
     reason:
-      'TLH primary-agent subagent resume calls may not use agentScope: "system". Use "user", "project", "both", or omit it.',
+      'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
   });
   assert.deepEqual(await toolCall(blockedResumeContextEvent, ctx), {
     block: true,
@@ -606,9 +645,9 @@ test("/switch-primary-agent status reports model override or none", async (t) =>
   );
 });
 
-test("/switch-primary-agent status hides stale overrides for locked primaries", async (t) => {
+test("/switch-primary-agent status reports an override for overrideable Rush", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writePrimaryConfig(fixture.agent, { modelOverrides: { rush: "anthropic/claude-opus-5" } });
@@ -630,14 +669,16 @@ test("/switch-primary-agent status hides stale overrides for locked primaries", 
 
     assert.equal(status.notifications.at(-1)?.type, "info");
     assert.match(status.notifications.at(-1)?.message ?? "", /Primary agent: rush\./);
-    assert.match(status.notifications.at(-1)?.message ?? "", /Model override: none\./);
-    assert.doesNotMatch(status.notifications.at(-1)?.message ?? "", /claude-opus-5/);
+    assert.match(
+      status.notifications.at(-1)?.message ?? "",
+      /Model override: anthropic\/claude-opus-5\./,
+    );
   });
 });
 
-test("/switch-primary-agent model reset clears a stale locked-primary model override", async (t) => {
+test("/switch-primary-agent model reset clears an overrideable Rush model override", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const primaryAgents = new Map([["rush", lockedRushPrimary()]]);
+  const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
   const initialSettings = `${JSON.stringify(
     {
       tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
@@ -672,10 +713,7 @@ test("/switch-primary-agent model reset clears a stale locked-primary model over
     assert.equal(written.tlh.primaryAgent.modelOverrides, undefined);
     assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-sonnet-4-6" });
     assert.equal(reset.notifications.at(-1)?.type, "info");
-    assert.match(
-      reset.notifications.at(-1)?.message ?? "",
-      /Cleared stale ignored model override for rush/,
-    );
+    assert.match(reset.notifications.at(-1)?.message ?? "", /Cleared model override for rush/);
   });
 });
 
@@ -743,6 +781,26 @@ test("/switch-primary-agent default refuses normal Pi settings", async () => {
 
 // ─── Embedded subagents (ts-42p1) ───────────────────────────────────────────
 
+test("project execution keeps retired binding and fail-open paths absent", () => {
+  const sourcePaths = [
+    "extensions/the-last-harness/primary-agent-runtime.ts",
+    "extensions/the-last-harness/primary-agent-runtime.js",
+    "extensions/subagents/src/runs/foreground/subagent-executor.ts",
+    "extensions/subagents/src/runs/foreground/subagent-executor.js",
+    "extensions/the-last-harness/prompts.ts",
+    "extensions/the-last-harness/prompts.js",
+    "extensions/the-last-harness-subagent-safety.mjs",
+  ];
+  for (const relativePath of sourcePaths) {
+    const source = readFileSync(join(process.cwd(), relativePath), "utf8");
+    assert.doesNotMatch(
+      source,
+      /projectCustomBinding|ProjectCustomAgentBinding|isProjectCustomAgentBinding|ProjectCustomAgentAuthorization|loadAuthorizedEmbeddedSubagentRuntimeNames/,
+      `${relativePath} must not restore retired custom binding/authorization paths`,
+    );
+  }
+});
+
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
   if (agentDir.endsWith(`${sep}agent`)) {
     const repoRoot = join(dirname(agentDir), "workspace");
@@ -752,12 +810,18 @@ function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
     new ProjectTrustStore(agentDir).set(repoRoot, true);
     const filePath = join(repoRoot, ".tlh", "agents", "custom", basenameUpper(relativePath));
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, `${frontmatter}\nbody\n`);
+    const definition = frontmatter.includes("\ntools:")
+      ? frontmatter
+      : frontmatter.replace(/\n---\s*$/u, "\ntools: read\n---");
+    writeFileSync(filePath, `${definition}\nbody\n`);
     return filePath;
   }
   const filePath = join(agentDir, "agents", relativePath);
   mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${frontmatter}\nbody\n`);
+  const definition = frontmatter.includes("\ntools:")
+    ? frontmatter
+    : frontmatter.replace(/\n---\s*$/u, "\ntools: read\n---");
+  writeFileSync(filePath, `${definition}\nbody\n`);
   return filePath;
 }
 
@@ -1229,12 +1293,12 @@ test("embedded subagents: same-name external fallback stays blocked when the roo
     assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
     assert.match(
       blockedResult?.reason ?? "",
-      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom|tombstone|profile fallback/,
     );
   });
 });
 
-test("embedded subagents: same-name external agents stay blocked and deleting root custom files is observed immediately", async (t) => {
+test("embedded subagents: same-name external agents stay blocked while the active snapshot remains stable", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
 
@@ -1292,17 +1356,16 @@ test("embedded subagents: same-name external agents stay blocked and deleting ro
       "---\nname: fallback\npackage: bundled\ndescription: No longer embedded\n---\nbody\n",
     );
 
-    const blockedEvent = {
+    const snapshotEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", task: "do something" },
+      input: { agent: "embedded.fallback", task: "the active snapshot remains exact" },
     };
-    const blockedResult = await toolCall(blockedEvent, ctx);
-    assert.equal(blockedResult?.block, true);
-    assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
-    assert.match(
-      blockedResult?.reason ?? "",
-      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    assert.equal(
+      await toolCall(snapshotEvent, ctx),
+      undefined,
+      "the session snapshot must retain the trusted captured definition after a source edit",
     );
+    assert.equal(snapshotEvent.input.agentScope, "project");
   });
 });
 
@@ -1468,7 +1531,10 @@ test("embedded subagents: a symlinked generic profile agents root cannot authori
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
-    assert.match(blockedResult?.reason ?? "", /Target\(s\): embedded\.fallback/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /(?:Target|Unauthorized) target\(s\): embedded\.fallback/,
+    );
     assert.match(
       blockedResult?.reason ?? "",
       /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
