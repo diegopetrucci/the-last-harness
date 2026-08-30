@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { AgentSession, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
@@ -13,8 +13,6 @@ import {
   registerRuntimeHarness,
   writePrimaryConfig,
   createPrimaryPrompt,
-  createCommandContext,
-  lockedRushPrimary,
   rushLikePrimary,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
@@ -88,7 +86,11 @@ test("primary runtime follows OpenRouter session models and resolves effective p
 
       const first = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
       await first.runtime.applySessionStart(makeCtx());
-      assert.equal(first.pi.model, undefined, "unlocked primary leaves session model untouched");
+      assert.equal(
+        first.pi.model,
+        undefined,
+        "primary leaves the OpenRouter session model untouched",
+      );
       assert.equal(
         first.pi.thinkingLevel,
         "max",
@@ -114,49 +116,6 @@ test("primary runtime follows OpenRouter session models and resolves effective p
       await codexPin.runtime.applySessionStart(makeCtx());
       assert.deepEqual(codexPin.pi.model, availableModels[2]);
       assert.equal(codexPin.pi.thinkingLevel, "medium", "stored Codex pin selects OpenAI thinking");
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
-});
-
-test("architect preserves and enforces its OpenRouter minThinking floor", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
-  const sessionModel = { provider: "openrouter", id: "openai/gpt-5.4" };
-  const architectPrimary = createPrimaryPrompt("architect", {
-    model: "anthropic/claude-sonnet-4-6",
-    minThinking: "medium",
-    tlhOpenrouterThinking: "high",
-    applyModel: true,
-    applyThinking: true,
-  });
-
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const { pi, runtime, beforeAgentStart } = registerRuntimeHarness({
-        primaryAgents: new Map([["architect", architectPrimary]]),
-        subagentMetadata: [],
-      });
-      const context = {
-        cwd: fixture.cwd,
-        sessionManager: { getBranch: () => [] },
-        ui: { notify() {} },
-        modelRegistry: { getAvailable: () => [sessionModel] },
-        model: sessionModel,
-      };
-
-      await runtime.applySessionStart(context);
-      assert.equal(pi.thinkingLevel, "high");
-      pi.thinkingLevel = "medium";
-      await beforeAgentStart({ systemPrompt: "base" }, context);
-      assert.equal(pi.thinkingLevel, "medium", "a level meeting the floor is preserved");
-      pi.thinkingLevel = "low";
-      await beforeAgentStart({ systemPrompt: "base" }, context);
-      assert.equal(
-        pi.thinkingLevel,
-        "high",
-        "a level below the floor is restored to OpenRouter target",
-      );
     });
   } finally {
     cleanupTempDir(fixture);
@@ -202,62 +161,7 @@ test("overrideable primary on OpenRouter keeps the session model while applying 
   }
 });
 
-test("custom locked primaries reject typed effort without recording session thinking intent", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-primary-locked-thinking-", {
-    cwd: true,
-    test: t,
-  });
-  const { notifications, ctx } = createCommandContext([
-    {
-      type: "custom",
-      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
-      data: { selected: "rush" },
-    },
-  ]);
-  ctx.cwd = fixture.cwd;
-  writePrimaryConfig(fixture.agent, { selected: "rush" });
-
-  try {
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const { pi, runtime } = registerRuntimeHarness({
-        primaryAgents: new Map([["rush", lockedRushPrimary()]]),
-        subagentMetadata: [],
-      });
-      assert.ok(runtime, "runtime should register outside child sessions");
-      const recordedThinkingLevels = [];
-      runtime.recordUserThinkingLevel = (level) => {
-        recordedThinkingLevels.push(level);
-      };
-      registerEffortCommand(pi, runtime);
-
-      await runtime.applySessionStart(ctx);
-      assert.equal(pi.thinkingLevel, "medium", "the custom lock keeps its provider default active");
-
-      await pi.commands.get("effort").handler("high", ctx);
-
-      assert.deepEqual(notifications, [
-        {
-          message: 'Thinking is locked at "medium" for the rush primary agent.',
-          type: "error",
-        },
-      ]);
-      assert.deepEqual(
-        recordedThinkingLevels,
-        [],
-        "a rejected effort must not create session intent",
-      );
-      assert.equal(
-        pi.thinkingLevel,
-        "medium",
-        "a rejected effort must not change the active level",
-      );
-    });
-  } finally {
-    cleanupTempDir(fixture);
-  }
-});
-
-test("unlocked primaries retain explicit thinking through turns, model switches, and mode boundaries", async (t) => {
+test("primaries retain explicit thinking through turns, model switches, and mode boundaries", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-thinking-lifecycle-", {
     cwd: true,
     test: t,
@@ -452,7 +356,7 @@ test("unlocked primaries retain explicit thinking through turns, model switches,
   }
 });
 
-test("unlocked primaries honor an explicit durable thinking level across sessions and mode changes", async (t) => {
+test("primaries honor an explicit durable thinking level across sessions and mode changes", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-durable-thinking-", {
     cwd: true,
     test: t,
@@ -471,7 +375,6 @@ test("unlocked primaries honor an explicit durable thinking level across session
   const architect = createPrimaryPrompt("architect", {
     model: "anthropic/claude-opus-5",
     thinking: "high",
-    minThinking: "medium",
     applyModel: false,
     applyThinking: true,
   });
@@ -552,7 +455,7 @@ test("unlocked primaries honor an explicit durable thinking level across session
   }
 });
 
-test("native thinking cycle changes are retained for every unlocked primary and survive a new session", async (t) => {
+test("native thinking cycle changes are retained for every primary without a default write", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-native-thinking-", {
     cwd: true,
     test: t,
@@ -598,21 +501,16 @@ test("native thinking cycle changes are retained for every unlocked primary and 
           (event) => event.name === "thinking_level_select",
         )?.handler;
         assert.equal(typeof thinkingSelect, "function");
-        const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-
         await runtime.applySessionStart(context);
         assert.equal(pi.thinkingLevel, definition.thinking);
 
-        // A native Shift+Tab/Ctrl+thinking cycle writes the upstream durable
-        // default before the extension event reaches TLH.
+        // A native Shift+Tab/Ctrl+thinking cycle is session-only; the
+        // event still records retained session intent without a default write.
         pi.thinkingLevel = "medium";
-        manager.setDefaultThinkingLevel("medium");
         await thinkingSelect(
           { type: "thinking_level_select", level: "medium", previousLevel: definition.thinking },
           context,
         );
-        await manager.flush();
-
         await beforeAgentStart({ systemPrompt: "base" }, context);
         assert.equal(
           pi.thinkingLevel,
@@ -623,8 +521,8 @@ test("native thinking cycle changes are retained for every unlocked primary and 
         await runtime.applySessionStart(context);
         assert.equal(
           pi.thinkingLevel,
-          "medium",
-          `${definition.name} restores native thinking from defaultThinkingLevel in a new session`,
+          definition.thinking,
+          `${definition.name} restores the packaged thinking level after a new session`,
         );
       }
     });
@@ -674,7 +572,6 @@ test("TLH default thinking application is not mistaken for native user intent", 
       pi.setThinkingLevel = (level) => {
         const previousLevel = pi.thinkingLevel;
         pi.thinkingLevel = level;
-        manager.setDefaultThinkingLevel(level);
         pendingEvents.push(
           thinkingSelect({ type: "thinking_level_select", level, previousLevel }, context),
         );
@@ -701,7 +598,7 @@ test("TLH default thinking application is not mistaken for native user intent", 
   }
 });
 
-test("unlocked retained thinking clamps across direct and OpenRouter model changes", async (t) => {
+test("retained thinking clamps across direct and OpenRouter model changes", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-thinking-clamp-", {
     cwd: true,
     test: t,
@@ -793,7 +690,7 @@ test("unlocked retained thinking clamps across direct and OpenRouter model chang
   }
 });
 
-test("architect applies a durable thinking choice without violating its medium floor", async (t) => {
+test("architect applies a durable thinking choice", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-architect-durable-thinking-", {
     cwd: true,
     test: t,
@@ -807,7 +704,6 @@ test("architect applies a durable thinking choice without violating its medium f
   const architect = createPrimaryPrompt("architect", {
     model: "anthropic/claude-opus-5",
     thinking: "high",
-    minThinking: "medium",
     applyModel: false,
     applyThinking: true,
   });
@@ -830,7 +726,7 @@ test("architect applies a durable thinking choice without violating its medium f
         model,
       };
       await runtime.applySessionStart(context);
-      assert.equal(pi.thinkingLevel, "medium");
+      assert.equal(pi.thinkingLevel, "low");
     });
   } finally {
     cleanupTempDir(fixture);
@@ -943,12 +839,11 @@ test("primary runtime respects explicit false settings over Rush-like metadata d
   }
 });
 
-test("architect before_agent_start preserves its floor and restores its default after Rush", async (t) => {
+test("architect before_agent_start reapplies its default after Rush", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const architectPrimary = createPrimaryPrompt("architect", {
     model: "anthropic/claude-opus-5",
     thinking: "high",
-    minThinking: "medium",
     applyModel: true,
     applyThinking: true,
   });
@@ -990,8 +885,8 @@ test("architect before_agent_start preserves its floor and restores its default 
     await beforeAgentStart({ systemPrompt: "base prompt" }, makeCtx([]));
     assert.equal(
       pi.thinkingLevel,
-      "medium",
-      "before_agent_start preserves a current level that satisfies architect's floor",
+      "high",
+      "before_agent_start reapplies the provider-aware primary default",
     );
 
     await beforeAgentStart(
@@ -1396,28 +1291,43 @@ test("primary runtime defers missing-tool startup warnings and keeps the archite
 
 // --- tlh-3mb3: per-primary model override tests ---
 
-function createPiHarnessWithFiringModelSelect(getCtx) {
-  const pi = createPiHarness();
-  const modelSelectHandlers = [];
-  const origOn = pi.on.bind(pi);
-  pi.on = function (name, handler) {
-    origOn(name, handler);
-    if (name === "model_select") {
-      modelSelectHandlers.push(handler);
-    }
+/**
+ * Exercise Pi's public AgentSession.setModel boundary for model persistence
+ * tests. The small object uses AgentSession.prototype.setModel itself, while
+ * supplying only the runtime internals that the published method needs.
+ */
+function createPublicModelSession(pi, ctx, initialModel) {
+  const manager = SettingsManager.create(ctx.cwd);
+  const state = { model: initialModel, thinkingLevel: "low" };
+  const session = Object.create(AgentSession.prototype);
+  session.agent = { state };
+  session.sessionManager = { appendModelChange() {} };
+  session.settingsManager = manager;
+  session._modelRuntime = { checkAuth: async () => true };
+  session._scopedModels = [];
+  session._getThinkingLevelForModelSwitch = () => state.thinkingLevel;
+  session._addPersistedDefaultToNonEmptyScope = () => {};
+  session.setThinkingLevel = (level) => {
+    state.thinkingLevel = level;
   };
-  pi.setModel = async function (model) {
-    const previousModel = this.model;
-    this.model = model;
-    const ctx = getCtx();
-    if (ctx) {
-      for (const h of modelSelectHandlers) {
-        await h({ type: "model_select", model, previousModel, source: "set" }, ctx);
+  session._emitModelSelect = async (model, previousModel, source) => {
+    if (model?.provider === previousModel?.provider && model?.id === previousModel?.id) {
+      return;
+    }
+    pi.model = model;
+    for (const registered of pi.events) {
+      if (registered.name === "model_select") {
+        await registered.handler({ type: "model_select", model, previousModel, source }, ctx);
       }
     }
-    return true;
   };
-  return pi;
+  return { manager, session, state };
+}
+
+async function persistModelThroughPublicApi(pi, ctx, selected) {
+  const { manager, session } = createPublicModelSession(pi, ctx, ctx.model);
+  await session.setModel(selected, { persist: true });
+  await manager.flush();
 }
 
 test("model override resolution: stored override is applied when the model is in the registry", async (t) => {
@@ -1533,7 +1443,7 @@ for (const [selection, defaultModel] of [
   });
 }
 
-test("model_select listener writes override to settings when user picks a non-default model", async (t) => {
+test("persisted model_select writes an override when Ctrl+S saves a non-default model", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const primaryAgents = new Map([["architect", rushLikePrimary()]]);
   // rushLikePrimary has model: "anthropic/claude-sonnet-4-6".
@@ -1541,11 +1451,9 @@ test("model_select listener writes override to settings when user picks a non-de
   // Available: both claude-sonnet-4-6 (bundled default) and claude-opus-5 (non-default).
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
-    // User picks a non-default model: anthropic/claude-opus-5
+    // User explicitly saves a non-default model with native Ctrl+S.
     const overrideModel = { provider: "anthropic", id: "claude-opus-5" };
     const ctx = {
       cwd: fixture.cwd,
@@ -1560,19 +1468,17 @@ test("model_select listener writes override to settings when user picks a non-de
       },
       model: overrideModel,
     };
+    await runtime.applySessionStart(ctx);
     // bundledKey for provider "anthropic" with rushLikePrimary: "anthropic/claude-sonnet-4-6" (the primary's .model field)
     // chosenKey: "anthropic/claude-opus-5" → different → should write override
-    await modelSelectHandler(
-      { type: "model_select", model: overrideModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await persistModelThroughPublicApi(pi, ctx, overrideModel);
 
     const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
     assert.equal(written.tlh.primaryAgent.modelOverrides.architect, "anthropic/claude-opus-5");
   });
 });
 
-test("model_select listener clears override when user reselects the primary's bundled default model", async (t) => {
+test("persisted model_select clears an override when Ctrl+S saves the bundled default", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const primaryAgents = new Map([["architect", rushLikePrimary()]]);
   const initialSettings =
@@ -1586,11 +1492,9 @@ test("model_select listener clears override when user reselects the primary's bu
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(join(fixture.agent, "settings.json"), initialSettings);
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
-    // rushLikePrimary with only anthropic available: bundled default is anthropic/claude-sonnet-4-6
+    // Native Ctrl+S explicitly saves the bundled default and clears the override.
     const bundledDefaultModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
     const ctx = {
       cwd: fixture.cwd,
@@ -1599,10 +1503,8 @@ test("model_select listener clears override when user reselects the primary's bu
       modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
       model: bundledDefaultModel,
     };
-    await modelSelectHandler(
-      { type: "model_select", model: bundledDefaultModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await runtime.applySessionStart(ctx);
+    await persistModelThroughPublicApi(pi, ctx, bundledDefaultModel);
 
     const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
     // Override for architect should be cleared
@@ -1610,7 +1512,7 @@ test("model_select listener clears override when user reselects the primary's bu
   });
 });
 
-test("Rush persists a model override when model_select fires for a non-default user model", async (t) => {
+test("Rush persists a model override through public setModel for a non-default user model", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const rushPrimary = createPrimaryPrompt("rush", {
     model: "anthropic/claude-sonnet-4-6",
@@ -1625,9 +1527,7 @@ test("Rush persists a model override when model_select fires for a non-default u
   const primaryAgents = new Map([["rush", rushPrimary]]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
     const nonDefaultModel = { provider: "anthropic", id: "claude-opus-5" };
     const ctx = {
@@ -1650,10 +1550,8 @@ test("Rush persists a model override when model_select fires for a non-default u
       },
       model: nonDefaultModel,
     };
-    await modelSelectHandler(
-      { type: "model_select", model: nonDefaultModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await runtime.applySessionStart(ctx);
+    await persistModelThroughPublicApi(pi, ctx, nonDefaultModel);
 
     const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
     assert.equal(
@@ -1670,7 +1568,7 @@ test("Rush persists a model override when model_select fires for a non-default u
 });
 
 for (const selection of ["product", "bug-hunter"]) {
-  test(`${selection} persists a model override when model_select fires for a non-default user model`, async (t) => {
+  test(`${selection} persists a model override through public setModel for a non-default user model`, async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", {
       cwd: true,
       test: t,
@@ -1685,12 +1583,10 @@ for (const selection of ["product", "bug-hunter"]) {
     });
 
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const { pi } = registerRuntimeHarness({
+      const { pi, runtime } = registerRuntimeHarness({
         primaryAgents: new Map([[selection, primary]]),
         subagentMetadata: [],
       });
-      const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-      assert.ok(modelSelectHandler, "model_select handler must be registered");
 
       const nonDefaultModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
       const ctx = {
@@ -1708,12 +1604,10 @@ for (const selection of ["product", "bug-hunter"]) {
         modelRegistry: {
           getAvailable: () => [{ provider: "anthropic", id: "claude-opus-5" }, nonDefaultModel],
         },
-        model: nonDefaultModel,
+        model: { provider: "anthropic", id: "claude-opus-5" },
       };
-      await modelSelectHandler(
-        { type: "model_select", model: nonDefaultModel, previousModel: undefined, source: "set" },
-        ctx,
-      );
+      await runtime.applySessionStart(ctx);
+      await persistModelThroughPublicApi(pi, ctx, nonDefaultModel);
 
       const settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
       assert.equal(
@@ -1730,13 +1624,23 @@ for (const selection of ["product", "bug-hunter"]) {
   });
 }
 
-test("echo guard: TLH's own applyPrimaryModel does not record a model override", async (t) => {
+test("echo guard: TLH's own public setModel application does not record a model override", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-  let capturedCtx = null;
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const pi = createPiHarnessWithFiringModelSelect(() => capturedCtx);
+    const pi = createPiHarness();
+    const initialModel = { provider: "anthropic", id: "claude-opus-5" };
+    pi.model = initialModel;
+    const applyCtx = {
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
+      get model() {
+        return pi.model;
+      },
+    };
     const runtime = registerTlhPrimaryAgentRuntime(pi, {
       env: {},
       primaryAgents,
@@ -1744,31 +1648,27 @@ test("echo guard: TLH's own applyPrimaryModel does not record a model override",
     });
     assert.ok(runtime);
 
-    const applyCtx = {
-      cwd: fixture.cwd,
-      sessionManager: { getBranch: () => [] },
-      ui: { notify() {} },
-      modelRegistry: { getAvailable: () => [{ provider: "anthropic", id: "claude-sonnet-4-6" }] },
-      model: { provider: "anthropic", id: "claude-opus-5" }, // different from bundled default
+    const { manager, session } = createPublicModelSession(pi, applyCtx, initialModel);
+    pi.setModel = async (model) => {
+      await session.setModel(model);
+      return true;
     };
-    capturedCtx = applyCtx;
 
-    // This will call pi.setModel which fires model_select with source="set".
-    // The echo guard (tlhApplyingModel=true) must suppress writing the override.
+    // The primary runtime reaches Pi's public setModel boundary. Its internal
+    // application must not be mistaken for a persisted user selection.
     await runtime.applySessionStart(applyCtx);
+    await manager.flush();
 
-    // settings.json should NOT have been written (no override)
     let settings;
     try {
       settings = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
     } catch {
       settings = null;
     }
-    const overrides = settings?.tlh?.primaryAgent?.modelOverrides;
     assert.equal(
-      overrides?.architect,
+      settings?.tlh?.primaryAgent?.modelOverrides?.architect,
       undefined,
-      "TLH's own setModel must not record a model override",
+      "TLH's own public setModel application must not record a model override",
     );
   });
 });
@@ -1924,9 +1824,9 @@ test("resetPrimaryAgentModelOverride refuses an unrecognised name: no write, no 
 // Override baseline recording (ts-sjlt)
 // ---------------------------------------------------------------------------
 
-test("model_select records override baseline on first creation", async (t) => {
-  // Verifies that firing model_select for a first-time override writes the packaged
-  // default of that moment as the baseline in reconcile-state.json.
+test("public setModel persistence records override baseline on first creation", async (t) => {
+  // Verifies that a persisted public setModel call for a first-time override
+  // writes the packaged default of that moment as the baseline in reconcile-state.json.
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   // Agent with Anthropic packaged default claude-sonnet-4-6.
   const agentWithModelX = createPrimaryPrompt("architect", {
@@ -1938,11 +1838,9 @@ test("model_select records override baseline on first creation", async (t) => {
   const primaryAgents = new Map([["architect", agentWithModelX]]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
-    // User picks a non-default model for the first time (no prior override in settings).
+    // User explicitly saves a non-default model with native Ctrl+S.
     const nonDefaultModel = { provider: "anthropic", id: "claude-opus-5" };
     const ctx = {
       cwd: fixture.cwd,
@@ -1954,12 +1852,10 @@ test("model_select records override baseline on first creation", async (t) => {
           { provider: "anthropic", id: "claude-opus-5" },
         ],
       },
-      model: nonDefaultModel,
+      model: { provider: "anthropic", id: "claude-sonnet-4-6" },
     };
-    await modelSelectHandler(
-      { type: "model_select", model: nonDefaultModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await runtime.applySessionStart(ctx);
+    await persistModelThroughPublicApi(pi, ctx, nonDefaultModel);
 
     // Baseline must record the packaged default for anthropic at override-creation time.
     const reconcileState = readReconcileState();
@@ -2006,11 +1902,9 @@ test("model_select does not rebaseline when editing an existing override", async
     mkdirSync(join(fixture.agent, "tlh"), { recursive: true });
     writeFileSync(statePath, `${JSON.stringify(staleBaseline, null, 2)}\n`);
 
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
-    // User picks a different non-default model (this is an edit, not a first creation).
+    // User explicitly saves a different non-default model (this is an edit, not a first creation).
     const newOverrideModel = { provider: "anthropic", id: "claude-opus-5" };
     const ctx = {
       cwd: fixture.cwd,
@@ -2023,12 +1917,10 @@ test("model_select does not rebaseline when editing an existing override", async
           { provider: "anthropic", id: "claude-opus-4-8" },
         ],
       },
-      model: newOverrideModel,
+      model: { provider: "anthropic", id: "claude-opus-4-8" },
     };
-    await modelSelectHandler(
-      { type: "model_select", model: newOverrideModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await runtime.applySessionStart(ctx);
+    await persistModelThroughPublicApi(pi, ctx, newOverrideModel);
 
     // Stale baseline must NOT have been overwritten — the edit must not rebaseline.
     const reconcileState = readReconcileState();
@@ -2045,7 +1937,7 @@ test("end-to-end: override created under packaged default X triggers notice afte
   // This is the primary regression test for ts-sjlt.
   //
   // Journey:
-  // 1. Packaged default is X. User creates override via model_select → baseline X is recorded.
+  // 1. Packaged default is X. User saves an override via public setModel/Ctrl+S → baseline X is recorded.
   // 2. TLH is updated: packaged default changes to Y.
   // 3. On next startup, maybeNotifyModelEffortDrift must fire because baseline X ≠ current Y.
   //
@@ -2063,14 +1955,12 @@ test("end-to-end: override created under packaged default X triggers notice afte
   const primaryAgentsWithX = new Map([["architect", agentWithModelX]]);
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    // User creates override by picking a non-default model via model_select.
+    // User saves a non-default model via Ctrl+S/model_select.
     // This should record baseline {model: "anthropic/claude-sonnet-4-6"} for architect@anthropic.
-    const { pi } = registerRuntimeHarness({
+    const { pi, runtime } = registerRuntimeHarness({
       primaryAgents: primaryAgentsWithX,
       subagentMetadata: [],
     });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
 
     const overrideModel = { provider: "anthropic", id: "claude-opus-5" };
     const ctx = {
@@ -2083,12 +1973,10 @@ test("end-to-end: override created under packaged default X triggers notice afte
           { provider: "anthropic", id: "claude-opus-5" },
         ],
       },
-      model: overrideModel,
+      model: { provider: "anthropic", id: "claude-sonnet-4-6" },
     };
-    await modelSelectHandler(
-      { type: "model_select", model: overrideModel, previousModel: undefined, source: "set" },
-      ctx,
-    );
+    await runtime.applySessionStart(ctx);
+    await persistModelThroughPublicApi(pi, ctx, overrideModel);
 
     // Confirm override and baseline were recorded.
     const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json"), "utf8"));
@@ -2165,9 +2053,9 @@ test("end-to-end: override created under packaged default X triggers notice afte
 // ---------------------------------------------------------------------------
 
 /**
- * Drives the real user-facing override-creation path: fires model_select exactly
- * as the pi runtime does when a user picks a model. Everything downstream
- * (settings write + baseline recording) is production code.
+ * Drives the user-facing override-creation path through Pi's public
+ * AgentSession.setModel({ persist: true }) boundary. Everything downstream
+ * (primary override + baseline recording) is production code.
  */
 async function createPrimaryOverrideViaRealPath(
   fixture,
@@ -2175,19 +2063,20 @@ async function createPrimaryOverrideViaRealPath(
   chosenModel,
   availableModels,
 ) {
-  const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-  const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-  assert.ok(modelSelectHandler, "model_select handler must be registered");
-  await modelSelectHandler(
-    { type: "model_select", model: chosenModel, previousModel: undefined, source: "set" },
-    {
-      cwd: fixture.cwd,
-      sessionManager: { getBranch: () => [] },
-      ui: { notify() {} },
-      modelRegistry: { getAvailable: () => availableModels },
-      model: chosenModel,
-    },
-  );
+  const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
+  const initialModel =
+    availableModels.find(
+      (candidate) => candidate.provider !== chosenModel.provider || candidate.id !== chosenModel.id,
+    ) ?? chosenModel;
+  const ctx = {
+    cwd: fixture.cwd,
+    sessionManager: { getBranch: () => [] },
+    ui: { notify() {} },
+    modelRegistry: { getAvailable: () => availableModels },
+    model: initialModel,
+  };
+  await runtime.applySessionStart(ctx);
+  await persistModelThroughPublicApi(pi, ctx, chosenModel);
 }
 
 /** Runs the startup notice against a supplied packaged catalog, returning notifications. */
@@ -2332,27 +2221,28 @@ test("primary baseline is not recorded when the settings write is refused", asyn
     // Make the settings path unwritable-by-guard.
     mkdirSync(join(fixture.agent, "settings.json"), { recursive: true });
 
-    const { pi } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
-    const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-    assert.ok(modelSelectHandler, "model_select handler must be registered");
+    const { pi, runtime } = registerRuntimeHarness({ primaryAgents, subagentMetadata: [] });
 
     const chosen = { provider: "anthropic", id: "claude-opus-5" };
-    // Must not throw into the command path even though the write is refused.
-    await modelSelectHandler(
-      { type: "model_select", model: chosen, previousModel: undefined, source: "set" },
-      {
-        cwd: fixture.cwd,
-        sessionManager: { getBranch: () => [] },
-        ui: { notify() {} },
-        modelRegistry: {
-          getAvailable: () => [
-            { provider: "anthropic", id: "claude-sonnet-4-6" },
-            { provider: "anthropic", id: "claude-opus-5" },
-          ],
-        },
-        model: chosen,
+    const ctx = {
+      cwd: fixture.cwd,
+      sessionManager: { getBranch: () => [] },
+      ui: { notify() {} },
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "anthropic", id: "claude-sonnet-4-6" },
+          { provider: "anthropic", id: "claude-opus-5" },
+        ],
       },
-    );
+      model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+    };
+    await runtime.applySessionStart(ctx);
+    const { manager, session } = createPublicModelSession(pi, ctx, ctx.model);
+    // Pi's settings manager records the load failure and lets the public model
+    // mutation complete; TLH must not record a primary baseline for a write that
+    // the profile guard refused.
+    await session.setModel(chosen, { persist: true });
+    await manager.flush();
 
     const baseline = readReconcileState().acknowledgedSnapshot?.architect;
     assert.equal(

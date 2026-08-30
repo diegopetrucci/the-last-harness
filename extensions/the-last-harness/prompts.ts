@@ -470,8 +470,6 @@ function parseAgentPrompt(filePath: string): AgentPrompt | undefined {
     preferOppositeProvider: parseBooleanValue(frontmatter.preferOppositeProvider),
     applyModel: parseBooleanValue(frontmatter.applyModel),
     applyThinking: parseBooleanValue(frontmatter.applyThinking),
-    lockThinking: parseBooleanValue(frontmatter.lockThinking),
-    minThinking: parseThinkingLevelValue(frontmatter.minThinking),
     tools: splitCommaList(frontmatter.tools),
     systemPrompt: body,
     filePath,

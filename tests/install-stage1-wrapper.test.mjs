@@ -1375,12 +1375,12 @@ test("wrapper update --extensions helper prepends the pinned private runtime dir
   mkdirSync(cwdDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
-  // Pinned pi at 0.84.2 — still prepended for --extensions.
+  // Pinned pi at 0.84.4 — still prepended for --extensions.
   writeFakePi(
     pinnedPiDir,
     [
       `printf '%s\\n' "$*" >>"${pinnedPiCallLog}"`,
-      `if [[ "\${1:-}" == "--version" ]]; then printf '0.84.2\\n'; exit 0; fi`,
+      `if [[ "\${1:-}" == "--version" ]]; then printf '0.84.4\\n'; exit 0; fi`,
       "exit 85",
     ].join("\n"),
   );

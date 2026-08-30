@@ -290,8 +290,6 @@ export type AgentPrompt = {
   preferOppositeProvider?: boolean;
   applyModel?: boolean;
   applyThinking?: boolean;
-  lockThinking?: boolean;
-  minThinking?: ThinkingLevel;
   tools: string[];
   systemPrompt: string;
   filePath: string;

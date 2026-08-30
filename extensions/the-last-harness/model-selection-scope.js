@@ -1,510 +1,442 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { ModelSelectorComponent, SettingsManager, } from "@earendil-works/pi-coding-agent";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { AgentSession, getPackageDir, VERSION, } from "@earendil-works/pi-coding-agent";
 import { safeTlhProfileFilePath } from "./profile-state.js";
-export const MODEL_SELECTION_SCOPE_SESSION_ONLY = "This session only — default";
-export const MODEL_SELECTION_SCOPE_ALL_SESSIONS = "All sessions";
-export const MODEL_SELECTION_SCOPE_OPTIONS = [
-    MODEL_SELECTION_SCOPE_SESSION_ONLY,
-    MODEL_SELECTION_SCOPE_ALL_SESSIONS,
-];
-function isModelSelectorRuntimePrototype(value) {
-    return (value !== null &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        "handleSelect" in value &&
-        typeof value.handleSelect === "function");
-}
 const TLH_MODEL_SELECTION_PERSISTENCE_PATCH = Symbol.for("tlh.modelSelectionPersistencePatch");
-function getPatchedPrototype() {
-    return SettingsManager.prototype;
+const BUNDLED_NODE_ENTRYPOINT_RE = /(?:^|[/\\])dist[/\\]bundle[/\\]cli\.js$/;
+const PINNED_PI_VERSION = "0.84.4";
+const tlhRequire = createRequire(import.meta.url);
+const bundledAgentSessionConstructors = new Map();
+let bundledAgentSessionResolution;
+let modelSelectionPersistenceInstallAttempted = false;
+let installedModelSelectionPersistencePatch;
+function isAgentSessionConstructor(value) {
+    if (typeof value !== "function") {
+        return false;
+    }
+    const prototype = value.prototype;
+    return (typeof prototype === "object" &&
+        prototype !== null &&
+        typeof prototype.setModel === "function");
+}
+function asAgentSessionConstructor(value) {
+    const candidate = typeof value === "function"
+        ? value
+        : typeof value === "object" && value !== null
+            ? value.AgentSession
+            : undefined;
+    return isAgentSessionConstructor(candidate) ? candidate : undefined;
+}
+function getRealBundledCliEntrypoint() {
+    const entrypoint = process.argv[1];
+    if (!entrypoint) {
+        return undefined;
+    }
+    try {
+        const realEntrypoint = realpathSync(entrypoint);
+        return BUNDLED_NODE_ENTRYPOINT_RE.test(realEntrypoint) ? realEntrypoint : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+function isPathContained(root, child) {
+    if (!isAbsolute(root) || !isAbsolute(child)) {
+        return false;
+    }
+    const childRelative = relative(root, child);
+    return (childRelative !== "" &&
+        childRelative !== ".." &&
+        !childRelative.startsWith(`..${sep}`) &&
+        !isAbsolute(childRelative));
+}
+function validateBundledPackageRoot(packageDir, cliEntrypoint) {
+    try {
+        const canonicalPackageDir = realpathSync(packageDir);
+        const expectedCli = join(canonicalPackageDir, "dist", "bundle", "cli.js");
+        const expectedIndex = join(canonicalPackageDir, "dist", "bundle", "index.js");
+        const expectedPackageJson = join(canonicalPackageDir, "package.json");
+        const expectedDist = join(canonicalPackageDir, "dist");
+        const expectedBundle = join(expectedDist, "bundle");
+        if (canonicalPackageDir !== packageDir || cliEntrypoint !== expectedCli) {
+            return {
+                status: "unsafe",
+                reason: "the bundled CLI or package root resolves through an unexpected path",
+            };
+        }
+        if (!isPathContained(canonicalPackageDir, cliEntrypoint) ||
+            !isPathContained(canonicalPackageDir, expectedIndex) ||
+            !isPathContained(canonicalPackageDir, expectedPackageJson)) {
+            return { status: "unsafe", reason: "the published bundle path escapes its package root" };
+        }
+        for (const directory of [expectedDist, expectedBundle]) {
+            if (realpathSync(directory) !== directory || !statSync(directory).isDirectory()) {
+                return { status: "unsafe", reason: "the published bundle directory is not canonical" };
+            }
+        }
+        for (const file of [expectedCli, expectedIndex, expectedPackageJson]) {
+            if (realpathSync(file) !== file || !statSync(file).isFile()) {
+                return { status: "unsafe", reason: "the published bundle file layout is not canonical" };
+            }
+        }
+        const packageMetadata = JSON.parse(readFileSync(expectedPackageJson, "utf8"));
+        if (VERSION !== PINNED_PI_VERSION ||
+            packageMetadata.name !== "@earendil-works/pi-coding-agent" ||
+            packageMetadata.version !== VERSION) {
+            return {
+                status: "unsafe",
+                reason: `expected @earendil-works/pi-coding-agent ${PINNED_PI_VERSION}`,
+            };
+        }
+        return { status: "safe", packageDir: canonicalPackageDir };
+    }
+    catch (error) {
+        return {
+            status: "unsafe",
+            reason: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+function resolveBundledPackage() {
+    const cliEntrypoint = getRealBundledCliEntrypoint();
+    if (!cliEntrypoint) {
+        return { status: "not-bundled" };
+    }
+    let importedPackageDir;
+    try {
+        importedPackageDir = realpathSync(getPackageDir());
+    }
+    catch {
+    }
+    if (importedPackageDir) {
+        const importedCli = join(importedPackageDir, "dist", "bundle", "cli.js");
+        if (cliEntrypoint === importedCli) {
+            return validateBundledPackageRoot(importedPackageDir, cliEntrypoint);
+        }
+    }
+    const activePackageDir = dirname(dirname(dirname(cliEntrypoint)));
+    return validateBundledPackageRoot(activePackageDir, cliEntrypoint);
+}
+function getBundledAgentSessionConstructor(packageDir) {
+    if (bundledAgentSessionConstructors.has(packageDir)) {
+        return bundledAgentSessionConstructors.get(packageDir);
+    }
+    const bundlePath = join(packageDir, "dist", "bundle", "index.js");
+    try {
+        const bundledModule = tlhRequire(bundlePath);
+        const bundledConstructor = asAgentSessionConstructor(bundledModule);
+        if (!bundledConstructor) {
+            throw new Error("the published bundle does not export AgentSession with setModel");
+        }
+        bundledAgentSessionConstructors.set(packageDir, bundledConstructor);
+        return bundledConstructor;
+    }
+    catch (error) {
+        console.warn(`[TLH] Unable to load Pi's bundled AgentSession entry ${bundlePath}: ${error instanceof Error ? error.message : String(error)}`);
+        bundledAgentSessionConstructors.set(packageDir, undefined);
+        return undefined;
+    }
+}
+function getAgentSessionConstructors(bundledAgentSession) {
+    const modularConstructor = AgentSession;
+    const constructors = [modularConstructor];
+    const cachedResolution = bundledAgentSessionResolution;
+    if (cachedResolution) {
+        if (cachedResolution.status === "not-bundled") {
+            return constructors;
+        }
+        if (cachedResolution.status === "unsafe") {
+            console.warn(`[TLH] installTlhModelSelectionPersistenceOverride: refusing an unsafe Pi bundle: ${cachedResolution.reason}`);
+            return undefined;
+        }
+        if (cachedResolution.constructor.prototype !== modularConstructor.prototype) {
+            constructors.push(cachedResolution.constructor);
+        }
+        return constructors;
+    }
+    if (bundledAgentSession !== undefined) {
+        const validatedBundledAgentSession = asAgentSessionConstructor(bundledAgentSession);
+        if (!validatedBundledAgentSession) {
+            const reason = "the virtual Pi module has no valid AgentSession.setModel export";
+            bundledAgentSessionResolution = { status: "unsafe", reason };
+            console.warn(`[TLH] installTlhModelSelectionPersistenceOverride: ${reason}; refusing a partial installation.`);
+            return undefined;
+        }
+        if (validatedBundledAgentSession.prototype !== modularConstructor.prototype) {
+            bundledAgentSessionResolution = {
+                status: "safe",
+                constructor: validatedBundledAgentSession,
+            };
+            constructors.push(validatedBundledAgentSession);
+            return constructors;
+        }
+    }
+    const packageResolution = resolveBundledPackage();
+    if (packageResolution.status === "not-bundled") {
+        bundledAgentSessionResolution = { status: "not-bundled" };
+        return constructors;
+    }
+    if (packageResolution.status === "unsafe") {
+        bundledAgentSessionResolution = packageResolution;
+        console.warn(`[TLH] installTlhModelSelectionPersistenceOverride: refusing an unsafe Pi bundle: ${packageResolution.reason}`);
+        return undefined;
+    }
+    const bundledConstructor = getBundledAgentSessionConstructor(packageResolution.packageDir);
+    if (!bundledConstructor) {
+        const reason = "the published bundle does not export AgentSession with setModel";
+        bundledAgentSessionResolution = { status: "unsafe", reason };
+        return undefined;
+    }
+    bundledAgentSessionResolution = { status: "safe", constructor: bundledConstructor };
+    if (!constructors.some((candidate) => candidate.prototype === bundledConstructor.prototype)) {
+        constructors.push(bundledConstructor);
+    }
+    return constructors;
+}
+function getPatchedPrototype(constructor = AgentSession) {
+    return constructor.prototype;
+}
+function isModelSelectionPersistencePatch(value) {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const candidate = value;
+    return (typeof candidate.ownerToken === "object" &&
+        candidate.ownerToken !== null &&
+        typeof candidate.modelSelectionContext?.run === "function" &&
+        Array.isArray(candidate.entries) &&
+        typeof candidate.state === "object" &&
+        candidate.state !== null &&
+        candidate.state.claimedInvocations instanceof WeakSet);
+}
+function getPatchFromPrototype(prototype) {
+    const value = prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH];
+    return isModelSelectionPersistencePatch(value) ? value : undefined;
 }
 function getInstalledPatch() {
-    return getPatchedPrototype()[TLH_MODEL_SELECTION_PERSISTENCE_PATCH];
+    return installedModelSelectionPersistencePatch;
 }
 function canWriteTlhDefaults() {
     return safeTlhProfileFilePath("settings.json") !== undefined;
 }
-function createGroupedDefaultWrites() {
-    return {
-        modelsAndProviders: new Set(),
-        thinking: new Set(),
-    };
-}
-function groupedWritesForManager(groups, manager) {
-    const group = groups.get(manager) ?? createGroupedDefaultWrites();
-    groups.set(manager, group);
-    return group;
-}
-function encodeModel(provider, modelId) {
-    return `${provider}\u0000${modelId}`;
-}
 function modelMatches(left, right) {
-    return left.provider === right.provider && left.modelId === right.id;
+    if (left === undefined || right === undefined) {
+        return left === right;
+    }
+    return left.provider === right.provider && left.id === right.id;
 }
-function operationsMatch(left, right) {
-    return (left.manager === right.manager &&
-        left.provider === right.provider &&
-        left.modelId === right.modelId);
+function asModelSelection(model) {
+    return model ? { provider: model.provider, id: model.id } : undefined;
 }
-function applySuppressedWrites(patch, writes) {
-    const groups = new Map();
-    for (const write of writes) {
-        const group = groupedWritesForManager(groups, write.manager);
-        switch (write.kind) {
-            case "model-and-provider":
-                group.modelsAndProviders.add(encodeModel(write.provider, write.modelId));
-                break;
-            case "thinking":
-                group.thinking.add(write.level);
-                break;
-        }
+function currentModelSelectionPersistence(patch, session) {
+    const context = patch.state.modelContext;
+    const invocation = patch.modelSelectionContext.getStore();
+    if (!context ||
+        context.session !== session ||
+        !invocation ||
+        invocation.session !== session ||
+        invocation.generation !== context.generation) {
+        return undefined;
     }
-    for (const [manager, group] of groups) {
-        for (const modelKey of group.modelsAndProviders) {
-            const separator = modelKey.indexOf("\u0000");
-            patch.originals.setDefaultModelAndProvider.call(manager, modelKey.slice(0, separator), modelKey.slice(separator + 1));
-        }
-        for (const level of group.thinking) {
-            patch.originals.setDefaultThinkingLevel.call(manager, level);
-        }
-    }
-    return [...groups.keys()];
+    return invocation;
 }
-async function flushManagers(managers) {
-    try {
-        await Promise.all(managers.map((manager) => manager.flush()));
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-function replayWrites(patch, writes) {
-    if (writes.length === 0 || !canWriteTlhDefaults()) {
-        return;
-    }
-    void flushManagers(applySuppressedWrites(patch, writes));
-}
-function replaySelectorCandidate(patch) {
-    const candidate = patch.state.selectorCandidate;
-    patch.state.selectorCandidate = undefined;
-    if (candidate) {
-        replayWrites(patch, candidate.writes);
-    }
-}
-function readTrackedActiveModel(state) {
-    if (!state.activeModelResolver) {
-        return { known: false, model: undefined };
-    }
-    try {
-        return { known: true, model: state.activeModelResolver() };
-    }
-    catch {
-        return { known: false, model: undefined };
-    }
-}
-function targetIsTrackedActiveModel(active, write) {
-    return (active.known &&
-        active.model !== undefined &&
-        active.model.provider === write.provider &&
-        active.model.id === write.modelId);
-}
-function replayImmediateModelWrite(patch, write) {
-    if (!operationsMatch(patch.state.immediateModelWrite ?? write, write)) {
-        patch.state.immediateModelWrite = undefined;
-    }
-    if (!patch.state.immediateModelWrite) {
-        replayWrites(patch, [write]);
-        patch.state.immediateModelWrite = {
-            manager: write.manager,
-            provider: write.provider,
-            modelId: write.modelId,
+function createSetModelWrapper(patch, original) {
+    return function (model, options) {
+        const activeContext = patch.state.modelContext;
+        const invocation = {
+            session: activeContext?.session,
+            generation: activeContext?.generation,
+            persist: options?.persist === true,
+            model: asModelSelection(model),
+            previousModel: undefined,
         };
-    }
-}
-function interceptCombinedModelWrite(patch, write) {
-    if (patch.state.suppressionDepth > 0) {
-        return;
-    }
-    if (patch.nativeSelectorContext.getStore() !== true) {
-        replaySelectorCandidate(patch);
-        patch.state.immediateModelWrite = undefined;
-        replayWrites(patch, [write]);
-        return;
-    }
-    const active = readTrackedActiveModel(patch.state);
-    if (!active.known) {
-        replaySelectorCandidate(patch);
-        patch.state.immediateModelWrite = undefined;
-        replayWrites(patch, [write]);
-        return;
-    }
-    const targetIsActive = targetIsTrackedActiveModel(active, write);
-    if (targetIsActive &&
-        patch.state.sessionOnlyModel !== undefined &&
-        modelMatches(write, patch.state.sessionOnlyModel)) {
-        replaySelectorCandidate(patch);
-        patch.state.immediateModelWrite = undefined;
-        return;
-    }
-    const candidate = patch.state.selectorCandidate;
-    if (candidate) {
-        if (operationsMatch(candidate, write) && targetIsActive) {
-            candidate.writes.push(write);
-            patch.state.selectorCandidate = undefined;
-            patch.state.selectorClaims.push(candidate);
-            patch.state.immediateModelWrite = undefined;
-            return;
-        }
-        replaySelectorCandidate(patch);
-    }
-    if (targetIsActive) {
-        replayImmediateModelWrite(patch, write);
-        return;
-    }
-    patch.state.immediateModelWrite = undefined;
-    patch.state.selectorCandidate = {
-        manager: write.manager,
-        provider: write.provider,
-        modelId: write.modelId,
-        writes: [write],
-        thinkingCaptured: false,
+        const result = patch.modelSelectionContext.run(invocation, () => {
+            invocation.previousModel = asModelSelection(this.model);
+            return arguments.length > 1
+                ? original.call(this, model, options)
+                : original.call(this, model);
+        });
+        void result.then(() => {
+            if (!invocation.persist || !modelMatches(invocation.previousModel, invocation.model)) {
+                return;
+            }
+            const currentContext = patch.state.modelContext;
+            if (!invocation.session ||
+                !currentContext ||
+                currentContext.session !== invocation.session ||
+                currentContext.generation !== invocation.generation) {
+                return;
+            }
+            try {
+                currentContext.onSameModelPersistence?.(invocation.model);
+            }
+            catch {
+            }
+        }, () => {
+        });
+        return result;
     };
 }
-export function installTlhModelSelectionPersistenceOverride() {
+function createModelSelectionPersistencePatch() {
+    return {
+        ownerToken: Object.freeze({}),
+        modelSelectionContext: new AsyncLocalStorage(),
+        entries: [],
+        state: {
+            nextGeneration: 0,
+            modelContext: undefined,
+            claimedInvocations: new WeakSet(),
+        },
+    };
+}
+export function installTlhModelSelectionPersistenceOverride(bundledAgentSession) {
+    if (modelSelectionPersistenceInstallAttempted) {
+        return installedModelSelectionPersistencePatch !== undefined;
+    }
+    modelSelectionPersistenceInstallAttempted = true;
     if (!canWriteTlhDefaults()) {
         return false;
     }
-    const prototype = getPatchedPrototype();
-    if (prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH]) {
-        return true;
-    }
-    const modelSelectorPrototypeCandidate = ModelSelectorComponent.prototype;
-    if (!isModelSelectorRuntimePrototype(modelSelectorPrototypeCandidate) ||
-        typeof prototype.setDefaultModelAndProvider !== "function" ||
-        typeof prototype.setDefaultModel !== "function" ||
-        typeof prototype.setDefaultProvider !== "function" ||
-        typeof prototype.setDefaultThinkingLevel !== "function") {
-        console.warn("[TLH] installTlhModelSelectionPersistenceOverride: model selector or SettingsManager default " +
-            "setters are unavailable; skipping patch.");
+    const constructors = getAgentSessionConstructors(bundledAgentSession);
+    if (!constructors) {
         return false;
     }
-    const modelSelectorPrototype = modelSelectorPrototypeCandidate;
-    const originals = {
-        handleModelSelect: modelSelectorPrototype.handleSelect,
-        setDefaultModelAndProvider: prototype.setDefaultModelAndProvider,
-        setDefaultModel: prototype.setDefaultModel,
-        setDefaultProvider: prototype.setDefaultProvider,
-        setDefaultThinkingLevel: prototype.setDefaultThinkingLevel,
-    };
-    const state = {
-        activeModelResolver: undefined,
-        sessionOnlyModel: undefined,
-        immediateModelWrite: undefined,
-        selectorCandidate: undefined,
-        selectorClaims: [],
-        standaloneThinkingWrites: [],
-        interactiveThinkingSelection: undefined,
-        suppressionDepth: 0,
-        thinkingSuppressionDepth: 0,
-    };
-    const patch = {
-        nativeSelectorContext: new AsyncLocalStorage(),
-        thinkingChangeContext: new AsyncLocalStorage(),
-        originals,
-        state,
-    };
-    modelSelectorPrototype.handleSelect = function (model) {
-        return patch.nativeSelectorContext.run(true, () => originals.handleModelSelect.call(this, model));
-    };
-    prototype.setDefaultModelAndProvider = function (provider, modelId) {
-        interceptCombinedModelWrite(patch, {
-            kind: "model-and-provider",
-            manager: this,
-            provider,
-            modelId,
-        });
-    };
-    prototype.setDefaultModel = function (modelId) {
-        if (state.suppressionDepth > 0) {
-            return;
+    const targets = constructors.map((constructor) => getPatchedPrototype(constructor));
+    const rawPatches = targets.map((prototype) => prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH]);
+    if (rawPatches.some((value) => value !== undefined && !isModelSelectionPersistencePatch(value))) {
+        console.warn("[TLH] installTlhModelSelectionPersistenceOverride: an AgentSession prototype has an unknown owner; " +
+            "refusing to overwrite it.");
+        return false;
+    }
+    const existingPatches = [
+        ...new Set(rawPatches.filter((value) => isModelSelectionPersistencePatch(value))),
+    ];
+    if (existingPatches.length > 1) {
+        console.warn("[TLH] installTlhModelSelectionPersistenceOverride: AgentSession prototypes have different owners; " +
+            "refusing a split installation.");
+        return false;
+    }
+    const patch = existingPatches[0] ?? createModelSelectionPersistencePatch();
+    for (const target of targets) {
+        const existingPatch = getPatchFromPrototype(target);
+        if (existingPatch === patch && !patch.entries.some((entry) => entry.prototype === target)) {
+            console.warn("[TLH] installTlhModelSelectionPersistenceOverride: an existing owner is missing its prototype entry; " +
+                "refusing to guess the original setter.");
+            return false;
         }
-        replaySelectorCandidate(patch);
-        state.immediateModelWrite = undefined;
-        originals.setDefaultModel.call(this, modelId);
-    };
-    prototype.setDefaultProvider = function (provider) {
-        if (state.suppressionDepth > 0) {
-            return;
+        if (!existingPatch && typeof target.setModel !== "function") {
+            console.warn("[TLH] installTlhModelSelectionPersistenceOverride: AgentSession.setModel is unavailable; " +
+                "skipping wrapper.");
+            return false;
         }
-        replaySelectorCandidate(patch);
-        state.immediateModelWrite = undefined;
-        originals.setDefaultProvider.call(this, provider);
-    };
-    prototype.setDefaultThinkingLevel = function (level) {
-        if (state.suppressionDepth > 0 || state.thinkingSuppressionDepth > 0) {
-            return;
+    }
+    const installedEntries = [];
+    try {
+        for (const target of targets) {
+            if (getPatchFromPrototype(target)) {
+                continue;
+            }
+            const original = target.setModel;
+            const wrapper = createSetModelWrapper(patch, original);
+            const entry = {
+                prototype: target,
+                original,
+                wrapper,
+            };
+            installedEntries.push(entry);
+            target.setModel = wrapper;
+            Object.defineProperty(target, TLH_MODEL_SELECTION_PERSISTENCE_PATCH, {
+                configurable: true,
+                enumerable: false,
+                value: patch,
+                writable: false,
+            });
+            patch.entries.push(entry);
         }
-        const interactiveThinkingSelection = state.interactiveThinkingSelection;
-        if (interactiveThinkingSelection) {
-            interactiveThinkingSelection.writes.push({ kind: "thinking", manager: this, level });
-            state.interactiveThinkingSelection = undefined;
-            return;
-        }
-        let claim;
-        for (let index = state.selectorClaims.length - 1; index >= 0; index -= 1) {
-            const operation = state.selectorClaims[index];
-            if (operation.manager === this && !operation.thinkingCaptured) {
-                claim = operation;
-                break;
+    }
+    catch {
+        for (const entry of installedEntries.reverse()) {
+            try {
+                if (entry.prototype.setModel === entry.wrapper) {
+                    entry.prototype.setModel = entry.original;
+                }
+            }
+            catch {
+            }
+            try {
+                if (entry.prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH] === patch) {
+                    delete entry.prototype[TLH_MODEL_SELECTION_PERSISTENCE_PATCH];
+                }
+            }
+            catch {
+            }
+            const entryIndex = patch.entries.indexOf(entry);
+            if (entryIndex >= 0) {
+                patch.entries.splice(entryIndex, 1);
             }
         }
-        const write = { kind: "thinking", manager: this, level };
-        if (claim) {
-            claim.writes.push(write);
-            claim.thinkingCaptured = true;
-            return;
-        }
-        replaySelectorCandidate(patch);
-        state.standaloneThinkingWrites.push(write);
-    };
-    Object.defineProperty(prototype, TLH_MODEL_SELECTION_PERSISTENCE_PATCH, {
-        configurable: false,
-        enumerable: false,
-        value: patch,
-        writable: false,
-    });
+        return false;
+    }
+    installedModelSelectionPersistencePatch = patch;
     return true;
 }
-export function setTlhModelSelectionActiveModelResolver(resolver) {
-    const patch = getInstalledPatch();
-    if (patch) {
-        patch.state.activeModelResolver = resolver;
-    }
-}
-export function runTlhThinkingChangeContext(origin, callback) {
-    const patch = getInstalledPatch();
-    return patch ? patch.thinkingChangeContext.run(origin, callback) : callback();
-}
-export function getTlhThinkingChangeContext() {
-    return getInstalledPatch()?.thinkingChangeContext.getStore();
-}
-export function beginTlhThinkingDefaultSuppression() {
+export function beginTlhModelSelectionPersistenceSession(onSameModelPersistence) {
     const patch = getInstalledPatch();
     if (!patch) {
-        return () => { };
+        return undefined;
     }
-    patch.state.thinkingSuppressionDepth += 1;
-    let released = false;
-    return () => {
-        if (released) {
-            return;
-        }
-        released = true;
-        patch.state.thinkingSuppressionDepth = Math.max(0, patch.state.thinkingSuppressionDepth - 1);
+    const session = Object.freeze({});
+    const generation = patch.state.nextGeneration + 1;
+    patch.state.nextGeneration = generation;
+    patch.state.modelContext = {
+        session,
+        generation,
+        onSameModelPersistence,
     };
+    return session;
 }
-export function setTlhSessionOnlyModel(model) {
-    const patch = getInstalledPatch();
-    if (patch) {
-        patch.state.sessionOnlyModel = model ? { provider: model.provider, id: model.id } : undefined;
-    }
-}
-export function beginTlhModelSelectionDefaultSuppression() {
+export function updateTlhModelSelectionPersistenceContext(session, onSameModelPersistence) {
     const patch = getInstalledPatch();
     if (!patch) {
-        return () => { };
+        return;
     }
-    patch.state.suppressionDepth += 1;
-    let released = false;
-    return () => {
-        if (released) {
-            return;
-        }
-        released = true;
-        patch.state.suppressionDepth = Math.max(0, patch.state.suppressionDepth - 1);
-    };
+    const context = patch.state.modelContext;
+    if (!context || context.session !== session) {
+        return;
+    }
+    if (onSameModelPersistence !== undefined) {
+        context.onSameModelPersistence = onSameModelPersistence;
+    }
 }
-export function claimTlhModelSelectionDefaults(model) {
+export function readTlhModelSelectionPersistence(session) {
+    const patch = getInstalledPatch();
+    return patch ? currentModelSelectionPersistence(patch, session) : undefined;
+}
+export function endTlhModelSelectionPersistenceSession(session) {
+    const patch = getInstalledPatch();
+    if (!patch || patch.state.modelContext?.session !== session) {
+        return;
+    }
+    patch.state.modelContext = undefined;
+}
+export function claimTlhModelSelectionDefaults(session, model, previousModel) {
     const patch = getInstalledPatch();
     if (!patch) {
         return undefined;
     }
-    const claimIndex = patch.state.selectorClaims.findIndex((operation) => modelMatches(operation, model));
-    if (claimIndex >= 0) {
-        const [operation] = patch.state.selectorClaims.splice(claimIndex, 1);
-        patch.state.immediateModelWrite = undefined;
-        return {
-            consumed: false,
-            nativeSelector: true,
-            writes: operation.writes,
-        };
-    }
-    const candidate = patch.state.selectorCandidate;
-    if (candidate && modelMatches(candidate, model)) {
-        patch.state.selectorCandidate = undefined;
-        patch.state.immediateModelWrite = undefined;
-        return {
-            consumed: false,
-            nativeSelector: false,
-            writes: candidate.writes,
-        };
-    }
-    patch.state.immediateModelWrite = undefined;
-    return undefined;
-}
-export function isTlhNativeModelSelectorClaim(claim) {
-    return claim?.nativeSelector === true;
-}
-function takeClaimWrites(claim) {
-    if (!claim || claim.consumed) {
-        return [];
-    }
-    claim.consumed = true;
-    return claim.writes;
-}
-export function discardTlhModelSelectionDefaults(claim) {
-    if (claim) {
-        takeClaimWrites(claim);
-        return;
-    }
-    const patch = getInstalledPatch();
-    if (patch) {
-        patch.state.selectorCandidate = undefined;
-        patch.state.immediateModelWrite = undefined;
-    }
-}
-export function replayTlhUnmatchedModelSelectionDefaults() {
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return;
-    }
-    replaySelectorCandidate(patch);
-    patch.state.immediateModelWrite = undefined;
-}
-export function replayAllTlhUnclaimedModelSelectionDefaults() {
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return;
-    }
-    const writes = [
-        ...(patch.state.selectorCandidate?.writes ?? []),
-        ...patch.state.selectorClaims.flatMap((operation) => operation.writes),
-        ...patch.state.standaloneThinkingWrites,
-    ];
-    patch.state.selectorCandidate = undefined;
-    patch.state.selectorClaims = [];
-    patch.state.standaloneThinkingWrites = [];
-    patch.state.immediateModelWrite = undefined;
-    replayWrites(patch, writes);
-}
-export async function persistTlhModelSelectionDefaults(claim, _cwd, _model) {
-    const writes = takeClaimWrites(claim);
-    if (writes.length === 0) {
-        return getInstalledPatch() !== undefined;
-    }
-    if (!canWriteTlhDefaults()) {
-        return false;
-    }
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return false;
-    }
-    return flushManagers(applySuppressedWrites(patch, writes));
-}
-export function beginTlhThinkingLevelSelection() {
-    const patch = getInstalledPatch();
-    if (!patch || patch.state.interactiveThinkingSelection) {
+    const invocation = readTlhModelSelectionPersistence(session);
+    if (!invocation ||
+        !invocation.persist ||
+        !modelMatches(invocation.model, model) ||
+        !modelMatches(invocation.previousModel, previousModel) ||
+        patch.state.claimedInvocations.has(invocation)) {
         return undefined;
     }
-    const claim = { consumed: false, writes: [] };
-    patch.state.interactiveThinkingSelection = claim;
-    return claim;
+    patch.state.claimedInvocations.add(invocation);
+    return { persisted: true };
 }
-export function endTlhThinkingLevelSelectionCapture(claim) {
-    if (!claim || claim.consumed) {
-        return undefined;
-    }
-    const patch = getInstalledPatch();
-    if (patch?.state.interactiveThinkingSelection === claim) {
-        patch.state.interactiveThinkingSelection = undefined;
-    }
-    return claim;
-}
-function takeTlhThinkingLevelSelectionWrites(claim) {
-    if (!claim || claim.consumed) {
-        return [];
-    }
-    claim.consumed = true;
-    const patch = getInstalledPatch();
-    if (patch?.state.interactiveThinkingSelection === claim) {
-        patch.state.interactiveThinkingSelection = undefined;
-    }
-    return claim.writes;
-}
-export function discardTlhThinkingLevelSelection(claim) {
-    takeTlhThinkingLevelSelectionWrites(claim);
-}
-export async function persistTlhThinkingLevelSelection(claim) {
-    if (!claim || claim.consumed) {
-        return false;
-    }
-    const writes = takeTlhThinkingLevelSelectionWrites(claim);
-    if (writes.length === 0 || !canWriteTlhDefaults()) {
-        return false;
-    }
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return false;
-    }
-    try {
-        return await flushManagers(applySuppressedWrites(patch, writes));
-    }
-    catch {
-        return false;
-    }
-}
-function takeStandaloneThinkingWrites() {
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return [];
-    }
-    const writes = patch.state.standaloneThinkingWrites;
-    patch.state.standaloneThinkingWrites = [];
-    return writes;
-}
-export async function persistTlhStandaloneThinkingDefaults() {
-    const writes = takeStandaloneThinkingWrites();
-    if (writes.length === 0 || !canWriteTlhDefaults()) {
-        return;
-    }
-    const patch = getInstalledPatch();
-    if (!patch) {
-        return;
-    }
-    await flushManagers(applySuppressedWrites(patch, writes));
-}
-async function chooseTlhSelectionScope(ctx, title) {
-    if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.select !== "function") {
-        return "all-sessions";
-    }
-    try {
-        const selected = await ctx.ui.select(title, [...MODEL_SELECTION_SCOPE_OPTIONS]);
-        if (selected === MODEL_SELECTION_SCOPE_SESSION_ONLY) {
-            return "session-only";
-        }
-        if (selected === MODEL_SELECTION_SCOPE_ALL_SESSIONS) {
-            return "all-sessions";
-        }
-    }
-    catch {
-        return "session-only";
-    }
-    return "cancel";
-}
-export function chooseTlhModelSelectionScope(ctx) {
-    return chooseTlhSelectionScope(ctx, "Model selection scope");
-}
-export function chooseTlhThinkingSelectionScope(ctx) {
-    return chooseTlhSelectionScope(ctx, "Thinking selection scope");
+export function isTlhPersistedModelSelection(claim) {
+    return claim?.persisted === true;
 }

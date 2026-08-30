@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
-import { ModelSelectorComponent, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
+import {
+  AgentSession,
+  getPackageDir,
+  initTheme,
+  ModelSelectorComponent,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
-import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 import {
   createPiHarness,
@@ -16,14 +31,12 @@ import {
 
 const jiti = createJiti(import.meta.url);
 const {
-  MODEL_SELECTION_SCOPE_ALL_SESSIONS,
-  MODEL_SELECTION_SCOPE_OPTIONS,
-  MODEL_SELECTION_SCOPE_SESSION_ONLY,
-  chooseTlhModelSelectionScope,
+  beginTlhModelSelectionPersistenceSession,
+  claimTlhModelSelectionDefaults,
+  endTlhModelSelectionPersistenceSession,
   installTlhModelSelectionPersistenceOverride,
-  replayAllTlhUnclaimedModelSelectionDefaults,
-  setTlhModelSelectionActiveModelResolver,
-  setTlhSessionOnlyModel,
+  readTlhModelSelectionPersistence,
+  updateTlhModelSelectionPersistenceContext,
 } = await jiti.import("../extensions/the-last-harness/model-selection-scope.ts");
 const { registerTlhPrimaryAgentRuntime } = await jiti.import(
   "../extensions/the-last-harness/primary-agent-runtime.ts",
@@ -41,191 +54,1236 @@ function writeSettings(agent, settings) {
   writeFileSync(join(agent, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-function installScopeOverride(getActiveModel = () => undefined) {
-  assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-  replayAllTlhUnclaimedModelSelectionDefaults();
-  setTlhSessionOnlyModel(undefined);
-  setTlhModelSelectionActiveModelResolver(getActiveModel);
+function model(provider, id) {
+  return { provider, id };
 }
 
-async function queueNativeSelectorWrites(manager, model, applyActiveModel, thinkingLevel) {
-  let callbackDone;
-  const selector = Object.create(ModelSelectorComponent.prototype);
-  selector.dispose = () => {};
-  selector.settingsManager = manager;
-  selector.onSelectCallback = () => {
-    callbackDone = (async () => {
-      // AgentSession.setModel first crosses its async auth check. The shim's
-      // native-selector context must survive this boundary deterministically.
-      await Promise.resolve();
-      if (!applyActiveModel) {
-        return;
-      }
-      applyActiveModel();
-      manager.setDefaultModelAndProvider(model.provider, model.id);
-      if (thinkingLevel) {
-        manager.setDefaultThinkingLevel(thinkingLevel);
-      }
-    })();
-  };
-  selector.handleSelect(model);
-  await callbackDone;
+function modelsMatch(left, right) {
+  return left?.provider === right?.provider && left?.id === right?.id;
 }
 
-async function dispatchLikeExtensionRunner(handlers, event, context) {
-  for (const handler of handlers) {
-    await handler(event, context);
-  }
+function copyPublishedPiPackage(t, suffix) {
+  const packageDir = mkdtempSync(join(tmpdir(), `tlh-pi-private-${suffix}-`));
+  cpSync(join(getPackageDir(), "package.json"), join(packageDir, "package.json"));
+  cpSync(join(getPackageDir(), "dist"), join(packageDir, "dist"), { recursive: true });
+  t.after(() => rmSync(packageDir, { recursive: true, force: true }));
+  return packageDir;
 }
 
-function createScopeContext(fixture, selection, model, modelRegistry = [model]) {
+function createModelContext(fixture, active, options = {}) {
+  const availableModels = options.availableModels ?? [active.current];
   return {
     mode: "tui",
-    hasUI: true,
+    hasUI: options.hasUI ?? true,
     cwd: fixture.cwd,
-    sessionManager: { getBranch: () => [] },
+    sessionManager: { getBranch: () => options.branch ?? [] },
     ui: {
-      async select(_title, options) {
-        return selection === "cancel" ? undefined : options[selection];
-      },
+      select: options.select ?? (async () => undefined),
       notify() {},
     },
-    modelRegistry: { getAvailable: () => modelRegistry },
-    model,
+    modelRegistry: { getAvailable: () => availableModels },
+    get model() {
+      return active.current;
+    },
   };
 }
 
-function registerScopeRuntime(primaryAgents) {
+function registerRuntime(primaryAgents, beforeRegistration) {
   const pi = createPiHarness();
+  beforeRegistration?.(pi);
   const runtime = registerTlhPrimaryAgentRuntime(pi, {
     env: {},
-    primaryAgents: primaryAgents ?? new Map([["architect", createPrimaryPrompt("architect")]]),
+    primaryAgents: primaryAgents ?? new Map([["architect", rushLikePrimary()]]),
     subagentMetadata: [],
   });
   assert.ok(runtime);
-  const handler = (name) => {
-    const value = pi.events.find((event) => event.name === name)?.handler;
-    assert.equal(typeof value, "function", `${name} handler must be registered`);
-    return value;
-  };
   return {
     pi,
     runtime,
-    beforeAgentStart: handler("before_agent_start"),
-    modelSelect: handler("model_select"),
-    sessionShutdown: handler("session_shutdown"),
-    sessionTree: handler("session_tree"),
-    thinkingSelect: handler("thinking_level_select"),
+    modelSelect: pi.events.find((event) => event.name === "model_select")?.handler,
+    beforeAgentStart: pi.events.find((event) => event.name === "before_agent_start")?.handler,
+    sessionTree: pi.events.find((event) => event.name === "session_tree")?.handler,
+    sessionShutdown: pi.events.find((event) => event.name === "session_shutdown")?.handler,
   };
 }
 
-test("model scope picker exposes the approved labels in order with session-only as default", async () => {
-  assert.deepEqual(
-    [...MODEL_SELECTION_SCOPE_OPTIONS],
-    [MODEL_SELECTION_SCOPE_SESSION_ONLY, MODEL_SELECTION_SCOPE_ALL_SESSIONS],
-  );
-  const calls = [];
-  const scope = await chooseTlhModelSelectionScope({
-    mode: "tui",
-    hasUI: true,
-    ui: {
-      async select(title, options) {
-        calls.push({ title, options });
-        return options[0];
-      },
-    },
-  });
-  assert.equal(scope, "session-only");
-  assert.deepEqual(calls, [
-    { title: "Model selection scope", options: [...MODEL_SELECTION_SCOPE_OPTIONS] },
-  ]);
-});
+function assertHandlers(runtimeHarness) {
+  assert.equal(typeof runtimeHarness.modelSelect, "function");
+  assert.equal(typeof runtimeHarness.beforeAgentStart, "function");
+  assert.equal(typeof runtimeHarness.sessionShutdown, "function");
+}
 
-test("scope picker exceptions keep the native selection session-only without restoring", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-picker-error-", {
-    cwd: true,
-    test: t,
+async function startSession(runtimeHarness, context) {
+  await runtimeHarness.runtime.applySessionStart(context);
+}
+
+async function fireModelSelect(runtimeHarness, context, selected, previous, source = "set") {
+  await runtimeHarness.modelSelect(
+    { type: "model_select", model: selected, previousModel: previous, source },
+    context,
+  );
+}
+
+function primaryWithModel(name, reference, options = {}) {
+  return createPrimaryPrompt(name, {
+    model: reference,
+    applyModel: options.applyModel ?? false,
+    applyThinking: options.applyThinking ?? false,
+    tlhAnthropicThinking: options.tlhAnthropicThinking,
+    tlhOpenaiModels: options.tlhOpenaiModels,
   });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
+}
+
+/**
+ * Exercise the published AgentSession.setModel implementation while routing its
+ * model_select dispatch through the registered TLH and test handlers. This is
+ * deliberately not a SettingsManager shortcut: Pi's public mutation boundary
+ * owns persistence and awaits every extension handler before resolving.
+ */
+function createAgentSessionHarness(fixture, runtimeHarness, context, initialModel, options = {}) {
+  const manager = SettingsManager.create(fixture.cwd, fixture.agent);
+  const state = { model: initialModel, thinkingLevel: "low" };
+  const session = Object.create(AgentSession.prototype);
+  session.agent = { state };
+  session.sessionManager = { appendModelChange() {} };
+  session.settingsManager = manager;
+  session._modelRuntime = {
+    checkAuth: options.checkAuth ?? (async () => true),
+    getAvailableSnapshot:
+      options.getAvailableSnapshot ?? (() => options.availableModels ?? [initialModel]),
+  };
+  session._scopedModels = [];
+  session._getThinkingLevelForModelSwitch = () => state.thinkingLevel;
+  session._addPersistedDefaultToNonEmptyScope = () => {};
+  session.setThinkingLevel = (level) => {
+    state.thinkingLevel = level;
+  };
+  session._emitModelSelect = async (nextModel, previousModel, source) => {
+    if (modelsMatch(nextModel, previousModel)) {
+      return;
+    }
+    context.active.current = nextModel;
+    runtimeHarness.pi.model = nextModel;
+    for (const registered of runtimeHarness.pi.events) {
+      if (registered.name !== "model_select") {
+        continue;
+      }
+      await registered.handler(
+        {
+          type: "model_select",
+          model: nextModel,
+          previousModel,
+          source,
+        },
+        context,
+      );
+    }
+  };
+  return { manager, session, state };
+}
+
+function createRuntimeContext(fixture, initialModel, availableModels) {
+  const active = { current: initialModel };
+  const context = createModelContext(fixture, active, { availableModels });
+  context.active = active;
+  return context;
+}
+
+test("native model selection has no TLH model-scope prompt and the selector prototype is untouched", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-native-picker-", { cwd: true, test: t });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
   writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
   });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime();
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    context.ui.select = async () => {
-      throw new Error("picker unavailable");
-    };
-    let restorationCalls = 0;
-    pi.setModel = async (model) => {
-      restorationCalls += 1;
-      pi.model = model;
-      return true;
-    };
-
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
+    const originalHandleSelect = ModelSelectorComponent.prototype.handleSelect;
+    const runtimeHarness = registerRuntime();
+    assertHandlers(runtimeHarness);
+    const active = { current: previous };
+    const context = createModelContext(fixture, active, {
+      availableModels: [previous, selected],
+      select: async (title) => {
+        throw new Error(`unexpected TLH picker: ${title}`);
+      },
     });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await manager.flush();
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
 
-    assert.deepEqual(pi.model, selectedModel);
-    assert.equal(restorationCalls, 0);
+    initTheme("dark", false);
+    const nativeSelector = new ModelSelectorComponent(
+      { requestRender() {} },
+      previous,
+      {
+        getAvailableSnapshot: () => [previous, selected],
+        getModel: (_provider, id) => [previous, selected].find((candidate) => candidate.id === id),
+        refresh: async () => ({ aborted: false, errors: new Map() }),
+      },
+      [],
+      () => {},
+      () => {},
+      undefined,
+      () => {},
+      previous,
+    );
+    assert.match(
+      nativeSelector.render(120).join("\n"),
+      /Enter to select · Ctrl\+S to set as default · Esc to cancel/,
+    );
+    nativeSelector.dispose();
+
+    let callbackModel;
+    const selector = Object.create(ModelSelectorComponent.prototype);
+    selector.dispose = () => {};
+    selector.onSelectCallback = (value) => {
+      callbackModel = value;
+    };
+    selector.handleSelect(selected);
+    assert.deepEqual(callbackModel, selected);
+    assert.equal(ModelSelectorComponent.prototype.handleSelect, originalHandleSelect);
+
+    active.current = selected;
+    runtimeHarness.pi.model = selected;
+    await fireModelSelect(runtimeHarness, context, selected, previous);
+    await runtimeHarness.beforeAgentStart({ systemPrompt: "base" }, context);
+    assert.deepEqual(runtimeHarness.pi.model, selected);
     assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
+      defaultProvider: previous.provider,
+      defaultModel: previous.id,
     });
     assert.equal(
       readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.architect,
       undefined,
     );
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
   });
 });
 
-test("model persistence interception is idempotent across repeated installation", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-idempotent-", {
+test("native Ctrl+S remains available when the model picker has a non-empty scope", (t) => {
+  initTheme("dark", false);
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const scoped = model("anthropic", "claude-opus-5");
+  const saved = [];
+  const selector = new ModelSelectorComponent(
+    { requestRender() {} },
+    previous,
+    {
+      getAvailableSnapshot: () => [previous, scoped],
+      getModel: (_provider, id) => [previous, scoped].find((candidate) => candidate.id === id),
+      refresh: async () => ({ aborted: false, errors: new Map() }),
+    },
+    [{ model: scoped }],
+    () => {},
+    () => {},
+    undefined,
+    (selected) => saved.push(selected),
+    previous,
+  );
+  t.after(() => selector.dispose());
+
+  selector.handleInput(String.fromCharCode(19));
+  assert.deepEqual(saved, [scoped]);
+});
+
+test("changed persisted selection survives earlier asynchronous model_select handlers", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-async-dispatch-", {
     cwd: true,
     test: t,
   });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    installScopeOverride();
-    const patchedSetter = SettingsManager.prototype.setDefaultModelAndProvider;
-    const patchedSelector = ModelSelectorComponent.prototype.handleSelect;
-    installScopeOverride();
-    assert.equal(SettingsManager.prototype.setDefaultModelAndProvider, patchedSetter);
-    assert.equal(ModelSelectorComponent.prototype.handleSelect, patchedSelector);
+    const dispatchOrder = [];
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", {
+            applyModel: false,
+          }),
+        ],
+      ]),
+      (pi) => {
+        pi.on("model_select", async () => {
+          dispatchOrder.push("earlier-start");
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          dispatchOrder.push("earlier-finished");
+        });
+      },
+    );
+    assertHandlers(runtimeHarness);
+    const context = createRuntimeContext(fixture, previous, [previous, selected]);
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      previous,
+    );
+
+    const options = { persist: true };
+    await session.setModel(selected, options);
+    await manager.flush();
+
+    assert.deepEqual(dispatchOrder, ["earlier-start", "earlier-finished"]);
+    assert.equal(readSettings(fixture.agent).defaultModel, selected.id);
+    assert.equal(
+      readSettings(fixture.agent).tlh.primaryAgent.modelOverrides.architect,
+      "anthropic/claude-opus-5",
+    );
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
   });
 });
 
-test("unsafe non-TLH profiles keep the original upstream SettingsManager behavior", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-unsafe-", { cwd: true, test: t });
+test("same-model persist:true invokes the owner callback only after AgentSession.setModel succeeds", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-same-save-", { cwd: true, test: t });
+  const activeModel = model("anthropic", "claude-opus-5");
+  const previousDefault = model("openai-codex", "gpt-5.4");
+  writeSettings(fixture.agent, {
+    defaultProvider: previousDefault.provider,
+    defaultModel: previousDefault.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", {
+            applyModel: false,
+          }),
+        ],
+      ]),
+    );
+    assertHandlers(runtimeHarness);
+    const context = createRuntimeContext(fixture, activeModel, [activeModel, previousDefault]);
+    runtimeHarness.pi.model = activeModel;
+    await startSession(runtimeHarness, context);
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      activeModel,
+    );
+
+    await session.setModel(activeModel, { persist: true });
+    await manager.flush();
+
+    assert.equal(readSettings(fixture.agent).defaultModel, activeModel.id);
+    assert.equal(
+      readSettings(fixture.agent).tlh.primaryAgent.modelOverrides.architect,
+      "anthropic/claude-opus-5",
+    );
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+  });
+});
+
+test("persist:false remains session-only and never writes a primary override", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-session-only-", { cwd: true, test: t });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", {
+            applyModel: false,
+          }),
+        ],
+      ]),
+    );
+    assertHandlers(runtimeHarness);
+    const context = createRuntimeContext(fixture, previous, [previous, selected]);
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      previous,
+    );
+
+    await session.setModel(selected, { persist: false });
+    await runtimeHarness.beforeAgentStart({ systemPrompt: "base" }, context);
+    await manager.flush();
+
+    assert.equal(readSettings(fixture.agent).defaultModel, previous.id);
+    assert.equal(readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.architect, undefined);
+    assert.deepEqual(context.active.current, selected);
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+  });
+});
+
+test("session-only Enter survives turn/tree reapplication and clears at primary and new-session boundaries", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-session-lifecycle-", {
+    cwd: true,
+    test: t,
+  });
+  const defaultModel = model("anthropic", "claude-sonnet-4-6");
+  const sessionModel = model("anthropic", "claude-opus-5");
+  const rushModel = model("anthropic", "claude-haiku-4-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: defaultModel.provider,
+    defaultModel: defaultModel.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", { applyModel: true }),
+        ],
+        ["rush", primaryWithModel("rush", "anthropic/claude-haiku-4-5", { applyModel: true })],
+      ]),
+    );
+    assertHandlers(runtimeHarness);
+    assert.equal(typeof runtimeHarness.sessionTree, "function");
+    runtimeHarness.pi.model = defaultModel;
+    const context = createRuntimeContext(fixture, defaultModel, [
+      defaultModel,
+      sessionModel,
+      rushModel,
+    ]);
+    Object.defineProperty(context, "model", {
+      configurable: true,
+      get: () => runtimeHarness.pi.model,
+    });
+    await startSession(runtimeHarness, context);
+
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      defaultModel,
+      { availableModels: [defaultModel, sessionModel, rushModel] },
+    );
+    await session.setModel(sessionModel, { persist: false });
+    await manager.flush();
+
+    await runtimeHarness.beforeAgentStart({ systemPrompt: "base" }, context);
+    assert.deepEqual(
+      runtimeHarness.pi.model,
+      sessionModel,
+      "Enter/session-only selection survives the next turn with model application enabled",
+    );
+    await runtimeHarness.sessionTree({}, context);
+    assert.deepEqual(
+      runtimeHarness.pi.model,
+      sessionModel,
+      "Enter/session-only selection survives session-tree reapplication",
+    );
+
+    await runtimeHarness.pi.commands.get("switch-primary-agent").handler("rush", context);
+    assert.deepEqual(
+      runtimeHarness.pi.model,
+      rushModel,
+      "an explicit primary-mode boundary clears session-only model intent and applies Rush",
+    );
+
+    const nextSession = createAgentSessionHarness(fixture, runtimeHarness, context, rushModel, {
+      availableModels: [defaultModel, sessionModel, rushModel],
+    });
+    await nextSession.session.setModel(sessionModel, { persist: false });
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+    await startSession(runtimeHarness, context);
+    assert.deepEqual(
+      runtimeHarness.pi.model,
+      defaultModel,
+      "a new session clears the prior Enter selection and reapplies the packaged default",
+    );
+    assert.deepEqual(readSettings(fixture.agent).defaultModel, defaultModel.id);
+    assert.equal(readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.architect, undefined);
+    assert.equal(readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.rush, undefined);
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+  });
+});
+
+test("rejected setModel does not invoke same-model persistence or write settings", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-rejected-", { cwd: true, test: t });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime();
+    assertHandlers(runtimeHarness);
+    const context = createRuntimeContext(fixture, previous, [previous, selected]);
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
+    const { manager, session, state } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      previous,
+      { checkAuth: async () => false },
+    );
+
+    await assert.rejects(
+      () => session.setModel(selected, { persist: true }),
+      /No API key for anthropic\/claude-opus-5/,
+    );
+    await manager.flush();
+
+    assert.deepEqual(state.model, previous);
+    assert.equal(readSettings(fixture.agent).defaultModel, previous.id);
+    assert.equal(readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.architect, undefined);
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+  });
+});
+
+test("provider-auth/programmatic persist:true follows the durable compatibility policy", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-provider-auth-", {
+    cwd: true,
+    test: t,
+  });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", {
+            applyModel: false,
+          }),
+        ],
+      ]),
+    );
+    assertHandlers(runtimeHarness);
+    const context = createRuntimeContext(fixture, previous, [previous, selected]);
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
+      context,
+      previous,
+    );
+
+    // Pi provides no origin bit for provider-auth/programmatic calls. A
+    // successful public persist:true call is intentionally treated as durable.
+    await session.setModel(selected, { persist: true });
+    await manager.flush();
+
+    assert.equal(readSettings(fixture.agent).defaultModel, selected.id);
+    assert.equal(
+      readSettings(fixture.agent).tlh.primaryAgent.modelOverrides.architect,
+      "anthropic/claude-opus-5",
+    );
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+  });
+});
+
+test("owner tokens isolate overlapping runtimes and stale shutdowns", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-overlapping-runtime-", {
+    cwd: true,
+    test: t,
+  });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const first = registerRuntime();
+    const firstContext = createRuntimeContext(fixture, previous, [previous, selected]);
+    first.pi.model = previous;
+    await startSession(first, firstContext);
+
+    const second = registerRuntime();
+    const secondContext = createRuntimeContext(fixture, previous, [previous, selected]);
+    second.pi.model = previous;
+    await startSession(second, secondContext);
+
+    // The older runtime's lifecycle callback is stale and must not end the
+    // newer owner-scoped context.
+    await first.sessionShutdown({ type: "session_shutdown" }, firstContext);
+
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      second,
+      secondContext,
+      previous,
+    );
+    await session.setModel(selected, { persist: true });
+    await manager.flush();
+
+    assert.equal(
+      readSettings(fixture.agent).tlh.primaryAgent.modelOverrides.architect,
+      "anthropic/claude-opus-5",
+    );
+    await second.sessionShutdown({ type: "session_shutdown" }, secondContext);
+  });
+});
+
+test("OpenRouter persisted selections keep distinct primary overrides across switches and new sessions", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-openrouter-primaries-", {
+    cwd: true,
+    test: t,
+  });
+  const profileDefault = model("anthropic", "claude-sonnet-4-6");
+  const selectedModels = new Map([
+    ["architect", model("openrouter", "anthropic/claude-sonnet-4-6")],
+    ["rush", model("openrouter", "openai/gpt-5.4")],
+    ["product", model("openrouter", "anthropic/claude-opus-5")],
+    ["bug-hunter", model("openrouter", "openai/gpt-5.6")],
+  ]);
+  const availableModels = [profileDefault, ...selectedModels.values()];
+  const primaryAgents = new Map(
+    [...selectedModels.keys()].map((selection) => [
+      selection,
+      primaryWithModel(selection, "anthropic/claude-sonnet-4-6", { applyModel: true }),
+    ]),
+  );
+  writeSettings(fixture.agent, {
+    defaultProvider: profileDefault.provider,
+    defaultModel: profileDefault.id,
+    tlh: { primaryAgent: { enabled: true, selected: "architect" } },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const runtimeHarness = registerRuntime(primaryAgents);
+    assertHandlers(runtimeHarness);
+    const branch = [];
+    runtimeHarness.pi.appendEntry = (_type, data) => {
+      branch.push({ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data });
+    };
+    runtimeHarness.pi.model = profileDefault;
+    const context = createRuntimeContext(fixture, profileDefault, availableModels);
+    Object.defineProperty(context, "model", {
+      configurable: true,
+      get: () => runtimeHarness.pi.model,
+    });
+    context.sessionManager = { getBranch: () => branch };
+    await startSession(runtimeHarness, context);
+
+    const switchPrimary = runtimeHarness.pi.commands.get("switch-primary-agent");
+    assert.ok(switchPrimary);
+    for (const [selection, selectedModel] of selectedModels) {
+      if (selection !== "architect") {
+        await switchPrimary.handler(selection, context);
+      }
+      const { manager, session } = createAgentSessionHarness(
+        fixture,
+        runtimeHarness,
+        context,
+        runtimeHarness.pi.model,
+        { availableModels },
+      );
+      await session.setModel(selectedModel, { persist: true });
+      await manager.flush();
+      assert.equal(
+        readSettings(fixture.agent).tlh.primaryAgent.modelOverrides[selection],
+        `${selectedModel.provider}/${selectedModel.id}`,
+        `${selection} keeps its own OpenRouter persisted override`,
+      );
+    }
+
+    const overrides = readSettings(fixture.agent).tlh.primaryAgent.modelOverrides;
+    assert.deepEqual(
+      overrides,
+      Object.fromEntries(
+        [...selectedModels].map(([selection, selectedModel]) => [
+          selection,
+          `${selectedModel.provider}/${selectedModel.id}`,
+        ]),
+      ),
+    );
+    assert.equal(readSettings(fixture.agent).defaultProvider, "openrouter");
+    assert.equal(readSettings(fixture.agent).defaultModel, selectedModels.get("bug-hunter").id);
+
+    for (const [selection, selectedModel] of [...selectedModels].reverse()) {
+      await switchPrimary.handler(selection, context);
+      assert.deepEqual(
+        runtimeHarness.pi.model,
+        selectedModel,
+        `${selection} reapplies its persisted OpenRouter override on a primary switch`,
+      );
+    }
+
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+    branch.length = 0;
+    runtimeHarness.pi.model = selectedModels.get("bug-hunter");
+    await startSession(runtimeHarness, context);
+    assert.deepEqual(
+      runtimeHarness.pi.model,
+      selectedModels.get("architect"),
+      "a new session reapplies the persistent default primary's OpenRouter override",
+    );
+  });
+});
+
+test("model cycling never creates or edits a primary override", async (t) => {
+  for (const existingOverride of [undefined, "anthropic/claude-opus-5"]) {
+    const fixture = createIsolatedProfileFixture("tlh-model-cycle-", { cwd: true, test: t });
+    const defaultModel = model("anthropic", "claude-sonnet-4-6");
+    const alternateModel = model("anthropic", "claude-opus-5");
+    const availableModels = [defaultModel, alternateModel, model("anthropic", "claude-haiku-4-5")];
+    writeSettings(fixture.agent, {
+      defaultProvider: defaultModel.provider,
+      defaultModel: defaultModel.id,
+      tlh: {
+        primaryAgent: {
+          enabled: true,
+          selected: "architect",
+          ...(existingOverride ? { modelOverrides: { architect: existingOverride } } : {}),
+        },
+      },
+    });
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const runtimeHarness = registerRuntime(
+        new Map([
+          [
+            "architect",
+            primaryWithModel("architect", "anthropic/claude-sonnet-4-6", { applyModel: true }),
+          ],
+        ]),
+      );
+      assertHandlers(runtimeHarness);
+      runtimeHarness.pi.model = defaultModel;
+      const context = createRuntimeContext(fixture, defaultModel, availableModels);
+      Object.defineProperty(context, "model", {
+        configurable: true,
+        get: () => runtimeHarness.pi.model,
+      });
+      await startSession(runtimeHarness, context);
+
+      const initialModel = existingOverride ? alternateModel : defaultModel;
+      assert.deepEqual(runtimeHarness.pi.model, initialModel);
+      const { manager, session } = createAgentSessionHarness(
+        fixture,
+        runtimeHarness,
+        context,
+        initialModel,
+        { availableModels },
+      );
+      await session.cycleModel("forward", { persist: true });
+      await manager.flush();
+
+      assert.equal(
+        readSettings(fixture.agent).tlh.primaryAgent.modelOverrides?.architect,
+        existingOverride,
+        existingOverride
+          ? "cycle must not edit an existing primary override"
+          : "cycle must not create a primary override",
+      );
+      await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
+    });
+  }
+});
+
+test("session tokens are opaque and stale reads/updates cannot claim a newer context", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-owner-api-", { cwd: true, test: t });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
+  writeSettings(fixture.agent, {
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
+    const receivedA = [];
+    const receivedB = [];
+    const sessionA = beginTlhModelSelectionPersistenceSession((value) => receivedA.push(value));
+    const sessionB = beginTlhModelSelectionPersistenceSession((value) => receivedB.push(value));
+    assert.ok(sessionA);
+    assert.ok(sessionB);
+    assert.notEqual(sessionA, sessionB);
+    assert.equal(readTlhModelSelectionPersistence(sessionA), undefined);
+    assert.equal(readTlhModelSelectionPersistence(sessionB), undefined);
+
+    updateTlhModelSelectionPersistenceContext(sessionA, (value) => receivedA.push(value));
+    endTlhModelSelectionPersistenceSession(sessionA);
+    assert.equal(claimTlhModelSelectionDefaults(sessionA, selected, previous), undefined);
+    assert.equal(claimTlhModelSelectionDefaults(sessionB, selected, previous), undefined);
+    assert.deepEqual(receivedA, []);
+    assert.deepEqual(receivedB, []);
+    endTlhModelSelectionPersistenceSession(sessionB);
+  });
+});
+
+test("failed runtime registration does not install the AgentSession wrapper", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-registration-failure-", {
+    cwd: true,
+    test: t,
+  });
   const script = `
-		import assert from "node:assert/strict";
-		import { mkdirSync, readFileSync } from "node:fs";
-		import { join } from "node:path";
-		import { SettingsManager } from "@earendil-works/pi-coding-agent";
-		import { installTlhModelSelectionPersistenceOverride } from "./extensions/the-last-harness/model-selection-scope.js";
-		const agent = join(process.env.HOME, ".pi", "agent");
-		mkdirSync(agent, { recursive: true });
-		const original = SettingsManager.prototype.setDefaultModelAndProvider;
-		assert.equal(installTlhModelSelectionPersistenceOverride(), false);
-		assert.equal(SettingsManager.prototype.setDefaultModelAndProvider, original);
-		const manager = SettingsManager.create(process.cwd(), agent);
-		manager.setDefaultModelAndProvider("anthropic", "outside-tlh");
-		await manager.flush();
-		const settings = JSON.parse(readFileSync(join(agent, "settings.json"), "utf8"));
-		assert.equal(settings.defaultModel, "outside-tlh");
-	`;
+    import assert from "node:assert/strict";
+    import { AgentSession } from "@earendil-works/pi-coding-agent";
+    import { registerTlhPrimaryAgentRuntime } from "./extensions/the-last-harness/primary-agent-runtime.js";
+
+    const original = AgentSession.prototype.setModel;
+    const pi = {
+      on() {},
+      registerCommand() {
+        throw new Error("simulated command registration failure");
+      },
+    };
+    assert.throws(
+      () => registerTlhPrimaryAgentRuntime(pi, { env: process.env, subagentMetadata: [] }),
+      /simulated command registration failure/,
+    );
+    assert.equal(AgentSession.prototype.setModel, original);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("bundled primary-runtime registration failure leaves both AgentSession prototypes untouched", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-bundle-runtime-rollback-", {
+    cwd: true,
+    test: t,
+  });
+  const bundlePath = join(getPackageDir(), "dist", "bundle", "index.js");
+  const bundleEntrypoint = join(getPackageDir(), "dist", "bundle", "cli.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+    const bundledModule = await import(${JSON.stringify(bundlePath)});
+    const BundledAgentSession = bundledModule.AgentSession;
+    process.argv[1] = ${JSON.stringify(bundleEntrypoint)};
+    const originalModular = ModularAgentSession.prototype.setModel;
+    const originalBundled = BundledAgentSession.prototype.setModel;
+    Object.defineProperty(BundledAgentSession.prototype, "setModel", {
+      configurable: true,
+      enumerable: true,
+      value: originalBundled,
+      writable: false,
+    });
+    const { registerTlhPrimaryAgentRuntime } = await import(
+      "./extensions/the-last-harness/primary-agent-runtime.js"
+    );
+    const pi = {
+      on() {},
+      registerCommand() {},
+      registerShortcut() {},
+    };
+    assert.throws(
+      () => registerTlhPrimaryAgentRuntime(pi, { env: process.env, subagentMetadata: [] }),
+      /Could not install the Pi AgentSession.setModel persistence seam/,
+    );
+    assert.equal(ModularAgentSession.prototype.setModel, originalModular);
+    assert.equal(BundledAgentSession.prototype.setModel, originalBundled);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("bundled Node and modular AgentSession constructors share one exact public wrapper", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-bundle-identity-", {
+    cwd: true,
+    test: t,
+  });
+  const bundlePath = join(getPackageDir(), "dist", "bundle", "index.js");
+  const bundleEntrypoint = join(getPackageDir(), "dist", "bundle", "cli.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+
+    const bundledModule = await import(${JSON.stringify(bundlePath)});
+    const BundledAgentSession = bundledModule.AgentSession;
+    assert.notEqual(
+      ModularAgentSession,
+      BundledAgentSession,
+      "Pi 0.84.4 must expose distinct modular and bundled AgentSession constructors",
+    );
+
+    // The extension loader resolves this module through the normal package root,
+    // while this synthetic argv selects the same bundled-Node path used by Pi.
+    process.argv[1] = ${JSON.stringify(bundleEntrypoint)};
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+
+    const calls = [];
+    const rejected = Promise.reject(new Error("bundled rejection"));
+    const modularResult = Promise.resolve("modular-result");
+    const bundledResult = Promise.resolve("bundled-result");
+    ModularAgentSession.prototype.setModel = function (model, options) {
+      calls.push({ owner: "modular", receiver: this, model, options, argumentCount: arguments.length });
+      return model.id === "reject" ? rejected : modularResult;
+    };
+    BundledAgentSession.prototype.setModel = function (model, options) {
+      calls.push({ owner: "bundled", receiver: this, model, options, argumentCount: arguments.length });
+      return model.id === "reject" ? rejected : bundledResult;
+    };
+
+    assert.equal(scope.installTlhModelSelectionPersistenceOverride(), true);
+
+    const previous = { provider: "anthropic", id: "previous" };
+    const next = { provider: "anthropic", id: "next" };
+    const sameCalls = [];
+    const owner = scope.beginTlhModelSelectionPersistenceSession((model) => sameCalls.push(model));
+    assert.ok(owner);
+
+    const modularReceiver = Object.create(ModularAgentSession.prototype);
+    Object.defineProperty(modularReceiver, "model", { configurable: true, value: previous });
+    const modularOptions = { persist: true };
+    const modularPromise = modularReceiver.setModel(next, modularOptions);
+    assert.equal(modularPromise, modularResult, "modular wrapper must return the original Promise");
+    assert.equal(await modularPromise, "modular-result");
+
+    const bundledReceiver = Object.create(BundledAgentSession.prototype);
+    Object.defineProperty(bundledReceiver, "model", { configurable: true, value: next });
+    const bundledOptions = { persist: true };
+    const bundledPromise = bundledReceiver.setModel(next, bundledOptions);
+    assert.equal(bundledPromise, bundledResult, "bundle wrapper must return the original Promise");
+    assert.equal(await bundledPromise, "bundled-result");
+    assert.deepEqual(sameCalls, [next], "the bundled wrapper must feed the shared owner callback");
+
+    assert.equal(calls[0].owner, "modular");
+    assert.equal(calls[0].receiver, modularReceiver, "wrapper must preserve this");
+    assert.equal(calls[0].options, modularOptions, "wrapper must preserve options identity");
+    assert.equal(calls[0].argumentCount, 2, "wrapper must preserve argument count");
+    assert.equal(calls[1].owner, "bundled");
+    assert.equal(calls[1].receiver, bundledReceiver, "bundle wrapper must preserve this");
+    assert.equal(calls[1].options, bundledOptions, "bundle wrapper must preserve options identity");
+    assert.equal(calls[1].argumentCount, 2, "bundle wrapper must preserve argument count");
+
+    const rejectedReceiver = Object.create(BundledAgentSession.prototype);
+    Object.defineProperty(rejectedReceiver, "model", { configurable: true, value: previous });
+    const rejectedPromise = rejectedReceiver.setModel({ provider: "anthropic", id: "reject" }, { persist: true });
+    assert.equal(rejectedPromise, rejected, "rejection identity must be preserved");
+    await assert.rejects(() => rejectedPromise, /bundled rejection/);
+    assert.deepEqual(sameCalls, [next], "failed calls must not claim the owner callback");
+    scope.endTlhModelSelectionPersistenceSession(owner);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("a virtual bundled AgentSession constructor is patched without path guessing", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-virtual-bundle-", { cwd: true, test: t });
+  const bundlePath = join(getPackageDir(), "dist", "bundle", "index.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+    const bundledModule = await import(${JSON.stringify(bundlePath)});
+    const BundledAgentSession = bundledModule.AgentSession;
+    process.argv[1] = process.execPath;
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+    const marker = Symbol.for("tlh.modelSelectionPersistencePatch");
+    assert.equal(
+      scope.installTlhModelSelectionPersistenceOverride(BundledAgentSession),
+      true,
+    );
+    assert.ok(ModularAgentSession.prototype[marker]);
+    assert.equal(
+      ModularAgentSession.prototype[marker],
+      BundledAgentSession.prototype[marker],
+    );
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("a separate private Pi runtime is resolved from its canonical bundle CLI", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-private-bundle-", { cwd: true, test: t });
+  const privatePackageDir = copyPublishedPiPackage(t, "separate");
+  const privateCliPath = join(privatePackageDir, "dist", "bundle", "cli.js");
+  const privateBundlePath = join(privatePackageDir, "dist", "bundle", "index.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+
+    const privateModule = await import(${JSON.stringify(privateBundlePath)});
+    const PrivateAgentSession = privateModule.AgentSession;
+    assert.notEqual(ModularAgentSession, PrivateAgentSession);
+    process.argv[1] = ${JSON.stringify(privateCliPath)};
+
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+    const marker = Symbol.for("tlh.modelSelectionPersistencePatch");
+    assert.equal(scope.installTlhModelSelectionPersistenceOverride(), true);
+    assert.ok(ModularAgentSession.prototype[marker]);
+    assert.ok(PrivateAgentSession.prototype[marker]);
+    assert.equal(
+      ModularAgentSession.prototype[marker],
+      PrivateAgentSession.prototype[marker],
+      "both runtime constructors must share one owner token",
+    );
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("installed bundle patch remains stable after bundle metadata becomes unavailable", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-private-bundle-stable-", {
+    cwd: true,
+    test: t,
+  });
+  const privatePackageDir = copyPublishedPiPackage(t, "stable");
+  const privateCliPath = join(privatePackageDir, "dist", "bundle", "cli.js");
+  const privatePackageJsonPath = join(privatePackageDir, "package.json");
+  const privateBundlePath = join(privatePackageDir, "dist", "bundle", "index.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { rmSync } from "node:fs";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+
+    const privateModule = await import(${JSON.stringify(privateBundlePath)});
+    const PrivateAgentSession = privateModule.AgentSession;
+    assert.notEqual(ModularAgentSession, PrivateAgentSession);
+    process.argv[1] = ${JSON.stringify(privateCliPath)};
+
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+    let owner;
+    let observedInvocation;
+    let observedClaim;
+    const selected = { provider: "anthropic", id: "claude-opus-5" };
+    PrivateAgentSession.prototype.setModel = function (model) {
+      observedInvocation = scope.readTlhModelSelectionPersistence(owner);
+      observedClaim = scope.claimTlhModelSelectionDefaults(owner, model, model);
+      return Promise.resolve();
+    };
+    assert.equal(scope.installTlhModelSelectionPersistenceOverride(), true);
+
+    // Keep the active CLI entrypoint in place, but make the validated package
+    // layout unavailable. Post-registration calls must use their stable patch.
+    rmSync(${JSON.stringify(privatePackageJsonPath)});
+    const persisted = [];
+    owner = scope.beginTlhModelSelectionPersistenceSession((model) => persisted.push(model));
+    assert.ok(owner);
+
+    const receiver = Object.create(PrivateAgentSession.prototype);
+    Object.defineProperty(receiver, "model", { configurable: true, value: selected });
+    await receiver.setModel(selected, { persist: true });
+    assert.equal(observedInvocation?.model.id, selected.id);
+    assert.deepEqual(observedClaim, { persisted: true });
+    assert.deepEqual(persisted, [selected]);
+
+    for (let index = 0; index < 3; index += 1) {
+      scope.updateTlhModelSelectionPersistenceContext(owner);
+      assert.equal(scope.readTlhModelSelectionPersistence(owner), undefined);
+      scope.endTlhModelSelectionPersistenceSession(owner);
+      owner = scope.beginTlhModelSelectionPersistenceSession(() => {});
+      assert.ok(owner);
+    }
+    scope.endTlhModelSelectionPersistenceSession(owner);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("unsafe private bundle metadata, layout, and symlink escapes fail closed", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-private-bundle-unsafe-", {
+    cwd: true,
+    test: t,
+  });
+  const wrongMetadataDir = copyPublishedPiPackage(t, "wrong-metadata");
+  const wrongMetadata = JSON.parse(readFileSync(join(wrongMetadataDir, "package.json"), "utf8"));
+  wrongMetadata.name = "malicious-pi-runtime";
+  wrongMetadata.version = "0.84.3";
+  writeFileSync(join(wrongMetadataDir, "package.json"), `${JSON.stringify(wrongMetadata)}\\n`);
+  const missingIndexDir = copyPublishedPiPackage(t, "missing-index");
+  rmSync(join(missingIndexDir, "dist", "bundle", "index.js"));
+  const symlinkDir = copyPublishedPiPackage(t, "symlink-index");
+  const escapedTargetDir = mkdtempSync(join(tmpdir(), "tlh-pi-escaped-index-"));
+  t.after(() => rmSync(escapedTargetDir, { recursive: true, force: true }));
+  cpSync(join(symlinkDir, "dist", "bundle", "index.js"), join(escapedTargetDir, "index.js"));
+  rmSync(join(symlinkDir, "dist", "bundle", "index.js"));
+  symlinkSync(join(escapedTargetDir, "index.js"), join(symlinkDir, "dist", "bundle", "index.js"));
+
+  const cases = [wrongMetadataDir, missingIndexDir, symlinkDir];
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession } from "@earendil-works/pi-coding-agent";
+    import { join } from "node:path";
+    const original = AgentSession.prototype.setModel;
+    const marker = Symbol.for("tlh.modelSelectionPersistencePatch");
+    for (const [index, packageDir] of ${JSON.stringify(cases)}.entries()) {
+      const scope = await import(
+        "./extensions/the-last-harness/model-selection-scope.js?unsafe-" + index,
+      );
+      process.argv[1] = join(packageDir, "dist", "bundle", "cli.js");
+      assert.equal(scope.installTlhModelSelectionPersistenceOverride(), false);
+      assert.equal(AgentSession.prototype.setModel, original);
+      assert.equal(AgentSession.prototype[marker], undefined);
+    }
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("unknown or non-bundle entrypoints do not load a second Pi runtime", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-unknown-entrypoint-", {
+    cwd: true,
+    test: t,
+  });
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+    process.argv[1] = process.execPath;
+    const original = ModularAgentSession.prototype.setModel;
+    const marker = Symbol.for("tlh.modelSelectionPersistencePatch");
+    assert.equal(scope.installTlhModelSelectionPersistenceOverride(), true);
+    assert.notEqual(ModularAgentSession.prototype.setModel, original);
+    assert.ok(ModularAgentSession.prototype[marker]);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("bundle installation rolls back the modular wrapper on a partial failure", (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-bundle-rollback-", {
+    cwd: true,
+    test: t,
+  });
+  const bundlePath = join(getPackageDir(), "dist", "bundle", "index.js");
+  const bundleEntrypoint = join(getPackageDir(), "dist", "bundle", "cli.js");
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession as ModularAgentSession } from "@earendil-works/pi-coding-agent";
+
+    const bundledModule = await import(${JSON.stringify(bundlePath)});
+    const BundledAgentSession = bundledModule.AgentSession;
+    process.argv[1] = ${JSON.stringify(bundleEntrypoint)};
+    const originalModular = ModularAgentSession.prototype.setModel;
+    const originalBundled = BundledAgentSession.prototype.setModel;
+    Object.defineProperty(BundledAgentSession.prototype, "setModel", {
+      configurable: true,
+      enumerable: true,
+      value: originalBundled,
+      writable: false,
+    });
+
+    const scope = await import("./extensions/the-last-harness/model-selection-scope.js");
+    assert.equal(
+      scope.installTlhModelSelectionPersistenceOverride(),
+      false,
+      "a failed second-prototype mutation must fail atomically",
+    );
+    assert.equal(ModularAgentSession.prototype.setModel, originalModular);
+    assert.equal(scope.beginTlhModelSelectionPersistenceSession(() => {}), undefined);
+  `;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: fixture.agent,
+      PI_SUBAGENT_CHILD: "0",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("unsafe non-TLH profiles retain the upstream AgentSession method", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-unsafe-", { cwd: true, test: t });
+  const script = `
+    import assert from "node:assert/strict";
+    import { AgentSession } from "@earendil-works/pi-coding-agent";
+    import { installTlhModelSelectionPersistenceOverride } from "./extensions/the-last-harness/model-selection-scope.js";
+
+    const original = AgentSession.prototype.setModel;
+    assert.equal(installTlhModelSelectionPersistenceOverride(), false);
+    assert.equal(AgentSession.prototype.setModel, original);
+  `;
   const env = { ...process.env, HOME: fixture.home };
   delete env.PI_CODING_AGENT_DIR;
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
@@ -236,962 +1294,47 @@ test("unsafe non-TLH profiles keep the original upstream SettingsManager behavio
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test("session-only survives turn and tree reapplication, then resets on explicit mode and new session", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-session-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  const availableModels = [previousModel, selectedModel];
+test("first persisted override records its packaged baseline", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-model-baseline-", { cwd: true, test: t });
+  const previous = model("anthropic", "claude-sonnet-4-6");
+  const selected = model("anthropic", "claude-opus-5");
   writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-  const sessionSentinel = join(fixture.cwd, "existing-session.jsonl");
-  writeFileSync(sessionSentinel, "existing session content\n");
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-    const { beforeAgentStart, modelSelect, pi, runtime, sessionTree } =
-      registerScopeRuntime(primaryAgents);
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 0, selectedModel, availableModels);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await runtime.applySessionStart(context);
-
-    await queueNativeSelectorWrites(
-      manager,
-      selectedModel,
-      () => {
-        pi.model = selectedModel;
-      },
-      "high",
-    );
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    assert.deepEqual(pi.model, selectedModel);
-
-    await beforeAgentStart({ systemPrompt: "base" }, context);
-    assert.deepEqual(
-      pi.model,
-      selectedModel,
-      "next turn must preserve the accepted session-only model",
-    );
-    await sessionTree({ type: "session_tree" }, context);
-    assert.deepEqual(
-      pi.model,
-      selectedModel,
-      "session-tree reapplication must preserve the session-only model",
-    );
-
-    await pi.commands.get("switch-primary-agent").handler("architect", context);
-    assert.deepEqual(
-      pi.model,
-      previousModel,
-      "an explicit primary mode change reapplies its packaged model",
-    );
-
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await runtime.applySessionStart(context);
-    assert.deepEqual(
-      pi.model,
-      previousModel,
-      "a new session must not inherit the prior session-only model",
-    );
-    assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-    });
-    assert.equal(readFileSync(sessionSentinel, "utf8"), "existing session content\n");
-  });
-});
-
-test("All sessions persists one upstream default and the applicable primary override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-all-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-    await queueNativeSelectorWrites(
-      manager,
-      selectedModel,
-      () => {
-        activeModel = selectedModel;
-      },
-      "high",
-    );
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      createScopeContext(fixture, 1, selectedModel, [previousModel, selectedModel]),
-    );
-
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultProvider, selectedModel.provider);
-    assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(written.defaultThinkingLevel, "high");
-    assert.equal(written.tlh.primaryAgent.modelOverrides.architect, "anthropic/claude-opus-5");
-  });
-});
-
-test("OpenRouter session-only selection stays active without creating a primary override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-openrouter-session-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "openrouter", id: "openai/gpt-5.4" };
-  const primary = createPrimaryPrompt("architect", {
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenrouterThinking: "high",
-    applyModel: true,
-    applyThinking: true,
-  });
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi, runtime } = registerScopeRuntime(new Map([["architect", primary]]));
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await runtime.applySessionStart(context);
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await manager.flush();
-
-    assert.deepEqual(pi.model, selectedModel);
-    assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-    });
-    assert.equal(
-      readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.architect,
-      undefined,
-    );
-  });
-});
-
-test("OpenRouter All sessions selection stores the chosen primary override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-openrouter-all-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-    tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primary = createPrimaryPrompt("architect", {
-      model: "anthropic/claude-opus-5",
-      tlhOpenrouterThinking: "high",
-      applyModel: true,
-      applyThinking: true,
-    });
-    const { modelSelect } = registerScopeRuntime(new Map([["architect", primary]]));
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      activeModel = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      createScopeContext(fixture, 1, selectedModel, [previousModel, selectedModel]),
-    );
-    await manager.flush();
-
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultProvider, selectedModel.provider);
-    assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(
-      written.tlh?.primaryAgent?.modelOverrides?.architect,
-      "openrouter/anthropic/claude-sonnet-4-6",
-    );
-  });
-});
-
-test("OpenRouter All sessions preserves distinct overrides across primary switches and new sessions", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-openrouter-primaries-", {
-    cwd: true,
-    test: t,
-  });
-  const primaryModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModels = new Map([
-    ["architect", { provider: "openrouter", id: "anthropic/claude-sonnet-4-6" }],
-    ["rush", { provider: "openrouter", id: "openai/gpt-5.4" }],
-    ["product", { provider: "openrouter", id: "anthropic/claude-opus-5" }],
-    ["bug-hunter", { provider: "openrouter", id: "openai/gpt-5.6" }],
-  ]);
-  const availableModels = [primaryModel, ...selectedModels.values()];
-  const primaryAgents = new Map(
-    [...selectedModels.keys()].map((selection) => [
-      selection,
-      createPrimaryPrompt(selection, {
-        model: "anthropic/claude-sonnet-4-6",
-        tlhOpenrouterThinking: "high",
-        applyModel: true,
-        applyThinking: true,
-      }),
-    ]),
-  );
-  writeSettings(fixture.agent, {
-    defaultProvider: primaryModel.provider,
-    defaultModel: primaryModel.id,
+    defaultProvider: previous.provider,
+    defaultModel: previous.id,
     tlh: { primaryAgent: { enabled: true, selected: "architect" } },
   });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi, runtime, sessionShutdown } = registerScopeRuntime(primaryAgents);
-    const branch = [];
-    pi.appendEntry = (_type, data) => {
-      branch.push({ type: "custom", customType: PRIMARY_AGENT_SESSION_STATE_ENTRY, data });
-    };
-    pi.model = primaryModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 1, primaryModel, availableModels);
-    context.sessionManager = { getBranch: () => branch };
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await runtime.applySessionStart(context);
-
-    const command = pi.commands.get("switch-primary-agent");
-    assert.ok(command, "registers /switch-primary-agent");
-    let previousModel = primaryModel;
-    for (const [selection, selectedModel] of selectedModels) {
-      if (selection !== "architect") {
-        await command.handler(selection, context);
-      }
-      await queueNativeSelectorWrites(manager, selectedModel, () => {
-        pi.model = selectedModel;
-      });
-      await modelSelect(
-        { type: "model_select", model: selectedModel, previousModel, source: "set" },
-        context,
-      );
-      await manager.flush();
-      assert.equal(
-        readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.[selection],
-        `${selectedModel.provider}/${selectedModel.id}`,
-      );
-      previousModel = selectedModel;
-    }
-
-    assert.deepEqual(
-      readSettings(fixture.agent).tlh.primaryAgent.modelOverrides,
-      Object.fromEntries(
-        [...selectedModels].map(([selection, model]) => [
-          selection,
-          `${model.provider}/${model.id}`,
-        ]),
-      ),
+    const runtimeHarness = registerRuntime(
+      new Map([
+        [
+          "architect",
+          primaryWithModel("architect", "anthropic/claude-sonnet-4-6", {
+            applyModel: false,
+          }),
+        ],
+      ]),
     );
-
-    for (const [selection, selectedModel] of [...selectedModels].reverse()) {
-      await command.handler(selection, context);
-      assert.deepEqual(pi.model, selectedModel, `${selection} keeps its OpenRouter override`);
-    }
-
-    await sessionShutdown({ type: "session_shutdown" }, context);
-    branch.length = 0;
-    pi.model = primaryModel;
-    await runtime.applySessionStart(context);
-    assert.deepEqual(
-      pi.model,
-      selectedModels.get("architect"),
-      "a new session reapplies the persistent default primary's OpenRouter override",
-    );
-  });
-});
-
-test("direct-provider packaged defaults still clear matching primary overrides", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-direct-default-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  const primary = createPrimaryPrompt("architect", {
-    model: "anthropic/claude-opus-5",
-    applyModel: true,
-    applyThinking: true,
-  });
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-    tlh: { primaryAgent: { modelOverrides: { architect: "anthropic/claude-opus-5" } } },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime(new Map([["architect", primary]]));
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 1, selectedModel, [previousModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
+    const context = createRuntimeContext(fixture, previous, [previous, selected]);
+    runtimeHarness.pi.model = previous;
+    await startSession(runtimeHarness, context);
+    const { manager, session } = createAgentSessionHarness(
+      fixture,
+      runtimeHarness,
       context,
+      previous,
     );
+
+    await session.setModel(selected, { persist: true });
     await manager.flush();
 
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
-  });
-});
-
-test("native selector claims survive preceding async extension dispatch and stay session-only", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-dispatch-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      activeModel = selectedModel;
-    });
-    let pickerCalls = 0;
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    context.ui.select = async (_title, options) => {
-      pickerCalls += 1;
-      return options[0];
-    };
-    // context-cap registers first as an async handler with no internal await;
-    // the runner's `await handler(...)` still yields before TLH runs.
-    const precedingContextCapLikeHandler = async () => {};
-
-    await dispatchLikeExtensionRunner(
-      [precedingContextCapLikeHandler, modelSelect],
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await manager.flush();
-    assert.equal(pickerCalls, 1);
-    assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-    });
-  });
-});
-
-test("reconfirming an active session-only model does not persist it globally", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-session-noop-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime();
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    let pickerCalls = 0;
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    context.ui.select = async (_title, options) => {
-      pickerCalls += 1;
-      return options[0];
-    };
-
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await manager.flush();
-    assert.equal(pickerCalls, 1);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-
-    // Pi's picker writes once before AgentSession notices the model is already
-    // active; no second write or model_select event follows that no-op.
-    await queueNativeSelectorWrites(manager, selectedModel, undefined);
-    await manager.flush();
-    assert.equal(pickerCalls, 1, "a no-op selection emits no event and opens no scope prompt");
-    assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-    });
-  });
-});
-
-test("an active-model re-selection persists synchronously without stale state and thinking still persists", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-no-event-", { cwd: true, test: t });
-  const activeModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const laterModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, { defaultProvider: "openai-codex", defaultModel: "old-default" });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let currentModel = activeModel;
-    installScopeOverride(() => currentModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, thinkingSelect } = registerScopeRuntime();
-
-    await queueNativeSelectorWrites(manager, activeModel, () => {}, "medium");
-    await thinkingSelect(
-      { type: "thinking_level_select", level: "medium", previousLevel: "low" },
-      {},
-    );
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultModel, activeModel.id);
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "medium");
-
-    manager.setDefaultThinkingLevel("high");
-    await thinkingSelect(
-      { type: "thinking_level_select", level: "high", previousLevel: "medium" },
-      {},
-    );
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "high");
-
-    await queueNativeSelectorWrites(manager, laterModel, () => {
-      currentModel = laterModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: laterModel, previousModel: activeModel, source: "set" },
-      createScopeContext(fixture, 0, laterModel, [activeModel, laterModel]),
-    );
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultModel, activeModel.id);
-    assert.equal(written.defaultThinkingLevel, "high");
-  });
-});
-
-test("a failed selector write is bounded and replayed before the next unrelated selection", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-failed-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const failedModel = { provider: "openai-codex", id: "unavailable-model" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-
-    // The selector wrote, but AgentSession.setModel rejected before its write/event.
-    await queueNativeSelectorWrites(manager, failedModel, undefined);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      activeModel = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]),
-    );
-    await manager.flush();
-    const written = readSettings(fixture.agent);
+    const statePath = join(fixture.agent, "tlh", "reconcile-state.json");
+    assert.equal(existsSync(statePath), true);
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
     assert.equal(
-      written.defaultModel,
-      failedModel.id,
-      "the old upstream write is replayed, not merged",
+      state.acknowledgedSnapshot.architect.byProvider.anthropic.model,
+      "anthropic/claude-sonnet-4-6",
     );
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
-  });
-});
-
-test("session shutdown replays and clears a failed-selector candidate", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-failed-shutdown-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const failedModel = { provider: "openai-codex", id: "unavailable-model" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    installScopeOverride(() => previousModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { sessionShutdown } = registerScopeRuntime();
-
-    await queueNativeSelectorWrites(manager, failedModel, undefined);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-    await sessionShutdown({ type: "session_shutdown" }, {});
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultModel, failedModel.id);
-
-    // A second boundary must not replay the already-drained candidate.
-    manager.setDefaultModelAndProvider(previousModel.provider, previousModel.id);
-    await manager.flush();
-    await sessionShutdown({ type: "session_shutdown" }, {});
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-  });
-});
-
-test("unknown model event sources fail open by replaying unmatched writes", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-future-source-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const failedModel = { provider: "openai-codex", id: "unavailable-model" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    installScopeOverride(() => previousModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-    await queueNativeSelectorWrites(manager, failedModel, undefined);
-
-    await modelSelect(
-      {
-        type: "model_select",
-        model: previousModel,
-        previousModel: failedModel,
-        source: "future-source",
-      },
-      createScopeContext(fixture, 0, previousModel, [previousModel, failedModel]),
-    );
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultModel, failedModel.id);
-  });
-});
-
-test("/model exact-name and provider-auth-style source=set persist without the picker", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-programmatic-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "openai-codex", id: "gpt-5.6-luna" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-    tlh: { primaryAgent: { enabled: false, selected: "disabled" } },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-    // Leave the same target behind as a failed native-selector candidate.
-    await queueNativeSelectorWrites(manager, selectedModel, undefined);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-    // Direct/programmatic AgentSession.setModel updates the active model first
-    // and produces only this one settings write. It must drain, not merge with,
-    // the failed picker candidate or provider-auth would open the scope dialog.
-    activeModel = selectedModel;
-    manager.setDefaultModelAndProvider(selectedModel.provider, selectedModel.id);
-    let pickerCalls = 0;
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    context.ui.select = async () => {
-      pickerCalls += 1;
-      return MODEL_SELECTION_SCOPE_SESSION_ONLY;
-    };
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    assert.equal(pickerCalls, 0);
-    assert.equal(readSettings(fixture.agent).defaultModel, selectedModel.id);
-    activeModel = selectedModel;
-  });
-});
-
-test("model cycling keeps persistent upstream behavior without creating a TLH primary override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-cycle-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    installScopeOverride(() => selectedModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect } = registerScopeRuntime();
-    manager.setDefaultModelAndProvider(selectedModel.provider, selectedModel.id);
-    let pickerCalls = 0;
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    context.ui.select = async () => {
-      pickerCalls += 1;
-      return MODEL_SELECTION_SCOPE_SESSION_ONLY;
-    };
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "cycle" },
-      context,
-    );
-
-    assert.equal(pickerCalls, 0);
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
-  });
-});
-
-test("cancel restores the previous active model without persisting attempted or restoration writes", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-cancel-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime();
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    const notifications = [];
-    const context = createScopeContext(fixture, "cancel", selectedModel, [
-      previousModel,
-      selectedModel,
-    ]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    context.ui.notify = (message, type) => notifications.push({ message, type });
-    pi.setModel = async (model) => {
-      const prior = pi.model;
-      pi.model = model;
-      manager.setDefaultModelAndProvider(model.provider, model.id);
-      await modelSelect(
-        { type: "model_select", model, previousModel: prior, source: "set" },
-        context,
-      );
-      return true;
-    };
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-
-    assert.deepEqual(pi.model, previousModel);
-    assert.deepEqual(
-      notifications,
-      [],
-      "the corrected status waits for upstream's attempted-model status",
-    );
-    notifications.push({ message: `Model: ${selectedModel.id}`, type: "upstream-status" });
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(notifications.at(-1), {
-      message: `Kept ${previousModel.provider}/${previousModel.id} after cancelling model selection.`,
-      type: "info",
-    });
-    assert.deepEqual(readSettings(fixture.agent), {
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-    });
-  });
-});
-
-test("cancel restoration failures are caught and reported without persisting the attempted model", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-cancel-error-", {
-    cwd: true,
-    test: t,
-  });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    let activeModel = previousModel;
-    installScopeOverride(() => activeModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime();
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      activeModel = selectedModel;
-    });
-    const notifications = [];
-    const context = createScopeContext(fixture, "cancel", selectedModel, [
-      previousModel,
-      selectedModel,
-    ]);
-    context.ui.notify = (message, type) => notifications.push({ message, type });
-    pi.setModel = async () => {
-      throw new Error("No API key");
-    };
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    assert.deepEqual(notifications, [
-      {
-        message: `TLH could not restore the previous model: ${previousModel.provider}/${previousModel.id}`,
-        type: "warning",
-      },
-    ]);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-  });
-});
-
-test("TLH-internal model application persists defaults without prompting or recording an override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-internal-", { cwd: true, test: t });
-  const initialModel = { provider: "anthropic", id: "claude-opus-5" };
-  const primaryModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  writeSettings(fixture.agent, {
-    defaultProvider: initialModel.provider,
-    defaultModel: initialModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["architect", rushLikePrimary()]]);
-    const { modelSelect, pi, runtime } = registerScopeRuntime(primaryAgents);
-    pi.model = initialModel;
-    installScopeOverride(() => pi.model);
-    let pickerCalls = 0;
-    const context = createScopeContext(fixture, 0, initialModel, [initialModel, primaryModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    context.ui.select = async () => {
-      pickerCalls += 1;
-      return MODEL_SELECTION_SCOPE_SESSION_ONLY;
-    };
-    pi.setModel = async (model) => {
-      const previousModel = pi.model;
-      pi.model = model;
-      manager.setDefaultModelAndProvider(model.provider, model.id);
-      await modelSelect({ type: "model_select", model, previousModel, source: "set" }, context);
-      return true;
-    };
-
-    await runtime.applySessionStart(context);
-    assert.equal(pickerCalls, 0);
-    assert.deepEqual(pi.model, primaryModel);
-    const written = readSettings(fixture.agent);
-    assert.equal(written.defaultModel, primaryModel.id);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.architect, undefined);
-  });
-});
-
-test("overrideable Rush All sessions persists globally and creates its role override", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-override-all-", {
-    cwd: true,
-    test: t,
-  });
-  const primaryModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: primaryModel.provider,
-    defaultModel: primaryModel.id,
-    tlh: { primaryAgent: { enabled: true, selected: "rush" } },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
-    const { beforeAgentStart, modelSelect, pi } = registerScopeRuntime(primaryAgents);
-    pi.model = primaryModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 1, selectedModel, [primaryModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel: primaryModel, source: "set" },
-      context,
-    );
-    let written = readSettings(fixture.agent);
-    assert.equal(written.defaultModel, selectedModel.id);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, "anthropic/claude-opus-5");
-
-    await beforeAgentStart({ systemPrompt: "base" }, context);
-    assert.deepEqual(
-      pi.model,
-      selectedModel,
-      "an overrideable primary must retain its persisted model override",
-    );
-    written = readSettings(fixture.agent);
-    assert.equal(written.tlh?.primaryAgent?.modelOverrides?.rush, "anthropic/claude-opus-5");
-  });
-});
-
-test("overrideable Rush session-only selection is retained on the next before_agent_start", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-override-session-", {
-    cwd: true,
-    test: t,
-  });
-  const primaryModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: primaryModel.provider,
-    defaultModel: primaryModel.id,
-    tlh: { primaryAgent: { enabled: true, selected: "rush" } },
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const primaryAgents = new Map([["rush", rushLikePrimary("rush")]]);
-    const { beforeAgentStart, modelSelect, pi } = registerScopeRuntime(primaryAgents);
-    pi.model = primaryModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 0, selectedModel, [primaryModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel: primaryModel, source: "set" },
-      context,
-    );
-    assert.deepEqual(pi.model, selectedModel);
-    assert.equal(readSettings(fixture.agent).defaultModel, primaryModel.id);
-
-    await beforeAgentStart({ systemPrompt: "base" }, context);
-    assert.deepEqual(
-      pi.model,
-      selectedModel,
-      "an overrideable primary must retain a session-only model on the next turn",
-    );
-    assert.equal(readSettings(fixture.agent).tlh?.primaryAgent?.modelOverrides?.rush, undefined);
-  });
-});
-
-for (const selection of ["product", "bug-hunter"]) {
-  test(`${selection} All sessions selection persists a distinct primary override`, async (t) => {
-    const fixture = createIsolatedProfileFixture("tlh-model-scope-primary-", {
-      cwd: true,
-      test: t,
-    });
-    const primaryModel = { provider: "anthropic", id: "claude-opus-5" };
-    const selectedModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-    const primary = createPrimaryPrompt(selection, {
-      model: "anthropic/claude-opus-5",
-      tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-      tlhAnthropicThinking: "high",
-      tlhOpenaiThinking: "high",
-      applyModel: true,
-      applyThinking: true,
-    });
-    writeSettings(fixture.agent, {
-      defaultProvider: primaryModel.provider,
-      defaultModel: primaryModel.id,
-      tlh: { primaryAgent: { enabled: true, selected: selection } },
-    });
-
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-      const { beforeAgentStart, modelSelect, pi, runtime } = registerScopeRuntime(
-        new Map([[selection, primary]]),
-      );
-      pi.model = primaryModel;
-      installScopeOverride(() => pi.model);
-      const context = createScopeContext(fixture, 1, selectedModel, [primaryModel, selectedModel]);
-      Object.defineProperty(context, "model", { get: () => pi.model });
-      await runtime.applySessionStart(context);
-      await queueNativeSelectorWrites(manager, selectedModel, () => {
-        pi.model = selectedModel;
-      });
-      await modelSelect(
-        { type: "model_select", model: selectedModel, previousModel: primaryModel, source: "set" },
-        context,
-      );
-      await manager.flush();
-
-      const written = readSettings(fixture.agent);
-      assert.equal(written.defaultModel, selectedModel.id);
-      assert.equal(
-        written.tlh?.primaryAgent?.modelOverrides?.[selection],
-        "anthropic/claude-sonnet-4-6",
-      );
-      await beforeAgentStart({ systemPrompt: "base" }, context);
-      assert.deepEqual(pi.model, selectedModel);
-    });
-  });
-}
-
-test("non-TUI native model events retain persistent upstream behavior without showing the scope picker", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-model-scope-nontui-", { cwd: true, test: t });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
-  writeSettings(fixture.agent, {
-    defaultProvider: previousModel.provider,
-    defaultModel: previousModel.id,
-  });
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const { modelSelect, pi } = registerScopeRuntime();
-    pi.model = previousModel;
-    installScopeOverride(() => pi.model);
-    const context = createScopeContext(fixture, 0, selectedModel, [previousModel, selectedModel]);
-    Object.defineProperty(context, "model", { get: () => pi.model });
-    context.mode = "json";
-    context.hasUI = false;
-    let pickerCalls = 0;
-    context.ui.select = async () => {
-      pickerCalls += 1;
-      return MODEL_SELECTION_SCOPE_SESSION_ONLY;
-    };
-
-    // Exercise the native selector path instead of calling the settings manager
-    // directly; the non-TUI guard must still bypass the scope picker.
-    await queueNativeSelectorWrites(manager, selectedModel, () => {
-      pi.model = selectedModel;
-    });
-    await modelSelect(
-      { type: "model_select", model: selectedModel, previousModel, source: "set" },
-      context,
-    );
-    await manager.flush();
-    assert.equal(pickerCalls, 0);
-    assert.deepEqual(pi.model, selectedModel);
-    assert.deepEqual(context.model, selectedModel);
-    assert.equal(readSettings(fixture.agent).defaultModel, selectedModel.id);
+    await runtimeHarness.sessionShutdown({ type: "session_shutdown" }, context);
   });
 });
