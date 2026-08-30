@@ -123,6 +123,19 @@ test("custom-agent trust guard rejects positive claims but allows defaults-only 
   }
 });
 
+test("custom-agent tools remain required rather than optional", () => {
+  const optionalChildAgentFields = canonical.match(
+    /After the required fields, project custom definitions may declare the optional child-agent fields ([^.]+)\./,
+  );
+  assert.ok(optionalChildAgentFields, "optional child-agent fields must be documented");
+  assert.doesNotMatch(
+    optionalChildAgentFields[1],
+    /\btools\b/,
+    "tools must not be documented as optional",
+  );
+  assert.match(canonical, /`tools` must be explicit and contain at least one usable entry\./);
+});
+
 test("canonical custom-subagent documentation preserves the exact project contract", () => {
   assertContainsAll(
     canonical,
