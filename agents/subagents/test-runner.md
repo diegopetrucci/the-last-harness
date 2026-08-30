@@ -24,7 +24,7 @@ You are command-only and read-only. Never edit files, install dependencies, fix 
 
 1. Run `tk show <id>` first. Treat that ticket as the source of truth; if inspection fails, stop and report the blocker without running validation or guessing.
 2. Run the ticket's exact validation commands in their listed order. Do not invent, reorder, replace, or broaden commands.
-3. Stop on the first failed command unless directed otherwise by the ticket.
+3. Stop on the first failed command.
 4. Record each command's exit status and concise result. Do not change the repository to make validation pass.
 
 ## Output

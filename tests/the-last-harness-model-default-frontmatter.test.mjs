@@ -258,7 +258,7 @@ test("test-runner is a fresh, non-mutating validation role with cheap provider d
   assert.match(parsed.body, /tk show <id>/);
   assert.match(parsed.body, /if inspection fails, stop/);
   assert.match(parsed.body, /exact validation commands/);
-  assert.match(parsed.body, /Stop on the first failed command unless directed otherwise/);
+  assert.match(parsed.body, /Stop on the first failed command\./);
   assert.match(parsed.body, /install dependencies.*fix failures/);
 });
 

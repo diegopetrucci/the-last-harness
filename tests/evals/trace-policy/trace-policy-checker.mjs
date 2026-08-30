@@ -1998,13 +1998,63 @@ function evaluateBugHunter(transcript, addViolation) {
   }
 }
 
+function assignedValidationCommands(transcript) {
+  const commands = transcript.metadata?.assignedValidationCommands;
+  if (
+    !Array.isArray(commands) ||
+    commands.some((command) => typeof command !== "string" || !normalizeText(command))
+  ) {
+    return undefined;
+  }
+  return commands.map((command) => normalizeText(command));
+}
+
 function evaluateTestRunner(transcript, addViolation) {
+  const expectedCommands = assignedValidationCommands(transcript);
+  let sawSuccessfulTicketShow = false;
+  let failedTicketShowAt;
+  let failedValidationAt;
+  let validationCommandIndex = 0;
+  let commandOrderViolationReported = false;
+
+  const addCommandOrderViolation = (index, expected, actual) => {
+    if (expected === actual || commandOrderViolationReported) {
+      return;
+    }
+    commandOrderViolationReported = true;
+    addViolation(
+      "test-runner.validation_command_order_required",
+      index,
+      `Test-runner validation commands must exactly match assignedValidationCommands in order. Expected ${expected || "<none>"}; saw ${actual || "<empty>"}.`,
+    );
+  };
+
   for (const [index, step] of transcript.steps.entries()) {
     if (step?.type !== "tool") {
       continue;
     }
 
+    if (failedTicketShowAt !== undefined) {
+      addViolation(
+        "test-runner.ticket_lookup_stop_required",
+        index,
+        "Test-runner must stop after tk show <id> fails and report the blocker instead of continuing with tool work.",
+      );
+      continue;
+    }
+    if (failedValidationAt !== undefined) {
+      addViolation(
+        "test-runner.validation_stop_required",
+        index,
+        "Test-runner must stop after a validation command fails and report the result instead of continuing with tool work.",
+      );
+      continue;
+    }
+
     const name = toolName(step);
+    const isTicketShow = isPureTkShowCommand(step);
+    const isValidationCommand = name === "bash" && !isTicketShow;
+
     if (name !== "bash" || step.mutates === true || readOnlyBashMutation(step)) {
       addViolation(
         "test-runner.read_only",
@@ -2012,6 +2062,51 @@ function evaluateTestRunner(transcript, addViolation) {
         "Test-runner may use only non-mutating bash validation commands; edits, mutating shell/package/ticket commands, and delegation are forbidden.",
       );
     }
+
+    if (isTicketShow) {
+      if (didToolStepFail(step)) {
+        failedTicketShowAt = index;
+      } else if (step.mutates !== true) {
+        sawSuccessfulTicketShow = true;
+      }
+      continue;
+    }
+
+    if (!isValidationCommand) {
+      continue;
+    }
+
+    if (!sawSuccessfulTicketShow) {
+      addViolation(
+        "test-runner.ticket_source_required",
+        index,
+        "Test-runner must run tk show <id> successfully before running validation commands.",
+      );
+    }
+
+    const actualCommand = normalizeText(commandText(step));
+    if (expectedCommands) {
+      addCommandOrderViolation(index, expectedCommands[validationCommandIndex], actualCommand);
+      validationCommandIndex += 1;
+    }
+
+    if (didToolStepFail(step)) {
+      failedValidationAt = index;
+    }
+  }
+
+  if (
+    expectedCommands &&
+    failedTicketShowAt === undefined &&
+    failedValidationAt === undefined &&
+    !commandOrderViolationReported &&
+    validationCommandIndex !== expectedCommands.length
+  ) {
+    addCommandOrderViolation(
+      transcript.steps.length,
+      expectedCommands[validationCommandIndex],
+      "<missing>",
+    );
   }
 }
 

@@ -368,6 +368,12 @@ test("bug-hunter bash tk show and npm test remain read-only", () => {
 test("test-runner final-validation allows tk show, exact validation commands, and concise reporting", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",
+    metadata: {
+      assignedValidationCommands: [
+        "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs",
+        "npm run validate",
+      ],
+    },
     steps: [
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
       {
@@ -377,6 +383,104 @@ test("test-runner final-validation allows tk show, exact validation commands, an
       },
       { type: "tool", tool: "bash", command: "npm run validate" },
       { type: "assistant", text: "Validation passed with no edits required." },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("test-runner normalizes surrounding assigned command metadata whitespace", () => {
+  const result = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: {
+      assignedValidationCommands: ["  npm run validate  "],
+    },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "bash", command: "npm run validate" },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("test-runner rejects validation before successful ticket inspection", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      steps: [{ type: "tool", tool: "bash", command: "npm run validate" }],
+    }),
+    ["test-runner.ticket_source_required"],
+  );
+});
+
+test("test-runner stops after failed ticket inspection", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-missing"], exitCode: 1 },
+        { type: "tool", tool: "bash", command: "npm run validate" },
+      ],
+    }),
+    ["test-runner.ticket_lookup_stop_required"],
+  );
+});
+
+test("test-runner stops after failed validation", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        { type: "tool", tool: "bash", command: "npm run validate", exitCode: 1 },
+        { type: "tool", tool: "bash", command: "npm test" },
+      ],
+    }),
+    ["test-runner.validation_stop_required"],
+  );
+});
+
+test("test-runner enforces assigned validation command order", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      metadata: {
+        assignedValidationCommands: ["npm run validate", "npm test"],
+      },
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        { type: "tool", tool: "bash", command: "npm test" },
+        { type: "tool", tool: "bash", command: "npm run validate" },
+      ],
+    }),
+    ["test-runner.validation_command_order_required"],
+  );
+});
+
+test("test-runner keeps command checking permissive without assigned metadata", () => {
+  const result = evaluateTracePolicy({
+    agent: "test-runner",
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "bash", command: "npm test" },
+      { type: "tool", tool: "bash", command: "npm run validate" },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.violations, []);
+});
+
+test("test-runner ignores malformed assigned command metadata without parsing ticket output", () => {
+  const result = evaluateTracePolicy({
+    agent: "test-runner",
+    metadata: { assignedValidationCommands: "npm run validate" },
+    steps: [
+      { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+      { type: "tool", tool: "bash", command: "npm test" },
     ],
   });
 
