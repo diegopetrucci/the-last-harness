@@ -295,10 +295,10 @@ export function installTlhModelSelectionPersistenceOverride(bundledAgentSession)
     if (modelSelectionPersistenceInstallAttempted) {
         return installedModelSelectionPersistencePatch !== undefined;
     }
-    modelSelectionPersistenceInstallAttempted = true;
     if (!canWriteTlhDefaults()) {
         return false;
     }
+    modelSelectionPersistenceInstallAttempted = true;
     const constructors = getAgentSessionConstructors(bundledAgentSession);
     if (!constructors) {
         return false;

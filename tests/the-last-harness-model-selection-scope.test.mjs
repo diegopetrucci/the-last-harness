@@ -1273,16 +1273,23 @@ test("bundle installation rolls back the modular wrapper on a partial failure", 
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test("unsafe non-TLH profiles retain the upstream AgentSession method", async (t) => {
+test("unsafe non-TLH registration does not consume a later safe installation", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-model-unsafe-", { cwd: true, test: t });
   const script = `
     import assert from "node:assert/strict";
     import { AgentSession } from "@earendil-works/pi-coding-agent";
     import { installTlhModelSelectionPersistenceOverride } from "./extensions/the-last-harness/model-selection-scope.js";
 
+    const marker = Symbol.for("tlh.modelSelectionPersistencePatch");
     const original = AgentSession.prototype.setModel;
     assert.equal(installTlhModelSelectionPersistenceOverride(), false);
     assert.equal(AgentSession.prototype.setModel, original);
+    assert.equal(AgentSession.prototype[marker], undefined);
+
+    process.env.PI_CODING_AGENT_DIR = ${JSON.stringify(fixture.agent)};
+    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
+    assert.notEqual(AgentSession.prototype.setModel, original);
+    assert.ok(AgentSession.prototype[marker]);
   `;
   const env = { ...process.env, HOME: fixture.home };
   delete env.PI_CODING_AGENT_DIR;
