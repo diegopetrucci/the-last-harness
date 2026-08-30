@@ -325,6 +325,8 @@ interface ExecutorDeps {
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+  /** Optional: retrieve current-session heartbeat totals for the doctor action. */
+  getHeartbeatSummary?: () => import("../../extension/heartbeat-wiring.ts").HeartbeatSessionSummary;
 }
 
 interface ExecutionContextData {
@@ -6711,6 +6713,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
                 orchestratorTarget,
                 sessionError,
                 expandTilde: deps.expandTilde,
+                ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
               }),
             },
           ],
