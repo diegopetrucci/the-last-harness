@@ -13,6 +13,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Fixed
 
+- Fixed startup PTY bridge cleanup when the checker disappears, including fixture process-group teardown on stdin EOF or broken stdout.
 - Child `tools` policies now preserve three states: omitted inherits Pi defaults; explicit empty/MCP-only disables tools (while runtime-required tools are added); named and extension-path entries are translated to exact allowlists or `--no-builtin-tools`, and lazy-skill path-only declarations fail early with guidance.
 - Malformed custom-agent markdown is isolated from discovery: invalid definitions are skipped without hiding valid agents, and list/unknown-agent diagnostics identify the source path and validation error.
 - Child-derived terminal text is sanitized only at display boundaries (including terminal controls and binary-looking content); durable transcripts, output artifacts, metadata, and logs retain unsanitized values subject to their existing retention limits.
