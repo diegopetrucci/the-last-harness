@@ -258,7 +258,12 @@ export function createHeartbeatController(config, deps = {}) {
             cancelTimer();
             return;
         }
-        armTimer();
+        if (outcome === "error") {
+            rearmAfterSkip();
+        }
+        else {
+            armTimer();
+        }
     }
     function onTimerFire() {
         timerHandle = undefined;

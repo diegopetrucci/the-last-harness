@@ -337,10 +337,11 @@ export function createHeartbeatController(
   }
 
   /**
-   * Re-arm the timer after a skip (not_idle, in_flight, or no-capture).
+   * Re-arm the timer after a deferred attempt (not_idle, in_flight, no-capture,
+   * or error).
    *
    * Applies MIN_REARM_DELAY_MS as a floor so the controller never spins on
-   * setTimeout(0) when elapsed >= intervalMs and the skip did not advance
+   * setTimeout(0) when elapsed >= intervalMs and the attempt did not advance
    * lastRequestAt.  The initial-scheduling path (armTimer) is unchanged.
    */
   function rearmAfterSkip(): void {
@@ -614,8 +615,14 @@ export function createHeartbeatController(
       return;
     }
 
-    // Re-arm for the next interval.
-    armTimer();
+    // Errors do not refresh the provider cache, so keep lastRequestAt as-is
+    // while still avoiding a zero-delay retry burst.
+    if (outcome === "error") {
+      rearmAfterSkip();
+    } else {
+      // Re-arm for the next interval after a successful or otherwise terminal beat.
+      armTimer();
+    }
   }
 
   // -------------------------------------------------------------------------

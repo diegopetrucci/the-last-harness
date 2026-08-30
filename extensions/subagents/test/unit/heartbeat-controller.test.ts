@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createHeartbeatController } from "../../src/runs/shared/heartbeat-controller.ts";
+import { MIN_REARM_DELAY_MS } from "../../src/runs/shared/heartbeat-state.ts";
 import type { ResolvedHeartbeatConfig } from "../../src/runs/shared/heartbeat-config.ts";
 import type { AssistantMessageEvent, Context, Model, StreamOptions } from "@earendil-works/pi-ai";
 import type { Api } from "@earendil-works/pi-ai";
@@ -634,14 +635,20 @@ describe("createHeartbeatController — error handling", () => {
     ctrl.destroy();
   });
 
-  it("disables the session after MAX_CONSECUTIVE_ERRORS errors", async () => {
+  it("re-arms errors with the minimum delay before the three-error breaker trips", async () => {
     const timer = makeTimerFake();
     const sink = makeLoggerSink();
+    const scheduledDelays: number[] = [];
     let errorCount = 0;
+
+    const trackingSetTimeout = (fn: () => void, ms: number): FakeHandle => {
+      scheduledDelays.push(ms);
+      return timer.setTimeout(fn, ms);
+    };
 
     const ctrl = createHeartbeatController(BASE_CONFIG, {
       now: timer.now,
-      setTimeout: timer.setTimeout,
+      setTimeout: trackingSetTimeout,
       clearTimeout: timer.clearTimeout,
       logPath: "/fake.jsonl",
       ...sink,
@@ -659,19 +666,57 @@ describe("createHeartbeatController — error handling", () => {
     ctrl.onIdle(true);
     ctrl.startGap("g1", "sess-1");
 
-    for (let i = 0; i < 3; i++) {
-      timer.advance(BASE_CONFIG.intervalMs + 1);
-      timer.firePending();
-      await new Promise((r) => setTimeout(r, 50));
-    }
-
-    // After 3 errors the controller should be permanently disabled
-    // Further timer fires should not invoke the stream
-    const beforeCount = errorCount;
+    // The first error is due at the normal interval, then must re-arm with a
+    // positive floor without moving lastRequestAt forward.
     timer.advance(BASE_CONFIG.intervalMs + 1);
     timer.firePending();
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(errorCount, beforeCount, "no more stream calls after session disabled");
+    assert.equal(errorCount, 1);
+    assert.equal(scheduledDelays[0], BASE_CONFIG.intervalMs);
+    assert.equal(
+      scheduledDelays.at(-1),
+      MIN_REARM_DELAY_MS,
+      "the first error must re-arm with the minimum positive delay",
+    );
+
+    // A pending error re-arm must not fire again in the same tick or before its
+    // full delay has elapsed.
+    timer.firePending();
+    assert.equal(errorCount, 1, "the first error must not trigger a same-tick retry");
+    timer.advance(MIN_REARM_DELAY_MS - 1);
+    timer.firePending();
+    assert.equal(errorCount, 1, "the first error must wait for the minimum delay");
+
+    // The second error gets the same guarded re-arm, while the third still
+    // trips the existing session breaker.
+    timer.advance(1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(errorCount, 2);
+    assert.equal(
+      scheduledDelays.at(-1),
+      MIN_REARM_DELAY_MS,
+      "the second error must re-arm with the minimum positive delay",
+    );
+    timer.firePending();
+    assert.equal(errorCount, 2, "the second error must not trigger a same-tick retry");
+
+    timer.advance(MIN_REARM_DELAY_MS);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(errorCount, 3);
+
+    // After 3 errors the controller should be permanently disabled; no timer
+    // remains that can invoke the stream again.
+    timer.advance(BASE_CONFIG.intervalMs + MIN_REARM_DELAY_MS);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(errorCount, 3, "no more stream calls after session disabled");
+    assert.equal(
+      sink.records.filter((r) => (r as { outcome: string }).outcome === "error").length,
+      3,
+      "each breaker attempt must remain an error outcome",
+    );
     ctrl.destroy();
   });
 });
