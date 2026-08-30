@@ -25,6 +25,7 @@
     }
   ],
   "rules": {
+    "complexity": ["error", { "max": 100, "variant": "classic" }],
     // Anti-slop rules are adopted one at a time after reviewing their diagnostics.
     "anti-slop/no-chained-type-assertions": "error",
     // "anti-slop/no-conditional-empty-object-spread": "error",
