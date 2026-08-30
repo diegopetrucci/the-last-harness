@@ -118,6 +118,8 @@ This is a hard cutover. Existing profile definitions are not automatically copie
 
 A project custom file is executable only after TLH finds a **persisted** positive project-trust decision covering the validated Git root. In the TLH TUI, run `/trust` from the repository root (or another path whose persisted decision covers that root), choose the persistent `Trust` option, save it, and retry. A session-only decision is not authorization, and a decision saved only for a nested cwd does not authorize the root custom directory. No custom-file content is used while trust is missing, denied, or unreadable.
 
+Project model/effort defaults in [the model guide](models.md#project-modeleffort-defaults) use a separate, weaker configuration-trust decision. That decision applies packaged defaults only; it never authorizes or modifies these project custom agents, which always require persisted positive project trust.
+
 Every custom definition is read with the same fail-closed limits used for project-agent authorization:
 
 - maximum **64 KiB (65,536 UTF-8 bytes)**;

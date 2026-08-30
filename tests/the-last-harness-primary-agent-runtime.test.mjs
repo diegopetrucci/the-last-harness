@@ -34,6 +34,9 @@ const {
 const PRE_BIND_RUNTIME_ERROR =
   "Extension runtime not initialized. Action methods cannot be called during extension loading.";
 
+const { getTlhProjectAgentAccess } =
+  await import("../extensions/the-last-harness/project-agent-access.mjs");
+
 function projectAgentSessionContext(fixture, notifications, sessionId) {
   const branch = [
     {
@@ -70,7 +73,7 @@ test("primary runtime warns once when persisted project trust denies an exact cu
         status: "denied",
         projectRoot: fixture.cwd,
         agentsDirectory: customDirectory,
-        trust: { trusted: false, source: "no-persisted-trust" },
+        trust: { kind: "project-agent", trusted: false, source: "no-persisted-trust" },
         diagnostics: ["definition content must not surface"],
       }),
     });
@@ -87,6 +90,72 @@ test("primary runtime warns once when persisted project trust denies an exact cu
   });
 });
 
+test("primary runtime does not treat project-config trust as persisted project-agent denial", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-kind-", {
+    cwd: true,
+    test: t,
+  });
+  const customDirectory = join(fixture.cwd, ".tlh", "agents", "custom");
+  mkdirSync(customDirectory, { recursive: true });
+  const notifications = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      projectAgentLoader: async () => ({
+        status: "denied",
+        projectRoot: fixture.cwd,
+        agentsDirectory: customDirectory,
+        // A configuration-plane denial must not trigger the persisted agent
+        // denial warning, even though its shape is otherwise valid.
+        trust: { kind: "project-config", trusted: false, source: "saved-negative" },
+        diagnostics: [],
+      }),
+    });
+    await applySessionStart(
+      projectAgentSessionContext(fixture, notifications, "trust-kind-session"),
+    );
+
+    assert.equal(
+      notifications.some(
+        ({ message, type }) => type === "warning" && /project custom agents/i.test(message),
+      ),
+      false,
+      "project-config trust must not trigger the persisted project-agent denial warning",
+    );
+  });
+});
+
+test("primary runtime rejects a config-plane-shaped result at the agent boundary", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-agent-trust-kind-", {
+    cwd: true,
+    test: t,
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      // Configuration defaults do not carry the capability/provenance/manifest
+      // required by the agent plane, so even a config trust tag cannot create
+      // project-agent authority.
+      projectAgentLoader: async () => ({
+        status: "loaded",
+        trust: { kind: "project-config", trusted: true, source: "saved-positive" },
+      }),
+      projectDefaultsLoader: async () => ({ status: "unavailable", warnings: [] }),
+    });
+    await applySessionStart(projectAgentSessionContext(fixture, [], "trust-kind-session"));
+
+    assert.equal(
+      getTlhProjectAgentAccess({ cwd: fixture.cwd, sessionId: "trust-kind-session" }),
+      undefined,
+      "a config-plane-shaped result must not create project-agent authority",
+    );
+  });
+});
+
 test("primary runtime keeps the absent project-agent fast path quiet", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-empty-", {
     cwd: true,
@@ -100,7 +169,7 @@ test("primary runtime keeps the absent project-agent fast path quiet", async (t)
       subagentMetadata: [],
       projectAgentLoader: async () => ({
         status: "loaded",
-        trust: { trusted: true, source: "no-project-agents" },
+        trust: { kind: "project-agent", trusted: true, source: "no-project-agents" },
       }),
     });
     await applySessionStart(projectAgentSessionContext(fixture, notifications, "empty-session"));
@@ -131,7 +200,7 @@ test("primary runtime deduplicates project trust warnings per session", async (t
         status: "denied",
         projectRoot: fixture.cwd,
         agentsDirectory: customDirectory,
-        trust: { trusted: false, source: "saved-negative" },
+        trust: { kind: "project-agent", trusted: false, source: "saved-negative" },
         diagnostics: [],
       }),
     });

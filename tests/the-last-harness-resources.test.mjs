@@ -6,7 +6,11 @@ import test from "node:test";
 import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import {
+  createIsolatedProfileFixture,
+  createSyntheticGitWorktree,
+  withEnv,
+} from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { collectStartupResourceSnapshot } = await jiti.import(
@@ -51,6 +55,7 @@ test("startup resources hide project-local skills when trust is unresolved", asy
 
 test("startup resources show project-local inputs for an exact saved trust decision", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-resources-trusted-", { cwd: true, test: t });
+  createSyntheticGitWorktree(fixture.cwd);
   writeContextFile(fixture.cwd, "AGENTS.md");
   writeSkill(fixture.cwd, "project-skill");
   writeTrust(fixture.agent, { [realpathSync(fixture.cwd)]: true });
@@ -78,6 +83,7 @@ test("startup resources inherit the nearest parent saved trust decision", async 
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   const childCwd = join(fixture.cwd, "project");
   mkdirSync(childCwd, { recursive: true });
   writeContextFile(childCwd, "AGENTS.md");
@@ -100,6 +106,7 @@ test("startup resources let a nearer false trust override a parent true", async 
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   const childCwd = join(fixture.cwd, "project");
   mkdirSync(childCwd, { recursive: true });
   writeContextFile(childCwd, "AGENTS.md");
@@ -141,6 +148,7 @@ test("startup resources surface only trusted project-agent guidance sources", as
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   const guidancePath = join(fixture.cwd, ".tlh", "agents", "builtin", "ARCHITECT_PROMPT_APPEND.md");
   mkdirSync(join(fixture.cwd, ".tlh", "agents", "builtin"), { recursive: true });
   writeFileSync(guidancePath, "architect project guidance", "utf8");

@@ -1,14 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { ProjectTrustStore, SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
+import { hasTrustRequiringProjectResources, ProjectTrustStore, SettingsManager, getAgentDir, } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PRIMARY_AGENT, DISABLED_PRIMARY_AGENT, PRIMARY_AGENT_CYCLE, PRIMARY_AGENT_SESSION_STATE_ENTRY, isEnabledPrimaryAgentSelection, nextPrimaryAgentSelection, primaryAgentDefaultLabel, primaryAgentSelectionFromBranch, resolvePrimaryAgentConfig, } from "../the-last-harness-primary-agent.mjs";
 import { createPrimaryToolState, filterAvailableTools, } from "../the-last-harness-primary-tools.mjs";
 import { allowedSubagentsForExperimentalConfig, collectSubagentTargets, isEmbeddedSubagentTarget, registerTlhStartupMode, validateSubagentToolInput, } from "../the-last-harness-subagent-safety.mjs";
 import { buildTlhCommitAttributionPrompt, getTlhGitCommitAttributionBlockReason, resolveTlhCommitAttribution, } from "./attribution.js";
 import { formatHomePath, isRecord } from "./common.js";
 import { loadProjectAgentSnapshot, reauthorizeTlhProjectAgentTrust, } from "./project-agent-loader-bridge.mjs";
+import { loadProjectDefaults } from "./project-defaults-loader-bridge.mjs";
 import { lookupTlhProjectAgentRunReference, probeTlhProjectAgentRunMarker, setTlhProjectAgentAccessProvider, } from "./project-agent-access.mjs";
 import { releaseTlhProjectAgentRunReferencesForSession, releaseTlhProjectAgentSnapshotReference, retainTlhProjectAgentSnapshotReference, } from "./project-agent-access.mjs";
 import { GNOSIS_PROMPT, PRIMARY_AGENT_CYCLE_SHORTCUT, THINKING_LEVELS, TLH_NAME, TLH_PACKAGE_NAME, } from "./constants.js";
@@ -24,6 +25,114 @@ import { buildChildSubagentSystemPrompt, buildTlhSystemPrompt, loadPrimaryAgents
 import { activateTlhTicketRuntime, activateTlhTicketSessionScope } from "./tickets.js";
 import { isMeaningfulPrimaryOverride, recordOverrideBaseline } from "./model-effort-reconcile.js";
 import { tlhSettingsPathForWrite, withLockedTlhSettingsWrite } from "./profile-state.js";
+const PROJECT_PRIMARY_AGENT_NAMES = new Set([
+    "architect",
+    "rush",
+    "product",
+    "bug-hunter",
+]);
+const PROJECT_SUBAGENT_ROLE_NAMES = new Set([
+    "code-reviewer",
+    "contrarian",
+    "developer",
+    "diff-summarizer",
+    "librarian",
+    "oracle",
+    "repo-scout",
+    "web-scout",
+]);
+const MAX_PROJECT_DEFAULT_WARNINGS = 20;
+const MAX_PROJECT_DEFAULT_WARNING_LENGTH = 512;
+const MAX_PROJECT_DEFAULT_WARNING_COUNT = 1_000_000;
+const PROJECT_DEFAULTS_WARNING_SUMMARY_PATTERN = /^…and ([1-9][0-9]*) more issues in \.tlh\/defaults\.json$/;
+function truncateProjectDefaultsWarning(message) {
+    if (message.length <= MAX_PROJECT_DEFAULT_WARNING_LENGTH)
+        return message;
+    return `${message.slice(0, MAX_PROJECT_DEFAULT_WARNING_LENGTH - 1)}…`;
+}
+function saturatingProjectDefaultsWarningCount(value) {
+    if (!Number.isFinite(value) || value >= MAX_PROJECT_DEFAULT_WARNING_COUNT) {
+        return MAX_PROJECT_DEFAULT_WARNING_COUNT;
+    }
+    return value > 0 ? Math.floor(value) : 0;
+}
+function addProjectDefaultsWarningCounts(current, additional) {
+    const boundedCurrent = saturatingProjectDefaultsWarningCount(current);
+    const boundedAdditional = saturatingProjectDefaultsWarningCount(additional);
+    if (boundedCurrent >= MAX_PROJECT_DEFAULT_WARNING_COUNT - boundedAdditional ||
+        boundedAdditional >= MAX_PROJECT_DEFAULT_WARNING_COUNT) {
+        return MAX_PROJECT_DEFAULT_WARNING_COUNT;
+    }
+    return boundedCurrent + boundedAdditional;
+}
+function projectDefaultsWarningSummaryCount(message) {
+    const match = PROJECT_DEFAULTS_WARNING_SUMMARY_PATTERN.exec(message);
+    if (!match)
+        return undefined;
+    return saturatingProjectDefaultsWarningCount(Number(match[1]));
+}
+function projectDefaultsWarningRoot(projectRoot, cwd) {
+    return (canonicalExistingProjectRoot(projectRoot) ?? canonicalExistingProjectRoot(cwd) ?? resolve(cwd));
+}
+function projectDefaultsWarningKey(projectRoot, cwd, agent, message, identityMessage = message) {
+    const digest = createHash("sha256")
+        .update(projectDefaultsWarningRoot(projectRoot, cwd), "utf8")
+        .update("\0", "utf8")
+        .update(agent ?? "", "utf8")
+        .update("\0", "utf8")
+        .update(message, "utf8")
+        .update("\0", "utf8")
+        .update(identityMessage, "utf8")
+        .digest("hex");
+    return `project-default-warning-${digest}`;
+}
+function unavailableProjectModelWarningMessage(selection, modelReference) {
+    const prefix = `TLH project default model "`;
+    const suffix = `" for ${selection} is not available; falling back to stored or bundled defaults.`;
+    const maxModelLength = Math.max(0, MAX_PROJECT_DEFAULT_WARNING_LENGTH - prefix.length - suffix.length);
+    const boundedModel = modelReference.length <= maxModelLength
+        ? modelReference
+        : maxModelLength > 0
+            ? `${modelReference.slice(0, maxModelLength - 1)}…`
+            : "";
+    return truncateProjectDefaultsWarning(`${prefix}${boundedModel}${suffix}`);
+}
+function normalizeProjectDefaultsWarnings(value) {
+    if (!Array.isArray(value))
+        return [];
+    const retained = [];
+    const seen = new Set();
+    let omittedCount = 0;
+    let loaderSummaryCount = 0;
+    let hasLoaderSummary = false;
+    for (const rawWarning of value) {
+        if (typeof rawWarning !== "string" || rawWarning.length === 0)
+            continue;
+        const summaryCount = projectDefaultsWarningSummaryCount(rawWarning);
+        if (summaryCount !== undefined) {
+            if (!hasLoaderSummary) {
+                hasLoaderSummary = true;
+                loaderSummaryCount = summaryCount;
+            }
+            continue;
+        }
+        const warning = truncateProjectDefaultsWarning(rawWarning);
+        if (seen.has(warning))
+            continue;
+        if (retained.length < MAX_PROJECT_DEFAULT_WARNINGS) {
+            retained.push(warning);
+            seen.add(warning);
+        }
+        else {
+            omittedCount = addProjectDefaultsWarningCounts(omittedCount, 1);
+        }
+    }
+    const totalOmitted = addProjectDefaultsWarningCounts(loaderSummaryCount, omittedCount);
+    if (totalOmitted > 0) {
+        retained.push(truncateProjectDefaultsWarning(`…and ${totalOmitted} more issues in .tlh/defaults.json`));
+    }
+    return retained;
+}
 const PROJECT_AGENT_RUNTIME_GLOBAL_KEY = Symbol.for("the-last-harness.project-agent-runtime-state");
 const PROJECT_AGENT_RUNTIME_GLOBAL = globalThis;
 const PROJECT_AGENT_RUNTIME_STATE = PROJECT_AGENT_RUNTIME_GLOBAL[PROJECT_AGENT_RUNTIME_GLOBAL_KEY] ??
@@ -37,8 +146,34 @@ const PERSISTED_PROJECT_AGENT_TRUST_DENIAL_SOURCES = new Set([
     "trust-path-mismatch",
     "trust-store-error",
 ]);
+const PROJECT_CONFIG_TRUST_POSITIVE_SOURCES = new Set([
+    "saved-positive",
+    "upstream-positive",
+    "default-always",
+    "session-positive",
+]);
 function nonEmptyString(value) {
     return typeof value === "string" && value.trim().length > 0;
+}
+function isProjectPrimaryAgentName(value) {
+    return PROJECT_PRIMARY_AGENT_NAMES.has(value);
+}
+function isProjectSubagentRoleName(value) {
+    return PROJECT_SUBAGENT_ROLE_NAMES.has(value);
+}
+function isValidProjectModelReference(value) {
+    return typeof value === "string" && parseProviderModelReference(value) !== undefined;
+}
+function canonicalExistingProjectRoot(value) {
+    if (!nonEmptyString(value))
+        return undefined;
+    try {
+        const canonical = fs.realpathSync(value);
+        return fs.statSync(canonical).isDirectory() ? canonical : undefined;
+    }
+    catch {
+        return undefined;
+    }
 }
 function normalizeActiveProjectAgentSnapshot(value) {
     if (!isRecord(value) || value.status !== "loaded")
@@ -80,8 +215,12 @@ function normalizeActiveProjectAgentSnapshot(value) {
             return undefined;
         tombstones.push(rawTombstone);
     }
-    const trust = isRecord(value.trust) && value.trust.trusted === true && typeof value.trust.source === "string"
-        ? { trusted: true, source: value.trust.source }
+    const rawTrust = value.trust;
+    const trust = isRecord(rawTrust) &&
+        rawTrust.kind === "project-agent" &&
+        rawTrust.trusted === true &&
+        typeof rawTrust.source === "string"
+        ? { trusted: true, source: rawTrust.source }
         : undefined;
     return {
         capability,
@@ -103,9 +242,21 @@ function isPersistedProjectAgentTrustDenial(value) {
         return false;
     const trust = value.trust;
     return (isRecord(trust) &&
+        trust.kind === "project-agent" &&
         trust.trusted === false &&
         typeof trust.source === "string" &&
         PERSISTED_PROJECT_AGENT_TRUST_DENIAL_SOURCES.has(trust.source));
+}
+function defaultProjectTrustForCwd(cwd) {
+    try {
+        const value = SettingsManager.create(cwd, getAgentDir(), {
+            projectTrusted: false,
+        }).getDefaultProjectTrust();
+        return value === "always" || value === "never" ? value : "ask";
+    }
+    catch {
+        return "ask";
+    }
 }
 function sessionIdForContext(ctx) {
     try {
@@ -579,8 +730,9 @@ export function extractDispatchProviders(input) {
     return [...seen];
 }
 function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runtimeOptions = {}) {
-    const { getProviderAuthHealthStore, projectAgentLoader = loadProjectAgentSnapshot, now: nowFn = Date.now, } = runtimeOptions;
+    const { getProviderAuthHealthStore, projectAgentLoader = loadProjectAgentSnapshot, projectDefaultsLoader: projectDefaultsLoaderFn = loadProjectDefaults, now: nowFn = Date.now, } = runtimeOptions;
     const warned = new Set();
+    const projectDefaultsWarned = new Set();
     const runtimeOwnerPrefix = `runtime:${randomUUID()}`;
     let runtimeReferenceId = `${runtimeOwnerPrefix}:owner:${randomUUID()}`;
     const runtimeEpoch = ++PROJECT_AGENT_RUNTIME_STATE.epoch;
@@ -616,6 +768,13 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             },
         };
     };
+    const noticed = new Set();
+    let activeProjectDefaults;
+    let sessionStartRequestId = 0;
+    function isCurrentSessionStartOperation(operation) {
+        return (operation.requestId === sessionStartRequestId &&
+            operation.runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch);
+    }
     setTlhProjectAgentAccessProvider(() => {
         const snapshot = activeProjectAgentSnapshot;
         if (!snapshot)
@@ -710,6 +869,22 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         warned.add(key);
         ctx.ui.notify(message, "warning");
     }
+    function warnProjectDefaultsOnce(ctx, projectRoot, agent, message, identityMessage = message) {
+        const boundedMessage = truncateProjectDefaultsWarning(message);
+        if (boundedMessage.length === 0)
+            return;
+        try {
+            if (ctx.hasUI === false)
+                return;
+            const key = projectDefaultsWarningKey(projectRoot, ctx.cwd, agent, boundedMessage, identityMessage);
+            if (projectDefaultsWarned.has(key))
+                return;
+            ctx.ui.notify(boundedMessage, "warning");
+            projectDefaultsWarned.add(key);
+        }
+        catch {
+        }
+    }
     function warnPersistedProjectAgentTrustDenied(ctx, sessionId, loaded) {
         if (ctx.hasUI === false ||
             projectAgentTrustWarningSessionId === sessionId ||
@@ -722,6 +897,109 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
         catch {
         }
+    }
+    function noticeOnce(ctx, key, message) {
+        if (noticed.has(key)) {
+            return;
+        }
+        noticed.add(key);
+        try {
+            ctx.ui.notify(message, "info");
+        }
+        catch {
+        }
+    }
+    function normalizeProjectDefaultsResult(value, cwd) {
+        if (!isRecord(value) || !Object.hasOwn(value, "status"))
+            return undefined;
+        const status = value.status;
+        if (status !== "loaded" && status !== "denied" && status !== "unavailable")
+            return undefined;
+        const warnings = normalizeProjectDefaultsWarnings(value.warnings);
+        if (status !== "loaded") {
+            return { status, projectRoot: undefined, primaryAgents: {}, subagents: {}, warnings };
+        }
+        const rawDefaults = Object.hasOwn(value, "defaults") ? value.defaults : undefined;
+        const primaryAgents = {};
+        const subagents = {};
+        function normalizeSection(raw, target, isAllowedRole) {
+            if (!isRecord(raw))
+                return;
+            for (const [name, rawEntry] of Object.entries(raw)) {
+                if (!isAllowedRole(name) || !isRecord(rawEntry))
+                    continue;
+                if (Object.keys(rawEntry).some((key) => key !== "model" && key !== "effort")) {
+                    continue;
+                }
+                let model;
+                if (Object.hasOwn(rawEntry, "model")) {
+                    if (!isValidProjectModelReference(rawEntry.model))
+                        continue;
+                    model = rawEntry.model;
+                }
+                let effort;
+                if (Object.hasOwn(rawEntry, "effort")) {
+                    if (typeof rawEntry.effort !== "string" || !isThinkingLevel(rawEntry.effort)) {
+                        continue;
+                    }
+                    effort = rawEntry.effort;
+                }
+                if (model === undefined && effort === undefined)
+                    continue;
+                const entry = {};
+                if (model !== undefined)
+                    entry.model = model;
+                if (effort !== undefined)
+                    entry.effort = effort;
+                target[name] = entry;
+            }
+        }
+        if (isRecord(rawDefaults)) {
+            if (Object.hasOwn(rawDefaults, "primaryAgents")) {
+                normalizeSection(rawDefaults.primaryAgents, primaryAgents, isProjectPrimaryAgentName);
+            }
+            if (Object.hasOwn(rawDefaults, "subagents")) {
+                normalizeSection(rawDefaults.subagents, subagents, isProjectSubagentRoleName);
+            }
+        }
+        const projectRoot = Object.hasOwn(value, "projectRoot")
+            ? canonicalExistingProjectRoot(value.projectRoot)
+            : undefined;
+        const hasActiveDefaults = Object.keys(primaryAgents).length > 0 || Object.keys(subagents).length > 0;
+        if (hasActiveDefaults) {
+            if (!projectRoot)
+                return undefined;
+            const cwdValidation = validatePrimaryProjectAgentCwdContainment(projectRoot, cwd, []);
+            if (!cwdValidation.valid)
+                return undefined;
+            const trust = value.trust;
+            if (!isRecord(trust) ||
+                !Object.hasOwn(trust, "kind") ||
+                !Object.hasOwn(trust, "trusted") ||
+                !Object.hasOwn(trust, "source") ||
+                trust.kind !== "project-config" ||
+                trust.trusted !== true ||
+                typeof trust.source !== "string" ||
+                !PROJECT_CONFIG_TRUST_POSITIVE_SOURCES.has(trust.source)) {
+                return undefined;
+            }
+        }
+        return {
+            status: "loaded",
+            projectRoot,
+            primaryAgents,
+            subagents,
+            warnings,
+        };
+    }
+    function activeProjectDefaultsForCwd(cwd) {
+        if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch)
+            return undefined;
+        const defaults = activeProjectDefaults;
+        if (defaults?.status !== "loaded" || !defaults.projectRoot)
+            return undefined;
+        const validation = validatePrimaryProjectAgentCwdContainment(defaults.projectRoot, cwd, []);
+        return validation.valid ? defaults : undefined;
     }
     function warnInvalidPrimarySelection(ctx, source, value) {
         warnOnce(ctx, `invalid-primary-agent-${source}-${value}`, `TLH primary agent "${value}" is not valid; falling back to ${DEFAULT_PRIMARY_AGENT}. Available: ${PRIMARY_AGENT_CYCLE.join(", ")}.`);
@@ -1035,7 +1313,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         override.level = clamped;
         return clamped;
     }
-    async function applyPrimaryModel(ctx, primary, model) {
+    async function applyPrimaryModel(ctx, primary, model, source) {
         if (!model) {
             const candidateValues = [
                 primary.preferredModel ? formatProviderModelReference(primary.preferredModel) : undefined,
@@ -1049,6 +1327,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         if (ctx.model?.provider === model.provider && ctx.model?.id === model.id) {
             return model;
         }
+        const releaseModelSuppression = source === "project" ? beginTlhModelSelectionDefaultSuppression() : undefined;
         const releaseThinkingSuppression = beginTlhThinkingDefaultSuppression();
         tlhApplyingModel = true;
         let success;
@@ -1057,6 +1336,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
         finally {
             releaseThinkingSuppression();
+            releaseModelSuppression?.();
             tlhApplyingModel = false;
         }
         if (!success) {
@@ -1071,21 +1351,23 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             isThinkingLevel(currentThinking) &&
             thinkingLevelAtLeast(currentThinking, primary.minThinking));
     }
-    function applyPrimaryThinking(cwd, selection, primary, thinking, model) {
+    function applyPrimaryThinking(cwd, selection, primary, thinking, model, projectEffort) {
         const sessionThinking = sessionThinkingLevelForPrimary(selection, primary, model);
         const durableThinking = getTlhDurableThinkingLevel(cwd);
-        const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+        const requestedThinking = sessionThinking ?? projectEffort ?? durableThinking ?? thinking;
         if (requestedThinking === undefined) {
-            return;
+            return undefined;
         }
-        const hasExplicitThinking = sessionThinking !== undefined || durableThinking !== undefined;
+        const projectEffortIsEffective = sessionThinking === undefined && projectEffort !== undefined;
+        const hasExplicitThinking = sessionThinking !== undefined || projectEffort !== undefined || durableThinking !== undefined;
         const targetThinking = clampThinkingLevelForPrimary(requestedThinking, primary, model);
         const currentThinking = pi.getThinkingLevel();
         if (currentThinking === targetThinking ||
             (!hasExplicitThinking && currentThinkingSatisfiesPrimaryFloor(primary, currentThinking))) {
-            return;
+            return projectEffortIsEffective ? targetThinking : undefined;
         }
         setTlhThinkingLevel(targetThinking);
+        return projectEffortIsEffective ? targetThinking : undefined;
     }
     async function restoreCancelledModel(ctx, previousModel) {
         if (!previousModel) {
@@ -1123,10 +1405,14 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
         }
     }
     async function applyPrimaryDefaults(ctx, options = {}) {
-        const { warnOnMissing = true } = options;
+        const { warnOnMissing = true, sessionStartOperation } = options;
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         lastObservedModel = ctx.model;
         const selection = currentPrimaryAgentSelection();
         if (!isEnabledPrimaryAgentSelection(selection)) {
+            if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+                return;
             try {
                 applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
             }
@@ -1137,19 +1423,33 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             }
             return;
         }
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         const primary = activePrimaryAgent();
         if (!primary) {
             restorePrimaryToolsIfAppropriate();
             return;
         }
         applyPrimaryTools(ctx, primary, warnOnMissing);
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
         const forceApply = shouldForceApplyForLock(primary);
         const shouldApplyModel = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
         const shouldApplyThinking = forceApply || resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyThinking");
         const availableModels = getUnfilteredAvailableModels(ctx.modelRegistry);
         const primaryDefaults = selectProviderAwareAgentDefaults(primary, availableModels, ctx.model?.provider, ctx.model);
+        const preservesSessionOnlyModel = !forceApply &&
+            sessionOnlyModel !== undefined &&
+            ctx.model?.provider === sessionOnlyModel.provider &&
+            ctx.model?.id === sessionOnlyModel.id;
+        if (sessionOnlyModel && !preservesSessionOnlyModel) {
+            updateSessionOnlyModel(undefined);
+        }
         let resolvedModel = primaryDefaults.model;
+        let resolvedModelSource = "existing";
+        let projectModelCandidate;
+        let projectEffort;
         if (!forceApply) {
             const storedOverride = primaryConfig?.modelOverrides?.[selection];
             if (storedOverride) {
@@ -1158,21 +1458,62 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                     resolvedModel = overrideRef;
                 }
             }
+            const projectDefaults = activeProjectDefaultsForCwd(ctx.cwd);
+            const projectEntry = projectDefaults && isProjectPrimaryAgentName(selection)
+                ? projectDefaults.primaryAgents[selection]
+                : undefined;
+            if (projectDefaults?.projectRoot && projectEntry) {
+                if (!preservesSessionOnlyModel && projectEntry.model !== undefined) {
+                    const projectModelRef = availableModels.find((m) => `${m.provider}/${m.id}` === projectEntry.model);
+                    if (projectModelRef) {
+                        resolvedModel = projectModelRef;
+                        resolvedModelSource = "project";
+                        projectModelCandidate = { reference: projectEntry.model, model: projectModelRef };
+                    }
+                    else {
+                        const warning = unavailableProjectModelWarningMessage(selection, projectEntry.model);
+                        warnProjectDefaultsOnce(ctx, projectDefaults.projectRoot, selection, warning, `${warning}\0${projectEntry.model}`);
+                    }
+                }
+                if (projectEntry.effort !== undefined && isThinkingLevel(projectEntry.effort)) {
+                    projectEffort = projectEntry.effort;
+                }
+            }
         }
-        const preservesSessionOnlyModel = !forceApply &&
-            sessionOnlyModel !== undefined &&
-            ctx.model?.provider === sessionOnlyModel.provider &&
-            ctx.model.id === sessionOnlyModel.id;
-        if (sessionOnlyModel && !preservesSessionOnlyModel) {
-            updateSessionOnlyModel(undefined);
-        }
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         const activePrimaryModel = shouldApplyModel && !preservesSessionOnlyModel
-            ? await applyPrimaryModel(ctx, primary, resolvedModel)
+            ? await applyPrimaryModel(ctx, primary, resolvedModel, resolvedModelSource)
             : undefined;
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        const appliedProjectModel = projectModelCandidate !== undefined &&
+            modelsMatch(activePrimaryModel, projectModelCandidate.model)
+            ? projectModelCandidate.reference
+            : undefined;
+        let appliedProjectEffort;
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         if (shouldApplyThinking) {
             const effectiveModel = activePrimaryModel ?? ctx.model;
-            applyPrimaryThinking(ctx.cwd, selection, primary, resolveProviderThinking(primary, effectiveModel?.provider), effectiveModel);
+            appliedProjectEffort = applyPrimaryThinking(ctx.cwd, selection, primary, resolveProviderThinking(primary, effectiveModel?.provider), effectiveModel, projectEffort);
         }
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        if (appliedProjectModel !== undefined || appliedProjectEffort !== undefined) {
+            const appliedParts = [];
+            if (appliedProjectModel !== undefined) {
+                appliedParts.push(`model ${appliedProjectModel}`);
+            }
+            if (appliedProjectEffort !== undefined) {
+                appliedParts.push(`effort ${appliedProjectEffort}`);
+            }
+            if (appliedParts.length > 0) {
+                noticeOnce(ctx, `project-defaults-applied-${selection}`, `TLH applied project defaults for ${selection}: ${appliedParts.join(", ")}.`);
+            }
+        }
+        if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         lastObservedModel = activePrimaryModel ?? ctx.model;
     }
     async function applyPrimaryModeChange(ctx) {
@@ -1570,18 +1911,107 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 await loadLease.release();
         }
     }
+    async function loadProjectDefaultsForSession(ctx, operation) {
+        if (!isCurrentSessionStartOperation(operation))
+            return;
+        activeProjectDefaults = undefined;
+        const sessionId = sessionIdForContext(ctx);
+        if (!sessionId)
+            return;
+        let loaded;
+        try {
+            const defaultProjectTrust = defaultProjectTrustForCwd(ctx.cwd);
+            loaded = await projectDefaultsLoaderFn({
+                cwd: ctx.cwd,
+                sessionId,
+                agentDir: getAgentDir(),
+                defaultProjectTrust,
+                trust: {
+                    sessionId,
+                    defaultProjectTrust,
+                    createProjectTrustStore: PROJECT_AGENT_TRUST_DEPENDENCIES.createProjectTrustStore,
+                    hasTrustRequiringProjectResources,
+                    isProjectTrusted: () => ctx.isProjectTrusted(),
+                    hasUI: ctx.hasUI,
+                    ui: typeof ctx.ui?.confirm === "function"
+                        ? {
+                            confirm: (title, message, options) => ctx.ui.confirm(title, message, options),
+                        }
+                        : undefined,
+                },
+            });
+        }
+        catch {
+            return;
+        }
+        if (!isCurrentSessionStartOperation(operation))
+            return;
+        let normalized;
+        try {
+            normalized = normalizeProjectDefaultsResult(loaded, ctx.cwd);
+        }
+        catch {
+            return;
+        }
+        if (!isCurrentSessionStartOperation(operation))
+            return;
+        if (normalized?.status === "loaded") {
+            for (const warning of normalized.warnings) {
+                if (!isCurrentSessionStartOperation(operation))
+                    return;
+                warnProjectDefaultsOnce(ctx, normalized.projectRoot, undefined, warning);
+            }
+        }
+        if (!isCurrentSessionStartOperation(operation))
+            return;
+        activeProjectDefaults = normalized ?? undefined;
+    }
     async function applySessionStart(ctx) {
+        const sessionStartOperation = {
+            requestId: ++sessionStartRequestId,
+            runtimeEpoch,
+        };
+        activeProjectDefaults = undefined;
+        projectDefaultsWarned.clear();
+        noticed.clear();
         await persistTlhStandaloneThinkingDefaults();
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         replayAllTlhUnclaimedModelSelectionDefaults();
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         setTlhModelSelectionActiveModelResolver(() => ctx.model);
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         updateSessionOnlyModel(undefined);
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         clearSessionThinkingOverride();
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        noticed.clear();
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         activateTlhTicketSessionScope(ctx.cwd);
         await loadProjectAgentSnapshotForSession(ctx);
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         sessionProjectAgentGuidanceSnapshot = inventoryProjectAgentGuidance(ctx.cwd, getAgentDir());
         notifyUndecidedProjectAgentGuidance(ctx, sessionProjectAgentGuidanceSnapshot);
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        await loadProjectDefaultsForSession(ctx, sessionStartOperation);
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
         syncPrimaryAgentState(ctx);
-        await applyPrimaryDefaults(ctx, { warnOnMissing: false });
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
+        await applyPrimaryDefaults(ctx, {
+            warnOnMissing: false,
+            sessionStartOperation,
+        });
+        if (!isCurrentSessionStartOperation(sessionStartOperation))
+            return;
     }
     function registerLifecycleHooks() {
         pi.on("thinking_level_select", async (event, ctx) => {
@@ -1709,11 +2139,15 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             }
         });
         pi.on("session_shutdown", async (_event, _ctx) => {
+            sessionStartRequestId += 1;
             const shutdownRequestId = ++projectAgentLoadRequest;
             const previousReferenceId = runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch &&
                 PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceId
                 ? runtimeReferenceId
                 : undefined;
+            activeProjectDefaults = undefined;
+            projectDefaultsWarned.clear();
+            noticed.clear();
             activeProjectAgentSnapshot = undefined;
             if (previousReferenceId) {
                 let released = true;
@@ -1741,6 +2175,7 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
             updateSessionOnlyModel(undefined);
             clearSessionThinkingOverride();
             sessionProjectAgentGuidanceSnapshot = undefined;
+            noticed.clear();
             restorePrimaryToolsIfAppropriate();
             notifiedForReauth.clear();
             pendingReauthNotifications.clear();
@@ -1772,9 +2207,18 @@ function createTlhPrimaryAgentRuntime(pi, primaryAgents, subagentMetadata, runti
                 return undefined;
             }
             const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
+            const projectDefaults = activeProjectDefaultsForCwd(ctx.cwd);
+            const subagentProjectDefaults = projectDefaults?.subagents;
             applyProviderAwareModelsToNonProjectTargets(event.input, subagentsByName, getUnfilteredAvailableModels(ctx.modelRegistry), ctx.model?.provider, ctx.model, {
                 agentOverrides: subagentOverrides,
-                onWarning: ({ agent, message }) => warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
+                projectDefaults: subagentProjectDefaults,
+                onWarning: ({ agent, message, source }) => {
+                    if (source === "project-default") {
+                        warnProjectDefaultsOnce(ctx, projectDefaults?.projectRoot, agent, message);
+                        return;
+                    }
+                    warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message);
+                },
             });
             capScoutSubagentTimeout(event.input);
             syncPrimaryAgentState(ctx);
@@ -1941,6 +2385,7 @@ export function registerTlhPrimaryAgentRuntime(pi, options = {}) {
     const runtime = createTlhPrimaryAgentRuntime(pi, options.primaryAgents ?? loadPrimaryAgents(), options.subagentMetadata ?? loadSubagentMetadata(), {
         getProviderAuthHealthStore: options.getProviderAuthHealthStore,
         projectAgentLoader: options.projectAgentLoader,
+        projectDefaultsLoader: options.projectDefaultsLoader,
         now: options.now,
     });
     runtime.registerCommands();

@@ -146,6 +146,8 @@ export type ProjectAgentTrustSource =
   | "no-project-agents";
 
 export interface ProjectAgentTrustResult {
+  /** Nominally identifies this result as execution-plane agent trust. */
+  readonly kind: "project-agent";
   readonly trusted: boolean;
   readonly source: ProjectAgentTrustSource;
 }
@@ -425,30 +427,30 @@ export async function resolveProjectAgentTrust(
   options: ProjectAgentTrustOptions = {},
 ): Promise<ProjectAgentTrustResult> {
   if (options.trustOverride === false) {
-    return { trusted: false, source: "explicit-negative" };
+    return { kind: "project-agent", trusted: false, source: "explicit-negative" };
   }
 
   let store: ProjectAgentTrustStore | undefined;
   try {
     store = defaultTrustStore(options);
-    if (!store) return { trusted: false, source: "no-persisted-trust" };
+    if (!store) return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
 
     const entry = store.getEntry(projectRoot);
     if (entry !== null && typeof entry !== "object") {
-      return { trusted: false, source: "trust-store-error" };
+      return { kind: "project-agent", trusted: false, source: "trust-store-error" };
     }
     if (entry && (typeof entry.path !== "string" || typeof entry.decision !== "boolean")) {
-      return { trusted: false, source: "trust-store-error" };
+      return { kind: "project-agent", trusted: false, source: "trust-store-error" };
     }
-    if (!entry) return { trusted: false, source: "no-persisted-trust" };
+    if (!entry) return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
     if (!trustEntryPathApplies(entry.path, projectRoot)) {
-      return { trusted: false, source: "trust-path-mismatch" };
+      return { kind: "project-agent", trusted: false, source: "trust-path-mismatch" };
     }
     return entry.decision
-      ? { trusted: true, source: "saved-positive" }
-      : { trusted: false, source: "saved-negative" };
+      ? { kind: "project-agent", trusted: true, source: "saved-positive" }
+      : { kind: "project-agent", trusted: false, source: "saved-negative" };
   } catch {
-    return { trusted: false, source: "trust-store-error" };
+    return { kind: "project-agent", trusted: false, source: "trust-store-error" };
   }
 }
 
@@ -1603,6 +1605,7 @@ export async function loadProjectAgentSnapshot(
     // directory appears later, it stays inactive until a later load captures
     // a new generation after the persisted-trust check.
     const trust = {
+      kind: "project-agent",
       trusted: true,
       source: "no-project-agents",
     } satisfies ProjectAgentTrustResult;

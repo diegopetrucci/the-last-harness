@@ -8,6 +8,8 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const readRepoFile = (relativePath) => readFileSync(join(repoRoot, relativePath), "utf8");
 const canonical = readRepoFile("docs/custom-subagents.md");
 const compatibility = readRepoFile("docs/embedded-subagents.md");
+const readme = readRepoFile("README.md");
+const models = readRepoFile("docs/models.md");
 const projectAgentLoader = readRepoFile("extensions/subagents/src/agents/project-agent-loader.ts");
 
 const BUILTIN_APPEND_FILENAMES = [
@@ -44,6 +46,82 @@ const assertContainsAll = (text, phrases, label) => {
     assert.match(text, new RegExp(escapeRegExp(phrase), "i"), `${label}: ${phrase}`);
   }
 };
+
+const TRUST_SOURCE_PATTERN = String.raw`(?:configuration[- ]trust|session[- ]only|session approval|defaults(?:-only)? approval)`;
+const TRUST_ACTION_PATTERN = String.raw`(?:authori[sz](?:e|es|ed|ing)|enabl(?:e|es|ed|ing)|grant(?:s|ed|ing)|permit(?:s|ted|ting)?)`;
+const CUSTOM_AGENT_TARGET_PATTERN = String.raw`(?:(?:a|an|the|any|each|this|that|these|those)\s+)?(?:(?:project|embedded)\s+)?custom[- ]agents?\b`;
+const NEGATED_TRUST_CLAIM_PATTERN =
+  /\b(?:never|not|cannot|can't|does\s+not|doesn't|none\s+of|no|unable\s+to|fails?\s+to)\b/i;
+
+const assertNoPositiveCustomAgentTrustClaim = (text, label) => {
+  const activeClaimPatterns = [
+    new RegExp(
+      `\\b${TRUST_SOURCE_PATTERN}\\b[^.!?;]{0,24}\\b${TRUST_ACTION_PATTERN}\\b(?:\\s+(?:only|both))?\\s+${CUSTOM_AGENT_TARGET_PATTERN}`,
+      "gi",
+    ),
+    new RegExp(
+      `\\b${TRUST_SOURCE_PATTERN}\\b[^.!?;]{0,24}\\b${TRUST_ACTION_PATTERN}\\b[^.!?;]{0,60}\\b${CUSTOM_AGENT_TARGET_PATTERN}`,
+      "gi",
+    ),
+  ];
+  const passiveClaimPattern = new RegExp(
+    `${CUSTOM_AGENT_TARGET_PATTERN}[^.!?;]{0,60}\\b(?:is|are|can be|may be|will be|would be)\\s+${TRUST_ACTION_PATTERN}\\b[^.!?;]{0,40}\\b(?:by|from|using|with|via|through)\\s+${TRUST_SOURCE_PATTERN}\\b`,
+    "gi",
+  );
+
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  for (const sentence of sentences) {
+    if (!new RegExp(`\\b${TRUST_SOURCE_PATTERN}\\b`, "i").test(sentence)) {
+      continue;
+    }
+    const claimMatches = [];
+    for (const pattern of [...activeClaimPatterns, passiveClaimPattern]) {
+      for (const match of sentence.matchAll(pattern)) {
+        claimMatches.push({
+          start: match.index,
+          text: match[0],
+        });
+      }
+    }
+    for (const claim of claimMatches) {
+      const before = sentence.slice(Math.max(0, claim.start - 96), claim.start);
+      if (
+        NEGATED_TRUST_CLAIM_PATTERN.test(before) ||
+        NEGATED_TRUST_CLAIM_PATTERN.test(claim.text)
+      ) {
+        continue;
+      }
+      assert.fail(
+        `${label}: configuration trust must not positively authorize custom agents: ${sentence}`,
+      );
+    }
+  }
+};
+
+const CUSTOM_AGENT_TRUST_CLAIM_FIXTURES = [
+  ["Configuration trust authorizes a custom agent.", true],
+  ["Configuration-trust enables the project custom-agent.", true],
+  ["Session approval grants an embedded custom agent.", true],
+  ["Configuration trust grants access to the custom agent.", true],
+  ["Configuration trust permits both defaults and custom agents.", true],
+  ["The custom agents are enabled by configuration trust.", true],
+  ["Configuration trust never authorizes custom agents.", false],
+  ["Configuration-trust does not permit a project custom agent.", false],
+  [
+    "A session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents.",
+    false,
+  ],
+];
+
+test("custom-agent trust guard rejects positive claims but allows defaults-only approval", () => {
+  for (const [text, rejects] of CUSTOM_AGENT_TRUST_CLAIM_FIXTURES) {
+    if (rejects) {
+      assert.throws(() => assertNoPositiveCustomAgentTrustClaim(text, text), text);
+    } else {
+      assert.doesNotThrow(() => assertNoPositiveCustomAgentTrustClaim(text, text), text);
+    }
+  }
+});
 
 test("canonical custom-subagent documentation preserves the exact project contract", () => {
   assertContainsAll(
@@ -142,13 +220,38 @@ test("unsupported project-agent paths are explicitly negative, not supportive", 
   );
   assert.doesNotMatch(canonical, /\.tlh\/agents\/<slug>\.md/i);
   assert.doesNotMatch(canonical, /\.tlh\/agents\/\*\*\/\*\.md/i);
-  assert.doesNotMatch(canonical, /session approval/i);
+});
+
+test("README and model docs preserve the split trust contract", () => {
+  assertContainsAll(
+    readme,
+    [
+      "Custom-agent execution requires a persisted positive `/trust` decision",
+      "session-only or configuration-trust approvals never authorize custom agents",
+      "Defaults use a separate, weaker configuration-trust decision",
+      "an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents",
+    ],
+    "README split trust contract",
+  );
+  assertContainsAll(
+    models,
+    [
+      "A persisted canonical `/trust` `saved-positive` decision for the validated Git worktree root enables both",
+      "An upstream positive project-trust signal",
+      "or a session approval may enable `.tlh/defaults.json` only",
+      "None of those configuration-trust sources authorizes a project custom agent",
+      "custom-agent execution always requires persisted positive `/trust`",
+      'The defaults prompt title is **"Trust project-local TLH defaults?"**',
+      "capped at 1,000,000 omitted issues",
+    ],
+    "model defaults split trust contract",
+  );
 });
 
 test("ticket-named documentation uses the reconciled project trust and layout contract", () => {
   for (const relativePath of DOCUMENTATION_CONTRACT_PATHS) {
     const text = readRepoFile(relativePath);
-    assert.doesNotMatch(text, /session approval/i, `${relativePath}: stale session approval`);
+    assertNoPositiveCustomAgentTrustClaim(text, relativePath);
     assert.doesNotMatch(
       text,
       /\.tlh\/agents\/(?:<slug>|\*\*\/\*\.md)/i,

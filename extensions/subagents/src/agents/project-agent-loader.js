@@ -222,31 +222,31 @@ function defaultTrustStore(options) {
 }
 export async function resolveProjectAgentTrust(projectRoot, options = {}) {
     if (options.trustOverride === false) {
-        return { trusted: false, source: "explicit-negative" };
+        return { kind: "project-agent", trusted: false, source: "explicit-negative" };
     }
     let store;
     try {
         store = defaultTrustStore(options);
         if (!store)
-            return { trusted: false, source: "no-persisted-trust" };
+            return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
         const entry = store.getEntry(projectRoot);
         if (entry !== null && typeof entry !== "object") {
-            return { trusted: false, source: "trust-store-error" };
+            return { kind: "project-agent", trusted: false, source: "trust-store-error" };
         }
         if (entry && (typeof entry.path !== "string" || typeof entry.decision !== "boolean")) {
-            return { trusted: false, source: "trust-store-error" };
+            return { kind: "project-agent", trusted: false, source: "trust-store-error" };
         }
         if (!entry)
-            return { trusted: false, source: "no-persisted-trust" };
+            return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
         if (!trustEntryPathApplies(entry.path, projectRoot)) {
-            return { trusted: false, source: "trust-path-mismatch" };
+            return { kind: "project-agent", trusted: false, source: "trust-path-mismatch" };
         }
         return entry.decision
-            ? { trusted: true, source: "saved-positive" }
-            : { trusted: false, source: "saved-negative" };
+            ? { kind: "project-agent", trusted: true, source: "saved-positive" }
+            : { kind: "project-agent", trusted: false, source: "saved-negative" };
     }
     catch {
-        return { trusted: false, source: "trust-store-error" };
+        return { kind: "project-agent", trusted: false, source: "trust-store-error" };
     }
 }
 function fileIdentity(stat) {
@@ -1125,6 +1125,7 @@ export async function loadProjectAgentSnapshot(options) {
     const projectAgentDirectoryPresent = projectAgentDirectoryExists(projectRoot, fileSystem);
     if (!projectAgentDirectoryPresent && trustOptions.trustOverride !== false) {
         const trust = {
+            kind: "project-agent",
             trusted: true,
             source: "no-project-agents",
         };

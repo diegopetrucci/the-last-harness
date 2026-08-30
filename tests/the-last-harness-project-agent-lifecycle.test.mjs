@@ -141,6 +141,7 @@ function makeSnapshot(projectRoot, generationId) {
     capability,
     provenance,
     manifest: resolveProjectAgentSnapshot(capability, provenance),
+    trust: { kind: "project-agent", trusted: true, source: "test" },
   };
 }
 
@@ -758,7 +759,7 @@ test("primary runtime keeps same-capability rebinds stable and fails closed on r
   const baseSnapshot = makeSnapshot(projectRoot, "primary-rebind-guards-generation");
   const snapshot = {
     ...baseSnapshot,
-    trust: { trusted: true, source: "test" },
+    trust: { kind: "project-agent", trusted: true, source: "test" },
   };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
@@ -834,7 +835,7 @@ test("primary runtime releases every rejected rebind generation without changing
   execFileSync("git", ["init", "--quiet", projectRoot], { stdio: "ignore" });
   const initialSnapshot = {
     ...makeSnapshot(projectRoot, "primary-rebind-rejected-initial"),
-    trust: { trusted: true, source: "test" },
+    trust: { kind: "project-agent", trusted: true, source: "test" },
   };
   const rejectedSnapshots = [];
   process.env.HOME = home;
@@ -863,7 +864,7 @@ test("primary runtime releases every rejected rebind generation without changing
       if (loadCount === 1) return initialSnapshot;
       const rejected = {
         ...makeSnapshot(projectRoot, `primary-rebind-rejected-${loadCount}`),
-        trust: { trusted: false, source: "test-denied" },
+        trust: { kind: "project-agent", trusted: false, source: "test-denied" },
       };
       rejectedSnapshots.push(rejected);
       return rejected;
@@ -952,13 +953,13 @@ test("primary runtime releases stale session-load generations without changing r
       if (loadCount === 1) {
         return {
           ...makeSnapshot(projectRoot, "primary-load-rejected-initial"),
-          trust: { trusted: true, source: "test" },
+          trust: { kind: "project-agent", trusted: true, source: "test" },
         };
       }
       if (loadCount % 2 === 0) {
         const stale = {
           ...makeSnapshot(projectRoot, `primary-load-rejected-stale-${loadCount}`),
-          trust: { trusted: true, source: "test" },
+          trust: { kind: "project-agent", trusted: true, source: "test" },
         };
         staleSnapshots.push(stale);
         return await new Promise((resolve) => {
@@ -970,7 +971,7 @@ test("primary runtime releases stale session-load generations without changing r
       }
       return {
         ...makeSnapshot(projectRoot, `primary-load-rejected-current-${loadCount}`),
-        trust: { trusted: true, source: "test" },
+        trust: { kind: "project-agent", trusted: true, source: "test" },
       };
     },
   });
@@ -1016,7 +1017,7 @@ test("primary runtime refuses a handoff when releasing the active owner fails", 
   execFileSync("git", ["init", "--quiet", projectRoot], { stdio: "ignore" });
   const originalSnapshot = {
     ...makeSnapshot(projectRoot, "primary-rebind-release-original"),
-    trust: { trusted: true, source: "test" },
+    trust: { kind: "project-agent", trusted: true, source: "test" },
   };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
@@ -1045,7 +1046,7 @@ test("primary runtime refuses a handoff when releasing the active owner fails", 
       if (loadCount === 1) return originalSnapshot;
       freshSnapshot = {
         ...makeSnapshot(projectRoot, "primary-rebind-release-fresh"),
-        trust: { trusted: true, source: "test" },
+        trust: { kind: "project-agent", trusted: true, source: "test" },
       };
       return freshSnapshot;
     },
@@ -1116,7 +1117,7 @@ test("primary runtime rejects stale rebinds across reload and shutdown awaits", 
   execFileSync("git", ["init", "--quiet", projectRoot], { stdio: "ignore" });
   const originalSnapshot = {
     ...makeSnapshot(projectRoot, "primary-rebind-interleave-original"),
-    trust: { trusted: true, source: "test" },
+    trust: { kind: "project-agent", trusted: true, source: "test" },
   };
   let reloadedSnapshot;
   process.env.HOME = home;
@@ -1146,7 +1147,7 @@ test("primary runtime rejects stale rebinds across reload and shutdown awaits", 
       if (loadCount === 3) {
         reloadedSnapshot = {
           ...makeSnapshot(projectRoot, "primary-rebind-interleave-reloaded"),
-          trust: { trusted: true, source: "test" },
+          trust: { kind: "project-agent", trusted: true, source: "test" },
         };
         return reloadedSnapshot;
       }

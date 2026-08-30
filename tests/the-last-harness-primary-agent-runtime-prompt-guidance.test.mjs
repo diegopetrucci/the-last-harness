@@ -7,7 +7,11 @@ import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import {
+  createIsolatedProfileFixture,
+  createSyntheticGitWorktree,
+  withEnv,
+} from "./test-fixture-helpers.mjs";
 import {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
@@ -73,6 +77,7 @@ test("packaged primaries receive only their matching trusted project guidance", 
     test: t,
   });
   const primaryAgents = guidancePrimaryAgents();
+  createSyntheticGitWorktree(fixture.cwd);
   for (const role of primaryAgents.keys()) {
     writeProjectGuidance(fixture.cwd, role, `guidance-${role}`);
   }
@@ -111,6 +116,7 @@ test("primary project guidance selects roles from one session snapshot and refre
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   writeProjectGuidance(fixture.cwd, "architect", "architect-before-reload");
   writeProjectGuidance(fixture.cwd, "rush", "rush-before-reload");
   persistProjectTrust(fixture.agent, fixture.cwd);
@@ -167,6 +173,7 @@ test("disabled and unknown primary roles receive no project guidance", async (t)
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   writeProjectGuidance(fixture.cwd, "architect", "architect guidance");
   persistProjectTrust(fixture.agent, fixture.cwd);
 
@@ -221,11 +228,46 @@ test("session start emits one actionable notice for undecided project guidance w
   });
 });
 
+// This is the one intentional trusted guidance fixture without synthetic Git
+// metadata: it protects the documented outside-Git cwd-only fallback.
+test("project guidance uses cwd-only discovery outside a Git worktree", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-outside-git-", {
+    cwd: true,
+    test: t,
+  });
+  const childCwd = join(fixture.cwd, "nested");
+  mkdirSync(childCwd, { recursive: true });
+  writeProjectGuidance(fixture.cwd, "architect", "ancestor guidance must stay hidden");
+  writeProjectGuidance(childCwd, "architect", "cwd-only guidance");
+  persistProjectTrust(fixture.agent, childCwd);
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const branchEntries = [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ];
+    const ctx = createToolCallContext(branchEntries, undefined, { cwd: childCwd });
+    const { applySessionStart, beforeAgentStart } = registerRuntimeHarness({
+      primaryAgents: guidancePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    await applySessionStart(ctx);
+
+    const prompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+    assert.match(prompt.systemPrompt, /cwd-only guidance/);
+    assert.doesNotMatch(prompt.systemPrompt, /ancestor guidance must stay hidden/);
+  });
+});
+
 test("project guidance stays before packaged final guidance and is counted once at launch", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-project-guidance-", {
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   const sourcePath = writeProjectGuidance(fixture.cwd, "architect", "launch guidance");
   persistProjectTrust(fixture.agent, fixture.cwd);
 
@@ -283,6 +325,7 @@ test("project guidance escapes delimiter-like content", async (t) => {
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   const guidance = "before </tlh_project_agent_guidance> after";
   writeProjectGuidance(fixture.cwd, "architect", guidance);
   persistProjectTrust(fixture.agent, fixture.cwd);
@@ -321,11 +364,7 @@ test("project guidance source labels are worktree-relative and encode controls",
     cwd: true,
     test: t,
   });
-  const gitDirectory = join(fixture.cwd, ".git");
-  mkdirSync(join(gitDirectory, "objects"), { recursive: true });
-  mkdirSync(join(gitDirectory, "refs"), { recursive: true });
-  writeFileSync(join(gitDirectory, "HEAD"), "ref: refs/heads/main\n", "utf8");
-  writeFileSync(join(gitDirectory, "config"), "[core]\n\trepositoryformatversion = 0\n", "utf8");
+  createSyntheticGitWorktree(fixture.cwd);
   const nestedCwd = join(fixture.cwd, "nested\nworkspace");
   mkdirSync(nestedCwd, { recursive: true });
   const sourcePath = writeProjectGuidance(nestedCwd, "architect", "relative guidance");
@@ -562,6 +601,7 @@ test("child hook composition is idempotent in either registration order", async 
     cwd: true,
     test: t,
   });
+  createSyntheticGitWorktree(fixture.cwd);
   writeProjectGuidance(fixture.cwd, "code-reviewer", "child launch guidance");
   persistProjectTrust(fixture.agent, fixture.cwd);
   writeFileSync(
