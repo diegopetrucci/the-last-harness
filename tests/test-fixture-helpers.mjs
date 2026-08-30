@@ -33,6 +33,18 @@ export function createIsolatedProfileFixture(prefix, { cwd = false, test } = {})
 }
 
 /**
+ * Create an isolated profile and a distinct nested directory that tests can
+ * expose as TMPDIR/TEMP/TMP to exercise temporary-root containment checks.
+ * The profile itself remains under the real OS temporary directory.
+ */
+export function createRedirectedTempProfileFixture(prefix, { test } = {}) {
+  const fixture = createIsolatedProfileFixture(prefix, { test });
+  const redirectedTemp = join(fixture.dir, "redirected-temp");
+  mkdirSync(redirectedTemp, { recursive: true });
+  return { ...fixture, redirectedTemp };
+}
+
+/**
  * Create the minimal on-disk Git metadata accepted by TLH's metadata-only
  * worktree resolver. Fixtures should use this instead of invoking Git when the
  * production path under test only needs a canonical worktree boundary.
