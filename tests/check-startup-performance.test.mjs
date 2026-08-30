@@ -545,6 +545,7 @@ test("direct Python PTY bridge cleans up when checker stdout closes", async (t) 
   }
 
   const fixture = createDirectBridgeFixture(`
+trap 'exit 0' INT TERM
 printf '%s\\n' "$$" >"$pid_file"
 printf '%s\\n' "$PPID" >"$bridge_pid_file"
 printf 'ready\\n' >"$ready_file"
