@@ -161,14 +161,6 @@ export interface HeartbeatControllerDeps {
    */
   onBeatResult?: (result: BeatResult) => void;
   /**
-   * Callback invoked when a beat is lifecycle-cancelled (gap closed while the
-   * stream was in flight).  The wiring uses this to increment the
-   * `cancelledBeats` counter in the gap accumulator, making the cancellation-
-   * only verdict explicitly 'wasted' (beats issued but no cache-read evidence)
-   * rather than an implicit fallthrough.
-   */
-  onBeatCancelled?: (gapId: string) => void;
-  /**
    * Callback invoked when the controller decides the gap is terminal-lost
    * (elapsed >= LATE_BEAT_THRESHOLD_MS).  The wiring uses this to override the
    * gap verdict to 'lost' even when prior beats were successful.
@@ -691,7 +683,6 @@ export function createHeartbeatController(
         latencyMs: now() - beatStartMs,
       };
       logger.append(record);
-      deps.onBeatCancelled?.(gapId);
       // Only clear inFlight if this beat still matches the active gap generation.
       // A newer gap may have already set state.inFlight = true for its own beat;
       // clearing it here would permit a ghost overlap on the newer gap.

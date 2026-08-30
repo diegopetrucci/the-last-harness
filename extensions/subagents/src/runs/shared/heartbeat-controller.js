@@ -294,7 +294,6 @@ export function createHeartbeatController(config, deps = {}) {
                 latencyMs: now() - beatStartMs,
             };
             logger.append(record);
-            deps.onBeatCancelled?.(gapId);
             if (capturedGeneration === gapGeneration) {
                 state.inFlight = false;
             }

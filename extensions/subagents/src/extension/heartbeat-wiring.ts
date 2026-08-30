@@ -122,13 +122,6 @@ interface GapAccumulator {
    */
   avoidedCostUsd: number;
   /**
-   * Beats that were lifecycle-cancelled (gap closed while stream was in flight).
-   * Counted here explicitly so the 'wasted' verdict for a cancellation-only gap
-   * is a deliberate semantic (beats were issued, cost was potentially spent, but
-   * no cache-read evidence was observed) rather than an implicit fallthrough.
-   */
-  cancelledBeats: number;
-  /**
    * Set to true when the controller reports a terminal-lost event for this gap.
    * Overrides the verdict to 'lost' even if prior beats were cache_read, since
    * the cache is considered/likely expired.
@@ -145,7 +138,6 @@ function createAccumulator(gapId: string, sessionId: string): GapAccumulator {
     totalBeatCostUsd: 0,
     totalCacheReadTokens: 0,
     avoidedCostUsd: 0,
-    cancelledBeats: 0,
     terminatedLost: false,
   };
 }
@@ -155,10 +147,10 @@ function verdictFrom(acc: GapAccumulator): HeartbeatGapVerdict {
   // considered/likely expired, so any earlier refresh is now irrelevant.
   if (acc.terminatedLost) return "lost";
   if (acc.cacheReadBeats > 0) return "saved";
-  // Deliberate semantic: a gap with issued beats (including cancellation-only
-  // gaps where every beat was lifecycle-cancelled) is 'wasted' — cost was
-  // potentially spent but no cache-read evidence was observed.  This is
-  // explicit rather than an implicit fallthrough of the cancellation path.
+  // Deliberate semantic: any gap with issued beats (including a
+  // cancellation-only gap) is 'wasted' when no cache-read evidence was
+  // observed. The issue-time executedBeats count preserves this verdict even
+  // when lifecycle cancellation prevents onBeatResult.
   if (acc.executedBeats > 0) return "wasted";
   // Zero-beat gap without a terminal-lost signal: it closed before the first
   // beat. This can reflect a short run, parent turn, lifecycle event, model
@@ -394,15 +386,6 @@ export function createHeartbeatWiring(
     currentGap.executedBeats++;
   }
 
-  // Called by the controller when a beat is lifecycle-cancelled (gap closed
-  // while stream was in flight).  Increments cancelledBeats to make the
-  // 'wasted' verdict for a cancellation-only gap an explicit, documented
-  // semantic rather than an implicit fallthrough.
-  function onBeatCancelled(gapId: string): void {
-    if (!currentGap || gapId !== currentGap.gapId) return;
-    currentGap.cancelledBeats++;
-  }
-
   // Called by the controller when the gap has expired (timer fired past
   // LATE_BEAT_THRESHOLD_MS).  Overrides the verdict to 'lost' so a gap
   // that had prior successful beats is not misleadingly marked 'saved'.
@@ -473,7 +456,6 @@ export function createHeartbeatWiring(
     onBeatIssued,
     onBeatAccounting,
     onBeatResult,
-    onBeatCancelled,
     onGapLost,
   };
 

@@ -22,7 +22,6 @@ function createAccumulator(gapId, sessionId) {
         totalBeatCostUsd: 0,
         totalCacheReadTokens: 0,
         avoidedCostUsd: 0,
-        cancelledBeats: 0,
         terminatedLost: false,
     };
 }
@@ -124,11 +123,6 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             return;
         currentGap.executedBeats++;
     }
-    function onBeatCancelled(gapId) {
-        if (!currentGap || gapId !== currentGap.gapId)
-            return;
-        currentGap.cancelledBeats++;
-    }
     function onGapLost(gapId) {
         if (!currentGap || gapId !== currentGap.gapId)
             return;
@@ -182,7 +176,6 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         onBeatIssued,
         onBeatAccounting,
         onBeatResult,
-        onBeatCancelled,
         onGapLost,
     };
     const controller = createHeartbeatController(resolved, controllerDeps);

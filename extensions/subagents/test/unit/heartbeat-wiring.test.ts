@@ -1579,11 +1579,10 @@ describe("createHeartbeatWiring — enabled: agent_settled re-arm lifecycle (fin
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatWiring — enabled: cancellation-only gap verdict", () => {
-  it("a gap whose only beat was lifecycle-cancelled is verdicted 'wasted' (explicit semantic)", async () => {
+  it("a gap whose only beat was lifecycle-cancelled is verdicted 'wasted' (issued-beat accounting)", async () => {
     // Deliberate semantic: a gap with only a cancelled beat has executedBeats > 0
-    // (via optimistic onBeatIssued) and cancelledBeats > 0 (via onBeatCancelled).
-    // The verdict is 'wasted' — cost was potentially spent but no cache-read evidence
-    // was observed.  This is an explicit, documented semantic, not an implicit fallthrough.
+    // via optimistic onBeatIssued. The verdict is 'wasted' — cost was potentially
+    // spent but no cache-read evidence was observed.
     const written: string[] = [];
     const pi = makeFakePi();
     const capturedFns: Array<() => void> = [];
@@ -1646,7 +1645,6 @@ describe("createHeartbeatWiring — enabled: cancellation-only gap verdict", () 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Lifecycle-cancel the beat by disarming while the stream is in flight.
-    // onBeatCancelled is called in the controller — wiring increments cancelledBeats.
     wiring.disarm();
     // Wait for the stream to abort and executeBeat to settle.
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -1658,9 +1656,8 @@ describe("createHeartbeatWiring — enabled: cancellation-only gap verdict", () 
       "wasted",
       "cancellation-only gap must be verdicted 'wasted': beats were issued but no cache-read observed",
     );
-    // No session entry: the beat was cancelled, cost was potentially spent, but
-    // there is no way to verify cache-read — the gap should still have an entry since
-    // executedBeats > 0 (optimistic accounting).
+    // The cancelled beat was issued and may have cost money, but there is no way
+    // to verify cache-read. The gap still emits an entry because executedBeats > 0.
     assert.ok(pi.entries.length >= 1, "gap with cancelled beat must emit a session entry");
   });
 });
