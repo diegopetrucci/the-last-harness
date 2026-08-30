@@ -1,0 +1,1175 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, it } from "node:test";
+import {
+  loadProjectDefaults,
+  MAX_PROJECT_DEFAULTS_FILE_BYTES,
+  MAX_PROJECT_DEFAULT_WARNING_LENGTH,
+  MAX_PROJECT_DEFAULT_WARNINGS,
+  PROJECT_DEFAULTS_FILE,
+  type ProjectDefaultsLoadOptions,
+} from "../../src/agents/project-defaults-loader.ts";
+import { loadProjectAgentSnapshot } from "../../src/agents/project-agent-loader.ts";
+// ProjectAgentLoaderFileSystem is defined and owned by project-agent-loader; the defaults loader
+// imports it internally. Tests import from the owning module to reflect the true public API.
+import type { ProjectAgentLoaderFileSystem } from "../../src/agents/project-agent-loader.ts";
+
+// ---------------------------------------------------------------------------
+// Test infrastructure
+// ---------------------------------------------------------------------------
+
+const tempDirs: string[] = [];
+
+function tempProject(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-defaults-loader-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** Write a .tlh/defaults.json file and return the project root. */
+function writeDefaults(projectRoot: string, content: unknown): void {
+  const tlhDir = path.join(projectRoot, ".tlh");
+  fs.mkdirSync(tlhDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(tlhDir, "defaults.json"),
+    typeof content === "string" ? content : JSON.stringify(content),
+    "utf8",
+  );
+}
+
+/** Build trusted load options that gate on an in-memory trust store. */
+function trustedOptions(
+  projectRoot: string,
+  overrides: Partial<ProjectDefaultsLoadOptions> = {},
+): ProjectDefaultsLoadOptions {
+  const canonicalRoot = fs.realpathSync(projectRoot);
+  return {
+    cwd: projectRoot,
+    sessionId: "loader-test-session",
+    git: { showToplevel: () => projectRoot },
+    trust: {
+      trustStore: { getEntry: () => ({ path: canonicalRoot, decision: true }) },
+      hasTrustRequiringProjectResources: () => false,
+    },
+    ...overrides,
+  };
+}
+
+/** Build denied load options. */
+function deniedOptions(projectRoot: string): ProjectDefaultsLoadOptions {
+  return {
+    cwd: projectRoot,
+    sessionId: "loader-test-session",
+    git: { showToplevel: () => projectRoot },
+    trust: {
+      trustStore: { getEntry: () => ({ path: fs.realpathSync(projectRoot), decision: false }) },
+      hasTrustRequiringProjectResources: () => false,
+    },
+  };
+}
+
+/** Stat-based fake that reports a symlink for the named path. */
+function fileSystemWithSymlinkAt(
+  real: ProjectAgentLoaderFileSystem,
+  symlinkPath: string,
+): ProjectAgentLoaderFileSystem {
+  return {
+    ...real,
+    lstatSync: (filePath: string) => {
+      const stat = fs.lstatSync(filePath);
+      if (path.resolve(filePath) === path.resolve(symlinkPath)) {
+        return Object.create(stat, {
+          isSymbolicLink: { value: () => true },
+          isFile: { value: () => false },
+          isDirectory: { value: () => false },
+        }) as fs.Stats;
+      }
+      return stat;
+    },
+    readdirSync: (filePath: string, opts: { withFileTypes: true }) =>
+      fs.readdirSync(filePath, opts),
+    realpathSync: (filePath: string) => fs.realpathSync(filePath),
+    readFileSync: (filePath: string) => fs.readFileSync(filePath),
+  };
+}
+
+/** Inject a post-read lstat result without relying on filesystem timing. */
+function fileSystemWithPostReadStat(
+  real: ProjectAgentLoaderFileSystem,
+  targetPath: string,
+  mutate: (stat: fs.Stats) => fs.Stats,
+): ProjectAgentLoaderFileSystem {
+  const canonicalTarget = path.resolve(real.realpathSync(targetPath));
+  let readStarted = false;
+  return {
+    ...real,
+    lstatSync: (filePath: string) => {
+      const stat = real.lstatSync(filePath);
+      return readStarted && path.resolve(filePath) === canonicalTarget ? mutate(stat) : stat;
+    },
+    readFileSync: (filePath: string) => {
+      const raw = real.readFileSync(filePath);
+      if (path.resolve(filePath) === canonicalTarget) readStarted = true;
+      return raw;
+    },
+  };
+}
+
+/** Inject a target identity change on the lstat immediately before reading. */
+function fileSystemWithBeforeReadStat(
+  real: ProjectAgentLoaderFileSystem,
+  targetPath: string,
+  mutate: (stat: fs.Stats) => fs.Stats,
+  onRead: () => void,
+): ProjectAgentLoaderFileSystem {
+  const canonicalTarget = path.resolve(real.realpathSync(targetPath));
+  let targetLstatCount = 0;
+  return {
+    ...real,
+    lstatSync: (filePath: string) => {
+      const stat = real.lstatSync(filePath);
+      if (path.resolve(filePath) !== canonicalTarget) return stat;
+      targetLstatCount += 1;
+      return targetLstatCount === 3 ? mutate(stat) : stat;
+    },
+    readFileSync: (filePath: string) => {
+      onRead();
+      return real.readFileSync(filePath);
+    },
+  };
+}
+
+const REAL_FS: ProjectAgentLoaderFileSystem = {
+  lstatSync: (filePath: string) => fs.lstatSync(filePath),
+  readdirSync: (filePath: string, opts: { withFileTypes: true }) => fs.readdirSync(filePath, opts),
+  realpathSync: (filePath: string) => fs.realpathSync(filePath),
+  readFileSync: (filePath: string) => fs.readFileSync(filePath),
+};
+
+// ---------------------------------------------------------------------------
+// Module exports (parity gate)
+// ---------------------------------------------------------------------------
+
+describe("project-defaults-loader exports", () => {
+  it("exports PROJECT_DEFAULTS_FILE constant", () => {
+    assert.ok(typeof PROJECT_DEFAULTS_FILE === "string");
+    assert.ok(PROJECT_DEFAULTS_FILE.includes("defaults.json"));
+  });
+
+  it("exports warning bounds as positive numbers", () => {
+    assert.ok(MAX_PROJECT_DEFAULT_WARNINGS > 0);
+    assert.ok(MAX_PROJECT_DEFAULT_WARNING_LENGTH > 0);
+  });
+
+  it("exports MAX_PROJECT_DEFAULTS_FILE_BYTES as a positive number", () => {
+    assert.ok(typeof MAX_PROJECT_DEFAULTS_FILE_BYTES === "number");
+    assert.ok(MAX_PROJECT_DEFAULTS_FILE_BYTES > 0);
+  });
+
+  it("exports loadProjectDefaults as an async function", () => {
+    assert.ok(typeof loadProjectDefaults === "function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Generated .js parity
+// ---------------------------------------------------------------------------
+
+describe("generated .js parity", () => {
+  it("the generated .js exports the same public symbols as the .ts source", async () => {
+    const jsUrl = new URL("../../src/agents/project-defaults-loader.js", import.meta.url);
+    const jsModule = (await import(jsUrl.href)) as Record<string, unknown>;
+    assert.ok(typeof jsModule.PROJECT_DEFAULTS_FILE === "string");
+    assert.ok(typeof jsModule.MAX_PROJECT_DEFAULTS_FILE_BYTES === "number");
+    assert.equal(jsModule.MAX_PROJECT_DEFAULT_WARNINGS, MAX_PROJECT_DEFAULT_WARNINGS);
+    assert.equal(jsModule.MAX_PROJECT_DEFAULT_WARNING_LENGTH, MAX_PROJECT_DEFAULT_WARNING_LENGTH);
+    assert.ok(typeof jsModule.loadProjectDefaults === "function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worktree root resolution
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — worktree resolution", () => {
+  it("returns unavailable when cwd is not inside a git worktree", async () => {
+    const result = await loadProjectDefaults({
+      cwd: "/tmp",
+      git: { showToplevel: () => undefined },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+      },
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("Git worktree")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Trust gating
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — trust gating", () => {
+  it("returns denied when trust store explicitly denies the project", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const result = await loadProjectDefaults(deniedOptions(projectRoot));
+    assert.equal(result.status, "denied");
+    assert.ok(result.warnings.some((w) => w.includes("denied")));
+  });
+
+  it("returns unavailable when trust dependencies are missing", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {});
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "missing-trust-dependencies",
+      git: { showToplevel: () => projectRoot },
+      // No trust provided at all
+      trust: {},
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("trust dependencies")));
+  });
+
+  it("returns unavailable when hasTrustRequiringProjectResources is not a function", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {});
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "missing-resource-probe",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        // hasTrustRequiringProjectResources is missing
+      },
+    });
+    assert.equal(result.status, "unavailable");
+  });
+
+  it("fails closed without a session identity and never prompts", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let prompts = 0;
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("Session identity")));
+    assert.equal(prompts, 0);
+  });
+
+  it("loads successfully when trust store grants access", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.defaults !== undefined);
+  });
+
+  it("uses trustOverride=false to deny without consulting trust store", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "explicit-denial",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustOverride: false,
+        hasTrustRequiringProjectResources: () => false,
+        trustStore: { getEntry: () => ({ path: fs.realpathSync(projectRoot), decision: true }) },
+      },
+    });
+    assert.equal(result.status, "denied");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// File absence
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — file absence", () => {
+  it("returns loaded with empty defaults when .tlh/ directory does not exist", async () => {
+    const projectRoot = tempProject();
+    // No .tlh directory at all
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.deepEqual(result.warnings, []);
+  });
+
+  it("returns loaded with empty defaults when .tlh/ exists but defaults.json does not", async () => {
+    const projectRoot = tempProject();
+    fs.mkdirSync(path.join(projectRoot, ".tlh"));
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.deepEqual(result.warnings, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared interactive trust flow
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — shared interactive trust", () => {
+  it("prompts and loads defaults for a defaults-only project", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let prompts = 0;
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "defaults-only-interactive",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        isProjectTrusted: () => true,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+    });
+
+    assert.equal(result.status, "loaded");
+    assert.equal(result.trust?.source, "session-positive");
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
+    assert.equal(prompts, 1);
+  });
+
+  it("reuses the agent trust decision when both resources exist", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const agentPath = path.join(projectRoot, ".tlh", "agents", "reviewer.md");
+    fs.mkdirSync(path.dirname(agentPath), { recursive: true });
+    fs.writeFileSync(
+      agentPath,
+      "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
+      "utf8",
+    );
+    let prompts = 0;
+    const trust = {
+      trustStore: { getEntry: () => null },
+      hasTrustRequiringProjectResources: () => false,
+      isProjectTrusted: () => true,
+      hasUI: true,
+      confirm: () => {
+        prompts += 1;
+        return true;
+      },
+    };
+    const agentResult = await loadProjectAgentSnapshot({
+      cwd: projectRoot,
+      sessionId: "both-resources-interactive",
+      generationId: "both-resources-generation",
+      git: { showToplevel: () => projectRoot },
+      trust,
+    });
+    const defaultsResult = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "both-resources-interactive",
+      git: { showToplevel: () => projectRoot },
+      trust,
+    });
+
+    assert.equal(agentResult.status, "loaded");
+    assert.equal(defaultsResult.status, "loaded");
+    assert.deepEqual(defaultsResult.defaults?.primaryAgents.architect, { effort: "high" });
+    assert.equal(prompts, 1);
+  });
+
+  it("does not prompt when neither trust-requiring resource exists", async () => {
+    const projectRoot = tempProject();
+    let prompts = 0;
+    const trust = {
+      trustStore: { getEntry: () => null },
+      hasTrustRequiringProjectResources: () => false,
+      isProjectTrusted: () => true,
+      hasUI: true,
+      confirm: () => {
+        prompts += 1;
+        return true;
+      },
+    };
+    const agentResult = await loadProjectAgentSnapshot({
+      cwd: projectRoot,
+      sessionId: "no-resources-interactive",
+      generationId: "no-resources-generation",
+      git: { showToplevel: () => projectRoot },
+      trust,
+    });
+    const defaultsResult = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "no-resources-interactive",
+      git: { showToplevel: () => projectRoot },
+      trust,
+    });
+
+    assert.equal(agentResult.status, "loaded");
+    assert.equal(agentResult.trust?.source, "no-project-agents");
+    assert.equal(defaultsResult.status, "loaded");
+    assert.deepEqual(defaultsResult.defaults, { primaryAgents: {}, subagents: {} });
+    assert.equal(prompts, 0);
+  });
+
+  it("fails closed when the interactive decision denies defaults", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let prompts = 0;
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "defaults-denied-interactive",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        isProjectTrusted: () => true,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return false;
+        },
+      },
+    });
+
+    assert.equal(result.status, "denied");
+    assert.equal(result.trust?.source, "session-negative");
+    assert.equal(result.defaults, undefined);
+    assert.equal(prompts, 1);
+  });
+
+  it("fails closed when no interactive UI is available", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "defaults-no-ui",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        isProjectTrusted: () => true,
+        hasUI: false,
+        confirm: () => {
+          throw new Error("must not prompt without UI");
+        },
+      },
+    });
+
+    assert.equal(result.status, "denied");
+    assert.equal(result.trust?.source, "session-unavailable");
+    assert.equal(result.defaults, undefined);
+  });
+
+  it("fails closed when the trust UI times out", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "defaults-timeout",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        isProjectTrusted: () => true,
+        hasUI: true,
+        trustUiTimeoutMs: 10,
+        ui: { confirm: () => new Promise<boolean>(() => {}) },
+      },
+    });
+
+    assert.equal(result.status, "denied");
+    assert.equal(result.trust?.source, "session-unavailable");
+    assert.equal(result.defaults, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unsafe path conditions (fail-closed)
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — symlink rejection", () => {
+  it("returns unavailable without prompting when .tlh is a symlink", async () => {
+    const projectRoot = tempProject();
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-symlink-target-"));
+    tempDirs.push(target);
+    const tlhPath = path.join(projectRoot, ".tlh");
+    fs.symlinkSync(target, tlhPath);
+    let prompts = 0;
+
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "unsafe-tlh-symlink",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+      fileSystem: REAL_FS,
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("symlink") || w.includes(".tlh")));
+    assert.equal(prompts, 0);
+  });
+
+  it("returns unavailable without prompting when .tlh is not a directory", async () => {
+    const projectRoot = tempProject();
+    fs.writeFileSync(path.join(projectRoot, ".tlh"), "not a directory", "utf8");
+    let prompts = 0;
+
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "unsafe-tlh-file",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes(".tlh")));
+    assert.equal(prompts, 0);
+  });
+
+  it("returns unavailable without prompting when defaults.json is a symlink", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "medium" } } });
+
+    // Use realpathSync so the path matches what the loader sees after canonicalization.
+    const canonicalRoot = fs.realpathSync(projectRoot);
+    const filePath = path.join(canonicalRoot, PROJECT_DEFAULTS_FILE);
+    const fakeFsWithSymlink = fileSystemWithSymlinkAt(REAL_FS, filePath);
+    let prompts = 0;
+
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "unsafe-defaults-symlink",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+      fileSystem: fakeFsWithSymlink,
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(
+      result.warnings.some((w) => w.toLowerCase().includes("symlink")),
+      `Expected symlink warning, got: ${result.warnings.join("; ")}`,
+    );
+    assert.equal(prompts, 0);
+  });
+
+  it("returns unavailable without prompting when defaults.json is not a regular file", async () => {
+    const projectRoot = tempProject();
+    fs.mkdirSync(path.join(projectRoot, ".tlh", "defaults.json"), { recursive: true });
+    let prompts = 0;
+
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "unsafe-defaults-directory",
+      git: { showToplevel: () => projectRoot },
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        hasUI: true,
+        confirm: () => {
+          prompts += 1;
+          return true;
+        },
+      },
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("regular file")));
+    assert.equal(prompts, 0);
+  });
+});
+
+describe("loadProjectDefaults — file size limit", () => {
+  it("returns unavailable when defaults.json exceeds the size limit", async () => {
+    const projectRoot = tempProject();
+    const tlhDir = path.join(projectRoot, ".tlh");
+    fs.mkdirSync(tlhDir);
+    const oversized = "x".repeat(MAX_PROJECT_DEFAULTS_FILE_BYTES + 1);
+    fs.writeFileSync(path.join(tlhDir, "defaults.json"), oversized, "utf8");
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      maxFileBytes: MAX_PROJECT_DEFAULTS_FILE_BYTES,
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("size")));
+  });
+
+  it("respects a custom maxFileBytes override", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "low" } } });
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      maxFileBytes: 5, // very small — will be exceeded
+    });
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((w) => w.includes("size")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TOCTOU checks
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — pre-read identity checks", () => {
+  it("rejects a same-size replacement before reading and applies no content", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const filePath = path.join(projectRoot, PROJECT_DEFAULTS_FILE);
+    let readCalls = 0;
+    const fileSystem = fileSystemWithBeforeReadStat(
+      REAL_FS,
+      filePath,
+      (stat) => Object.create(stat, { ino: { value: Number(stat.ino) + 1 } }),
+      () => {
+        readCalls += 1;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(readCalls, 0, "pre-read identity replacement must not read content");
+    assert.ok(
+      result.warnings.some((warning) => warning.includes("changed before reading")),
+      `Expected pre-read replacement warning; got: ${result.warnings.join("; ")}`,
+    );
+  });
+});
+
+describe("loadProjectDefaults — post-read identity checks", () => {
+  it("rejects a same-size replacement after the pre-read lstat", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const filePath = path.join(projectRoot, PROJECT_DEFAULTS_FILE);
+    const fileSystem = fileSystemWithPostReadStat(REAL_FS, filePath, (stat) =>
+      Object.create(stat, { ino: { value: Number(stat.ino) + 1 } }),
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(
+      result.warnings.some((warning) => warning.includes("changed while reading")),
+      `Expected same-size replacement warning; got: ${result.warnings.join("; ")}`,
+    );
+  });
+
+  it("rejects a regular-file-to-symlink swap after the pre-read lstat", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const filePath = path.join(projectRoot, PROJECT_DEFAULTS_FILE);
+    const fileSystem = fileSystemWithPostReadStat(REAL_FS, filePath, (stat) =>
+      Object.create(stat, {
+        isSymbolicLink: { value: () => true },
+        isFile: { value: () => false },
+        isDirectory: { value: () => false },
+      }),
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(
+      result.warnings.some((warning) => warning.includes("became a symlink")),
+      `Expected symlink-swap warning; got: ${result.warnings.join("; ")}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Malformed JSON
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — malformed JSON", () => {
+  it("warns and returns empty defaults on invalid JSON", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, "not valid json {{{");
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.ok(result.warnings.some((w) => w.includes("not valid JSON")));
+  });
+
+  it("warns and returns empty defaults when top-level is a JSON array", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, "[1, 2, 3]");
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.ok(result.warnings.some((w) => w.includes("JSON object at the top level")));
+  });
+
+  it("warns and returns empty defaults when top-level is a JSON string", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, '"hello"');
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.ok(result.warnings.some((w) => w.includes("JSON object")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Warning bounds
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — warning bounds", () => {
+  it("truncates file-controlled warning strings", async () => {
+    const projectRoot = tempProject();
+    const longRole = `unknown-${"x".repeat(50_000)}`;
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        [longRole]: { effort: "high" },
+        architect: { effort: "low" },
+      },
+    });
+
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+
+    assert.equal(result.status, "loaded");
+    assert.equal(result.warnings.length, 1);
+    assert.equal(result.warnings[0]?.length, MAX_PROJECT_DEFAULT_WARNING_LENGTH);
+    assert.ok(result.warnings[0]?.endsWith("…"));
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "low" });
+  });
+
+  it("bounds file-controlled warnings while retaining valid entries", async () => {
+    const projectRoot = tempProject();
+    const primaryAgents: Record<string, unknown> = {
+      architect: { effort: "high" },
+    };
+    const subagents: Record<string, unknown> = {};
+    for (let index = 0; index < 3000; index += 1) {
+      primaryAgents[`p${index.toString(36)}`] = {};
+      subagents[`s${index.toString(36)}`] = {};
+    }
+    const content = JSON.stringify({ primaryAgents, subagents });
+    assert.ok(Buffer.byteLength(content, "utf8") <= MAX_PROJECT_DEFAULTS_FILE_BYTES);
+    writeDefaults(projectRoot, content);
+
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
+    assert.equal(result.warnings.length, MAX_PROJECT_DEFAULT_WARNINGS + 1);
+    assert.ok(
+      result.warnings.every((warning) => warning.length <= MAX_PROJECT_DEFAULT_WARNING_LENGTH),
+    );
+    const summaries = result.warnings.filter((warning) => warning.includes("more issues in"));
+    assert.equal(summaries.length, 1);
+    assert.ok(
+      summaries[0]?.includes("5980"),
+      `Expected deterministic summary, got: ${summaries[0]}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Happy-path schema parsing
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — valid schema", () => {
+  it("parses a complete valid defaults file", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        architect: { model: "anthropic/claude-opus-5", effort: "max" },
+        rush: { effort: "low" },
+      },
+      subagents: {
+        developer: { model: "openai-codex/gpt-5.6-sol" },
+        "code-reviewer": { effort: "medium" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.warnings, []);
+    assert.ok(result.defaults !== undefined);
+    assert.deepEqual(result.defaults.primaryAgents.architect, {
+      model: "anthropic/claude-opus-5",
+      effort: "max",
+    });
+    assert.deepEqual(result.defaults.primaryAgents.rush, { effort: "low" });
+    assert.deepEqual(result.defaults.subagents.developer, {
+      model: "openai-codex/gpt-5.6-sol",
+    });
+    assert.deepEqual(result.defaults.subagents["code-reviewer"], { effort: "medium" });
+  });
+
+  it("accepts model-only entries", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { subagents: { oracle: { model: "anthropic/claude-sonnet-5" } } });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults?.subagents.oracle, { model: "anthropic/claude-sonnet-5" });
+  });
+
+  it("accepts effort-only entries", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { "bug-hunter": { effort: "xhigh" } } });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults?.primaryAgents["bug-hunter"], { effort: "xhigh" });
+  });
+
+  it("returns loaded with empty maps when the file has no recognized sections", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {});
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.deepEqual(result.warnings, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unknown roles
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — unknown role names", () => {
+  it("warns and ignores an unknown primary agent name, keeps valid entries", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        unknown_primary: { effort: "high" },
+        architect: { effort: "medium" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("unknown_primary")),
+      `Expected warning about unknown_primary; got: ${result.warnings.join("; ")}`,
+    );
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "medium" });
+    assert.ok(result.defaults?.primaryAgents["unknown_primary" as never] === undefined);
+  });
+
+  it("warns and ignores an unknown subagent role, keeps valid entries", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: {
+        "phantom-agent": { effort: "low" },
+        developer: { effort: "high" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("phantom-agent")));
+    assert.deepEqual(result.defaults?.subagents.developer, { effort: "high" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unknown keys
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — unknown keys", () => {
+  it("warns and ignores an entry with an unknown key", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        rush: { effort: "medium", temperature: 0.5 }, // unknown key
+        architect: { effort: "low" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("temperature") || w.includes("unknown key")),
+      `Expected unknown-key warning; got: ${result.warnings.join("; ")}`,
+    );
+    // rush entry is ignored; architect is intact
+    assert.ok(result.defaults?.primaryAgents.rush === undefined);
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "low" });
+  });
+
+  it("warns and ignores an entry with multiple unknown keys", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: {
+        librarian: { effort: "low", maxTokens: 1000, debug: true },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("unknown key")));
+    assert.ok(result.defaults?.subagents.librarian === undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invalid model values
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — invalid model values", () => {
+  it("warns and ignores an entry with an empty model string", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: {
+        oracle: { model: "" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("model") && w.includes("provider/model")),
+      `Expected model warning; got: ${result.warnings.join("; ")}`,
+    );
+    assert.ok(result.defaults?.subagents.oracle === undefined);
+  });
+
+  it("warns and ignores an entry with a non-string model", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        product: { model: 42 },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("model")));
+    assert.ok(result.defaults?.primaryAgents.product === undefined);
+  });
+
+  it("warns and ignores malformed references without leaking effort", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        product: { model: "not-a-model-ref", effort: "high" },
+      },
+      subagents: {
+        oracle: { model: "openrouter/anthropic/claude-sonnet-5" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("model") && w.includes("provider/model")),
+      `Expected model-reference warning; got: ${result.warnings.join("; ")}`,
+    );
+    assert.equal(result.defaults?.primaryAgents.product, undefined);
+    assert.deepEqual(result.defaults?.subagents.oracle, {
+      model: "openrouter/anthropic/claude-sonnet-5",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invalid effort values
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — invalid effort values", () => {
+  it("warns and ignores an entry with an unknown effort value", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        architect: { effort: "ultra" },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("effort") && w.includes("case-sensitive")),
+      `Expected effort warning; got: ${result.warnings.join("; ")}`,
+    );
+    assert.ok(result.defaults?.primaryAgents.architect === undefined);
+  });
+
+  it("warns and ignores a non-string effort value", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: {
+        "web-scout": { effort: 3 },
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("effort")));
+    assert.ok(result.defaults?.subagents["web-scout"] === undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Effort vocabulary case-sensitivity
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — effort case-sensitivity", () => {
+  const validLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+  const invalidCasings = [
+    "Off",
+    "Minimal",
+    "Low",
+    "Medium",
+    "High",
+    "Xhigh",
+    "Max",
+    "MEDIUM",
+    "HIGH",
+    "MAX",
+  ];
+
+  for (const level of validLevels) {
+    it(`accepts lowercase effort "${level}"`, async () => {
+      const projectRoot = tempProject();
+      writeDefaults(projectRoot, { subagents: { developer: { effort: level } } });
+      const result = await loadProjectDefaults(trustedOptions(projectRoot));
+      assert.equal(result.status, "loaded");
+      assert.equal(result.defaults?.subagents.developer?.effort, level);
+      assert.deepEqual(result.warnings, []);
+    });
+  }
+
+  for (const bad of invalidCasings) {
+    it(`rejects wrong-case effort "${bad}"`, async () => {
+      const projectRoot = tempProject();
+      writeDefaults(projectRoot, { primaryAgents: { architect: { effort: bad } } });
+      const result = await loadProjectDefaults(trustedOptions(projectRoot));
+      assert.equal(result.status, "loaded");
+      assert.ok(
+        result.warnings.some((w) => w.includes("effort") && w.includes("case-sensitive")),
+        `Expected case-sensitivity warning for "${bad}"; got: ${result.warnings.join("; ")}`,
+      );
+      assert.ok(result.defaults?.primaryAgents.architect === undefined);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Empty entry (no model or effort)
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — entry with no fields", () => {
+  it("warns and ignores an empty entry object", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: { contrarian: {} },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(
+      result.warnings.some((w) => w.includes("at least one")),
+      `Expected 'at least one' warning; got: ${result.warnings.join("; ")}`,
+    );
+    assert.ok(result.defaults?.subagents.contrarian === undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section-level schema errors
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — section-level schema errors", () => {
+  it("warns and ignores primaryAgents section when it is an array", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: [{ effort: "low" }],
+      subagents: { developer: { effort: "medium" } },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("primaryAgents")));
+    // subagents should still be parsed
+    assert.deepEqual(result.defaults?.subagents.developer, { effort: "medium" });
+  });
+
+  it("warns and ignores subagents section when it is not an object", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      subagents: "not-an-object",
+      primaryAgents: { architect: { effort: "high" } },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.ok(result.warnings.some((w) => w.includes("subagents")));
+    // primaryAgents should still be parsed
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multiple warnings (partial apply)
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — partial application across entries", () => {
+  it("skips invalid entries and applies valid ones in the same file", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {
+      primaryAgents: {
+        architect: { effort: "high" },
+        rush: { effort: "WRONG_CASE" }, // rejected
+        product: { unknownKey: "value" }, // rejected
+        "bug-hunter": { model: "anthropic/claude-opus-5", effort: "max" },
+      },
+      subagents: {
+        developer: { effort: "medium" },
+        "fake-role": { effort: "low" }, // rejected
+      },
+    });
+    const result = await loadProjectDefaults(trustedOptions(projectRoot));
+    assert.equal(result.status, "loaded");
+    assert.equal(result.warnings.length, 3); // rush, product, fake-role
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
+    assert.deepEqual(result.defaults?.primaryAgents["bug-hunter"], {
+      model: "anthropic/claude-opus-5",
+      effort: "max",
+    });
+    assert.deepEqual(result.defaults?.subagents.developer, { effort: "medium" });
+    assert.ok(result.defaults?.primaryAgents.rush === undefined);
+    assert.ok(result.defaults?.primaryAgents.product === undefined);
+  });
+});

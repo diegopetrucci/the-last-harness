@@ -404,6 +404,42 @@ export function formatUnavailableStoredModelWarning(agentName, model) {
     const action = ` Update it with /subagent-settings set ${roleLabel} model <provider/id> or clear it with /subagent-settings reset ${roleLabel} model.`;
     return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
+export function formatUnavailableProjectModelWarning(agentName, model) {
+    const roleLabel = agentName ?? "this minor-agent role";
+    return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
+}
+function mergeProjectDefaultsWithOverride(override, projectEntry, availableModels, projectModelEligible, agentName, onWarning) {
+    if (!projectEntry) {
+        return override;
+    }
+    let effectiveModel = override?.model;
+    if (projectModelEligible && projectEntry.model !== undefined) {
+        const available = findAvailableProviderModel(availableModels, projectEntry.model);
+        if (available) {
+            effectiveModel = projectEntry.model;
+        }
+        else {
+            if (agentName && onWarning) {
+                onWarning({
+                    agent: agentName,
+                    message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+                });
+            }
+        }
+    }
+    const effectiveThinking = projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
+    if (effectiveModel === undefined && effectiveThinking === undefined) {
+        return undefined;
+    }
+    const result = {};
+    if (effectiveModel !== undefined) {
+        result.model = effectiveModel;
+    }
+    if (effectiveThinking !== undefined) {
+        result.thinking = effectiveThinking;
+    }
+    return result;
+}
 export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override) {
     const overrideModel = findAvailableProviderModel(availableModels, override?.model);
     if (overrideModel) {
@@ -528,8 +564,13 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     }
     const agentName = agentNameForTarget(target);
     const agent = agentName ? agents.get(agentName) : undefined;
-    const override = agentName ? options.agentOverrides?.get(agentName) : undefined;
-    if (hasExplicitModel(target)) {
+    const explicitModel = hasExplicitModel(target);
+    const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
+    const projectEntry = agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
+        ? options.projectDefaults[agentName]
+        : undefined;
+    const override = mergeProjectDefaultsWithOverride(persistedOverride, projectEntry, availableModels, !explicitModel, agentName, options.onWarning);
+    if (explicitModel) {
         if (typeof target.model !== "string" ||
             splitKnownThinkingSuffix(target.model).thinkingSuffix ||
             override?.thinking === undefined) {

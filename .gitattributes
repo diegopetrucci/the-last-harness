@@ -110,6 +110,7 @@ extensions/subagents/src/agents/frontmatter.js linguist-generated=true
 extensions/subagents/src/agents/identity.js linguist-generated=true
 extensions/subagents/src/agents/project-agent-loader.js linguist-generated=true
 extensions/subagents/src/agents/project-agent-snapshot.js linguist-generated=true
+extensions/subagents/src/agents/project-defaults-loader.js linguist-generated=true
 extensions/subagents/src/agents/skills.js linguist-generated=true
 extensions/subagents/src/extension/config.js linguist-generated=true
 extensions/subagents/src/extension/control-notices.js linguist-generated=true

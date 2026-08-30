@@ -51,8 +51,20 @@ type ProviderAwareSubagentResolution<T extends ProviderModelReference = Provider
   fallbackWarning?: string;
 };
 
+/** Per-role project defaults shape consumed by the subagent dispatch layer. */
+export type SubagentProjectDefaultsEntry = {
+  readonly model?: string;
+  readonly effort?: ThinkingLevel;
+};
+
 type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
+  /**
+   * Per-role project defaults from .tlh/defaults.json (loaded and trusted by
+   * the project-defaults-loader). Applied per field as `project-value ?? persisted-value`.
+   * Only "loaded" results should be forwarded; "denied"/"unavailable" must be omitted.
+   */
+  projectDefaults?: Readonly<Partial<Record<string, SubagentProjectDefaultsEntry>>>;
   onWarning?: (warning: { agent: string; message: string }) => void;
 };
 
@@ -777,6 +789,81 @@ export function formatUnavailableStoredModelWarning(
   return `TLH saved minor-agent model override "${model}" for ${roleLabel} is not currently available; forwarding the saved pin unchanged instead of swapping in bundled defaults.${action}`;
 }
 
+export function formatUnavailableProjectModelWarning(
+  agentName: string | undefined,
+  model: string,
+): string {
+  const roleLabel = agentName ?? "this minor-agent role";
+  return `TLH project default model "${model}" for ${roleLabel} is not available; falling back to stored or bundled defaults.`;
+}
+
+/**
+ * Compute the effective subagent override by merging project defaults (layer 2) with
+ * persisted overrides (layer 3) on a per-field basis.
+ *
+ * Rules:
+ * - Project model (layer 2) wins over any persisted model value (layer 3), including
+ *   `model: false` (inherit-session). `false` is a persisted value for the model field,
+ *   not a separate axis, so it yields to the project exactly as a model string would.
+ *   When the project model is unavailable in the registry, a warning is emitted and the
+ *   persisted model value (including `false`) is kept. When `projectModelEligible` is false,
+ *   the project model is ignored without an availability lookup or warning (explicit dispatch).
+ * - When the project entry has no `model` field, the persisted model value (including
+ *   `false`) is preserved unchanged.
+ * - Project effort wins over persisted thinking with no special guards.
+ * - When both fields are undefined after the merge, returns undefined (no override).
+ */
+function mergeProjectDefaultsWithOverride(
+  override: TlhSubagentOverride | undefined,
+  projectEntry: SubagentProjectDefaultsEntry | undefined,
+  availableModels: readonly ProviderModelReference[],
+  projectModelEligible: boolean,
+  agentName: string | undefined,
+  onWarning: ((w: { agent: string; message: string }) => void) | undefined,
+): TlhSubagentOverride | undefined {
+  if (!projectEntry) {
+    return override;
+  }
+
+  // Per-field merge: project value ?? persisted value.
+  // model:false is a persisted value for the model field; it is overridden by a project
+  // model pin exactly like a persisted model string, subject to the same availability check.
+  let effectiveModel: string | false | undefined = override?.model;
+
+  if (projectModelEligible && projectEntry.model !== undefined) {
+    const available = findAvailableProviderModel(availableModels, projectEntry.model);
+    if (available) {
+      effectiveModel = projectEntry.model; // project model wins (including over model:false)
+    } else {
+      // Project model unavailable: warn and fall through to persisted value (string or false).
+      if (agentName && onWarning) {
+        onWarning({
+          agent: agentName,
+          message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+        });
+      }
+      // effectiveModel stays as the persisted value (override?.model, which may be false)
+    }
+  }
+
+  // Effort from project maps directly to thinking level (same value set).
+  const effectiveThinking: string | false | undefined =
+    projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
+
+  if (effectiveModel === undefined && effectiveThinking === undefined) {
+    return undefined;
+  }
+
+  const result: TlhSubagentOverride = {};
+  if (effectiveModel !== undefined) {
+    result.model = effectiveModel;
+  }
+  if (effectiveThinking !== undefined) {
+    result.thinking = effectiveThinking;
+  }
+  return result;
+}
+
 /**
  * Resolve the full provider-aware model and thinking for a subagent, incorporating
  * any stored per-agent override from settings.
@@ -993,12 +1080,31 @@ function applyModelToRunnableTarget(
 
   const agentName = agentNameForTarget(target);
   const agent = agentName ? agents.get(agentName) : undefined;
-  const override = agentName ? options.agentOverrides?.get(agentName) : undefined;
+  const explicitModel = hasExplicitModel(target);
+  const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
+
+  // Merge project defaults (layer 2) with persisted override (layer 3) per field.
+  // `agentName` comes from dispatch input, so do not traverse the project-defaults
+  // object's prototype for names such as `__proto__` or `constructor`.
+  const projectEntry =
+    agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
+      ? options.projectDefaults[agentName]
+      : undefined;
+  const override = mergeProjectDefaultsWithOverride(
+    persistedOverride,
+    projectEntry,
+    availableModels,
+    !explicitModel,
+    agentName,
+    options.onWarning,
+  );
 
   // Explicit dispatch: target already has a model set by the caller.
-  if (hasExplicitModel(target)) {
+  // Human-only model-choice rule: project model cannot override an explicit dispatch model.
+  // Project effort (thinking) CAN still apply to an explicit dispatch.
+  if (explicitModel) {
     // If the model already carries a known thinking suffix, or there is no
-    // stored thinking preference, leave it untouched.
+    // effective thinking preference, leave it untouched.
     if (
       typeof target.model !== "string" ||
       splitKnownThinkingSuffix(target.model).thinkingSuffix ||
@@ -1006,7 +1112,7 @@ function applyModelToRunnableTarget(
     ) {
       return 0;
     }
-    // Explicit model without suffix + stored thinking preference → append suffix.
+    // Explicit model without suffix + effective thinking preference → append suffix.
     const explicitModel = findAvailableProviderModel(availableModels, target.model);
     const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override);
     if (thinkingResolution.warning && agentName) {
@@ -1020,7 +1126,7 @@ function applyModelToRunnableTarget(
     return 1;
   }
 
-  // No stored override — fast path preserving main's bundled-defaults behavior:
+  // No effective override — fast path preserving main's bundled-defaults behavior:
   // resolveThinkingForProvider's result is appended directly without
   // model-capability gating.
   if (override === undefined) {

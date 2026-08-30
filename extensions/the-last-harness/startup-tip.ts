@@ -10,6 +10,7 @@ export const TLH_STARTUP_TIPS = [
   "Press Shift+Tab to switch to bug-hunter for read-only debugging and root-cause analysis.",
   "Use “disabled” mode (Shift+Tab) to keep TLH’s tools and subagents without architect-specific guidance.",
   "Project custom subagents live in .tlh/agents; ask TLH to use one by name.",
+  "Pin model or effort defaults per role for a project using .tlh/defaults.json at the repository root.",
   "Run /fork to branch from an earlier user message and explore an alternate path.",
   "Run /tree to rewind to previous messages.",
   "Use /name to give the current session a label you can spot later.",

@@ -317,7 +317,7 @@ Frontmatter is configuration, not a security boundary. The tools, prompt, model 
 
 ### Project trust and session approval
 
-Before reading project definition content, TLH establishes the canonical Git worktree root from the current working directory. It then evaluates the applicable saved trust decision, current runtime trust signal, and—when needed—a bounded session confirmation. The confirmation says that repository-owned definitions under `.tlh/agents` may be loaded for the session.
+Before reading project definition content, TLH establishes the canonical Git worktree root from the current working directory. It then evaluates the applicable saved trust decision, current runtime trust signal, and—when needed—a bounded session confirmation. The confirmation prompt reads **"Trust project-local TLH configuration?"** and describes repository-owned content under `.tlh` (agent definitions and model/effort defaults) for this session only. Approving once covers both project custom subagents and `.tlh/defaults.json` project model/effort defaults for the session; see [Project model/effort defaults](models.md#project-modeleffort-defaults) in `docs/models.md`.
 
 - A denial, trust-store error, unavailable UI, timeout, or failed trust check fails closed; it does not degrade to an untrusted definition or a profile fallback.
 - A session approval authorizes the captured project snapshot for that session. A saved trust policy may apply the decision according to the user's normal project-trust settings.
