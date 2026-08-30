@@ -16,11 +16,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
-import {
-  ModelSelectorComponent,
-  ProjectTrustStore,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { AgentSession, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { loadProjectAgentSnapshot } from "../extensions/subagents/src/agents/project-agent-loader.js";
 import { loadProjectDefaults } from "../extensions/subagents/src/agents/project-defaults-loader.js";
@@ -46,12 +42,9 @@ const { parseProviderModelReference } = await jiti.import(
 const snapshotOperations =
   await import("../extensions/subagents/src/agents/project-agent-snapshot.js");
 
-const {
-  installTlhModelSelectionPersistenceOverride,
-  replayAllTlhUnclaimedModelSelectionDefaults,
-  setTlhSessionOnlyModel,
-  setTlhModelSelectionActiveModelResolver,
-} = await jiti.import("../extensions/the-last-harness/model-selection-scope.ts");
+const { installTlhModelSelectionPersistenceOverride } = await jiti.import(
+  "../extensions/the-last-harness/model-selection-scope.ts",
+);
 
 const MAX_PROJECT_DEFAULT_WARNINGS = 20;
 const MAX_PROJECT_DEFAULT_WARNING_LENGTH = 512;
@@ -302,59 +295,43 @@ function makeSessionCtx(fixture, overrides = {}) {
 }
 
 /**
- * Install the model-selection-scope override and reset per-test mutable state so
- * that tests using session-only model selection do not bleed into each other.
+ * Pi 0.84.4 carries model-persistence provenance through AgentSession.setModel.
+ * Keep this test helper on that public boundary so project defaults are verified
+ * against the same awaited persistence-session seam used by the runtime.
  */
-function installScopeOverride(getActiveModel = () => undefined) {
-  assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-  replayAllTlhUnclaimedModelSelectionDefaults();
-  setTlhSessionOnlyModel(undefined);
-  setTlhModelSelectionActiveModelResolver(getActiveModel);
-}
-
-/**
- * Queue a native-selector write for `model` via the installed patch.
- * Must be called AFTER installScopeOverride() so the patch is active.
- * `applyActiveModel` is called synchronously inside the callback to update pi.model.
- */
-async function queueNativeSelectorWrites(manager, model, applyActiveModel, thinkingLevel) {
-  let callbackDone;
-  const selector = Object.create(ModelSelectorComponent.prototype);
-  selector.dispose = () => {};
-  selector.settingsManager = manager;
-  selector.onSelectCallback = () => {
-    callbackDone = (async () => {
-      await Promise.resolve();
-      if (!applyActiveModel) return;
-      applyActiveModel();
-      manager.setDefaultModelAndProvider(model.provider, model.id);
-      if (thinkingLevel) {
-        manager.setDefaultThinkingLevel(thinkingLevel);
+function createPublicModelSession(pi, ctx, manager, initialModel) {
+  const state = { model: initialModel, thinkingLevel: pi.thinkingLevel };
+  const session = Object.create(AgentSession.prototype);
+  session.agent = { state };
+  session.sessionManager = { appendModelChange() {} };
+  session.settingsManager = manager;
+  session._modelRuntime = { checkAuth: async () => true };
+  session._scopedModels = [];
+  session._getThinkingLevelForModelSwitch = () => state.thinkingLevel;
+  session._addPersistedDefaultToNonEmptyScope = () => {};
+  session.setThinkingLevel = (level) => {
+    state.thinkingLevel = level;
+    pi.thinkingLevel = level;
+  };
+  session._emitModelSelect = async (model, previousModel, source) => {
+    if (model?.provider === previousModel?.provider && model?.id === previousModel?.id) {
+      return;
+    }
+    pi.model = model;
+    for (const registered of pi.events) {
+      if (registered.name === "model_select") {
+        await registered.handler({ type: "model_select", model, previousModel, source }, ctx);
       }
-    })();
+    }
   };
-  selector.handleSelect(model);
-  await callbackDone;
+  return session;
 }
 
-/** Wire the harness to the real SettingsManager interception used by Pi. */
-function wireRealModelSelection(registration, manager, ctx) {
-  const modelSelect = registration.pi.events.find(
-    (event) => event.name === "model_select",
-  )?.handler;
-  assert.equal(typeof modelSelect, "function", "model_select handler must be registered");
-
-  registration.pi.setModel = async (model) => {
-    const previousModel = registration.pi.model;
-    registration.pi.model = model;
-    manager.setDefaultModelAndProvider(model.provider, model.id);
-    await modelSelect({ type: "model_select", model, previousModel, source: "set" }, ctx);
-    return true;
-  };
-  registration.pi.setThinkingLevel = (level) => {
-    registration.pi.thinkingLevel = level;
-    manager.setDefaultThinkingLevel(level);
-  };
+async function setModelThroughPublicApi(pi, ctx, manager, model, persist) {
+  assert.equal(installTlhModelSelectionPersistenceOverride(), true);
+  const session = createPublicModelSession(pi, ctx, manager, pi.model);
+  await session.setModel(model, { persist });
+  await manager.flush();
 }
 
 /**
@@ -1285,9 +1262,6 @@ test("project-defaults: effective project model and effort change runtime state 
         configurable: true,
         get: () => registration.pi.model,
       });
-      installScopeOverride(() => registration.pi.model);
-      wireRealModelSelection(registration, manager, ctx);
-
       const initialBytes = readFileSync(join(fixture.agent, "settings.json"), "utf8");
       await registration.runtime.applySessionStart(ctx);
       await manager.flush();
@@ -1305,12 +1279,12 @@ test("project-defaults: effective project model and effort change runtime state 
       assert.equal(
         readFileSync(join(fixture.agent, "settings.json"), "utf8"),
         initialBytes,
-        "replaying unclaimed writes at shutdown must not restore project defaults",
+        "shutdown must not persist or restore project defaults",
       );
       assert.deepEqual(
         readSettings(fixture.agent),
         initialSettings,
-        "shutdown replay must leave every persisted value unchanged",
+        "shutdown must leave every persisted value unchanged",
       );
     });
   } finally {
@@ -1332,7 +1306,7 @@ for (const scenario of [
     expectedModel: { provider: "openai-codex", id: "gpt-5.6-luna" },
   },
 ]) {
-  test(`project-defaults: ${scenario.label} primary application retains persistence`, async (t) => {
+  test(`project-defaults: ${scenario.label} primary application stays runtime-only`, async (t) => {
     const fixture = createIsolatedProfileFixture("tlh-pd-persistence-", { cwd: true, test: t });
     const initialModel = { provider: "openai-codex", id: "gpt-5.6-sol" };
     const initialSettings = {
@@ -1352,7 +1326,6 @@ for (const scenario of [
           subagentMetadata: [],
           projectDefaultsLoader: makeDefaultsLoader({ architect: scenario.projectEntry }),
         });
-        const manager = SettingsManager.create(fixture.cwd, fixture.agent);
         registration.pi.model = initialModel;
         registration.pi.thinkingLevel = "xhigh";
         const ctx = makeSessionCtx(fixture, {
@@ -1369,16 +1342,17 @@ for (const scenario of [
           configurable: true,
           get: () => registration.pi.model,
         });
-        installScopeOverride(() => registration.pi.model);
-        wireRealModelSelection(registration, manager, ctx);
-
+        const initialBytes = readFileSync(join(fixture.agent, "settings.json"), "utf8");
         await registration.runtime.applySessionStart(ctx);
-        await manager.flush();
 
         assert.deepEqual(registration.pi.model, scenario.expectedModel);
         const written = readSettings(fixture.agent);
-        assert.equal(written.defaultProvider, scenario.expectedModel.provider);
-        assert.equal(written.defaultModel, scenario.expectedModel.id);
+        assert.equal(
+          readFileSync(join(fixture.agent, "settings.json"), "utf8"),
+          initialBytes,
+          "internal primary application must not persist the model default",
+        );
+        assert.deepEqual(written, initialSettings);
         assert.equal(
           written.defaultThinkingLevel,
           "xhigh",
@@ -1397,8 +1371,8 @@ for (const scenario of [
   });
 }
 
-test("project-defaults: All sessions user choice stays persisted when the next boundary applies project defaults", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-pd-all-sessions-", { cwd: true, test: t });
+test("project-defaults: persisted user choice stays persisted when the next boundary applies project defaults", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-persisted-model-", { cwd: true, test: t });
   const initialModel = { provider: "openai-codex", id: "gpt-5.6-sol" };
   const selectedModel = { provider: "anthropic", id: "claude-opus-5" };
   const projectModel = { provider: "anthropic", id: "claude-opus-4-8" };
@@ -1427,8 +1401,6 @@ test("project-defaults: All sessions user choice stays persisted when the next b
       registration.pi.model = initialModel;
       registration.pi.thinkingLevel = "low";
       const ctx = makeSessionCtx(fixture, {
-        mode: "tui",
-        hasUI: true,
         model: initialModel,
         modelRegistry: {
           getAvailable: () => [
@@ -1439,23 +1411,13 @@ test("project-defaults: All sessions user choice stays persisted when the next b
             { provider: "openai-codex", id: "gpt-5.6-luna" },
           ],
         },
-        ui: {
-          notify() {},
-          async select(_title, options) {
-            return options[1];
-          },
-        },
       });
       Object.defineProperty(ctx, "model", {
         configurable: true,
         get: () => registration.pi.model,
       });
-      installScopeOverride(() => registration.pi.model);
-      wireRealModelSelection(registration, manager, ctx);
-
       const initialBytes = readFileSync(join(fixture.agent, "settings.json"), "utf8");
       await registration.runtime.applySessionStart(ctx);
-      await manager.flush();
       assert.deepEqual(registration.pi.model, projectModel);
       assert.equal(registration.pi.thinkingLevel, "high");
       assert.equal(
@@ -1464,41 +1426,27 @@ test("project-defaults: All sessions user choice stays persisted when the next b
         "the initial project-only application must leave persisted user values untouched",
       );
 
-      const modelSelect = registration.pi.events.find(
-        (event) => event.name === "model_select",
-      )?.handler;
-      await queueNativeSelectorWrites(
-        manager,
-        selectedModel,
-        () => {
-          registration.pi.model = selectedModel;
-        },
-        "max",
-      );
-      await modelSelect(
-        {
-          type: "model_select",
-          model: selectedModel,
-          previousModel: projectModel,
-          source: "set",
-        },
-        ctx,
-      );
-      await manager.flush();
+      // Pi 0.84.4's native Ctrl+S path is represented by persist:true on the
+      // public AgentSession.setModel boundary. It writes the global model and
+      // lets TLH correlate the same call to the per-primary override handler.
+      await setModelThroughPublicApi(registration.pi, ctx, manager, selectedModel, true);
 
       let written = readSettings(fixture.agent);
       assert.equal(written.defaultProvider, selectedModel.provider);
       assert.equal(written.defaultModel, selectedModel.id);
-      assert.equal(written.defaultThinkingLevel, "max");
+      assert.equal(
+        written.defaultThinkingLevel,
+        "low",
+        "model persistence does not implicitly rewrite the thinking default",
+      );
       assert.equal(
         written.tlh?.primaryAgent?.modelOverrides?.architect,
         "anthropic/claude-opus-5",
-        "All sessions records the user's primary role choice",
+        "persisted public model selection records the user's primary role choice",
       );
       const expectedUserSettings = written;
 
       await registration.beforeAgentStart({ systemPrompt: "base" }, ctx);
-      await manager.flush();
       assert.deepEqual(
         registration.pi.model,
         projectModel,
@@ -1507,26 +1455,17 @@ test("project-defaults: All sessions user choice stays persisted when the next b
       assert.equal(registration.pi.thinkingLevel, "high");
 
       written = readSettings(fixture.agent);
-      assert.equal(written.defaultProvider, selectedModel.provider);
-      assert.equal(written.defaultModel, selectedModel.id);
-      assert.equal(written.defaultThinkingLevel, "max");
-      assert.equal(
-        written.tlh?.primaryAgent?.modelOverrides?.architect,
-        "anthropic/claude-opus-5",
-        "project reapplication must not overwrite persisted user choices",
-      );
       assert.deepEqual(
         written,
         expectedUserSettings,
-        "the boundary must preserve the user's All sessions settings",
+        "project reapplication must preserve the user's persisted model choice",
       );
 
       await shutdownRuntime(registration, ctx);
-      await manager.flush();
       assert.deepEqual(
         readSettings(fixture.agent),
         expectedUserSettings,
-        "shutdown replay must preserve the user's All sessions settings",
+        "shutdown must preserve the user's persisted model choice",
       );
     });
   } finally {
@@ -1711,45 +1650,20 @@ test("project-defaults: model from stored (layer 3), effort from bundled (layer 
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Layer 1 equivalent — locked primary bypasses project defaults
-//
-// Locked primaries (lockThinking: true) trigger forceApply=true which bypasses
-// the project-defaults layer. This tests the "project defaults not applied when
-// blocked by a higher priority" scenario.
-// The full session-only-model path (explicit user model_select) is tested in
-// the-last-harness-model-selection-scope.test.mjs.
+// ---------------------------------------------------------------------------
+// Tests: project defaults apply without fixed-primary exceptions
 // ---------------------------------------------------------------------------
 
-test("project-defaults: locked primary (forceApply) bypasses project defaults", async (t) => {
+test("project-defaults: project model and effort apply to an editable primary", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-pd-test-", { cwd: true, test: t });
 
   try {
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      // A locked primary always applies its packaged model regardless of project defaults
-      const lockedPrimary = createPrimaryPrompt("architect", {
-        tlhModelDefaults: [
-          {
-            provider: "anthropic",
-            models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-            effort: "low",
-          },
-          {
-            provider: "openai-codex",
-            models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-            effort: "medium",
-          },
-        ],
-        preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
-        applyModel: true,
-        applyThinking: true,
-        lockThinking: true, // forceApply = true
-      });
-      const primaryAgents = new Map([["architect", lockedPrimary]]);
+      const primaryAgents = new Map([["architect", architectWithDefaults()]]);
       const { runtime, pi } = registerRuntimeHarness({
         primaryAgents,
         subagentMetadata: [],
         projectDefaultsLoader: makeDefaultsLoader({
-          // Project default says opus-4-8, but locked primary should ignore it
           architect: { model: "anthropic/claude-opus-4-8", effort: "xhigh" },
         }),
       });
@@ -1757,13 +1671,8 @@ test("project-defaults: locked primary (forceApply) bypasses project defaults", 
       const ctx = makeSessionCtx(fixture);
       await runtime.applySessionStart(ctx);
 
-      // Locked primary uses its packaged preferred model (not the project default)
-      assert.deepEqual(
-        pi.model,
-        { provider: "anthropic", id: "claude-sonnet-4-6" },
-        "locked primary ignores project default model",
-      );
-      assert.equal(pi.thinkingLevel, "low", "locked primary ignores project default effort");
+      assert.deepEqual(pi.model, { provider: "anthropic", id: "claude-opus-4-8" });
+      assert.equal(pi.thinkingLevel, "xhigh");
     });
   } finally {
     cleanupTempDir(fixture);
@@ -3285,21 +3194,9 @@ test("project-defaults: project effort applies when session-only model is pinned
         }),
       });
 
-      const modelSelectHandler = pi.events.find((e) => e.name === "model_select")?.handler;
-      assert.equal(typeof modelSelectHandler, "function");
-
-      installScopeOverride(() => pi.model);
-
       // Build a context with a live ctx.model getter (tracks pi.model) so that
       // preservesSessionOnlyModel is computed correctly at each boundary.
-      const scopeUi = {
-        notify() {},
-        async select(_title, options) {
-          // Always return the first option ("This session only")
-          return options[0];
-        },
-      };
-      const ctx = makeSessionCtx(fixture, { mode: "tui", hasUI: true, ui: scopeUi });
+      const ctx = makeSessionCtx(fixture, { mode: "tui", hasUI: true });
       // Replace static model property with a live getter so ctx.model === pi.model at all times.
       Object.defineProperty(ctx, "model", { get: () => pi.model, configurable: true });
 
@@ -3314,13 +3211,7 @@ test("project-defaults: project effort applies when session-only model is pinned
 
       // --- User picks openai-codex/gpt-5.6-luna as a session-only choice ---
       const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-      await queueNativeSelectorWrites(manager, sessionModel, () => {
-        pi.model = sessionModel;
-      });
-      await modelSelectHandler(
-        { type: "model_select", model: sessionModel, previousModel: pi.model, source: "set" },
-        ctx,
-      );
+      await setModelThroughPublicApi(pi, ctx, manager, sessionModel, false);
       assert.deepEqual(pi.model, sessionModel, "session-only model applied after user pick");
 
       // --- At the next boundary ---

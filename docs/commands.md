@@ -26,7 +26,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/import` | Import and resume a session from a JSONL file — **hidden from TLH autocomplete** |
 | `/login` | Configure provider authentication |
 | `/logout` | Remove provider authentication |
-| `/model` | Select the active model (opens the native selector; see [model selection scope](models.md#model-selection-scope)) |
+| `/model` | Select the active model (opens the native selector; Enter is session-only and Ctrl+S saves the default; see [model selection](models.md#model-selection)) |
 | `/name` | Set the session display name |
 | `/new` | Start a new session |
 | `/quit` | Quit the TLH TUI |
@@ -36,6 +36,7 @@ These commands are provided by the upstream Pi runtime. They are available in ev
 | `/session` | Show session info and stats |
 | `/settings` | Open the settings menu |
 | `/share` | Share the session as a secret GitHub gist |
+| `/thinking` | Select the model thinking level with Pi's native picker and controls |
 | `/tree` | Navigate the session tree and switch branches |
 | `/trust` | Save the current project trust decision for future sessions |
 
@@ -47,8 +48,7 @@ These commands are registered by the TLH extension bundled with this profile.
 
 | Command | Description |
 |---------|-------------|
-| `/thinking` | Pick the model thinking level, subject to the active primary-agent thinking constraints |
-| `/effort` | Supported alias for `/thinking`, subject to the same active primary-agent thinking constraints |
+| `/effort` | TLH behavioral alias for Pi's native thinking-level picker |
 | `/experimental` | Open the TLH experimental-feature picker in TUI, or list/change TLH experimental features via typed subcommands (`delta-follow-up-reviews` and `ci-failure-investigation` are currently registered) |
 | `/tickets` | Show the read-only tk-backed TLH ticket workflow details for the current repo/worktree |
 | `/review` | Open an interactive code-review mode picker (available with the architect or disabled primary agent) |
@@ -63,17 +63,23 @@ These commands are registered by the TLH extension bundled with this profile.
 | `/usage` | Show or change TLH subscription usage-limit footer preferences |
 | `/version` | Show the installed TLH version and the upstream Pi runtime version |
 
-### `/thinking` and `/effort`
+### `/thinking` (native) and `/effort` (TLH alias)
 
-Both `/thinking` and `/effort` are subject to the active primary-agent thinking constraints. **Architect** enforces a medium floor: `/thinking off`, `/thinking minimal`, `/thinking low`, `/effort off`, `/effort minimal`, and `/effort low` are rejected with `architect requires at least medium thinking.` Rush, Product, and Bug-hunter accept any level supported by the current model, with no minimum floor. For an unlocked primary, a successful explicit selection remains active across later turns and session-tree reapplication while that primary remains selected; it is cleared at a new session or explicit primary-agent mode change. A model switch may clamp the retained level when the new model does not support it. The architect floor does not apply when the primary is disabled.
+`/thinking` is Pi's built-in command. TLH does not register, route, or intercept it. `/effort` is the TLH behavioral alias: it uses Pi 0.84.4's exported `ThinkingSelectorComponent` and the current model's native supported thinking levels.
 
-With no level argument in the interactive TUI, a changed selection opens a second `Thinking selection scope` picker: `This session only — default` keeps the new level active without changing the isolated profile's `defaultThinkingLevel`, while `All sessions` persists it through upstream settings for future sessions. Cancel restores the level that was active before the picker and leaves the persistent default unchanged. Selecting the current level still reports the active level but does not open the scope picker; dismissing the level picker or making a rejected selection also does not open it. Typed levels and thinking cycling/shortcuts retain their existing persistent behavior and are retained across later turns for the active unlocked primary. To replace a persistent default, run `/thinking <level>` or `/effort <level>` with the desired value. Pi writes that default only when the active level changes, so to persist a session-only level that is already active, first change to another allowed level and then type the desired level. For an unlocked primary, an explicit `/thinking` or `/effort` selection remains active through later turns and session-tree reapplication while that primary remains selected. A model switch may clamp the retained level when the new model does not support it and updates the in-session retained value; a new session or explicit primary-agent mode change clears session-only state, then uses the persisted upstream default when present or the packaged provider-aware default otherwise.
+With no level argument in the interactive TUI, both commands use the native picker and visibly show the same controls:
+
+- **Enter** applies the selected level to this session only.
+- **Ctrl+S** applies the selected level and saves the future-session default. Pi owns this write for `/thinking`; `/effort` uses TLH's guarded isolated-profile settings path, which backs up changed settings, preserves unknown fields, and reports a session-only fallback if saving fails.
+- **Esc** closes the picker without changing the active level or persistent default.
+
+Typed `/thinking <level>` and `/effort <level>` values, plus native thinking cycles/shortcuts, are session-only. The picker and typed commands use levels supported by the active model. For an enabled primary, TLH retains explicit choices through later turns and session-tree reapplication while that primary remains selected; a model switch clamps retained intent to a supported level. A new session or explicit primary-agent mode change clears session-only state, then uses the persisted default when present or the provider-aware packaged default otherwise.
 
 ### Disabled primary-agent mode
 
 Use `/switch-primary-agent disabled` to disable the primary persona for the current session; use `/switch-primary-agent default disabled` to make it the persistent default. `Shift+Tab` also cycles into disabled mode.
 
-Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
+Disabled mode retains TLH's base defaults/infrastructure and the architect-equivalent configured tool surface, including subagent safety/authorization checks and provider auth-health preflight. Canonical bundled minor agents and persisted-trust-authorized project custom `embedded.<slug>` agents remain available; new embedded runs are forced to the validated Git-root project scope and a fresh context. It does not inject the architect persona, architect-only project append or experimental guidance, automatic primary model/thinking defaults, any minimum thinking floor, or per-primary model override. The current session's model and thinking level stay unchanged unless you explicitly use `/model`, `/thinking`, or `/effort`.
 
 `/review` is available while architect or disabled is active (and requires the interactive TUI); rush, product, and bug-hunter remain blocked. It gathers the selected review target, sends a `[/review]` handoff, and the active primary delegates it to `code-reviewer` in a fresh isolated context, digests findings, and keeps the request review-only. Disabled mode does not regain architect planning, approval, ticket, or implementation orchestration.
 
@@ -174,7 +180,7 @@ For each role you have two choices:
 
 When resetting all, per-role failures are isolated — errors and unrecognised overrides are reported as a distinct category so a single failed clear does not abort the rest.
 
-**Reset is also undoable**: restore the value through the native `/model` picker and choose `All sessions` (the default `This session only — default` choice is session-only) for primary-agent overrides; use `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` for subagent overrides, or copy back the `settings.json.bak-*` backup shown in the notification.
+**Reset is also undoable**: restore the value through the native `/model` picker and press Ctrl+S to save the desired default for primary-agent overrides; use `/subagent-settings set <role> model <provider/id>` or `/subagent-settings set <role> effort <level>` for subagent overrides, or copy back the `settings.json.bak-*` backup shown in the notification.
 
 #### Outside the TUI
 
@@ -186,7 +192,7 @@ The packaged default shown is the canonical value for the active provider, resol
 
 #### Reconcile state
 
-Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when you create a persistent override via `/model` (the native picker requires the `All sessions` choice; its default `This session only — default` choice does not write an override; direct exact-name `/model` selections retain their existing persistent path) or via `/subagent-settings`, on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Do not edit it by hand.
+Acknowledgments are stored in the isolated TLH profile under `tlh/reconcile-state.json` (alongside `settings.json`). Each entry records the packaged defaults you acknowledged, keyed by role name and provider (`byProvider`), so a later provider switch does not inherit a prior acknowledgment. This file is written in three situations: when a correlated persisted model write creates or updates a primary override (normally the native `/model` picker Ctrl+S action, but Pi provider-auth and other programmatic `persist: true` writes are indistinguishable), via `/subagent-settings`, on startup when TLH backfills a missing baseline for a pre-existing override, and when you run `/reconcile`. Enter/session-only selections and direct session model applications do not write an override baseline. Do not edit it by hand.
 
 ### `/tickets`
 

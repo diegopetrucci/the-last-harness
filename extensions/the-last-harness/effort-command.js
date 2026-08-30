@@ -1,18 +1,51 @@
-import { beginTlhModelSelectionDefaultSuppression, beginTlhThinkingLevelSelection, chooseTlhThinkingSelectionScope, discardTlhThinkingLevelSelection, endTlhThinkingLevelSelectionCapture, persistTlhStandaloneThinkingDefaults, persistTlhThinkingLevelSelection, replayTlhUnmatchedModelSelectionDefaults, runTlhThinkingChangeContext, } from "./model-selection-scope.js";
-import { selectProviderAwareAgentDefaults } from "./model-defaults.js";
-import { formatThinkingLevelOption, getAvailableThinkingLevels, isThinkingLevel, parseThinkingLevelOption, setExtensionThinkingLevel, thinkingLevelAtLeast, } from "./thinking.js";
-export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
-    const primary = runtime?.activePrimaryAgentPrompt();
-    if (primary?.lockThinking) {
-        const defaults = selectProviderAwareAgentDefaults(primary, [], ctx.model?.provider);
-        const level = defaults.thinking ?? "off";
-        ctx.ui.notify(`Thinking is locked at "${level}" for the ${primary.name} primary agent.`, "error");
-        return;
+import { ThinkingSelectorComponent, } from "@earendil-works/pi-coding-agent";
+import { formatHomePath, isRecord, readText } from "./common.js";
+import { safeTlhProfileFilePath, withLockedTlhSettingsWrite } from "./profile-state.js";
+import { getAvailableThinkingLevels, isThinkingLevel, setExtensionThinkingLevel, } from "./thinking.js";
+function parseSettingsObject(content) {
+    const parsed = JSON.parse(content.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) {
+        throw new Error("settings.json must contain a JSON object");
     }
+    return parsed;
+}
+function readTlhThinkingDefault() {
+    const settingsPath = safeTlhProfileFilePath("settings.json");
+    const content = settingsPath ? readText(settingsPath) : undefined;
+    if (!content || !content.trim()) {
+        return undefined;
+    }
+    try {
+        const settings = parseSettingsObject(content);
+        const level = settings.defaultThinkingLevel;
+        return typeof level === "string" && isThinkingLevel(level) ? level : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+export function persistTlhThinkingDefault(cwd, level) {
+    return withLockedTlhSettingsWrite(cwd, "Refusing to write thinking defaults outside the isolated TLH profile.", (current) => {
+        const settings = current && current.trim() ? parseSettingsObject(current) : {};
+        if (settings.defaultThinkingLevel === level) {
+            return { changed: false };
+        }
+        return {
+            changed: true,
+            nextContent: `${JSON.stringify({ ...settings, defaultThinkingLevel: level }, null, 2)}\n`,
+        };
+    });
+}
+function errorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+function formatBackupNotice(result) {
+    return result.backupPath ? ` Backup: ${formatHomePath(result.backupPath)}.` : "";
+}
+export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
     const currentLevel = pi.getThinkingLevel();
     const availableLevels = getAvailableThinkingLevels(ctx.model);
     const requestedLevel = args.trim().toLowerCase();
-    const minThinking = primary?.minThinking;
     if (requestedLevel) {
         if (!isThinkingLevel(requestedLevel)) {
             ctx.ui.notify(`Unknown thinking level "${args.trim()}". Available: ${availableLevels.join(", ")}.`, "error");
@@ -22,97 +55,68 @@ export async function handleThinkingLevelCommand(pi, args, ctx, runtime) {
             ctx.ui.notify(`Thinking level "${requestedLevel}" is not available for the current model. Available: ${availableLevels.join(", ")}.`, "warning");
             return;
         }
-        if (minThinking !== undefined && !thinkingLevelAtLeast(requestedLevel, minThinking)) {
-            ctx.ui.notify(`${primary.name} requires at least ${minThinking} thinking.`, "error");
-            return;
-        }
         setExtensionThinkingLevel(pi, requestedLevel);
         runtime?.recordUserThinkingLevel?.(pi.getThinkingLevel());
-        ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()}.`, "info");
+        ctx.ui.notify(`Thinking level set to ${pi.getThinkingLevel()} for this session.`, "info");
         return;
     }
-    const pickerLevels = minThinking !== undefined
-        ? availableLevels.filter((level) => thinkingLevelAtLeast(level, minThinking))
-        : availableLevels;
-    if (!ctx.hasUI) {
+    const pickerLevels = availableLevels;
+    if (pickerLevels.length === 0) {
+        ctx.ui.notify("No thinking levels are available for the current model.", "warning");
+        return;
+    }
+    if (ctx.mode !== "tui" || !ctx.hasUI || typeof ctx.ui.custom !== "function") {
         ctx.ui.notify(`Available thinking levels: ${pickerLevels.join(", ")}. Current: ${currentLevel}.`, "info");
         return;
     }
-    const options = pickerLevels.map((level) => formatThinkingLevelOption(level, currentLevel));
-    const selected = await ctx.ui.select("Pick thinking level", options);
-    const selectedLevel = selected ? parseThinkingLevelOption(selected) : undefined;
-    if (!selectedLevel) {
-        return;
-    }
-    await persistTlhStandaloneThinkingDefaults();
-    replayTlhUnmatchedModelSelectionDefaults();
-    const thinkingCapture = beginTlhThinkingLevelSelection();
-    let thinkingSelection = thinkingCapture;
     try {
-        try {
-            runTlhThinkingChangeContext("interactive", () => setExtensionThinkingLevel(pi, selectedLevel));
-        }
-        finally {
-            thinkingSelection = endTlhThinkingLevelSelectionCapture(thinkingCapture);
-        }
-        const nextLevel = pi.getThinkingLevel();
-        if (nextLevel === currentLevel) {
-            discardTlhThinkingLevelSelection(thinkingSelection);
-            ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
-            return;
-        }
-        if (!thinkingSelection) {
-            runtime?.recordUserThinkingLevel?.(nextLevel);
-            ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
-            return;
-        }
-        const scope = await chooseTlhThinkingSelectionScope(ctx);
-        if (scope === "cancel") {
-            discardTlhThinkingLevelSelection(thinkingSelection);
-            let resultingLevel;
-            const releaseDefaultSuppression = beginTlhModelSelectionDefaultSuppression();
-            try {
+        await ctx.ui.custom((_tui, _theme, _keybindings, done) => {
+            let savingDefault = false;
+            const selectForSession = (level) => {
                 try {
-                    runTlhThinkingChangeContext("internal", () => setExtensionThinkingLevel(pi, currentLevel));
+                    setExtensionThinkingLevel(pi, level);
+                    const nextLevel = pi.getThinkingLevel();
+                    runtime?.recordUserThinkingLevel?.(nextLevel);
+                    ctx.ui.notify(`Thinking level set to ${nextLevel} for this session.`, "info");
+                    done({ level: nextLevel, persisted: false });
                 }
-                catch {
+                catch (error) {
+                    ctx.ui.notify(`Could not set thinking level: ${errorMessage(error)}`, "error");
+                    done(undefined);
                 }
-            }
-            finally {
-                releaseDefaultSuppression();
-            }
-            try {
-                resultingLevel = pi.getThinkingLevel();
-            }
-            catch {
-            }
-            if (resultingLevel === currentLevel) {
-                ctx.ui.notify(`Kept thinking level at ${resultingLevel} after cancelling thinking selection.`, "info");
-            }
-            else if (resultingLevel !== undefined) {
-                ctx.ui.notify(`TLH could not restore thinking level to ${currentLevel} after cancelling thinking selection; active level remains ${resultingLevel}.`, "warning");
-            }
-            else {
-                ctx.ui.notify(`TLH could not verify the active thinking level after cancelling thinking selection; expected ${currentLevel}.`, "warning");
-            }
-            return;
-        }
-        if (scope === "session-only") {
-            discardTlhThinkingLevelSelection(thinkingSelection);
-            runtime?.recordUserThinkingLevel?.(nextLevel);
-            ctx.ui.notify(`Thinking level set to ${nextLevel} for this session.`, "info");
-            return;
-        }
-        const persisted = await persistTlhThinkingLevelSelection(thinkingSelection);
-        runtime?.recordUserThinkingLevel?.(nextLevel);
-        if (!persisted) {
-            ctx.ui.notify(`Thinking level set to ${nextLevel} for this session, but TLH could not update the persistent default.`, "warning");
-            return;
-        }
-        ctx.ui.notify(`Thinking level set to ${nextLevel}.`, "info");
+            };
+            const selectAsDefault = (level) => {
+                if (savingDefault) {
+                    return;
+                }
+                savingDefault = true;
+                let nextLevel;
+                try {
+                    setExtensionThinkingLevel(pi, level);
+                    nextLevel = pi.getThinkingLevel();
+                    runtime?.recordUserThinkingLevel?.(nextLevel);
+                }
+                catch (error) {
+                    ctx.ui.notify(`Could not set thinking level: ${errorMessage(error)}`, "error");
+                    done(undefined);
+                    return;
+                }
+                void (async () => {
+                    try {
+                        const result = persistTlhThinkingDefault(ctx.cwd, nextLevel);
+                        ctx.ui.notify(`Thinking level set to ${nextLevel} and saved as the default for future sessions.${formatBackupNotice(result)}`, "info");
+                        done({ level: nextLevel, persisted: true });
+                    }
+                    catch (error) {
+                        ctx.ui.notify(`Thinking level set to ${nextLevel} for this session only; TLH could not save the persistent default: ${errorMessage(error)}`, "warning");
+                        done({ level: nextLevel, persisted: false });
+                    }
+                })();
+            };
+            return new ThinkingSelectorComponent(currentLevel, pickerLevels, selectForSession, () => done(undefined), selectAsDefault, readTlhThinkingDefault());
+        });
     }
     catch (error) {
-        await persistTlhThinkingLevelSelection(thinkingSelection);
-        throw error;
+        ctx.ui.notify(`Could not open thinking level picker: ${errorMessage(error)}`, "error");
     }
 }

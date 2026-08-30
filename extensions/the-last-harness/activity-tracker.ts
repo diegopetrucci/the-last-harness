@@ -29,7 +29,10 @@ const LIVENESS_DRAIN_INTERVAL_MS = 5_000;
 const QUEUED_GRACE_MS = 30_000;
 
 export type TlhEffectiveActivitySnapshot = {
+  /** True when primary agent work or background async jobs are in flight. */
   inProgress: boolean;
+  /** True while at least one blocking extension UI prompt is open. */
+  waitingForUser: boolean;
   primaryReasons: string[];
   activeAsyncJobIds: string[];
 };
@@ -50,6 +53,9 @@ export type TlhEffectiveActivityTracker = {
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
   handleSessionBeforeCompact(event: { reason?: string; willRetry?: boolean }): void;
   handleSessionCompact(event: { reason?: string; willRetry?: boolean }): void;
+  handleSessionCompactFailed(event?: { reason?: string; willRetry?: boolean }): void;
+  handleUIPromptStart(event?: { reason?: string; kind?: string; title?: string }): void;
+  handleUIPromptEnd(event?: { reason?: string; kind?: string; title?: string }): void;
   handleAsyncStarted(data: unknown): void;
   handleAsyncComplete(data: unknown): void;
   handleAsyncControl(data: unknown): void;
@@ -245,7 +251,9 @@ export function createTlhEffectiveActivityTracker(
   const retryGraceTimers = new Map<string, TimeoutHandle>();
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
-  let lastSnapshotKey = "0::::";
+  /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
+  let uiPromptDepth = 0;
+  let lastSnapshotKey = "0::0::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
 
@@ -492,6 +500,7 @@ export function createTlhEffectiveActivityTracker(
 
   const buildSnapshot = (): TlhEffectiveActivitySnapshot => ({
     inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+    waitingForUser: uiPromptDepth > 0,
     primaryReasons: [...primaryReasons.keys()].sort(),
     activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
   });
@@ -499,6 +508,7 @@ export function createTlhEffectiveActivityTracker(
   const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
     [
       snapshot.inProgress ? "1" : "0",
+      snapshot.waitingForUser ? "1" : "0",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
     ].join("::");
@@ -575,6 +585,7 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons.clear();
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
+      uiPromptDepth = 0;
       notifyIfChanged();
       listeners.clear();
     },
@@ -621,6 +632,23 @@ export function createTlhEffectiveActivityTracker(
       if (event.willRetry) {
         scheduleRetryGrace(`compaction:${event.reason ?? "unknown"}`);
       }
+      notifyIfChanged();
+    },
+    handleSessionCompactFailed(event) {
+      // Failed and aborted compactions must release the matching activity without
+      // inheriting the success-only retry grace. Pi 0.84.4 emits this event for
+      // both automatic and manual compactions, including extension cancellations.
+      removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
+      notifyIfChanged();
+    },
+    handleUIPromptStart() {
+      if (disposed) return;
+      uiPromptDepth += 1;
+      notifyIfChanged();
+    },
+    handleUIPromptEnd() {
+      if (uiPromptDepth === 0) return;
+      uiPromptDepth -= 1;
       notifyIfChanged();
     },
     handleAsyncStarted(data) {
@@ -693,6 +721,7 @@ export function registerTlhEffectiveActivityTracker(
       try {
         pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
           inProgress: snapshot.inProgress,
+          waitingForUser: snapshot.waitingForUser,
           activeAsyncJobIds: snapshot.activeAsyncJobIds,
         });
       } catch {
@@ -727,6 +756,15 @@ export function registerTlhEffectiveActivityTracker(
   });
   pi.on("session_compact", (event) => {
     tracker.handleSessionCompact(event);
+  });
+  pi.on("session_compact_failed", (event) => {
+    tracker.handleSessionCompactFailed(event);
+  });
+  pi.on("ui_prompt_start", (event) => {
+    tracker.handleUIPromptStart(event);
+  });
+  pi.on("ui_prompt_end", (event) => {
+    tracker.handleUIPromptEnd(event);
   });
   pi.on("session_shutdown", () => {
     for (const unsubscribe of unsubscribes) {

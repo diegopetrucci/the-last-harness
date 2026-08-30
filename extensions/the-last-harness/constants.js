@@ -53,13 +53,6 @@ export const THINKING_LEVELS = [
     "xhigh",
     "max",
 ];
-export const FALLBACK_THINKING_LEVELS = [
-    "off",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-];
 export const THINKING_LEVEL_DESCRIPTIONS = {
     off: "No extra reasoning effort",
     minimal: "Smallest reasoning budget",

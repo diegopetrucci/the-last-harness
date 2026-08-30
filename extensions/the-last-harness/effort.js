@@ -1,19 +1,8 @@
 import { THINKING_LEVEL_DESCRIPTIONS, THINKING_LEVELS } from "./constants.js";
 import { handleThinkingLevelCommand } from "./effort-command.js";
-import { thinkingLevelAtLeast } from "./thinking.js";
-function getThinkingLevelCompletions(prefix, runtime) {
-    const primary = runtime?.activePrimaryAgentPrompt();
+function getThinkingLevelCompletions(prefix) {
     const normalizedPrefix = prefix.trim().toLowerCase();
-    if (primary?.lockThinking) {
-        return [];
-    }
-    const minThinking = primary?.minThinking;
-    const filteredLevels = minThinking !== undefined
-        ? THINKING_LEVELS.filter((level) => thinkingLevelAtLeast(level, minThinking))
-        : THINKING_LEVELS;
-    const completions = filteredLevels
-        .filter((level) => level.startsWith(normalizedPrefix))
-        .map((level) => ({
+    const completions = THINKING_LEVELS.filter((level) => level.startsWith(normalizedPrefix)).map((level) => ({
         value: level,
         label: level,
         description: THINKING_LEVEL_DESCRIPTIONS[level],
@@ -21,11 +10,9 @@ function getThinkingLevelCompletions(prefix, runtime) {
     return completions.length > 0 ? completions : null;
 }
 export function registerEffortCommand(pi, runtime) {
-    for (const commandName of ["effort", "thinking"]) {
-        pi.registerCommand(commandName, {
-            description: "Pick the model thinking level",
-            getArgumentCompletions: (prefix) => getThinkingLevelCompletions(prefix, runtime),
-            handler: (args, ctx) => handleThinkingLevelCommand(pi, args, ctx, runtime),
-        });
-    }
+    pi.registerCommand("effort", {
+        description: "Pick the model thinking level",
+        getArgumentCompletions: getThinkingLevelCompletions,
+        handler: (args, ctx) => handleThinkingLevelCommand(pi, args, ctx, runtime),
+    });
 }

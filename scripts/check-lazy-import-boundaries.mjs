@@ -17,9 +17,9 @@
  * ERR_MODULE_NOT_FOUND at command-execution time. Condition (b) matters
  * independently: a module loaded in both the jiti graph and native ESM gets
  * duplicated module-level singleton state and prototype patches applied twice
- * (e.g. model-selection-scope.js holds AsyncLocalStorage and a prototype-patch
- * symbol; profile-state.js holds claim state — duplicating either silently splits
- * state and was the root cause of the tlhmf-1yvd regression).
+ * (e.g. model-selection-scope.js holds AsyncLocalStorage plus the AgentSession
+ * prototype-patch symbol; duplicating it silently splits state and was the root
+ * cause of the tlhmf-1yvd regression).
  *
  * SCOPE: All .js/.mjs files under extensions/, analysed on the GENERATED .js
  * files (not .ts), so type-only imports erased during compilation are not

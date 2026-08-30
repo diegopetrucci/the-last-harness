@@ -38,7 +38,7 @@ function createNoopReporter() {
         dispose() { },
     };
 }
-function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
+function createQueuedStateReporter(sendState, resolveState, options = {}, onStateCommitted) {
     const timers = {
         setTimeout: options.timers?.setTimeout ?? setTimeout,
         clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -48,6 +48,9 @@ function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
     let sendInFlight = false;
     let queuedState;
     let lastQueuedState;
+    let terminalSender;
+    let terminalQueued = false;
+    let terminalSent = false;
     let disposed = false;
     const clearIdleTimer = () => {
         if (!idleTimer)
@@ -56,7 +59,7 @@ function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
         idleTimer = undefined;
     };
     const queueState = (state) => {
-        if (disposed || lastQueuedState === state)
+        if (disposed || terminalQueued || terminalSent || lastQueuedState === state)
             return;
         queuedState = state;
         lastQueuedState = state;
@@ -66,15 +69,27 @@ function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
         }
     };
     const drainQueue = async () => {
-        if (sendInFlight || disposed)
+        if (sendInFlight || (disposed && !terminalQueued))
             return;
         sendInFlight = true;
         try {
-            while (!disposed && queuedState) {
-                const nextState = queuedState;
-                queuedState = undefined;
+            while ((!disposed && queuedState !== undefined) || terminalQueued) {
+                if (!disposed && queuedState !== undefined) {
+                    const nextState = queuedState;
+                    queuedState = undefined;
+                    try {
+                        await sendState(nextState);
+                    }
+                    catch {
+                    }
+                    continue;
+                }
+                const sendTerminal = terminalSender;
+                terminalSender = undefined;
+                terminalQueued = false;
+                terminalSent = true;
                 try {
-                    await sendState(nextState);
+                    await sendTerminal?.();
                 }
                 catch {
                 }
@@ -82,34 +97,43 @@ function createQueuedStateReporter(sendState, options = {}, onStateCommitted) {
         }
         finally {
             sendInFlight = false;
-            if (!disposed && queuedState) {
+            if ((!disposed && queuedState !== undefined) || terminalQueued) {
                 void drainQueue();
             }
         }
     };
     return {
         handleSnapshot(snapshot) {
-            if (disposed)
+            if (disposed || terminalQueued || terminalSent)
                 return;
-            if (snapshot.inProgress) {
+            const nextState = resolveState(snapshot);
+            if (nextState === "working") {
                 clearIdleTimer();
-                queueState("working");
+                queueState(nextState);
                 return;
             }
             clearIdleTimer();
             idleTimer = timers.setTimeout(() => {
                 idleTimer = undefined;
-                queueState("idle");
+                queueState(nextState);
             }, idleDebounceMs);
             idleTimer.unref?.();
         },
         handleSessionShutdown() {
             clearIdleTimer();
         },
+        enqueueAfterDrain(sendTerminal) {
+            if (disposed || terminalQueued || terminalSent)
+                return;
+            terminalSender = sendTerminal;
+            terminalQueued = true;
+            void drainQueue();
+        },
         dispose() {
             disposed = true;
             clearIdleTimer();
             queuedState = undefined;
+            void drainQueue();
         },
     };
 }
@@ -298,7 +322,7 @@ export function createHerdrActivityReporter(options = {}) {
         }, heartbeatIntervalMs);
         heartbeatTimer.unref?.();
     };
-    const sendState = () => {
+    const sendState = (_state) => {
         return enqueueOutbound(async () => {
             if (!rootSession || disposed)
                 return;
@@ -313,7 +337,7 @@ export function createHerdrActivityReporter(options = {}) {
             }
         });
     };
-    const queuedReporter = createQueuedStateReporter(sendState, {
+    const queuedReporter = createQueuedStateReporter(sendState, (snapshot) => snapshot.inProgress ? "working" : snapshot.waitingForUser ? "blocked" : "idle", {
         idleDebounceMs: options.idleDebounceMs ??
             parseDurationEnv(env, "HERDR_TLH_IDLE_DEBOUNCE_MS", DEFAULT_IDLE_DEBOUNCE_MS),
         timers: options.timers,
@@ -386,8 +410,12 @@ function defaultCommandRunner(command, args) {
         child.on("close", finish);
     });
 }
-function cmuxStatusValue(_snapshot) {
-    return "working";
+function cmuxStatusValue(snapshot) {
+    if (snapshot.inProgress)
+        return "working";
+    if (snapshot.waitingForUser)
+        return "waiting";
+    return "idle";
 }
 function sanitizeCmuxStatusKeySegment(value) {
     const sanitized = value
@@ -422,18 +450,15 @@ export function createCmuxActivityReporter(options = {}) {
     const cmuxBin = options.cmuxBin ?? env.CMUX_PI_CMUX_BIN ?? env.CMUX_BUNDLED_CLI_PATH ?? env.CMUX_BIN ?? "cmux";
     const runner = options.runner ?? defaultCommandRunner;
     let rootSession = false;
-    let lastValue;
     let statusKey = CMUX_STATUS_KEY;
     const sendState = async (state) => {
         if (state === "idle") {
-            lastValue = undefined;
             await runner(cmuxBin, ["clear-status", statusKey]);
             return;
         }
-        const value = lastValue ?? "working";
-        await runner(cmuxBin, ["set-status", statusKey, value]);
+        await runner(cmuxBin, ["set-status", statusKey, state]);
     };
-    const queuedReporter = createQueuedStateReporter(sendState, options);
+    const queuedReporter = createQueuedStateReporter(sendState, cmuxStatusValue, options);
     return {
         handleSessionStart(ctx) {
             rootSession = ctx.mode === "tui";
@@ -444,16 +469,23 @@ export function createCmuxActivityReporter(options = {}) {
         handleSnapshot(snapshot) {
             if (!rootSession)
                 return;
-            lastValue = snapshot.inProgress ? cmuxStatusValue(snapshot) : undefined;
             queuedReporter.handleSnapshot(snapshot);
         },
         handleSessionShutdown() {
             if (!rootSession)
                 return;
+            rootSession = false;
             queuedReporter.handleSessionShutdown();
-            void runner(cmuxBin, ["clear-status", statusKey]).catch(() => undefined);
+            const finalStatusKey = statusKey;
+            queuedReporter.enqueueAfterDrain(() => runner(cmuxBin, ["clear-status", finalStatusKey]));
         },
         dispose() {
+            if (rootSession) {
+                rootSession = false;
+                queuedReporter.handleSessionShutdown();
+                const finalStatusKey = statusKey;
+                queuedReporter.enqueueAfterDrain(() => runner(cmuxBin, ["clear-status", finalStatusKey]));
+            }
             queuedReporter.dispose();
         },
     };

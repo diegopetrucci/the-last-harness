@@ -258,28 +258,6 @@ export function rushLikePrimary(name = "architect") {
   });
 }
 
-export function lockedRushPrimary() {
-  return createPrimaryPrompt("rush", {
-    tlhModelDefaults: [
-      {
-        provider: "anthropic",
-        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
-        effort: "low",
-      },
-      {
-        provider: "openai-codex",
-        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
-        effort: "medium",
-      },
-      { provider: "openrouter", effort: "low" },
-    ],
-    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
-    applyModel: true,
-    applyThinking: true,
-    lockThinking: true,
-  });
-}
-
 export function createCommandContext(branchEntries = [], overrides = {}) {
   const notifications = [];
   return { notifications, ctx: createToolCallContext(branchEntries, notifications, overrides) };
