@@ -309,7 +309,7 @@ Verdict meanings:
 | `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the TTL. |
 | `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
 | `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
-| `unneeded` | No beats were sent and no terminal-lost signal was received. The async run finished faster than the heartbeat interval; the gap closed before the first beat timer fired. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
+| `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
 
 ### Circuit breakers
 
@@ -339,7 +339,7 @@ When disabled:
 
 ### How to undo
 
-Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect on the next session start (restart the Pi session so the extension picks up the new value).
+Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
 
 To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
 

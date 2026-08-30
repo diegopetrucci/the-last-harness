@@ -89,7 +89,11 @@ export interface HeartbeatSessionSummary {
   gapsSaved: number;
   gapsWasted: number;
   gapsLost: number;
-  /** Zero-beat gaps that closed without a terminal-lost signal: the run finished faster than the heartbeat interval. */
+  /**
+   * Zero-beat gaps closed before their first beat without a terminal-lost
+   * signal; this can reflect a short run, parent turn, lifecycle event, model
+   * change, or compaction, and the closure cause is not recorded.
+   */
   gapsUnneeded: number;
   /** True when the session circuit-breaker has fired (≥3 consecutive errors). */
   breakerDisabled: boolean;
@@ -156,9 +160,11 @@ function verdictFrom(acc: GapAccumulator): HeartbeatGapVerdict {
   // potentially spent but no cache-read evidence was observed.  This is
   // explicit rather than an implicit fallthrough of the cancellation path.
   if (acc.executedBeats > 0) return "wasted";
-  // Zero-beat gap without a terminal-lost signal: the async run finished faster
-  // than the heartbeat interval. Nothing was sent and the cache may still be
-  // warm — counting this as 'lost' would inflate gapsLost unfairly.
+  // Zero-beat gap without a terminal-lost signal: it closed before the first
+  // beat. This can reflect a short run, parent turn, lifecycle event, model
+  // change, or compaction; the closure cause is not recorded. Nothing was sent
+  // and the cache may still be warm — counting this as 'lost' would inflate
+  // gapsLost unfairly.
   return "unneeded";
 }
 

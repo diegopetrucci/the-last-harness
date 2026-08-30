@@ -540,7 +540,7 @@ describe("createHeartbeatWiring — enabled: destroy()", () => {
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatWiring — enabled: per-gap summary content", () => {
-  it("verdict 'unneeded' for a gap with zero beats (benign short run)", () => {
+  it("verdict 'unneeded' for a zero-beat gap closed before its first beat", () => {
     const written: string[] = [];
     const pi = makeFakePi();
     const wiring = createHeartbeatWiring(
@@ -554,7 +554,7 @@ describe("createHeartbeatWiring — enabled: per-gap summary content", () => {
 
     const summaries = parseSummaryLines(written);
     assert.ok(summaries.length > 0, "summary must be written");
-    // Zero-beat gap without terminatedLost: benign short run, not a 'lost' cache.
+    // The closure cause is not recorded; a zero-beat gap is not a 'lost' cache.
     assert.equal(summaries[0]!.verdict, "unneeded");
     assert.equal(summaries[0]!.beats, 0);
     // No session entry for zero-beat gap
@@ -738,7 +738,7 @@ describe("createHeartbeatWiring — enabled: getSessionSummary", () => {
     assert.equal(summary.enabled, true);
     assert.equal(summary.totalBeats, 0);
     // Zero-beat gaps without terminatedLost are 'unneeded', not 'lost'.
-    assert.equal(summary.gapsUnneeded, 2, "both benign zero-beat gaps counted as unneeded");
+    assert.equal(summary.gapsUnneeded, 2, "both zero-beat gaps counted as unneeded");
     assert.equal(summary.gapsLost, 0, "no lost gaps when terminatedLost was never set");
     assert.equal(summary.gapsSaved + summary.gapsWasted, 0);
   });
@@ -1733,7 +1733,7 @@ describe("createHeartbeatWiring — resetSession", () => {
     // Fire the timer (stream produces a cache_read beat via fake streamProvider).
     // Since makeTestDeps doesn't inject a streamProvider, we just close the gap
     // directly to accumulate session totals.
-    wiring.disarm(); // closes gap, increments session totals (unneeded verdict, 0 beats, no terminatedLost)
+    wiring.disarm(); // closes gap, increments session totals (unneeded: 0 beats, no terminatedLost)
 
     const summary1 = wiring.getSessionSummary();
     // gapsUnneeded should be 1 (no beats fired, no terminatedLost).

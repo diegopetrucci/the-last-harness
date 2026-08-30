@@ -106,6 +106,23 @@ export { loadConfig } from "./config.ts";
 type PiToolWithInternalFailure = "subagent";
 
 /**
+ * Apply the same session boundary as createAsyncJobTracker to the heartbeat's
+ * open event payloads. Only sessionId is consumed here; unknown fields remain
+ * untouched. A missing sessionId is accepted only when there is no string
+ * current session ID, matching the tracker rule without inventing attribution.
+ */
+function isCurrentHeartbeatEvent(
+  data: unknown,
+  currentSessionId: string | null,
+): data is Record<string, unknown> {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  return (
+    typeof currentSessionId !== "string" ||
+    ("sessionId" in data && data.sessionId === currentSessionId)
+  );
+}
+
+/**
  * Pi 0.83 represents tool failure separately from AgentToolResult. Keep the
  * extension's rich internal result until execute() returns, then strip the
  * private flag and restore it through the supported tool_result patch hook.
@@ -711,12 +728,13 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   // Only subscribe when heartbeat is enabled: when disabled, the wiring is a
   // no-op but these subscriptions still add live callbacks for every async event.
   const hbCompleteHandler = (data: unknown) => {
-    const result = data as { id?: string };
-    hbWiring.notifyAsyncComplete(result.id, state.asyncJobs);
+    if (!isCurrentHeartbeatEvent(data, state.currentSessionId)) return;
+    const id = data.id;
+    if (typeof id !== "string" || id.length === 0) return;
+    hbWiring.notifyAsyncComplete(id, state.asyncJobs);
   };
   const hbStartedHandler = (data: unknown) => {
-    const info = data as { id?: string };
-    void info; // id unused; what matters is the live-run count before this job
+    if (!isCurrentHeartbeatEvent(data, state.currentSessionId)) return;
     const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
     hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
   };

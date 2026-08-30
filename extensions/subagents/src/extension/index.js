@@ -31,6 +31,12 @@ import { COMPACT_SUBAGENT_TOOL_DESCRIPTION } from "./tool-description.js";
 import { ASYNC_DIR, DEFAULT_ARTIFACT_CONFIG, RESULTS_DIR, SLASH_TEXT_RESULT_TYPE, SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_CONTROL_EVENT, WIDGET_KEY, } from "../shared/types.js";
 import { clearPendingForegroundControlNotices, formatSubagentControlNotice, handleSubagentControlNotice, SUBAGENT_CONTROL_MESSAGE_TYPE, } from "./control-notices.js";
 export { loadConfig } from "./config.js";
+function isCurrentHeartbeatEvent(data, currentSessionId) {
+    if (!data || typeof data !== "object" || Array.isArray(data))
+        return false;
+    return (typeof currentSessionId !== "string" ||
+        ("sessionId" in data && data.sessionId === currentSessionId));
+}
 export function createSubagentToolResultBridge() {
     const failedResults = new Map();
     return {
@@ -487,12 +493,16 @@ export default function registerSubagentExtension(pi) {
         }
     }
     const hbCompleteHandler = (data) => {
-        const result = data;
-        hbWiring.notifyAsyncComplete(result.id, state.asyncJobs);
+        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
+            return;
+        const id = data.id;
+        if (typeof id !== "string" || id.length === 0)
+            return;
+        hbWiring.notifyAsyncComplete(id, state.asyncJobs);
     };
     const hbStartedHandler = (data) => {
-        const info = data;
-        void info;
+        if (!isCurrentHeartbeatEvent(data, state.currentSessionId))
+            return;
         const liveRunsBefore = countLiveAsyncRuns(state.asyncJobs);
         hbWiring.notifyAsyncStarted(liveRunsBefore, state.currentSessionId);
     };

@@ -11,10 +11,13 @@
  *     agent_settled with a live async job re-opens the gap (timer re-armed).
  *  2. session_start restored-jobs re-arm: session_start triggers tryRearm for
  *     any live jobs that were restored by restoreActiveJobs.
- *  3. session_before_switch disclosure: firing session_before_switch calls
+ *  3. async lifecycle session boundary: start/complete payloads with current,
+ *     foreign, and missing session IDs are accepted or rejected like the
+ *     async-job tracker, without allowing a foreign event to affect heartbeat.
+ *  4. session_before_switch disclosure: firing session_before_switch calls
  *     disarm() and emits the heartbeat-gap-summary session entry BEFORE teardown
  *     for beat-bearing gaps.
- *  4. session_before_fork disclosure: same as above for session_before_fork.
+ *  5. session_before_fork disclosure: same as above for session_before_fork.
  *
  * Note on harness constraints: The async-job tracker (async-job-tracker.ts)
  * requires real filesystem state (asyncDir + status.json) for jobs to
@@ -328,7 +331,163 @@ describe("heartbeat index.ts — session_start idle setup and re-arm (finding F-
 });
 
 // ---------------------------------------------------------------------------
-// Test 3: session_before_switch emits disclosure entry before teardown
+// Test 3: async lifecycle events use the tracker session boundary
+// ---------------------------------------------------------------------------
+
+describe("heartbeat index.ts — async lifecycle session boundary", () => {
+  it("accepts current-session starts/completions and rejects foreign or missing session IDs", () => {
+    const agentDir = makeHeartbeatAgentDir();
+    const script = String.raw`
+      import assert from "node:assert/strict";
+      import * as fs from "node:fs";
+      import * as path from "node:path";
+      import registerSubagentExtension from "./src/extension/index.ts";
+      import {
+        SUBAGENT_ASYNC_COMPLETE_EVENT,
+        SUBAGENT_ASYNC_STARTED_EVENT,
+      } from "./src/shared/types.ts";
+
+      const timerCallbacks = [];
+      global.setTimeout = (fn, ms) => {
+        timerCallbacks.push({ fn, ms });
+        return { unref() {} };
+      };
+      global.clearTimeout = () => {};
+
+      const extensionHandlers = new Map();
+      const eventBusListeners = new Map();
+      const fakePi = new Proxy({
+        events: {
+          on(channel, handler) {
+            const handlers = eventBusListeners.get(channel) ?? [];
+            handlers.push(handler);
+            eventBusListeners.set(channel, handlers);
+            return () => {};
+          },
+          emit(channel, payload) {
+            for (const handler of eventBusListeners.get(channel) ?? []) handler(payload);
+          },
+        },
+        on(type, handler) {
+          const handlers = extensionHandlers.get(type) ?? [];
+          handlers.push(handler);
+          extensionHandlers.set(type, handlers);
+        },
+        appendEntry() {},
+        registerEntryRenderer() {},
+        registerTool() {},
+        registerCommand() {},
+        registerShortcut() {},
+        registerMessageRenderer() {},
+        sendMessage() {},
+        getSessionName() { return undefined; },
+      }, {
+        get(target, prop) {
+          if (prop in target) return target[prop];
+          return () => undefined;
+        },
+      });
+
+      registerSubagentExtension(fakePi);
+
+      let activeSessionId = "session-start-current";
+      const makeCtx = () => ({
+        cwd: process.cwd(),
+        hasUI: false,
+        isIdle: () => true,
+        sessionManager: {
+          getSessionId() { return activeSessionId; },
+          getSessionFile() { return null; },
+        },
+        modelRegistry: { getAvailable() { return []; } },
+        model: undefined,
+      });
+      const emitPiEvent = async (type, event) => {
+        for (const handler of extensionHandlers.get(type) ?? []) await handler(event, makeCtx());
+      };
+      const start = (payload) => fakePi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, payload);
+      const complete = (payload) => fakePi.events.emit(SUBAGENT_ASYNC_COMPLETE_EVENT, payload);
+      const summaryCount = () => {
+        const logPath = path.join(process.env.PI_CODING_AGENT_DIR, "subagents", "heartbeat.jsonl");
+        if (!fs.existsSync(logPath)) return 0;
+        return fs.readFileSync(logPath, "utf8")
+          .split("\\n")
+          .filter((line) => line.includes('"type":"gap_summary"'))
+          .length;
+      };
+      const startSession = async (sessionId) => {
+        activeSessionId = sessionId;
+        await emitPiEvent("session_start", { type: "session_start", reason: "startup" });
+        return timerCallbacks.length;
+      };
+
+      // A matching session ID opens a gap before the tracker records the job.
+      let timersBefore = await startSession("session-start-current");
+      start({ id: "job-start-current", sessionId: "session-start-current" });
+      assert.ok(
+        timerCallbacks.length > timersBefore,
+        "current-session start must arm heartbeat before tracker handling",
+      );
+
+      // A foreign or sessionless start must be rejected before it can arm a gap.
+      timersBefore = await startSession("session-start-foreign");
+      start({ id: "job-start-foreign", sessionId: "session-other" });
+      assert.equal(
+        timerCallbacks.length,
+        timersBefore,
+        "foreign-session start must not arm heartbeat",
+      );
+
+      timersBefore = await startSession("session-start-missing");
+      start({ id: "job-start-missing" });
+      assert.equal(
+        timerCallbacks.length,
+        timersBefore,
+        "missing-session start must not arm heartbeat when currentSessionId is a string",
+      );
+
+      // A matching completion closes the gap and records the current session ID.
+      activeSessionId = "session-complete-current";
+      await emitPiEvent("session_start", { type: "session_start", reason: "startup" });
+      start({ id: "job-complete-current", sessionId: activeSessionId });
+      const summariesBeforeCurrentComplete = summaryCount();
+      complete({ id: "job-complete-current", sessionId: activeSessionId, success: true });
+      assert.equal(summaryCount(), summariesBeforeCurrentComplete + 1);
+      const summaryLine = fs.readFileSync(
+        path.join(process.env.PI_CODING_AGENT_DIR, "subagents", "heartbeat.jsonl"),
+        "utf8",
+      ).trim().split("\\n").at(-1);
+      assert.equal(JSON.parse(summaryLine).sessionId, "session-complete-current");
+
+      // Foreign and sessionless completions must not close the current gap.
+      activeSessionId = "session-complete-foreign";
+      await emitPiEvent("session_start", { type: "session_start", reason: "startup" });
+      start({ id: "job-complete-foreign", sessionId: activeSessionId });
+      const summariesBeforeForeignComplete = summaryCount();
+      complete({ id: "job-complete-foreign", sessionId: "session-other", success: true });
+      assert.equal(
+        summaryCount(),
+        summariesBeforeForeignComplete,
+        "foreign-session completion must not close heartbeat gap",
+      );
+
+      activeSessionId = "session-complete-missing";
+      await emitPiEvent("session_start", { type: "session_start", reason: "startup" });
+      start({ id: "job-complete-missing", sessionId: activeSessionId });
+      const summariesBeforeMissingComplete = summaryCount();
+      complete({ id: "job-complete-missing", success: true });
+      assert.equal(
+        summaryCount(),
+        summariesBeforeMissingComplete,
+        "missing-session completion must not close heartbeat gap when currentSessionId is a string",
+      );
+    `;
+    runScript(script, agentDir);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 4: session_before_switch emits disclosure entry before teardown
 // ---------------------------------------------------------------------------
 
 describe("heartbeat index.ts — session_before_switch/fork disclosure (finding F-3)", () => {
