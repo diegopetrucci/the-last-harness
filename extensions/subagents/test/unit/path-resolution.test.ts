@@ -1,21 +1,19 @@
 // Fork delta (hermetic HOME redirect): the upstream version of this test
 // backed up and restored the REAL ~/.agents directory around each run,
-// which is destructive if the process crashes mid-run. It also assumed
-// PI_CODING_AGENT_DIR is unset, but TLH sessions always set
-// PI_CODING_AGENT_DIR, which suppresses ~/.agents discovery in
-// src/shared/profile.ts (getLegacyGlobalAgentsDir) and makes the
-// "~/.agents" test cases fail under a live TLH session. This version
-// instead points $HOME (and $USERPROFILE, which os.homedir() reads on
-// Windows instead of $HOME) at a fresh mkdtemp fake-home directory for
-// the duration of the test and unsets PI_CODING_AGENT_DIR, so the
-// discovery code (which reads os.homedir() at call time) never touches
+// which is destructive if the process crashes mid-run. This suite covers
+// supported skill discovery plus negative hard-cutover coverage for generic
+// agent definitions, so it points $HOME (and $USERPROFILE, which os.homedir()
+// reads on Windows instead of $HOME) at a fresh mkdtemp fake-home directory
+// and unsets PI_CODING_AGENT_DIR. The discovery code therefore never touches
 // the real home directory on any platform.
 import { describe, test, before, after } from "node:test";
 import * as assert from "node:assert";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { discoverAgents } from "../../src/agents/agents.ts";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { resolveSkillPath, clearSkillCache } from "../../src/agents/skills.ts";
 
 const tmpDir = path.join(os.tmpdir(), "pi-path-resolution-test");
@@ -65,7 +63,7 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("Path resolution for .agents and ~/.agents", () => {
+describe("Path resolution for skills and removed generic agent sources", () => {
   test("should resolve skills in .agents/skills", () => {
     const skillsDir = path.join(cwdDir, ".agents", "skills");
     fs.mkdirSync(skillsDir, { recursive: true });
@@ -94,7 +92,7 @@ describe("Path resolution for .agents and ~/.agents", () => {
     assert.strictEqual(resolved?.path, path.join(userSkillsDir, "test-skill-2.md"));
   });
 
-  test("should resolve project agents from both .agents and .pi/agents", () => {
+  test("negative hard-cutover: ignore generic project and project-custom agent trees", () => {
     const legacyDir = path.join(cwdDir, ".agents");
     const agentsDir = path.join(cwdDir, ".pi", "agents");
     fs.mkdirSync(path.join(cwdDir, ".agents", "skills"), { recursive: true });
@@ -108,27 +106,54 @@ describe("Path resolution for .agents and ~/.agents", () => {
       path.join(agentsDir, "test-agent-1.md"),
       "---\nname: test-agent-1\ndescription: Test agent\n---\nAgent content",
     );
+    execFileSync("git", ["init", "--quiet"], { cwd: tmpDir });
+    const agentDir = path.join(fakeHomeDir, ".pi", "agent");
+    fs.mkdirSync(agentDir, { recursive: true });
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    new ProjectTrustStore(agentDir).set(tmpDir, true);
+    const customPath = path.join(tmpDir, ".tlh", "agents", "custom", "TEST-AGENT-1.md");
+    fs.mkdirSync(path.dirname(customPath), { recursive: true });
+    fs.writeFileSync(
+      customPath,
+      "---\nname: test-agent-1\npackage: embedded\ndescription: Test agent\n---\nAgent content",
+    );
 
     const result = discoverAgents(cwdDir, "project");
-    const legacyAgent = result.agents.find((a) => a.name === "test-agent-legacy");
-    const agent = result.agents.find((a) => a.name === "test-agent-1");
-    assert.ok(legacyAgent);
-    assert.strictEqual(legacyAgent?.filePath, path.join(legacyDir, "test-agent-legacy.md"));
-    assert.ok(agent);
-    assert.strictEqual(agent?.filePath, path.join(agentsDir, "test-agent-1.md"));
+    const custom = result.agents.find((a) => a.name === "embedded.test-agent-1");
+    assert.equal(custom, undefined);
+    assert.equal(
+      result.agents.some((a) => a.name === "test-agent-legacy"),
+      false,
+    );
+    assert.equal(
+      result.agents.some((a) => a.name === "test-agent-1"),
+      false,
+    );
   });
 
-  test("should resolve agents in ~/.agents", () => {
+  test("negative hard-cutover: ignore generic agents in ~/.agents while retaining packaged TLH roles", () => {
     const userAgentsDir = path.join(realHomeDir, ".agents");
     fs.mkdirSync(userAgentsDir, { recursive: true });
     fs.writeFileSync(
       path.join(userAgentsDir, "test-agent-2.md"),
       "---\nname: test-agent-2\ndescription: Test agent\n---\nAgent content",
     );
+    const agentDir = path.join(fakeHomeDir, ".pi", "agent");
+    const canonical = path.join(agentDir, "tlh", "agents", "subagents", "developer.md");
+    fs.mkdirSync(path.dirname(canonical), { recursive: true });
+    fs.writeFileSync(
+      canonical,
+      "---\nname: developer\ndescription: TLH developer\n---\nDeveloper content",
+    );
+    process.env.PI_CODING_AGENT_DIR = agentDir;
 
     const result = discoverAgents(cwdDir, "user");
-    const agent = result.agents.find((a) => a.name === "test-agent-2");
+    const agent = result.agents.find((a) => a.name === "developer");
     assert.ok(agent);
-    assert.strictEqual(agent?.filePath, path.join(userAgentsDir, "test-agent-2.md"));
+    assert.strictEqual(agent?.filePath, canonical);
+    assert.equal(
+      result.agents.some((a) => a.name === "test-agent-2"),
+      false,
+    );
   });
 });

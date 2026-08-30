@@ -4,12 +4,11 @@
  * targets separate; the subagents target owns compilation of its loader and
  * generated JavaScript.
  *
- * Trust is the shared worktree-level .tlh decision: since project-defaults-loader.js
- * imports resolveProjectAgentTrust from project-agent-loader.js, and Node.js ESM
- * caches modules by resolved path, both loaders share the same SESSION_TRUST_DECISIONS
- * map. When the agents loader resolves trust first, this bridge reuses that decision
- * for the same sessionId and does not re-prompt. A defaults-only project may establish
- * the shared decision here, so callers must provide interactive UI when appropriate.
+ * Project defaults use a separate project-configuration trust policy. The lazy
+ * defaults loader owns its nominally distinct result type and module-private,
+ * plane-tagged session cache; it never shares custom-agent execution trust or
+ * authorizes .tlh/agents/custom definitions. A session/defaults approval only
+ * permits model/effort values from .tlh/defaults.json for that session.
  */
 
 const projectDefaultsLoaderModuleUrl = new URL(

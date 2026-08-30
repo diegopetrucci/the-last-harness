@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,20 @@ export function createIsolatedProfileFixture(prefix, { cwd = false, test } = {})
   const workspace = join(dir, "workspace");
   mkdirSync(workspace, { recursive: true });
   return { dir, home, agent, cwd: workspace };
+}
+
+/**
+ * Create the minimal on-disk Git metadata accepted by TLH's metadata-only
+ * worktree resolver. Fixtures should use this instead of invoking Git when the
+ * production path under test only needs a canonical worktree boundary.
+ */
+export function createSyntheticGitWorktree(worktreeRoot) {
+  const gitDirectory = join(worktreeRoot, ".git");
+  mkdirSync(join(gitDirectory, "objects"), { recursive: true });
+  mkdirSync(join(gitDirectory, "refs"), { recursive: true });
+  writeFileSync(join(gitDirectory, "HEAD"), "ref: refs/heads/main\n", "utf8");
+  writeFileSync(join(gitDirectory, "config"), "[core]\n\trepositoryformatversion = 0\n", "utf8");
+  return gitDirectory;
 }
 
 export async function withEnv(env, fn) {

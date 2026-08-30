@@ -10,6 +10,7 @@ import {
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
   SUBAGENT_CHILD_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   applyThinkingSuffix,
   buildPiArgs,
   getThinkingLevelDropNote,
@@ -22,6 +23,7 @@ const originalEnv = {
   PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
   PI_SUBAGENT_PARENT_SESSION: process.env.PI_SUBAGENT_PARENT_SESSION,
   PI_SUBAGENT_RUN_ID: process.env.PI_SUBAGENT_RUN_ID,
+  PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: process.env.PI_SUBAGENT_PROJECT_AGENT_GUIDANCE,
 };
 
 afterEach(() => {
@@ -555,6 +557,39 @@ describe("buildPiArgs system prompt mode wiring", () => {
       hard: 3,
       block: ["read"],
     });
+  });
+
+  it("always emits an explicit project-guidance provenance sentinel", () => {
+    process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+
+    const inherited = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+    assert.equal(inherited.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV], "0");
+
+    const verified = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: true,
+    });
+    assert.equal(verified.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV], "1");
+
+    const disabled = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      projectAgentGuidance: false,
+    });
+    assert.equal(disabled.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV], "0");
   });
 
   it("passes child intercom and orchestrator metadata through env", () => {

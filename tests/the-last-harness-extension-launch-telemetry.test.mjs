@@ -1721,9 +1721,8 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 
 // ── project-vs-user agentOverrides precedence tests ───────────────────────────
 //
-// TLH's eight subagents are installed under `tlh/agents/subagents` and reach the subagents
-// runtime through `subagents.agentDirs`, so the runtime resolves them as USER-scope custom
-// agents via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054).
+// TLH's eight subagents are installed under the fixed `tlh/agents/subagents` path and reach the
+// runtime as canonical USER-scope roles via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts).
 // That gives a two-rule precedence: project `agentOverrides[name]`, else user
 // `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been
 // removed from the extension, so only the two-rule custom override precedence above applies.

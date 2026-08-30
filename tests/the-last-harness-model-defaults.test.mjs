@@ -3241,3 +3241,60 @@ test("project defaults: project defaults apply to each task target in tasks[] ba
   assert.equal(input.tasks[0].model, "anthropic/claude-opus-5:high");
   assert.equal(input.tasks[1].model, "anthropic/claude-opus-5:high");
 });
+
+test("project defaults: mixed packaged and embedded dispatch only mutates packaged targets", () => {
+  const input = {
+    tasks: [
+      { agent: "developer", task: "Implement the packaged task" },
+      { agent: "embedded.reviewer", task: "Run the captured project reviewer" },
+    ],
+  };
+  const beforeEmbedded = { ...input.tasks[1] };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    new Map([...pdAgents2, ["embedded.reviewer", { ...pdDeveloper, name: "embedded.reviewer" }]]),
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "openai-codex/gpt-5.6-luna", thinking: "high" }],
+        ["embedded.reviewer", { model: "openai-codex/gpt-5.6-luna", thinking: "max" }],
+      ]),
+      projectDefaults: {
+        developer: { model: "anthropic/claude-opus-5", effort: "high" },
+        "embedded.reviewer": { model: "openai-codex/gpt-5.6-luna", effort: "max" },
+      },
+    },
+  );
+  assert.equal(mutations, 1);
+  assert.equal(input.tasks[0].model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(input.tasks[1], beforeEmbedded);
+});
+
+test("project defaults: direct embedded target guard ignores project and stored model policy", () => {
+  const input = {
+    agent: "embedded.reviewer",
+    task: "Run from the exact captured configuration",
+    model: "anthropic/claude-sonnet-4-6",
+    fallbackModels: ["caller/fallback"],
+  };
+  const before = { ...input, fallbackModels: [...input.fallbackModels] };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    new Map([["embedded.reviewer", { ...pdDeveloper, name: "embedded.reviewer" }]]),
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["embedded.reviewer", { model: "openai-codex/gpt-5.6-luna", thinking: "max" }],
+      ]),
+      projectDefaults: {
+        "embedded.reviewer": { model: "openai-codex/gpt-5.6-luna", effort: "high" },
+      },
+    },
+  );
+  assert.equal(mutations, 0);
+  assert.deepEqual(input, before);
+});

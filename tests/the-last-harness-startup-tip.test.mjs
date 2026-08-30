@@ -38,15 +38,21 @@ test("the curated startup tips include exactly one disabled-mode affordance", ()
   );
 });
 
-test("the curated startup list has exactly one project custom subagent tip", () => {
+test("the curated startup list preserves one custom-agent and defaults tip", () => {
   const projectTips = TLH_STARTUP_TIPS.filter((tip) => tip.includes(".tlh/agents"));
   assert.deepEqual(projectTips, [
-    "Project custom subagents live in .tlh/agents; ask TLH to use one by name.",
+    "Project custom subagents live in .tlh/agents/custom/<UPPERCASE-SLUG>.md; ask TLH to use one by name.",
   ]);
+  const defaultsTip =
+    "Pin model or effort defaults per role for a project using .tlh/defaults.json at the repository root.";
+  assert.deepEqual(
+    TLH_STARTUP_TIPS.filter((tip) => tip === defaultsTip),
+    [defaultsTip],
+  );
   assert.equal(
-    TLH_STARTUP_TIPS.some((tip) => /trust|\/reload/i.test(tip)),
+    TLH_STARTUP_TIPS.some((tip) => /trust|\/reload|\/reconcile/i.test(tip)),
     false,
-    "the curated startup list must not add a trust or reload tip",
+    "the curated startup list must not add trust, reload, or reconciliation reminders",
   );
 });
 

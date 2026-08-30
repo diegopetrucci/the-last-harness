@@ -20,7 +20,6 @@ import {
   type ThinkingLevel,
 } from "../../shared/model-info.ts";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.ts";
-
 const TASK_ARG_LIMIT = 8000;
 export const CONTACT_SUPERVISOR_TOOL_NAME = "contact_supervisor";
 export const INVALID_LAZY_SKILL_TOOL_POLICY_ERROR =
@@ -37,6 +36,8 @@ export const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "PI_SUBAGENT_ORCHESTRATOR_SE
 export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR";
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
+/** Parent-verified provenance for installer-managed TLH minor-agent prompts. */
+export const SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV = "PI_SUBAGENT_PROJECT_AGENT_GUIDANCE";
 export const SUBAGENT_CHILD_INDEX_ENV = "PI_SUBAGENT_CHILD_INDEX";
 export const SUBAGENT_PARENT_EVENT_SINK_ENV = "PI_SUBAGENT_PARENT_EVENT_SINK";
 export const SUBAGENT_PARENT_CONTROL_INBOX_ENV = "PI_SUBAGENT_PARENT_CONTROL_INBOX";
@@ -79,6 +80,8 @@ interface BuildPiArgsInput {
   orchestratorIntercomTarget?: string;
   runId?: string;
   childAgentName?: string;
+  /** True only when the parent selected the canonical installer-managed TLH prompt. */
+  projectAgentGuidance?: boolean;
   childIndex?: number;
   steerInboxDir?: string;
   structuredOutput?: {
@@ -332,6 +335,9 @@ function buildPiArgsInternal(
   env[SUBAGENT_CHILD_ENV] = "1";
   env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT = input.inheritProjectContext ? "1" : "0";
   env.PI_SUBAGENT_INHERIT_SKILLS = input.inheritSkills ? "1" : "0";
+  // Always write the provenance sentinel. An inherited "1" must never opt a
+  // same-name custom agent into project guidance.
+  env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
   if (input.intercomSessionName) {
     env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
   }

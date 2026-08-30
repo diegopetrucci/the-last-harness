@@ -1,4 +1,5 @@
 import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 function result(text, isError = false) {
     return {
         content: [{ type: "text", text }],
@@ -98,7 +99,11 @@ export function handleList(params, ctx) {
     const scope = normalizeListScope(params.agentScope) ?? "both";
     const d = discoverAgentsAll(ctx.cwd);
     const scopedAgents = allAgents(d)
-        .filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope)
+        .filter((a) => scope === "both" ||
+        a.source === "builtin" ||
+        a.source === "package" ||
+        a.source === scope ||
+        (scope === "project" && isCanonicalPackagedMinorAgent(a)))
         .sort((a, b) => a.name.localeCompare(b.name));
     const agents = scopedAgents.filter((a) => !a.disabled);
     const lines = [

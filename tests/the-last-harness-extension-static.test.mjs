@@ -211,7 +211,6 @@ test("primary and child prompts do not include disabled-ticket fallback guidance
   assert.match(primaryPrompt, /## TLH Allowed Minor Subagents/);
   assert.match(primaryPrompt, /action: "list"`\/`"get"`\/`"resume"/);
   assert.match(primaryPrompt, /omit `agentScope` or use `"user"`/);
-  assert.match(primaryPrompt, /action: "resume".*omit `context` or use `"fresh"`/);
   assert.match(primaryPrompt, /TLH minor agents are isolated to the user scope/);
   assert.match(primaryPrompt, /- contrarian:/i);
 
@@ -230,7 +229,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   const bugHunter = primaryAgents.get("bug-hunter");
   const subagents = loadSubagentMetadata();
 
-  const embeddedClause = /embedded\.<slug>.*subagent.*explicitly names or asks/s;
+  const embeddedClause = /embedded\.<slug>.*agent.*explicitly names or asks/s;
   const projectNaturalLanguageClause =
     /project agents are intentionally omitted.*list.*get.*user asks for the `xyz` project subagent.*`embedded\.xyz`.*exception.*management output omits it/is;
   const closingRule = /Do not delegate outside this bundled TLH minor-agent list\./;
@@ -258,6 +257,7 @@ test("allowed-subagents prompt scopes embedded guidance to architect regardless 
   assert.match(disabledPrompt, sectionHeader, "disabled: section header present");
   assert.match(disabledPrompt, managementGuidance, "disabled: management guidance present");
   assert.match(disabledPrompt, embeddedClause, "disabled: embedded guidance present");
+  assert.match(disabledPrompt, /\.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/);
   assert.match(disabledPrompt, /## \/review handoff/);
   assert.match(disabledPrompt, /`code-reviewer` subagent in a \*\*fresh \(isolated\) context\*\*/);
   assert.match(disabledPrompt, /passing the full envelope contents as the task input/);

@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { discoverAgents, discoverAgentsAll } from "../../src/agents/agents.ts";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import {
+  discoverAgents as upstreamDiscoverAgents,
+  discoverAgentsAll as upstreamDiscoverAgentsAll,
+} from "../../src/agents/agents.ts";
 import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import { THINKING_LEVELS } from "../../src/shared/model-info.ts";
 
@@ -18,6 +23,38 @@ function writeAgent(filePath: string, body: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, body, "utf-8");
 }
+
+function writeRootCustomAgent(
+  dir: string,
+  filename: string,
+  name: string,
+  body = "Custom prompt",
+): string {
+  const filePath = path.join(dir, ".tlh", "agents", "custom", filename);
+  writeAgent(
+    filePath,
+    `---\nname: ${name}\npackage: embedded\ndescription: ${name} custom\n---\n\n${body}\n`,
+  );
+  return filePath;
+}
+
+function trustRoot(dir: string, agentDir = path.join(dir, ".agent-profile")): string {
+  if (!fs.existsSync(path.join(dir, ".git")))
+    execFileSync("git", ["init", "--quiet"], { cwd: dir });
+  fs.mkdirSync(agentDir, { recursive: true });
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  new ProjectTrustStore(agentDir).set(dir, true);
+  return agentDir;
+}
+
+function canonicalAgentDir(dir: string): string {
+  const profileDir = path.join(dir, ".agent-profile");
+  process.env.PI_CODING_AGENT_DIR = profileDir;
+  return path.join(profileDir, "tlh", "agents", "subagents");
+}
+
+const discoverAgents = upstreamDiscoverAgents;
+const discoverAgentsAll = upstreamDiscoverAgentsAll;
 
 function withTempHome<T>(fn: (home: string) => T): T {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-home-"));
@@ -58,12 +95,12 @@ describe("agent permission frontmatter", () => {
       path.join(os.tmpdir(), "pi-subagents-agent-permission-frontmatter-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 tools: bash,read,write
 permission:
@@ -80,7 +117,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.equal(
       worker?.extraFields?.permission,
       `"*": ask
@@ -96,12 +133,12 @@ describe("agent frontmatter defaultContext", () => {
   it("parses defaultContext from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-default-context-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 defaultContext: fork
 ---
@@ -112,7 +149,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.equal(worker?.defaultContext, "fork");
   });
 });
@@ -121,11 +158,11 @@ describe("agent maxExecutionTimeMs frontmatter", () => {
   it("parses and validates maxExecutionTimeMs", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-max-execution-time-"));
     tempDirs.push(dir);
-    const filePath = path.join(dir, ".pi", "agents", "explorer.md");
+    const filePath = path.join(canonicalAgentDir(dir), "repo-scout.md");
     writeAgent(
       filePath,
       `---
-name: explorer
+name: repo-scout
 description: Explorer
 maxExecutionTimeMs: ${Number.MAX_SAFE_INTEGER}
 ---
@@ -135,7 +172,7 @@ Explore the codebase
     );
 
     const explorer = discoverAgents(dir, "project").agents.find(
-      (agent) => agent.name === "explorer",
+      (agent) => agent.name === "repo-scout",
     );
     assert.equal(explorer?.maxExecutionTimeMs, Number.MAX_SAFE_INTEGER);
     assert.equal(explorer?.extraFields?.maxExecutionTimeMs, undefined);
@@ -143,7 +180,7 @@ Explore the codebase
     writeAgent(
       filePath,
       `---
-name: explorer
+name: repo-scout
 description: Explorer
 maxExecutionTimeMs: ${Number.MAX_SAFE_INTEGER + 1}
 ---
@@ -153,7 +190,7 @@ Explore the codebase
     );
     const discovered = discoverAgentsAll(dir);
     assert.equal(
-      discovered.project.some((agent) => agent.name === "explorer"),
+      discovered.user.some((agent) => agent.name === "repo-scout"),
       false,
       "malformed agent must be skipped",
     );
@@ -167,11 +204,11 @@ describe("agent acceptance-role frontmatter", () => {
   it("parses and validates acceptance roles", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-acceptance-role-"));
     tempDirs.push(dir);
-    const filePath = path.join(dir, ".pi", "agents", "explorer.md");
+    const filePath = path.join(canonicalAgentDir(dir), "code-reviewer.md");
     writeAgent(
       filePath,
       `---
-name: explorer
+name: code-reviewer
 description: Explorer
 acceptanceRole: read-only
 ---
@@ -181,7 +218,7 @@ Explore the codebase
     );
 
     const explorer = discoverAgents(dir, "project").agents.find(
-      (agent) => agent.name === "explorer",
+      (agent) => agent.name === "code-reviewer",
     );
     assert.equal(explorer?.acceptanceRole, "read-only");
     assert.equal(explorer?.extraFields?.acceptanceRole, undefined);
@@ -189,7 +226,7 @@ Explore the codebase
     writeAgent(
       filePath,
       `---
-name: explorer
+name: code-reviewer
 description: Explorer
 acceptanceRole: observer
 ---
@@ -199,7 +236,7 @@ Explore the codebase
     );
     const discovered = discoverAgentsAll(dir);
     assert.equal(
-      discovered.project.some((agent) => agent.name === "explorer"),
+      discovered.user.some((agent) => agent.name === "code-reviewer"),
       false,
       "malformed agent must be skipped",
     );
@@ -213,11 +250,11 @@ describe("agent frontmatter malformed-file isolation", () => {
   it("skips malformed toolBudget while retaining valid peers and a diagnostic", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-invalid-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     writeAgent(
-      path.join(agentsDir, "broken.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: broken
+name: developer
 description: Broken
 toolBudget: {not-json
 ---
@@ -226,9 +263,9 @@ Broken
 `,
     );
     writeAgent(
-      path.join(agentsDir, "valid.md"),
+      path.join(agentsDir, "code-reviewer.md"),
       `---
-name: valid
+name: code-reviewer
 description: Valid
 ---
 
@@ -237,16 +274,16 @@ Valid
     );
 
     const result = discoverAgentsAll(dir);
-    assert.ok(result.project.some((agent) => agent.name === "valid"));
+    assert.ok(result.user.some((agent) => agent.name === "code-reviewer"));
     assert.equal(
-      result.project.some((agent) => agent.name === "broken"),
+      result.user.some((agent) => agent.name === "developer"),
       false,
     );
     const diagnostic = result.agentDiagnostics?.find((entry) =>
-      entry.filePath.endsWith("broken.md"),
+      entry.filePath.endsWith("developer.md"),
     );
     assert.ok(diagnostic);
-    assert.match(diagnostic.error, /broken/);
+    assert.match(diagnostic.error, /developer/);
     assert.match(diagnostic.error, /toolBudget/);
   });
 
@@ -255,15 +292,15 @@ Valid
       path.join(os.tmpdir(), "pi-subagents-agent-tool-budget-semantic-invalid-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     const invalidBudgets: Array<{
       name: string;
       config: Record<string, unknown>;
       field: string;
     }> = [
-      { name: "invalid-hard", config: { hard: 0 }, field: "hard" },
-      { name: "invalid-soft", config: { soft: 5, hard: 4 }, field: "soft" },
-      { name: "invalid-block", config: { hard: 4, block: [] }, field: "block" },
+      { name: "developer", config: { hard: 0 }, field: "hard" },
+      { name: "code-reviewer", config: { soft: 5, hard: 4 }, field: "soft" },
+      { name: "repo-scout", config: { hard: 4, block: [] }, field: "block" },
     ];
     for (const { name, config } of invalidBudgets) {
       writeAgent(
@@ -279,9 +316,9 @@ Invalid ${name}
       );
     }
     writeAgent(
-      path.join(agentsDir, "valid-normalized.md"),
+      path.join(agentsDir, "diff-summarizer.md"),
       `---
-name: valid-normalized
+name: diff-summarizer
 description: Valid normalized budget
 toolBudget: ${JSON.stringify({ soft: 2, hard: 4, block: [" read ", "read", "write"] })}
 ---
@@ -291,7 +328,7 @@ Valid budget
     );
 
     const result = discoverAgentsAll(dir);
-    const valid = result.project.find((agent) => agent.name === "valid-normalized");
+    const valid = result.user.find((agent) => agent.name === "diff-summarizer");
     assert.deepEqual(valid?.toolBudget, {
       soft: 2,
       hard: 4,
@@ -299,7 +336,7 @@ Valid budget
     });
     for (const { name, field } of invalidBudgets) {
       assert.equal(
-        result.project.some((agent) => agent.name === name),
+        result.user.some((agent) => agent.name === name),
         false,
         `invalid ${name} agent must be skipped`,
       );
@@ -314,19 +351,19 @@ Valid budget
   it("silently skips README.md and empty frontmatter files", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-no-frontmatter-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     writeAgent(
       path.join(agentsDir, "README.md"),
       "# Agent notes\n\nThis is not an agent definition.\n",
     );
     writeAgent(path.join(agentsDir, "empty.md"), "---\n---\n\nNotes only.\n");
     writeAgent(
-      path.join(agentsDir, "valid.md"),
-      "---\nname: valid\ndescription: Valid\n---\n\nValid\n",
+      path.join(agentsDir, "librarian.md"),
+      "---\nname: librarian\ndescription: Valid\n---\n\nValid\n",
     );
 
     const result = discoverAgentsAll(dir);
-    assert.ok(result.project.some((agent) => agent.name === "valid"));
+    assert.ok(result.user.some((agent) => agent.name === "librarian"));
     assert.equal(
       result.agentDiagnostics?.some((entry) => entry.filePath.endsWith("README.md")),
       false,
@@ -340,7 +377,7 @@ Valid budget
   it("aggregates missing required fields into one per-file diagnostic", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-missing-fields-"));
     tempDirs.push(dir);
-    const filePath = path.join(dir, ".pi", "agents", "candidate.md");
+    const filePath = path.join(canonicalAgentDir(dir), "oracle.md");
     writeAgent(
       filePath,
       "---\nmodel: mock/candidate\n---\n\nThis looks like an agent but is incomplete.\n",
@@ -348,7 +385,7 @@ Valid budget
 
     const result = discoverAgentsAll(dir);
     assert.equal(
-      result.project.some((agent) => agent.filePath === filePath),
+      result.user.some((agent) => agent.filePath === filePath),
       false,
     );
     const diagnostics =
@@ -407,7 +444,7 @@ Run the markdown chain
 });
 
 describe("configured agent directories", () => {
-  it("loads project-configured agent dirs relative to the project root while keeping .pi agents ahead", () =>
+  it("ignores configured agent dirs and settings overrides after the hard cutover", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(
         path.join(os.tmpdir(), "pi-subagents-project-configured-agent-dirs-"),
@@ -418,6 +455,7 @@ describe("configured agent directories", () => {
       writeJson(path.join(dir, ".pi", "settings.json"), {
         subagents: {
           agentDirs: ["vendor/subagents"],
+          agentOverrides: { "embedded.configured-only": { model: "override/model" } },
         },
       });
       writeAgent(
@@ -425,19 +463,10 @@ describe("configured agent directories", () => {
         `---
 name: configured-only
 description: Configured only agent
+package: embedded
 ---
 
 Configured only.
-`,
-      );
-      writeAgent(
-        path.join(dir, "vendor", "subagents", "shared.md"),
-        `---
-name: shared
-description: Configured shared agent
----
-
-Configured shared.
 `,
       );
       writeAgent(
@@ -450,31 +479,31 @@ description: Project shared agent
 Project shared.
 `,
       );
-
-      const projectAgents = discoverAgents(nested, "project").agents;
+      const profile = trustRoot(dir);
+      writeRootCustomAgent(dir, "CONFIGURED-ONLY.md", "configured-only");
+      const projectAgents = upstreamDiscoverAgents(nested, "project").agents;
       assert.equal(
-        projectAgents.find((agent) => agent.name === "configured-only")?.filePath,
-        path.join(dir, "vendor", "subagents", "configured-only.md"),
+        projectAgents.find((agent) => agent.name === "embedded.configured-only"),
+        undefined,
       );
       assert.equal(
-        projectAgents.find((agent) => agent.name === "shared")?.filePath,
-        path.join(dir, ".pi", "agents", "shared.md"),
-      );
-
-      const all = discoverAgentsAll(nested);
-      assert.equal(
-        all.project.find((agent) => agent.name === "configured-only")?.filePath,
-        path.join(dir, "vendor", "subagents", "configured-only.md"),
+        projectAgents.find((agent) => agent.name === "shared"),
+        undefined,
       );
       assert.equal(
-        all.project.find((agent) => agent.name === "shared")?.filePath,
-        path.join(dir, ".pi", "agents", "shared.md"),
+        projectAgents.find((agent) => agent.name === "configured-only"),
+        undefined,
       );
+      assert.equal(
+        upstreamDiscoverAgentsAll(nested).project.find((agent) => agent.name === "shared"),
+        undefined,
+      );
+      assert.equal(process.env.PI_CODING_AGENT_DIR, profile);
     }));
 });
 
 describe("package-provided agent discovery", () => {
-  it("discovers package agents while ignoring package chain declarations", () =>
+  it("ignores installed package agents while ignoring package chain declarations", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-discovery-"));
       tempDirs.push(dir);
@@ -521,19 +550,17 @@ Review the task.
 
       const all = discoverAgentsAll(dir);
       const packagedAgent = all.package.find((agent) => agent.name === "my-workflow.reviewer");
-      assert.ok(packagedAgent);
-      assert.equal(packagedAgent.source, "package");
-      assert.equal(packagedAgent.filePath, path.join(workflowRoot, "agents", "reviewer.md"));
+      assert.equal(packagedAgent, undefined);
+      assert.deepEqual(all.package, []);
       assert.equal(
-        discoverAgents(dir, "both").agents.find((agent) => agent.name === "my-workflow.reviewer")
-          ?.source,
-        "package",
+        discoverAgents(dir, "both").agents.some((agent) => agent.name === "my-workflow.reviewer"),
+        false,
       );
 
       assert.deepEqual(all.chains, []);
     }));
 
-  it("loads packages referenced from Pi settings", () =>
+  it("ignores packages referenced from Pi settings", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-settings-package-"));
       tempDirs.push(dir);
@@ -564,11 +591,10 @@ Plan the work.
       const agent = discoverAgents(dir, "both").agents.find(
         (candidate) => candidate.name === "settings-workflow.planner",
       );
-      assert.ok(agent);
-      assert.equal(agent.source, "package");
+      assert.equal(agent, undefined);
     }));
 
-  it("discovers project package agents when cwd is nested below the project root", () =>
+  it("ignores project package agents when cwd is nested below the project root", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-nested-package-discovery-"));
       tempDirs.push(dir);
@@ -596,12 +622,10 @@ Review nested project work.
       const agent = discoverAgents(nested, "both").agents.find(
         (candidate) => candidate.name === "nested-workflow.reviewer",
       );
-      assert.ok(agent);
-      assert.equal(agent.source, "package");
-      assert.equal(agent.filePath, path.join(packageRoot, "agents", "reviewer.md"));
+      assert.equal(agent, undefined);
     }));
 
-  it("discovers package-provided agents from the nearest declaring package root without discovering saved chains", () =>
+  it("ignores package-provided agents from the nearest declaring package root", () =>
     withTempHome((home) => {
       const dir = path.join(home, "workspace");
       tempDirs.push(dir);
@@ -644,19 +668,17 @@ Review nested package.
       const all = discoverAgentsAll(nested);
       assert.equal(all.projectDir, null);
       assert.equal(all.projectSettingsPath, null);
+      assert.deepEqual(all.package, []);
       assert.equal(
-        all.package.find((agent) => agent.name === "nested-package-agent")?.filePath,
-        path.join(dir, "package-agents", "nested-package-agent.md"),
+        discoverAgents(nested, "both").agents.find(
+          (agent) => agent.name === "nested-package-agent",
+        ),
+        undefined,
       );
       assert.deepEqual(all.chains, []);
-      assert.equal(
-        discoverAgents(nested, "both").agents.find((agent) => agent.name === "nested-package-agent")
-          ?.source,
-        "package",
-      );
     }));
 
-  it("ignores the default-profile ~/.agents marker so nested package manifests under HOME still drive package discovery", () =>
+  it("ignores nested package manifests even when a default-profile ~/.agents marker exists", () =>
     withTempHome((home) => {
       const dir = path.join(home, "workspace");
       tempDirs.push(dir);
@@ -700,19 +722,15 @@ Review nested HOME package.
       const all = discoverAgentsAll(nested);
       assert.equal(all.projectDir, null);
       assert.equal(all.projectSettingsPath, null);
+      assert.deepEqual(all.package, []);
       assert.equal(
-        all.package.find((agent) => agent.name === "home-package-agent")?.filePath,
-        path.join(dir, "package-agents", "home-package-agent.md"),
+        discoverAgents(nested, "both").agents.find((agent) => agent.name === "home-package-agent"),
+        undefined,
       );
       assert.deepEqual(all.chains, []);
-      assert.equal(
-        discoverAgents(nested, "both").agents.find((agent) => agent.name === "home-package-agent")
-          ?.source,
-        "package",
-      );
     }));
 
-  it("ignores the default-profile ~/.pi marker when PI_CODING_AGENT_DIR points at a custom profile", () =>
+  it("ignores package agents when PI_CODING_AGENT_DIR points at a custom profile", () =>
     withTempHome((home) => {
       const dir = path.join(home, "workspace");
       tempDirs.push(dir);
@@ -756,20 +774,17 @@ Review custom profile package.
       const all = discoverAgentsAll(nested);
       assert.equal(all.projectDir, null);
       assert.equal(all.projectSettingsPath, null);
-      assert.equal(
-        all.package.find((agent) => agent.name === "custom-profile-package-agent")?.filePath,
-        path.join(dir, "package-agents", "custom-profile-package-agent.md"),
-      );
-      assert.deepEqual(all.chains, []);
+      assert.deepEqual(all.package, []);
       assert.equal(
         discoverAgents(nested, "both").agents.find(
           (agent) => agent.name === "custom-profile-package-agent",
-        )?.source,
-        "package",
+        ),
+        undefined,
       );
+      assert.deepEqual(all.chains, []);
     }));
 
-  it("keeps .pi/.agents project markers ahead of nearer package manifests", () =>
+  it("keeps generic project markers inert despite nearer package manifests", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-marker-precedence-"));
       tempDirs.push(dir);
@@ -838,18 +853,19 @@ Review nested package.
 
       const all = discoverAgentsAll(nested);
       assert.equal(all.projectDir, path.join(dir, ".pi", "agents"));
+      assert.deepEqual(all.package, []);
       assert.equal(
-        all.package.find((agent) => agent.name === "root-package-agent")?.filePath,
-        path.join(dir, "root-package-agents", "root-package-agent.md"),
+        all.project.some((agent) => agent.name === "root-package-agent"),
+        false,
       );
       assert.equal(
-        all.package.some((agent) => agent.name === "nested-package-agent"),
+        all.project.some((agent) => agent.name === "nested-package-agent"),
         false,
       );
       assert.deepEqual(all.chains, []);
     }));
 
-  it("does not register legacy skill files from broad package agent roots", () =>
+  it("does not inspect broad package agent roots", () =>
     withTempHome(() => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-broad-package-skills-"));
       tempDirs.push(dir);
@@ -892,32 +908,10 @@ Agent prompt
       );
 
       const packageAgents = discoverAgentsAll(dir).package;
-      assert.ok(
-        packageAgents.find(
-          (agent) =>
-            agent.name === "package-agent" && agent.filePath === path.join(packageRoot, "agent.md"),
-        ),
-      );
-      assert.ok(
-        packageAgents.find(
-          (agent) =>
-            agent.name === "skill-named-package-agent" &&
-            agent.filePath === path.join(packageRoot, "agents", "SKILL.md"),
-        ),
-      );
-      assert.equal(
-        packageAgents.some((agent) =>
-          agent.filePath.includes(`${path.sep}.agents${path.sep}skills${path.sep}`),
-        ),
-        false,
-      );
-      assert.equal(
-        packageAgents.some((agent) => agent.name === "package-skill"),
-        false,
-      );
+      assert.deepEqual(packageAgents, []);
     }));
 
-  it("keeps package definitions below user and project overrides", () =>
+  it("ignores package definitions and generic user/project overrides", () =>
     withTempHome((home) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-precedence-"));
       tempDirs.push(dir);
@@ -996,14 +990,15 @@ Project chain.
 `,
       );
 
-      assert.equal(
-        discoverAgents(dir, "user").agents.find((agent) => agent.name === "scout")?.source,
-        "user",
+      const userScoped = upstreamDiscoverAgents(dir, "user").agents.find(
+        (agent) => agent.name === "scout",
       );
-      assert.equal(
-        discoverAgents(dir, "project").agents.find((agent) => agent.name === "scout")?.source,
-        "project",
+      assert.equal(userScoped, undefined);
+      const projectScoped = upstreamDiscoverAgents(dir, "project").agents.find(
+        (agent) => agent.name === "scout",
       );
+      assert.equal(projectScoped, undefined);
+      assert.deepEqual(discoverAgentsAll(dir).package, []);
       assert.deepEqual(discoverAgentsAll(dir).chains, []);
     }));
 });
@@ -1012,12 +1007,12 @@ describe("agent frontmatter tools policy", () => {
   it("distinguishes omitted, explicit-empty, MCP-only, and named declarations", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-tools-policy-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
 
     writeAgent(
-      path.join(agentsDir, "omitted.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: omitted
+name: developer
 description: Omitted tools
 ---
 
@@ -1025,9 +1020,9 @@ No tools field.
 `,
     );
     writeAgent(
-      path.join(agentsDir, "empty.md"),
+      path.join(agentsDir, "code-reviewer.md"),
       `---
-name: empty
+name: code-reviewer
 description: Explicit empty tools
 tools:
 ---
@@ -1036,9 +1031,9 @@ Empty tools field.
 `,
     );
     writeAgent(
-      path.join(agentsDir, "mcp-only.md"),
+      path.join(agentsDir, "repo-scout.md"),
       `---
-name: mcp-only
+name: repo-scout
 description: MCP-only tools
 tools: mcp:server/lookup, mcp:other/search
 ---
@@ -1047,9 +1042,9 @@ MCP-only tools field.
 `,
     );
     writeAgent(
-      path.join(agentsDir, "named.md"),
+      path.join(agentsDir, "diff-summarizer.md"),
       `---
-name: named
+name: diff-summarizer
 description: Named tools
 tools: read, bash, mcp:server/lookup
 ---
@@ -1059,10 +1054,13 @@ Named tools field.
     );
 
     const agents = discoverAgents(dir, "project").agents;
-    assert.equal(agents.find((agent) => agent.name === "omitted")?.tools, undefined);
-    assert.equal(agents.find((agent) => agent.name === "empty")?.tools, null);
-    assert.equal(agents.find((agent) => agent.name === "mcp-only")?.tools, null);
-    assert.deepEqual(agents.find((agent) => agent.name === "named")?.tools, ["read", "bash"]);
+    assert.equal(agents.find((agent) => agent.name === "developer")?.tools, undefined);
+    assert.equal(agents.find((agent) => agent.name === "code-reviewer")?.tools, null);
+    assert.equal(agents.find((agent) => agent.name === "repo-scout")?.tools, null);
+    assert.deepEqual(agents.find((agent) => agent.name === "diff-summarizer")?.tools, [
+      "read",
+      "bash",
+    ]);
   });
 });
 
@@ -1070,12 +1068,12 @@ describe("agent frontmatter completionGuard", () => {
   it("parses completionGuard from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "test-runner.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: test-runner
+name: developer
 description: Test runner
 completionGuard: false
 ---
@@ -1086,7 +1084,7 @@ Validate changes
     );
 
     const result = discoverAgents(dir, "project");
-    const runner = result.agents.find((agent) => agent.name === "test-runner");
+    const runner = result.agents.find((agent) => agent.name === "developer");
     assert.equal(runner?.completionGuard, false);
     assert.equal(runner?.extraFields?.completionGuard, undefined);
   });
@@ -1096,12 +1094,12 @@ describe("agent frontmatter maxSubagentDepth", () => {
   it("parses maxSubagentDepth from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-frontmatter-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "scout.md"),
+      path.join(agentsDir, "repo-scout.md"),
       `---
-name: scout
+name: repo-scout
 description: Scout
 maxSubagentDepth: 1
 ---
@@ -1112,7 +1110,7 @@ Inspect code
     );
 
     const result = discoverAgents(dir, "project");
-    const scout = result.agents.find((agent) => agent.name === "scout");
+    const scout = result.agents.find((agent) => agent.name === "repo-scout");
     assert.equal(scout?.maxSubagentDepth, 1);
   });
 });
@@ -1121,17 +1119,17 @@ describe("agent frontmatter thinking", () => {
   it("coerces frontmatter false strings to disabled thinking", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-thinking-false-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
 
-    for (const [name, value] of [
-      ["unquoted", "false"],
-      ["quoted", '"false"'],
+    for (const [name, role, value] of [
+      ["unquoted", "developer", "false"],
+      ["quoted", "code-reviewer", '"false"'],
     ] as const) {
       fs.writeFileSync(
-        path.join(agentsDir, `${name}.md`),
+        path.join(agentsDir, `${role}.md`),
         `---
-name: ${name}
+name: ${role}
 description: ${name}
 model: glm-5.2-short-fast
 thinking: ${value}
@@ -1144,8 +1142,8 @@ Do work
     }
 
     const agents = discoverAgents(dir, "project").agents;
-    for (const name of ["unquoted", "quoted"]) {
-      const agent = agents.find((candidate) => candidate.name === name);
+    for (const role of ["developer", "code-reviewer"]) {
+      const agent = agents.find((candidate) => candidate.name === role);
       assert.ok(agent);
       assert.equal(agent.thinking, false);
 
@@ -1168,14 +1166,25 @@ Do work
   it("preserves supported frontmatter thinking strings", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-thinking-levels-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
+    const roles = [
+      "developer",
+      "code-reviewer",
+      "repo-scout",
+      "diff-summarizer",
+      "librarian",
+      "web-scout",
+      "oracle",
+    ];
 
-    for (const level of THINKING_LEVELS) {
+    for (const [index, level] of THINKING_LEVELS.entries()) {
+      const role = roles[index];
+      assert.ok(role);
       fs.writeFileSync(
-        path.join(agentsDir, `${level}.md`),
+        path.join(agentsDir, `${role}.md`),
         `---
-name: thinker-${level}
+name: ${role}
 description: Thinking ${level}
 thinking: ${level}
 ---
@@ -1187,8 +1196,10 @@ Do work
     }
 
     const agents = discoverAgents(dir, "project").agents;
-    for (const level of THINKING_LEVELS) {
-      const agent = agents.find((candidate) => candidate.name === `thinker-${level}`);
+    for (const [index, level] of THINKING_LEVELS.entries()) {
+      const role = roles[index];
+      assert.ok(role);
+      const agent = agents.find((candidate) => candidate.name === role);
       assert.ok(agent);
       assert.equal(agent.thinking, level);
     }
@@ -1199,12 +1210,12 @@ describe("agent frontmatter fallbackModels", () => {
   it("parses fallbackModels from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-fallback-frontmatter-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 fallbackModels: openai/gpt-5-mini, anthropic/claude-sonnet-4
 ---
@@ -1215,7 +1226,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.deepEqual(worker?.fallbackModels, ["openai/gpt-5-mini", "anthropic/claude-sonnet-4"]);
   });
 });
@@ -1226,12 +1237,12 @@ describe("agent frontmatter systemPromptMode", () => {
       path.join(os.tmpdir(), "pi-subagents-agent-prompt-mode-frontmatter-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 systemPromptMode: replace
 ---
@@ -1242,7 +1253,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.equal(worker?.systemPromptMode, "replace");
   });
 });
@@ -1253,12 +1264,12 @@ describe("agent frontmatter prompt inheritance flags", () => {
       path.join(os.tmpdir(), "pi-subagents-agent-prompt-inheritance-frontmatter-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 inheritProjectContext: true
 inheritSkills: true
@@ -1270,7 +1281,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.equal(worker?.inheritProjectContext, true);
     assert.equal(worker?.inheritSkills, true);
   });
@@ -1280,12 +1291,12 @@ describe("agent frontmatter subagentOnlyExtensions", () => {
   it("parses subagentOnlyExtensions from discovered agent frontmatter", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-child-ext-"));
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 subagentOnlyExtensions: ./tools/child-search.ts, /opt/pi/child-only.ts
 ---
@@ -1296,7 +1307,7 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.deepEqual(worker?.subagentOnlyExtensions, [
       "./tools/child-search.ts",
       "/opt/pi/child-only.ts",
@@ -1310,12 +1321,12 @@ describe("agent frontmatter prompt assembly defaults", () => {
       path.join(os.tmpdir(), "pi-subagents-agent-default-prompt-settings-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "worker.md"),
+      path.join(agentsDir, "developer.md"),
       `---
-name: worker
+name: developer
 description: Worker
 ---
 
@@ -1325,24 +1336,24 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "worker");
+    const worker = result.agents.find((agent) => agent.name === "developer");
     assert.equal(worker?.systemPromptMode, "replace");
     assert.equal(worker?.inheritProjectContext, false);
     assert.equal(worker?.inheritSkills, false);
   });
 
-  it("defaults delegate to append mode with inherited project context", () => {
+  it("defaults another canonical role to replace mode with no inherited context", () => {
     const dir = fs.mkdtempSync(
       path.join(os.tmpdir(), "pi-subagents-agent-delegate-default-prompt-settings-"),
     );
     tempDirs.push(dir);
-    const agentsDir = path.join(dir, ".pi", "agents");
+    const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "delegate.md"),
+      path.join(agentsDir, "code-reviewer.md"),
       `---
-name: delegate
-description: Delegate
+name: code-reviewer
+description: Code reviewer
 ---
 
 Do work
@@ -1351,15 +1362,15 @@ Do work
     );
 
     const result = discoverAgents(dir, "project");
-    const delegate = result.agents.find((agent) => agent.name === "delegate");
-    assert.equal(delegate?.systemPromptMode, "append");
-    assert.equal(delegate?.inheritProjectContext, true);
-    assert.equal(delegate?.inheritSkills, false);
+    const reviewer = result.agents.find((agent) => agent.name === "code-reviewer");
+    assert.equal(reviewer?.systemPromptMode, "replace");
+    assert.equal(reviewer?.inheritProjectContext, false);
+    assert.equal(reviewer?.inheritSkills, false);
   });
 });
 
 describe("packaged agent discovery", () => {
-  it("recursively discovers nested project agents without discovering saved chain files", () => {
+  it("does not discover nested project agents or saved chain files", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-recursive-agent-discovery-"));
     tempDirs.push(dir);
     const nestedDir = path.join(dir, ".pi", "agents", "code-analysis", "deep");
@@ -1392,11 +1403,11 @@ Review
     );
 
     const result = discoverAgentsAll(dir);
-    assert.ok(
-      result.project.find(
-        (agent) => agent.name === "scout" && agent.filePath === path.join(nestedDir, "scout.md"),
-      ),
+    assert.equal(
+      result.project.some((agent) => agent.name === "scout"),
+      false,
     );
+    assert.deepEqual(result.package, []);
     assert.deepEqual(result.chains, []);
     assert.equal(
       result.project.some((agent) => agent.filePath.endsWith("review.chain.md")),
@@ -1404,7 +1415,7 @@ Review
     );
   });
 
-  it("registers packaged agents by runtime name and preserves local name plus package", () => {
+  it("does not register package frontmatter from generic project paths", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-agent-"));
     tempDirs.push(dir);
     const agentsDir = path.join(dir, ".pi", "agents");
@@ -1425,12 +1436,10 @@ Inspect code
     const scout = discoverAgents(dir, "project").agents.find(
       (agent) => agent.name === "code-analysis.scout",
     );
-    assert.ok(scout);
-    assert.equal(scout.localName, "scout");
-    assert.equal(scout.packageName, "code-analysis");
+    assert.equal(scout, undefined);
   });
 
-  it("keeps packaged and un-packaged runtime names distinct while preserving un-packaged precedence", () => {
+  it("ignores generic project runtime-name collisions", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-packaged-collisions-"));
     tempDirs.push(dir);
     fs.mkdirSync(path.join(dir, ".agents"), { recursive: true });
@@ -1471,14 +1480,17 @@ Packaged
     );
 
     const agents = discoverAgents(dir, "project").agents;
-    const unqualified = agents.find((agent) => agent.name === "scout");
-    const packaged = agents.find((agent) => agent.name === "code-analysis.scout");
-    assert.equal(unqualified?.description, "Project scout");
-    assert.equal(unqualified?.filePath, path.join(dir, ".pi", "agents", "scout.md"));
-    assert.equal(packaged?.description, "Packaged scout");
+    assert.equal(
+      agents.find((agent) => agent.name === "scout"),
+      undefined,
+    );
+    assert.equal(
+      agents.find((agent) => agent.name === "code-analysis.scout"),
+      undefined,
+    );
   });
 
-  it("normalizes package frontmatter for discovered agents while ignoring saved chains", () => {
+  it("ignores package frontmatter while still ignoring saved chains", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-package-normalize-"));
     tempDirs.push(dir);
     const agentsDir = path.join(dir, ".pi", "agents");
@@ -1513,11 +1525,15 @@ Review
     );
 
     const result = discoverAgentsAll(dir);
-    assert.ok(result.project.find((agent) => agent.name === "code-analysis.scout"));
+    assert.equal(
+      result.project.find((agent) => agent.name === "code-analysis.scout"),
+      undefined,
+    );
+    assert.deepEqual(result.package, []);
     assert.deepEqual(result.chains, []);
   });
 
-  it("skips invalid package frontmatter that cannot be normalized", () => {
+  it("does not inspect invalid package frontmatter from generic paths", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-invalid-package-"));
     tempDirs.push(dir);
     const agentsDir = path.join(dir, ".pi", "agents");
@@ -1560,118 +1576,82 @@ Review
       result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")),
       false,
     );
-    const diagnostic = result.agentDiagnostics?.find((entry) =>
-      entry.filePath.endsWith("scout.md"),
+    assert.equal(
+      result.agentDiagnostics?.some((entry) => entry.filePath.endsWith("scout.md")),
+      false,
     );
-    assert.ok(diagnostic);
-    assert.match(diagnostic.error, /package/);
   });
 });
 
 describe("project agent directory discovery", () => {
-  it("discovers project agents from both .agents and .pi/agents", () => {
+  it("ignores project custom and generic project trees in ordinary discovery", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-agent-dirs-"));
     tempDirs.push(dir);
     fs.mkdirSync(path.join(dir, ".agents", "skills"), { recursive: true });
     fs.mkdirSync(path.join(dir, ".pi", "agents"), { recursive: true });
     fs.writeFileSync(
       path.join(dir, ".agents", "legacy.md"),
-      `---
-name: legacy
-description: Legacy
----
-
-Legacy prompt
-`,
+      `---\nname: legacy\ndescription: Legacy\n---\n\nLegacy prompt\n`,
       "utf-8",
     );
     fs.writeFileSync(
       path.join(dir, ".pi", "agents", "canonical.md"),
-      `---
-name: canonical
-description: Canonical
----
-
-Canonical prompt
-`,
+      `---\nname: canonical\ndescription: Canonical\n---\n\nCanonical prompt\n`,
       "utf-8",
     );
     fs.writeFileSync(
       path.join(dir, ".pi", "agents", "SKILL.md"),
-      `---
-name: skill-named-agent
-description: Skill-named agent
----
-
-Skill-named agent prompt
-`,
+      `---\nname: skill-named-agent\ndescription: Skill-named agent\n---\n\nSkill-named agent prompt\n`,
       "utf-8",
     );
+    const profile = trustRoot(dir);
+    writeRootCustomAgent(dir, "CANONICAL.md", "canonical");
 
-    const result = discoverAgents(dir, "project");
-    assert.ok(
-      result.agents.find(
-        (agent) =>
-          agent.name === "legacy" && agent.filePath === path.join(dir, ".agents", "legacy.md"),
-      ),
+    const result = upstreamDiscoverAgents(dir, "project");
+    assert.equal(
+      result.agents.find((agent) => agent.name === "embedded.canonical"),
+      undefined,
     );
-    assert.ok(
-      result.agents.find(
-        (agent) =>
-          agent.name === "canonical" &&
-          agent.filePath === path.join(dir, ".pi", "agents", "canonical.md"),
+    assert.equal(
+      result.agents.some((agent) =>
+        ["legacy", "canonical", "skill-named-agent"].includes(agent.name),
       ),
+      false,
     );
-    assert.ok(
-      result.agents.find(
-        (agent) =>
-          agent.name === "skill-named-agent" &&
-          agent.filePath === path.join(dir, ".pi", "agents", "SKILL.md"),
-      ),
-    );
-    assert.equal(result.projectAgentsDir, path.join(dir, ".pi", "agents"));
+    assert.equal(process.env.PI_CODING_AGENT_DIR, profile);
   });
 
-  it("does not register legacy project skill files as agents", () => {
+  it("keeps generic project and project-custom skill trees out of agent discovery", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-skills-not-agents-"));
     tempDirs.push(dir);
     writeAgent(
       path.join(dir, ".agents", "legacy.md"),
-      `---
-name: legacy
-description: Legacy
----
-
-Legacy prompt
-`,
+      `---\nname: legacy\ndescription: Legacy\n---\n\nLegacy prompt\n`,
     );
     writeAgent(
       path.join(dir, ".agents", "skills", "directory-skill", "SKILL.md"),
-      `---
-name: directory-skill
-description: Directory skill
----
-
-Skill prompt
-`,
+      `---\nname: directory-skill\ndescription: Directory skill\n---\n\nSkill prompt\n`,
     );
     writeAgent(
       path.join(dir, ".agents", "skills", "file-skill.md"),
-      `---
-name: file-skill
-description: File skill
----
-
-Skill prompt
-`,
+      `---\nname: file-skill\ndescription: Skill prompt\n---\n\nSkill prompt\n`,
     );
+    trustRoot(dir);
+    writeRootCustomAgent(dir, "LEGACY.md", "legacy");
 
-    const agents = discoverAgents(dir, "project").agents;
-    assert.ok(agents.find((agent) => agent.name === "legacy"));
+    const agents = upstreamDiscoverAgents(dir, "project").agents;
+    assert.equal(
+      agents.find((agent) => agent.name === "embedded.legacy"),
+      undefined,
+    );
     assert.equal(
       agents.some((agent) =>
         agent.filePath.includes(`${path.sep}.agents${path.sep}skills${path.sep}`),
       ),
+      false,
+    );
+    assert.equal(
+      agents.some((agent) => agent.name === "legacy"),
       false,
     );
     assert.equal(
@@ -1684,33 +1664,39 @@ Skill prompt
     );
   });
 
-  it("does not register user SKILL.md files as agents", () =>
+  it("does not register generic user SKILL.md files as agents", () =>
     withTempHome((home) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-user-skills-not-agents-"));
       tempDirs.push(dir);
       writeAgent(
         path.join(home, ".agents", "user-agent.md"),
-        `---
-name: user-agent
-description: User agent
----
-
-User prompt
-`,
+        `---\nname: user-agent\ndescription: User agent\n---\n\nUser prompt\n`,
       );
       writeAgent(
         path.join(home, ".agents", "skills", "user-skill", "SKILL.md"),
-        `---
-name: user-skill
-description: User skill
----
-
-Skill prompt
-`,
+        `---\nname: user-skill\ndescription: User skill\n---\n\nSkill prompt\n`,
       );
+      const canonical = path.join(
+        home,
+        ".pi",
+        "agent",
+        "tlh",
+        "agents",
+        "subagents",
+        "developer.md",
+      );
+      writeAgent(
+        canonical,
+        `---\nname: developer\ndescription: TLH developer\n---\n\nDeveloper prompt\n`,
+      );
+      process.env.PI_CODING_AGENT_DIR = path.join(home, ".pi", "agent");
 
       const agents = discoverAgents(dir, "user").agents;
-      assert.ok(agents.find((agent) => agent.name === "user-agent"));
+      assert.equal(agents.find((agent) => agent.name === "developer")?.filePath, canonical);
+      assert.equal(
+        agents.some((agent) => agent.name === "user-agent"),
+        false,
+      );
       assert.equal(
         agents.some((agent) =>
           agent.filePath.includes(`${path.sep}.agents${path.sep}skills${path.sep}`),
@@ -1723,39 +1709,32 @@ Skill prompt
       );
     }));
 
-  it("prefers .pi/agents over .agents on project agent name collisions", () => {
+  it("ignores root custom files when generic project trees collide", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-project-agent-collision-"));
     tempDirs.push(dir);
     fs.mkdirSync(path.join(dir, ".agents"), { recursive: true });
     fs.mkdirSync(path.join(dir, ".pi", "agents"), { recursive: true });
     fs.writeFileSync(
       path.join(dir, ".agents", "shared.md"),
-      `---
-name: shared
-description: Legacy shared
----
-
-Legacy prompt
-`,
+      `---\nname: shared\ndescription: Legacy shared\n---\n\nLegacy prompt\n`,
       "utf-8",
     );
     fs.writeFileSync(
       path.join(dir, ".pi", "agents", "shared.md"),
-      `---
-name: shared
-description: Canonical shared
----
-
-Canonical prompt
-`,
+      `---\nname: shared\ndescription: Generic shared\n---\n\nGeneric prompt\n`,
       "utf-8",
     );
+    trustRoot(dir);
+    writeRootCustomAgent(dir, "SHARED.md", "shared", "Canonical prompt");
 
-    const shared = discoverAgents(dir, "project").agents.find((agent) => agent.name === "shared");
-    assert.ok(shared);
-    assert.equal(shared.filePath, path.join(dir, ".pi", "agents", "shared.md"));
-    assert.equal(shared.description, "Canonical shared");
-    assert.equal(shared.systemPrompt.trim(), "Canonical prompt");
+    const shared = upstreamDiscoverAgents(dir, "project").agents.find(
+      (agent) => agent.name === "embedded.shared",
+    );
+    assert.equal(shared, undefined);
+    assert.equal(
+      upstreamDiscoverAgents(dir, "project").agents.some((agent) => agent.name === "shared"),
+      false,
+    );
   });
 
   it("uses the project root for the canonical project agent dir even when only .agents exists", () => {

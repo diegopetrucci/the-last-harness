@@ -7,7 +7,6 @@ import {
   requiredSupportFiles,
   type SupportFileDescriptor,
 } from "./tlh-install-support-manifest.mjs";
-import { settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts } from "./tlh-install-subagents.mjs";
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -168,24 +167,18 @@ async function prepareSupportFilesFromRemote(
     }
   }
 
-  if (
-    settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-      noSettings: config.noSettings,
-    })
-  ) {
-    const targetDir = join(config.tmpDir, "agents", "subagents");
-    mkdirSync(targetDir, { recursive: true });
-    for (const prompt of config.subagentPrompts) {
-      const targetPath = join(targetDir, prompt);
-      try {
-        await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
-      } catch {
-        callWarn(
-          `TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`,
-          io,
-        );
-        rmSync(targetPath, { force: true });
-      }
+  const targetDir = join(config.tmpDir, "agents", "subagents");
+  mkdirSync(targetDir, { recursive: true });
+  for (const prompt of config.subagentPrompts) {
+    const targetPath = join(targetDir, prompt);
+    try {
+      await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
+    } catch {
+      callWarn(
+        `TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`,
+        io,
+      );
+      rmSync(targetPath, { force: true });
     }
   }
 }

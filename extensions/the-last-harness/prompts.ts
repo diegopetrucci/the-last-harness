@@ -1,16 +1,18 @@
-import { lstatSync } from "node:fs";
-import { basename, join, relative, sep } from "node:path";
+import { join } from "node:path";
 
 import { SELECTABLE_PRIMARY_AGENTS } from "../the-last-harness-primary-agent.mjs";
-import {
-  allowedSubagentsForExperimentalConfig,
-  isEmbeddedSubagentTarget,
-} from "../the-last-harness-subagent-safety.mjs";
+import { allowedSubagentsForExperimentalConfig } from "../the-last-harness-subagent-safety.mjs";
 import { CHILD_SUBAGENT_PROMPT, HARNESS_PROMPT } from "./constants.js";
-import { readMarkdownFilesRecursive, readText, uniqueSorted } from "./common.js";
+import { readMarkdownFilesRecursive, readText } from "./common.js";
 import { packageRoot } from "./package-version.js";
 import { isThinkingLevel } from "./thinking.js";
+import {
+  formatProjectAgentGuidance,
+  type ProjectAgentGuidanceInventory,
+} from "../shared/project-agent-guidance.js";
 import type { ProviderModelReference } from "./model-defaults.js";
+
+export { formatProjectAgentGuidance } from "../shared/project-agent-guidance.js";
 import type {
   AgentPrompt,
   SubagentMetadata,
@@ -509,136 +511,6 @@ export function loadSubagentMetadata(): SubagentMetadata[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function parseSubagentDiscoveryFrontmatter(content: string): Record<string, string> {
-  const frontmatter: Record<string, string> = {};
-  const normalized = content.replace(/\r\n/g, "\n");
-  if (!normalized.startsWith("---")) {
-    return frontmatter;
-  }
-  const endIndex = normalized.indexOf("\n---", 3);
-  if (endIndex === -1) {
-    return frontmatter;
-  }
-
-  let currentKey: string | undefined;
-  let currentBlockLines: string[] | undefined;
-  let currentIndent: number | undefined;
-  const flushBlock = () => {
-    if (currentKey === undefined || currentBlockLines === undefined) {
-      return;
-    }
-    const rawBlock = currentBlockLines.join("\n");
-    const prefix = rawBlock.match(/^([ \t]+)/m)?.[1] ?? "";
-    frontmatter[currentKey] = prefix
-      ? rawBlock
-          .replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gm"), "")
-          .replace(/^\n/, "")
-      : rawBlock;
-    currentKey = undefined;
-    currentBlockLines = undefined;
-    currentIndent = undefined;
-  };
-
-  for (const line of normalized.slice(4, endIndex).split("\n")) {
-    const indent = line.search(/\S|$/);
-    if (
-      currentKey !== undefined &&
-      currentBlockLines !== undefined &&
-      indent > (currentIndent ?? 0)
-    ) {
-      currentBlockLines.push(line);
-      continue;
-    }
-    flushBlock();
-    const match = line.match(/^([\w-]+):\s*(.*)$/);
-    if (!match) {
-      continue;
-    }
-    let value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (value === "") {
-      currentKey = match[1];
-      currentBlockLines = [];
-      currentIndent = indent;
-    } else {
-      frontmatter[match[1]] = value;
-    }
-  }
-  flushBlock();
-  return frontmatter;
-}
-
-function normalizeSubagentPackageName(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const normalized = trimmed
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9.-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/\.+/g, ".")
-    .replace(/(?:^[-.]+|[-.]+$)/g, "");
-  return /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/.test(normalized) ? normalized : undefined;
-}
-
-function isLegacyAgentSkillPath(rootDir: string, filePath: string): boolean {
-  const parts = relative(rootDir, filePath)
-    .split(sep)
-    .map((part) => part.toLowerCase());
-  if (basename(rootDir).toLowerCase() === ".agents") {
-    parts.unshift(".agents");
-  }
-  return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
-}
-
-export function loadAuthorizedEmbeddedSubagentRuntimeNames(agentDir: string): string[] {
-  const authorizationByRuntimeName = new Map<string, boolean>();
-  const agentsDir = join(agentDir, "agents");
-  try {
-    if (lstatSync(agentsDir).isSymbolicLink()) {
-      return [];
-    }
-  } catch {
-    return [];
-  }
-  for (const filePath of readMarkdownFilesRecursive(agentsDir)) {
-    if (filePath.endsWith(".chain.md") || isLegacyAgentSkillPath(agentsDir, filePath)) {
-      continue;
-    }
-    const content = readText(filePath);
-    if (typeof content !== "string") {
-      continue;
-    }
-    const frontmatter = parseSubagentDiscoveryFrontmatter(content);
-    const name = frontmatter.name;
-    const description = frontmatter.description;
-    if (normalizeSubagentPackageName(frontmatter.package) !== "embedded" || !name || !description) {
-      continue;
-    }
-    const runtimeName = `embedded.${name}`;
-    if (!isEmbeddedSubagentTarget(runtimeName)) {
-      continue;
-    }
-    try {
-      authorizationByRuntimeName.set(runtimeName, lstatSync(filePath).isFile());
-    } catch {
-      continue;
-    }
-  }
-  return uniqueSorted(
-    [...authorizationByRuntimeName.entries()]
-      .filter(([, authorized]) => authorized)
-      .map(([runtimeName]) => runtimeName),
-  );
-}
-
 const REVIEW_HANDOFF_PROMPT = `
 ## /review handoff
 
@@ -664,11 +536,11 @@ function formatAllowedSubagents(
   }
   const managementGuidance = `For subagent management \`action: "list"\`/\`"get"\`/\`"resume"\` calls, omit \`agentScope\` or use \`"user"\`. For \`action: "resume"\`, also omit \`context\` or use \`"fresh"\`. TLH minor agents are isolated to the user scope.`;
   if (options.neutral) {
-    return `## TLH Allowed Minor Subagents\n\nThe subagent tool may delegate to these bundled TLH minor agents:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted \`embedded.<slug>\` subagents may also be used only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf.`;
+    return `## TLH Allowed Minor Subagents\n\nThe subagent tool may delegate to these bundled TLH minor agents:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted \`embedded.<slug>\` agents may also be used only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves them only from \`.tlh/agents/custom/<UPPERCASE-SLUG>.md\`.`;
   }
   const isArchitect = primary?.name === "architect";
   if (isArchitect) {
-    return `## TLH Allowed Minor Subagents\n\nYou may delegate to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted project agents are intentionally omitted from management \`list\`/\`get\` output. After the user asks for the \`xyz\` project subagent, map it to \`embedded.xyz\`; this trusted project-agent exception may be invoked even though management output omits it. You may also delegate to a trusted \`embedded.<slug>\` subagent only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf.`;
+    return `## TLH Allowed Minor Subagents\n\nYou may delegate to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance} Trusted project agents are intentionally omitted from management \`list\`/\`get\` output. After the user asks for the \`xyz\` project subagent, map it to \`embedded.xyz\`; this trusted project-agent exception may be invoked even though management output omits it. You may also delegate to a trusted \`embedded.<slug>\` agent only when the user explicitly names or asks for that trusted agent; never proactively choose embedded agents on the user's behalf. TLH resolves project agents only from \`.tlh/agents/custom/<UPPERCASE-SLUG>.md\`.`;
   }
   return `## TLH Allowed Minor Subagents\n\nYou may delegate only to these minor agents via the subagent tool:\n\n${lines.join("\n")}\n\n${managementGuidance}\n\nDo not delegate outside this bundled TLH minor-agent list.`;
 }
@@ -677,11 +549,13 @@ export function buildTlhSystemPrompt(
   primary: AgentPrompt | undefined,
   subagents: SubagentMetadata[],
   primaryEnabled: boolean,
+  projectAgentGuidanceInventory?: ProjectAgentGuidanceInventory,
 ): string {
   const prompts = [HARNESS_PROMPT.trim()];
   if (primaryEnabled) {
     if (primary) {
       prompts.push(primary.systemPrompt.trim());
+      prompts.push(formatProjectAgentGuidance(projectAgentGuidanceInventory, primary.name));
     }
     prompts.push(formatAllowedSubagents(primary, subagents));
   } else {

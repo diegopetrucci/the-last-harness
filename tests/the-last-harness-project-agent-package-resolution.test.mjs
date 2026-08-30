@@ -15,10 +15,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-import {
-  hasTrustRequiringProjectResources,
-  ProjectTrustStore,
-} from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
 const repoRoot = realpathSync(join(import.meta.dirname, ".."));
 
@@ -42,7 +39,7 @@ test("staged package resolves trusted project agents without peer/dev node_modul
   const agentDir = join(root, "agent");
   mkdirSync(packDir, { recursive: true });
   mkdirSync(extractDir, { recursive: true });
-  mkdirSync(join(projectRoot, ".tlh", "agents"), { recursive: true });
+  mkdirSync(join(projectRoot, ".tlh", "agents", "custom"), { recursive: true });
   mkdirSync(agentDir, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -84,8 +81,9 @@ test("staged package resolves trusted project agents without peer/dev node_modul
   );
 
   spawnSync("git", ["init", "--quiet", projectRoot], { stdio: "ignore" });
+  new ProjectTrustStore(agentDir).set(projectRoot, true);
   writeFileSync(
-    join(projectRoot, ".tlh", "agents", "trusted.md"),
+    join(projectRoot, ".tlh", "agents", "custom", "TRUSTED.md"),
     `---
 name: trusted
 package: embedded
@@ -110,8 +108,6 @@ Loaded from the staged package.
     cwd: projectRoot,
     sessionId: "staged-package-missing-dependencies",
     agentDir,
-    defaultProjectTrust: "always",
-    context: { hasUI: false },
   });
   assert.equal(missingDependencies.status, "unavailable");
 
@@ -119,12 +115,9 @@ Loaded from the staged package.
     cwd: projectRoot,
     sessionId: "staged-package-session",
     agentDir,
-    defaultProjectTrust: "always",
     trustDependencies: {
       createProjectTrustStore: (trustAgentDir) => new ProjectTrustStore(trustAgentDir),
-      hasTrustRequiringProjectResources,
     },
-    context: { hasUI: false },
   });
 
   assert.equal(result.status, "loaded");
@@ -135,12 +128,9 @@ Loaded from the staged package.
   );
   const reauthorized = await bridge.reauthorizeTlhProjectAgentTrust(projectRoot, {
     agentDir,
-    defaultProjectTrust: "always",
     trustDependencies: {
       createProjectTrustStore: (trustAgentDir) => new ProjectTrustStore(trustAgentDir),
-      hasTrustRequiringProjectResources,
     },
-    hasUI: false,
   });
   assert.equal(reauthorized.trusted, true);
   await access.retainTlhProjectAgentSnapshotReference(

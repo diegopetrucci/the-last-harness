@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,9 +7,36 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { handleManagementAction } from "../../src/agents/agent-management.ts";
 import { discoverAgentsAll } from "../../src/agents/agents.ts";
 import { clearSkillCache } from "../../src/agents/skills.ts";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
 let tempDir = "";
 let oldAgentDir: string | undefined;
+
+function trustProject(): void {
+  execFileSync("git", ["init", "--quiet"], { cwd: tempDir });
+  fs.mkdirSync(path.join(tempDir, "agent-home"), { recursive: true });
+  new ProjectTrustStore(path.join(tempDir, "agent-home")).set(tempDir, true);
+}
+
+function writeCustom(filename: string, name: string, extra = ""): void {
+  const filePath = path.join(tempDir, ".tlh", "agents", "custom", filename);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    `---\nname: ${name}\npackage: embedded\ndescription: ${name}\n${extra}---\n\n${name}.\n`,
+    "utf-8",
+  );
+}
+
+function writeCanonicalRole(name: string): void {
+  const filePath = path.join(tempDir, "agent-home", "tlh", "agents", "subagents", `${name}.md`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(
+    filePath,
+    `---\nname: ${name}\ndescription: Canonical ${name}\n---\n\nCanonical role.\n`,
+    "utf-8",
+  );
+}
 
 function readText(result: { content: Array<{ type: string; text?: string }> }): string {
   const first = result.content[0];
@@ -75,128 +103,65 @@ describe("agent management config parsing", () => {
     assert.deepEqual(discovered.builtin, [], "builtin agents must be empty after removal");
   });
 
-  it("formats omitted tools differently from explicit empty and named policies", () => {
-    const agentsDir = path.join(tempDir, ".pi", "agents");
-    fs.mkdirSync(agentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(agentsDir, "omitted.md"),
-      `---
-name: omitted
-description: Omitted tools
----
+  it("shows canonical roles for project scope without exposing project custom agents", () => {
+    writeCanonicalRole("developer");
+    trustProject();
+    writeCustom("HELPER.md", "helper");
 
-Omitted tools.
-`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(agentsDir, "empty.md"),
-      `---
-name: empty
-description: Explicit empty tools
-tools:
----
-
-Empty tools.
-`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(agentsDir, "named.md"),
-      `---
-name: named
-description: Named tools
-tools: read, bash
----
-
-Named tools.
-`,
-      "utf-8",
-    );
-
-    const getAgent = (agent: string): string => {
-      const result = handleManagementAction("get", { agent }, { cwd: tempDir });
-      assert.equal(result.isError, false);
-      return readText(result);
-    };
-
-    assert.doesNotMatch(getAgent("omitted"), /^Tools:/m);
-    assert.match(getAgent("empty"), /^Tools: \(none\)$/m);
-    assert.match(getAgent("named"), /^Tools: read, bash$/m);
+    const result = handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir });
+    assert.equal(result.isError, false);
+    const text = readText(result);
+    assert.match(text, /- developer \(user\): Canonical developer/);
+    assert.doesNotMatch(text, /embedded\.helper|HELPER\.md/);
   });
 
-  it("lists malformed-agent warnings without hiding valid agents", () => {
-    const agentsDir = path.join(tempDir, ".pi", "agents");
-    fs.mkdirSync(agentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(agentsDir, "broken.md"),
-      `---
-name: broken
-description: Broken
-acceptanceRole: observer
----
+  it("does not expose project-custom definitions through management get", () => {
+    trustProject();
+    writeCustom("OMITTED.md", "omitted");
+    writeCustom("EMPTY.md", "empty", "tools:\n");
+    writeCustom("NAMED.md", "named", "tools: read, bash\n");
 
-Broken.
-`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(agentsDir, "valid.md"),
-      `---
-name: valid
-description: Valid
----
+    for (const agent of ["omitted", "empty", "named"]) {
+      const result = handleManagementAction(
+        "get",
+        { agent: `embedded.${agent}` },
+        { cwd: tempDir },
+      );
+      assert.equal(result.isError, true);
+      assert.match(readText(result), /not found/i);
+    }
+  });
 
-Valid.
-`,
-      "utf-8",
-    );
+  it("does not inspect malformed root custom definitions", () => {
+    trustProject();
+    writeCustom("BROKEN.md", "broken", "acceptanceRole: observer\n");
+    writeCustom("VALID.md", "valid");
 
     const listed = handleManagementAction("list", {}, { cwd: tempDir });
     assert.equal(listed.isError, false);
     const text = readText(listed);
-    assert.match(text, /- valid \(project\): Valid/);
-    assert.match(text, /Agent load warnings:/);
-    assert.match(text, /broken\.md/);
-    assert.match(text, /acceptanceRole/);
+    assert.equal(text, "Executable agents:\n- (none)");
   });
 
-  it("keeps malformed-agent warnings aligned with existing list scopes", () => {
-    const userAgentsDir = path.join(tempDir, "agent-home", "agents");
-    const projectAgentsDir = path.join(tempDir, ".pi", "agents");
-    fs.mkdirSync(userAgentsDir, { recursive: true });
-    fs.mkdirSync(projectAgentsDir, { recursive: true });
+  it("keeps root custom warnings aligned with user and project list scopes", () => {
+    trustProject();
+    writeCustom("PROJECT-BROKEN.md", "project-broken", "acceptanceRole: observer\n");
+    fs.mkdirSync(path.join(tempDir, "agent-home", "agents"), { recursive: true });
     fs.writeFileSync(
-      path.join(userAgentsDir, "user-broken.md"),
-      `---
-description: User malformed
----
-
-Malformed user.
-`,
-      "utf-8",
-    );
-    fs.writeFileSync(
-      path.join(projectAgentsDir, "project-broken.md"),
-      `---
-name: project-broken
----
-
-Malformed project.
-`,
+      path.join(tempDir, "agent-home", "agents", "user-broken.md"),
+      "---\ndescription: User malformed\n---\n\nMalformed user.\n",
       "utf-8",
     );
 
     const userText = readText(
       handleManagementAction("list", { agentScope: "user" }, { cwd: tempDir }),
     );
-    assert.match(userText, /user-broken\.md/);
-    assert.doesNotMatch(userText, /project-broken\.md/);
+    assert.doesNotMatch(userText, /user-broken\.md|PROJECT-BROKEN\.md/);
 
     const projectText = readText(
       handleManagementAction("list", { agentScope: "project" }, { cwd: tempDir }),
     );
-    assert.match(projectText, /project-broken\.md/);
-    assert.doesNotMatch(projectText, /user-broken\.md/);
+    assert.doesNotMatch(projectText, /PROJECT-BROKEN\.md|user-broken\.md/);
+    assert.equal(projectText, "Executable agents:\n- (none)");
   });
 });

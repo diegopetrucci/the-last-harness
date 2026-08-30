@@ -9,12 +9,11 @@ import {
   MAX_PROJECT_DEFAULT_WARNING_LENGTH,
   MAX_PROJECT_DEFAULT_WARNINGS,
   PROJECT_DEFAULTS_FILE,
+  resolveProjectConfigTrust,
   type ProjectDefaultsLoadOptions,
+  type ProjectDefaultsLoaderFileSystem,
 } from "../../src/agents/project-defaults-loader.ts";
-import { loadProjectAgentSnapshot } from "../../src/agents/project-agent-loader.ts";
-// ProjectAgentLoaderFileSystem is defined and owned by project-agent-loader; the defaults loader
-// imports it internally. Tests import from the owning module to reflect the true public API.
-import type { ProjectAgentLoaderFileSystem } from "../../src/agents/project-agent-loader.ts";
+import { resolveProjectAgentTrust } from "../../src/agents/project-agent-loader.ts";
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -25,6 +24,11 @@ const tempDirs: string[] = [];
 function tempProject(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-defaults-loader-"));
   tempDirs.push(dir);
+  const gitDir = path.join(dir, ".git");
+  fs.mkdirSync(path.join(gitDir, "objects"), { recursive: true });
+  fs.mkdirSync(path.join(gitDir, "refs"), { recursive: true });
+  fs.writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/main\n", "utf8");
+  fs.writeFileSync(path.join(gitDir, "config"), "[core]\nrepositoryformatversion = 0\n", "utf8");
   return dir;
 }
 
@@ -55,7 +59,6 @@ function trustedOptions(
   return {
     cwd: projectRoot,
     sessionId: "loader-test-session",
-    git: { showToplevel: () => projectRoot },
     trust: {
       trustStore: { getEntry: () => ({ path: canonicalRoot, decision: true }) },
       hasTrustRequiringProjectResources: () => false,
@@ -69,7 +72,6 @@ function deniedOptions(projectRoot: string): ProjectDefaultsLoadOptions {
   return {
     cwd: projectRoot,
     sessionId: "loader-test-session",
-    git: { showToplevel: () => projectRoot },
     trust: {
       trustStore: { getEntry: () => ({ path: fs.realpathSync(projectRoot), decision: false }) },
       hasTrustRequiringProjectResources: () => false,
@@ -79,9 +81,9 @@ function deniedOptions(projectRoot: string): ProjectDefaultsLoadOptions {
 
 /** Stat-based fake that reports a symlink for the named path. */
 function fileSystemWithSymlinkAt(
-  real: ProjectAgentLoaderFileSystem,
+  real: ProjectDefaultsLoaderFileSystem,
   symlinkPath: string,
-): ProjectAgentLoaderFileSystem {
+): ProjectDefaultsLoaderFileSystem {
   return {
     ...real,
     lstatSync: (filePath: string) => {
@@ -95,45 +97,81 @@ function fileSystemWithSymlinkAt(
       }
       return stat;
     },
-    readdirSync: (filePath: string, opts: { withFileTypes: true }) =>
-      fs.readdirSync(filePath, opts),
     realpathSync: (filePath: string) => fs.realpathSync(filePath),
     readFileSync: (filePath: string) => fs.readFileSync(filePath),
   };
 }
 
+/** Add descriptor hooks while preserving the shared filesystem seam. */
+function descriptorFileSystem(
+  real: ProjectDefaultsLoaderFileSystem,
+  onRead?: (filePath: string) => void,
+  onOpen?: (filePath: string, flags: number) => void,
+  onClose?: (filePath: string) => void,
+): ProjectDefaultsLoaderFileSystem {
+  const descriptors = new Map<number, string>();
+  return {
+    ...real,
+    openSync: (filePath, flags) => {
+      if (!real.openSync) throw new Error("openSync unavailable");
+      onOpen?.(filePath, flags);
+      const descriptor = real.openSync(filePath, flags);
+      descriptors.set(descriptor, filePath);
+      return descriptor;
+    },
+    fstatSync: (descriptor) => {
+      if (!real.fstatSync) throw new Error("fstatSync unavailable");
+      return real.fstatSync(descriptor);
+    },
+    readSync: (descriptor, buffer, offset, length, position) => {
+      if (!real.readSync) throw new Error("readSync unavailable");
+      const filePath = descriptors.get(descriptor);
+      if (filePath) onRead?.(filePath);
+      return real.readSync(descriptor, buffer, offset, length, position);
+    },
+    closeSync: (descriptor) => {
+      const filePath = descriptors.get(descriptor);
+      try {
+        if (!real.closeSync) throw new Error("closeSync unavailable");
+        real.closeSync(descriptor);
+      } finally {
+        if (filePath) onClose?.(filePath);
+        descriptors.delete(descriptor);
+      }
+    },
+  };
+}
+
 /** Inject a post-read lstat result without relying on filesystem timing. */
 function fileSystemWithPostReadStat(
-  real: ProjectAgentLoaderFileSystem,
+  real: ProjectDefaultsLoaderFileSystem,
   targetPath: string,
   mutate: (stat: fs.Stats) => fs.Stats,
-): ProjectAgentLoaderFileSystem {
+): ProjectDefaultsLoaderFileSystem {
   const canonicalTarget = path.resolve(real.realpathSync(targetPath));
   let readStarted = false;
-  return {
+  const fileSystem = {
     ...real,
     lstatSync: (filePath: string) => {
       const stat = real.lstatSync(filePath);
       return readStarted && path.resolve(filePath) === canonicalTarget ? mutate(stat) : stat;
     },
-    readFileSync: (filePath: string) => {
-      const raw = real.readFileSync(filePath);
-      if (path.resolve(filePath) === canonicalTarget) readStarted = true;
-      return raw;
-    },
-  };
+  } satisfies ProjectDefaultsLoaderFileSystem;
+  return descriptorFileSystem(fileSystem, (filePath) => {
+    if (path.resolve(filePath) === canonicalTarget) readStarted = true;
+  });
 }
 
 /** Inject a target identity change on the lstat immediately before reading. */
 function fileSystemWithBeforeReadStat(
-  real: ProjectAgentLoaderFileSystem,
+  real: ProjectDefaultsLoaderFileSystem,
   targetPath: string,
   mutate: (stat: fs.Stats) => fs.Stats,
   onRead: () => void,
-): ProjectAgentLoaderFileSystem {
+): ProjectDefaultsLoaderFileSystem {
   const canonicalTarget = path.resolve(real.realpathSync(targetPath));
   let targetLstatCount = 0;
-  return {
+  const fileSystem = {
     ...real,
     lstatSync: (filePath: string) => {
       const stat = real.lstatSync(filePath);
@@ -141,18 +179,28 @@ function fileSystemWithBeforeReadStat(
       targetLstatCount += 1;
       return targetLstatCount === 3 ? mutate(stat) : stat;
     },
-    readFileSync: (filePath: string) => {
-      onRead();
-      return real.readFileSync(filePath);
-    },
-  };
+  } satisfies ProjectDefaultsLoaderFileSystem;
+  return descriptorFileSystem(fileSystem, (filePath) => {
+    if (path.resolve(filePath) === canonicalTarget) onRead();
+  });
 }
 
-const REAL_FS: ProjectAgentLoaderFileSystem = {
+function cloneStatsWithIdentity(stat: fs.Stats, dev: number, ino: number): fs.Stats {
+  const clone = Object.create(Object.getPrototypeOf(stat)) as fs.Stats;
+  Object.assign(clone, stat, { dev, ino });
+  return clone;
+}
+
+const REAL_FS: ProjectDefaultsLoaderFileSystem = {
   lstatSync: (filePath: string) => fs.lstatSync(filePath),
-  readdirSync: (filePath: string, opts: { withFileTypes: true }) => fs.readdirSync(filePath, opts),
   realpathSync: (filePath: string) => fs.realpathSync(filePath),
   readFileSync: (filePath: string) => fs.readFileSync(filePath),
+  openSync: (filePath, flags) => fs.openSync(filePath, flags),
+  fstatSync: (descriptor) => fs.fstatSync(descriptor),
+  readSync: (descriptor, buffer, offset, length, position) =>
+    fs.readSync(descriptor, buffer, offset, length, position),
+  closeSync: (descriptor) => fs.closeSync(descriptor),
+  noFollowFlag: fs.constants.O_NOFOLLOW,
 };
 
 // ---------------------------------------------------------------------------
@@ -204,7 +252,6 @@ describe("loadProjectDefaults — worktree resolution", () => {
   it("returns unavailable when cwd is not inside a git worktree", async () => {
     const result = await loadProjectDefaults({
       cwd: "/tmp",
-      git: { showToplevel: () => undefined },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -234,7 +281,6 @@ describe("loadProjectDefaults — trust gating", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "missing-trust-dependencies",
-      git: { showToplevel: () => projectRoot },
       // No trust provided at all
       trust: {},
     });
@@ -248,7 +294,6 @@ describe("loadProjectDefaults — trust gating", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "missing-resource-probe",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         // hasTrustRequiringProjectResources is missing
@@ -263,7 +308,6 @@ describe("loadProjectDefaults — trust gating", () => {
     let prompts = 0;
     const result = await loadProjectDefaults({
       cwd: projectRoot,
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -294,7 +338,6 @@ describe("loadProjectDefaults — trust gating", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "explicit-denial",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustOverride: false,
         hasTrustRequiringProjectResources: () => false,
@@ -327,25 +370,25 @@ describe("loadProjectDefaults — file absence", () => {
     assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
     assert.deepEqual(result.warnings, []);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Shared interactive trust flow
-// ---------------------------------------------------------------------------
-
-describe("loadProjectDefaults — shared interactive trust", () => {
-  it("prompts and loads defaults for a defaults-only project", async () => {
+  it("does not consult trust services when the defaults file is absent", async () => {
     const projectRoot = tempProject();
-    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let trustReads = 0;
     let prompts = 0;
     const result = await loadProjectDefaults({
       cwd: projectRoot,
-      sessionId: "defaults-only-interactive",
-      git: { showToplevel: () => projectRoot },
+      sessionId: "absent-defaults-no-trust",
       trust: {
-        trustStore: { getEntry: () => null },
-        hasTrustRequiringProjectResources: () => false,
-        isProjectTrusted: () => true,
+        trustStore: {
+          getEntry: () => {
+            trustReads += 1;
+            return null;
+          },
+        },
+        hasTrustRequiringProjectResources: () => {
+          trustReads += 1;
+          return true;
+        },
         hasUI: true,
         confirm: () => {
           prompts += 1;
@@ -355,21 +398,75 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     });
 
     assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults, { primaryAgents: {}, subagents: {} });
+    assert.equal(trustReads, 0);
+    assert.equal(prompts, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Project-configuration trust flow and trust-plane isolation
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — project-configuration trust", () => {
+  it("prompts only for defaults and loads a defaults-only project", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let prompts = 0;
+    let promptTitle = "";
+    let promptMessage = "";
+    const result = await loadProjectDefaults({
+      cwd: projectRoot,
+      sessionId: "defaults-only-interactive",
+      trust: {
+        trustStore: { getEntry: () => null },
+        hasTrustRequiringProjectResources: () => false,
+        isProjectTrusted: () => true,
+        hasUI: true,
+        confirm: (_root) => {
+          prompts += 1;
+          return true;
+        },
+        ui: {
+          confirm: (title, message) => {
+            promptTitle = title;
+            promptMessage = message;
+            return true;
+          },
+        },
+      },
+    });
+
+    assert.equal(result.status, "loaded");
+    assert.equal(result.trust?.kind, "project-config");
     assert.equal(result.trust?.source, "session-positive");
     assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
     assert.equal(prompts, 1);
+    assert.equal(promptTitle, "");
+    assert.equal(promptMessage, "");
+
+    const uiResult = await resolveProjectConfigTrust(projectRoot, {
+      sessionId: "defaults-prompt-copy",
+      trustStore: { getEntry: () => null },
+      hasTrustRequiringProjectResources: () => false,
+      hasUI: true,
+      ui: {
+        confirm: (title, message) => {
+          promptTitle = title;
+          promptMessage = message;
+          return true;
+        },
+      },
+    });
+    assert.equal(uiResult.source, "session-positive");
+    assert.match(promptTitle, /defaults/i);
+    assert.match(promptMessage, /defaults\.json/);
+    assert.match(promptMessage, /custom agents require persisted \/trust authorization/i);
   });
 
-  it("reuses the agent trust decision when both resources exist", async () => {
+  it("caches session configuration approval without sharing it with agent trust", async () => {
     const projectRoot = tempProject();
     writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
-    const agentPath = path.join(projectRoot, ".tlh", "agents", "reviewer.md");
-    fs.mkdirSync(path.dirname(agentPath), { recursive: true });
-    fs.writeFileSync(
-      agentPath,
-      "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
-      "utf8",
-    );
     let prompts = 0;
     const trust = {
       trustStore: { getEntry: () => null },
@@ -378,61 +475,123 @@ describe("loadProjectDefaults — shared interactive trust", () => {
       hasUI: true,
       confirm: () => {
         prompts += 1;
-        return true;
+        return prompts === 1;
       },
     };
-    const agentResult = await loadProjectAgentSnapshot({
+
+    const first = await loadProjectDefaults({
       cwd: projectRoot,
-      sessionId: "both-resources-interactive",
-      generationId: "both-resources-generation",
-      git: { showToplevel: () => projectRoot },
+      sessionId: "isolated-session",
       trust,
     });
-    const defaultsResult = await loadProjectDefaults({
+    const second = await loadProjectDefaults({
       cwd: projectRoot,
-      sessionId: "both-resources-interactive",
-      git: { showToplevel: () => projectRoot },
+      sessionId: "isolated-session",
       trust,
     });
 
-    assert.equal(agentResult.status, "loaded");
-    assert.equal(defaultsResult.status, "loaded");
-    assert.deepEqual(defaultsResult.defaults?.primaryAgents.architect, { effort: "high" });
-    assert.equal(prompts, 1);
+    assert.equal(first.status, "loaded");
+    assert.equal(first.trust?.kind, "project-config");
+    assert.equal(first.trust?.source, "session-positive");
+    assert.equal(second.status, "loaded");
+    assert.equal(second.trust?.source, "session-positive");
+    assert.equal(prompts, 1, "the project-config session cache should avoid a second prompt");
+
+    const agentTrust = await resolveProjectAgentTrust(projectRoot, {
+      sessionId: "isolated-session",
+      trustStore: { getEntry: () => null },
+      // These legacy-looking fields must remain inert for the execution plane.
+      hasTrustRequiringProjectResources: () => true,
+      isProjectTrusted: () => true,
+      defaultProjectTrust: "always",
+      hasUI: true,
+      confirm: () => true,
+    } as never);
+    assert.equal(agentTrust.kind, "project-agent");
+    assert.equal(agentTrust.trusted, false);
+    assert.equal(agentTrust.source, "no-persisted-trust");
   });
 
-  it("does not prompt when neither trust-requiring resource exists", async () => {
+  it("preserves upstream, default, denial, and session-cache configuration semantics", async () => {
     const projectRoot = tempProject();
-    let prompts = 0;
-    const trust = {
-      trustStore: { getEntry: () => null },
-      hasTrustRequiringProjectResources: () => false,
+    const canonicalRoot = fs.realpathSync(projectRoot);
+    const noPersistedTrust = { trustStore: { getEntry: () => null } };
+
+    const savedPositive = await resolveProjectConfigTrust(projectRoot, {
+      trustStore: { getEntry: () => ({ path: canonicalRoot, decision: true }) },
+      defaultProjectTrust: "never",
+    });
+    assert.deepEqual(savedPositive, {
+      kind: "project-config",
+      trusted: true,
+      source: "saved-positive",
+    });
+
+    const savedNegative = await resolveProjectConfigTrust(projectRoot, {
+      trustStore: { getEntry: () => ({ path: canonicalRoot, decision: false }) },
+      defaultProjectTrust: "always",
+    });
+    assert.deepEqual(savedNegative, {
+      kind: "project-config",
+      trusted: false,
+      source: "saved-negative",
+    });
+
+    const upstream = await resolveProjectConfigTrust(projectRoot, {
+      ...noPersistedTrust,
+      hasTrustRequiringProjectResources: () => true,
       isProjectTrusted: () => true,
+    });
+    assert.deepEqual(upstream, {
+      kind: "project-config",
+      trusted: true,
+      source: "upstream-positive",
+    });
+
+    const always = await resolveProjectConfigTrust(projectRoot, {
+      ...noPersistedTrust,
+      defaultProjectTrust: "always",
+    });
+    assert.deepEqual(always, { kind: "project-config", trusted: true, source: "default-always" });
+
+    const never = await resolveProjectConfigTrust(projectRoot, {
+      ...noPersistedTrust,
+      defaultProjectTrust: "never",
+    });
+    assert.deepEqual(never, { kind: "project-config", trusted: false, source: "default-never" });
+
+    const explicitlyDenied = await resolveProjectConfigTrust(projectRoot, {
+      ...noPersistedTrust,
+      trustOverride: false,
+      defaultProjectTrust: "always",
+    });
+    assert.deepEqual(explicitlyDenied, {
+      kind: "project-config",
+      trusted: false,
+      source: "explicit-negative",
+    });
+
+    let prompts = 0;
+    const sessionOptions = {
+      ...noPersistedTrust,
+      sessionId: "config-negative-cache",
       hasUI: true,
+      confirm: () => {
+        prompts += 1;
+        return false;
+      },
+    };
+    const denied = await resolveProjectConfigTrust(projectRoot, sessionOptions);
+    const cachedDenied = await resolveProjectConfigTrust(projectRoot, {
+      ...sessionOptions,
       confirm: () => {
         prompts += 1;
         return true;
       },
-    };
-    const agentResult = await loadProjectAgentSnapshot({
-      cwd: projectRoot,
-      sessionId: "no-resources-interactive",
-      generationId: "no-resources-generation",
-      git: { showToplevel: () => projectRoot },
-      trust,
     });
-    const defaultsResult = await loadProjectDefaults({
-      cwd: projectRoot,
-      sessionId: "no-resources-interactive",
-      git: { showToplevel: () => projectRoot },
-      trust,
-    });
-
-    assert.equal(agentResult.status, "loaded");
-    assert.equal(agentResult.trust?.source, "no-project-agents");
-    assert.equal(defaultsResult.status, "loaded");
-    assert.deepEqual(defaultsResult.defaults, { primaryAgents: {}, subagents: {} });
-    assert.equal(prompts, 0);
+    assert.equal(denied.source, "session-negative");
+    assert.equal(cachedDenied.source, "session-negative");
+    assert.equal(prompts, 1);
   });
 
   it("fails closed when the interactive decision denies defaults", async () => {
@@ -442,7 +601,6 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "defaults-denied-interactive",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -456,6 +614,7 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     });
 
     assert.equal(result.status, "denied");
+    assert.equal(result.trust?.kind, "project-config");
     assert.equal(result.trust?.source, "session-negative");
     assert.equal(result.defaults, undefined);
     assert.equal(prompts, 1);
@@ -467,7 +626,6 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "defaults-no-ui",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -480,6 +638,7 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     });
 
     assert.equal(result.status, "denied");
+    assert.equal(result.trust?.kind, "project-config");
     assert.equal(result.trust?.source, "session-unavailable");
     assert.equal(result.defaults, undefined);
   });
@@ -490,7 +649,6 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "defaults-timeout",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -502,6 +660,7 @@ describe("loadProjectDefaults — shared interactive trust", () => {
     });
 
     assert.equal(result.status, "denied");
+    assert.equal(result.trust?.kind, "project-config");
     assert.equal(result.trust?.source, "session-unavailable");
     assert.equal(result.defaults, undefined);
   });
@@ -523,7 +682,6 @@ describe("loadProjectDefaults — symlink rejection", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "unsafe-tlh-symlink",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -548,7 +706,6 @@ describe("loadProjectDefaults — symlink rejection", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "unsafe-tlh-file",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -577,7 +734,6 @@ describe("loadProjectDefaults — symlink rejection", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "unsafe-defaults-symlink",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -605,7 +761,6 @@ describe("loadProjectDefaults — symlink rejection", () => {
     const result = await loadProjectDefaults({
       cwd: projectRoot,
       sessionId: "unsafe-defaults-directory",
-      git: { showToplevel: () => projectRoot },
       trust: {
         trustStore: { getEntry: () => null },
         hasTrustRequiringProjectResources: () => false,
@@ -648,6 +803,223 @@ describe("loadProjectDefaults — file size limit", () => {
     });
     assert.equal(result.status, "unavailable");
     assert.ok(result.warnings.some((w) => w.includes("size")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stable descriptor reads
+// ---------------------------------------------------------------------------
+
+describe("loadProjectDefaults — descriptor reads", () => {
+  it("opens the canonical defaults file read-only with O_NOFOLLOW", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const filePath = path.join(projectRoot, PROJECT_DEFAULTS_FILE);
+    const maxFileBytes = 1024;
+    let openedPath: string | undefined;
+    let openedFlags: number | undefined;
+    let largestRead = 0;
+    const fileSystem = descriptorFileSystem(
+      {
+        ...REAL_FS,
+        readSync: (descriptor, buffer, offset, length, position) => {
+          largestRead = Math.max(largestRead, length);
+          return REAL_FS.readSync!(descriptor, buffer, offset, length, position);
+        },
+      },
+      undefined,
+      (openedFilePath, flags) => {
+        openedPath = openedFilePath;
+        openedFlags = flags;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+      maxFileBytes,
+    });
+
+    assert.equal(result.status, "loaded");
+    assert.deepEqual(result.defaults?.primaryAgents.architect, { effort: "high" });
+    assert.equal(openedPath, fs.realpathSync(filePath));
+    assert.equal(openedFlags, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    assert.ok(largestRead <= maxFileBytes + 1);
+  });
+
+  it("rejects an in-window large replacement before reading its bytes", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const filePath = path.join(fs.realpathSync(projectRoot), PROJECT_DEFAULTS_FILE);
+    const backupPath = `${filePath}.old`;
+    let replacementDone = false;
+    let readCalls = 0;
+    const fileSystem = descriptorFileSystem(
+      {
+        ...REAL_FS,
+        openSync: (openedFilePath, flags) => {
+          if (!replacementDone && path.resolve(openedFilePath) === path.resolve(filePath)) {
+            replacementDone = true;
+            fs.renameSync(filePath, backupPath);
+            fs.writeFileSync(filePath, "x".repeat(MAX_PROJECT_DEFAULTS_FILE_BYTES + 1), "utf8");
+          }
+          return REAL_FS.openSync!(openedFilePath, flags);
+        },
+      },
+      () => {
+        readCalls += 1;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(readCalls, 0, "a replacement larger than the bound must not be read");
+    assert.ok(
+      result.warnings.some((warning) => /changed before reading|exceeds maximum/.test(warning)),
+      `Expected bounded replacement warning; got: ${result.warnings.join("; ")}`,
+    );
+  });
+
+  it("rejects a descriptor read that reaches the sentinel bound", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, {});
+    const maxFileBytes = 32;
+    let largestRead = 0;
+    let readCalls = 0;
+    const fileSystem = descriptorFileSystem(
+      {
+        ...REAL_FS,
+        readSync: (_descriptor, buffer, _offset, length) => {
+          readCalls += 1;
+          largestRead = Math.max(largestRead, length);
+          buffer.fill(0x78);
+          return length;
+        },
+      },
+      undefined,
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+      maxFileBytes,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(readCalls, 1);
+    assert.equal(largestRead, maxFileBytes + 1);
+    assert.ok(result.warnings.some((warning) => warning.includes("exceeds maximum")));
+  });
+
+  it("fails closed when O_NOFOLLOW is unavailable", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let openCalls = 0;
+    const fileSystem = descriptorFileSystem(
+      { ...REAL_FS, noFollowFlag: undefined },
+      undefined,
+      () => {
+        openCalls += 1;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(openCalls, 0);
+    assert.ok(result.warnings.some((warning) => warning.includes("O_NOFOLLOW")));
+  });
+
+  it("fails closed when the no-follow descriptor open fails", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const fileSystem = descriptorFileSystem({
+      ...REAL_FS,
+      openSync: () => {
+        const error = new Error("symlink appeared") as NodeJS.ErrnoException;
+        error.code = "ELOOP";
+        throw error;
+      },
+    });
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((warning) => warning.includes("changed before reading")));
+  });
+
+  it("closes a descriptor when post-open identity validation rejects it", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    let readCalls = 0;
+    let closeCalls = 0;
+    let fstatCalls = 0;
+    const fileSystem = descriptorFileSystem(
+      {
+        ...REAL_FS,
+        fstatSync: (descriptor) => {
+          const stat = REAL_FS.fstatSync!(descriptor);
+          fstatCalls += 1;
+          return fstatCalls === 1 ? cloneStatsWithIdentity(stat, stat.dev, stat.ino + 1) : stat;
+        },
+      },
+      () => {
+        readCalls += 1;
+      },
+      undefined,
+      () => {
+        closeCalls += 1;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.equal(readCalls, 0);
+    assert.equal(closeCalls, 1);
+    assert.ok(result.warnings.some((warning) => warning.includes("changed before reading")));
+  });
+
+  it("rejects a fixed .tlh directory identity change after reading", async () => {
+    const projectRoot = tempProject();
+    writeDefaults(projectRoot, { primaryAgents: { architect: { effort: "high" } } });
+    const tlhPath = path.join(fs.realpathSync(projectRoot), ".tlh");
+    let readStarted = false;
+    const fileSystem = descriptorFileSystem(
+      {
+        ...REAL_FS,
+        lstatSync: (filePath) => {
+          const stat = REAL_FS.lstatSync(filePath);
+          return readStarted && path.resolve(filePath) === path.resolve(tlhPath)
+            ? cloneStatsWithIdentity(stat, stat.dev, stat.ino + 1)
+            : stat;
+        },
+      },
+      (filePath) => {
+        if (path.basename(filePath) === "defaults.json") readStarted = true;
+      },
+    );
+
+    const result = await loadProjectDefaults({
+      ...trustedOptions(projectRoot),
+      fileSystem,
+    });
+
+    assert.equal(result.status, "unavailable");
+    assert.ok(result.warnings.some((warning) => warning.includes("changed while reading")));
   });
 });
 

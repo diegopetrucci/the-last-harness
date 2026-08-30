@@ -7,6 +7,7 @@ import {
   frontmatterNameForConfig,
 } from "./agents.ts";
 import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 type ManagementAction = "list" | "get";
 type ManagementContext = Pick<ExtensionContext, "cwd"> & { config?: ExtensionConfig };
@@ -134,7 +135,11 @@ export function handleList(
   const scopedAgents = allAgents(d)
     .filter(
       (a) =>
-        scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope,
+        scope === "both" ||
+        a.source === "builtin" ||
+        a.source === "package" ||
+        a.source === scope ||
+        (scope === "project" && isCanonicalPackagedMinorAgent(a)),
     )
     .sort((a, b) => a.name.localeCompare(b.name));
   const agents = scopedAgents.filter((a) => !a.disabled);

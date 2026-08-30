@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,6 +12,7 @@ import {
 } from "../../src/agents/project-agent-snapshot.ts";
 import {
   createSubagentExecutor,
+  projectAgentEntryIdentityError,
   type SubagentParamsLike,
 } from "../../src/runs/foreground/subagent-executor.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
@@ -22,9 +24,12 @@ const originalUserProfile = process.env.USERPROFILE;
 const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 function makeProject(): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-agent-execution-"));
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-agent-execution-")),
+  );
   tempRoots.push(root);
-  fs.mkdirSync(path.join(root, ".tlh", "agents"), { recursive: true });
+  execFileSync("git", ["init", "--quiet", root]);
+  fs.mkdirSync(path.join(root, ".tlh", "agents", "custom"), { recursive: true });
   fs.mkdirSync(path.join(root, "inside"), { recursive: true });
   return root;
 }
@@ -41,7 +46,7 @@ function makeAgent(projectRoot: string, name = "embedded.xyz"): AgentConfig {
     inheritProjectContext: false,
     inheritSkills: false,
     source: "project",
-    filePath: path.join(projectRoot, ".tlh", "agents", "xyz.md"),
+    filePath: path.join(projectRoot, ".tlh", "agents", "custom", "XYZ.md"),
   };
 }
 
@@ -73,7 +78,10 @@ function asFixture<T>(value: Partial<T>): T {
   return value as T;
 }
 
-function makeContext(projectRoot: string): ExtensionContext {
+function makeContext(
+  projectRoot: string,
+  model?: { provider: string; id: string },
+): ExtensionContext {
   const context = {
     cwd: projectRoot,
     hasUI: false,
@@ -87,7 +95,7 @@ function makeContext(projectRoot: string): ExtensionContext {
       getBranch: () => [],
     }),
     modelRegistry: asFixture<ExtensionContext["modelRegistry"]>({ getAvailable: () => [] }),
-    model: undefined,
+    model: model as ExtensionContext["model"],
     isProjectTrusted: () => false,
     mode: "json" as const,
     scopedModels: [],
@@ -109,6 +117,16 @@ function makeExecutor(
   expected: ReturnType<typeof getProjectAgentSnapshotProvenance>,
   discoverCalls: { count: number },
   architect = true,
+  options: {
+    canInitiate?: boolean;
+    runSync?: (
+      runtimeCwd: string,
+      agents: AgentConfig[],
+      agentName: string,
+      task: string,
+      options: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  } = {},
 ) {
   const pi = asFixture<ExtensionAPI>({
     // The executor only consumes the event bus and session-name methods in these gate tests.
@@ -131,7 +149,9 @@ function makeExecutor(
       capability,
       expected,
       architect,
+      ...(options.canInitiate !== undefined ? { canInitiate: options.canInitiate } : {}),
     }),
+    runSync: options.runSync as never,
   });
 }
 
@@ -145,6 +165,34 @@ function registerSnapshot(projectRoot: string, agent = makeAgent(projectRoot)) {
   return { capability, expected: getProjectAgentSnapshotProvenance(capability) };
 }
 
+function identityEntry(projectRoot: string, overrides: Record<string, unknown> = {}) {
+  return {
+    agent: { ...makeAgent(projectRoot), ...overrides },
+    digest: "digest-execution-test",
+    frontmatterFields: ["tools"],
+  } as never;
+}
+
+function addNestedLinkedWorktree(projectRoot: string): string {
+  fs.writeFileSync(path.join(projectRoot, "tracked.txt"), "tracked\n", "utf8");
+  execFileSync("git", ["-C", projectRoot, "add", "tracked.txt"]);
+  execFileSync("git", [
+    "-C",
+    projectRoot,
+    "-c",
+    "user.email=test@example.invalid",
+    "-c",
+    "user.name=TLH Test",
+    "commit",
+    "--quiet",
+    "-m",
+    "initial test commit",
+  ]);
+  const linkedRoot = path.join(projectRoot, "nested-linked-worktree");
+  execFileSync("git", ["-C", projectRoot, "worktree", "add", "--quiet", linkedRoot]);
+  return fs.realpathSync(linkedRoot);
+}
+
 function asyncParallelTooLargeParams(projectRoot: string): SubagentParamsLike {
   return {
     tasks: [
@@ -155,7 +203,7 @@ function asyncParallelTooLargeParams(projectRoot: string): SubagentParamsLike {
         cwd: "inside",
       })),
     ],
-    agentScope: "user",
+    agentScope: "project",
     context: "fresh",
     cwd: projectRoot,
     async: true,
@@ -176,15 +224,218 @@ afterEach(() => {
 });
 
 describe("project-agent executor authorization", () => {
+  it("rejects every malformed project-agent identity at the identity gate", () => {
+    const projectRoot = makeProject();
+    const canonicalRoot = fs.realpathSync(projectRoot);
+    const cases: Array<{
+      name: string;
+      overrides: Record<string, unknown>;
+      expected: RegExp;
+    }> = [
+      {
+        name: "runtime name",
+        overrides: { name: "project.xyz" },
+        expected: /runtime name .*valid embedded project-agent identity/,
+      },
+      {
+        name: "local name",
+        overrides: { localName: "different" },
+        expected: /does not match its embedded package\/local identity/,
+      },
+      {
+        name: "package name",
+        overrides: { packageName: "other" },
+        expected: /does not match its embedded package\/local identity/,
+      },
+      {
+        name: "source",
+        overrides: { source: "profile" },
+        expected: /is not sourced from the project snapshot/,
+      },
+      {
+        name: "missing tools",
+        overrides: { tools: undefined },
+        expected: /does not carry an explicit usable tools list/,
+      },
+      {
+        name: "empty tools",
+        overrides: { tools: [] },
+        expected: /does not carry an explicit usable tools list/,
+      },
+      {
+        name: "extensions",
+        overrides: { extensions: ["project-extension"] },
+        expected: /carries a prohibited extension surface/,
+      },
+      {
+        name: "subagent-only extensions",
+        overrides: { subagentOnlyExtensions: ["project-extension"] },
+        expected: /carries a prohibited extension surface/,
+      },
+      {
+        name: "absolute definition path",
+        overrides: { filePath: path.join("relative", "XYZ.md") },
+        expected: /does not carry an absolute definition path/,
+      },
+      {
+        name: "canonical definition directory",
+        overrides: {
+          filePath: path.join(canonicalRoot, ".tlh", "agents", "other", "XYZ.md"),
+        },
+        expected: /definition path is not the canonical .*XYZ\.md path/,
+      },
+      {
+        name: "canonical definition filename",
+        overrides: {
+          filePath: path.join(canonicalRoot, ".tlh", "agents", "custom", "OTHER.md"),
+        },
+        expected: /definition path is not the canonical .*XYZ\.md path/,
+      },
+    ];
+
+    for (const { name, overrides, expected } of cases) {
+      const error = projectAgentEntryIdentityError(
+        canonicalRoot,
+        identityEntry(projectRoot, overrides),
+      );
+      assert.match(error ?? "", expected, name);
+    }
+  });
+
+  it("rejects malformed registered snapshots before foreground or parallel spawn", async () => {
+    const projectRoot = makeProject();
+    const malformedAgent = { ...makeAgent(projectRoot), tools: [] } as AgentConfig;
+    const snapshot = registerSnapshot(projectRoot, malformedAgent);
+    const discoverCalls = { count: 0 };
+    let spawnCalls = 0;
+    const executor = makeExecutor(
+      projectRoot,
+      snapshot.capability,
+      snapshot.expected,
+      discoverCalls,
+      true,
+      {
+        runSync: async () => {
+          spawnCalls += 1;
+          return {};
+        },
+      },
+    );
+    const cases: Array<{ id: string; params: SubagentParamsLike }> = [
+      {
+        id: "malformed-registered-single",
+        params: {
+          agent: "embedded.xyz",
+          task: "must reject malformed registered identity",
+          agentScope: "project",
+          context: "fresh",
+          cwd: projectRoot,
+        },
+      },
+      {
+        id: "malformed-registered-parallel",
+        params: {
+          tasks: [
+            {
+              agent: "embedded.xyz",
+              task: "must reject malformed registered identity",
+              cwd: projectRoot,
+            },
+          ],
+          agentScope: "project",
+          context: "fresh",
+          cwd: projectRoot,
+        },
+      },
+    ];
+
+    for (const item of cases) {
+      const result = await executor.execute(
+        item.id,
+        item.params,
+        new AbortController().signal,
+        undefined,
+        makeContext(projectRoot),
+      );
+      assert.equal(result.isError, true, item.id);
+      assert.match(resultText(result), /does not carry an explicit usable tools list/);
+    }
+    assert.equal(discoverCalls.count, 0);
+    assert.equal(spawnCalls, 0);
+    assert.equal(fs.existsSync(path.join(projectRoot, "sessions")), false);
+  });
+
+  it("rejects nested linked-worktree cwd roots before spawning for single and parallel execution", async () => {
+    const projectRoot = makeProject();
+    const linkedRoot = addNestedLinkedWorktree(projectRoot);
+    const snapshot = registerSnapshot(projectRoot);
+    const discoverCalls = { count: 0 };
+    let spawned = false;
+    const executor = makeExecutor(
+      projectRoot,
+      snapshot.capability,
+      snapshot.expected,
+      discoverCalls,
+      true,
+      {
+        runSync: async () => {
+          spawned = true;
+          return {};
+        },
+      },
+    );
+
+    const singleResult = await executor.execute(
+      "nested-linked-single",
+      {
+        agent: "embedded.xyz",
+        task: "must stay in the containing worktree",
+        agentScope: "project",
+        context: "fresh",
+        cwd: linkedRoot,
+      } as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot),
+    );
+    assert.equal(singleResult.isError, true);
+    assert.match(resultText(singleResult), /trusted snapshot worktree/i);
+    assert.equal(discoverCalls.count, 0);
+    assert.equal(spawned, false);
+
+    const parallelResult = await executor.execute(
+      "nested-linked-parallel",
+      {
+        tasks: [
+          {
+            agent: "embedded.xyz",
+            task: "must stay in the containing worktree",
+            cwd: linkedRoot,
+          },
+        ],
+        agentScope: "project",
+        context: "fresh",
+        cwd: projectRoot,
+      } as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot),
+    );
+    assert.equal(parallelResult.isError, true);
+    assert.match(resultText(parallelResult), /one trusted snapshot worktree/i);
+    assert.equal(discoverCalls.count, 0);
+    assert.equal(spawned, false);
+  });
+
   it("uses the exact active snapshot and confines a mixed async batch before spawning", async () => {
     const projectRoot = makeProject();
     const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-project-agent-outside-"));
     tempRoots.push(outsideRoot);
     const profileDir = path.join(projectRoot, "profile");
     process.env.PI_CODING_AGENT_DIR = profileDir;
-    fs.mkdirSync(path.join(profileDir, "agents"), { recursive: true });
+    fs.mkdirSync(path.join(profileDir, "tlh", "agents", "subagents"), { recursive: true });
     fs.writeFileSync(
-      path.join(profileDir, "agents", "developer.md"),
+      path.join(profileDir, "tlh", "agents", "subagents", "developer.md"),
       `---
 name: developer
 description: Profile developer
@@ -220,7 +471,7 @@ Profile developer prompt.
       {
         agent: "embedded.xyz",
         task: "must not run",
-        agentScope: "user",
+        agentScope: "project",
         context: "fresh",
         cwd: outsideRoot,
       } as never,
@@ -251,7 +502,7 @@ Profile developer prompt.
       {
         agent: " embedded.xyz ",
         task: "must not bypass project identity",
-        agentScope: "user",
+        agentScope: "project",
         context: "fresh",
         cwd: projectRoot,
       } as never,
@@ -267,7 +518,7 @@ Profile developer prompt.
       "project-whitespace-task",
       {
         tasks: [{ agent: "\tembedded.xyz\t", task: "must not bypass project identity" }],
-        agentScope: "user",
+        agentScope: "project",
         context: "fresh",
         cwd: projectRoot,
         async: true,
@@ -345,6 +596,134 @@ Profile developer prompt.
     assert.equal(discoverCalls.count, 0);
   });
 
+  it("routes foreground project execution through the exact capture and provider model policy", async () => {
+    const projectRoot = makeProject();
+    const agent = makeAgent(projectRoot);
+    agent.model = "anthropic/file-model";
+    const snapshot = registerSnapshot(projectRoot, agent);
+    const discoverCalls = { count: 0 };
+    const calls: Array<{
+      agents: AgentConfig[];
+      agentName: string;
+      options: Record<string, unknown>;
+    }> = [];
+    const runSync = async (
+      _runtimeCwd: string,
+      agents: AgentConfig[],
+      agentName: string,
+      _task: string,
+      options: Record<string, unknown>,
+    ) => {
+      calls.push({ agents, agentName, options });
+      return {
+        agent: agentName,
+        task: "project task",
+        exitCode: 0,
+        messages: [],
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+        finalOutput: "project result",
+      };
+    };
+    const executor = makeExecutor(
+      projectRoot,
+      snapshot.capability,
+      snapshot.expected,
+      discoverCalls,
+      true,
+      { runSync },
+    );
+    const baseParams = {
+      agent: "embedded.xyz",
+      task: "run the exact project agent",
+      agentScope: "project" as const,
+      context: "fresh" as const,
+      cwd: projectRoot,
+    };
+
+    const fileModelResult = await executor.execute(
+      "project-file-model",
+      baseParams as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot, { provider: "anthropic", id: "live-model" }),
+    );
+    assert.equal(fileModelResult.isError, undefined);
+    assert.equal(calls[0]?.agentName, "embedded.xyz");
+    assert.equal(calls[0]?.options.modelOverride, "anthropic/file-model");
+    assert.deepEqual(calls[0]?.agents.find((entry) => entry.name === "embedded.xyz")?.tools, [
+      "read",
+    ]);
+    assert.equal(
+      (calls[0]?.options.projectAgent as { provenance?: { digest?: string } } | undefined)
+        ?.provenance?.digest,
+      "digest-execution-test",
+    );
+
+    const openRouterResult = await executor.execute(
+      "project-openrouter-model",
+      baseParams as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot, { provider: "openrouter", id: "openai/live-model" }),
+    );
+    assert.equal(openRouterResult.isError, undefined);
+    assert.equal(calls[1]?.options.modelOverride, "openrouter/openai/live-model");
+
+    const explicitResult = await executor.execute(
+      "project-explicit-model",
+      { ...baseParams, model: "openai/explicit-model" } as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot, { provider: "openrouter", id: "openai/live-model" }),
+    );
+    assert.equal(explicitResult.isError, undefined);
+    assert.equal(calls[2]?.options.modelOverride, "openai/explicit-model");
+  });
+
+  it("allows disabled mode to initiate a project run only with explicit capability access", async () => {
+    const projectRoot = makeProject();
+    const snapshot = registerSnapshot(projectRoot);
+    const discoverCalls = { count: 0 };
+    let spawned = false;
+    const executor = makeExecutor(
+      projectRoot,
+      snapshot.capability,
+      snapshot.expected,
+      discoverCalls,
+      false,
+      {
+        canInitiate: true,
+        runSync: async (_runtimeCwd, _agents, agentName, task) => {
+          spawned = true;
+          return {
+            agent: agentName,
+            task,
+            exitCode: 0,
+            messages: [],
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+            finalOutput: "disabled result",
+          };
+        },
+      },
+    );
+    const result = await executor.execute(
+      "disabled-project",
+      {
+        agent: "embedded.xyz",
+        task: "run while primary persona is disabled",
+        agentScope: "project",
+        context: "fresh",
+        cwd: projectRoot,
+      } as never,
+      new AbortController().signal,
+      undefined,
+      makeContext(projectRoot),
+    );
+    assert.equal(result.isError, undefined);
+    assert.equal(spawned, true);
+    assert.equal(discoverCalls.count, 0);
+  });
+
   it("lets active tombstones block same-name profile fallback", async () => {
     const projectRoot = makeProject();
     const profileDir = path.join(projectRoot, "profile");
@@ -371,7 +750,7 @@ Profile developer prompt.
       {
         agent: "embedded.xyz",
         task: "must not use profile fallback",
-        agentScope: "user",
+        agentScope: "project",
         context: "fresh",
         cwd: projectRoot,
         async: true,
