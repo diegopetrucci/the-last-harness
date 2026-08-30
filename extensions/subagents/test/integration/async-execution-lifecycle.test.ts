@@ -745,6 +745,239 @@ describe("async execution utilities", () => {
     },
   );
 
+  it("characterizes concurrency-1 fail-fast parallel settlement", async () => {
+    mockPi.onCall({
+      matchArgIncludes: "Characterize fail-fast first",
+      output: "first child failed",
+      exitCode: 1,
+    });
+    mockPi.onCall({ matchArgIncludes: "Characterize fail-fast skipped", output: "must not run" });
+    const id = `async-characterize-fail-fast-${Date.now().toString(36)}`;
+    const launch = executeAsyncChain(id, {
+      chain: [
+        {
+          parallel: [
+            { agent: "fail-fast-one", task: "Characterize fail-fast first" },
+            { agent: "fail-fast-two", task: "Characterize fail-fast skipped" },
+          ],
+          concurrency: 1,
+          failFast: true,
+        },
+      ],
+      resultMode: "parallel",
+      agents: [makeAgent("fail-fast-one"), makeAgent("fail-fast-two")],
+      ctx: {
+        pi: { events: { emit() {} } },
+        cwd: tempDir,
+        currentSessionId: "session-characterize-fail-fast",
+      },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(launch.isError, undefined);
+
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventRecords = fs
+      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; stepIndex?: number });
+    const lifecycleEvents = eventRecords.filter((event) =>
+      [
+        "subagent.run.started",
+        "subagent.parallel.started",
+        "subagent.step.started",
+        "subagent.step.failed",
+        "subagent.parallel.completed",
+        "subagent.run.completed",
+      ].includes(event.type),
+    );
+
+    assert.equal(mockPi.callCount(), 1, "concurrency-1 fail-fast must not spawn the skipped child");
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.success, false);
+    assert.deepEqual(
+      payload.results.map((result) => ({
+        agent: result.agent,
+        output: result.output,
+        success: result.success,
+        exitCode: result.exitCode,
+        skipped: result.skipped,
+        interrupted: result.interrupted,
+        timedOut: result.timedOut,
+        terminationReason: result.terminationReason,
+      })),
+      [
+        {
+          agent: "fail-fast-one",
+          output: "first child failed",
+          success: false,
+          exitCode: 1,
+          skipped: undefined,
+          interrupted: undefined,
+          timedOut: undefined,
+          terminationReason: "process_exit",
+        },
+        {
+          agent: "fail-fast-two",
+          output: "(skipped — fail-fast)",
+          success: false,
+          exitCode: -1,
+          skipped: true,
+          interrupted: undefined,
+          timedOut: undefined,
+          terminationReason: "process_exit",
+        },
+      ],
+    );
+    assert.deepEqual(
+      status.steps?.map((step) => step.status),
+      ["failed", "failed"],
+    );
+    assert.equal(status.steps?.[1]?.error, "Skipped due to fail-fast");
+    assert.equal(status.steps?.[1]?.startedAt, status.steps?.[1]?.endedAt);
+    assert.equal(status.steps?.[1]?.durationMs, 0);
+    assert.equal(status.steps?.[1]?.exitCode, -1);
+    assert.equal(status.steps?.[1]?.terminationReason, "process_exit");
+    assert.deepEqual(
+      lifecycleEvents.map((event) => event.type),
+      [
+        "subagent.run.started",
+        "subagent.parallel.started",
+        "subagent.step.started",
+        "subagent.step.failed",
+        "subagent.step.failed",
+        "subagent.parallel.completed",
+        "subagent.run.completed",
+      ],
+    );
+    assert.deepEqual(
+      eventRecords
+        .filter(
+          (event) =>
+            event.type === "subagent.step.started" || event.type === "subagent.step.failed",
+        )
+        .map((event) => event.stepIndex),
+      [0, 0, 1],
+    );
+  });
+
+  it("characterizes sequential first-step failure settlement", async () => {
+    mockPi.onCall({
+      matchArgIncludes: "Characterize sequential first failure",
+      output: "sequential first failed",
+      exitCode: 1,
+    });
+    mockPi.onCall({ matchArgIncludes: "Characterize sequential second", output: "must not run" });
+    const id = `async-characterize-sequential-failure-${Date.now().toString(36)}`;
+    const launch = executeAsyncChain(id, {
+      chain: [
+        { agent: "first-step", task: "Characterize sequential first failure" },
+        { agent: "second-step", task: "Characterize sequential second" },
+      ],
+      resultMode: "chain",
+      agents: [makeAgent("first-step"), makeAgent("second-step")],
+      ctx: {
+        pi: { events: { emit() {} } },
+        cwd: tempDir,
+        currentSessionId: "session-characterize-sequential-failure",
+      },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(launch.isError, undefined);
+
+    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(10_000));
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const asyncDir = path.join(ASYNC_DIR, id);
+    const status = JSON.parse(
+      fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
+    ) as AsyncStatusPayload;
+    const eventRecords = fs
+      .readFileSync(path.join(asyncDir, "events.jsonl"), "utf-8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; stepIndex?: number });
+    const lifecycleEvents = eventRecords.filter((event) =>
+      [
+        "subagent.run.started",
+        "subagent.step.started",
+        "subagent.step.failed",
+        "subagent.run.completed",
+      ].includes(event.type),
+    );
+
+    assert.equal(mockPi.callCount(), 1, "a sequential first failure must not spawn the next step");
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.success, false);
+    assert.deepEqual(
+      payload.results.map((result) => ({
+        agent: result.agent,
+        output: result.output,
+        success: result.success,
+        exitCode: result.exitCode,
+        terminationReason: result.terminationReason,
+      })),
+      [
+        {
+          agent: "first-step",
+          output: "sequential first failed",
+          success: false,
+          exitCode: 1,
+          terminationReason: "process_exit",
+        },
+      ],
+    );
+    assert.deepEqual(
+      status.steps?.map((step) => step.status),
+      ["failed", "pending"],
+    );
+    assert.equal(status.steps?.[0]?.terminationReason, "process_exit");
+    assert.equal(status.steps?.[1]?.startedAt, undefined);
+    assert.equal(status.steps?.[1]?.endedAt, undefined);
+    assert.deepEqual(
+      lifecycleEvents.map((event) => event.type),
+      [
+        "subagent.run.started",
+        "subagent.step.started",
+        "subagent.step.failed",
+        "subagent.run.completed",
+      ],
+    );
+    assert.deepEqual(
+      eventRecords
+        .filter(
+          (event) =>
+            event.type === "subagent.step.started" || event.type === "subagent.step.failed",
+        )
+        .map((event) => event.stepIndex),
+      [0, 0],
+    );
+  });
+
   it("cancels async acceptance verification when the run times out", async () => {
     mockPi.onCall({ output: "implementation complete" });
     const id = `async-timeout-acceptance-${Date.now().toString(36)}`;
