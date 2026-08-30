@@ -110,7 +110,7 @@ npm run check:startup-performance
 
 This is intentionally separate from `npm run validate`. It launches TLH in a PTY and measures timing, so results are sensitive to the current machine and system load.
 
-The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the eight supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes in the release validation notes. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
+The remaining first-party subagent live-session smoke is separate from `npm run validate`: against the packaged release candidate, verify the compact parent-facing tool description, native `contact_supervisor` coordination, a supported `:max` thinking badge, and delegation to the nine supported TLH minor agents with non-allowlisted blocking, user-scope/fresh-context enforcement, and an async `status`/`resume` cycle. Record the candidate, profile, session evidence, and outcomes in the release validation notes. The current checkbox form lives in [docs/pin-bump-verification.md](docs/pin-bump-verification.md); its pin/release workflow is retired even though this live-session debt remains.
 
 Release objective: keep the steady-state first TLH header mean below `1000ms`.
 
@@ -120,6 +120,6 @@ If the checker fails, investigate before release instead of treating it like a n
 
 ## Final validation guidance
 
-Final validation should use this document as the reference for which repository checks to run.
+Final validation should use this document as the reference for which repository checks to run. The architect must put the exact commands, including arguments, into the final-validation `tk` ticket, deriving them from this document or repository discovery. Dispatch that ticket to `test-runner`; it runs `tk show <id>` first, executes only the listed commands, and reports outcomes without editing, installing dependencies, fixing failures, or changing tickets. Implementation tickets remain responsible for their own narrow, ticket-scoped developer validation; do not defer those checks to the final-validation ticket.
 
 After pushing changes that rely on CI or GitHub Actions, monitor the relevant checks until they are green. Do not stop at `git push`; investigate and fix CI failures before considering the work complete.

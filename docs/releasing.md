@@ -42,6 +42,8 @@ Before validation, update release-sensitive docs that include concrete versioned
 - `README.md` and `docs/install.md`: any pinned Pi runtime version, minimum Node.js version, managed Gnosis version, managed `tk` version, or bundled default-extension behavior should match the release metadata and installer constants.
 - `docs/releasing.md`: keep this checklist aligned when release validation adds or removes required documentation checks.
 
+For architect-managed work, keep implementation-ticket checks narrow and ticket-scoped, then put the exact safe validation commands in a separate final-validation `tk` ticket and dispatch it to `test-runner`. The ticket must contain the commands and arguments derived from `VALIDATING.md` or repository discovery; `test-runner` executes that list and reports the outcomes without planning, editing, installing dependencies, or fixing failures. Keep dependency installation and release-preparation commands outside the command-only runner.
+
 Then run the aggregate validation script and release-notes check:
 
 ```sh

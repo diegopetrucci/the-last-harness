@@ -190,6 +190,7 @@ const requiredFiles = [
   ...TERMINAL_SKILL_FILES,
   "agents/primary/architect.md",
   "agents/subagents/developer.md",
+  "agents/subagents/test-runner.md",
   "config/APPEND_SYSTEM.md",
   "config/settings.defaults.json",
   "prompts/analyse-tlh-sessions.md",

@@ -546,7 +546,7 @@ test("joinModelEffort degenerate combinations: unknown:unknown, custom:high, and
 
 // ── Tlh.Subagent.NAME.modelEffort tests ──────────────────────────────────────
 
-test("launch telemetry emits all eight bundled subagent keys with unknown:unknown when no config present", async (t) => {
+test("launch telemetry emits all nine bundled subagent keys with unknown:unknown when no config present", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
   writeTelemetryState(fixture);
 
@@ -588,6 +588,7 @@ test("launch telemetry emits all eight bundled subagent keys with unknown:unknow
     "librarian",
     "oracle",
     "repo-scout",
+    "test-runner",
     "web-scout",
   ];
   for (const name of bundledNames) {
@@ -820,7 +821,7 @@ test("launch telemetry: disabled agentOverride is reported as 'disabled' (single
   );
 });
 
-test("launch telemetry never emits keys for agent names outside the bundled eight", async (t) => {
+test("launch telemetry never emits keys for agent names outside the bundled nine", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-launch-telemetry-subagent-", { test: t });
   writeTelemetryState(fixture);
   writeFileSync(
@@ -1721,7 +1722,7 @@ test("registry-accurate: hand-edited generic model: field wins when provider-awa
 
 // ── project-vs-user agentOverrides precedence tests ───────────────────────────
 //
-// TLH's eight subagents are installed under the fixed `tlh/agents/subagents` path and reach the
+// TLH's nine subagents are installed under the fixed `tlh/agents/subagents` path and reach the
 // runtime as canonical USER-scope roles via applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts).
 // That gives a two-rule precedence: project `agentOverrides[name]`, else user
 // `agentOverrides[name]`, else unmodified. `disableBuiltins` and `disableThinking` have been

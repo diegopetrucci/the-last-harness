@@ -6,7 +6,7 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Added
 
-- Added trusted, append-only project prompt appends for all twelve packaged TLH roles through exact `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` files. Nearest-upward worktree discovery, outside-Git cwd-only behavior, persisted trust, snapshots, reload timing, and 64 KiB/symlink safety rules are documented in [Per-agent project guidance](README.md#per-agent-project-guidance).
+- Added trusted, append-only project prompt appends for all thirteen packaged TLH roles through exact `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` files. Nearest-upward worktree discovery, outside-Git cwd-only behavior, persisted trust, snapshots, reload timing, and 64 KiB/symlink safety rules are documented in [Per-agent project guidance](README.md#per-agent-project-guidance).
 - TLH now warns in the footer when no providers are available and points to `/login`.
 - Rush, Product, and Bug-hunter now use their provider-aware model and thinking values as editable defaults. Their model selections persist per primary and can be reviewed or reset with `/reconcile`; supported `/thinking` and `/effort` levels are no longer locked. Explicit thinking choices use the upstream durable default, remain retained across turns, and clamp safely when a switched model supports fewer levels. Architect's medium thinking floor remains unchanged.
 - Disabled primary-agent mode now retains TLH's architect-equivalent tools and guarded bundled/trusted-subagent access, and `/review` can dispatch a fresh isolated `code-reviewer`; it still omits the architect persona, automatic primary model/thinking behavior, and architect thinking floor while preserving the current session model and thinking level. See [README.md](README.md), [docs/commands.md](docs/commands.md), and [docs/models.md](docs/models.md).
@@ -15,8 +15,9 @@ All notable changes to The Last Harness will be documented in this file.
 
 ### Changed
 
+- Architect implementation tickets continue to route to `developer`, while a separate final-validation ticket with exact commands derived from `VALIDATING.md` or repository discovery routes to the command-only `test-runner`; ticket-local developer validation remains required and the final runner does not edit, install dependencies, fix failures, or change tickets.
 - TLH-primary project custom delegation follows the live OpenRouter session model when the caller omits `model`, overriding a root file's model; other providers keep the root file's model unless the caller explicitly overrides it.
-- TLH no longer installs `subagents.agentDirs` for canonical minor agents. The eight canonical minor roles load from the fixed installer-managed `<agent-dir>/tlh/agents/subagents/` paths; existing user/project `agentDirs` values are preserved by install/update but are inert for TLH role discovery and may be removed manually.
+- TLH no longer installs `subagents.agentDirs` for canonical minor agents. The nine canonical minor roles load from the fixed installer-managed `<agent-dir>/tlh/agents/subagents/` paths; existing user/project `agentDirs` values are preserved by install/update but are inert for TLH role discovery and may be removed manually.
 
 ### Removed
 

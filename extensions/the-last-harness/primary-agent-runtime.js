@@ -35,6 +35,7 @@ const PROJECT_SUBAGENT_ROLE_NAMES = new Set([
     "code-reviewer",
     "contrarian",
     "developer",
+    "test-runner",
     "diff-summarizer",
     "librarian",
     "oracle",

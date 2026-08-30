@@ -1998,6 +1998,23 @@ function evaluateBugHunter(transcript, addViolation) {
   }
 }
 
+function evaluateTestRunner(transcript, addViolation) {
+  for (const [index, step] of transcript.steps.entries()) {
+    if (step?.type !== "tool") {
+      continue;
+    }
+
+    const name = toolName(step);
+    if (name !== "bash" || step.mutates === true || readOnlyBashMutation(step)) {
+      addViolation(
+        "test-runner.read_only",
+        index,
+        "Test-runner may use only non-mutating bash validation commands; edits, mutating shell/package/ticket commands, and delegation are forbidden.",
+      );
+    }
+  }
+}
+
 function evaluateDeveloper(transcript, addViolation) {
   let sawSuccessfulTicketShow = false;
   let failedTicketShowAt;
@@ -2845,6 +2862,7 @@ const EVALUATORS = Object.freeze({
   rush: evaluateRush,
   product: evaluateProduct,
   developer: evaluateDeveloper,
+  "test-runner": evaluateTestRunner,
   "code-reviewer": evaluateCodeReviewer,
   "bug-hunter": evaluateBugHunter,
   "web-scout": evaluateWebScout,

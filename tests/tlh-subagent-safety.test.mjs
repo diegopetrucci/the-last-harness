@@ -31,6 +31,14 @@ function createPiHarness() {
 }
 
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
+  const testRunner = {
+    agent: "test-runner",
+    task: "Run the assigned validation commands and report the results",
+  };
+  assertAllowed(testRunner);
+  assert.equal(testRunner.agentScope, "user");
+  assert.equal(testRunner.context, "fresh");
+
   const webScout = {
     agent: "web-scout",
     task: "research the general web for upstream release notes",
@@ -105,6 +113,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
       { agent: "oracle", task: "provide a second opinion", context: "fresh" },
       { agent: "developer", task: "fix one issue" },
       { agent: "repo-scout", task: "inspect one area", context: "fresh" },
+      { agent: "test-runner", task: "run the exact validation commands" },
     ],
   };
   assertAllowed(batched);

@@ -18,6 +18,7 @@ const BUILTIN_APPEND_FILENAMES = [
   ".tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md",
   ".tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md",
   ".tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md",
+  ".tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md",
   ".tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md",
   ".tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md",
   ".tlh/agents/builtin/DIFF-SUMMARIZER_PROMPT_APPEND.md",
@@ -190,9 +191,37 @@ test("canonical custom-subagent documentation covers all exact built-in guidance
       "non-recursive",
       "old builtin append convention `.tlh/<ROLE>.md`",
       "never read as a fallback",
-      "one of the twelve packaged TLH roles only",
+      "one of the thirteen packaged TLH roles only",
     ],
     "built-in guidance contract",
+  );
+});
+
+test("test-runner role documentation covers routing, defaults, settings, and project guidance", () => {
+  assertContainsAll(
+    readme,
+    [
+      "thirteen packaged roles",
+      "`test-runner` for exact final-validation commands and read-only reports",
+      "`test-runner` uses cheap low-effort defaults",
+      ".tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md",
+    ],
+    "README test-runner contract",
+  );
+  assertContainsAll(
+    models,
+    [
+      "command-only `test-runner`",
+      "OpenAI Codex GPT-5.6 Luna at low effort",
+      "Anthropic Claude Haiku 4.5 at low effort",
+      "`test-runner`",
+    ],
+    "model defaults test-runner contract",
+  );
+  assertContainsAll(
+    canonical,
+    ["`test-runner`", ".tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md", "thirteen"],
+    "project guidance test-runner contract",
   );
 });
 

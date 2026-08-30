@@ -47,7 +47,7 @@ Again, the core idea: explore and plan with the architect. Double check with the
 
 A few quick-fire tips to get the most of the architect:
 
-- If the planned work is too big, ask the architect to delegate even just one tk ticket at a time to the developer. You don't need to go all the way at all times.
+- If the planned work is too big, ask the architect to delegate even just one tk ticket at a time to the developer. Final-validation tickets go to the command-only test-runner instead. You don't need to go all the way at all times.
 - `/annotate-last-message` opens a simple native window where you can write comments to specific parts of the architect's last message
 - `/tree` lets you go back and forth in the conversation tree. It's similar to Claude Code's `/btw`, but much, much more powerful. I often use it to explore smaller parts of the conversation, and after having done so, I return to the last "clean" message to clear up context (you can do so with or without generated summaries of your nested conversation).
 - `/annotate-git-diff`: similar to `/annotate-last-message`, but for git diffs (even tickets!).
@@ -66,17 +66,18 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 ### Subagents
 
-Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
+Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. TLH ships thirteen packaged roles: four primaries and nine bundled minors. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
 Stable, always-available trusted project custom subagents are available to the architect (and `disabled` mode) when an exact file at `<git-worktree-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md` authorizes them. Custom-agent execution requires a persisted positive `/trust` decision for the validated Git worktree root; session-only or configuration-trust approvals never authorize custom agents. TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides (except an active-profile `disabled: true` deny-only tombstone); those definitions do not appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths; see [docs/custom-subagents.md](docs/custom-subagents.md).
 
-Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
+Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. The command-only `test-runner` uses cheap low-effort defaults and can be customized like the other bundled minors through `/subagent-settings` or project defaults. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
 
 All bundled subagents:
 
 - `repo-scout` for discovery
 - `diff-summarizer` for change overviews
-- `developer` for implementation
+- `developer` for implementation and ticket-local validation
+- `test-runner` for exact final-validation commands and read-only reports
 - `code-reviewer` for review
 - `librarian` for read-only GitHub repository research (uses `gh` CLI and `git`)
 - `web-scout` for web research
@@ -115,6 +116,7 @@ To give project-specific instructions to one packaged TLH role, add a plain Mark
 | `product`         | `.tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md`         |
 | `bug-hunter`      | `.tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md`      |
 | `developer`       | `.tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md`       |
+| `test-runner`     | `.tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md`     |
 | `code-reviewer`   | `.tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md`   |
 | `repo-scout`      | `.tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md`      |
 | `diff-summarizer` | `.tlh/agents/builtin/DIFF-SUMMARIZER_PROMPT_APPEND.md` |

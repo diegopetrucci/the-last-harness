@@ -63,6 +63,7 @@ const BUNDLED_SUBAGENT_NAMES = Object.freeze([
     "librarian",
     "oracle",
     "repo-scout",
+    "test-runner",
     "web-scout",
 ]);
 const execFileAsync = promisify(execFile);

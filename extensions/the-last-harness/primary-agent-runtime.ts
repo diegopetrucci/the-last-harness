@@ -133,6 +133,7 @@ type ProjectSubagentRoleName =
   | "code-reviewer"
   | "contrarian"
   | "developer"
+  | "test-runner"
   | "diff-summarizer"
   | "librarian"
   | "oracle"
@@ -149,6 +150,7 @@ const PROJECT_SUBAGENT_ROLE_NAMES: ReadonlySet<string> = new Set([
   "code-reviewer",
   "contrarian",
   "developer",
+  "test-runner",
   "diff-summarizer",
   "librarian",
   "oracle",

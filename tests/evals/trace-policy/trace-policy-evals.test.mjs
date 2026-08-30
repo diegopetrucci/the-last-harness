@@ -365,9 +365,9 @@ test("bug-hunter bash tk show and npm test remain read-only", () => {
   }
 });
 
-test("developer final-validation no-edit flow stays allowed after tk show", () => {
+test("test-runner final-validation allows tk show, exact validation commands, and concise reporting", () => {
   const result = evaluateTracePolicy({
-    agent: "developer",
+    agent: "test-runner",
     steps: [
       { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
       {
@@ -375,12 +375,34 @@ test("developer final-validation no-edit flow stays allowed after tk show", () =
         tool: "bash",
         command: "node --test tests/evals/trace-policy/trace-policy-evals.test.mjs",
       },
+      { type: "tool", tool: "bash", command: "npm run validate" },
       { type: "assistant", text: "Validation passed with no edits required." },
     ],
   });
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.violations, []);
+});
+
+test("test-runner rejects edits, mutation commands, and delegation", () => {
+  const traces = [
+    { type: "tool", tool: "edit", path: "README.md" },
+    { type: "tool", tool: "bash", command: "npm ci" },
+    { type: "tool", tool: "bash", command: "rm -f /tmp/output" },
+    { type: "tool", tool: "bash", command: "tk close tlht-0qod" },
+    { type: "tool", tool: "subagent", input: { agent: "developer", prompt: "Fix it." } },
+  ];
+
+  for (const step of traces) {
+    const result = evaluateTracePolicy({
+      agent: "test-runner",
+      steps: [{ type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] }, step],
+    });
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      ["test-runner.read_only"],
+    );
+  }
 });
 
 test("developer rejects bare tk show before editing", () => {

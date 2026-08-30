@@ -83,7 +83,7 @@ Disabled mode retains TLH's base defaults/infrastructure and the architect-equiv
 
 ### `/subagent-settings`
 
-`/subagent-settings` configures persistent model and effort overrides for the eight bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`. These roles are dispatched through TLH's first-party `extensions/subagents` runtime; they are not a separately installed extension.
+`/subagent-settings` configures persistent model and effort overrides for the nine bundled TLH minor-agent roles: `code-reviewer`, `contrarian`, `developer`, `test-runner`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, and `web-scout`. These roles are dispatched through TLH's first-party `extensions/subagents` runtime; they are not a separately installed extension. The command-only `test-runner` is intended for exact commands from final-validation tickets.
 
 #### Grammar
 

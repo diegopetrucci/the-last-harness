@@ -33,6 +33,7 @@ interface SubagentConfig {
 
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
   "developer.md",
+  "test-runner.md",
   "code-reviewer.md",
   "repo-scout.md",
   "diff-summarizer.md",

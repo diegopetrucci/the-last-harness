@@ -62,6 +62,10 @@ function writePromptSet(dir, label = "prompt") {
   }
 }
 
+test("installer manages the canonical test-runner prompt", () => {
+  assert.ok(TLH_SUBAGENT_PROMPTS.includes("test-runner.md"));
+});
+
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
