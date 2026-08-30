@@ -306,17 +306,22 @@ export function selectProviderAwareAgentDefaults(agent, availableModels, current
     const thinking = resolveProviderThinking(agent, model?.provider ?? currentProvider);
     return { model, thinking };
 }
-function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback) {
+function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback, effortSource) {
     const storedThinking = rawThinking === false ? "off" : String(rawThinking);
     const modelLabel = `${generatedFallback ? "generated fallback " : ""}${formatProviderModelReference(model)}`;
     const standardStoredThinking = rawThinking === false || (typeof rawThinking === "string" && isThinkingLevel(rawThinking));
-    const subject = standardStoredThinking
-        ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
-        : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${generatedFallback ? modelLabel : (agent?.name ?? "this subagent")}`;
+    const roleLabel = generatedFallback ? modelLabel : (agent?.name ?? "this subagent");
+    const subject = effortSource === "project"
+        ? standardStoredThinking
+            ? `TLH project default effort "${storedThinking}" from .tlh/defaults.json is not supported by ${modelLabel}`
+            : `TLH ignored unsupported project default effort "${storedThinking}" from .tlh/defaults.json for ${roleLabel}`
+        : standardStoredThinking
+            ? `TLH stored minor-agent effort "${storedThinking}" is not supported by ${modelLabel}`
+            : `TLH ignored unsupported stored minor-agent effort "${storedThinking}" for ${roleLabel}`;
     if (neutralizingThinking === undefined) {
         const residual = rawThinking === false
             ? "no supported neutralizer is available, so the runtime's default effort behavior will be used for this run"
-            : "no supported suffix can neutralize it, so the subagents runtime will drop the stored value for this run";
+            : `no supported suffix can neutralize it, so the subagents runtime will drop the ${effortSource === "project" ? "project" : "stored"} value for this run`;
         return `${subject}; ${residual}.`;
     }
     if (neutralizingThinking === "off") {
@@ -330,13 +335,19 @@ function formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThin
         : "using bundled defaults for this run";
     return `${subject}; ${action}.`;
 }
-function formatUnresolvedStoredThinkingWarning(agent, rawThinking) {
+function formatUnresolvedStoredThinkingWarning(agent, rawThinking, effortSource) {
+    if (effortSource === "project") {
+        return `TLH ignored unsupported project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
+    }
     return `TLH ignored unsupported stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"}; no supported model suffix could be emitted, so the subagents runtime will drop the value for a known model and fail open for an unknown model if this role is dispatched.`;
 }
-function formatUnresolvedStoredThinkingCapabilityWarning(agent, rawThinking) {
+function formatUnresolvedStoredThinkingCapabilityWarning(agent, rawThinking, effortSource) {
+    if (effortSource === "project") {
+        return `TLH project default effort "${rawThinking}" from .tlh/defaults.json for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
+    }
     return `TLH stored minor-agent effort "${rawThinking}" for ${agent?.name ?? "this subagent"} could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.`;
 }
-function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false) {
+function resolveStoredSubagentThinking(agent, model, override, generatedFallback = false, effortSource = "stored") {
     const rawThinking = override?.thinking;
     const bundledThinking = resolveThinkingForProvider(agent, model?.provider);
     const requestedThinking = rawThinking === false
@@ -365,7 +376,7 @@ function resolveStoredSubagentThinking(agent, model, override, generatedFallback
             return { thinking: requestedThinking };
         }
         return {
-            warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking)),
+            warning: formatUnresolvedStoredThinkingWarning(agent, String(rawThinking), effortSource),
         };
     }
     if (!Object.hasOwn(model, "reasoning")) {
@@ -382,7 +393,7 @@ function resolveStoredSubagentThinking(agent, model, override, generatedFallback
             : undefined;
     return {
         thinking: neutralizingThinking,
-        warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback),
+        warning: formatStoredThinkingWarning(agent, model, rawThinking, neutralizingThinking, generatedFallback, effortSource),
     };
 }
 function resolveIndependence(agent, model, currentProvider, currentModel) {
@@ -410,7 +421,10 @@ export function formatUnavailableProjectModelWarning(agentName, model) {
 }
 function mergeProjectDefaultsWithOverride(override, projectEntry, availableModels, projectModelEligible, agentName, onWarning) {
     if (!projectEntry) {
-        return override;
+        return {
+            override,
+            effortSource: override?.thinking !== undefined ? "stored" : undefined,
+        };
     }
     let effectiveModel = override?.model;
     if (projectModelEligible && projectEntry.model !== undefined) {
@@ -429,7 +443,7 @@ function mergeProjectDefaultsWithOverride(override, projectEntry, availableModel
     }
     const effectiveThinking = projectEntry.effort !== undefined ? projectEntry.effort : override?.thinking;
     if (effectiveModel === undefined && effectiveThinking === undefined) {
-        return undefined;
+        return { override: undefined };
     }
     const result = {};
     if (effectiveModel !== undefined) {
@@ -438,12 +452,19 @@ function mergeProjectDefaultsWithOverride(override, projectEntry, availableModel
     if (effectiveThinking !== undefined) {
         result.thinking = effectiveThinking;
     }
-    return result;
+    return {
+        override: result,
+        effortSource: projectEntry.effort !== undefined
+            ? "project"
+            : override?.thinking !== undefined
+                ? "stored"
+                : undefined,
+    };
 }
-export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override) {
+export function resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override, effortSource = "stored") {
     const overrideModel = findAvailableProviderModel(availableModels, override?.model);
     if (overrideModel) {
-        const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, overrideModel, override, false, effortSource);
         return {
             model: overrideModel,
             thinking: thinkingResolution.thinking,
@@ -453,7 +474,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     }
     if (typeof override?.model === "string") {
         const parsedOverrideModel = parseProviderModelReference(splitKnownThinkingSuffix(override.model).baseModel);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, undefined, override, false, effortSource);
         return {
             unavailableModel: override.model,
             independence: resolveIndependence(agent, parsedOverrideModel, currentProvider, currentModel),
@@ -462,7 +483,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     }
     if (override?.model === false) {
         const inheritedModel = findAvailableProviderModelReference(availableModels, currentModel);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, inheritedModel, override, false, effortSource);
         return {
             model: inheritedModel,
             thinking: thinkingResolution.thinking,
@@ -474,7 +495,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     if (openrouterFollow?.model) {
         const thinkingResolution = override === undefined
             ? { thinking: openrouterFollow.thinking }
-            : resolveStoredSubagentThinking(agent, openrouterFollow.model, override);
+            : resolveStoredSubagentThinking(agent, openrouterFollow.model, override, false, effortSource);
         return {
             model: openrouterFollow.model,
             fallbackModels: [],
@@ -493,14 +514,14 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
     if (!selectedModel && override?.thinking !== undefined) {
         const currentSessionModel = findAvailableProviderModelReference(availableModels, currentModel);
         if (currentSessionModel) {
-            currentSessionThinkingResolution = resolveStoredSubagentThinking(agent, currentSessionModel, override);
+            currentSessionThinkingResolution = resolveStoredSubagentThinking(agent, currentSessionModel, override, false, effortSource);
             if (currentSessionThinkingResolution.thinking) {
                 selectedModel = currentSessionModel;
             }
         }
         else if (typeof override.thinking === "string" && override.thinking !== "off") {
             currentSessionThinkingResolution = {
-                warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking),
+                warning: formatUnresolvedStoredThinkingCapabilityWarning(agent, override.thinking, effortSource),
             };
         }
     }
@@ -514,7 +535,7 @@ export function resolveProviderAwareSubagentResolution(agent, availableModels, c
         : [];
     const resolveThinkingResult = (m, generatedFallback = false) => override === undefined
         ? { thinking: resolveThinkingForProvider(agent, m?.provider ?? currentProvider) }
-        : resolveStoredSubagentThinking(agent, m, override, generatedFallback);
+        : resolveStoredSubagentThinking(agent, m, override, generatedFallback, effortSource);
     const primaryThinkingResolution = selectedModel
         ? resolveThinkingResult(selectedModel)
         : (currentSessionThinkingResolution ?? {});
@@ -569,7 +590,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     const projectEntry = agentName && options.projectDefaults && Object.hasOwn(options.projectDefaults, agentName)
         ? options.projectDefaults[agentName]
         : undefined;
-    const override = mergeProjectDefaultsWithOverride(persistedOverride, projectEntry, availableModels, !explicitModel, agentName, options.onWarning);
+    const mergedOverride = mergeProjectDefaultsWithOverride(persistedOverride, projectEntry, availableModels, !explicitModel, agentName, options.onWarning);
+    const override = mergedOverride.override;
+    const effortSource = mergedOverride.effortSource;
     if (explicitModel) {
         if (typeof target.model !== "string" ||
             splitKnownThinkingSuffix(target.model).thinkingSuffix ||
@@ -577,7 +600,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
             return 0;
         }
         const explicitModel = findAvailableProviderModel(availableModels, target.model);
-        const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override);
+        const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override, false, effortSource);
         if (thinkingResolution.warning && agentName) {
             options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
         }
@@ -624,7 +647,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
     if (override.model === false && override.thinking === undefined) {
         return 0;
     }
-    const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override);
+    const resolution = resolveProviderAwareSubagentResolution(agent, availableModels, currentProvider, currentModel, override, effortSource);
     if (resolution.unavailableModel && agentName) {
         options.onWarning?.({
             agent: agentName,

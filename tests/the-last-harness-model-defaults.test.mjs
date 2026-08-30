@@ -2712,6 +2712,99 @@ test("project defaults: layer 2 project effort beats layer 3 persisted thinking"
   assert.equal(input.model, "anthropic/claude-sonnet-4-6:high");
 });
 
+test("project and stored effort warnings retain their source provenance", () => {
+  const limitedModel = {
+    provider: "anthropic",
+    id: "claude-sonnet-4-6",
+    reasoning: true,
+    thinkingLevelMap: { medium: null, high: null },
+  };
+  const projectInput = { agent: "developer", task: "Implement" };
+  const projectWarnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      projectInput,
+      pdAgents2,
+      [limitedModel],
+      "anthropic",
+      limitedModel,
+      {
+        projectDefaults: { developer: { effort: "high" } },
+        onWarning: ({ message }) => projectWarnings.push(message),
+      },
+    ),
+    1,
+  );
+  assert.equal(projectInput.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(projectWarnings, [
+    'TLH project default effort "high" from .tlh/defaults.json is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+
+  const storedInput = { agent: "developer", task: "Implement" };
+  const storedWarnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      storedInput,
+      pdAgents2,
+      [limitedModel],
+      "anthropic",
+      limitedModel,
+      {
+        agentOverrides: new Map([["developer", { thinking: "high" }]]),
+        onWarning: ({ message }) => storedWarnings.push(message),
+      },
+    ),
+    1,
+  );
+  assert.equal(storedInput.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(storedWarnings, [
+    'TLH stored minor-agent effort "high" is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+});
+
+test("project defaults: project model merge retains persisted effort warning provenance", () => {
+  const limitedModel = {
+    provider: "anthropic",
+    id: "claude-sonnet-4-6",
+    reasoning: true,
+    thinkingLevelMap: { medium: null, high: null },
+  };
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(input, pdAgents2, [limitedModel], "anthropic", limitedModel, {
+      agentOverrides: new Map([["developer", { thinking: "high" }]]),
+      projectDefaults: { developer: { model: "anthropic/claude-sonnet-4-6" } },
+      onWarning: ({ message }) => warnings.push(message),
+    }),
+    1,
+  );
+  // The project model is selected, while the persisted unsupported effort still
+  // follows the existing capability neutralization path.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(warnings, [
+    'TLH stored minor-agent effort "high" is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+  assert.doesNotMatch(warnings[0], /project default|\.tlh\/defaults\.json/);
+});
+
+test("project defaults: no-model capability warning identifies the project defaults file", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(input, pdAgents2, [], "custom-provider", undefined, {
+      projectDefaults: { developer: { effort: "high" } },
+      onWarning: ({ message }) => warnings.push(message),
+    }),
+    0,
+  );
+  assert.equal(input.model, undefined);
+  assert.deepEqual(warnings, [
+    'TLH project default effort "high" from .tlh/defaults.json for developer could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.',
+  ]);
+  assert.match(warnings[0], /\.tlh\/defaults\.json/);
+});
+
 // Layer 1 (explicit dispatch model): human model wins; project effort still attaches.
 test("project defaults: layer 1 explicit dispatch model beats project model (human-only rule)", () => {
   const input = { agent: "developer", task: "Implement", model: "anthropic/claude-opus-5" };
