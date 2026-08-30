@@ -403,6 +403,42 @@ describe("buildDoctorReport — heartbeat section", () => {
     }
   });
 
+  it("shows read-time active-gap totals without inventing a gap verdict", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-active-"));
+    try {
+      const summary: HeartbeatSessionSummary = {
+        enabled: true,
+        totalBeats: 1,
+        totalCacheReadTokens: 5000,
+        totalBeatCostUsd: 0.001575,
+        gapsSaved: 0,
+        gapsWasted: 0,
+        gapsLost: 0,
+        gapsUnneeded: 0,
+        breakerDisabled: false,
+      };
+      const report = buildDoctorReport({
+        cwd: root,
+        config: {},
+        state: makeMinimalState(),
+        heartbeat: summary,
+        paths: {
+          tempRootDir: root,
+          asyncDir: path.join(root, "async"),
+          resultsDir: path.join(root, "results"),
+          chainRunsDir: path.join(root, "chains"),
+        },
+        deps: minimalDeps,
+      });
+      assert.match(report, /beats this session: 1/);
+      assert.match(report, /cache-read tokens: 5000/);
+      assert.match(report, /total beat cost/);
+      assert.match(report, /- gaps: none yet/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows circuit breaker open when disabled", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-doctor-hb-brk-"));
     try {

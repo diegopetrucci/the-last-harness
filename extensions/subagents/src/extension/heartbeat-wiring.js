@@ -297,11 +297,12 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
             controller.resetSession();
         },
         getSessionSummary() {
+            const activeGap = currentGap;
             return {
                 enabled: true,
-                totalBeats: sessionTotalBeats,
-                totalCacheReadTokens: sessionTotalCacheReadTokens,
-                totalBeatCostUsd: sessionTotalBeatCostUsd,
+                totalBeats: sessionTotalBeats + (activeGap?.executedBeats ?? 0),
+                totalCacheReadTokens: sessionTotalCacheReadTokens + (activeGap?.totalCacheReadTokens ?? 0),
+                totalBeatCostUsd: sessionTotalBeatCostUsd + (activeGap?.totalBeatCostUsd ?? 0),
                 gapsSaved: sessionGapsSaved,
                 gapsWasted: sessionGapsWasted,
                 gapsLost: sessionGapsLost,

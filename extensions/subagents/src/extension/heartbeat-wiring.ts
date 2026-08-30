@@ -618,11 +618,15 @@ export function createHeartbeatWiring(
     },
 
     getSessionSummary(): HeartbeatSessionSummary {
+      // Project the active accumulator onto the read-time totals without
+      // finalizing it.  Gap verdict counters remain finalized-only so doctor
+      // does not report a verdict for a gap that is still in progress.
+      const activeGap = currentGap;
       return {
         enabled: true,
-        totalBeats: sessionTotalBeats,
-        totalCacheReadTokens: sessionTotalCacheReadTokens,
-        totalBeatCostUsd: sessionTotalBeatCostUsd,
+        totalBeats: sessionTotalBeats + (activeGap?.executedBeats ?? 0),
+        totalCacheReadTokens: sessionTotalCacheReadTokens + (activeGap?.totalCacheReadTokens ?? 0),
+        totalBeatCostUsd: sessionTotalBeatCostUsd + (activeGap?.totalBeatCostUsd ?? 0),
         gapsSaved: sessionGapsSaved,
         gapsWasted: sessionGapsWasted,
         gapsLost: sessionGapsLost,

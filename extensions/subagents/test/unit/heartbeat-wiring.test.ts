@@ -181,6 +181,25 @@ function parseSummaryLines(written: string[]): Array<Record<string, unknown>> {
   });
 }
 
+function makeCacheReadDeps(
+  options: {
+    written?: string[];
+    timers?: Array<{ fn: () => void; ms: number }>;
+    nowFn?: () => number;
+  } = {},
+): HeartbeatWiringDeps {
+  const deps = makeTestDeps(options);
+  deps.streamProvider = () => makeCacheReadStream();
+  return deps;
+}
+
+async function fireLatestTimer(timers: Array<{ fn: () => void; ms: number }>): Promise<void> {
+  const timer = timers.at(-1);
+  if (!timer) throw new Error("expected a scheduled heartbeat timer");
+  timer.fn();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+}
+
 // ---------------------------------------------------------------------------
 // Tests: countLiveAsyncRuns
 // ---------------------------------------------------------------------------
@@ -724,6 +743,129 @@ describe("createHeartbeatWiring — enabled: getSessionSummary", () => {
     assert.equal(summary.gapsUnneeded, 2, "both benign zero-beat gaps counted as unneeded");
     assert.equal(summary.gapsLost, 0, "no lost gaps when terminatedLost was never set");
     assert.equal(summary.gapsSaved + summary.gapsWasted, 0);
+  });
+
+  it("adds active-gap totals without assigning an active gap a verdict or double-counting on close", async () => {
+    const pi = makeFakePi();
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true } },
+      makeCacheReadDeps({ written, timers }),
+    );
+
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "session-active-totals");
+    await fireLatestTimer(timers);
+    wiring.disarm();
+
+    const finalized = wiring.getSessionSummary();
+    assert.equal(finalized.totalBeats, 1);
+    assert.equal(finalized.totalCacheReadTokens, 5000);
+    assert.ok(finalized.totalBeatCostUsd > 0);
+    assert.equal(finalized.gapsSaved, 1);
+
+    // A second gap proves read-time diagnostics compose finalized totals with
+    // the active accumulator rather than exposing only one of the two.
+    wiring.onProviderRequest({}, makeModel());
+    wiring.notifyAsyncStarted(0, "session-active-totals");
+    await fireLatestTimer(timers);
+
+    const active = wiring.getSessionSummary();
+    assert.equal(active.totalBeats, finalized.totalBeats + 1);
+    assert.equal(active.totalCacheReadTokens, finalized.totalCacheReadTokens + 5000);
+    assert.ok(active.totalBeatCostUsd > finalized.totalBeatCostUsd);
+    assert.equal(active.gapsSaved, finalized.gapsSaved, "active gap must not get a verdict yet");
+    assert.equal(active.gapsWasted, 0);
+    assert.equal(active.gapsLost, 0);
+    assert.equal(active.gapsUnneeded, 0);
+
+    wiring.disarm();
+    const closed = wiring.getSessionSummary();
+    assert.equal(closed.totalBeats, active.totalBeats, "closing must not double-count beats");
+    assert.equal(
+      closed.totalCacheReadTokens,
+      active.totalCacheReadTokens,
+      "closing must not double-count cache-read tokens",
+    );
+    assert.equal(
+      closed.totalBeatCostUsd,
+      active.totalBeatCostUsd,
+      "closing must not double-count cost",
+    );
+    assert.equal(closed.gapsSaved, 2);
+    wiring.destroy();
+  });
+
+  it("destroy finalizes active totals once without double-counting", async () => {
+    const pi = makeFakePi();
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true } },
+      makeCacheReadDeps({ written, timers }),
+    );
+
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "session-destroy-totals");
+    await fireLatestTimer(timers);
+    const active = wiring.getSessionSummary();
+
+    wiring.destroy();
+    const destroyed = wiring.getSessionSummary();
+    assert.equal(destroyed.totalBeats, active.totalBeats);
+    assert.equal(destroyed.totalCacheReadTokens, active.totalCacheReadTokens);
+    assert.equal(destroyed.totalBeatCostUsd, active.totalBeatCostUsd);
+    assert.equal(destroyed.gapsSaved, 1);
+    assert.equal(parseSummaryLines(written).length, 1, "destroy must finalize the gap once");
+
+    wiring.destroy();
+    assert.deepEqual(wiring.getSessionSummary(), destroyed, "repeated destroy must not re-count");
+  });
+
+  it("reset clears finalized and active session-visible totals", async () => {
+    const pi = makeFakePi();
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true } },
+      makeCacheReadDeps({ written, timers }),
+    );
+
+    // Finalize one gap, then leave another gap active so reset covers both
+    // storage locations used by getSessionSummary.
+    wiring.onProviderRequest({}, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "session-reset-totals");
+    await fireLatestTimer(timers);
+    wiring.disarm();
+
+    wiring.onProviderRequest({}, makeModel());
+    wiring.notifyAsyncStarted(0, "session-reset-totals");
+    await fireLatestTimer(timers);
+    const beforeReset = wiring.getSessionSummary();
+    assert.equal(beforeReset.totalBeats, 2);
+    assert.equal(beforeReset.totalCacheReadTokens, 10_000);
+    assert.equal(beforeReset.gapsSaved, 1, "the second gap is still active");
+
+    wiring.resetSession();
+    assert.deepEqual(wiring.getSessionSummary(), {
+      enabled: true,
+      totalBeats: 0,
+      totalCacheReadTokens: 0,
+      totalBeatCostUsd: 0,
+      gapsSaved: 0,
+      gapsWasted: 0,
+      gapsLost: 0,
+      gapsUnneeded: 0,
+      breakerDisabled: false,
+    });
+    wiring.destroy();
   });
 
   it("reflects enabled:false for disabled wiring", () => {
