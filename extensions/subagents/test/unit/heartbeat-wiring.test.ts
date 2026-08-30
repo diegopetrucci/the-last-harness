@@ -765,6 +765,51 @@ describe("createHeartbeatWiring — enabled: synchronous disarm before completio
 });
 
 // ---------------------------------------------------------------------------
+// Tests: resetSession — clear wiring-owned lifecycle state
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatWiring — enabled: resetSession", () => {
+  it("clears idle state and captured data before rearming a new session", async () => {
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const pi = makeFakePi();
+    let streamCalls = 0;
+    const deps = makeTestDeps({ timers });
+    deps.streamProvider = () => {
+      streamCalls++;
+      return makeCacheReadStream();
+    };
+
+    const wiring = createHeartbeatWiring(pi, { heartbeat: { enabled: true } }, deps);
+
+    wiring.onIdle(true);
+    wiring.onProviderRequest({ session: "old" }, makeModel());
+    wiring.notifyAsyncStarted(0, "session-old");
+    const timersBeforeReset = timers.length;
+
+    wiring.resetSession();
+
+    // A stale idle flag would let tryRearm open a gap immediately after reset.
+    wiring.tryRearm(1, "session-new");
+    assert.equal(
+      timers.length,
+      timersBeforeReset,
+      "resetSession must clear wiring idle state before rearm",
+    );
+
+    // Once the new session reports idle, a gap can open, but it has no payload
+    // until a new provider request is captured.
+    wiring.onIdle(true);
+    wiring.tryRearm(1, "session-new");
+    assert.ok(timers.length > timersBeforeReset, "new-session idle state should permit rearm");
+    timers[timers.length - 1]!.fn();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(streamCalls, 0, "resetSession must clear the old payload capture");
+
+    wiring.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: tryRearm — re-arm on idle with live runs (finding 4)
 // ---------------------------------------------------------------------------
 

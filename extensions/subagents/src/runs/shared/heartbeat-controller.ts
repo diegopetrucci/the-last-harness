@@ -194,10 +194,10 @@ export interface HeartbeatController {
   /**
    * Reset session-scoped state for a new session.
    *
-   * Clears the error-breaker (disabled flag), consecutive-error count, and
-   * any open gap state.  Does NOT reset the resolved config.
-   * Safe to call when a gap is somehow still open — closes it without
-   * emitting a duplicate log entry.
+   * Clears the error-breaker (disabled flag), consecutive-error count, captured
+   * request, idle/session identity, and any open gap state.  Does NOT reset the
+   * resolved config.  Safe to call when a gap is somehow still open — closes
+   * it without emitting a duplicate log entry.
    */
   resetSession(): void;
 }
@@ -375,12 +375,16 @@ export function createHeartbeatController(
   async function executeBeat(
     currentCapture: HeartbeatCapture,
     capturedGapId: string,
+    capturedSessionId: string,
     capturedGeneration: number,
+    capturedBeatIndex: number,
   ): Promise<void> {
     const beatStartMs = now();
+    // Snapshot all beat identity before any asynchronous provider/auth work so
+    // later lifecycle changes cannot retag this beat with a newer session.
     const gapId = capturedGapId;
-    // Use beatCount BEFORE completeBeat increments it so the index is 0-based.
-    const beatIndex = state.gap?.beatCount ?? 0;
+    const sessionId = capturedSessionId;
+    const beatIndex = capturedBeatIndex;
     const model = currentCapture.model;
 
     let outcome: HeartbeatOutcome = "error";
@@ -425,6 +429,20 @@ export function createHeartbeatController(
         if (!provider) throw new Error(`heartbeat: provider not found: ${model.provider}`);
 
         const auth = await registry.getApiKeyAndHeaders(model);
+        // Auth lookup is asynchronous.  A session reset, gap close, or newer
+        // gap may have invalidated this beat while it was pending; never build
+        // a provider stream for that stale request.
+        if (
+          abortCtrl.signal.aborted ||
+          destroyed ||
+          gapGeneration !== capturedGeneration ||
+          state.gap?.gapId !== capturedGapId
+        ) {
+          if (!abortCtrl.signal.aborted) abortCtrl.abort("lifecycle");
+          // Throw so the common finally/cancellation path records the beat as
+          // cancelled without ever constructing a provider stream.
+          throw new Error("heartbeat: beat invalidated during auth lookup");
+        }
         if (!auth.ok) throw new Error(`heartbeat: auth failed: ${auth.error}`);
 
         const options: StreamOptions = {
@@ -620,9 +638,17 @@ export function createHeartbeatController(
       beginBeat(state);
       const currentCapture = capture;
       const capturedGapId = state.gap?.gapId ?? "unknown";
+      const capturedSessionId = sessionId;
       const capturedGeneration = gapGeneration;
+      const capturedBeatIndex = state.gap?.beatCount ?? 0;
       // Beat is async; fire and forget.
-      executeBeat(currentCapture, capturedGapId, capturedGeneration).catch(() => {
+      executeBeat(
+        currentCapture,
+        capturedGapId,
+        capturedSessionId,
+        capturedGeneration,
+        capturedBeatIndex,
+      ).catch(() => {
         // executeBeat never throws, but guard defensively.
       });
       // The timer is re-armed inside executeBeat once the beat completes.
@@ -670,10 +696,19 @@ export function createHeartbeatController(
       if (destroyed || state.disabled) return;
 
       // Validate serialized size before storing.
-      let serialized: string;
+      let serialized: string | undefined;
       try {
         serialized = JSON.stringify(payload);
       } catch {
+        // A circular or otherwise non-serializable payload must invalidate any
+        // previous capture instead of leaving it available for replay.
+        capture = null;
+        return;
+      }
+      if (typeof serialized !== "string") {
+        // JSON.stringify returns undefined for root-level undefined, functions,
+        // symbols, and some unusable toJSON results.
+        capture = null;
         return;
       }
       if (Buffer.byteLength(serialized, "utf-8") > MAX_PAYLOAD_BYTES) {
@@ -742,9 +777,14 @@ export function createHeartbeatController(
     },
 
     resetSession(): void {
-      // Cancel any pending timer and abort any in-flight beat.
+      // Invalidate any beat that may still resume after this reset before
+      // clearing the session-owned identity it must use for attribution.
+      gapGeneration++;
       cancelTimer();
       abortInFlight();
+      capture = null;
+      sessionId = "";
+      isIdle = false;
       // Reset all session-scoped state without emitting a log entry.
       // (The wiring is responsible for discarding the gap accumulator
       // and resetting session totals before calling this.)

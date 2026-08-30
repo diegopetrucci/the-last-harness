@@ -285,6 +285,7 @@ export function createHeartbeatWiring(pi, config, deps = {}) {
         },
         resetSession() {
             currentGap = null;
+            isIdleState = false;
             sessionTotalBeats = 0;
             sessionTotalCacheReadTokens = 0;
             sessionTotalBeatCostUsd = 0;

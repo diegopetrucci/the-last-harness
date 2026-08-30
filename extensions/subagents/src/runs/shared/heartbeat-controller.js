@@ -100,10 +100,11 @@ export function createHeartbeatController(config, deps = {}) {
             beatAbortController = null;
         }
     }
-    async function executeBeat(currentCapture, capturedGapId, capturedGeneration) {
+    async function executeBeat(currentCapture, capturedGapId, capturedSessionId, capturedGeneration, capturedBeatIndex) {
         const beatStartMs = now();
         const gapId = capturedGapId;
-        const beatIndex = state.gap?.beatCount ?? 0;
+        const sessionId = capturedSessionId;
+        const beatIndex = capturedBeatIndex;
         const model = currentCapture.model;
         let outcome = "error";
         let classifyFromUsage = true;
@@ -132,6 +133,14 @@ export function createHeartbeatController(config, deps = {}) {
                 if (!provider)
                     throw new Error(`heartbeat: provider not found: ${model.provider}`);
                 const auth = await registry.getApiKeyAndHeaders(model);
+                if (abortCtrl.signal.aborted ||
+                    destroyed ||
+                    gapGeneration !== capturedGeneration ||
+                    state.gap?.gapId !== capturedGapId) {
+                    if (!abortCtrl.signal.aborted)
+                        abortCtrl.abort("lifecycle");
+                    throw new Error("heartbeat: beat invalidated during auth lookup");
+                }
                 if (!auth.ok)
                     throw new Error(`heartbeat: auth failed: ${auth.error}`);
                 const options = {
@@ -264,8 +273,10 @@ export function createHeartbeatController(config, deps = {}) {
             beginBeat(state);
             const currentCapture = capture;
             const capturedGapId = state.gap?.gapId ?? "unknown";
+            const capturedSessionId = sessionId;
             const capturedGeneration = gapGeneration;
-            executeBeat(currentCapture, capturedGapId, capturedGeneration).catch(() => {
+            const capturedBeatIndex = state.gap?.beatCount ?? 0;
+            executeBeat(currentCapture, capturedGapId, capturedSessionId, capturedGeneration, capturedBeatIndex).catch(() => {
             });
             return;
         }
@@ -302,6 +313,11 @@ export function createHeartbeatController(config, deps = {}) {
                 serialized = JSON.stringify(payload);
             }
             catch {
+                capture = null;
+                return;
+            }
+            if (typeof serialized !== "string") {
+                capture = null;
                 return;
             }
             if (Buffer.byteLength(serialized, "utf-8") > MAX_PAYLOAD_BYTES) {
@@ -351,8 +367,12 @@ export function createHeartbeatController(config, deps = {}) {
             abortInFlight();
         },
         resetSession() {
+            gapGeneration++;
             cancelTimer();
             abortInFlight();
+            capture = null;
+            sessionId = "";
+            isIdle = false;
             state.disabled = false;
             state.consecutiveErrors = 0;
             state.inFlight = false;

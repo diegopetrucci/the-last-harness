@@ -1815,6 +1815,190 @@ describe("createHeartbeatController — MIN_REARM_DELAY_MS floor on skip re-arm"
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatController — resetSession", () => {
+  it("resetSession clears captured data and idle state before a new gap", async () => {
+    const timer = makeTimerFake();
+    let streamCalls = 0;
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: null,
+      streamProvider() {
+        streamCalls++;
+        return makeStream([makeStartEvent(), makeTextStartEvent()]);
+      },
+    });
+
+    ctrl.onProviderRequest({ session: "old" }, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-old", "session-old");
+
+    ctrl.resetSession();
+
+    // Re-arm while idle, but without a new provider request.  The old capture
+    // must not be replayed into the new session.
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-new-no-capture", "session-new");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(streamCalls, 0, "resetSession must clear the prior payload capture");
+
+    ctrl.resetSession();
+
+    // A new capture still must wait for the new session's idle notification;
+    // resetSession must not carry the prior idle state across sessions.
+    ctrl.onProviderRequest({ session: "new" }, makeModel());
+    ctrl.startGap("gap-new-not-idle", "session-new");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(streamCalls, 0, "resetSession must clear the prior idle state");
+
+    ctrl.destroy();
+  });
+
+  it("rejects unusable captures without replaying the previous payload", async () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    const invalidPayloads: Array<{ label: string; payload: unknown }> = [
+      { label: "circular payload", payload: circular },
+      { label: "undefined payload", payload: undefined },
+      { label: "oversized payload", payload: { data: "x".repeat(2 * 1024 * 1024 + 1) } },
+      { label: "unusable serialized payload", payload: { toJSON: () => undefined } },
+    ];
+
+    for (const { label, payload } of invalidPayloads) {
+      const timer = makeTimerFake();
+      let streamCalls = 0;
+      const ctrl = createHeartbeatController(BASE_CONFIG, {
+        now: timer.now,
+        setTimeout: timer.setTimeout,
+        clearTimeout: timer.clearTimeout,
+        logPath: null,
+        streamProvider() {
+          streamCalls++;
+          return makeStream([makeStartEvent(), makeTextStartEvent()]);
+        },
+      });
+
+      ctrl.onProviderRequest({ valid: true }, makeModel());
+      assert.doesNotThrow(
+        () => ctrl.onProviderRequest(payload, makeModel()),
+        `${label} must be rejected without throwing`,
+      );
+      ctrl.onIdle(true);
+      ctrl.startGap(`gap-${label}`, "session-invalid");
+      timer.advance(BASE_CONFIG.intervalMs + 1);
+      timer.firePending();
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.equal(streamCalls, 0, `${label} must clear the previous capture`);
+      ctrl.destroy();
+    }
+  });
+
+  it("does not construct a provider stream after auth is cancelled", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    let resolveAuth!: (result: { ok: true; apiKey: string }) => void;
+    let authRequested = false;
+    let streamCalls = 0;
+    const authPending = new Promise<{ ok: true; apiKey: string }>((resolve) => {
+      resolveAuth = resolve;
+    });
+    const fakeProvider = {
+      stream: () => {
+        streamCalls++;
+        return makeStream([makeStartEvent(), makeTextStartEvent()]);
+      },
+    };
+    const fakeRegistryObj: unknown = {
+      getProvider: () => fakeProvider,
+      getApiKeyAndHeaders: async () => {
+        authRequested = true;
+        return authPending;
+      },
+    };
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      getModelRegistry: () => fakeRegistryObj as ModelRegistry,
+    });
+
+    ctrl.onProviderRequest({ messages: [] }, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-auth-cancel", "session-old");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    assert.equal(authRequested, true, "the beat must reach the pending auth lookup");
+
+    // Session reset aborts the old beat and opens the way for a new session;
+    // resolving the old auth lookup must not construct its provider stream.
+    ctrl.resetSession();
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-after-reset", "session-new");
+    resolveAuth({ ok: true, apiKey: "test-key" });
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(streamCalls, 0, "cancelled auth must not invoke provider.stream");
+    const cancelledRecord = sink.records.find((record) => record["outcome"] === "cancelled");
+    assert.equal(cancelledRecord?.["sessionId"], "session-old");
+    ctrl.destroy();
+  });
+
+  it("uses issuing session identity for stream options and cancellation logs", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    let observedStreamSessionId: unknown;
+    let streamStarted = false;
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      streamProvider(_model, _context, options: StreamOptions) {
+        observedStreamSessionId = (options as { sessionId?: string }).sessionId;
+        return (async function* () {
+          streamStarted = true;
+          await new Promise<void>((resolve) => {
+            if (options.signal?.aborted) {
+              resolve();
+              return;
+            }
+            options.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          yield* [] as AssistantMessageEvent[];
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({ messages: [] }, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-identity-old", "session-old");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(streamStarted, true, "the old beat must be in flight");
+    assert.equal(observedStreamSessionId, "session-old");
+
+    ctrl.endGap();
+    ctrl.startGap("gap-identity-new", "session-new");
+    await new Promise((r) => setTimeout(r, 20));
+
+    const cancelledRecord = sink.records.find((record) => record["outcome"] === "cancelled");
+    assert.equal(cancelledRecord?.["sessionId"], "session-old");
+    assert.equal(cancelledRecord?.["gapId"], "gap-identity-old");
+    ctrl.destroy();
+  });
+
   it("resetSession re-enables a breaker-tripped session so startGap works again", async () => {
     const timer = makeTimerFake();
     const sink = makeLoggerSink();
@@ -1859,6 +2043,7 @@ describe("createHeartbeatController — resetSession", () => {
 
     // Now startGap a new session and verify the stream fires again.
     ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
     ctrl.startGap("g-new", "sess-2");
     timer.advance(BASE_CONFIG.intervalMs + 1);
     timer.firePending();
