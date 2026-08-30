@@ -356,6 +356,62 @@ describe("nested event parsing and projection", () => {
     assert.equal(invalid?.steps?.[0]?.terminationReason, undefined);
   });
 
+  it("retains malformed project-agent markers through nested event and status sanitization", () => {
+    const route = trackRoute();
+    const malformedRun = child("nested-malformed-project", "complete", 100);
+    Reflect.set(malformedRun, "projectAgent", { forged: true });
+    const malformedStep = child("nested-malformed-project-step", "complete", 200);
+    Reflect.set(malformedStep.steps![0]!, "projectAgent", { forged: true });
+    writeNestedEvent(route, {
+      type: "subagent.nested.completed",
+      ts: 100,
+      parentRunId: "root-run",
+      parentStepIndex: 1,
+      child: malformedRun,
+    });
+    writeNestedEvent(route, {
+      type: "subagent.nested.completed",
+      ts: 200,
+      parentRunId: "root-run",
+      parentStepIndex: 1,
+      child: malformedStep,
+    });
+
+    const registry = projectNestedEvents(route);
+    assert.equal(
+      registry.children.find((run) => run.id === malformedRun.id)?.projectAgent,
+      undefined,
+    );
+    assert.equal(
+      registry.children.find((run) => run.id === malformedRun.id)?.projectAgentMarker,
+      true,
+    );
+    assert.equal(
+      registry.children.find((run) => run.id === malformedStep.id)?.steps?.[0]?.projectAgent,
+      undefined,
+    );
+    assert.equal(
+      registry.children.find((run) => run.id === malformedStep.id)?.steps?.[0]?.projectAgentMarker,
+      true,
+    );
+
+    const projected = nestedSummaryFromAsyncStatus(
+      {
+        runId: "nested-malformed-status",
+        mode: "single",
+        state: "complete",
+        startedAt: 1,
+        steps: [{ agent: "leaf", status: "complete", projectAgent: { forged: true } }],
+      } as never,
+      "/tmp/nested-malformed-status",
+      { id: "nested-malformed-status", parentRunId: "parent", depth: 1, ts: 2 },
+    );
+    assert.equal(projected.projectAgent, undefined);
+    assert.equal(projected.projectAgentMarker, true);
+    assert.equal(projected.steps?.[0]?.projectAgent, undefined);
+    assert.equal(projected.steps?.[0]?.projectAgentMarker, true);
+  });
+
   it("projects valid nested context diagnostics and omits invalid optional diagnostics", () => {
     const route = trackRoute();
     writeNestedEvent(route, {

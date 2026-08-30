@@ -98,6 +98,7 @@ import {
   isRetryableModelFailure,
   sanitizeModelFallbackNotice,
 } from "../shared/model-fallback.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 import {
   createMutatingFailureState,
   didMutatingToolFail,
@@ -549,6 +550,7 @@ async function runSingleAttempt(
       orchestratorIntercomTarget: options.orchestratorIntercomTarget,
       runId: options.runId,
       childAgentName: agent.name,
+      projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
       childIndex: options.index ?? 0,
       parentSessionId: options.parentSessionId,
       structuredOutput: options.structuredOutput,

@@ -317,13 +317,13 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   // single
   const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
   assertAllowed(single, opts);
-  assert.equal(single.agentScope, "user");
+  assert.equal(single.agentScope, "project");
   assert.equal(single.context, "fresh");
 
   // tasks (parallel batch)
   const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
   assertAllowed(tasks, opts);
-  assert.equal(tasks.agentScope, "user");
+  assert.equal(tasks.agentScope, "project");
   assert.equal(tasks.context, "fresh");
 
   // mixed: bundled + embedded
@@ -334,6 +334,21 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
     ],
   };
   assertAllowed(mixed, opts);
+  assert.equal(mixed.agentScope, "project");
+  assert.equal(mixed.context, "fresh");
+
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "user" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", context: "fork" }, opts),
+    /may not use context: "fork"/,
+  );
 });
 
 test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed embedded names", () => {

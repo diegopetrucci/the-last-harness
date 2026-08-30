@@ -11,12 +11,17 @@ import {
   loadSkills,
   type ResolvedResource,
 } from "@earendil-works/pi-coding-agent";
+import {
+  inventoryProjectAgentGuidance,
+  type ProjectAgentGuidanceInventory,
+} from "../shared/project-agent-guidance.js";
 import { formatPathFromCwd, readText, realpathForCompare, uniqueSorted } from "./common.js";
 import { parseFrontmatterValue } from "./prompts.js";
 import type { StartupResourceSnapshot } from "./types.js";
 
 type CollectStartupResourcesOptions = {
   projectTrusted?: boolean;
+  projectAgentGuidance?: ProjectAgentGuidanceInventory;
 };
 
 function packageSourceLabel(source: string | undefined): string | undefined {
@@ -148,12 +153,22 @@ function filterVisibleResources(
   );
 }
 
+function projectGuidanceLabels(cwd: string, inventory: ProjectAgentGuidanceInventory): string[] {
+  return uniqueSorted(
+    inventory.files
+      .filter((file) => file.content !== undefined)
+      .map((file) => `${file.role}: ${formatPathFromCwd(cwd, file.path)}`),
+  );
+}
+
 export async function collectStartupResourceSnapshot(
   cwd: string,
   options: CollectStartupResourcesOptions = {},
 ): Promise<StartupResourceSnapshot> {
   const agentDir = getAgentDir();
   const projectTrusted = resolveProjectTrusted(cwd, agentDir, options);
+  const guidanceInventory =
+    options.projectAgentGuidance ?? inventoryProjectAgentGuidance(cwd, agentDir);
   const settingsManager = createSettingsManager(cwd, agentDir, projectTrusted);
   const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
   const resolved = await packageManager.resolve(async () => "skip");
@@ -175,6 +190,7 @@ export async function collectStartupResourceSnapshot(
       prompts: uniqueSorted(enabled(resolved.prompts).map(labelPrompt)),
       extensions: uniqueSorted(enabled(resolved.extensions).map(labelExtension)),
       themes: uniqueSorted(enabled(resolved.themes).map(labelTheme)),
+      projectGuidance: projectGuidanceLabels(cwd, guidanceInventory),
     },
     promptMetadata: {
       contextFiles,

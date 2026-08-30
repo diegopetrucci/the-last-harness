@@ -1,6 +1,7 @@
 import { THINKING_LEVELS } from "./constants.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import { isRecord } from "./common.js";
+import { isEmbeddedSubagentTarget } from "../the-last-harness-subagent-safety.mjs";
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const OPENROUTER_PROVIDERS = new Set(["openrouter"]);
@@ -437,6 +438,7 @@ function mergeProjectDefaultsWithOverride(override, projectEntry, availableModel
                 onWarning({
                     agent: agentName,
                     message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+                    source: "project-default",
                 });
             }
         }
@@ -584,6 +586,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         return 0;
     }
     const agentName = agentNameForTarget(target);
+    if (isEmbeddedSubagentTarget(agentName)) {
+        return 0;
+    }
     const agent = agentName ? agents.get(agentName) : undefined;
     const explicitModel = hasExplicitModel(target);
     const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
@@ -602,7 +607,11 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         const explicitModel = findAvailableProviderModel(availableModels, target.model);
         const thinkingResolution = resolveStoredSubagentThinking(agent, explicitModel, override, false, effortSource);
         if (thinkingResolution.warning && agentName) {
-            options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
+            options.onWarning?.({
+                agent: agentName,
+                message: thinkingResolution.warning,
+                source: effortSource === "project" ? "project-default" : "stored",
+            });
         }
         const modelWithThinking = applyThinkingSuffix(target.model, thinkingResolution.thinking);
         if (!modelWithThinking || modelWithThinking === target.model) {
@@ -652,14 +661,23 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         options.onWarning?.({
             agent: agentName,
             message: formatUnavailableStoredModelWarning(agentName, resolution.unavailableModel),
+            source: "stored",
         });
     }
     if (resolution.warning && agentName) {
-        options.onWarning?.({ agent: agentName, message: resolution.warning });
+        options.onWarning?.({
+            agent: agentName,
+            message: resolution.warning,
+            source: effortSource === "project" ? "project-default" : "stored",
+        });
     }
     const usesGeneratedFallback = !Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined;
     if (usesGeneratedFallback && resolution.fallbackWarning && agentName) {
-        options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
+        options.onWarning?.({
+            agent: agentName,
+            message: resolution.fallbackWarning,
+            source: effortSource === "project" ? "project-default" : "stored",
+        });
     }
     const selectedModel = formatEffectiveModelAndThinking(resolution.unavailableModel ?? resolution.model, resolution.unavailableModel ? undefined : resolution.thinking);
     if (!selectedModel ||

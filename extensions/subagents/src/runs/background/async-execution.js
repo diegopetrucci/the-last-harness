@@ -22,6 +22,7 @@ import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -316,6 +317,7 @@ export function buildAsyncRunnerSteps(id, params) {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
             ...(projectAgent ? { projectAgent } : {}),
             agent: s.agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
             task,
             phase: s.phase,
             label: s.label,
@@ -594,6 +596,7 @@ export function executeAsyncChain(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -801,6 +804,7 @@ export function executeAsyncSingle(id, params) {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
                     ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
                     agent,
+                    projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
                     model,
@@ -914,6 +918,7 @@ export function executeAsyncSingle(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,

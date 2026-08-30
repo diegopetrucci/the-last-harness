@@ -16,12 +16,21 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
-import { ModelSelectorComponent, SettingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  ModelSelectorComponent,
+  ProjectTrustStore,
+  SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 
 import { loadProjectAgentSnapshot } from "../extensions/subagents/src/agents/project-agent-loader.js";
 import { loadProjectDefaults } from "../extensions/subagents/src/agents/project-defaults-loader.js";
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
-import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import {
+  cleanupTempDir,
+  createIsolatedProfileFixture,
+  createSyntheticGitWorktree,
+  withEnv,
+} from "./test-fixture-helpers.mjs";
 import {
   createPrimaryPrompt,
   registerRuntimeHarness,
@@ -29,6 +38,13 @@ import {
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
+const { setTlhProjectAgentSnapshotOperations } =
+  await import("../extensions/the-last-harness/project-agent-access.mjs");
+const { parseProviderModelReference } = await jiti.import(
+  "../extensions/the-last-harness/model-defaults.ts",
+);
+const snapshotOperations =
+  await import("../extensions/subagents/src/agents/project-agent-snapshot.js");
 
 const {
   installTlhModelSelectionPersistenceOverride,
@@ -39,6 +55,7 @@ const {
 
 const MAX_PROJECT_DEFAULT_WARNINGS = 20;
 const MAX_PROJECT_DEFAULT_WARNING_LENGTH = 512;
+const MAX_PROJECT_DEFAULT_WARNING_COUNT = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,12 +78,80 @@ function writeSettings(agent, settings) {
  * primaryAgents entries.
  */
 function makeDefaultsLoader(primaryAgents = {}) {
-  return async () => ({
+  return async ({ cwd }) => ({
     status: "loaded",
+    projectRoot: cwd,
     defaults: { primaryAgents, subagents: {} },
+    trust: { kind: "project-config", trusted: true, source: "session-positive" },
     warnings: [],
   });
 }
+
+function addTestDefaultsBoundary(cwd, result) {
+  if (result?.status !== "loaded") {
+    return result;
+  }
+  return {
+    ...result,
+    projectRoot: result.projectRoot ?? cwd,
+    trust: result.trust ?? {
+      kind: "project-config",
+      trusted: true,
+      source: "session-positive",
+    },
+  };
+}
+
+// Keep this corpus in the top-level integration test so it can compare the
+// eager runtime parser with the lazy loader without introducing a production
+// import from the subagents target back into TLH's eager target.
+test("project defaults accept exactly the eager provider/model reference grammar", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-model-grammar-", { cwd: true, test: t });
+  createSyntheticGitWorktree(fixture.cwd);
+  mkdirSync(join(fixture.cwd, ".tlh"), { recursive: true });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const references = [
+        "anthropic/claude-sonnet-4-6",
+        "openrouter/anthropic/vendor/model",
+        "provider/model:high",
+        "provider//model",
+        "",
+        "model-without-provider",
+        "/model-without-provider",
+        "provider/",
+      ];
+      for (const reference of references) {
+        writeFileSync(
+          join(fixture.cwd, ".tlh", "defaults.json"),
+          JSON.stringify({ primaryAgents: { architect: { model: reference } } }),
+          "utf8",
+        );
+        const result = await loadProjectDefaults({
+          cwd: fixture.cwd,
+          sessionId: "grammar-test-session",
+          trust: {
+            trustStore: {
+              getEntry: () => ({ path: fixture.cwd, decision: true }),
+            },
+            hasTrustRequiringProjectResources: () => false,
+            hasUI: false,
+          },
+        });
+        const eagerAccepts = parseProviderModelReference(reference) !== undefined;
+        const lazyAccepts = result.defaults?.primaryAgents.architect?.model === reference;
+        assert.equal(
+          lazyAccepts,
+          eagerAccepts,
+          `lazy defaults loader grammar disagrees for ${JSON.stringify(reference)}`,
+        );
+      }
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
 
 /**
  * A loader stub that returns "denied" (trust refused).
@@ -107,16 +192,16 @@ async function shutdownRuntime(registration, ctx) {
 
 /**
  * Exercise the real generated trust loaders through the primary runtime with
- * both resources present and an undecided first agents prompt.
+ * both resources present and an undecided persisted custom-agent trust state.
  */
 async function assertBothResourceTrustFailure(t, confirm, timeoutMs) {
   const fixture = createIsolatedProfileFixture("tlh-pd-trust-flow-", { cwd: true, test: t });
 
   try {
     await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      mkdirSync(join(fixture.cwd, ".tlh", "agents"), { recursive: true });
+      mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
       writeFileSync(
-        join(fixture.cwd, ".tlh", "agents", "reviewer.md"),
+        join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
         "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
         "utf8",
       );
@@ -145,12 +230,20 @@ async function assertBothResourceTrustFailure(t, confirm, timeoutMs) {
           return agentResult;
         },
         projectDefaultsLoader: async (options) => {
-          defaultsResult = await loadProjectDefaults(options);
+          defaultsResult = await loadProjectDefaults({
+            ...options,
+            trust: { ...options.trust, trustUiTimeoutMs: timeoutMs },
+          });
           return defaultsResult;
         },
       });
       const ctx = makeSessionCtx(fixture, {
-        isProjectTrusted: () => true,
+        // Keep upstream trust unavailable so the configuration plane exercises
+        // its own bounded session decision. The execution plane must remain
+        // persisted-trust-only regardless of this result.
+        isProjectTrusted: () => {
+          throw new Error("upstream trust is unavailable");
+        },
         hasUI: true,
         ui: {
           notify() {},
@@ -163,9 +256,9 @@ async function assertBothResourceTrustFailure(t, confirm, timeoutMs) {
 
       await runtime.applySessionStart(ctx);
 
-      assert.equal(prompts, 1, "both resources must not re-prompt after undecided agent trust");
+      assert.equal(prompts, 1, "defaults trust should prompt independently of custom-agent trust");
       assert.equal(agentResult?.status, "denied");
-      assert.equal(agentResult?.trust?.source, "session-unavailable");
+      assert.equal(agentResult?.trust?.source, "no-persisted-trust");
       assert.equal(defaultsResult?.status, "denied");
       assert.equal(defaultsResult?.trust?.source, "session-unavailable");
       assert.equal(
@@ -370,18 +463,23 @@ test("project-defaults: runtime supplies interactive UI for a defaults-only trus
         projectAgentLoader: async () => ({ status: "unavailable" }),
         projectDefaultsLoader: async (options) => {
           assert.equal(options.trust?.hasUI, true);
+          assert.equal(options.trust?.sessionId, "test-session-123");
+          assert.equal(typeof options.trust?.hasTrustRequiringProjectResources, "function");
+          assert.equal(options.trust?.defaultProjectTrust, "ask");
           assert.equal(typeof options.trust?.ui?.confirm, "function");
           const approved = await options.trust.ui.confirm(
-            "Trust project-local TLH configuration?",
+            "Trust project-local TLH defaults?",
             "Approve defaults for this session.",
           );
           return approved
             ? {
                 status: "loaded",
+                projectRoot: fixture.cwd,
                 defaults: { primaryAgents: { architect: { effort: "xhigh" } }, subagents: {} },
+                trust: { kind: "project-config", trusted: true, source: "session-positive" },
                 warnings: [],
               }
-            : { status: "denied", warnings: [] };
+            : { status: "denied", projectRoot: fixture.cwd, warnings: [] };
         },
       });
 
@@ -419,6 +517,224 @@ test("project-defaults: both resources do not re-prompt after agent trust reject
     },
     10,
   );
+});
+
+test("project-defaults: session approval cannot authorize custom agents", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-trust-isolation-", { cwd: true, test: t });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
+      writeFileSync(
+        join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
+        "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
+        "utf8",
+      );
+      writeFileSync(
+        join(fixture.cwd, ".tlh", "defaults.json"),
+        JSON.stringify({ primaryAgents: { architect: { effort: "xhigh" } } }),
+        "utf8",
+      );
+      execFileSync("git", ["-C", fixture.cwd, "init", "--quiet"]);
+
+      let prompts = 0;
+      let agentResult;
+      let defaultsResult;
+      const notifications = [];
+      const { runtime, pi, toolCall } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectAgentLoader: async (options) => {
+          agentResult = await loadProjectAgentSnapshot(options);
+          return agentResult;
+        },
+        projectDefaultsLoader: async (options) => {
+          defaultsResult = await loadProjectDefaults(options);
+          return defaultsResult;
+        },
+      });
+      const ctx = makeSessionCtx(fixture, {
+        // The config resolver must reach its own session prompt. The custom-agent
+        // loader receives no UI/trust authority and therefore cannot use this.
+        isProjectTrusted: () => {
+          throw new Error("upstream trust unavailable");
+        },
+        hasUI: true,
+        ui: {
+          notify: (message, type) => notifications.push({ message, type }),
+          confirm: async () => {
+            prompts += 1;
+            return true;
+          },
+        },
+      });
+
+      await runtime.applySessionStart(ctx);
+
+      assert.equal(prompts, 1, "only the defaults trust plane should prompt");
+      assert.equal(agentResult?.status, "denied");
+      assert.equal(agentResult?.trust?.source, "no-persisted-trust");
+      assert.equal(defaultsResult?.status, "loaded");
+      assert.equal(defaultsResult?.trust?.kind, "project-config");
+      assert.equal(defaultsResult?.trust?.source, "session-positive");
+      assert.equal(pi.thinkingLevel, "xhigh");
+
+      const blocked = await toolCall(
+        { toolName: "subagent", input: { agent: "embedded.reviewer", task: "Review" } },
+        ctx,
+      );
+      assert.equal(blocked?.block, true);
+      assert.match(blocked?.reason ?? "", /Persist project trust with \/trust/);
+      assert.ok(
+        notifications.some((entry) => /custom agents are unavailable/i.test(entry.message)),
+        "custom-agent denial should remain visible and independent from defaults approval",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: persisted trust enables custom agents and defaults without prompting", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-trust-persisted-", { cwd: true, test: t });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
+      writeFileSync(
+        join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
+        "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
+        "utf8",
+      );
+      writeFileSync(
+        join(fixture.cwd, ".tlh", "defaults.json"),
+        JSON.stringify({ primaryAgents: { architect: { effort: "xhigh" } } }),
+        "utf8",
+      );
+      execFileSync("git", ["-C", fixture.cwd, "init", "--quiet"]);
+      new ProjectTrustStore(fixture.agent).set(fixture.cwd, true);
+
+      let prompts = 0;
+      let agentResult;
+      let defaultsResult;
+      const { runtime, pi, toolCall } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectAgentLoader: async (options) => {
+          agentResult = await loadProjectAgentSnapshot(options);
+          return agentResult;
+        },
+        projectDefaultsLoader: async (options) => {
+          defaultsResult = await loadProjectDefaults(options);
+          return defaultsResult;
+        },
+      });
+      const ctx = makeSessionCtx(fixture, {
+        isProjectTrusted: () => false,
+        hasUI: true,
+        ui: {
+          notify() {},
+          confirm: async () => {
+            prompts += 1;
+            return false;
+          },
+        },
+      });
+
+      await runtime.applySessionStart(ctx);
+
+      assert.equal(prompts, 0, "persisted trust should satisfy both planes without prompting");
+      assert.equal(agentResult?.status, "loaded");
+      assert.equal(agentResult?.trust?.source, "saved-positive");
+      assert.equal(defaultsResult?.status, "loaded");
+      assert.equal(defaultsResult?.trust?.kind, "project-config");
+      assert.equal(defaultsResult?.trust?.source, "saved-positive");
+      assert.equal(pi.thinkingLevel, "xhigh");
+      assert.equal(
+        await toolCall(
+          { toolName: "subagent", input: { agent: "embedded.reviewer", task: "Review" } },
+          ctx,
+        ),
+        undefined,
+        "persisted trust should also retain custom-agent execution authority",
+      );
+      const openRouterInput = { agent: "embedded.reviewer", task: "Review" };
+      await toolCall(
+        { toolName: "subagent", input: openRouterInput },
+        makeSessionCtx(fixture, {
+          model: { provider: "openrouter", id: "openai/gpt-5.6" },
+        }),
+      );
+      assert.equal(
+        openRouterInput.model,
+        "openrouter/openai/gpt-5.6",
+        "OpenRouter project-target inheritance remains the only project-target model mutation",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: shutdown clears defaults before an active-agent release failure", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-shutdown-release-", { cwd: true, test: t });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      mkdirSync(join(fixture.cwd, ".tlh", "agents", "custom"), { recursive: true });
+      writeFileSync(
+        join(fixture.cwd, ".tlh", "agents", "custom", "REVIEWER.md"),
+        "---\nname: reviewer\npackage: embedded\ndescription: Reviewer\ntools: read\n---\nReview.\n",
+        "utf8",
+      );
+      execFileSync("git", ["-C", fixture.cwd, "init", "--quiet"]);
+      new ProjectTrustStore(fixture.agent).set(fixture.cwd, true);
+
+      const notifications = [];
+      const registration = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectAgentLoader: async (options) => loadProjectAgentSnapshot(options),
+        projectDefaultsLoader: makeDefaultsLoader({ architect: { effort: "xhigh" } }),
+      });
+      const ctx = makeSessionCtx(fixture);
+      ctx.ui.notify = (message, type) => notifications.push({ message, type });
+
+      await registration.runtime.applySessionStart(ctx);
+      assert.equal(registration.pi.thinkingLevel, "xhigh");
+
+      setTlhProjectAgentSnapshotOperations({
+        retainSnapshotReference: snapshotOperations.retainProjectAgentSnapshotReference,
+        releaseSnapshotReference: () => {
+          throw new Error("simulated shutdown release failure");
+        },
+        releaseRunReferencesForSession:
+          snapshotOperations.releaseProjectAgentRunReferencesForSession,
+        getRunReferenceMetadata: snapshotOperations.getProjectAgentRunReferenceMetadata,
+        lookupRunReference: snapshotOperations.lookupProjectAgentRunReference,
+      });
+      const shutdown = registration.pi.events.find(
+        (event) => event.name === "session_shutdown",
+      )?.handler;
+      assert.equal(typeof shutdown, "function");
+      await shutdown({}, ctx);
+
+      // The failed capability release intentionally leaves its owner for retry,
+      // but defaults must already be cleared before that failure path returns.
+      await registration.beforeAgentStart({ systemPrompt: "base" }, ctx);
+      assert.equal(registration.pi.thinkingLevel, "low");
+      assert.equal(
+        notifications.filter(
+          (entry) => entry.type === "info" && entry.message.includes("project defaults"),
+        ).length,
+        1,
+        "clearing defaults also clears the applied-default notice scope",
+      );
+    });
+  } finally {
+    setTlhProjectAgentSnapshotOperations(undefined);
+    cleanupTempDir(fixture);
+  }
 });
 
 test("project-defaults: stale defaults result is ignored after session shutdown", async (t) => {
@@ -492,10 +808,10 @@ test("project-defaults: stale agent load cannot start defaults or clear newer st
           }
           return { status: "unavailable", warnings: [] };
         },
-        projectDefaultsLoader: async () => {
+        projectDefaultsLoader: async ({ cwd }) => {
           defaultsCalls += 1;
           if (defaultsCalls === 1) {
-            return {
+            return addTestDefaultsBoundary(cwd, {
               status: "loaded",
               defaults: {
                 primaryAgents: {
@@ -504,9 +820,9 @@ test("project-defaults: stale agent load cannot start defaults or clear newer st
                 subagents: {},
               },
               warnings: ["B defaults warning"],
-            };
+            });
           }
-          return {
+          return addTestDefaultsBoundary(cwd, {
             status: "loaded",
             defaults: {
               primaryAgents: {
@@ -515,10 +831,10 @@ test("project-defaults: stale agent load cannot start defaults or clear newer st
               subagents: {},
             },
             warnings: ["A defaults warning"],
-          };
+          });
         },
       });
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
 
       const startA = runtime.applySessionStart(ctx);
@@ -577,14 +893,14 @@ test("project-defaults: newer defaults load wins over an older deferred result",
         primaryAgents: new Map([["architect", architectWithDefaults()]]),
         subagentMetadata: [],
         projectAgentLoader: async () => ({ status: "unavailable" }),
-        projectDefaultsLoader: async () => {
+        projectDefaultsLoader: async ({ cwd }) => {
           defaultsCall += 1;
           if (defaultsCall === 1) {
             firstStartedResolve();
-            return firstDefaults.promise;
+            return addTestDefaultsBoundary(cwd, await firstDefaults.promise);
           }
           secondStartedResolve();
-          return secondDefaults.promise;
+          return addTestDefaultsBoundary(cwd, await secondDefaults.promise);
         },
       });
       const ctx = makeSessionCtx(fixture);
@@ -716,6 +1032,115 @@ test("project-defaults: an older runtime cannot apply defaults after a newer run
       }
     });
   } finally {
+    cleanupTempDir(fixtureA);
+    cleanupTempDir(fixtureB);
+  }
+});
+
+test("project-defaults: an adopted defaults snapshot is ignored after a newer runtime registers", async (t) => {
+  const fixtureA = createIsolatedProfileFixture("tlh-pd-runtime-adopted-a-", {
+    cwd: true,
+    test: t,
+  });
+  const fixtureB = createIsolatedProfileFixture("tlh-pd-runtime-adopted-b-", {
+    cwd: true,
+    test: t,
+  });
+  let registrationA;
+  let contextA;
+  let registrationB;
+  let contextB;
+  const developer = {
+    name: "developer",
+    description: "Test developer",
+    tools: ["read"],
+    systemPrompt: "test",
+    filePath: "agents/subagents/developer.md",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+
+  try {
+    await withEnv({ HOME: fixtureA.home, PI_CODING_AGENT_DIR: fixtureA.agent }, async () => {
+      registrationA = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [developer],
+        projectAgentLoader: async () => ({ status: "unavailable" }),
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: {
+              architect: { model: "anthropic/claude-opus-4-8", effort: "xhigh" },
+            },
+            subagents: {
+              developer: { model: "anthropic/claude-opus-4-8", effort: "xhigh" },
+            },
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      contextA = makeSessionCtx(fixtureA);
+      await registrationA.runtime.applySessionStart(contextA);
+      assert.deepEqual(registrationA.pi.model, {
+        provider: "anthropic",
+        id: "claude-opus-4-8",
+      });
+      assert.equal(registrationA.pi.thinkingLevel, "xhigh");
+
+      // Registering B retires A's runtime epoch without delivering A a shutdown.
+      await withEnv({ HOME: fixtureB.home, PI_CODING_AGENT_DIR: fixtureB.agent }, async () => {
+        registrationB = registerRuntimeHarness({
+          primaryAgents: new Map([["architect", architectWithDefaults()]]),
+          subagentMetadata: [],
+          projectAgentLoader: async () => ({ status: "unavailable" }),
+          projectDefaultsLoader: makeUnavailableLoader(),
+        });
+        contextB = makeSessionCtx(fixtureB);
+      });
+
+      const subagentInput = { agent: "developer", task: "Use the packaged developer defaults" };
+      await registrationA.toolCall(
+        { toolName: "subagent", input: subagentInput },
+        {
+          ...contextA,
+          model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+        },
+      );
+      assert.equal(
+        subagentInput.model,
+        "anthropic/claude-sonnet-4-6:low",
+        "retired runtime must not apply adopted project subagent defaults",
+      );
+
+      registrationA.pi.model = { provider: "openai-codex", id: "gpt-5.6-sol" };
+      registrationA.pi.thinkingLevel = "normal";
+      await registrationA.beforeAgentStart(
+        { systemPrompt: "base" },
+        { ...contextA, model: registrationA.pi.model },
+      );
+
+      assert.deepEqual(
+        registrationA.pi.model,
+        { provider: "anthropic", id: "claude-sonnet-4-6" },
+        "retired runtime must fall back to bundled defaults, not its adopted project model",
+      );
+      assert.equal(
+        registrationA.pi.thinkingLevel,
+        "low",
+        "retired runtime must fall back to bundled effort, not its adopted project effort",
+      );
+    });
+  } finally {
+    await shutdownRuntime(registrationB, contextB);
+    await shutdownRuntime(registrationA, contextA);
     cleanupTempDir(fixtureA);
     cleanupTempDir(fixtureB);
   }
@@ -1372,7 +1797,7 @@ test("project-defaults: unavailable project model emits warning and falls back t
         }),
       });
 
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
       await runtime.applySessionStart(ctx);
 
@@ -1410,7 +1835,7 @@ test("project-defaults: unavailable project model falls back to layer 4 when no 
         }),
       });
 
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
       await runtime.applySessionStart(ctx);
 
@@ -1448,7 +1873,7 @@ test("project-defaults: unavailable project model warning fires only once per se
         }),
       });
 
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
 
       await runtime.applySessionStart(ctx);
@@ -1462,6 +1887,231 @@ test("project-defaults: unavailable project model warning fires only once per se
     });
   } finally {
     cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: unavailable model warnings are distinct for later model references", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-warning-key-", { cwd: true, test: t });
+  let defaultsCall = 0;
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const notifications = [];
+      const { runtime } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: {
+              architect: {
+                model:
+                  defaultsCall++ === 0
+                    ? "anthropic/claude-unavailable-first"
+                    : "anthropic/claude-unavailable-second",
+              },
+            },
+            subagents: {},
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
+      ctx.ui.notify = (message, type) => notifications.push({ message, type });
+
+      await runtime.applySessionStart(ctx);
+      await runtime.applySessionStart(ctx);
+
+      const warnings = notifications.filter(
+        (entry) => entry.type === "warning" && entry.message.includes("project default model"),
+      );
+      assert.equal(warnings.length, 2, "each unavailable project model should warn once");
+      assert.ok(
+        warnings.some((entry) => entry.message.includes("claude-unavailable-first")),
+        "first unavailable model warning should be retained",
+      );
+      assert.ok(
+        warnings.some((entry) => entry.message.includes("claude-unavailable-second")),
+        "later unavailable model warning should not be suppressed",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: long unavailable model warnings stay bounded and distinguish full references", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-warning-long-", { cwd: true, test: t });
+  const modelPrefix = `anthropic/${"x".repeat(60_000)}`;
+  const modelReferences = [modelPrefix, `${modelPrefix}y`];
+  let defaultsCall = 0;
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const notifications = [];
+      const { runtime } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: {
+              architect: {
+                // The simple provider/model grammar accepts this long reference;
+                // the file-backed loader still enforces its independent 64 KiB bound.
+                model: modelReferences[Math.min(defaultsCall++, modelReferences.length - 1)],
+              },
+            },
+            subagents: {},
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
+      ctx.ui.notify = (message, type) => notifications.push({ message, type });
+
+      await runtime.applySessionStart(ctx);
+      await runtime.applySessionStart(ctx);
+
+      const warnings = notifications.filter(
+        (entry) => entry.type === "warning" && entry.message.includes("project default model"),
+      );
+      assert.equal(
+        warnings.length,
+        2,
+        "references with the same bounded prefix must still have distinct warning identities",
+      );
+      assert.ok(
+        warnings.every((entry) => entry.message.length <= MAX_PROJECT_DEFAULT_WARNING_LENGTH),
+        "long model references must not expand the notification",
+      );
+      assert.ok(
+        warnings.every((entry) => entry.message.endsWith("defaults.")),
+        "bounded warnings retain their fallback explanation",
+      );
+      assert.ok(
+        warnings.every((entry) => !entry.message.includes("x".repeat(1024))),
+        "the raw long model reference must not be emitted",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: overlong subagent model warnings stay bounded", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-warning-subagent-long-", {
+    cwd: true,
+    test: t,
+  });
+  const longModel = `anthropic/${"z".repeat(60_000)}`;
+  const developer = {
+    name: "developer",
+    description: "Test developer",
+    tools: ["read"],
+    systemPrompt: "test",
+    filePath: "agents/subagents/developer.md",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const notifications = [];
+      const registration = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [developer],
+        projectAgentLoader: async () => ({ status: "unavailable" }),
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: {},
+            subagents: { developer: { model: longModel } },
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
+      ctx.ui.notify = (message, type) => notifications.push({ message, type });
+
+      await registration.runtime.applySessionStart(ctx);
+      const input = { agent: "developer", task: "Check warning bounds" };
+      await registration.toolCall({ toolName: "subagent", input }, ctx);
+
+      const warnings = notifications.filter(
+        (entry) => entry.type === "warning" && entry.message.includes("project default model"),
+      );
+      assert.equal(warnings.length, 1);
+      assert.ok(warnings[0].message.length <= MAX_PROJECT_DEFAULT_WARNING_LENGTH);
+      assert.ok(!warnings[0].message.includes("z".repeat(1024)));
+      assert.equal(input.model, "anthropic/claude-sonnet-4-6:low");
+      await shutdownRuntime(registration, ctx);
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+// Only one project-defaults root is active in a session. The root remains in the
+// warning key as defense-in-depth, while this test proves re-notification at a
+// new session boundary after the active root changes.
+test("project-defaults: the same unavailable model re-notifies per session after the root changes", async (t) => {
+  const fixtureA = createIsolatedProfileFixture("tlh-pd-warning-root-a-", { cwd: true, test: t });
+  const fixtureB = createIsolatedProfileFixture("tlh-pd-warning-root-b-", { cwd: true, test: t });
+  const unavailableModel = "anthropic/claude-same-unavailable";
+
+  try {
+    await withEnv({ HOME: fixtureA.home, PI_CODING_AGENT_DIR: fixtureA.agent }, async () => {
+      const notifications = [];
+      const registration = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: { architect: { model: unavailableModel } },
+            subagents: {},
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      const contextA = makeSessionCtx(fixtureA, { hasUI: true });
+      const contextB = makeSessionCtx(fixtureB, { hasUI: true });
+      const notify = (message, type) => notifications.push({ message, type });
+      contextA.ui.notify = notify;
+      contextB.ui.notify = notify;
+
+      await registration.runtime.applySessionStart(contextA);
+      await registration.runtime.applySessionStart(contextB);
+
+      const warnings = notifications.filter(
+        (entry) => entry.type === "warning" && entry.message.includes("project default model"),
+      );
+      assert.equal(
+        warnings.length,
+        2,
+        "the same unavailable model must re-notify once in each session after the root changes",
+      );
+      assert.equal(new Set(warnings.map((entry) => entry.message)).size, 1);
+      await shutdownRuntime(registration, contextB);
+    });
+  } finally {
+    cleanupTempDir(fixtureA);
+    cleanupTempDir(fixtureB);
   }
 });
 
@@ -1941,7 +2591,7 @@ test("project-defaults: successful model and clamped effort are announced once p
 // Tests: loaded-result warnings and boundary normalization
 // ---------------------------------------------------------------------------
 
-test("project-defaults: loaded-result warnings are surfaced once across session boundaries", async (t) => {
+test("project-defaults: loaded-result warnings are once per session and reappear later", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-pd-warning-", { cwd: true, test: t });
 
   try {
@@ -1958,24 +2608,45 @@ test("project-defaults: loaded-result warnings are surfaced once across session 
         warnings: [...warnings, warnings[0]],
       });
       const notifications = [];
-      const { runtime } = registerRuntimeHarness({
+      const { runtime, pi, beforeAgentStart } = registerRuntimeHarness({
         primaryAgents: new Map([["architect", architectWithDefaults()]]),
         subagentMetadata: [],
         projectAgentLoader: async () => ({ status: "unavailable" }),
         projectDefaultsLoader: async () => injectedResult,
       });
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
 
       await runtime.applySessionStart(ctx);
-      await runtime.applySessionStart(ctx);
+      await beforeAgentStart({ systemPrompt: "base" }, ctx);
+      await beforeAgentStart({ systemPrompt: "base" }, ctx);
 
       for (const warning of warnings) {
         assert.equal(
           notifications.filter((entry) => entry.type === "warning" && entry.message === warning)
             .length,
           1,
-          `loaded warning should be shown once: ${warning}`,
+          `loaded warning should be shown once per session: ${warning}`,
+        );
+      }
+
+      await shutdownRuntime({ pi }, ctx);
+      const laterCtx = makeSessionCtx(fixture, {
+        hasUI: true,
+        sessionManager: {
+          getBranch: () => [],
+          getSessionId: () => "later-test-session",
+        },
+      });
+      laterCtx.ui.notify = (message, type) => notifications.push({ message, type });
+      await runtime.applySessionStart(laterCtx);
+
+      for (const warning of warnings) {
+        assert.equal(
+          notifications.filter((entry) => entry.type === "warning" && entry.message === warning)
+            .length,
+          2,
+          `loaded warning should reappear in a later session: ${warning}`,
         );
       }
     });
@@ -2033,12 +2704,12 @@ test("project-defaults: real loader bounds warnings and preserves valid entries"
       );
       assert.equal(registration.pi.thinkingLevel, "high", "valid architect entry still applies");
 
-      await registration.runtime.applySessionStart(ctx);
+      await registration.beforeAgentStart({ systemPrompt: "base" }, ctx);
       const secondWarningNotifications = notifications.filter((entry) => entry.type === "warning");
       assert.equal(
         secondWarningNotifications.length,
         firstWarningNotifications.length,
-        "repeated session starts must not re-notify the same warnings",
+        "later lifecycle boundaries must not re-notify the same warnings",
       );
       await shutdownRuntime(registration, ctx);
     });
@@ -2057,6 +2728,7 @@ test("project-defaults: runtime independently bounds injected warning arrays", a
       for (let index = 0; index < 25; index += 1) {
         warnings.push(`unique-${index}-${"y".repeat(2048)}`);
       }
+      warnings.push(`…and ${"9".repeat(2048)} more issues in .tlh/defaults.json`);
       const injectedResult = /** @type {unknown} */ ({
         status: "loaded",
         defaults: { primaryAgents: {}, subagents: {} },
@@ -2069,7 +2741,7 @@ test("project-defaults: runtime independently bounds injected warning arrays", a
         projectAgentLoader: async () => ({ status: "unavailable" }),
         projectDefaultsLoader: async () => injectedResult,
       });
-      const ctx = makeSessionCtx(fixture);
+      const ctx = makeSessionCtx(fixture, { hasUI: true });
       ctx.ui.notify = (message, type) => notifications.push({ message, type });
 
       await registration.runtime.applySessionStart(ctx);
@@ -2084,6 +2756,11 @@ test("project-defaults: runtime independently bounds injected warning arrays", a
         entry.message.includes("more issues in .tlh/defaults.json"),
       );
       assert.equal(summaryNotifications.length, 1);
+      assert.equal(
+        summaryNotifications[0].message,
+        `…and ${MAX_PROJECT_DEFAULT_WARNING_COUNT} more issues in .tlh/defaults.json`,
+        "overflow summary count must saturate at the documented safe bound",
+      );
       const individualNotifications = warningNotifications.filter(
         (entry) => !entry.message.includes("more issues in .tlh/defaults.json"),
       );
@@ -2127,6 +2804,55 @@ test("project-defaults: throwing injected result fails closed", async (t) => {
       });
       assert.equal(registration.pi.thinkingLevel, "low");
       await shutdownRuntime(registration, ctx);
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: warning notifications fail closed for broken and headless UI", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-warning-ui-", { cwd: true, test: t });
+  const warning = "Repository-owned defaults warning with a broken notifier.";
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const registration = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectAgentLoader: async () => ({ status: "unavailable" }),
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: { primaryAgents: {}, subagents: {} },
+          warnings: [warning],
+        }),
+      });
+      const throwingContext = makeSessionCtx(fixture, {
+        hasUI: true,
+        ui: {
+          notify() {
+            throw new Error("simulated notifier failure");
+          },
+        },
+      });
+      await assert.doesNotReject(
+        registration.runtime.applySessionStart(throwingContext),
+        "a throwing notifier must not escape session_start",
+      );
+
+      const headlessContext = makeSessionCtx(fixture, {
+        hasUI: false,
+        ui: {
+          notify() {
+            throw new Error("headless notifier must not be called");
+          },
+        },
+      });
+      await assert.doesNotReject(
+        registration.runtime.applySessionStart(headlessContext),
+        "headless defaults warnings must not escape session_start",
+      );
+      await shutdownRuntime(registration, headlessContext);
     });
   } finally {
     cleanupTempDir(fixture);
@@ -2278,6 +3004,106 @@ test("project-defaults: boundary drops invalid subagent entries and prototype ke
       // the bundled anthropic model/effort therefore remain in effect.
       assert.equal(input.model, "anthropic/claude-sonnet-4-6:low");
       assert.equal(Object.prototype.effort, undefined);
+    });
+  } finally {
+    cleanupTempDir(fixture);
+  }
+});
+
+test("project-defaults: consumption is bound to the loaded root and current cwd", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-root-binding-", { cwd: true, test: t });
+  const other = createIsolatedProfileFixture("tlh-pd-root-binding-other-", {
+    cwd: true,
+    test: t,
+  });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const developer = {
+        name: "developer",
+        description: "Test developer",
+        tools: ["read"],
+        systemPrompt: "test",
+        filePath: "agents/subagents/developer.md",
+        tlhModelDefaults: [
+          {
+            provider: "anthropic",
+            models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+            effort: "low",
+          },
+        ],
+        tlhModelDefaultsSource: "frontmatter",
+      };
+      const projectModel = { provider: "anthropic", id: "claude-opus-4-8" };
+      const { runtime, pi, beforeAgentStart, toolCall } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [developer],
+        projectAgentLoader: async () => ({ status: "unavailable" }),
+        projectDefaultsLoader: async () => ({
+          status: "loaded",
+          projectRoot: fixture.cwd,
+          defaults: {
+            primaryAgents: { architect: { model: "anthropic/claude-opus-4-8" } },
+            subagents: { developer: { model: "anthropic/claude-opus-4-8" } },
+          },
+          trust: { kind: "project-config", trusted: true, source: "session-positive" },
+          warnings: [],
+        }),
+      });
+      const ctx = makeSessionCtx(fixture);
+      await runtime.applySessionStart(ctx);
+      assert.deepEqual(pi.model, projectModel);
+
+      const outsideCtx = makeSessionCtx(other, { model: pi.model });
+      pi.model = { provider: "anthropic", id: "claude-sonnet-4-6" };
+      await beforeAgentStart({ systemPrompt: "base" }, outsideCtx);
+      assert.notDeepEqual(
+        pi.model,
+        projectModel,
+        "a primary defaults entry from another worktree must not reapply",
+      );
+
+      const outsideDispatch = { agent: "developer", task: "Use the current worktree" };
+      await toolCall({ toolName: "subagent", input: outsideDispatch }, outsideCtx);
+      assert.equal(
+        outsideDispatch.model,
+        "anthropic/claude-sonnet-4-6:low",
+        "packaged defaults must not cross a worktree/cwd boundary",
+      );
+    });
+  } finally {
+    cleanupTempDir(fixture);
+    cleanupTempDir(other);
+  }
+});
+
+test("project-defaults: active entries require positive project-config trust", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-pd-trust-kind-", { cwd: true, test: t });
+
+  try {
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const { runtime, pi } = registerRuntimeHarness({
+        primaryAgents: new Map([["architect", architectWithDefaults()]]),
+        subagentMetadata: [],
+        projectAgentLoader: async () => ({ status: "unavailable" }),
+        projectDefaultsLoader: async ({ cwd }) => ({
+          status: "loaded",
+          projectRoot: cwd,
+          defaults: {
+            primaryAgents: { architect: { effort: "xhigh" } },
+            subagents: {},
+          },
+          // An execution-plane result is never valid at this boundary.
+          trust: { kind: "project-agent", trusted: true, source: "saved-positive" },
+          warnings: [],
+        }),
+      });
+      await runtime.applySessionStart(makeSessionCtx(fixture));
+      assert.equal(
+        pi.thinkingLevel,
+        "low",
+        "a loaded defaults entry with the wrong trust kind must be ignored",
+      );
     });
   } finally {
     cleanupTempDir(fixture);

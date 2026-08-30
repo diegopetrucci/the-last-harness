@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 
 import { isRecord } from "./common.js";
+import { isEmbeddedSubagentTarget } from "../the-last-harness-subagent-safety.mjs";
 
 export type ProviderModelReference = {
   provider: string;
@@ -57,6 +58,8 @@ export type SubagentProjectDefaultsEntry = {
   readonly effort?: ThinkingLevel;
 };
 
+type ProjectDefaultsWarningSource = "project-default" | "stored";
+
 type ApplyProviderAwareSubagentModelOptions = {
   agentOverrides?: ReadonlyMap<string, TlhSubagentOverride>;
   /**
@@ -65,7 +68,11 @@ type ApplyProviderAwareSubagentModelOptions = {
    * Only "loaded" results should be forwarded; "denied"/"unavailable" must be omitted.
    */
   projectDefaults?: Readonly<Partial<Record<string, SubagentProjectDefaultsEntry>>>;
-  onWarning?: (warning: { agent: string; message: string }) => void;
+  onWarning?: (warning: {
+    agent: string;
+    message: string;
+    source?: ProjectDefaultsWarningSource;
+  }) => void;
 };
 
 type SubagentEffortSource = "project" | "stored";
@@ -846,7 +853,9 @@ function mergeProjectDefaultsWithOverride(
   availableModels: readonly ProviderModelReference[],
   projectModelEligible: boolean,
   agentName: string | undefined,
-  onWarning: ((w: { agent: string; message: string }) => void) | undefined,
+  onWarning:
+    | ((w: { agent: string; message: string; source?: ProjectDefaultsWarningSource }) => void)
+    | undefined,
 ): MergedSubagentOverride {
   if (!projectEntry) {
     return {
@@ -870,6 +879,7 @@ function mergeProjectDefaultsWithOverride(
         onWarning({
           agent: agentName,
           message: formatUnavailableProjectModelWarning(agentName, projectEntry.model),
+          source: "project-default",
         });
       }
       // effectiveModel stays as the persisted value (override?.model, which may be false)
@@ -1148,6 +1158,13 @@ function applyModelToRunnableTarget(
   }
 
   const agentName = agentNameForTarget(target);
+  // Project custom-agent dispatch uses an exact captured snapshot. Never let
+  // settings, project defaults, or bundled model/effort policy mutate an
+  // embedded target, even if a future caller bypasses the outer non-project
+  // dispatch filter.
+  if (isEmbeddedSubagentTarget(agentName)) {
+    return 0;
+  }
   const agent = agentName ? agents.get(agentName) : undefined;
   const explicitModel = hasExplicitModel(target);
   const persistedOverride = agentName ? options.agentOverrides?.get(agentName) : undefined;
@@ -1193,7 +1210,11 @@ function applyModelToRunnableTarget(
       effortSource,
     );
     if (thinkingResolution.warning && agentName) {
-      options.onWarning?.({ agent: agentName, message: thinkingResolution.warning });
+      options.onWarning?.({
+        agent: agentName,
+        message: thinkingResolution.warning,
+        source: effortSource === "project" ? "project-default" : "stored",
+      });
     }
     const modelWithThinking = applyThinkingSuffix(target.model, thinkingResolution.thinking);
     if (!modelWithThinking || modelWithThinking === target.model) {
@@ -1276,15 +1297,24 @@ function applyModelToRunnableTarget(
     options.onWarning?.({
       agent: agentName,
       message: formatUnavailableStoredModelWarning(agentName, resolution.unavailableModel),
+      source: "stored",
     });
   }
   if (resolution.warning && agentName) {
-    options.onWarning?.({ agent: agentName, message: resolution.warning });
+    options.onWarning?.({
+      agent: agentName,
+      message: resolution.warning,
+      source: effortSource === "project" ? "project-default" : "stored",
+    });
   }
   const usesGeneratedFallback =
     !Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined;
   if (usesGeneratedFallback && resolution.fallbackWarning && agentName) {
-    options.onWarning?.({ agent: agentName, message: resolution.fallbackWarning });
+    options.onWarning?.({
+      agent: agentName,
+      message: resolution.fallbackWarning,
+      source: effortSource === "project" ? "project-default" : "stored",
+    });
   }
 
   const selectedModel = formatEffectiveModelAndThinking(

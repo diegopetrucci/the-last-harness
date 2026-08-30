@@ -21,7 +21,10 @@ import {
   revokeProjectAgentSnapshot,
   retainProjectAgentRunReference,
   releaseProjectAgentRunReference,
+  retainProjectAgentSnapshotReference,
+  releaseProjectAgentSnapshotReference,
   cleanupProjectAgentSnapshotRegistry,
+  projectAgentSnapshotRegistryStats,
   type ProjectAgentSnapshotInput,
 } from "../../src/agents/project-agent-snapshot.ts";
 import type { AgentConfig } from "../../src/agents/agents.ts";
@@ -74,13 +77,12 @@ function register(
   });
 }
 
-function writeProfileAgent(name: string, packageName?: string): void {
-  const fileName = packageName ? `${packageName}.${name}` : name;
-  const filePath = path.join(tempHome, ".pi", "agent", "agents", `${fileName}.md`);
+function writeProfileAgent(name: string): void {
+  const filePath = path.join(tempHome, ".pi", "agent", "tlh", "agents", "subagents", `${name}.md`);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(
     filePath,
-    `---\nname: ${name}${packageName ? `\npackage: ${packageName}` : ""}\ndescription: ${name} profile agent\n---\n\nProfile prompt.\n`,
+    `---\nname: ${name}\ndescription: ${name} profile agent\n---\n\nProfile prompt.\n`,
     "utf-8",
   );
 }
@@ -186,6 +188,39 @@ describe("project agent snapshot provider", () => {
       () => resolveProjectAgentSnapshot(capability, getProjectAgentSnapshotProvenance(capability)),
       ProjectAgentSnapshotCapabilityError,
     );
+  });
+
+  it("releases only the owned generation instead of sweeping a concurrent registration", () => {
+    const ownedCapability = register({
+      sessionId: "session-owned-release",
+      generationId: "generation-owned-release",
+    });
+    const concurrentCapability = register({
+      sessionId: "session-concurrent-release",
+      generationId: "generation-concurrent-release",
+    });
+    retainProjectAgentSnapshotReference(ownedCapability, "per-capability-release-owner");
+    const beforeRelease = projectAgentSnapshotRegistryStats();
+
+    releaseProjectAgentSnapshotReference("per-capability-release-owner");
+
+    assert.equal(
+      projectAgentSnapshotRegistryStats().generations,
+      beforeRelease.generations - 1,
+      "releasing one owner must collect only its generation",
+    );
+    assert.equal(
+      projectAgentSnapshotRegistryStats().references,
+      beforeRelease.references - 1,
+      "releasing one owner must remove only its reference",
+    );
+    assert.doesNotThrow(() =>
+      resolveProjectAgentSnapshot(
+        concurrentCapability,
+        getProjectAgentSnapshotProvenance(concurrentCapability),
+      ),
+    );
+    revokeProjectAgentSnapshot(concurrentCapability);
   });
 
   it("rejects duplicate retained captures so a child cannot resolve ambiguously", () => {
@@ -345,15 +380,22 @@ describe("project agent snapshot provider", () => {
     );
   });
 
-  it("applies user defaults and overrides without applying project settings", () => {
+  it("keeps custom snapshot configuration immutable except for a profile deny", () => {
     writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
       subagents: {
         defaultModel: "user-default",
         agentOverrides: {
-          "override-model": { model: "user-override", thinking: "high" },
-          "explicit-tools": { tools: ["write"] },
-          "disabled-snapshot": { disabled: true },
-          "embedded.disabled": { disabled: true },
+          "embedded.override-model": {
+            model: "user-override",
+            thinking: "high",
+            systemPrompt: "user prompt",
+            tools: ["write"],
+            defaultContext: "fork",
+            disabled: false,
+          },
+          "embedded.explicit-tools": { tools: ["write"], model: "user-tools-model" },
+          "embedded.disabled-snapshot": { model: "ignored", disabled: true },
+          "embedded.non-disabled": { model: "ignored", disabled: false },
         },
       },
     });
@@ -361,64 +403,61 @@ describe("project agent snapshot provider", () => {
       subagents: {
         defaultModel: "project-default",
         agentOverrides: {
-          "default-model": { model: "project-override" },
-          "override-model": { model: "project-override" },
+          "embedded.override-model": { model: "project-override", disabled: true },
+          "embedded.non-disabled": { model: "project-model", disabled: true },
         },
       },
     });
-    writeProfileAgent("disabled", "embedded");
-
-    const explicitTools = makeAgent("explicit-tools");
+    const overrideModel = makeAgent("embedded.override-model");
+    overrideModel.model = "root-model";
+    overrideModel.thinking = "low";
+    overrideModel.systemPrompt = "root prompt";
+    overrideModel.tools = ["read"];
+    const explicitTools = makeAgent("embedded.explicit-tools");
     explicitTools.tools = ["read"];
     const capability = register({
       sessionId: "session-overrides",
       generationId: "generation-overrides",
       entries: [
-        makeEntry("default-model", "digest-default-model"),
-        makeEntry("override-model", "digest-override-model"),
+        makeEntry("embedded.default-model", "digest-default-model"),
+        makeEntry(overrideModel, "digest-override-model", ["model", "thinking", "tools"]),
         makeEntry(explicitTools, "digest-explicit-tools", ["tools"]),
-        makeEntry("disabled-snapshot", "digest-disabled-snapshot"),
-        makeEntry("embedded.disabled", "digest-disabled-embedded"),
+        makeEntry("embedded.disabled-snapshot", "digest-disabled-snapshot"),
+        makeEntry("embedded.non-disabled", "digest-non-disabled"),
       ],
     });
     const expected = getProjectAgentSnapshotProvenance(capability);
     const discovered = discoverAgentsWithProjectSnapshot(tempProject, capability, expected);
 
-    assert.equal(
-      discovered.agents.find((agent) => agent.name === "default-model")?.model,
-      "user-default",
+    const defaultModel = discovered.agents.find((agent) => agent.name === "embedded.default-model");
+    assert.equal(defaultModel?.model, undefined);
+    const unchanged = discovered.agents.find((agent) => agent.name === "embedded.override-model");
+    assert.equal(unchanged?.model, "root-model");
+    assert.equal(unchanged?.thinking, "low");
+    assert.equal(unchanged?.systemPrompt, "root prompt");
+    assert.deepEqual(unchanged?.tools, ["read"]);
+    assert.equal(unchanged?.override, undefined);
+    assert.deepEqual(
+      discovered.agents.find((agent) => agent.name === "embedded.explicit-tools")?.tools,
+      ["read"],
     );
+    const nonDisabled = discovered.agents.find((agent) => agent.name === "embedded.non-disabled");
+    assert.ok(nonDisabled);
+    assert.equal(nonDisabled.model, undefined);
+    assert.equal(nonDisabled.disabled, undefined);
     assert.equal(
-      discovered.agents.find((agent) => agent.name === "override-model")?.model,
-      "user-override",
-    );
-    assert.equal(
-      discovered.agents.find((agent) => agent.name === "override-model")?.thinking,
-      "high",
-    );
-    assert.deepEqual(discovered.agents.find((agent) => agent.name === "explicit-tools")?.tools, [
-      "read",
-    ]);
-    assert.equal(
-      discovered.agents.some((agent) => agent.name === "disabled-snapshot"),
-      false,
-    );
-    assert.equal(
-      discovered.agents.some((agent) => agent.name === "embedded.disabled"),
+      discovered.agents.some((agent) => agent.name === "embedded.disabled-snapshot"),
       false,
     );
     assert.deepEqual(discovered.projectSnapshot.entries, [
-      { name: "default-model", digest: "digest-default-model" },
-      { name: "override-model", digest: "digest-override-model" },
-      { name: "explicit-tools", digest: "digest-explicit-tools" },
-      { name: "disabled-snapshot", digest: "digest-disabled-snapshot" },
-      { name: "embedded.disabled", digest: "digest-disabled-embedded" },
+      { name: "embedded.default-model", digest: "digest-default-model" },
+      { name: "embedded.override-model", digest: "digest-override-model" },
+      { name: "embedded.explicit-tools", digest: "digest-explicit-tools" },
+      { name: "embedded.disabled-snapshot", digest: "digest-disabled-snapshot" },
+      { name: "embedded.non-disabled", digest: "digest-non-disabled" },
     ]);
     assert.deepEqual(discovered.projectSnapshot.tombstones, []);
-    assert.deepEqual(discovered.projectSnapshot.disabledByUser, [
-      "disabled-snapshot",
-      "embedded.disabled",
-    ]);
+    assert.deepEqual(discovered.projectSnapshot.disabledByUser, ["embedded.disabled-snapshot"]);
     assert.ok(Object.isFrozen(discovered.projectSnapshot.disabledByUser));
 
     revokeProjectAgentSnapshot(capability);
@@ -524,9 +563,7 @@ describe("project agent snapshot provider", () => {
   });
 
   it("merges trusted entries after profile agents and applies tombstones first", () => {
-    writeProfileAgent("shared", "embedded");
-    writeProfileAgent("remove-me", "embedded");
-    writeProfileAgent("profile-only");
+    writeProfileAgent("developer");
     fs.mkdirSync(path.join(tempProject, ".tlh", "agents"), { recursive: true });
     fs.writeFileSync(
       path.join(tempProject, ".tlh", "agents", "ignored.md"),
@@ -612,7 +649,7 @@ describe("project agent snapshot provider", () => {
       discovered.agents.find((agent) => agent.name === "project-only")?.source,
       "project",
     );
-    assert.equal(discovered.agents.find((agent) => agent.name === "profile-only")?.source, "user");
+    assert.equal(discovered.agents.find((agent) => agent.name === "developer")?.source, "user");
     assert.deepEqual(discovered.projectSnapshot.entries, [
       { name: "embedded.shared", digest: "digest-shared" },
       { name: "project-only", digest: "digest-project-only" },

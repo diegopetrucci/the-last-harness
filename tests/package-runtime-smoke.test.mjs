@@ -47,23 +47,6 @@ test("packed TLH generated JavaScript resolves from profile settings and reloads
   for (const path of [packDir, extractDir, cwd, agentDir, homeDir])
     mkdirSync(path, { recursive: true });
 
-  mkdirSync(join(agentDir, "package-smoke-agents"), { recursive: true });
-  writeFileSync(
-    join(agentDir, "package-smoke-agents", "worker.md"),
-    `---
-name: worker
-description: deterministic packed package smoke worker
-tools: read
-systemPromptMode: replace
-inheritProjectContext: false
-inheritSkills: false
-defaultContext: fresh
-acceptanceRole: read-only
----
-Return the deterministic faux child marker exactly.
-`,
-  );
-
   const env = isolatedEnv(root, agentDir);
   const packResult = spawnSync("npm", ["pack", "--json", "--pack-destination", packDir], {
     cwd: repoRoot,
@@ -100,6 +83,23 @@ Return the deterministic faux child marker exactly.
   });
   assert.equal(extractResult.status, 0, extractResult.stderr || extractResult.stdout);
   const packageRoot = realpathSync(join(extractDir, "package"));
+  const canonicalSubagentsDir = join(agentDir, "tlh", "agents", "subagents");
+  mkdirSync(canonicalSubagentsDir, { recursive: true });
+  writeFileSync(
+    join(canonicalSubagentsDir, "developer.md"),
+    `---
+name: developer
+description: deterministic packed package smoke developer
+tools: read
+systemPromptMode: replace
+inheritProjectContext: false
+inheritSkills: false
+defaultContext: fresh
+acceptanceRole: read-only
+---
+Return the deterministic faux child marker exactly.
+`,
+  );
   writeFileSync(
     join(agentDir, "settings.json"),
     `${JSON.stringify(
@@ -109,9 +109,6 @@ Return the deterministic faux child marker exactly.
           primaryAgent: { enabled: false, selected: "disabled" },
           telemetry: { enabled: false },
           updateCheck: { enabled: false },
-        },
-        subagents: {
-          agentDirs: ["package-smoke-agents"],
         },
       },
       null,

@@ -112,6 +112,12 @@ function parseArgs(argv) {
 //     Verified 2026-08-15: shared between the eager graph of the-last-harness.js
 //     and the lazy static graphs of tokens.js and session-limit-report.js.
 //
+//   extensions/shared/project-agent-worktree.js
+//     Pure filesystem/path validation helpers with no peer imports or mutable
+//     module state. Shared by eager built-in guidance and the lazy custom-agent
+//     snapshot loader; allowing this overlap avoids a second root authority.
+//     Verified 2026-08-30.
+//
 //   the-last-harness/mcp-tools.js
 //     3 pure exported functions (getMcpToolKind, hasKnownPiMcpAdapterSource,
 //     hasPersistedDirectMcpResultDetails) + 1 readonly const array
@@ -126,6 +132,7 @@ function parseArgs(argv) {
 const SHARED_MODULE_ALLOWLIST = new Set([
   "the-last-harness/common.js",
   "the-last-harness/mcp-tools.js",
+  "shared/project-agent-worktree.js",
 ]);
 
 // ---------------------------------------------------------------------------

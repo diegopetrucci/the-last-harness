@@ -14,14 +14,14 @@ export async function loadProjectAgentSnapshot(options) {
   return module.loadProjectAgentSnapshot(options);
 }
 
-export async function reauthorizeTlhProjectAgentTrust(projectRoot, options) {
+export async function reauthorizeTlhProjectAgentTrust(projectRoot, options = {}) {
   const module = await import(projectAgentLoaderModuleUrl.href);
-  const dependencies = options?.trustDependencies;
+  const input = options ?? {};
+  const dependencies = input.trustDependencies;
   return module.resolveProjectAgentTrust(projectRoot, {
-    ...options,
-    createProjectTrustStore:
-      options?.createProjectTrustStore ?? dependencies?.createProjectTrustStore,
-    hasTrustRequiringProjectResources:
-      options?.hasTrustRequiringProjectResources ?? dependencies?.hasTrustRequiringProjectResources,
+    agentDir: input.agentDir,
+    trustStore: input.trustStore,
+    trustOverride: input.trustOverride,
+    createProjectTrustStore: input.createProjectTrustStore ?? dependencies?.createProjectTrustStore,
   });
 }

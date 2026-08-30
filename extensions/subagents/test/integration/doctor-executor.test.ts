@@ -12,6 +12,7 @@ import {
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const originalPiCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
 const importHome = createTempDir("pi-doctor-executor-import-home-");
 process.env.HOME = importHome;
 process.env.USERPROFILE = importHome;
@@ -65,6 +66,8 @@ describe(
       else process.env.HOME = originalHome;
       if (originalUserProfile === undefined) delete process.env.USERPROFILE;
       else process.env.USERPROFILE = originalUserProfile;
+      if (originalPiCodingAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = originalPiCodingAgentDir;
       removeTempDir(tempDir);
       removeTempDir(tempHome);
     });
