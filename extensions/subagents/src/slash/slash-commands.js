@@ -4,7 +4,7 @@ import { SLASH_TEXT_RESULT_TYPE, } from "../shared/types.js";
 function sendSlashText(pi, text) {
     pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
-function doctorReportForContext(pi, state, config, ctx) {
+function doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary) {
     let currentSessionFile = null;
     let currentSessionId = state.currentSessionId;
     let sessionError;
@@ -31,13 +31,14 @@ function doctorReportForContext(pi, state, config, ctx) {
         currentSessionId,
         orchestratorTarget,
         sessionError,
+        ...(getHeartbeatSummary ? { heartbeat: getHeartbeatSummary() } : {}),
     });
 }
-export function registerSlashCommands(pi, state, config) {
+export function registerSlashCommands(pi, state, config, getHeartbeatSummary) {
     pi.registerCommand("subagents-doctor", {
         description: "Show subagent diagnostics",
         handler: async (_args, ctx) => {
-            sendSlashText(pi, doctorReportForContext(pi, state, config, ctx));
+            sendSlashText(pi, doctorReportForContext(pi, state, config, ctx, getHeartbeatSummary));
         },
     });
 }
