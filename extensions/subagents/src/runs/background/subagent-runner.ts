@@ -1188,11 +1188,7 @@ interface ModelAttemptStart {
   modelAttempts?: ModelAttempt[];
 }
 
-/** Run a single pi agent step, returning output and metadata */
-async function runSingleStep(
-  step: SubagentStep,
-  ctx: SingleStepContext,
-): Promise<{
+type SingleStepResultValue = {
   agent: string;
   output: string;
   exitCode: number | null;
@@ -1228,7 +1224,54 @@ async function runSingleStep(
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
-}> {
+};
+
+type SingleStepAcceptance = import("../../shared/types.ts").AcceptanceLedger;
+type SingleStepAcceptanceReport = ReturnType<typeof parseAndStripAcceptanceReport>["report"];
+type SingleStepResolvedOutput = ReturnType<typeof resolveSingleOutput>;
+type SingleStepStructuredOutput = ReturnType<typeof createStructuredOutputRuntime>;
+type SingleStepRuntimeResult = RunPiStreamingResult & { structuredOutput?: unknown };
+
+interface SingleStepExecutionState {
+  candidates: Array<string | undefined>;
+  attemptedModels: string[];
+  modelAttempts: ModelAttempt[];
+  attemptNotes: string[];
+  modelResolution?: SubagentModelResolution;
+  finalResult?: SingleStepRuntimeResult;
+  finalOutputSnapshot?: SingleOutputSnapshot;
+  completionGuardTriggeredFinal: boolean;
+  turnBudget?: TurnBudgetState;
+  toolBudget?: ToolBudgetState;
+  toolBudgetBlocked: boolean;
+  contextExhaustedDetected: boolean;
+  firstAttemptIdentity?: SubagentModelIdentity;
+  aggregateContextUsage?: ContextUsageDiagnostics;
+  finalAttemptContextUsage?: ContextUsageDiagnostics;
+}
+
+interface SingleStepSetup {
+  segmentStartedAt: number;
+  priorActiveRuntimeMs: number;
+  stepTimeoutTimer?: DeadlineTimer;
+  inheritedTimeoutSignal?: AbortSignal;
+  relayInheritedTimeout: () => void;
+  parentRegisterTimeout?: (interrupt: (() => void) | undefined) => void;
+  childDeadlineAt?: number;
+  ctx: SingleStepContext;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  task: string;
+  taskForCompletionGuard: string;
+  sessionEnabled: boolean;
+  sessionDir?: string;
+  artifactPaths?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  eventsPath: string;
+  restoredSession: boolean;
+  state: SingleStepExecutionState;
+}
+
+function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): SingleStepSetup {
   const segmentStartedAt = ctx.startedAt ?? Date.now();
   const priorActiveRuntimeMs = Math.max(0, step.activeRuntimeMs ?? 0);
   const stepTimeoutController = new AbortController();
@@ -1248,7 +1291,7 @@ async function runSingleStep(
         })
       : undefined;
   const parentRegisterTimeout = ctx.registerTimeout;
-  ctx = {
+  const stepContext: SingleStepContext = {
     ...ctx,
     timeoutSignal: stepTimeoutController.signal,
     timeoutMessage:
@@ -1265,37 +1308,40 @@ async function runSingleStep(
     (step.structuredOutputSchema
       ? createStructuredOutputRuntime(
           step.structuredOutputSchema,
-          path.join(path.dirname(ctx.outputFile), "structured-output"),
+          path.join(path.dirname(stepContext.outputFile), "structured-output"),
         )
       : undefined);
-  const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-  let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
-  task = resolveOutputReferences(task, ctx.outputs ?? {});
+  const placeholderRegex = new RegExp(
+    stepContext.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "g",
+  );
+  let task = step.task.replace(placeholderRegex, () => stepContext.previousOutput);
+  task = resolveOutputReferences(task, stepContext.outputs ?? {});
   const taskForCompletionGuard = task;
   if (step.effectiveAcceptance) {
     const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance);
     if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
   }
-  const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
-  const sessionDir = step.sessionFile ? undefined : ctx.sessionDir;
+  const sessionEnabled = Boolean(step.sessionFile) || stepContext.sessionEnabled;
+  const sessionDir = step.sessionFile ? undefined : stepContext.sessionDir;
 
   let artifactPaths: ArtifactPaths | undefined;
   let transcriptWriter: ChildTranscriptWriter | undefined;
-  if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
-    const index = ctx.flatStepCount > 1 ? ctx.flatIndex : undefined;
-    artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
-    fs.mkdirSync(ctx.artifactsDir, { recursive: true });
-    if (ctx.artifactConfig?.includeInput !== false) {
+  if (stepContext.artifactsDir && stepContext.artifactConfig?.enabled !== false) {
+    const index = stepContext.flatStepCount > 1 ? stepContext.flatIndex : undefined;
+    artifactPaths = getArtifactPaths(stepContext.artifactsDir, stepContext.id, step.agent, index);
+    fs.mkdirSync(stepContext.artifactsDir, { recursive: true });
+    if (stepContext.artifactConfig?.includeInput !== false) {
       fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
     }
-    if (ctx.artifactConfig?.includeTranscript !== false) {
+    if (stepContext.artifactConfig?.includeTranscript !== false) {
       transcriptWriter = createChildTranscriptWriter({
         transcriptPath: artifactPaths.transcriptPath,
         source: "async",
-        runId: ctx.id,
+        runId: stepContext.id,
         agent: step.agent,
-        childIndex: ctx.flatIndex,
-        cwd: step.cwd ?? ctx.cwd,
+        childIndex: stepContext.flatIndex,
+        cwd: step.cwd ?? stepContext.cwd,
       });
     }
   }
@@ -1311,15 +1357,11 @@ async function runSingleStep(
   const modelAttempts: ModelAttempt[] = [];
   const attemptNotes: string[] = [...(step.attemptNotes ?? [])];
   let modelResolution = step.modelResolution;
-  const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
-  let finalResult: RunPiStreamingResult | undefined;
-  let finalOutputSnapshot: SingleOutputSnapshot | undefined;
-  let completionGuardTriggeredFinal = false;
-  let turnBudget = ctx.turnBudget ? initialTurnBudgetState(ctx.turnBudget) : undefined;
-  let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
-  let toolBudgetBlocked = false;
-  let contextExhaustedDetected = false;
-  let firstAttemptIdentity: SubagentModelIdentity | undefined;
+  const eventsPath = path.join(path.dirname(stepContext.outputFile), "events.jsonl");
+  const initialTurnBudget = stepContext.turnBudget
+    ? initialTurnBudgetState(stepContext.turnBudget)
+    : undefined;
+  const initialToolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
   // Async fresh runs commonly receive a preallocated session path. Snapshot
   // whether its artifact existed before the first child is spawned so fallback
   // attempts in this invocation cannot become restored attempts.
@@ -1334,320 +1376,344 @@ async function runSingleStep(
           : {}),
       }
     : undefined;
-  let finalAttemptContextUsage: ContextUsageDiagnostics | undefined;
+  return {
+    segmentStartedAt,
+    priorActiveRuntimeMs,
+    stepTimeoutTimer,
+    inheritedTimeoutSignal,
+    relayInheritedTimeout,
+    parentRegisterTimeout,
+    childDeadlineAt,
+    ctx: stepContext,
+    effectiveStructuredOutput,
+    task,
+    taskForCompletionGuard,
+    sessionEnabled,
+    sessionDir,
+    artifactPaths,
+    transcriptWriter,
+    eventsPath,
+    restoredSession,
+    state: {
+      candidates,
+      attemptedModels,
+      modelAttempts,
+      attemptNotes,
+      modelResolution,
+      finalResult: undefined,
+      finalOutputSnapshot: undefined,
+      completionGuardTriggeredFinal: false,
+      turnBudget: initialTurnBudget,
+      toolBudget: initialToolBudget,
+      toolBudgetBlocked: false,
+      contextExhaustedDetected: false,
+      firstAttemptIdentity: undefined,
+      aggregateContextUsage,
+      finalAttemptContextUsage: undefined,
+    },
+  };
+}
 
-  for (let index = 0; index < candidates.length; index++) {
-    if (ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
-    const candidate = candidates[index];
-    // Support-aware effective identity for this attempt: never persist a
-    // thinking level that dispatch preparation already dropped as unsupported.
-    const attemptThinking = dispatchThinkingDropped(step, candidate)
-      ? undefined
-      : resolveEffectiveThinking(candidate, step.thinking);
-    const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
-    if (index === 0) firstAttemptIdentity = attemptIdentity;
-    // If the process dies mid-attempt, the last status write must still carry
-    // the original identity, fallback reason, and completed attempt history so
-    // durable resume does not mistake a runtime fallback for the original
-    // selection. Persist the full transition in one status write.
-    let attemptResolution = modelResolution;
-    if (index > 0) {
-      modelResolution = appendRuntimeFallbackResolution({
-        previous: modelResolution,
-        sourceAttempt: modelAttempts.at(-1),
-        currentIdentity: attemptIdentity,
-        originalIdentity: firstAttemptIdentity,
-      });
-      attemptResolution = modelResolution;
-    }
-    ctx.onAttemptStart?.({
-      model: candidate,
-      thinking: attemptThinking,
-      modelIdentity: attemptIdentity,
-      modelResolution: attemptResolution,
-      attemptedModels: candidate ? [...attemptedModels, candidate] : undefined,
-      modelAttempts: modelAttempts.length > 0 ? [...modelAttempts] : undefined,
+interface SingleStepAttemptPreparation {
+  candidate: string | undefined;
+  attemptThinking?: string;
+  outputSnapshot?: SingleOutputSnapshot;
+  args: string[];
+  env: Record<string, string | undefined>;
+  tempDir?: string;
+}
+
+function prepareSingleStepAttempt(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  candidate: string | undefined;
+  index: number;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  task: string;
+  sessionEnabled: boolean;
+  sessionDir?: string;
+}): SingleStepAttemptPreparation {
+  const {
+    step,
+    ctx,
+    state,
+    candidate,
+    index,
+    effectiveStructuredOutput,
+    task,
+    sessionEnabled,
+    sessionDir,
+  } = input;
+  // Support-aware effective identity for this attempt: never persist a
+  // thinking level that dispatch preparation already dropped as unsupported.
+  const attemptThinking = dispatchThinkingDropped(step, candidate)
+    ? undefined
+    : resolveEffectiveThinking(candidate, step.thinking);
+  const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
+  if (index === 0) state.firstAttemptIdentity = attemptIdentity;
+  // If the process dies mid-attempt, the last status write must still carry the
+  // original identity, fallback reason, and completed attempt history so
+  // durable resume does not mistake a runtime fallback for the original
+  // selection. Persist the full transition in one status write.
+  let attemptResolution = state.modelResolution;
+  if (index > 0) {
+    state.modelResolution = appendRuntimeFallbackResolution({
+      previous: state.modelResolution,
+      sourceAttempt: state.modelAttempts.at(-1),
+      currentIdentity: attemptIdentity,
+      originalIdentity: state.firstAttemptIdentity,
     });
-    const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
-    if (effectiveStructuredOutput) {
-      try {
-        if (fs.existsSync(effectiveStructuredOutput.outputPath))
-          fs.unlinkSync(effectiveStructuredOutput.outputPath);
-      } catch {
-        // Missing/stale structured-output files are handled after the child exits.
-      }
+    attemptResolution = state.modelResolution;
+  }
+  ctx.onAttemptStart?.({
+    model: candidate,
+    thinking: attemptThinking,
+    modelIdentity: attemptIdentity,
+    modelResolution: attemptResolution,
+    attemptedModels: candidate ? [...state.attemptedModels, candidate] : undefined,
+    modelAttempts: state.modelAttempts.length > 0 ? [...state.modelAttempts] : undefined,
+  });
+  const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+  if (effectiveStructuredOutput) {
+    try {
+      if (fs.existsSync(effectiveStructuredOutput.outputPath))
+        fs.unlinkSync(effectiveStructuredOutput.outputPath);
+    } catch {
+      // Missing/stale structured-output files are handled after the child exits.
     }
-    const { args, env, tempDir } = buildPiArgs({
-      parentSessionId: step.parentSessionId,
-      baseArgs: ["--mode", "json", "-p"],
-      task,
-      sessionEnabled,
-      sessionDir,
-      sessionFile: step.sessionFile,
-      model: candidate,
-      inheritProjectContext: step.inheritProjectContext,
-      inheritSkills: step.inheritSkills,
-      requireReadTool: Boolean(step.skills?.length),
-      tools: step.tools,
-      extensions: step.extensions,
-      subagentOnlyExtensions: step.subagentOnlyExtensions,
-      systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
-      systemPromptMode: step.systemPromptMode,
-      cwd: step.cwd ?? ctx.cwd,
-      promptFileStem: step.agent,
-      intercomSessionName: ctx.childIntercomTarget,
-      orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
-      runId: ctx.id,
-      childAgentName: step.agent,
-      childIndex: ctx.flatIndex,
-      steerInboxDir: ctx.steerInboxDir,
-      structuredOutput: effectiveStructuredOutput,
-      toolBudget: step.toolBudget,
-    });
-    const run = await runPiStreaming(
-      args,
-      step.cwd ?? ctx.cwd,
-      ctx.outputFile,
-      env,
-      ctx.piPackageRoot,
-      ctx.piArgv1,
-      step.maxSubagentDepth,
-      { eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
-      ctx.registerInterrupt,
-      ctx.onChildEvent,
-      transcriptWriter,
-      ctx.registerTimeout,
-      ctx.timeoutMessage,
-      ctx.registerTurnBudgetAbort,
-      {
-        restored: restoredSession,
-        configuredModel: candidate,
-        contextWindow: contextWindowForModel(candidate, step.contextWindows),
-        contextWindows: step.contextWindows,
-      },
-    );
-    finalAttemptContextUsage = run.contextUsage;
-    aggregateContextUsage = mergeContextUsageDiagnostics(aggregateContextUsage, run.contextUsage);
-    if (run.turnBudget) turnBudget = run.turnBudget;
-    else if (ctx.turnBudget) {
-      const assistantMessages = run.messages.filter((message) => message.role === "assistant");
-      const turnCount = assistantMessages.length;
-      const lastAssistantMessage = assistantMessages.at(-1);
-      if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
-        turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
-      } else if (turnCount >= ctx.turnBudget.maxTurns) {
-        turnBudget = turnBudgetState(
+  }
+  const { args, env, tempDir } = buildPiArgs({
+    parentSessionId: step.parentSessionId,
+    baseArgs: ["--mode", "json", "-p"],
+    task,
+    sessionEnabled,
+    sessionDir,
+    sessionFile: step.sessionFile,
+    model: candidate,
+    inheritProjectContext: step.inheritProjectContext,
+    inheritSkills: step.inheritSkills,
+    requireReadTool: Boolean(step.skills?.length),
+    tools: step.tools,
+    extensions: step.extensions,
+    subagentOnlyExtensions: step.subagentOnlyExtensions,
+    systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
+    systemPromptMode: step.systemPromptMode,
+    cwd: step.cwd ?? ctx.cwd,
+    promptFileStem: step.agent,
+    intercomSessionName: ctx.childIntercomTarget,
+    orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
+    runId: ctx.id,
+    childAgentName: step.agent,
+    childIndex: ctx.flatIndex,
+    steerInboxDir: ctx.steerInboxDir,
+    structuredOutput: effectiveStructuredOutput,
+    toolBudget: step.toolBudget,
+  });
+  return { candidate, attemptThinking, outputSnapshot, args, env, tempDir };
+}
+
+interface SingleStepAttemptAssessment {
+  attempt: ModelAttempt;
+  completionGuardTriggered: boolean;
+}
+
+function assessSingleStepAttempt(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  run: RunPiStreamingResult;
+  candidate: string | undefined;
+  outputSnapshot?: SingleOutputSnapshot;
+  tempDir?: string;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  taskForCompletionGuard: string;
+}): SingleStepAttemptAssessment {
+  const {
+    step,
+    ctx,
+    state,
+    run,
+    candidate,
+    outputSnapshot,
+    tempDir,
+    effectiveStructuredOutput,
+    taskForCompletionGuard,
+  } = input;
+  state.finalAttemptContextUsage = run.contextUsage;
+  state.aggregateContextUsage = mergeContextUsageDiagnostics(
+    state.aggregateContextUsage,
+    run.contextUsage,
+  );
+  if (run.turnBudget) state.turnBudget = run.turnBudget;
+  else if (ctx.turnBudget) {
+    const assistantMessages = run.messages.filter((message) => message.role === "assistant");
+    const turnCount = assistantMessages.length;
+    const lastAssistantMessage = assistantMessages.at(-1);
+    if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
+      state.turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
+    } else if (turnCount >= ctx.turnBudget.maxTurns) {
+      state.turnBudget = turnBudgetState(
+        ctx.turnBudget,
+        turnCount,
+        shouldAbortForTurnBudget(
           ctx.turnBudget,
           turnCount,
-          shouldAbortForTurnBudget(
-            ctx.turnBudget,
-            turnCount,
-            lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
-          ),
-        );
-      }
-    }
-    cleanupTempDir(tempDir);
-
-    const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
-    const runTerminationReason = resolveSubagentTerminationReason({
-      assistantStopReason: run.assistantStopReason,
-      effectiveExitCode: run.exitCode ?? undefined,
-      processCompleted: true,
-    });
-    const contextExhaustedSignature = classifyContextExhaustedTermination({
-      messages: run.messages,
-      // A retry is a new diagnostic scope; prior attempts remain aggregate
-      // reporting data but cannot pressure-classify this attempt.
-      contextUsage: run.contextUsage,
-      exitCode: run.exitCode ?? undefined,
-      error: run.error,
-      terminationReason: runTerminationReason,
-    });
-    // Keep this scoped to the current attempt; a failed prior attempt must
-    // never make a later fallback look context-exhausted.
-    contextExhaustedDetected =
-      run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
-    const missingStructuredOutput = effectiveStructuredOutput
-      ? !fs.existsSync(effectiveStructuredOutput.outputPath)
-      : false;
-    const emptyOutputError =
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !contextExhaustedSignature &&
-      !run.finalOutput.trim() &&
-      (!effectiveStructuredOutput || missingStructuredOutput)
-        ? "Subagent produced no output (possible model cold-start or empty response)."
-        : undefined;
-    let structuredOutput: unknown;
-    let structuredError: string | undefined;
-    if (
-      effectiveStructuredOutput &&
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !emptyOutputError
-    ) {
-      const structured = readStructuredOutput({
-        schema: effectiveStructuredOutput.schema,
-        schemaPath: effectiveStructuredOutput.schemaPath,
-        outputPath: effectiveStructuredOutput.outputPath,
-      });
-      if (structured.error) structuredError = structured.error;
-      else structuredOutput = structured.value;
-    }
-    const completionGuard =
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !emptyOutputError &&
-      step.completionGuard !== false
-        ? evaluateCompletionMutationGuard({
-            agent: step.agent,
-            task: taskForCompletionGuard,
-            messages: run.messages,
-            tools: step.tools,
-          })
-        : undefined;
-    const completionGuardTriggered =
-      completionGuard?.triggered === true && !run.observedMutationAttempt;
-    const completionGuardError = completionGuardTriggered
-      ? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
-      : undefined;
-    const effectiveExitCode = completionGuardTriggered
-      ? 1
-      : structuredError
-        ? 1
-        : hiddenError?.hasError
-          ? (hiddenError.exitCode ?? 1)
-          : emptyOutputError
-            ? 1
-            : run.error && run.exitCode === 0
-              ? 1
-              : run.exitCode;
-    const error =
-      completionGuardError ??
-      structuredError ??
-      (hiddenError?.hasError
-        ? hiddenError.details
-          ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
-          : `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-        : (emptyOutputError ??
-          (run.error ||
-            (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined))));
-    const attempt: ModelAttempt = {
-      model: candidate ?? run.model ?? step.model ?? "default",
-      success: effectiveExitCode === 0 && !error,
-      exitCode: effectiveExitCode,
-      error,
-      usage: run.usage,
-    };
-    modelAttempts.push(attempt);
-    if (candidate) attemptedModels.push(candidate);
-    completionGuardTriggeredFinal = completionGuardTriggered;
-    finalOutputSnapshot = outputSnapshot;
-    if (step.toolBudget) {
-      const toolMessages = run.messages.filter((message) => message.role === "toolResult");
-      const blockedMessage = toolMessages.find((message) =>
-        extractTextFromContent(message.content).includes("Tool budget hard limit reached"),
-      );
-      toolBudgetBlocked = Boolean(blockedMessage);
-      toolBudget = toolBudgetState(
-        step.toolBudget,
-        toolMessages.length,
-        blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined,
+          lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
+        ),
       );
     }
-    finalResult = {
-      ...run,
-      exitCode: effectiveExitCode,
-      model: candidate ?? run.model,
-      error,
-      structuredOutput,
-    } as RunPiStreamingResult & { structuredOutput?: unknown };
-    if (run.turnBudgetExceeded) break;
-    if (run.timedOut || ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
-    if (attempt.success || completionGuardTriggered) break;
-    if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
-    attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
   }
+  cleanupTempDir(tempDir);
 
-  const processCleanup =
-    finalResult?.processCleanup ??
-    skipOwnedProcessGroupCleanup(
-      supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform",
-      finalResult?.processGroupId,
-    );
-  const modelFallbackNotice =
-    modelAttempts.length > 1 ? sanitizeModelFallbackNotice(step.modelFallbackNotice) : undefined;
-  const finalModel = finalResult?.model;
-  // A dispatched candidate is authoritative. For an unconfigured run, only the
-  // first validated child report is eligible to become the effective identity;
-  // runtime observation is not a model-resolution override or fallback.
-  const finalConfiguredIdentity = finalResult?.configuredModel
-    ? canonicalSubagentModelIdentity(
-        finalResult.configuredModel,
-        dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking,
-      )
-    : undefined;
-  const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
-  if (modelAttempts.length > 1 && finalConfiguredIdentity) {
-    modelResolution = appendRuntimeFallbackResolution({
-      previous: modelResolution,
-      sourceAttempt: modelAttempts.at(-2),
-      currentIdentity: finalConfiguredIdentity,
-      originalIdentity: firstAttemptIdentity,
-    });
-  } else if (modelResolution && finalConfiguredIdentity) {
-    modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
-  }
-  if (modelResolution) {
-    const resolutionNotice = `Notice: ${modelResolution.reason}`;
-    if (!attemptNotes.some((note) => note.includes(modelResolution!.reason)))
-      attemptNotes.push(resolutionNotice);
-  }
-  const rawOutput = finalResult?.finalOutput ?? "";
-  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
-    parseAndStripAcceptanceReport(rawOutput);
-  const resolvedOutput =
-    step.outputPath && finalResult?.exitCode === 0
-      ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
-      : { fullOutput: outputForPersistence };
-  const output = resolvedOutput.fullOutput;
-  const outputReference = resolvedOutput.savedPath
-    ? formatSavedOutputReference(resolvedOutput.savedPath, output)
-    : undefined;
-  let outputForSummary = output;
-  if (modelFallbackNotice) {
-    outputForSummary = `Notice: ${modelFallbackNotice}\n\n${outputForSummary}`.trim();
-  }
-  if (attemptNotes.length > 0) {
-    outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
-  }
-  if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && turnBudget) {
-    outputForSummary = formatTurnBudgetOutput(
-      turnBudgetExceededMessage(turnBudget, turnBudget.turnCount),
-      outputForSummary,
-    );
-  } else if (!finalResult?.timedOut && turnBudget?.outcome === "wrap-up-requested") {
-    const note = turnBudgetSoftNote(
-      turnBudget,
-      turnBudget.wrapUpRequestedAtTurn ?? turnBudget.turnCount,
-    );
-    outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
-  }
-  const outputForAcceptance = rawOutput;
-  const finalizedOutput = finalizeSingleOutput({
-    fullOutput: outputForSummary,
-    outputPath: step.outputPath,
-    outputMode: step.outputMode,
-    exitCode: finalResult?.exitCode ?? 1,
-    savedPath: resolvedOutput.savedPath,
-    outputReference,
-    saveError: resolvedOutput.saveError,
+  const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
+  const runTerminationReason = resolveSubagentTerminationReason({
+    assistantStopReason: run.assistantStopReason,
+    effectiveExitCode: run.exitCode ?? undefined,
+    processCompleted: true,
   });
-  outputForSummary = finalizedOutput.displayOutput;
+  const contextExhaustedSignature = classifyContextExhaustedTermination({
+    messages: run.messages,
+    // A retry is a new diagnostic scope; prior attempts remain aggregate
+    // reporting data but cannot pressure-classify this attempt.
+    contextUsage: run.contextUsage,
+    exitCode: run.exitCode ?? undefined,
+    error: run.error,
+    terminationReason: runTerminationReason,
+  });
+  // Keep this scoped to the current attempt; a failed prior attempt must
+  // never make a later fallback look context-exhausted.
+  state.contextExhaustedDetected =
+    run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
+  const missingStructuredOutput = effectiveStructuredOutput
+    ? !fs.existsSync(effectiveStructuredOutput.outputPath)
+    : false;
+  const emptyOutputError =
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !contextExhaustedSignature &&
+    !run.finalOutput.trim() &&
+    (!effectiveStructuredOutput || missingStructuredOutput)
+      ? "Subagent produced no output (possible model cold-start or empty response)."
+      : undefined;
+  let structuredOutput: unknown;
+  let structuredError: string | undefined;
+  if (
+    effectiveStructuredOutput &&
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !emptyOutputError
+  ) {
+    const structured = readStructuredOutput({
+      schema: effectiveStructuredOutput.schema,
+      schemaPath: effectiveStructuredOutput.schemaPath,
+      outputPath: effectiveStructuredOutput.outputPath,
+    });
+    if (structured.error) structuredError = structured.error;
+    else structuredOutput = structured.value;
+  }
+  const completionGuard =
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !emptyOutputError &&
+    step.completionGuard !== false
+      ? evaluateCompletionMutationGuard({
+          agent: step.agent,
+          task: taskForCompletionGuard,
+          messages: run.messages,
+          tools: step.tools,
+        })
+      : undefined;
+  const completionGuardTriggered =
+    completionGuard?.triggered === true && !run.observedMutationAttempt;
+  const completionGuardError = completionGuardTriggered
+    ? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
+    : undefined;
+  const effectiveExitCode = completionGuardTriggered
+    ? 1
+    : structuredError
+      ? 1
+      : hiddenError?.hasError
+        ? (hiddenError.exitCode ?? 1)
+        : emptyOutputError
+          ? 1
+          : run.error && run.exitCode === 0
+            ? 1
+            : run.exitCode;
+  const error =
+    completionGuardError ??
+    structuredError ??
+    (hiddenError?.hasError
+      ? hiddenError.details
+        ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
+        : `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
+      : (emptyOutputError ??
+        (run.error || (run.exitCode !== 0 && run.stderr.trim() ? run.stderr.trim() : undefined))));
+  const attempt: ModelAttempt = {
+    model: candidate ?? run.model ?? step.model ?? "default",
+    success: effectiveExitCode === 0 && !error,
+    exitCode: effectiveExitCode,
+    error,
+    usage: run.usage,
+  };
+  state.modelAttempts.push(attempt);
+  if (candidate) state.attemptedModels.push(candidate);
+  state.completionGuardTriggeredFinal = completionGuardTriggered;
+  state.finalOutputSnapshot = outputSnapshot;
+  if (step.toolBudget) {
+    const toolMessages = run.messages.filter((message) => message.role === "toolResult");
+    const blockedMessage = toolMessages.find((message) =>
+      extractTextFromContent(message.content).includes("Tool budget hard limit reached"),
+    );
+    state.toolBudgetBlocked = Boolean(blockedMessage);
+    state.toolBudget = toolBudgetState(
+      step.toolBudget,
+      toolMessages.length,
+      blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined,
+    );
+  }
+  state.finalResult = {
+    ...run,
+    exitCode: effectiveExitCode,
+    model: candidate ?? run.model,
+    error,
+    structuredOutput,
+  };
+  return { attempt, completionGuardTriggered };
+}
+
+function shouldStopSingleStepAttempt(input: {
+  run: RunPiStreamingResult;
+  ctx: SingleStepContext;
+  attempt: ModelAttempt;
+  completionGuardTriggered: boolean;
+  index: number;
+  candidateCount: number;
+}): boolean {
+  if (input.run.turnBudgetExceeded) return true;
+  if (input.run.timedOut || input.ctx.timeoutSignal?.aborted || input.ctx.skipAcceptance?.())
+    return true;
+  if (input.attempt.success || input.completionGuardTriggered) return true;
+  return !isRetryableModelFailure(input.attempt.error) || input.index === input.candidateCount - 1;
+}
+
+interface SingleStepAcceptanceEvaluation {
+  acceptance: SingleStepAcceptance | Promise<SingleStepAcceptance> | undefined;
+  wasInterrupted: () => boolean;
+  teardown: () => void;
+}
+
+function prepareSingleStepAcceptance(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  finalResult?: SingleStepRuntimeResult;
+  output: string;
+  report?: SingleStepAcceptanceReport;
+}): SingleStepAcceptanceEvaluation {
+  const { step, ctx, finalResult, output, report } = input;
   const acceptanceAbortController = new AbortController();
   const acceptanceAbortListeners: Array<() => void> = [];
   const relayAcceptanceAbort = (signal: AbortSignal | undefined, abort: () => void) => {
@@ -1669,6 +1735,10 @@ async function runSingleStep(
     interruptedDuringAcceptance = true;
     acceptanceAbortController.abort();
   });
+  const teardown = () => {
+    ctx.registerInterrupt?.(undefined);
+    for (const removeAbortListener of acceptanceAbortListeners) removeAbortListener();
+  };
   const acceptance =
     step.effectiveAcceptance &&
     !finalResult?.interrupted &&
@@ -1677,10 +1747,10 @@ async function runSingleStep(
     !ctx.interruptSignal?.aborted &&
     !acceptanceAbortController.signal.aborted &&
     !ctx.skipAcceptance?.()
-      ? await evaluateAcceptance({
+      ? evaluateAcceptance({
           acceptance: step.effectiveAcceptance,
-          output: outputForAcceptance,
-          report: rawAcceptanceReport,
+          output,
+          report,
           cwd: step.cwd ?? ctx.cwd,
           signal: acceptanceAbortController.signal,
           abortMessage: interruptedDuringAcceptance
@@ -1688,11 +1758,160 @@ async function runSingleStep(
             : (ctx.timeoutMessage ?? "Subagent timed out."),
         })
       : undefined;
-  ctx.registerInterrupt?.(undefined);
-  for (const removeAbortListener of acceptanceAbortListeners) removeAbortListener();
+  return {
+    acceptance,
+    wasInterrupted: () => interruptedDuringAcceptance,
+    teardown,
+  };
+}
+
+interface SingleStepOutputFinalization {
+  processCleanup: ChildProcessCleanupResult;
+  modelFallbackNotice?: string;
+  finalModel?: string;
+  finalModelIdentity?: SubagentModelIdentity;
+  rawOutput: string;
+  rawAcceptanceReport?: SingleStepAcceptanceReport;
+  resolvedOutput: SingleStepResolvedOutput;
+  output: string;
+  outputForSummary: string;
+  acceptance: SingleStepAcceptance | Promise<SingleStepAcceptance> | undefined;
+  acceptanceWasInterrupted: () => boolean;
+  acceptanceTeardown: () => void;
+}
+
+function finalizeSingleStepOutput(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+}): SingleStepOutputFinalization {
+  const { step, ctx, state } = input;
+  const finalResult = state.finalResult;
+  const processCleanup =
+    finalResult?.processCleanup ??
+    skipOwnedProcessGroupCleanup(
+      supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform",
+      finalResult?.processGroupId,
+    );
+  const modelFallbackNotice =
+    state.modelAttempts.length > 1
+      ? sanitizeModelFallbackNotice(step.modelFallbackNotice)
+      : undefined;
+  const finalModel = finalResult?.model;
+  // A dispatched candidate is authoritative. For an unconfigured run, only the
+  // first validated child report is eligible to become the effective identity;
+  // runtime observation is not a model-resolution override or fallback.
+  const finalConfiguredIdentity = finalResult?.configuredModel
+    ? canonicalSubagentModelIdentity(
+        finalResult.configuredModel,
+        dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking,
+      )
+    : undefined;
+  const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
+  let modelResolution = state.modelResolution;
+  if (state.modelAttempts.length > 1 && finalConfiguredIdentity) {
+    modelResolution = appendRuntimeFallbackResolution({
+      previous: modelResolution,
+      sourceAttempt: state.modelAttempts.at(-2),
+      currentIdentity: finalConfiguredIdentity,
+      originalIdentity: state.firstAttemptIdentity,
+    });
+  } else if (modelResolution && finalConfiguredIdentity) {
+    modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
+  }
+  state.modelResolution = modelResolution;
+  if (modelResolution) {
+    const resolutionNotice = `Notice: ${modelResolution.reason}`;
+    if (!state.attemptNotes.some((note) => note.includes(modelResolution!.reason)))
+      state.attemptNotes.push(resolutionNotice);
+  }
+  const rawOutput = finalResult?.finalOutput ?? "";
+  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
+    parseAndStripAcceptanceReport(rawOutput);
+  const resolvedOutput =
+    step.outputPath && finalResult?.exitCode === 0
+      ? resolveSingleOutput(step.outputPath, outputForPersistence, state.finalOutputSnapshot)
+      : { fullOutput: outputForPersistence };
+  const output = resolvedOutput.fullOutput;
+  const outputReference = resolvedOutput.savedPath
+    ? formatSavedOutputReference(resolvedOutput.savedPath, output)
+    : undefined;
+  let outputForSummary = output;
+  if (modelFallbackNotice) {
+    outputForSummary = `Notice: ${modelFallbackNotice}\n\n${outputForSummary}`.trim();
+  }
+  if (state.attemptNotes.length > 0) {
+    outputForSummary = `${state.attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
+  }
+  if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && state.turnBudget) {
+    outputForSummary = formatTurnBudgetOutput(
+      turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount),
+      outputForSummary,
+    );
+  } else if (!finalResult?.timedOut && state.turnBudget?.outcome === "wrap-up-requested") {
+    const note = turnBudgetSoftNote(
+      state.turnBudget,
+      state.turnBudget.wrapUpRequestedAtTurn ?? state.turnBudget.turnCount,
+    );
+    outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
+  }
+  const outputForAcceptance = rawOutput;
+  const finalizedOutput = finalizeSingleOutput({
+    fullOutput: outputForSummary,
+    outputPath: step.outputPath,
+    outputMode: step.outputMode,
+    exitCode: finalResult?.exitCode ?? 1,
+    savedPath: resolvedOutput.savedPath,
+    outputReference,
+    saveError: resolvedOutput.saveError,
+  });
+  outputForSummary = finalizedOutput.displayOutput;
+  const acceptanceEvaluation = prepareSingleStepAcceptance({
+    step,
+    ctx,
+    finalResult,
+    output: outputForAcceptance,
+    report: rawAcceptanceReport,
+  });
+  return {
+    processCleanup,
+    modelFallbackNotice,
+    finalModel,
+    finalModelIdentity,
+    rawOutput,
+    rawAcceptanceReport,
+    resolvedOutput,
+    output,
+    outputForSummary,
+    acceptance: acceptanceEvaluation.acceptance,
+    acceptanceWasInterrupted: acceptanceEvaluation.wasInterrupted,
+    acceptanceTeardown: acceptanceEvaluation.teardown,
+  };
+}
+
+interface SingleStepOutcome {
+  effectiveInterrupted: boolean;
+  interruptedAcceptance?: SingleStepAcceptance;
+  timedOutAfterAcceptance: boolean;
+  turnBudgetExceeded: boolean;
+  effectiveAcceptance?: SingleStepAcceptance;
+  effectiveFinalExitCode: number | null;
+  terminationReason: SubagentTerminationReason;
+  effectiveFinalError?: string;
+}
+
+function finalizeSingleStepOutcome(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  acceptance?: SingleStepAcceptance;
+  acceptanceWasInterrupted: () => boolean;
+}): SingleStepOutcome {
+  const { step, ctx, state, acceptance, acceptanceWasInterrupted } = input;
+  const finalResult = state.finalResult;
   const effectiveInterrupted =
     finalResult?.interrupted === true ||
-    interruptedDuringAcceptance ||
+    acceptanceWasInterrupted() ||
     (ctx.interruptSignal?.aborted === true &&
       !ctx.timeoutSignal?.aborted &&
       !ctx.skipAcceptance?.());
@@ -1738,7 +1957,7 @@ async function runSingleStep(
     paused: effectiveInterrupted,
     timedOut: timedOutAfterAcceptance,
     turnBudgetExceeded,
-    toolBudgetBlocked,
+    toolBudgetBlocked: state.toolBudgetBlocked,
     interrupted: effectiveInterrupted,
     assistantStopReason: finalResult?.assistantStopReason,
     effectiveExitCode: effectiveFinalExitCode,
@@ -1748,8 +1967,8 @@ async function runSingleStep(
     ? (ctx.timeoutMessage ?? "Subagent timed out.")
     : turnBudgetExceeded
       ? (finalResult?.error ??
-        (turnBudget
-          ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount)
+        (state.turnBudget
+          ? turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount)
           : "Subagent exceeded turn budget."))
       : effectiveInterrupted
         ? undefined
@@ -1759,7 +1978,7 @@ async function runSingleStep(
             : acceptanceFailure
           : finalResult?.error;
   const contextExhaustedReason =
-    contextExhaustedDetected &&
+    state.contextExhaustedDetected &&
     !timedOutAfterAcceptance &&
     !turnBudgetExceeded &&
     !effectiveInterrupted &&
@@ -1771,7 +1990,7 @@ async function runSingleStep(
           messages: finalResult?.messages,
           // Use only the final attempt for false-success classification;
           // aggregateContextUsage remains the persisted reporting diagnostic.
-          contextUsage: finalAttemptContextUsage,
+          contextUsage: state.finalAttemptContextUsage,
           exitCode: effectiveFinalExitCode,
           error: effectiveFinalError,
           terminationReason,
@@ -1781,13 +2000,51 @@ async function runSingleStep(
     effectiveFinalError = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
     terminationReason = contextExhaustedReason;
   }
+  return {
+    effectiveInterrupted,
+    interruptedAcceptance,
+    timedOutAfterAcceptance,
+    turnBudgetExceeded,
+    effectiveAcceptance,
+    effectiveFinalExitCode,
+    terminationReason,
+    effectiveFinalError,
+  };
+}
 
+function finalizeSingleStepArtifacts(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  output: SingleStepOutputFinalization;
+  outcome: SingleStepOutcome;
+  artifactPaths?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  childDeadlineAt?: number;
+  task: string;
+  priorActiveRuntimeMs: number;
+  segmentStartedAt: number;
+}): void {
+  const {
+    step,
+    ctx,
+    state,
+    output,
+    outcome,
+    artifactPaths,
+    transcriptWriter,
+    childDeadlineAt,
+    task,
+    priorActiveRuntimeMs,
+    segmentStartedAt,
+  } = input;
+  const { finalResult } = state;
   if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
     if (ctx.artifactConfig?.includeOutput !== false) {
       const artifactBaseOutput =
-        effectiveFinalExitCode !== 0 && !effectiveInterrupted
-          ? formatErrorWithOutput(effectiveFinalError, output)
-          : output;
+        outcome.effectiveFinalExitCode !== 0 && !outcome.effectiveInterrupted
+          ? formatErrorWithOutput(outcome.effectiveFinalError, output.output)
+          : output.output;
       // The artifact file is the supervisor-facing surface; the digest goes here
       // only, keeping `output`/`outputForSummary` (the returned semantic value and
       // any persisted output file) free of appended text.
@@ -1795,14 +2052,14 @@ async function runSingleStep(
       // Exception: when the run saved a user-requested output file, the artifact is
       // a verbatim archive of that deliverable, so it stays byte-exact.
       const artifactOutput =
-        rawAcceptanceReport && !resolvedOutput.savedPath
-          ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
+        output.rawAcceptanceReport && !output.resolvedOutput.savedPath
+          ? appendAcceptanceReportDigest(artifactBaseOutput, output.rawAcceptanceReport)
           : artifactBaseOutput;
       writeArtifactWithFloor(
         artifactPaths.outputPath,
         artifactOutput,
-        rawOutput,
-        !!resolvedOutput.savedPath,
+        output.rawOutput,
+        !!output.resolvedOutput.savedPath,
       );
     }
     if (ctx.artifactConfig?.includeMetadata !== false) {
@@ -1813,20 +2070,20 @@ async function runSingleStep(
             runId: ctx.id,
             agent: step.agent,
             task,
-            exitCode: effectiveFinalExitCode,
+            exitCode: outcome.effectiveFinalExitCode,
             exitSignal: finalResult?.exitSignal,
             model: finalResult?.model,
-            modelIdentity: finalModelIdentity,
-            modelResolution,
-            attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
-            modelAttempts,
-            modelFallbackNotice,
-            error: effectiveFinalError,
-            terminationReason,
-            contextUsage: aggregateContextUsage,
+            modelIdentity: output.finalModelIdentity,
+            modelResolution: state.modelResolution,
+            attemptedModels: state.attemptedModels.length > 0 ? state.attemptedModels : undefined,
+            modelAttempts: state.modelAttempts,
+            modelFallbackNotice: output.modelFallbackNotice,
+            error: outcome.effectiveFinalError,
+            terminationReason: outcome.terminationReason,
+            contextUsage: state.aggregateContextUsage,
             contextPressure: step.contextPressure,
             contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
-            processCleanup,
+            processCleanup: output.processCleanup,
             ...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
             transcriptError: transcriptWriter?.getError(),
             skills: step.skills,
@@ -1842,62 +2099,187 @@ async function runSingleStep(
       );
     }
   }
+}
 
-  stepTimeoutTimer?.cancel();
-  inheritedTimeoutSignal?.removeEventListener("abort", relayInheritedTimeout);
-  parentRegisterTimeout?.(undefined);
+function cleanupSingleStepSetup(setup: SingleStepSetup): void {
+  setup.stepTimeoutTimer?.cancel();
+  setup.inheritedTimeoutSignal?.removeEventListener("abort", setup.relayInheritedTimeout);
+  setup.parentRegisterTimeout?.(undefined);
+}
 
+function buildSingleStepResult(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  setup: SingleStepSetup;
+  output: SingleStepOutputFinalization;
+  outcome: SingleStepOutcome;
+}): SingleStepResultValue {
+  const { step, ctx, state, setup, output, outcome } = input;
+  const finalResult = state.finalResult;
   return {
     agent: step.agent,
-    output: outputForSummary,
-    exitCode: effectiveFinalExitCode,
+    output: output.outputForSummary,
+    exitCode: outcome.effectiveFinalExitCode,
     exitSignal: finalResult?.exitSignal,
-    error: effectiveFinalError,
+    error: outcome.effectiveFinalError,
     sessionFile: step.sessionFile,
     intercomTarget: ctx.childIntercomTarget,
-    model: finalModel,
-    modelIdentity: finalModelIdentity,
-    modelResolution,
-    attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
-    modelAttempts,
-    modelFallbackNotice,
-    totalCost: costSummaryFromAttempts(modelAttempts),
-    artifactPaths,
-    processCleanup,
-    contextUsage: aggregateContextUsage,
+    model: output.finalModel,
+    modelIdentity: output.finalModelIdentity,
+    modelResolution: state.modelResolution,
+    attemptedModels: state.attemptedModels.length > 0 ? state.attemptedModels : undefined,
+    modelAttempts: state.modelAttempts,
+    modelFallbackNotice: output.modelFallbackNotice,
+    totalCost: costSummaryFromAttempts(state.modelAttempts),
+    artifactPaths: setup.artifactPaths,
+    processCleanup: output.processCleanup,
+    contextUsage: state.aggregateContextUsage,
     contextPressure: step.contextPressure,
     contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
-    terminationReason,
-    transcriptPath: transcriptWriter ? artifactPaths?.transcriptPath : undefined,
-    transcriptError: transcriptWriter?.getError(),
-    interrupted: timedOutAfterAcceptance || turnBudgetExceeded ? false : effectiveInterrupted,
-    timedOut: timedOutAfterAcceptance ? true : finalResult?.timedOut,
-    turnBudget,
-    turnBudgetExceeded: turnBudgetExceeded || undefined,
+    terminationReason: outcome.terminationReason,
+    transcriptPath: setup.transcriptWriter ? setup.artifactPaths?.transcriptPath : undefined,
+    transcriptError: setup.transcriptWriter?.getError(),
+    interrupted:
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
+        ? false
+        : outcome.effectiveInterrupted,
+    timedOut: outcome.timedOutAfterAcceptance ? true : finalResult?.timedOut,
+    turnBudget: state.turnBudget,
+    turnBudgetExceeded: outcome.turnBudgetExceeded || undefined,
     wrapUpRequested:
       finalResult?.wrapUpRequested ||
-      turnBudget?.outcome === "wrap-up-requested" ||
-      turnBudgetExceeded ||
+      state.turnBudget?.outcome === "wrap-up-requested" ||
+      outcome.turnBudgetExceeded ||
       undefined,
-    toolBudget,
-    toolBudgetBlocked: toolBudgetBlocked || undefined,
-    completionGuardTriggered: completionGuardTriggeredFinal,
+    toolBudget: state.toolBudget,
+    toolBudgetBlocked: state.toolBudgetBlocked || undefined,
+    completionGuardTriggered: state.completionGuardTriggeredFinal,
     structuredOutput:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)
-            ?.structuredOutput,
+        : finalResult?.structuredOutput,
     structuredOutputPath:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : effectiveStructuredOutput?.outputPath,
+        : setup.effectiveStructuredOutput?.outputPath,
     structuredOutputSchemaPath:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : effectiveStructuredOutput?.schemaPath,
-    acceptance: effectiveAcceptance,
-    activeRuntimeMs: priorActiveRuntimeMs + (Date.now() - segmentStartedAt),
+        : setup.effectiveStructuredOutput?.schemaPath,
+    acceptance: outcome.effectiveAcceptance,
+    activeRuntimeMs: setup.priorActiveRuntimeMs + (Date.now() - setup.segmentStartedAt),
   };
+}
+
+/** Run a single pi agent step, returning output and metadata */
+async function runSingleStep(
+  step: SubagentStep,
+  ctx: SingleStepContext,
+): Promise<SingleStepResultValue> {
+  const setup = prepareSingleStepSetup(step, ctx);
+  const stepCtx = setup.ctx;
+  const state = setup.state;
+
+  for (let index = 0; index < state.candidates.length; index++) {
+    if (stepCtx.timeoutSignal?.aborted || stepCtx.skipAcceptance?.()) break;
+    const candidate = state.candidates[index];
+    const attempt = prepareSingleStepAttempt({
+      step,
+      ctx: stepCtx,
+      state,
+      candidate,
+      index,
+      effectiveStructuredOutput: setup.effectiveStructuredOutput,
+      task: setup.task,
+      sessionEnabled: setup.sessionEnabled,
+      sessionDir: setup.sessionDir,
+    });
+    // Keep this await in runSingleStep: settling a child attempt must not gain a
+    // promise continuation from an extracted async helper.
+    const run = await runPiStreaming(
+      attempt.args,
+      step.cwd ?? stepCtx.cwd,
+      stepCtx.outputFile,
+      attempt.env,
+      stepCtx.piPackageRoot,
+      stepCtx.piArgv1,
+      step.maxSubagentDepth,
+      {
+        eventsPath: setup.eventsPath,
+        runId: stepCtx.id,
+        stepIndex: stepCtx.flatIndex,
+        agent: step.agent,
+      },
+      stepCtx.registerInterrupt,
+      stepCtx.onChildEvent,
+      setup.transcriptWriter,
+      stepCtx.registerTimeout,
+      stepCtx.timeoutMessage,
+      stepCtx.registerTurnBudgetAbort,
+      {
+        restored: setup.restoredSession,
+        configuredModel: candidate,
+        contextWindow: contextWindowForModel(candidate, step.contextWindows),
+        contextWindows: step.contextWindows,
+      },
+    );
+    const assessment = assessSingleStepAttempt({
+      step,
+      ctx: stepCtx,
+      state,
+      run,
+      candidate,
+      outputSnapshot: attempt.outputSnapshot,
+      tempDir: attempt.tempDir,
+      effectiveStructuredOutput: setup.effectiveStructuredOutput,
+      taskForCompletionGuard: setup.taskForCompletionGuard,
+    });
+    if (
+      shouldStopSingleStepAttempt({
+        run,
+        ctx: stepCtx,
+        attempt: assessment.attempt,
+        completionGuardTriggered: assessment.completionGuardTriggered,
+        index,
+        candidateCount: state.candidates.length,
+      })
+    )
+      break;
+    state.attemptNotes.push(
+      formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]),
+    );
+  }
+
+  const output = finalizeSingleStepOutput({ step, ctx: stepCtx, state });
+  let acceptance: SingleStepAcceptance | undefined;
+  try {
+    acceptance = output.acceptance instanceof Promise ? await output.acceptance : output.acceptance;
+  } finally {
+    output.acceptanceTeardown();
+  }
+  const outcome = finalizeSingleStepOutcome({
+    step,
+    ctx: stepCtx,
+    state,
+    acceptance,
+    acceptanceWasInterrupted: output.acceptanceWasInterrupted,
+  });
+  finalizeSingleStepArtifacts({
+    step,
+    ctx: stepCtx,
+    state,
+    output,
+    outcome,
+    artifactPaths: setup.artifactPaths,
+    transcriptWriter: setup.transcriptWriter,
+    childDeadlineAt: setup.childDeadlineAt,
+    task: setup.task,
+    priorActiveRuntimeMs: setup.priorActiveRuntimeMs,
+    segmentStartedAt: setup.segmentStartedAt,
+  });
+  cleanupSingleStepSetup(setup);
+  return buildSingleStepResult({ step, ctx: stepCtx, state, setup, output, outcome });
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
