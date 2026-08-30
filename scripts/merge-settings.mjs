@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
-import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { criticalDefaultExtensionOptOutIds, defaultExtensionPackageIdentities, disabledDefaultExtensionIds, FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, managedDefaultExtensionPackageIdentities, packageIdentity, packageSourceOf, readDefaultExtensionProvenance, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, repairTargetedDefaultExtensionLoadOrder, setDefaultExtensionProvenance, withLegacyRetiredDefaultPackageIdentities, } from "./lib/default-extensions.mjs";
@@ -534,7 +534,7 @@ function mergeObject(target, defaults, changes, options) {
             continue;
         }
         if (Array.isArray(value) && Array.isArray(target[key])) {
-            mergeArray(target[key], value, changes, { label, path });
+            mergeArray(target[key], value, changes, { label });
             continue;
         }
         if (isPlainObject(value) && isPlainObject(target[key])) {
@@ -592,25 +592,13 @@ function mergePackages(target, packageDefaults, changes) {
         changes.push(`append packages: ${source}`);
     }
 }
-function normalizeAgentDirPath(value) {
-    const normalized = normalize(value);
-    const root = parse(normalized).root;
-    let stripped = normalized;
-    while (stripped.length > root.length && stripped.endsWith(sep)) {
-        stripped = stripped.slice(0, -sep.length);
-    }
-    return stripped;
-}
-function arrayMergeKey(item, path) {
-    if (path.join(".") === "subagents.agentDirs" && typeof item === "string") {
-        return `path:${normalizeAgentDirPath(item)}`;
-    }
+function arrayMergeKey(item) {
     return `json:${JSON.stringify(item)}`;
 }
-function mergeArray(targetArray, defaultArray, changes, { label, path }) {
-    const seen = new Set(targetArray.map((item) => arrayMergeKey(item, path)));
+function mergeArray(targetArray, defaultArray, changes, { label }) {
+    const seen = new Set(targetArray.map((item) => arrayMergeKey(item)));
     for (const item of defaultArray) {
-        const key = arrayMergeKey(item, path);
+        const key = arrayMergeKey(item);
         if (seen.has(key))
             continue;
         targetArray.push(clone(item));

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, sep } from "node:path";
 import test from "node:test";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
 import { PRIMARY_AGENT_SESSION_STATE_ENTRY } from "../extensions/the-last-harness-primary-agent.mjs";
 import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
@@ -237,6 +246,46 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
     assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(legacyFlagEvent.input.agentScope, "user");
     assert.equal(legacyFlagEvent.input.context, "fresh");
+  });
+});
+
+test("provider-aware defaults still apply to a single target when tasks is empty", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const ctx = createToolCallContext(
+    [
+      {
+        type: "custom",
+        customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+        data: { selected: "architect" },
+      },
+    ],
+    undefined,
+    {
+      cwd: fixture.cwd,
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "openai-codex", id: "gpt-5.4" },
+          { provider: "anthropic", id: "claude-opus-5" },
+        ],
+      },
+      model: { provider: "openai-codex", id: "gpt-5.4" },
+    },
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { toolCall } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [contrarianMetadata()],
+    });
+    const event = {
+      toolName: "subagent",
+      input: { agent: "contrarian", task: "stress-test this plan", tasks: [] },
+    };
+
+    assert.equal(await toolCall(event, ctx), undefined);
+    assert.equal(event.input.model, "anthropic/claude-opus-5:high");
+    assert.equal(event.input.agentScope, "user");
+    assert.equal(event.input.context, "fresh");
   });
 });
 
@@ -732,11 +781,53 @@ test("/switch-primary-agent default refuses normal Pi settings", async () => {
 
 // ─── Embedded subagents (ts-42p1) ───────────────────────────────────────────
 
+test("project execution keeps retired binding and fail-open paths absent", () => {
+  const sourcePaths = [
+    "extensions/the-last-harness/primary-agent-runtime.ts",
+    "extensions/the-last-harness/primary-agent-runtime.js",
+    "extensions/subagents/src/runs/foreground/subagent-executor.ts",
+    "extensions/subagents/src/runs/foreground/subagent-executor.js",
+    "extensions/the-last-harness/prompts.ts",
+    "extensions/the-last-harness/prompts.js",
+    "extensions/the-last-harness-subagent-safety.mjs",
+  ];
+  for (const relativePath of sourcePaths) {
+    const source = readFileSync(join(process.cwd(), relativePath), "utf8");
+    assert.doesNotMatch(
+      source,
+      /projectCustomBinding|ProjectCustomAgentBinding|isProjectCustomAgentBinding|ProjectCustomAgentAuthorization|loadAuthorizedEmbeddedSubagentRuntimeNames/,
+      `${relativePath} must not restore retired custom binding/authorization paths`,
+    );
+  }
+});
+
 function writeEmbeddedAgent(agentDir, relativePath, frontmatter) {
+  if (agentDir.endsWith(`${sep}agent`)) {
+    const repoRoot = join(dirname(agentDir), "workspace");
+    if (!existsSync(join(repoRoot, ".git"))) {
+      execFileSync("git", ["init", "--quiet"], { cwd: repoRoot });
+    }
+    new ProjectTrustStore(agentDir).set(repoRoot, true);
+    const filePath = join(repoRoot, ".tlh", "agents", "custom", basenameUpper(relativePath));
+    mkdirSync(dirname(filePath), { recursive: true });
+    const definition = frontmatter.includes("\ntools:")
+      ? frontmatter
+      : frontmatter.replace(/\n---\s*$/u, "\ntools: read\n---");
+    writeFileSync(filePath, `${definition}\nbody\n`);
+    return filePath;
+  }
   const filePath = join(agentDir, "agents", relativePath);
   mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${frontmatter}\nbody\n`);
+  const definition = frontmatter.includes("\ntools:")
+    ? frontmatter
+    : frontmatter.replace(/\n---\s*$/u, "\ntools: read\n---");
+  writeFileSync(filePath, `${definition}\nbody\n`);
   return filePath;
+}
+
+function basenameUpper(relativePath) {
+  const name = relativePath.split(/[\\\\/]/).at(-1) ?? relativePath;
+  return name.endsWith(".md") ? `${name.slice(0, -3).toUpperCase()}.md` : name.toUpperCase();
 }
 
 test("embedded subagents: disabled mode allows authorized targets and blocks unauthorized ones", async (t) => {
@@ -767,20 +858,23 @@ test("embedded subagents: disabled mode allows authorized targets and blocks una
 
     const allowedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(await toolCall(allowedEvent, ctx), undefined);
-    assert.equal(allowedEvent.input.agentScope, "user");
+    assert.equal(allowedEvent.input.agentScope, "project");
     assert.equal(allowedEvent.input.context, "fresh");
 
     const blockedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.missing-tool", prompt: "blocked" },
+      input: { agent: "embedded.missing-tool", task: "blocked" },
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
     assert.match(blockedResult?.reason ?? "", /embedded\.missing-tool/);
-    assert.match(blockedResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    );
     assert.match(blockedResult?.reason ?? "", /primary-agent infrastructure/);
   });
 });
@@ -809,12 +903,12 @@ test("embedded subagents: architect delegates authorized targets without the ret
       undefined,
       { cwd: fixture.cwd },
     );
-    // The retired experimental setting is absent; profile authorization is the only gate.
+    // The retired experimental setting is absent; exact trusted Git-root authorization is the only gate.
     await applySessionStart(ctx);
 
     for (const input of [
-      { agent: "embedded.my-tool", prompt: "do something" },
-      { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
+      { agent: "embedded.my-tool", task: "do something" },
+      { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
       assert.equal(
@@ -822,9 +916,60 @@ test("embedded subagents: architect delegates authorized targets without the ret
         undefined,
         `authorized target should be allowed: ${JSON.stringify(input)}`,
       );
-      assert.equal(input.agentScope, "user");
+      assert.equal(input.agentScope, "project");
       assert.equal(input.context, "fresh");
     }
+  });
+});
+
+test("embedded subagents: architect injects the current OpenRouter session model over frontmatter", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
+  const sessionModel = { provider: "openrouter", id: "openai/gpt-5.4" };
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    writeEmbeddedAgent(
+      fixture.agent,
+      "trusted/my-tool.md",
+      "---\nname: my-tool\npackage: embedded\ndescription: Trusted helper\nmodel: anthropic/claude-sonnet-4-6\n---",
+    );
+    const { applySessionStart, toolCall } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+    });
+    const ctx = createToolCallContext(
+      [
+        {
+          type: "custom",
+          customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+          data: { selected: "architect" },
+        },
+      ],
+      undefined,
+      {
+        cwd: fixture.cwd,
+        model: sessionModel,
+        modelRegistry: { getAvailable: () => [sessionModel] },
+      },
+    );
+    await applySessionStart(ctx);
+
+    const inheritedEvent = {
+      toolName: "subagent",
+      input: { agent: "embedded.my-tool", task: "use the current session model" },
+    };
+    assert.equal(await toolCall(inheritedEvent, ctx), undefined);
+    assert.equal(inheritedEvent.input.model, "openrouter/openai/gpt-5.4");
+
+    const explicitEvent = {
+      toolName: "subagent",
+      input: {
+        agent: "embedded.my-tool",
+        task: "use the caller-selected model",
+        model: "anthropic/claude-opus-5",
+      },
+    };
+    assert.equal(await toolCall(explicitEvent, ctx), undefined);
+    assert.equal(explicitEvent.input.model, "anthropic/claude-opus-5");
   });
 });
 
@@ -850,7 +995,7 @@ test("embedded subagents: non-architect primary agents remain blocked regardless
 
       const embeddedEvent = {
         toolName: "subagent",
-        input: { agent: "embedded.my-tool", prompt: "do something" },
+        input: { agent: "embedded.my-tool", task: "do something" },
       };
       const result = await toolCall(embeddedEvent, ctx);
       assert.equal(result?.block, true, `expected block for ${selected}`);
@@ -869,7 +1014,7 @@ test("embedded subagents: non-architect primary agents remain blocked regardless
   });
 });
 
-test("embedded subagents: architect allows only profile-authorized embedded targets", async (t) => {
+test("embedded subagents: architect allows only root-authorized embedded targets", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -901,19 +1046,19 @@ test("embedded subagents: architect allows only profile-authorized embedded targ
 
     const singleEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(
       await toolCall(singleEvent, ctx),
       undefined,
       "single embedded target should be allowed for architect",
     );
-    assert.equal(singleEvent.input.agentScope, "user");
+    assert.equal(singleEvent.input.agentScope, "project");
     assert.equal(singleEvent.input.context, "fresh");
 
     const tasksEvent = {
       toolName: "subagent",
-      input: { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
+      input: { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     };
     assert.equal(
       await toolCall(tasksEvent, ctx),
@@ -923,11 +1068,14 @@ test("embedded subagents: architect allows only profile-authorized embedded targ
 
     const missingEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.missing-tool", prompt: "blocked" },
+      input: { agent: "embedded.missing-tool", task: "blocked" },
     };
     const missingResult = await toolCall(missingEvent, ctx);
     assert.equal(missingResult?.block, true);
-    assert.match(missingResult?.reason ?? "", /valid package: embedded \/ name: <slug>/);
+    assert.match(
+      missingResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    );
     assert.match(missingResult?.reason ?? "", /embedded\.missing-tool/);
   });
 });
@@ -959,7 +1107,7 @@ test("embedded subagents: rush blocks embedded targets with rush-specific reason
 
     const embeddedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     const result = await toolCall(embeddedEvent, ctx);
     assert.equal(result?.block, true);
@@ -1039,8 +1187,8 @@ test("embedded subagents: product blocks embedded targets with product-specific 
     await applySessionStart(ctx);
 
     for (const input of [
-      { agent: "embedded.my-tool", prompt: "do something" },
-      { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
+      { agent: "embedded.my-tool", task: "do something" },
+      { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
       assert.equal(result?.block, true);
@@ -1078,8 +1226,8 @@ test("embedded subagents: bug-hunter blocks embedded targets with bug-hunter-spe
     await applySessionStart(ctx);
 
     for (const input of [
-      { agent: "embedded.my-tool", prompt: "do something" },
-      { tasks: [{ agent: "embedded.my-tool", prompt: "step 1" }] },
+      { agent: "embedded.my-tool", task: "do something" },
+      { tasks: [{ agent: "embedded.my-tool", task: "step 1" }] },
     ]) {
       const result = await toolCall({ toolName: "subagent", input }, ctx);
       assert.equal(result?.block, true);
@@ -1091,7 +1239,9 @@ test("embedded subagents: bug-hunter blocks embedded targets with bug-hunter-spe
   });
 });
 
-test("embedded subagents: same-name external fallback stays blocked when the profile file is missing required discovery frontmatter", async (t) => {
+// Negative hard-cutover coverage: the external agent directory, generic profile agents, and
+// `subagents.agentDirs` fixtures below must never authorize or replace a direct root custom file.
+test("embedded subagents: same-name external fallback stays blocked when the root custom file is missing required discovery frontmatter", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
 
@@ -1136,16 +1286,19 @@ test("embedded subagents: same-name external fallback stays blocked when the pro
 
     const blockedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "do something" },
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
     assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
-    assert.match(blockedResult?.reason ?? "", /currently exists under/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom|tombstone|profile fallback/,
+    );
   });
 });
 
-test("embedded subagents: same-name external agents stay blocked and deleting profile files is observed immediately", async (t) => {
+test("embedded subagents: same-name external agents stay blocked while the active snapshot remains stable", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
 
@@ -1190,12 +1343,12 @@ test("embedded subagents: same-name external agents stay blocked and deleting pr
 
     const allowedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "do something" },
     };
     assert.equal(
       await toolCall(allowedEvent, ctx),
       undefined,
-      "profile-owned embedded agent should be allowed",
+      "direct root custom embedded agent should be allowed",
     );
 
     writeFileSync(
@@ -1203,18 +1356,20 @@ test("embedded subagents: same-name external agents stay blocked and deleting pr
       "---\nname: fallback\npackage: bundled\ndescription: No longer embedded\n---\nbody\n",
     );
 
-    const blockedEvent = {
+    const snapshotEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "the active snapshot remains exact" },
     };
-    const blockedResult = await toolCall(blockedEvent, ctx);
-    assert.equal(blockedResult?.block, true);
-    assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
-    assert.match(blockedResult?.reason ?? "", /currently exists under/);
+    assert.equal(
+      await toolCall(snapshotEvent, ctx),
+      undefined,
+      "the session snapshot must retain the trusted captured definition after a source edit",
+    );
+    assert.equal(snapshotEvent.input.agentScope, "project");
   });
 });
 
-test("embedded subagents: same-name external agents stay blocked when the profile authorizer is a .chain.md file", async (t) => {
+test("embedded subagents: same-name external agents stay blocked when the root custom filename is a .chain.md file", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
 
@@ -1259,16 +1414,19 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 
     const blockedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "do something" },
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
     assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
-    assert.match(blockedResult?.reason ?? "", /currently exists under/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    );
   });
 });
 
-test("embedded subagents: same-name external agents stay blocked when the profile authorizer is a symlink", async (t) => {
+test("embedded subagents: same-name external agents stay blocked when the generic profile symlink cannot authorize", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
 
@@ -1315,16 +1473,19 @@ test("embedded subagents: same-name external agents stay blocked when the profil
 
     const blockedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "do something" },
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
     assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
-    assert.match(blockedResult?.reason ?? "", /currently exists under/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    );
   });
 });
 
-test("embedded subagents: a symlinked profile agents root cannot authorize embedded targets", async (t) => {
+test("embedded subagents: a symlinked generic profile agents root cannot authorize embedded targets", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
   const externalAgentsDir = join(fixture.dir, "external-agents");
   const profileAgentsDir = join(fixture.agent, "agents");
@@ -1366,16 +1527,22 @@ test("embedded subagents: a symlinked profile agents root cannot authorize embed
 
     const blockedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.fallback", prompt: "do something" },
+      input: { agent: "embedded.fallback", task: "do something" },
     };
     const blockedResult = await toolCall(blockedEvent, ctx);
     assert.equal(blockedResult?.block, true);
-    assert.match(blockedResult?.reason ?? "", /Unauthorized target\(s\): embedded\.fallback/);
-    assert.match(blockedResult?.reason ?? "", /currently exists under/);
+    assert.match(
+      blockedResult?.reason ?? "",
+      /(?:Target|Unauthorized) target\(s\): embedded\.fallback/,
+    );
+    assert.match(
+      blockedResult?.reason ?? "",
+      /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+    );
   });
 });
 
-test("embedded subagents: later same-name profile symlink collisions use upstream package normalization and block descriptions", async (t) => {
+test("embedded subagents: generic symlink collisions cannot supersede a root custom file", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1434,20 +1601,19 @@ test("embedded subagents: later same-name profile symlink collisions use upstrea
     for (const { name } of collisionCases) {
       const runtimeName = `embedded.${name}`;
       const blockedResult = await toolCall(
-        { toolName: "subagent", input: { agent: runtimeName, prompt: "blocked" } },
+        { toolName: "subagent", input: { agent: runtimeName, task: "blocked" } },
         ctx,
       );
       assert.equal(
-        blockedResult?.block,
-        true,
-        `${runtimeName} should bind to the later symlink definition`,
+        blockedResult,
+        undefined,
+        `${runtimeName} should remain bound to the direct root custom definition`,
       );
-      assert.match(blockedResult?.reason ?? "", new RegExp(runtimeName.replace(".", "\\.")));
     }
   });
 });
 
-test("embedded subagents: a later valid regular profile definition supersedes an earlier same-name symlink collision", async (t) => {
+test("embedded subagents: a later valid root custom definition supersedes an earlier same-name symlink collision", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1486,7 +1652,7 @@ test("embedded subagents: a later valid regular profile definition supersedes an
 
     assert.equal(
       await toolCall(
-        { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "allowed" } },
+        { toolName: "subagent", input: { agent: "embedded.fallback", task: "allowed" } },
         ctx,
       ),
       undefined,
@@ -1494,13 +1660,18 @@ test("embedded subagents: a later valid regular profile definition supersedes an
   });
 });
 
-test("embedded subagents: definitions beneath nested .agents/skills paths do not supersede an earlier same-name symlink", async (t) => {
+test("embedded subagents: generic nested skill paths cannot supersede a root custom file", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     writeFileSync(
       join(fixture.agent, "settings.json"),
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [EMBEDDED_SUBAGENTS_FEATURE] } } }, null, 2)}\n`,
+    );
+    writeEmbeddedAgent(
+      fixture.agent,
+      "fallback.md",
+      "---\nname: fallback\npackage: embedded\ndescription: Direct root custom definition\n---",
     );
     const earlierSymlinkTargetPath = writeEmbeddedAgent(
       fixture.dir,
@@ -1509,10 +1680,11 @@ test("embedded subagents: definitions beneath nested .agents/skills paths do not
     );
     mkdirSync(join(fixture.agent, "agents", "a"), { recursive: true });
     symlinkSync(earlierSymlinkTargetPath, join(fixture.agent, "agents", "a", "fallback.md"));
-    writeEmbeddedAgent(
-      fixture.agent,
-      "z/.agents/skills/fallback.md",
-      "---\nname: fallback\npackage: embedded\ndescription: Excluded legacy skill definition\n---",
+    const nestedSkillPath = join(fixture.agent, "agents", "z", ".agents", "skills", "fallback.md");
+    mkdirSync(dirname(nestedSkillPath), { recursive: true });
+    writeFileSync(
+      nestedSkillPath,
+      "---\nname: fallback\npackage: embedded\ndescription: Excluded legacy skill definition\n---\nbody\n",
     );
     const { applySessionStart, toolCall } = registerRuntimeHarness({
       primaryAgents: selectablePrimaryAgents(),
@@ -1531,16 +1703,15 @@ test("embedded subagents: definitions beneath nested .agents/skills paths do not
     );
     await applySessionStart(ctx);
 
-    const blockedResult = await toolCall(
-      { toolName: "subagent", input: { agent: "embedded.fallback", prompt: "blocked" } },
+    const allowedResult = await toolCall(
+      { toolName: "subagent", input: { agent: "embedded.fallback", task: "allowed" } },
       ctx,
     );
-    assert.equal(blockedResult?.block, true);
-    assert.match(blockedResult?.reason ?? "", /embedded\.fallback/);
+    assert.equal(allowedResult, undefined);
   });
 });
 
-test("embedded subagents: malformed or unreadable profile files fail closed", async (t) => {
+test("embedded subagents: malformed or unreadable root custom files fail closed", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1558,6 +1729,7 @@ test("embedded subagents: malformed or unreadable profile files fail closed", as
       "broken-package.md",
       "---\nname: other-tool\npackage: bundled\ndescription: Wrong package\n---",
     );
+    mkdirSync(join(fixture.agent, "agents"), { recursive: true });
     symlinkSync(
       join(fixture.agent, "missing-target.md"),
       join(fixture.agent, "agents", "missing-file.md"),
@@ -1581,16 +1753,19 @@ test("embedded subagents: malformed or unreadable profile files fail closed", as
 
     for (const target of ["embedded.my-tool", "embedded.other-tool", "embedded.missing-file"]) {
       const result = await toolCall(
-        { toolName: "subagent", input: { agent: target, prompt: "blocked" } },
+        { toolName: "subagent", input: { agent: target, task: "blocked" } },
         ctx,
       );
       assert.equal(result?.block, true, `${target} should fail closed`);
-      assert.match(result?.reason ?? "", /currently exists under/);
+      assert.match(
+        result?.reason ?? "",
+        /description|package: embedded|No validated Git worktree root|Expected \.tlh\/agents\/custom/,
+      );
     }
   });
 });
 
-test("embedded subagents: retired settings do not gate authorized targets across turns", async (t) => {
+test("embedded subagents: current root trust does not depend on retired settings across turns", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1627,15 +1802,15 @@ test("embedded subagents: retired settings do not gate authorized targets across
 
     const embeddedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(await toolCall(embeddedEvent, ctx), undefined);
-    assert.equal(embeddedEvent.input.agentScope, "user");
+    assert.equal(embeddedEvent.input.agentScope, "project");
     assert.equal(embeddedEvent.input.context, "fresh");
   });
 });
 
-test("embedded subagents: disabling a retired setting does not close the authorization path", async (t) => {
+test("embedded subagents: removing retired settings does not close the root authorization path", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1672,14 +1847,14 @@ test("embedded subagents: disabling a retired setting does not close the authori
 
     const embeddedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(
       await toolCall(embeddedEvent, ctx),
       undefined,
       "removing the retired setting must not close the embedded authorization path",
     );
-    assert.equal(embeddedEvent.input.agentScope, "user");
+    assert.equal(embeddedEvent.input.agentScope, "project");
     assert.equal(embeddedEvent.input.context, "fresh");
   });
 });
@@ -1752,7 +1927,7 @@ test("embedded subagents: existing rush developer and resume blocks are preserve
     // Rush developer still blocked
     const developerEvent = {
       toolName: "subagent",
-      input: { agent: "developer", prompt: "implement this" },
+      input: { agent: "developer", task: "implement this" },
     };
     const developerResult = await toolCall(developerEvent, rushCtx);
     assert.equal(developerResult?.block, true);
@@ -1767,7 +1942,7 @@ test("embedded subagents: existing rush developer and resume blocks are preserve
 // These tests exercise the genuine session_start → before_agent_start(xN) → tool_call
 // lifecycle and ensure legacy experimental settings never become an authorization snapshot.
 
-test("embedded subagents: multi-turn legacy setting changes do not gate authorized delegation", async (t) => {
+test("embedded subagents: multi-turn root authorization survives setting changes", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1805,15 +1980,15 @@ test("embedded subagents: multi-turn legacy setting changes do not gate authoriz
 
     const embeddedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(await toolCall(embeddedEvent, ctx), undefined);
-    assert.equal(embeddedEvent.input.agentScope, "user");
+    assert.equal(embeddedEvent.input.agentScope, "project");
     assert.equal(embeddedEvent.input.context, "fresh");
   });
 });
 
-test("embedded subagents: multi-turn removal of a retired setting preserves authorization", async (t) => {
+test("embedded subagents: multi-turn root authorization survives setting removal", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true, test: t });
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
@@ -1851,19 +2026,19 @@ test("embedded subagents: multi-turn removal of a retired setting preserves auth
       `${JSON.stringify({ tlh: { experimental: { enabledFeatures: [] } } }, null, 2)}\n`,
     );
 
-    // A second turn must continue to use the profile authorization path.
+    // A second turn must continue to use the exact trusted Git-root authorization path.
     await beforeAgentStart({ systemPrompt: "base" }, ctx);
 
     const embeddedEvent = {
       toolName: "subagent",
-      input: { agent: "embedded.my-tool", prompt: "do something" },
+      input: { agent: "embedded.my-tool", task: "do something" },
     };
     assert.equal(
       await toolCall(embeddedEvent, ctx),
       undefined,
       "removing the retired setting must not close the embedded authorization path",
     );
-    assert.equal(embeddedEvent.input.agentScope, "user");
+    assert.equal(embeddedEvent.input.agentScope, "project");
     assert.equal(embeddedEvent.input.context, "fresh");
   });
 });

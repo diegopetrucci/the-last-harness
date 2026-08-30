@@ -9,6 +9,8 @@ import {
   type AgentScope,
 } from "../../agents/agents.ts";
 import {
+  PROJECT_AGENT_DIRECTORY,
+  PROJECT_AGENT_PACKAGE,
   resolveCanonicalGitWorktreeRoot,
   validateProjectAgentCwdContainment,
 } from "../../agents/project-agent-loader.ts";
@@ -267,12 +269,33 @@ export interface SubagentParamsLike {
   config?: unknown;
 }
 
+interface ProjectAgentRebindRequest {
+  projectRoot: string;
+  cwd: string;
+  sessionId: string;
+  agent: string;
+}
+
+interface ProjectAgentRebindResult {
+  capability: ProjectAgentSnapshotCapability;
+  expected: ProjectAgentSnapshotExpected;
+  capture: ProjectAgentRunCapture;
+}
+
 export interface ProjectAgentAccess {
   capability: ProjectAgentSnapshotCapability;
   expected: ProjectAgentSnapshotExpected;
+  /** True only while the architect is active; retained controls require this. */
   architect: boolean;
+  /** Architect and disabled mode may initiate a new project-agent execution. */
+  canInitiate?: boolean;
   /** Process-private current-trust reauthorization; never serializable. */
   reauthorize?: () => Promise<boolean>;
+  /**
+   * Process-private fresh-operation rebind used only when a prior run belongs
+   * to another process and its old capability cannot be resolved.
+   */
+  rebind?: (request: ProjectAgentRebindRequest) => Promise<ProjectAgentRebindResult | undefined>;
 }
 
 interface ProjectAgentAccessRequest {
@@ -302,6 +325,8 @@ interface ExecutorDeps {
   /** Narrow functional seam for foreground pause/resume tests. */
   runSync?: typeof runSync;
   kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
+  /** Optional: retrieve current-session heartbeat totals for the doctor action. */
+  getHeartbeatSummary?: () => import("../../extension/heartbeat-wiring.ts").HeartbeatSessionSummary;
 }
 
 interface ExecutionContextData {
@@ -386,6 +411,44 @@ function resolveRequestedCwd(runtimeCwd: string, requestedCwd: string | undefine
   return requestedCwd ? path.resolve(runtimeCwd, requestedCwd) : runtimeCwd;
 }
 
+function hasExplicitProjectModel(target: unknown): boolean {
+  if (!isRecordValue(target)) return false;
+  const model = target.model;
+  if (typeof model !== "string") return false;
+  const normalized = model.trim();
+  return normalized.length > 0 && normalized !== "inherit";
+}
+
+function applyProjectAgentOpenRouterModel(
+  params: SubagentParamsLike,
+  captures: readonly ProjectAgentRunCapture[] | undefined,
+  currentModel: ExtensionContext["model"],
+): SubagentParamsLike {
+  if (!captures?.length || currentModel?.provider !== "openrouter") return params;
+  const projectTargets = new Set(captures.map((capture) => capture.provenance.agent));
+  const apply = (target: unknown): void => {
+    if (
+      !isRecordValue(target) ||
+      typeof target.agent !== "string" ||
+      !projectTargets.has(target.agent.trim()) ||
+      hasExplicitProjectModel(target)
+    ) {
+      return;
+    }
+    target.model = `${currentModel.provider}/${currentModel.id}`;
+  };
+  const next = { ...params };
+  apply(next);
+  if (Array.isArray(next.tasks)) {
+    next.tasks = next.tasks.map((task) => {
+      const copy = { ...task };
+      apply(copy);
+      return copy;
+    });
+  }
+  return next;
+}
+
 const EMBEDDED_PROJECT_AGENT_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
 
 interface ExecutionTargetIdentity {
@@ -410,10 +473,6 @@ function executionTargetIdentities(params: SubagentParamsLike): ExecutionTargetI
 
 function executionTargetNames(params: SubagentParamsLike): string[] {
   return [...new Set(executionTargetIdentities(params).map((identity) => identity.normalized))];
-}
-
-function embeddedProjectTargetNames(params: SubagentParamsLike): string[] {
-  return executionTargetNames(params).filter(isEmbeddedProjectAgentName);
 }
 
 interface ProjectAgentExecutionResolution {
@@ -466,14 +525,76 @@ export function normalizeProjectAgentAccess(value: unknown): ProjectAgentAccess 
   if (!isProjectAgentExpected(value.expected) || typeof value.architect !== "boolean") {
     return undefined;
   }
+  const canInitiate = typeof value.canInitiate === "boolean" ? value.canInitiate : value.architect;
   return {
     capability: asProjectAgentCapability(value.capability),
     expected: value.expected,
     architect: value.architect,
+    canInitiate,
     ...(typeof value.reauthorize === "function"
       ? { reauthorize: value.reauthorize as () => Promise<boolean> }
       : {}),
+    ...(typeof value.rebind === "function"
+      ? {
+          rebind: value.rebind as ProjectAgentAccess["rebind"],
+        }
+      : {}),
   };
+}
+
+export function projectAgentEntryIdentityError(
+  projectRoot: string,
+  entry: ProjectAgentSnapshotManifest["entries"][number],
+): string | undefined {
+  const agent = entry.agent;
+  const runtimeName = agent.name;
+  if (!EMBEDDED_PROJECT_AGENT_NAME_PATTERN.test(runtimeName)) {
+    return `runtime name '${runtimeName}' is not a valid embedded project-agent identity`;
+  }
+  const localName = runtimeName.slice("embedded.".length);
+  if (agent.localName !== localName || agent.packageName !== PROJECT_AGENT_PACKAGE) {
+    return `runtime name '${runtimeName}' does not match its embedded package/local identity`;
+  }
+  if (agent.source !== "project") {
+    return `runtime name '${runtimeName}' is not sourced from the project snapshot`;
+  }
+  if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
+    return `project agent '${runtimeName}' does not carry an explicit usable tools list`;
+  }
+  if (agent.extensions !== undefined || agent.subagentOnlyExtensions !== undefined) {
+    return `project agent '${runtimeName}' carries a prohibited extension surface`;
+  }
+  if (typeof agent.filePath !== "string" || !path.isAbsolute(agent.filePath)) {
+    return `project agent '${runtimeName}' does not carry an absolute definition path`;
+  }
+  const expectedDirectory = path.join(projectRoot, PROJECT_AGENT_DIRECTORY);
+  const expectedFileName = `${localName.toUpperCase()}.md`;
+  if (
+    path.dirname(agent.filePath) !== expectedDirectory ||
+    path.basename(agent.filePath) !== expectedFileName
+  ) {
+    return `project agent '${runtimeName}' definition path is not the canonical ${PROJECT_AGENT_DIRECTORY}/${expectedFileName} path`;
+  }
+  return undefined;
+}
+
+function projectAgentConfigMatches(left: AgentConfig, right: AgentConfig): boolean {
+  const stable = (value: unknown): string => {
+    if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+    if (isRecordValue(value)) {
+      return `{${Object.keys(value)
+        .filter((key) => value[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${stable(value[key])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value);
+  };
+  try {
+    return stable(left) === stable(right);
+  } catch {
+    return false;
+  }
 }
 
 function resolveProjectAgentExecution(
@@ -483,6 +604,44 @@ function resolveProjectAgentExecution(
   sessionId: string | null,
   deps: ExecutorDeps,
 ): ProjectAgentExecutionResolution | { error: string } {
+  const targetIdentities = executionTargetIdentities(params);
+  const embeddedTargets = [
+    ...new Set(
+      targetIdentities.map((identity) => identity.normalized).filter(isEmbeddedProjectAgentName),
+    ),
+  ];
+  const whitespaceEmbeddedTargets = targetIdentities.filter(
+    (identity) =>
+      identity.raw !== identity.normalized && isEmbeddedProjectAgentName(identity.normalized),
+  );
+  if (whitespaceEmbeddedTargets.length > 0) {
+    const details = whitespaceEmbeddedTargets
+      .map((identity) => `'${identity.raw}' (use '${identity.normalized}')`)
+      .join(", ");
+    return projectExecutionError(
+      `TLH project-agent execution rejected: target identity has surrounding whitespace: ${details}.`,
+    );
+  }
+
+  // Ordinary canonical roles retain their normal user/project discovery path.
+  // A project target must never fall through to that path: doing so would let
+  // a same-name profile/package definition execute without the snapshot.
+  if (embeddedTargets.length === 0) {
+    return {
+      params,
+      effectiveCwd,
+      discovered: deps.discoverAgents(effectiveCwd, scope),
+    };
+  }
+
+  const requestedScope =
+    typeof params.agentScope === "string" ? params.agentScope.trim() : params.agentScope;
+  if (params.agentScope !== undefined && requestedScope !== "" && requestedScope !== "project") {
+    return projectExecutionError(
+      `TLH project-agent execution requires agentScope: "project"; received '${String(requestedScope)}'.`,
+    );
+  }
+
   let rawAccess: ProjectAgentAccess | undefined;
   try {
     rawAccess = deps.getProjectAgentAccess?.({
@@ -491,93 +650,51 @@ function resolveProjectAgentExecution(
       targetNames: executionTargetNames(params),
     });
   } catch {
-    const embeddedTargets = embeddedProjectTargetNames(params);
-    return embeddedTargets.length > 0
-      ? projectExecutionError(
-          "TLH project-agent execution was rejected: the active snapshot capability is unavailable.",
-        )
-      : {
-          params,
-          effectiveCwd,
-          discovered: deps.discoverAgents(effectiveCwd, scope),
-        };
+    return projectExecutionError(
+      "TLH project-agent execution was rejected: the active snapshot capability is unavailable.",
+    );
   }
   const access = normalizeProjectAgentAccess(rawAccess);
   if (!access) {
-    const embeddedTargets = embeddedProjectTargetNames(params);
-    if (rawAccess !== undefined && embeddedTargets.length > 0) {
-      return projectExecutionError(
-        "TLH project-agent execution was rejected: the active snapshot capability is invalid.",
-      );
-    }
-    return {
-      params,
-      effectiveCwd,
-      discovered: deps.discoverAgents(effectiveCwd, scope),
-    };
+    return projectExecutionError(
+      "TLH project-agent execution was rejected: the active snapshot capability is unavailable or invalid.",
+    );
   }
 
   let manifest: ProjectAgentSnapshotManifest;
   try {
     manifest = resolveProjectAgentSnapshot(access.capability, access.expected);
   } catch {
-    const embeddedTargets = embeddedProjectTargetNames(params);
-    return embeddedTargets.length > 0
-      ? projectExecutionError(
-          `TLH project-agent execution was rejected: the active snapshot capability is invalid.`,
-        )
-      : {
-          params,
-          effectiveCwd,
-          discovered: deps.discoverAgents(effectiveCwd, scope),
-        };
+    return projectExecutionError(
+      "TLH project-agent execution was rejected: the active snapshot capability is invalid.",
+    );
   }
 
   const manifestNames = new Set([
     ...manifest.entries.map((entry) => entry.agent.name),
     ...manifest.tombstones,
   ]);
-  const targetIdentities = executionTargetIdentities(params);
-  const projectTargets = executionTargetNames(params).filter((name) => manifestNames.has(name));
-  const whitespaceProjectTargets = targetIdentities.filter(
-    (identity) => identity.raw !== identity.normalized && manifestNames.has(identity.normalized),
-  );
-  if (whitespaceProjectTargets.length > 0) {
-    const details = whitespaceProjectTargets
-      .map((identity) => `'${identity.raw}' (use '${identity.normalized}')`)
-      .join(", ");
+  const missingTargets = embeddedTargets.filter((target) => !manifestNames.has(target));
+  if (missingTargets.length > 0) {
     return projectExecutionError(
-      `TLH project-agent execution rejected: target identity has surrounding whitespace: ${details}.`,
+      `TLH project-agent execution is unavailable for ${missingTargets.join(", ")}; no matching active snapshot entry exists.`,
     );
-  }
-  if (projectTargets.length === 0) {
-    // Do not replace ordinary discovery for profile-only calls. This preserves
-    // normal user/project/package behavior even while an empty or unrelated
-    // project snapshot is active.
-    return {
-      params,
-      effectiveCwd,
-      discovered: deps.discoverAgents(effectiveCwd, scope),
-    };
   }
 
-  if (!access.architect) {
+  if (access.canInitiate !== true) {
     return projectExecutionError(
-      `TLH project-agent execution requires the architect primary agent. Target(s): ${projectTargets.join(", ")}.`,
+      `TLH project-agent execution requires the architect or disabled primary mode. Target(s): ${embeddedTargets.join(", ")}.`,
     );
   }
-  if (scope !== "user") {
-    return projectExecutionError(
-      `TLH project-agent execution requires user-style agent scope; received '${scope}'.`,
-    );
-  }
-  if (params.context !== "fresh") {
+  const requestedContext =
+    typeof params.context === "string" ? params.context.trim() : params.context;
+  if (params.context !== undefined && requestedContext !== "" && requestedContext !== "fresh") {
     return projectExecutionError('TLH project-agent execution requires context: "fresh".');
   }
   for (let index = 0; index < (params.tasks ?? []).length; index += 1) {
     const taskContext = (params.tasks?.[index] as (TaskParam & { context?: unknown }) | undefined)
       ?.context;
-    if (taskContext !== undefined && taskContext !== "fresh") {
+    if (taskContext !== undefined && taskContext !== "" && taskContext !== "fresh") {
       return projectExecutionError(
         `TLH project-agent execution requires fresh context for task ${index + 1}.`,
       );
@@ -597,8 +714,28 @@ function resolveProjectAgentExecution(
   if (!cwdValidation.valid) {
     return projectExecutionError(`TLH project-agent execution blocked: ${cwdValidation.reason}`);
   }
+  const trustedRoot = resolveCanonicalGitWorktreeRoot(cwdValidation.canonicalCwd);
+  const manifestRoot = resolveCanonicalGitWorktreeRoot(manifest.provenance.projectRoot);
+  if (
+    !trustedRoot ||
+    !manifestRoot ||
+    trustedRoot !== cwdValidation.canonicalRoot ||
+    manifestRoot !== trustedRoot
+  ) {
+    return projectExecutionError(
+      "TLH project-agent execution was rejected because the execution cwd is not in the trusted snapshot worktree.",
+    );
+  }
+  for (const [index, taskCwd] of cwdValidation.canonicalTaskCwds.entries()) {
+    const taskRoot = resolveCanonicalGitWorktreeRoot(taskCwd);
+    if (!taskRoot || taskRoot !== trustedRoot) {
+      return projectExecutionError(
+        `TLH project-agent execution blocked: task ${index + 1} cwd is not in the one trusted snapshot worktree.`,
+      );
+    }
+  }
 
-  for (const target of projectTargets) {
+  for (const target of embeddedTargets) {
     if (manifest.tombstones.includes(target)) {
       return projectExecutionError(
         `TLH project-agent execution is blocked for ${target}; the active snapshot tombstone prevents profile fallback.`,
@@ -608,6 +745,8 @@ function resolveProjectAgentExecution(
 
   const canonicalParams: SubagentParamsLike = {
     ...params,
+    agentScope: "project",
+    context: "fresh",
     cwd: cwdValidation.canonicalCwd,
     ...(params.tasks
       ? {
@@ -620,6 +759,8 @@ function resolveProjectAgentExecution(
   };
   let discovered: ProjectAgentExecutionResolution["discovered"];
   try {
+    // This is the sole project execution discovery seam: canonical packaged
+    // roles plus the exact immutable snapshot, never generic project sources.
     discovered = discoverAgentsWithProjectSnapshot(
       cwdValidation.canonicalCwd,
       access.capability,
@@ -635,27 +776,32 @@ function resolveProjectAgentExecution(
     );
   }
 
-  for (const target of projectTargets) {
+  for (const target of embeddedTargets) {
     const expectedEntry = manifest.entries.find((entry) => entry.agent.name === target);
     const selectedAgent = discovered.agents.find((agent) => agent.name === target);
     const selectedMetadata = discovered.projectSnapshot.entries.find(
       (entry) => entry.name === target,
     );
+    const identityError = expectedEntry
+      ? projectAgentEntryIdentityError(manifestRoot!, expectedEntry)
+      : "the snapshot entry is missing";
     if (
       !expectedEntry ||
+      identityError ||
       !selectedAgent ||
       selectedAgent.source !== "project" ||
       selectedAgent.filePath !== expectedEntry.agent.filePath ||
       !selectedMetadata ||
-      selectedMetadata.digest !== expectedEntry.digest
+      selectedMetadata.digest !== expectedEntry.digest ||
+      !projectAgentConfigMatches(selectedAgent, expectedEntry.agent)
     ) {
       return projectExecutionError(
-        `TLH project-agent execution was rejected: the selected snapshot entry or digest for ${target} is not active.`,
+        `TLH project-agent execution was rejected for ${target}: ${identityError ?? "the selected snapshot entry or digest is not active"}.`,
       );
     }
   }
 
-  const projectAgentCaptures = projectTargets.flatMap((target) => {
+  const projectAgentCaptures = embeddedTargets.flatMap((target) => {
     const selectedAgent = discovered.agents.find((agent) => agent.name === target);
     if (!selectedAgent) return [];
     try {
@@ -664,7 +810,7 @@ function resolveProjectAgentExecution(
       return [];
     }
   });
-  if (projectAgentCaptures.length !== projectTargets.length) {
+  if (projectAgentCaptures.length !== embeddedTargets.length) {
     return projectExecutionError(
       "TLH project-agent execution was rejected: an approved project-agent capture could not be created.",
     );
@@ -682,6 +828,12 @@ function resolveProjectAgentExecution(
 interface AuthorizedProjectAgentRun {
   capture: ProjectAgentRunCapture;
   agentConfig: AgentConfig;
+  capability: ProjectAgentSnapshotCapability;
+  /** Canonical existing cwd used for discovery and process start. */
+  canonicalCwd: string;
+  /** Whether the source run reference was absent and a fresh generation was bound. */
+  freshRebind: boolean;
+  digestChangeNotice?: string;
   modelScope?: ModelScopeConfig;
 }
 
@@ -708,7 +860,12 @@ function lookupPrivateProjectActionReference(
 /** Recognize persisted project markers as a deny-only signal, even when malformed. */
 function hasProjectAgentControlMarker(value: unknown): boolean {
   if (!isRecordValue(value)) return false;
-  if (Object.hasOwn(value, "projectAgent") || Object.hasOwn(value, "projectAgents")) return true;
+  if (
+    Object.hasOwn(value, "projectAgent") ||
+    Object.hasOwn(value, "projectAgents") ||
+    Object.hasOwn(value, "projectAgentMarker")
+  )
+    return true;
   for (const field of ["steps", "results", "children", "nestedChildren"] as const) {
     const children = value[field];
     if (Array.isArray(children) && children.some((child) => hasProjectAgentControlMarker(child))) {
@@ -718,11 +875,60 @@ function hasProjectAgentControlMarker(value: unknown): boolean {
   return false;
 }
 
+/** Detect malformed persisted captures without treating a valid capture as corrupt. */
+function hasMalformedProjectAgentControlMarker(value: unknown): boolean {
+  if (!isRecordValue(value)) return false;
+  if (Object.hasOwn(value, "projectAgentMarker")) return true;
+  if (
+    Object.hasOwn(value, "projectAgent") &&
+    !normalizeProjectAgentRunCapture(value.projectAgent)
+  ) {
+    return true;
+  }
+  if (Object.hasOwn(value, "projectAgents")) {
+    const captures = value.projectAgents;
+    if (captures !== undefined) {
+      if (!Array.isArray(captures) || captures.length === 0) return true;
+      if (captures.some((capture) => !normalizeProjectAgentRunCapture(capture))) return true;
+    }
+  }
+  for (const field of ["steps", "results", "children", "nestedChildren"] as const) {
+    const children = value[field];
+    if (
+      Array.isArray(children) &&
+      children.some((child) => hasMalformedProjectAgentControlMarker(child))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Async tracker projections always include `projectAgents`, including as
+ * `undefined` for ordinary jobs. In-memory state therefore uses semantic
+ * capture presence rather than persisted key-presence detection.
+ */
+function hasInMemoryProjectAgentCapture(value: unknown): boolean {
+  return (
+    isRecordValue(value) && Array.isArray(value.projectAgents) && value.projectAgents.length > 0
+  );
+}
+
 function rejectMissingPrivateProjectReference(
   lookup: ProjectAgentRunReferenceLookup,
   target: unknown,
+  options: { allowFreshResume?: boolean } = {},
 ): void {
-  if (lookup.status === "missing" && hasProjectAgentControlMarker(target)) {
+  const freshChildCapture =
+    isRecordValue(target) &&
+    Object.hasOwn(target, "projectAgent") &&
+    normalizeProjectAgentRunCapture(target.projectAgent) !== undefined;
+  if (
+    lookup.status === "missing" &&
+    !(options.allowFreshResume && freshChildCapture) &&
+    hasProjectAgentControlMarker(target)
+  ) {
     throw projectRunAuthorizationError(
       "the persisted run carries a project-agent marker, but its process-private reference is unavailable; refusing profile fallback.",
     );
@@ -791,7 +997,7 @@ function requirePersistedProjectCaptureForTarget(
  * process. Persisted config is checked against the private capture and never
  * used as executable authority on its own.
  */
-async function authorizePersistedProjectAgentRun(input: {
+async function authorizeRetainedProjectAgentRun(input: {
   target: {
     runId: string;
     agent: string;
@@ -812,7 +1018,8 @@ async function authorizePersistedProjectAgentRun(input: {
     throw projectRunAuthorizationError("the run belongs to a different session.");
   }
   const currentRoot = resolveCanonicalGitWorktreeRoot(input.ctx.cwd);
-  if (!currentRoot || currentRoot !== persisted.provenance.projectRoot) {
+  const persistedRoot = resolveCanonicalGitWorktreeRoot(persisted.provenance.projectRoot);
+  if (!currentRoot || !persistedRoot || currentRoot !== persistedRoot) {
     throw projectRunAuthorizationError(
       "the current canonical project root does not match the run.",
     );
@@ -825,6 +1032,12 @@ async function authorizePersistedProjectAgentRun(input: {
     input.target.cwd,
   );
   if (!cwdValidation.valid) throw projectRunAuthorizationError(cwdValidation.reason);
+  const targetRoot = resolveCanonicalGitWorktreeRoot(cwdValidation.canonicalCwd);
+  if (!targetRoot || targetRoot !== persistedRoot) {
+    throw projectRunAuthorizationError(
+      "the persisted execution cwd is not inside the one trusted project worktree.",
+    );
+  }
 
   let activeAccess: ProjectAgentAccess | undefined;
   try {
@@ -850,8 +1063,10 @@ async function authorizePersistedProjectAgentRun(input: {
   } catch {
     throw projectRunAuthorizationError("the current snapshot capability is invalid.");
   }
+  const activeManifestRoot = resolveCanonicalGitWorktreeRoot(activeManifest.provenance.projectRoot);
   if (
-    activeManifest.provenance.projectRoot !== currentRoot ||
+    !activeManifestRoot ||
+    activeManifestRoot !== currentRoot ||
     activeManifest.provenance.sessionId !== currentSessionId ||
     activeManifest.provenance.processInstanceId !== persisted.provenance.processInstanceId
   ) {
@@ -892,13 +1107,19 @@ async function authorizePersistedProjectAgentRun(input: {
   const entry = retained.manifest.entries.find(
     (candidate) => candidate.agent.name === persisted.provenance.agent,
   );
+  const identityError = entry
+    ? projectAgentEntryIdentityError(persistedRoot, entry)
+    : "the retained generation entry is missing";
   if (
     !entry ||
+    identityError ||
     entry.digest !== persisted.provenance.digest ||
     entry.agent.source !== "project" ||
     entry.agent.filePath !== capture.config.filePath
   ) {
-    throw projectRunAuthorizationError("the retained generation entry or digest is invalid.");
+    throw projectRunAuthorizationError(
+      `the retained generation entry or digest is invalid${identityError ? `: ${identityError}` : "."}`,
+    );
   }
   let modelScope: ModelScopeConfig | undefined;
   try {
@@ -906,14 +1127,221 @@ async function authorizePersistedProjectAgentRun(input: {
     // list is intentionally ignored: captured project config remains the sole
     // executable source for this continuation.
     modelScope = discoverAgentsWithProjectSnapshot(
-      input.target.cwd,
+      cwdValidation.canonicalCwd,
       activeAccess.capability,
       activeAccess.expected,
     ).modelScope;
   } catch {
     throw projectRunAuthorizationError("the current profile model scope is unavailable.");
   }
-  return { capture, agentConfig: capture.config, modelScope };
+  return {
+    capture,
+    agentConfig: capture.config,
+    capability: retained.capability,
+    canonicalCwd: cwdValidation.canonicalCwd,
+    freshRebind: false,
+    modelScope,
+  };
+}
+
+/**
+ * Authorize a persisted project run for either same-process continuation or a
+ * fresh process-starting rebind. Persisted captures are metadata only: when
+ * the private generation is unavailable, executable config comes exclusively
+ * from the current trusted loader result.
+ */
+async function authorizePersistedProjectAgentRun(input: {
+  target: {
+    runId: string;
+    agent: string;
+    cwd?: string;
+    projectAgent?: unknown;
+  };
+  ctx: ExtensionContext;
+  deps: ExecutorDeps;
+}): Promise<AuthorizedProjectAgentRun> {
+  const persisted = normalizeProjectAgentRunCapture(input.target.projectAgent);
+  if (!persisted) throw projectRunAuthorizationError("persisted provenance/config is corrupt.");
+  if (persisted.provenance.agent !== input.target.agent) {
+    throw projectRunAuthorizationError("the selected entry does not match persisted provenance.");
+  }
+
+  const currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
+  if (currentSessionId !== persisted.provenance.sessionId) {
+    throw projectRunAuthorizationError("the run belongs to a different session.");
+  }
+  const currentRoot = resolveCanonicalGitWorktreeRoot(input.ctx.cwd);
+  const persistedRoot = resolveCanonicalGitWorktreeRoot(persisted.provenance.projectRoot);
+  if (!currentRoot || !persistedRoot || currentRoot !== persistedRoot) {
+    throw projectRunAuthorizationError(
+      "the current canonical project root does not match the run.",
+    );
+  }
+  if (typeof input.target.cwd !== "string") {
+    throw projectRunAuthorizationError("the persisted execution cwd is missing.");
+  }
+  const cwdValidation = validateProjectAgentCwdContainment(
+    persisted.provenance.projectRoot,
+    input.target.cwd,
+  );
+  if (!cwdValidation.valid) throw projectRunAuthorizationError(cwdValidation.reason);
+  const targetRoot = resolveCanonicalGitWorktreeRoot(cwdValidation.canonicalCwd);
+  if (!targetRoot || targetRoot !== persistedRoot) {
+    throw projectRunAuthorizationError(
+      "the persisted execution cwd is not inside the one trusted project worktree.",
+    );
+  }
+
+  let activeAccess: ProjectAgentAccess | undefined;
+  try {
+    activeAccess = normalizeProjectAgentAccess(
+      input.deps.getProjectAgentAccess?.({
+        cwd: input.ctx.cwd,
+        sessionId: currentSessionId,
+        targetNames: [input.target.agent],
+      }),
+    );
+  } catch {
+    activeAccess = undefined;
+  }
+  if (!activeAccess) {
+    throw projectRunAuthorizationError("the current trusted project snapshot is unavailable.");
+  }
+  if (!activeAccess.architect) {
+    throw projectRunAuthorizationError("the current primary agent is not the architect.");
+  }
+  let activeManifest: ProjectAgentSnapshotManifest;
+  try {
+    activeManifest = resolveProjectAgentSnapshot(activeAccess.capability, activeAccess.expected);
+  } catch {
+    throw projectRunAuthorizationError("the current snapshot capability is invalid.");
+  }
+  const activeManifestRoot = resolveCanonicalGitWorktreeRoot(activeManifest.provenance.projectRoot);
+  if (
+    !activeManifestRoot ||
+    activeManifestRoot !== currentRoot ||
+    activeManifest.provenance.sessionId !== currentSessionId
+  ) {
+    throw projectRunAuthorizationError("current root or session identity is stale.");
+  }
+  if (typeof activeAccess.reauthorize !== "function") {
+    throw projectRunAuthorizationError("current project trust cannot be reauthorized safely.");
+  }
+  let trusted = false;
+  try {
+    trusted = await activeAccess.reauthorize();
+  } catch {
+    trusted = false;
+  }
+  if (!trusted) throw projectRunAuthorizationError("current project trust has been revoked.");
+
+  const privateReference = lookupProjectAgentRunReference(input.target.runId);
+  if (privateReference.status === "ambiguous") {
+    throw projectRunAuthorizationError(
+      `the requested run id is ambiguous in the retained project-agent registry (${privateReference.runIds.join(", ")}). Provide a full run id.`,
+    );
+  }
+  if (privateReference.status === "found") {
+    return authorizeRetainedProjectAgentRun(input);
+  }
+
+  // A missing reference in the same process is not permission to reconstruct
+  // the old generation from persisted JSON. The explicit rebind is reserved
+  // for a process-starting continuation with a different process identity.
+  if (activeManifest.provenance.processInstanceId === persisted.provenance.processInstanceId) {
+    throw projectRunAuthorizationError(
+      "the persisted project-agent run has no process-private reference; refusing profile fallback.",
+    );
+  }
+  if (typeof activeAccess.rebind !== "function") {
+    throw projectRunAuthorizationError(
+      "the prior process-private project-agent reference is unavailable and the current runtime cannot perform a fresh rebind.",
+    );
+  }
+
+  let rebound: ProjectAgentRebindResult | undefined;
+  try {
+    rebound = await activeAccess.rebind({
+      projectRoot: persistedRoot,
+      cwd: cwdValidation.canonicalCwd,
+      sessionId: currentSessionId,
+      agent: input.target.agent,
+    });
+  } catch {
+    rebound = undefined;
+  }
+  if (!rebound) {
+    throw projectRunAuthorizationError(
+      "the current project definition could not be reauthorized safely; verify trust and the canonical custom-agent file.",
+    );
+  }
+
+  let reboundManifest: ProjectAgentSnapshotManifest;
+  try {
+    reboundManifest = resolveProjectAgentSnapshot(rebound.capability, rebound.expected);
+  } catch {
+    throw projectRunAuthorizationError("the fresh project-agent snapshot capability is invalid.");
+  }
+  const reboundRoot = resolveCanonicalGitWorktreeRoot(reboundManifest.provenance.projectRoot);
+  if (
+    !reboundRoot ||
+    reboundRoot !== currentRoot ||
+    reboundManifest.provenance.sessionId !== currentSessionId ||
+    reboundManifest.provenance.processInstanceId !== activeManifest.provenance.processInstanceId
+  ) {
+    throw projectRunAuthorizationError(
+      "the fresh project-agent snapshot has stale root, session, or process identity.",
+    );
+  }
+  const reboundCapture = normalizeProjectAgentRunCapture(rebound.capture);
+  if (!reboundCapture || reboundCapture.provenance.agent !== input.target.agent) {
+    throw projectRunAuthorizationError("the fresh project-agent capture is invalid.");
+  }
+  const reboundEntry = reboundManifest.entries.find(
+    (candidate) => candidate.agent.name === input.target.agent,
+  );
+  const identityError = reboundEntry
+    ? projectAgentEntryIdentityError(reboundRoot, reboundEntry)
+    : "the current custom-agent definition is missing";
+  if (!reboundEntry || identityError || reboundEntry.digest !== reboundCapture.provenance.digest) {
+    throw projectRunAuthorizationError(
+      `the current project-agent definition is unsafe${identityError ? `: ${identityError}` : "."}`,
+    );
+  }
+  let capture: ProjectAgentRunCapture;
+  try {
+    capture = createProjectAgentRunCapture(reboundManifest, reboundEntry.agent);
+  } catch {
+    throw projectRunAuthorizationError("the current project-agent capture could not be created.");
+  }
+  if (!projectAgentRunCaptureEquals(reboundCapture, capture)) {
+    throw projectRunAuthorizationError(
+      "the fresh project-agent capture does not match the current validated definition.",
+    );
+  }
+  let modelScope: ModelScopeConfig | undefined;
+  try {
+    modelScope = discoverAgentsWithProjectSnapshot(
+      cwdValidation.canonicalCwd,
+      rebound.capability,
+      rebound.expected,
+    ).modelScope;
+  } catch {
+    throw projectRunAuthorizationError("the current profile model scope is unavailable.");
+  }
+  const digestChangeNotice =
+    persisted.provenance.digest !== capture.provenance.digest
+      ? `Project agent '${input.target.agent}' changed since the original run (digest ${persisted.provenance.digest} → ${capture.provenance.digest}). The resumed child uses the current validated definition; review the change if it was unexpected.`
+      : undefined;
+  return {
+    capture,
+    agentConfig: capture.config,
+    capability: rebound.capability,
+    canonicalCwd: cwdValidation.canonicalCwd,
+    freshRebind: true,
+    ...(digestChangeNotice ? { digestChangeNotice } : {}),
+    modelScope,
+  };
 }
 
 function indexedLifecycleContinuation(
@@ -2212,15 +2640,23 @@ function getAsyncInterruptTarget(
   runId: string | undefined,
   location?: { asyncDir: string | null; resolvedId?: string },
 ): { asyncId: string; asyncDir: string } | undefined {
-  if (location?.asyncDir) {
-    return {
-      asyncId: location.resolvedId ?? runId ?? path.basename(location.asyncDir),
-      asyncDir: location.asyncDir,
-    };
+  if (location) {
+    if (location.asyncDir) {
+      return {
+        asyncId: location.resolvedId ?? runId ?? path.basename(location.asyncDir),
+        asyncDir: location.asyncDir,
+      };
+    }
+    if (runId) {
+      const direct = state.asyncJobs.get(runId);
+      if (direct) return { asyncId: direct.asyncId, asyncDir: direct.asyncDir };
+    }
+    return undefined;
   }
   if (runId) {
     const direct = state.asyncJobs.get(runId);
     if (direct) return { asyncId: direct.asyncId, asyncDir: direct.asyncDir };
+    return undefined;
   }
   let newest: { asyncId: string; asyncDir: string; updatedAt: number } | undefined;
   for (const job of state.asyncJobs.values()) {
@@ -2230,6 +2666,68 @@ function getAsyncInterruptTarget(
     }
   }
   return newest ? { asyncId: newest.asyncId, asyncDir: newest.asyncDir } : undefined;
+}
+
+function resolvedAsyncInterruptTarget(target: {
+  asyncId: string;
+  asyncDir: string;
+}): Extract<ResolvedSubagentRunId, { kind: "async" }> {
+  return {
+    kind: "async",
+    id: target.asyncId,
+    location: {
+      asyncDir: target.asyncDir,
+      resultPath: null,
+      resolvedId: target.asyncId,
+    },
+  };
+}
+
+/** Resolve the target before any project marker fallback or interrupt signal. */
+function selectInterruptTarget(
+  params: SubagentParamsLike,
+  state: SubagentState,
+): { target: ResolvedSubagentRunId | undefined; params: SubagentParamsLike } {
+  const requestedId = params.id?.trim();
+  if (params.dir) {
+    const location = resolveAsyncRunLocation(params, ASYNC_DIR, RESULTS_DIR);
+    const runId = location.resolvedId ?? path.basename(path.resolve(params.dir));
+    if (!runId) return { target: undefined, params };
+    return {
+      target: { kind: "async", id: runId, location },
+      params: { ...params, id: runId },
+    };
+  }
+  if (requestedId) {
+    const resolved = resolveSubagentRunId(requestedId, { state });
+    if (resolved) return { target: resolved, params: { ...params, id: resolved.id } };
+    const foreground = getForegroundControl(state, requestedId);
+    if (foreground) {
+      const target = { kind: "foreground" as const, id: foreground.runId };
+      return { target, params: { ...params, id: target.id } };
+    }
+    const asyncTarget = getAsyncInterruptTarget(state, requestedId);
+    if (asyncTarget) {
+      const target = resolvedAsyncInterruptTarget(asyncTarget);
+      return {
+        target,
+        params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
+      };
+    }
+    return { target: undefined, params };
+  }
+  const foreground = getForegroundControl(state, undefined);
+  if (foreground) {
+    const target = { kind: "foreground" as const, id: foreground.runId };
+    return { target, params: { ...params, id: target.id } };
+  }
+  const asyncTarget = getAsyncInterruptTarget(state, undefined);
+  if (!asyncTarget) return { target: undefined, params };
+  const target = resolvedAsyncInterruptTarget(asyncTarget);
+  return {
+    target,
+    params: { ...params, id: target.id, dir: asyncTarget.asyncDir },
+  };
 }
 
 function requestForegroundInterrupt(
@@ -2898,6 +3396,7 @@ function validateNestedSessionFile(run: NestedRunSummary, trustedSessionRoots: s
 }
 
 type NestedResumeStatusStep = {
+  cwd?: string;
   status?: string;
   acceptance?: import("../../shared/types.ts").AcceptanceLedger;
   model?: string;
@@ -2908,6 +3407,7 @@ type NestedResumeStatusStep = {
   contextPressure?: import("../../shared/types.ts").ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
   activeRuntimeMs?: number;
+  projectAgentMarker?: true;
 };
 
 function readNestedResumeStatusStep(
@@ -2915,9 +3415,10 @@ function readNestedResumeStatusStep(
   asyncDir: string | undefined,
 ): NestedResumeStatusStep | undefined {
   if (!asyncDir) return undefined;
-  let parsed: { steps?: unknown };
+  let parsed: { cwd?: unknown; steps?: unknown };
   try {
     parsed = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as {
+      cwd?: unknown;
       steps?: unknown;
     };
   } catch (error) {
@@ -2932,6 +3433,7 @@ function readNestedResumeStatusStep(
   }
   if (!Array.isArray(parsed.steps))
     throw new Error(`Nested run '${runId}' persisted status has invalid steps metadata.`);
+  const malformedProjectAgentMarker = hasMalformedProjectAgentControlMarker(parsed);
   const step = parsed.steps[0];
   if (!step || typeof step !== "object" || Array.isArray(step))
     throw new Error(
@@ -2962,6 +3464,7 @@ function readNestedResumeStatusStep(
     raw.contextPressureCrossedThresholds,
   );
   return {
+    ...(typeof parsed.cwd === "string" ? { cwd: parsed.cwd } : {}),
     ...(typeof raw.status === "string" ? { status: raw.status } : {}),
     ...(modelIdentity ? { modelIdentity } : {}),
     ...(modelResolution ? { modelResolution } : {}),
@@ -2969,6 +3472,7 @@ function readNestedResumeStatusStep(
     ...(contextPressure ? { contextPressure } : {}),
     ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
     ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
+    ...(malformedProjectAgentMarker ? { projectAgentMarker: true as const } : {}),
     ...(raw.acceptance
       ? { acceptance: raw.acceptance as NestedResumeStatusStep["acceptance"] }
       : {}),
@@ -2987,6 +3491,18 @@ function resolveNestedContinuationAcceptance(
   return step.acceptance.status === "skipped" ? step.acceptance.effectiveAcceptance : undefined;
 }
 
+function resolveTrustedNestedResumeCwd(asyncDir: string | undefined): string | undefined {
+  if (!asyncDir) return undefined;
+  try {
+    const canonicalRoot = fs.realpathSync(NESTED_ASYNC_RUNS_DIR);
+    const canonicalParent = fs.realpathSync(path.dirname(asyncDir));
+    if (!pathWithin(canonicalRoot, canonicalParent)) return undefined;
+    return fs.statSync(canonicalParent).isDirectory() ? canonicalParent : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveNestedResumeTarget(
   match: ResolvedSubagentRunId & { kind: "nested" },
   trustedSessionRoots: string[],
@@ -3002,16 +3518,21 @@ function resolveNestedResumeTarget(
     run.state === "complete" || run.state === "failed" || run.state === "paused"
       ? run.state
       : "failed";
+  if (hasMalformedProjectAgentControlMarker(run)) {
+    throw projectRunAuthorizationError(
+      `Nested run '${run.id}' has a malformed project-agent marker.`,
+    );
+  }
   const projectAgentMarker = Object.hasOwn(run, "projectAgent")
     ? normalizeProjectAgentRunCapture(run.projectAgent)
     : undefined;
-  if (Object.hasOwn(run, "projectAgent") && !projectAgentMarker) {
-    throw projectRunAuthorizationError(
-      `Nested run '${run.id}' has an invalid project-agent marker.`,
-    );
-  }
   const asyncDir = resolveNestedAsyncDir(match.match.rootRunId, run);
   const statusStep = readNestedResumeStatusStep(run.id, asyncDir);
+  if (statusStep?.projectAgentMarker) {
+    throw projectRunAuthorizationError(
+      `Nested run '${run.id}' has a malformed project-agent marker in persisted status.`,
+    );
+  }
   const statusModelIdentity = statusStep?.modelIdentity;
   const statusModelResolution = statusStep?.modelResolution;
   const contextUsage = statusStep?.contextUsage;
@@ -3019,6 +3540,20 @@ function resolveNestedResumeTarget(
   const contextPressureCrossedThresholds = statusStep?.contextPressureCrossedThresholds;
   const continuationAcceptance =
     state === "paused" ? resolveNestedContinuationAcceptance(run.id, statusStep) : undefined;
+  let cwd = resolveTrustedNestedResumeCwd(asyncDir);
+  if (projectAgentMarker) {
+    const persistedCwd = statusStep?.cwd ?? run.cwd;
+    const cwdValidation = validateProjectAgentCwdContainment(
+      projectAgentMarker.provenance.projectRoot,
+      persistedCwd,
+    );
+    if (!cwdValidation.valid) {
+      throw projectRunAuthorizationError(
+        `Nested project-agent run '${run.id}' has an invalid persisted execution cwd: ${cwdValidation.reason}`,
+      );
+    }
+    cwd = cwdValidation.canonicalCwd;
+  }
   return {
     kind: "revive",
     source: "nested",
@@ -3041,7 +3576,9 @@ function resolveNestedResumeTarget(
     ...(asyncDir ? { asyncDir } : {}),
     ...(run.state === "paused" ? { pauseKind: "cohort_pause" as const } : {}),
     intercomTarget: resolveSubagentIntercomTarget(run.id, agent, 0),
-    cwd: asyncDir ? path.dirname(asyncDir) : undefined,
+    // Ordinary nested resumes use only the validated nested storage root. A
+    // project marker opts into its separately validated canonical project cwd.
+    ...(cwd ? { cwd } : {}),
     sessionFile: validateNestedSessionFile(run, trustedSessionRoots),
   };
 }
@@ -3055,6 +3592,20 @@ function directNestedAsyncInterrupt(
   const status = reconcileAsyncRun(asyncDir, {
     resultsDir: path.join(RESULTS_DIR, "nested", target.match.rootRunId),
   }).status;
+  if (status && hasMalformedProjectAgentControlMarker(status)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            "the nested target has a malformed project-agent marker; refusing interrupt fallback.",
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
   const pid = typeof status?.pid === "number" && status.pid > 0 ? status.pid : run.pid;
   if (!status || status.state !== "running" || typeof pid !== "number" || pid <= 0)
     return undefined;
@@ -3126,6 +3677,20 @@ function directNestedAsyncSteer(input: {
   const status = reconcileAsyncRun(asyncDir, {
     resultsDir: path.join(RESULTS_DIR, "nested", input.target.match.rootRunId),
   }).status;
+  if (status && hasMalformedProjectAgentControlMarker(status)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            "the nested target has a malformed project-agent marker; refusing steer fallback.",
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
   if (!status || (status.state !== "running" && status.state !== "queued")) return undefined;
   const steps = status.steps ?? [];
   if (input.index !== undefined) {
@@ -3544,6 +4109,148 @@ async function authorizeProjectSteerTarget(input: {
   }
 }
 
+function projectInterruptResolutionMismatch(
+  lookup: ProjectAgentRunReferenceLookup,
+  resolvedId: string | undefined,
+): Error | undefined {
+  if (lookup.status !== "found" || lookup.runId === resolvedId) return undefined;
+  return projectRunAuthorizationError(
+    resolvedId
+      ? `the retained project-agent run '${lookup.runId}' does not match the resolved interrupt target '${resolvedId}'; refusing cancellation.`
+      : "the retained project-agent run could not be resolved to a cancellable target; refusing cancellation.",
+  );
+}
+
+function projectInterruptAuthorizationResult(error: Error): SubagentToolResult<Details> {
+  return {
+    content: [{ type: "text", text: error.message }],
+    isError: true,
+    details: { mode: "management", results: [] },
+  };
+}
+
+async function authorizeProjectInterruptTarget(input: {
+  params: SubagentParamsLike;
+  lookup: ProjectAgentRunReferenceLookup;
+  ctx: ExtensionContext;
+  deps: ExecutorDeps;
+}): Promise<void> {
+  let location: ReturnType<typeof resolveAsyncRunLocation>;
+  try {
+    location = resolveAsyncRunLocation(
+      input.lookup.status === "found"
+        ? { id: input.lookup.runId, dir: input.params.dir }
+        : input.params,
+      ASYNC_DIR,
+      RESULTS_DIR,
+    );
+  } catch (error) {
+    throw projectRunAuthorizationError(
+      error instanceof Error ? error.message : "the persisted interrupt target is invalid.",
+    );
+  }
+  let status: AsyncStatus | null | undefined;
+  let statusReadError = false;
+  let rawStatusMarker = false;
+  if (location.asyncDir) {
+    try {
+      status = readStatus(location.asyncDir);
+    } catch {
+      statusReadError = true;
+      try {
+        rawStatusMarker = /["']projectAgents?["']\s*:/u.test(
+          fs.readFileSync(path.join(location.asyncDir, "status.json"), "utf8"),
+        );
+      } catch {
+        // Preserve the ordinary interrupt lifecycle error for malformed
+        // marker-free files; unreadable state cannot authorize a control.
+      }
+    }
+  }
+  let result: unknown;
+  if (!status && location.resultPath) {
+    try {
+      result = JSON.parse(fs.readFileSync(location.resultPath, "utf8")) as unknown;
+    } catch {
+      // The normal result parser will report malformed artifacts later; this
+      // deny-only probe still refuses marker-shaped result files below.
+      try {
+        result = /["']projectAgents?["']\s*:/u.test(fs.readFileSync(location.resultPath, "utf8"))
+          ? { projectAgents: [] }
+          : undefined;
+      } catch {
+        result = undefined;
+      }
+    }
+  }
+  if (input.lookup.status === "missing") {
+    if (
+      rawStatusMarker ||
+      hasProjectAgentControlMarker(status) ||
+      hasProjectAgentControlMarker(result)
+    ) {
+      throw projectRunAuthorizationError(
+        "the persisted run carries a project-agent marker, but its process-private reference is unavailable; refusing ordinary interrupt fallback.",
+      );
+    }
+    return;
+  }
+  if (input.lookup.status === "ambiguous") {
+    throw projectRunAuthorizationError(
+      `the requested run id is ambiguous in the retained project-agent registry (${input.lookup.runIds.join(", ")}). Provide a full run id.`,
+    );
+  }
+  if (!location.asyncDir || !status || statusReadError) {
+    throw projectRunAuthorizationError("the retained run has no persisted interrupt status.");
+  }
+  if (status.runId !== input.lookup.runId) {
+    throw projectRunAuthorizationError(
+      "the persisted interrupt status does not match the retained run.",
+    );
+  }
+  const projectSteps = (status.steps ?? []).filter((step) => step.projectAgent !== undefined);
+  const projectMarkers = [
+    ...projectSteps.map((step) => ({ agent: step.agent, projectAgent: step.projectAgent })),
+    ...(status.projectAgents ?? []).map((projectAgent) => ({
+      agent:
+        isRecordValue(projectAgent) &&
+        isRecordValue(projectAgent.provenance) &&
+        typeof projectAgent.provenance.agent === "string"
+          ? projectAgent.provenance.agent
+          : undefined,
+      projectAgent,
+    })),
+  ];
+  if (projectMarkers.length === 0) {
+    if (hasProjectAgentControlMarker(status)) {
+      throw projectRunAuthorizationError(
+        "the persisted project-agent interrupt marker has no selectable child capture.",
+      );
+    }
+    return;
+  }
+  for (const marker of projectMarkers) {
+    const persistedCapture = normalizeProjectAgentRunCapture(marker.projectAgent);
+    if (!persistedCapture) {
+      throw projectRunAuthorizationError(
+        "the persisted project-agent interrupt capture is invalid.",
+      );
+    }
+    const agent = marker.agent ?? persistedCapture.provenance.agent;
+    const retainedCapture = input.lookup.captures.find(
+      (capture) => capture.provenance.agent === agent,
+    );
+    if (!retainedCapture || !projectAgentRunCaptureEquals(persistedCapture, retainedCapture)) {
+      throw projectRunAuthorizationError(
+        `the project-agent interrupt child '${agent}' is missing or has corrupt persisted provenance/config.`,
+      );
+    }
+    // Interrupt is a stop-only control and remains available to every primary
+    // mode. The retained capture check above still prevents a project marker
+    // from silently becoming an ordinary control path.
+  }
+}
+
 async function resumeAsyncRun(input: {
   params: SubagentParamsLike;
   requestCwd: string;
@@ -3619,7 +4326,9 @@ async function resumeAsyncRun(input: {
           { requireSessionFile: true, readOnly: preResolutionStatus?.state !== "running" },
         ),
       };
-      rejectMissingPrivateProjectReference(privateProjectLookup, asyncTarget);
+      rejectMissingPrivateProjectReference(privateProjectLookup, asyncTarget, {
+        allowFreshResume: asyncTarget.kind === "revive",
+      });
       if (hadLiveResumeIntent && asyncTarget.kind !== "live") {
         return {
           content: [
@@ -3681,7 +4390,9 @@ async function resumeAsyncRun(input: {
   }
 
   try {
-    rejectMissingPrivateProjectReference(privateProjectLookup, target);
+    rejectMissingPrivateProjectReference(privateProjectLookup, target, {
+      allowFreshResume: target.kind === "revive",
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -3707,7 +4418,8 @@ async function resumeAsyncRun(input: {
   }
 
   let persistedProjectAuthorization: AuthorizedProjectAgentRun | undefined;
-  if (privateProjectLookup.status === "found") {
+  const targetProjectCapture = "projectAgent" in target ? target.projectAgent : undefined;
+  if (privateProjectLookup.status === "found" || targetProjectCapture !== undefined) {
     try {
       requirePersistedProjectCaptureForTarget(privateProjectLookup, target);
       persistedProjectAuthorization = await authorizePersistedProjectAgentRun({
@@ -3739,7 +4451,8 @@ async function resumeAsyncRun(input: {
   }
 
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
-  const effectiveCwd = target.cwd ?? input.requestCwd;
+  const effectiveCwd =
+    persistedProjectAuthorization?.canonicalCwd ?? target.cwd ?? input.requestCwd;
   const scope: AgentScope = resolveExecutionAgentScope(input.params.agentScope);
   const discovered = persistedProjectAuthorization
     ? {
@@ -3873,14 +4586,20 @@ async function resumeAsyncRun(input: {
   let projectRunTransferred = false;
   if (persistedProjectAuthorization) {
     try {
-      retainProjectAgentRunReferenceFrom(target.runId, runId);
+      if (persistedProjectAuthorization.freshRebind) {
+        retainProjectAgentRunReference(persistedProjectAuthorization.capability, runId, [
+          persistedProjectAuthorization.capture,
+        ]);
+      } else {
+        retainProjectAgentRunReferenceFrom(target.runId, runId);
+      }
       projectRunTransferred = true;
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `TLH project-agent control rejected: could not retain the original generation: ${error instanceof Error ? error.message : String(error)}`,
+            text: `TLH project-agent control rejected: could not retain the authorized generation: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,
@@ -3928,7 +4647,7 @@ async function resumeAsyncRun(input: {
       projectAgent: persistedProjectAuthorization?.capture,
       ctx: {
         pi: input.deps.pi,
-        cwd: input.requestCwd,
+        cwd: persistedProjectAuthorization?.canonicalCwd ?? input.requestCwd,
         currentSessionId: input.deps.state.currentSessionId,
         parentSessionId: input.ctx.sessionManager.getSessionId() ?? undefined,
         currentModelProvider: input.ctx.model?.provider,
@@ -3986,6 +4705,9 @@ async function resumeAsyncRun(input: {
     `Revived ${sourceLabel} subagent from ${target.runId}.`,
     `Revived run: ${revivedId}`,
     `Agent: ${target.agent}`,
+    persistedProjectAuthorization?.digestChangeNotice
+      ? `Notice: ${persistedProjectAuthorization.digestChangeNotice}`
+      : undefined,
     privacySafeSupervisorResume ? undefined : `Session: ${target.sessionFile}`,
     !privacySafeSupervisorResume && result.details.asyncDir
       ? `Async dir: ${result.details.asyncDir}`
@@ -5991,6 +6713,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
                 orchestratorTarget,
                 sessionError,
                 expandTilde: deps.expandTilde,
+                ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
               }),
             },
           ],
@@ -6222,6 +6945,22 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         });
       }
       if (action === "interrupt") {
+        deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+        const requestedProjectLookup = lookupPrivateProjectActionReference(paramsWithResolvedCwd);
+        if (requestedProjectLookup.status === "ambiguous") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: projectRunAuthorizationError(
+                  `the requested run id is ambiguous in the retained project-agent registry (${requestedProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+                ).message,
+              },
+            ],
+            isError: true,
+            details: { mode: "management", results: [] },
+          };
+        }
         const targetRunId = paramsWithResolvedCwd.id;
         const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
         if (
@@ -6230,92 +6969,284 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
           !getForegroundControl(deps.state, rememberedPaused.run.runId)
         ) {
           const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
-          if (fs.existsSync(pausedAsyncDir))
+          if (fs.existsSync(pausedAsyncDir)) {
+            const projectResolutionError = projectInterruptResolutionMismatch(
+              requestedProjectLookup,
+              rememberedPaused.run.runId,
+            );
+            if (projectResolutionError) {
+              return projectInterruptAuthorizationResult(projectResolutionError);
+            }
+            try {
+              await authorizeProjectInterruptTarget({
+                params: { ...paramsWithResolvedCwd, id: rememberedPaused.run.runId },
+                lookup: requestedProjectLookup,
+                ctx,
+                deps,
+              });
+            } catch (error) {
+              return {
+                content: [
+                  { type: "text", text: error instanceof Error ? error.message : String(error) },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+              };
+            }
             return cancelPersistedPausedForegroundRun(
               deps.state,
               pausedAsyncDir,
               rememberedPaused.run.runId,
               rememberedPaused.index,
             );
+          }
         }
         let resolved: ResolvedSubagentRunId | undefined;
-        if (targetRunId) {
-          try {
-            resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text", text: message }],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
+        let selectedParams = paramsWithResolvedCwd;
+        try {
+          const selected = selectInterruptTarget(paramsWithResolvedCwd, deps.state);
+          resolved = selected.target;
+          selectedParams = selected.params;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: "text", text: message }],
+            isError: true,
+            details: { mode: "management", results: [] },
+          };
         }
-        if (resolved?.kind === "nested") return interruptNestedRun(resolved);
-        const foreground = getForegroundControl(
-          deps.state,
-          resolved?.kind === "foreground" ? resolved.id : targetRunId,
-        );
-        if (foreground) {
-          if (requestForegroundInterrupt(foreground)) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Interrupt requested for foreground run ${foreground.runId}.`,
-                },
-              ],
-              details: { mode: "management", results: [] },
-            };
-          }
+        const privateProjectLookup =
+          targetRunId || paramsWithResolvedCwd.dir
+            ? requestedProjectLookup
+            : lookupPrivateProjectActionReference(selectedParams);
+        if (privateProjectLookup.status === "ambiguous") {
           return {
             content: [
               {
                 type: "text",
-                text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
+                text: projectRunAuthorizationError(
+                  `the selected run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+                ).message,
               },
             ],
             isError: true,
             details: { mode: "management", results: [] },
           };
         }
-        if (resolved?.kind === "foreground") {
-          const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
-          const persistedStatus = readStatus(pausedAsyncDir);
-          if (
-            persistedStatus?.state === "paused" ||
-            persistedStatus?.state === "continued" ||
-            persistedStatus?.state === "cancelled"
-          ) {
-            return cancelPersistedPausedForegroundRun(
-              deps.state,
-              pausedAsyncDir,
-              resolved.id,
-              paramsWithResolvedCwd.index,
-            );
-          }
-        }
-        if (resolved?.kind === "async" && resolved.location.asyncDir) {
-          const persistedStatus = readStatus(resolved.location.asyncDir);
-          if (
-            persistedStatus?.state === "paused" ||
-            persistedStatus?.state === "continued" ||
-            persistedStatus?.state === "cancelled"
-          ) {
-            return cancelPersistedPausedForegroundRun(
-              deps.state,
-              resolved.location.asyncDir,
-              resolved.id,
-              paramsWithResolvedCwd.index,
-            );
-          }
-        }
-        const asyncInterruptResult = interruptAsyncRun(
-          deps.state,
-          resolved?.kind === "async" ? resolved.id : targetRunId,
-          deps.kill,
-          resolved?.kind === "async" ? resolved.location : undefined,
+        const projectResolutionError = projectInterruptResolutionMismatch(
+          privateProjectLookup,
+          resolved?.id,
         );
+        if (projectResolutionError) {
+          return projectInterruptAuthorizationResult(projectResolutionError);
+        }
+        let asyncInterruptTarget = resolved?.kind === "async" ? resolved : undefined;
+        let asyncInterruptParams = selectedParams;
+        let asyncInterruptLookup: ProjectAgentRunReferenceLookup = privateProjectLookup;
+        if (resolved?.kind === "nested") {
+          if (
+            hasMalformedProjectAgentControlMarker(resolved.match.run) ||
+            (privateProjectLookup.status === "missing" &&
+              hasProjectAgentControlMarker(resolved.match.run))
+          ) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: projectRunAuthorizationError(
+                    "the nested target carries a malformed or unavailable project-agent marker; refusing nested interrupt fallback.",
+                  ).message,
+                },
+              ],
+              isError: true,
+              details: { mode: "management", results: [] },
+            };
+          }
+          if (privateProjectLookup.status === "found" && resolved.match.run.projectAgent) {
+            try {
+              privateProjectCaptureForTarget(privateProjectLookup, {
+                runId: resolved.id,
+                agent: resolved.match.run.agent ?? resolved.match.run.projectAgent.provenance.agent,
+                projectAgent: resolved.match.run.projectAgent,
+              });
+            } catch (error) {
+              return {
+                content: [
+                  { type: "text", text: error instanceof Error ? error.message : String(error) },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+              };
+            }
+          }
+          return interruptNestedRun(resolved);
+        }
+        if (resolved?.kind === "foreground") {
+          const foregroundRun = deps.state.foregroundRuns?.get(resolved.id);
+          const foregroundProjectChildren = (foregroundRun?.children ?? []).filter(
+            (child) => child.projectAgent !== undefined,
+          );
+          if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "missing") {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: projectRunAuthorizationError(
+                    "the foreground target carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
+                  ).message,
+                },
+              ],
+              isError: true,
+              details: { mode: "management", results: [] },
+            };
+          }
+          if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "found") {
+            try {
+              for (const foregroundChild of foregroundProjectChildren) {
+                privateProjectCaptureForTarget(privateProjectLookup, {
+                  runId: resolved.id,
+                  agent: foregroundChild.agent,
+                  projectAgent: foregroundChild.projectAgent,
+                });
+              }
+            } catch (error) {
+              return {
+                content: [
+                  { type: "text", text: error instanceof Error ? error.message : String(error) },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+              };
+            }
+          }
+          const foreground = getForegroundControl(deps.state, resolved.id);
+          if (foreground) {
+            if (requestForegroundInterrupt(foreground)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Interrupt requested for foreground run ${foreground.runId}.`,
+                  },
+                ],
+                details: { mode: "management", results: [] },
+              };
+            }
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
+                },
+              ],
+              isError: true,
+              details: { mode: "management", results: [] },
+            };
+          }
+          const asyncTarget = getAsyncInterruptTarget(deps.state, resolved.id);
+          if (asyncTarget) {
+            asyncInterruptTarget = resolvedAsyncInterruptTarget(asyncTarget);
+            asyncInterruptParams = {
+              ...selectedParams,
+              id: asyncInterruptTarget.id,
+              dir: asyncTarget.asyncDir,
+            };
+            asyncInterruptLookup = lookupPrivateProjectActionReference(asyncInterruptParams);
+            if (asyncInterruptLookup.status === "ambiguous") {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: projectRunAuthorizationError(
+                      `the selected async run id is ambiguous in the retained project-agent registry (${asyncInterruptLookup.runIds.join(", ")}). Provide a full run id.`,
+                    ).message,
+                  },
+                ],
+                isError: true,
+                details: { mode: "management", results: [] },
+              };
+            }
+            const asyncProjectResolutionError = projectInterruptResolutionMismatch(
+              asyncInterruptLookup,
+              asyncInterruptTarget.id,
+            );
+            if (asyncProjectResolutionError) {
+              return projectInterruptAuthorizationResult(asyncProjectResolutionError);
+            }
+          } else {
+            const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
+            const persistedStatus = readStatus(pausedAsyncDir);
+            if (
+              persistedStatus?.state === "paused" ||
+              persistedStatus?.state === "continued" ||
+              persistedStatus?.state === "cancelled"
+            ) {
+              return cancelPersistedPausedForegroundRun(
+                deps.state,
+                pausedAsyncDir,
+                resolved.id,
+                paramsWithResolvedCwd.index,
+              );
+            }
+          }
+        }
+        if (asyncInterruptTarget) {
+          const selectedAsyncJob = deps.state.asyncJobs.get(asyncInterruptTarget.id);
+          if (
+            asyncInterruptLookup.status === "missing" &&
+            hasInMemoryProjectAgentCapture(selectedAsyncJob)
+          ) {
+            return projectInterruptAuthorizationResult(
+              projectRunAuthorizationError(
+                "the selected async run carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
+              ),
+            );
+          }
+          try {
+            await authorizeProjectInterruptTarget({
+              params: asyncInterruptParams,
+              lookup: asyncInterruptLookup,
+              ctx,
+              deps,
+            });
+          } catch (error) {
+            return {
+              content: [
+                { type: "text", text: error instanceof Error ? error.message : String(error) },
+              ],
+              isError: true,
+              details: { mode: "management", results: [] },
+            };
+          }
+        }
+        if (
+          asyncInterruptTarget &&
+          resolved?.kind === "async" &&
+          targetRunId?.trim() &&
+          asyncInterruptTarget.location.asyncDir
+        ) {
+          const persistedStatus = readStatus(asyncInterruptTarget.location.asyncDir);
+          if (
+            persistedStatus?.state === "paused" ||
+            persistedStatus?.state === "continued" ||
+            persistedStatus?.state === "cancelled"
+          ) {
+            return cancelPersistedPausedForegroundRun(
+              deps.state,
+              asyncInterruptTarget.location.asyncDir,
+              asyncInterruptTarget.id,
+              paramsWithResolvedCwd.index,
+            );
+          }
+        }
+        const asyncInterruptResult = asyncInterruptTarget
+          ? interruptAsyncRun(
+              deps.state,
+              asyncInterruptTarget.id,
+              deps.kill,
+              asyncInterruptTarget.location,
+            )
+          : null;
         if (asyncInterruptResult) return asyncInterruptResult;
         return {
           content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
@@ -6385,7 +7316,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     if ("error" in projectResolution) {
       return toExecutionErrorResult(effectiveParams, new Error(projectResolution.error));
     }
-    effectiveParams = projectResolution.params;
+    effectiveParams = applyProjectAgentOpenRouterModel(
+      projectResolution.params,
+      projectResolution.projectAgentCaptures,
+      ctx.model,
+    );
     const effectiveCwd = projectResolution.effectiveCwd;
     const discovered = projectResolution.discovered;
     const discoveredAgents = discovered.agents;
@@ -6609,6 +7544,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
             parentStepIndex: nestedParentAddress.parentStepIndex,
             depth: nestedParentAddress.depth,
             path: nestedParentAddress.path,
+            cwd: effectiveCwd,
             ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
             leafIntercomTarget,
             intercomTarget: leafIntercomTarget,

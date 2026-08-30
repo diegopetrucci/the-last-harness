@@ -60,7 +60,7 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 ### Disabled mode
 
-`disabled` is a mode where no ad-hoc guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
+`disabled` is a mode where no ad-hoc primary-role guidance is given, but the TLH tooling (subagents, extensions, etc.) is kept. Disabled mode receives no primary-role append, while each newly launched canonical minor agent still uses its own matching project append. It can also initiate an explicitly requested, freshly scoped project custom agent under the exact-root contract. I would say, frankly, if you find yourself using it a lot: either you should send me feedback to improve TLH, or TLH itself might not be a good fit.
 
 ## Everything else
 
@@ -68,7 +68,9 @@ These are smaller, laser-focused primary agents. I especially recommend `rush` f
 
 Subagent orchestration is first-party TLH functionality: the runtime, prompts, and supervision ship in the root package, so there is no separate subagent package for you to install or pin. The imported test suites live in this repository and run in CI, but are excluded from the published package. Bundled subagents start in a fresh context, isolated from both the primary agent and one another, and the primary gives them just enough context to do their job. Async work, status/steering, durable pause/resume, acceptance evidence, diagnostics, artifacts, and the full migration/undo details are covered in [docs/subagents.md](docs/subagents.md).
 
-Stable, always-available user-owned profile custom subagents are available to the architect (and `disabled` mode) when a valid active-profile definition authorizes their `embedded.<slug>` runtime name. Project-owned custom subagents can be placed in `.tlh/agents/<slug>.md` and requested naturally by name after project approval; see [docs/custom-subagents.md](docs/custom-subagents.md) for both sources.
+Stable, always-available trusted project custom subagents are available to the architect (and `disabled` mode) when an exact file at `<git-worktree-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md` authorizes them. Custom-agent execution requires a persisted positive `/trust` decision for the validated Git worktree root; session-only or configuration-trust approvals never authorize custom agents. TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, installed-package/extra-directory definitions, and settings/default overrides (except an active-profile `disabled: true` deny-only tombstone); those definitions do not appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot create or authorize a custom target. Canonical installer-managed packaged TLH roles continue loading from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths; see [docs/custom-subagents.md](docs/custom-subagents.md).
+
+Projects can also provide session-scoped model and effort defaults for the packaged primary agents and bundled subagent roles in `.tlh/defaults.json`. Defaults use a separate, weaker configuration-trust decision: persisted `/trust` permits both surfaces, while an upstream/default/session approval permits only `.tlh/defaults.json` and never authorizes or modifies custom agents. See [docs/models.md § Project model/effort defaults](docs/models.md#project-modeleffort-defaults).
 
 All bundled subagents:
 
@@ -83,7 +85,7 @@ All bundled subagents:
 
 ### Customisation
 
-You can add your own skills, prompts, extensions, packages, and custom subagents to TLH. User-owned profile custom subagents use the active profile's `agents/` directory and `embedded.<slug>` runtime names; project custom subagents live in `.tlh/agents/<slug>.md` and can be requested naturally by name. Their separate authorization, trust, lifecycle, and removal rules are documented in [docs/custom-subagents.md](docs/custom-subagents.md).
+You can add your own skills, prompts, extensions, and packages to TLH.
 
 User-level:
 
@@ -98,14 +100,53 @@ Repo settings:
 - `.pi/prompts/`
 - `.pi/extensions/`
 - `.claude/skills/` — project-level Claude Code skills directory; on the primary agent, **project trust must be granted** before this root is read (see `/trust`)
+- `.tlh/agents/custom/<UPPERCASE-SLUG>.md` — direct, Git-root-only project custom-agent definitions; see [Project custom subagents](docs/custom-subagents.md) for the exact contract and persisted-trust requirement.
 
-After adding files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so the new resources are picked up.
+After adding built-in append files, installing a package, or saving project trust, run `/reload` in TLH (or restart it) so those resources are picked up. Project custom-agent changes become active in a new snapshot after `/reload` or a new session.
+
+#### Per-agent project guidance
+
+To give project-specific instructions to one packaged TLH role, add a plain Markdown prompt append under `.tlh/agents/builtin/` using one of these exact filenames:
+
+| Packaged role     | Exact filename                                         |
+| ----------------- | ------------------------------------------------------ |
+| `architect`       | `.tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md`       |
+| `rush`            | `.tlh/agents/builtin/RUSH_PROMPT_APPEND.md`            |
+| `product`         | `.tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md`         |
+| `bug-hunter`      | `.tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md`      |
+| `developer`       | `.tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md`       |
+| `code-reviewer`   | `.tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md`   |
+| `repo-scout`      | `.tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md`      |
+| `diff-summarizer` | `.tlh/agents/builtin/DIFF-SUMMARIZER_PROMPT_APPEND.md` |
+| `librarian`       | `.tlh/agents/builtin/LIBRARIAN_PROMPT_APPEND.md`       |
+| `web-scout`       | `.tlh/agents/builtin/WEB-SCOUT_PROMPT_APPEND.md`       |
+| `oracle`          | `.tlh/agents/builtin/ORACLE_PROMPT_APPEND.md`          |
+| `contrarian`      | `.tlh/agents/builtin/CONTRARIAN_PROMPT_APPEND.md`      |
+
+For each role, TLH starts at the current working directory and searches upward through the enclosing Git worktree; outside a Git worktree it checks only the current directory. Discovery is exact and non-recursive within each `.tlh/agents/builtin/` directory. The nearest exact match wins. A nearer blank, invalid, or unsafe match does not fall through to a farther same-role file. Only the matching role's append is added to that packaged role's prompt. Legacy `.tlh/<ROLE>.md` paths are no longer read and have no fallback. Files are append-only plain Markdown: they do not replace the packaged prompt, and they do not support YAML frontmatter or model, tool, or other agent configuration. Project custom embedded agents use the separate exact-root contract in [docs/custom-subagents.md](docs/custom-subagents.md), not this convention.
+
+Example:
+
+```sh
+mkdir -p .tlh/agents/builtin
+cat > .tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md <<'EOF'
+Before proposing implementation work, state the important assumptions and risks.
+EOF
+```
+
+`.tlh/agents/builtin/` is not classified as a trust-requiring resource by the upstream runtime, but the persisted trust entry must contain the selected append source before TLH reads it. In TLH, run `/trust`, choose a persistent `Trust` option (not a session-only option), and save the decision. For a worktree-root append, run `/trust` while TLH is at that worktree root and persist the `Trust` decision there; trust saved only for a nested cwd does not authorize ancestor/worktree-root `.tlh/agents/builtin/` files. Then run `/reload` or restart. Primary-agent appends are snapshotted at session start: edits and newly saved trust take effect for the primary only after that boundary, while switching primary roles selects the corresponding file from the same snapshot. Minor-agent appends are resolved when each child process starts, including foreground, parallel, async, and any resume/revival that launches a new child process. A live async resume/steer that continues the same child process keeps its session-start append snapshot; a resume/revival that starts a new child process rereads the current `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` append.
+
+TLH refuses to read a symlinked `.tlh`, `.tlh/agents`, or `.tlh/agents/builtin` directory or prompt-append file, a non-regular file, or a file larger than **64 KiB**. It fails closed rather than following a symlink, truncating content, or throwing; diagnostics for rejected files are internal and are not guaranteed to be user-visible. Recognized trusted files appear in the expanded startup header under **Project guidance**; rejected files do not appear in startup resources. If prompt appends are found without persisted trust, startup shows an actionable `/trust` plus `/reload` or restart warning without exposing their contents.
+
+To undo the example, remove `.tlh/agents/builtin/ARCHITECT_PROMPT_APPEND.md` and run `/reload` or restart; new child launches and resume/revival actions that start a new child process stop using it, while a live async resume/steer that continues an existing child keeps its session-start snapshot. If an ancestor contains another `ARCHITECT_PROMPT_APPEND.md`, it becomes the nearest match, so remove that file too if you want no architect append (or leave an empty nearest file to explicitly shadow farther guidance).
+
+This is separate from the upstream global/project `APPEND_SYSTEM.md` mechanism: the global file in the active isolated profile (by default `~/.the-last-harness/agent/APPEND_SYSTEM.md`) and project `.pi/APPEND_SYSTEM.md` append general system instructions, not role-specific guidance. `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` only adds content to its matching packaged role and does not replace or reconfigure that system prompt.
 
 ### Docs dump
 
 - Slash commands reference: [`docs/commands.md`](docs/commands.md)
 - First-party subagent dispatch, supervision, migration, and undo steps: [`docs/subagents.md`](docs/subagents.md)
-- Profile- and project-owned trusted custom subagents: [`docs/custom-subagents.md`](docs/custom-subagents.md)
+- [Project custom subagents](docs/custom-subagents.md) — exact Git-root layout, persisted trust, and migration/undo rules
 - TLH model defaults, thinking levels, and provider selection: [`docs/models.md`](docs/models.md)
 - Install, update, uninstall, paths, and undo steps: [`docs/install.md`](docs/install.md)
 - Common failure recovery and conservative troubleshooting: [`docs/troubleshooting.md`](docs/troubleshooting.md)

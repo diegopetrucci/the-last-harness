@@ -30,7 +30,7 @@ Disabled mode is not a model role: it applies no primary model/effort default or
 
 The upstream Pi runtime provides OpenRouter authentication and transport: use `/login openrouter` for OAuth or set `OPENROUTER_API_KEY`. TLH does not implement that provider's transport or authentication. All non-opposite TLH primaries and subagents follow the active OpenRouter session model by default. For an active primary, a persisted `tlh.primaryAgent.modelOverrides.<primary>` entry takes precedence and is reapplied at the next session or primary-mode boundary; otherwise the primary follows the current session model. Their effort comes from each role's effort-only `openrouter` entry; generic or legacy thinking values do not leak onto this path. Unknown versus explicitly non-reasoning capability checks apply to stored minor-agent effort overrides and generated fallback handling, not pure bundled or primary defaults.
 
-For `code-reviewer`, `oracle`, and `contrarian` (`preferOppositeProvider`), TLH first looks for an available direct OpenAI/Codex or Anthropic candidate (both the Codex subscription provider and plain OpenAI API candidates qualify). For known `openrouter/anthropic/*` models it tries the opposite OpenAI/Codex family first, then an available Anthropic-family direct candidate; for known `openrouter/openai/*` models it tries Anthropic first, then an available OpenAI/Codex-family direct candidate. A same-family fallback reports degraded review independence. For unknown vendors it tries the OpenAI/Codex family first, but independence is unknown. The active OpenRouter session model remains the retry fallback, also with a reduced-independence notice. Stored or explicitly supplied model and effort overrides retain precedence over these defaults.
+For project custom embedded agents launched by a TLH primary, an omitted caller model likewise follows the live OpenRouter session model—even when the root file declares a different `model`; an explicitly supplied caller model still wins. On other providers, the root file's model remains effective unless the caller overrides it. For `code-reviewer`, `oracle`, and `contrarian` (`preferOppositeProvider`), TLH first looks for an available direct OpenAI/Codex or Anthropic candidate (both the Codex subscription provider and plain OpenAI API candidates qualify). For known `openrouter/anthropic/*` models it tries the opposite OpenAI/Codex family first, then an available Anthropic-family direct candidate; for known `openrouter/openai/*` models it tries Anthropic first, then an available OpenAI/Codex-family direct candidate. A same-family fallback reports degraded review independence. For unknown vendors it tries the OpenAI/Codex family first, but independence is unknown. The active OpenRouter session model remains the retry fallback, also with a reduced-independence notice. For bundled review roles, stored or explicitly supplied model and effort overrides retain precedence over those review-role defaults; stored profile/default overrides do not modify project custom embedded agents.
 
 OpenRouter has no packaged model frontmatter catalog beyond effort-only entries. Consequently, `/reconcile` cannot dynamically drift-check the OpenRouter session model or dynamically selected opposite-provider candidates; this is an accepted limitation. OpenRouter credit usage is not a subscription-window footer provider.
 
@@ -85,6 +85,72 @@ The valid effort values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, 
 When existing settings content is replaced, TLH creates a `settings.json.bak-*` backup and shows its path. To undo a change, use the matching `reset` command, use `reset-all` for bundled roles, or restore the desired `settings.json.bak-*` backup over the active profile's `settings.json`.
 
 See [`commands.md`](commands.md) for the complete grammar, precedence details, warnings, and recovery steps.
+
+## Project model/effort defaults
+
+A project can provide model and effort defaults for the active session without requiring every contributor to set personal overrides. Place `.tlh/defaults.json` at the canonical Git worktree root:
+
+```json
+{
+  "primaryAgents": {
+    "architect": { "model": "anthropic/claude-opus-5", "effort": "high" },
+    "rush": { "effort": "medium" }
+  },
+  "subagents": {
+    "developer": { "model": "anthropic/claude-sonnet-4-6" },
+    "code-reviewer": { "effort": "xhigh" }
+  }
+}
+```
+
+Both `model` and `effort` are optional per entry, but at least one must be present. The `model` value uses the `provider/model-id` vocabulary (for example `anthropic/claude-opus-5` or `openai-codex/gpt-5.6-sol`). The parser requires non-empty text on both sides of the first `/`; additional `/` characters in the model ID and a `:<effort>` suffix are retained. The `effort` value is one of the seven canonical levels — `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` — and is case-sensitive.
+
+Valid primary agent names: `architect`, `rush`, `product`, `bug-hunter`. Valid subagent role names: `code-reviewer`, `contrarian`, `developer`, `diff-summarizer`, `librarian`, `oracle`, `repo-scout`, `web-scout`.
+
+Unknown role names, unknown keys within an entry, invalid model/effort values, and entries missing both fields all produce a warning and skip that entry; the rest of the file still applies. Malformed JSON warns and applies nothing. Loaded validation warnings are surfaced with bounded, deduplicated notifications (plus one overflow summary when needed, capped at 1,000,000 omitted issues so the count remains numerically safe). The file is read with fail-closed safety: symlinks anywhere on the `.tlh` path, non-regular files, and files exceeding 64 KiB (65,536 UTF-8 bytes) are rejected entirely.
+
+### Trust
+
+Project custom agents and project defaults use separate trust planes:
+
+- A persisted canonical `/trust` `saved-positive` decision for the validated Git worktree root enables both the exact `.tlh/agents/custom/<UPPERCASE-SLUG>.md` custom-agent contract and `.tlh/defaults.json`.
+- An upstream positive project-trust signal, `defaultProjectTrust: always`, or a session approval may enable `.tlh/defaults.json` only. None of those configuration-trust sources authorizes a project custom agent; custom-agent execution always requires a persisted positive `/trust` decision.
+- The defaults prompt title is **"Trust project-local TLH defaults?"**. Its message scopes the decision to repository-owned model/effort defaults for the current session and states that project custom agents require persisted `/trust`; it is never a custom-agent authorization prompt.
+
+A denial, unavailable confirmation, or failed configuration-trust check applies no project defaults and does so non-fatally.
+
+### Precedence
+
+Model and effort resolve independently per role. For each field, the order is (highest wins):
+
+1. **Explicit in-session user action** — an Enter/session-only model choice or session thinking override; for subagents, an explicitly user-directed per-dispatch model.
+2. **Project defaults** — `.tlh/defaults.json` (this section).
+3. **Persisted user overrides** — `tlh.primaryAgent.modelOverrides.<primary>` for primaries, `subagents.agentOverrides.<role>` for subagents.
+4. **Bundled `tlhModelDefaults` frontmatter**.
+
+Because fields are independent, a session-only model pin does not suppress a project effort default, and vice versa. For primary agents, the effort precedence is literally `session ?? project ?? durable ?? bundled`.
+
+Project defaults are applied at runtime only and are never written into the user's persisted settings. They apply only to the packaged primary agents and bundled subagent roles listed above; they do not apply to project custom agents. Project custom agents execute the exact captured frontmatter/configuration from their trusted snapshot and ignore `.tlh/defaults.json`, profile/project settings, and `subagents.agentOverrides` (apart from explicit dispatch controls and the documented OpenRouter behavior in [OpenRouter sessions](#openrouter-sessions)).
+
+The informational notice `TLH applied project defaults for <role>: model <x>, effort <y>` is primary-agent-only and appears at most once per primary per session. It lists only project fields that win precedence and become effective; an effort value is shown after model-capability clamping. Subagent defaults apply silently at dispatch, while unavailable project models still produce warnings.
+
+If a project model is not available in the current registry, TLH warns once and falls through to layer 3/4 for that field; the effort field is still applied independently.
+
+### Opposite-provider subagents and project defaults
+
+`code-reviewer`, `oracle`, and `contrarian` derive their provider dynamically from the active session model (see [Review independence](#review-independence-for-code-reviewer-oracle-and-contrarian)). Project defaults interact with this in two ways:
+
+- **Primary project model default**: changes the active session model, so opposite-role subagents pick up the new provider automatically.
+- **Subagent effort-only entry** (`{ "effort": "..." }` with no `model` field): dynamic opposite-provider selection is preserved; only the effort level is overridden.
+- **Subagent model pin** (`{ "model": "..." }`): bypasses dynamic opposite-provider selection for that role, the same way a persisted `/subagent-settings` model pin does.
+
+**Recommend effort-only entries for `code-reviewer`, `oracle`, and `contrarian`** when you want to keep opposite-provider behavior.
+
+A project model pin also overrides a persisted `model: false` (session-inherit) setting, since `model: false` is a persisted value for the model field; an effort-only project entry leaves `model: false` intact. If the project model is unavailable, TLH falls back to the persisted value (including `model: false`).
+
+### Undo
+
+Delete `.tlh/defaults.json` or remove the specific entry. To override a project model for the active session, choose the desired model through the native picker and press Ctrl+S to persist it as layer 3; an existing project model remains higher precedence and can re-override it at the next `before_agent_start` or `session_tree` boundary while that project entry exists. An Enter/session-only choice is layer 1. Explicit session thinking/effort choices remain layer 1 and continue to win over project effort.
 
 ## Thinking level selection
 

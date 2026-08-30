@@ -17,6 +17,8 @@ export interface RunnerSubagentStep {
   /** Exact approved project-agent config/provenance; never includes a capability. */
   projectAgent?: ProjectAgentRunCapture;
   agent: string;
+  /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
+  projectAgentGuidance?: boolean;
   task: string;
   phase?: string;
   label?: string;

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
@@ -45,6 +45,7 @@ import {
   loadProjectAgentSnapshot,
   reauthorizeTlhProjectAgentTrust,
 } from "./project-agent-loader-bridge.mjs";
+import { loadProjectDefaults } from "./project-defaults-loader-bridge.mjs";
 import {
   lookupTlhProjectAgentRunReference,
   probeTlhProjectAgentRunMarker,
@@ -89,10 +90,14 @@ import {
   isThinkingLevel,
   setExtensionThinkingLevel,
 } from "./thinking.js";
+import { appendBeforeChildSubagentBoundary } from "../shared/subagent-child-boundary.js";
+import {
+  inventoryProjectAgentGuidance,
+  type ProjectAgentGuidanceInventory,
+} from "../shared/project-agent-guidance.js";
 import {
   buildChildSubagentSystemPrompt,
   buildTlhSystemPrompt,
-  loadAuthorizedEmbeddedSubagentRuntimeNames,
   loadPrimaryAgents,
   loadSubagentMetadata,
 } from "./prompts.js";
@@ -112,28 +117,207 @@ import type {
   TlhSubagentOverride,
 } from "./types.js";
 
-interface ProjectAgentSnapshotLoadResult {
-  status: string;
-  capability?: object;
-  trust?: { trusted: boolean; source: string };
-  provenance?: Record<string, unknown>;
-  manifest?: Record<string, unknown>;
+type ProjectAgentCapability = Record<string, unknown>;
+/** Role names accepted by the project-defaults runtime boundary. */
+type ProjectPrimaryAgentName = Exclude<TlhPrimaryAgentSelection, "disabled">;
+type ProjectSubagentRoleName =
+  | "code-reviewer"
+  | "contrarian"
+  | "developer"
+  | "diff-summarizer"
+  | "librarian"
+  | "oracle"
+  | "repo-scout"
+  | "web-scout";
+
+const PROJECT_PRIMARY_AGENT_NAMES: ReadonlySet<string> = new Set([
+  "architect",
+  "rush",
+  "product",
+  "bug-hunter",
+]);
+const PROJECT_SUBAGENT_ROLE_NAMES: ReadonlySet<string> = new Set([
+  "code-reviewer",
+  "contrarian",
+  "developer",
+  "diff-summarizer",
+  "librarian",
+  "oracle",
+  "repo-scout",
+  "web-scout",
+]);
+
+/** Keep these bounds aligned with the lazy project-defaults loader. */
+const MAX_PROJECT_DEFAULT_WARNINGS = 20;
+const MAX_PROJECT_DEFAULT_WARNING_LENGTH = 512;
+/** Saturate overflow counts so hostile summaries stay finite and bounded. */
+const MAX_PROJECT_DEFAULT_WARNING_COUNT = 1_000_000;
+const PROJECT_DEFAULTS_WARNING_SUMMARY_PATTERN =
+  /^…and ([1-9][0-9]*) more issues in \.tlh\/defaults\.json$/;
+
+function truncateProjectDefaultsWarning(message: string): string {
+  if (message.length <= MAX_PROJECT_DEFAULT_WARNING_LENGTH) return message;
+  return `${message.slice(0, MAX_PROJECT_DEFAULT_WARNING_LENGTH - 1)}…`;
 }
 
-type ProjectAgentTrustReauthorizer = () => Promise<boolean>;
+function saturatingProjectDefaultsWarningCount(value: number): number {
+  if (!Number.isFinite(value) || value >= MAX_PROJECT_DEFAULT_WARNING_COUNT) {
+    return MAX_PROJECT_DEFAULT_WARNING_COUNT;
+  }
+  return value > 0 ? Math.floor(value) : 0;
+}
 
-type ProjectAgentSnapshotLoader = (options: {
+function addProjectDefaultsWarningCounts(current: number, additional: number): number {
+  const boundedCurrent = saturatingProjectDefaultsWarningCount(current);
+  const boundedAdditional = saturatingProjectDefaultsWarningCount(additional);
+  if (
+    boundedCurrent >= MAX_PROJECT_DEFAULT_WARNING_COUNT - boundedAdditional ||
+    boundedAdditional >= MAX_PROJECT_DEFAULT_WARNING_COUNT
+  ) {
+    return MAX_PROJECT_DEFAULT_WARNING_COUNT;
+  }
+  return boundedCurrent + boundedAdditional;
+}
+
+function projectDefaultsWarningSummaryCount(message: string): number | undefined {
+  const match = PROJECT_DEFAULTS_WARNING_SUMMARY_PATTERN.exec(message);
+  if (!match) return undefined;
+  return saturatingProjectDefaultsWarningCount(Number(match[1]));
+}
+
+function projectDefaultsWarningRoot(projectRoot: string | undefined, cwd: string): string {
+  return (
+    canonicalExistingProjectRoot(projectRoot) ?? canonicalExistingProjectRoot(cwd) ?? resolve(cwd)
+  );
+}
+
+function projectDefaultsWarningKey(
+  projectRoot: string | undefined,
+  cwd: string,
+  agent: string | undefined,
+  message: string,
+  identityMessage = message,
+): string {
+  const digest = createHash("sha256")
+    .update(projectDefaultsWarningRoot(projectRoot, cwd), "utf8")
+    .update("\0", "utf8")
+    .update(agent ?? "", "utf8")
+    .update("\0", "utf8")
+    .update(message, "utf8")
+    .update("\0", "utf8")
+    .update(identityMessage, "utf8")
+    .digest("hex");
+  return `project-default-warning-${digest}`;
+}
+
+function unavailableProjectModelWarningMessage(selection: string, modelReference: string): string {
+  const prefix = `TLH project default model "`;
+  const suffix = `" for ${selection} is not available; falling back to stored or bundled defaults.`;
+  const maxModelLength = Math.max(
+    0,
+    MAX_PROJECT_DEFAULT_WARNING_LENGTH - prefix.length - suffix.length,
+  );
+  const boundedModel =
+    modelReference.length <= maxModelLength
+      ? modelReference
+      : maxModelLength > 0
+        ? `${modelReference.slice(0, maxModelLength - 1)}…`
+        : "";
+  return truncateProjectDefaultsWarning(`${prefix}${boundedModel}${suffix}`);
+}
+
+/**
+ * Bound untrusted loader diagnostics independently from the lazy loader. Exact
+ * duplicates do not consume visible warning slots; overflow is one summary.
+ */
+function normalizeProjectDefaultsWarnings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const retained: string[] = [];
+  const seen = new Set<string>();
+  let omittedCount = 0;
+  let loaderSummaryCount = 0;
+  let hasLoaderSummary = false;
+  for (const rawWarning of value) {
+    if (typeof rawWarning !== "string" || rawWarning.length === 0) continue;
+    // Parse a loader-produced summary before truncating it; otherwise a huge
+    // decimal count could lose its suffix and evade saturation handling.
+    const summaryCount = projectDefaultsWarningSummaryCount(rawWarning);
+    if (summaryCount !== undefined) {
+      if (!hasLoaderSummary) {
+        hasLoaderSummary = true;
+        loaderSummaryCount = summaryCount;
+      }
+      continue;
+    }
+    const warning = truncateProjectDefaultsWarning(rawWarning);
+    if (seen.has(warning)) continue;
+    if (retained.length < MAX_PROJECT_DEFAULT_WARNINGS) {
+      retained.push(warning);
+      seen.add(warning);
+    } else {
+      omittedCount = addProjectDefaultsWarningCounts(omittedCount, 1);
+    }
+  }
+
+  const totalOmitted = addProjectDefaultsWarningCounts(loaderSummaryCount, omittedCount);
+  if (totalOmitted > 0) {
+    retained.push(
+      truncateProjectDefaultsWarning(`…and ${totalOmitted} more issues in .tlh/defaults.json`),
+    );
+  }
+  return retained;
+}
+
+/**
+ * Normalized project defaults loaded from .tlh/defaults.json for this session.
+ * This is a TLH-owned shape produced only after the lazy-import boundary is
+ * narrowed by normalizeProjectDefaultsResult.
+ */
+interface ActiveProjectDefaultsEntry {
+  readonly model?: string;
+  readonly effort?: ThinkingLevel;
+}
+
+interface ActiveProjectDefaults {
+  readonly status: "loaded" | "denied" | "unavailable";
+  /** Canonical root that authorized the loaded defaults, when present. */
+  readonly projectRoot: string | undefined;
+  readonly primaryAgents: Readonly<
+    Partial<Record<ProjectPrimaryAgentName, ActiveProjectDefaultsEntry>>
+  >;
+  readonly subagents: Readonly<
+    Partial<Record<ProjectSubagentRoleName, ActiveProjectDefaultsEntry>>
+  >;
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Structural contract used by the injectable bridge. Callers still widen the
+ * returned value to unknown before normalizeProjectDefaultsResult parses it.
+ */
+interface ProjectDefaultsLoaderResult {
+  readonly status: string;
+  readonly warnings?: readonly unknown[];
+  readonly defaults?: Record<string, unknown>;
+  readonly projectRoot?: string;
+  readonly trust?: Record<string, unknown>;
+}
+
+type ProjectDefaultsLoader = (options: {
   cwd: string;
-  sessionId: string;
-  agentDir: string;
-  defaultProjectTrust: "ask" | "always" | "never";
-  trustDependencies: {
-    createProjectTrustStore: (agentDir: string) => object;
-    hasTrustRequiringProjectResources: (cwd: string) => boolean;
-  };
-  context: {
+  sessionId?: string;
+  agentDir?: string;
+  defaultProjectTrust?: "ask" | "always" | "never";
+  trust?: {
+    sessionId?: string;
+    trustOverride?: boolean;
+    defaultProjectTrust?: "ask" | "always" | "never";
+    createProjectTrustStore?: (agentDir: string) => object;
+    hasTrustRequiringProjectResources?: (cwd: string) => boolean;
     isProjectTrusted?: () => boolean;
     hasUI?: boolean;
+    trustUiTimeoutMs?: number;
     ui?: {
       confirm(
         title: string,
@@ -142,10 +326,49 @@ type ProjectAgentSnapshotLoader = (options: {
       ): Promise<boolean> | boolean;
     };
   };
+}) => Promise<ProjectDefaultsLoaderResult>;
+
+interface ProjectAgentSnapshotLoadResult {
+  status: string;
+  capability?: ProjectAgentCapability;
+  trust?: { kind: "project-agent"; trusted: boolean; source: string };
+  provenance?: Record<string, unknown>;
+  manifest?: Record<string, unknown>;
+}
+
+type ProjectAgentTrustReauthorizer = () => Promise<boolean>;
+
+type ProjectAgentRebindRequest = {
+  projectRoot: string;
+  cwd: string;
+  sessionId: string;
+  agent: string;
+};
+
+type ProjectAgentRebindResult = {
+  capability: ProjectAgentCapability;
+  expected: Record<string, unknown>;
+  capture: {
+    provenance: Record<string, unknown>;
+    config: Record<string, unknown>;
+  };
+};
+
+type ProjectAgentRebinder = (
+  request: ProjectAgentRebindRequest,
+) => Promise<ProjectAgentRebindResult | undefined>;
+
+type ProjectAgentSnapshotLoader = (options: {
+  cwd: string;
+  sessionId: string;
+  agentDir: string;
+  trustDependencies: {
+    createProjectTrustStore: (agentDir: string) => object;
+  };
 }) => Promise<ProjectAgentSnapshotLoadResult>;
 
 interface ActiveProjectAgentSnapshot {
-  capability: object;
+  capability: ProjectAgentCapability;
   provenance: {
     projectRoot: string;
     sessionId: string;
@@ -156,6 +379,7 @@ interface ActiveProjectAgentSnapshot {
   tombstones: readonly string[];
   trust?: { trusted: boolean; source: string };
   reauthorizeTrust?: ProjectAgentTrustReauthorizer;
+  rebindProjectAgent?: ProjectAgentRebinder;
 }
 
 interface ProjectAgentRuntimeGlobalState {
@@ -174,14 +398,29 @@ const PROJECT_AGENT_RUNTIME_STATE =
 
 const PROJECT_AGENT_TRUST_DEPENDENCIES = {
   createProjectTrustStore: (agentDir: string) => new ProjectTrustStore(agentDir),
-  hasTrustRequiringProjectResources,
 };
+
+const PERSISTED_PROJECT_AGENT_TRUST_DENIAL_SOURCES = new Set([
+  "saved-negative",
+  "no-persisted-trust",
+  "trust-path-mismatch",
+  "trust-store-error",
+]);
+
+const PROJECT_CONFIG_TRUST_POSITIVE_SOURCES = new Set([
+  "saved-positive",
+  "upstream-positive",
+  "default-always",
+  "session-positive",
+]);
 
 type TlhPrimaryAgentRuntimeOptions = {
   env?: Record<string, string | undefined>;
   primaryAgents?: Map<TlhPrimaryAgentSelection, AgentPrompt>;
   subagentMetadata?: SubagentMetadata[];
   projectAgentLoader?: ProjectAgentSnapshotLoader;
+  /** Injectable project-defaults loader for testing. Defaults to the bridge. */
+  projectDefaultsLoader?: ProjectDefaultsLoader;
   /**
    * Returns the current session's provider auth-health store, or undefined when
    * called outside a session. Injected from the-last-harness.ts so the tool_call
@@ -205,6 +444,29 @@ type ActiveModel = NonNullable<ExtensionContext["model"]>;
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isProjectPrimaryAgentName(value: string): value is ProjectPrimaryAgentName {
+  return PROJECT_PRIMARY_AGENT_NAMES.has(value);
+}
+
+function isProjectSubagentRoleName(value: string): value is ProjectSubagentRoleName {
+  return PROJECT_SUBAGENT_ROLE_NAMES.has(value);
+}
+
+/** Use the eager runtime's shared registry parser for project model references. */
+function isValidProjectModelReference(value: unknown): value is string {
+  return typeof value === "string" && parseProviderModelReference(value) !== undefined;
+}
+
+function canonicalExistingProjectRoot(value: unknown): string | undefined {
+  if (!nonEmptyString(value)) return undefined;
+  try {
+    const canonical = fs.realpathSync(value);
+    return fs.statSync(canonical).isDirectory() ? canonical : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -254,9 +516,13 @@ function normalizeActiveProjectAgentSnapshot(
     tombstones.push(rawTombstone);
   }
 
+  const rawTrust = value.trust;
   const trust =
-    isRecord(value.trust) && value.trust.trusted === true && typeof value.trust.source === "string"
-      ? { trusted: true, source: value.trust.source }
+    isRecord(rawTrust) &&
+    rawTrust.kind === "project-agent" &&
+    rawTrust.trusted === true &&
+    typeof rawTrust.source === "string"
+      ? { trusted: true, source: rawTrust.source }
       : undefined;
   return {
     capability,
@@ -270,6 +536,19 @@ function normalizeActiveProjectAgentSnapshot(
     tombstones,
     ...(trust ? { trust } : {}),
   };
+}
+
+function isPersistedProjectAgentTrustDenial(value: unknown): boolean {
+  if (!isRecord(value) || value.status !== "denied") return false;
+  if (!nonEmptyString(value.projectRoot) || !nonEmptyString(value.agentsDirectory)) return false;
+  const trust = value.trust;
+  return (
+    isRecord(trust) &&
+    trust.kind === "project-agent" &&
+    trust.trusted === false &&
+    typeof trust.source === "string" &&
+    PERSISTED_PROJECT_AGENT_TRUST_DENIAL_SOURCES.has(trust.source)
+  );
 }
 
 function defaultProjectTrustForCwd(cwd: string): "ask" | "always" | "never" {
@@ -368,6 +647,7 @@ type SessionThinkingOverride = {
 
 export type TlhPrimaryAgentRuntime = {
   applySessionStart(ctx: ExtensionContext): Promise<void>;
+  projectAgentGuidanceSnapshot(): ProjectAgentGuidanceInventory | undefined;
   currentPrimaryAgentLabel(): string;
   activePrimaryAgentPrompt(): AgentPrompt | undefined;
   /** Remember a validated user thinking selection for this primary/session. */
@@ -645,6 +925,84 @@ function subagentCallTargetsMatching(
   return collectSubagentCallTargetsMatching(input, predicate).length > 0;
 }
 
+function hasExplicitDispatchModel(target: unknown): boolean {
+  if (!isRecord(target)) return false;
+  const model = target.model;
+  if (typeof model !== "string") return false;
+  const normalized = model.trim();
+  return normalized.length > 0 && normalized !== "inherit";
+}
+
+/**
+ * Generic provider-aware defaults must never rewrite a project snapshot entry.
+ * Embedded model policy is applied below after the snapshot identity gate, so
+ * the only mutable exception is OpenRouter's omitted-model session inheritance.
+ */
+function applyProviderAwareModelsToNonProjectTargets(
+  input: unknown,
+  agents: ReadonlyMap<string, SubagentMetadata>,
+  availableModels: Parameters<typeof applyProviderAwareSubagentModels>[2],
+  currentProvider: string | undefined,
+  currentModel: Parameters<typeof applyProviderAwareSubagentModels>[4],
+  options: Parameters<typeof applyProviderAwareSubagentModels>[5],
+): void {
+  if (!isRecord(input)) return;
+  // applyProviderAwareSubagentModels also walks `tasks`; only use it for a
+  // single target here, then handle task targets individually so a project
+  // entry can never be rewritten and generic tasks are not visited twice.
+  if (
+    (!Array.isArray(input.tasks) || input.tasks.length === 0) &&
+    !isEmbeddedSubagentTarget(input.agent)
+  ) {
+    applyProviderAwareSubagentModels(
+      input,
+      agents,
+      availableModels,
+      currentProvider,
+      currentModel,
+      options,
+    );
+    return;
+  }
+  if (!Array.isArray(input.tasks)) return;
+  for (const task of input.tasks) {
+    if (isRecord(task) && !isEmbeddedSubagentTarget(task.agent)) {
+      applyProviderAwareSubagentModels(
+        task,
+        agents,
+        availableModels,
+        currentProvider,
+        currentModel,
+        options,
+      );
+    }
+  }
+}
+
+function applyOpenRouterModelToProjectTargets(
+  input: unknown,
+  projectTargets: readonly string[],
+  currentModel: ActiveModel | undefined,
+): void {
+  if (!isRecord(input) || currentModel?.provider !== "openrouter") return;
+  const projectTargetSet = new Set(projectTargets);
+  const apply = (target: unknown): void => {
+    if (
+      !isRecord(target) ||
+      typeof target.agent !== "string" ||
+      !projectTargetSet.has(target.agent.trim()) ||
+      hasExplicitDispatchModel(target)
+    ) {
+      return;
+    }
+    target.model = `${currentModel.provider}/${currentModel.id}`;
+  };
+  apply(input);
+  if (Array.isArray(input.tasks)) {
+    for (const task of input.tasks) apply(task);
+  }
+}
+
 const SCOUT_RUN_MAX_TIMEOUT_MS = 360_000;
 const SCOUT_TIMEOUT_CAPPED_SUBAGENTS = new Set([
   "librarian",
@@ -720,15 +1078,15 @@ function registerChildSubagentRuntime(
     const settings = getTlhGlobalSettings(ctx.cwd);
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const childAgentName = env.PI_SUBAGENT_CHILD_AGENT;
+    const additions = [
+      buildChildPrompt(),
+      buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
+      buildTlhCommitAttributionPrompt(commitAttributionState),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
-      systemPrompt: [
-        event.systemPrompt,
-        buildChildPrompt(),
-        buildChildExperimentalPrompt(childAgentName, settings.tlh?.experimental),
-        buildTlhCommitAttributionPrompt(commitAttributionState),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
+      systemPrompt: appendBeforeChildSubagentBoundary(event.systemPrompt, additions),
     };
   });
 
@@ -895,19 +1253,81 @@ function createTlhPrimaryAgentRuntime(
   runtimeOptions: {
     getProviderAuthHealthStore?: () => ProviderAuthHealthStore | undefined;
     projectAgentLoader?: ProjectAgentSnapshotLoader;
+    projectDefaultsLoader?: ProjectDefaultsLoader;
     now?: () => number;
   } = {},
 ): TlhPrimaryAgentRuntime & { registerCommands(): void; registerLifecycleHooks(): void } {
   const {
     getProviderAuthHealthStore,
     projectAgentLoader = loadProjectAgentSnapshot,
+    projectDefaultsLoader: projectDefaultsLoaderFn = loadProjectDefaults,
     now: nowFn = Date.now,
   } = runtimeOptions;
   const warned = new Set<string>();
-  const runtimeReferenceId = `runtime:${randomUUID()}`;
+  // Repository-controlled project-default diagnostics are intentionally scoped
+  // to one session. Their hashed keys keep attacker-controlled roots, roles,
+  // and messages out of long-lived notification state.
+  const projectDefaultsWarned = new Set<string>();
+  const runtimeOwnerPrefix = `runtime:${randomUUID()}`;
+  let runtimeReferenceId = `${runtimeOwnerPrefix}:owner:${randomUUID()}`;
   const runtimeEpoch = ++PROJECT_AGENT_RUNTIME_STATE.epoch;
   let activeProjectAgentSnapshot: ActiveProjectAgentSnapshot | undefined;
   let projectAgentLoadRequest = 0;
+  let projectAgentTrustWarningSessionId: string | undefined;
+
+  const isCurrentProjectAgentOperation = (loadRequest: number, sessionId: string): boolean =>
+    runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch &&
+    projectAgentLoadRequest === loadRequest &&
+    PROJECT_AGENT_RUNTIME_STATE.sessionId === sessionId;
+  const releaseProjectAgentReferenceQuietly = async (referenceId: string): Promise<void> => {
+    try {
+      await releaseTlhProjectAgentSnapshotReference(referenceId);
+    } catch {
+      // A failed cleanup can never become execution authority. Keep the
+      // active state unchanged and do not fall back to the unverified result.
+    }
+  };
+  type ProjectAgentReferenceLease = {
+    referenceId: string;
+    release: () => Promise<void>;
+  };
+  const retainProjectAgentReferenceTemporarily = async (
+    capability: ProjectAgentCapability,
+    kind: "load" | "rebind",
+  ): Promise<ProjectAgentReferenceLease | undefined> => {
+    const referenceId = `${runtimeOwnerPrefix}:${kind}:${randomUUID()}`;
+    try {
+      await retainTlhProjectAgentSnapshotReference(capability, referenceId);
+    } catch {
+      // A structurally valid loader result without a registry capability is
+      // not execution authority. Do not fall back to the returned metadata.
+      return undefined;
+    }
+    let retained = true;
+    return {
+      referenceId,
+      release: async () => {
+        if (!retained) return;
+        retained = false;
+        await releaseProjectAgentReferenceQuietly(referenceId);
+      },
+    };
+  };
+  const noticed = new Set<string>();
+  let activeProjectDefaults: ActiveProjectDefaults | undefined;
+  let sessionStartRequestId = 0;
+
+  type SessionStartOperation = {
+    readonly requestId: number;
+    readonly runtimeEpoch: number;
+  };
+
+  function isCurrentSessionStartOperation(operation: SessionStartOperation): boolean {
+    return (
+      operation.requestId === sessionStartRequestId &&
+      operation.runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch
+    );
+  }
 
   // The access provider is process-private and carries no model-facing fields.
   // It remains installed for this runtime's lifetime while its captured
@@ -915,21 +1335,28 @@ function createTlhPrimaryAgentRuntime(
   setTlhProjectAgentAccessProvider(() => {
     const snapshot = activeProjectAgentSnapshot;
     if (!snapshot) return undefined;
+    const selection = currentPrimaryAgentSelection();
     const architect =
-      currentPrimaryAgentSelection() === "architect" &&
-      isEnabledPrimaryAgentSelection(currentPrimaryAgentSelection()) &&
+      selection === "architect" &&
+      isEnabledPrimaryAgentSelection(selection) &&
       activePrimaryAgent() !== undefined;
     return {
       capability: snapshot.capability,
       expected: snapshot.provenance,
       architect,
+      // Disabled mode keeps the TLH safety plane active but intentionally has
+      // no primary persona. It may still initiate an explicitly requested
+      // project custom run; retained controls remain architect-only.
+      canInitiate: architect || selection === DISABLED_PRIMARY_AGENT,
       ...(snapshot.reauthorizeTrust ? { reauthorize: snapshot.reauthorizeTrust } : {}),
+      ...(snapshot.rebindProjectAgent ? { rebind: snapshot.rebindProjectAgent } : {}),
     };
   });
   const primaryToolState = createPrimaryToolState();
   const subagentsByName = new Map(subagentMetadata.map((agent) => [agent.name, agent]));
   let primaryAgentDefaultSelection: TlhPrimaryAgentSelection = DEFAULT_PRIMARY_AGENT;
   let sessionPrimaryAgentOverride: TlhPrimaryAgentSelection | undefined;
+  let sessionProjectAgentGuidanceSnapshot: ProjectAgentGuidanceInventory | undefined;
 
   // Per-provider throttle for credential preflights.
   // Key: provider string. Value: { failures, nextAllowedAt (ms timestamp) }.
@@ -1099,6 +1526,190 @@ function createTlhPrimaryAgentRuntime(
     }
     warned.add(key);
     ctx.ui.notify(message, "warning");
+  }
+
+  /**
+   * Publish a repository-controlled project-default warning once per session.
+   * The display text is bounded independently from the fixed-size hashed key;
+   * a headless or broken UI cannot make session_start fail.
+   */
+  function warnProjectDefaultsOnce(
+    ctx: ExtensionContext,
+    projectRoot: string | undefined,
+    agent: string | undefined,
+    message: string,
+    identityMessage = message,
+  ): void {
+    const boundedMessage = truncateProjectDefaultsWarning(message);
+    if (boundedMessage.length === 0) return;
+    try {
+      if (ctx.hasUI === false) return;
+      const key = projectDefaultsWarningKey(
+        projectRoot,
+        ctx.cwd,
+        agent,
+        boundedMessage,
+        identityMessage,
+      );
+      if (projectDefaultsWarned.has(key)) return;
+      ctx.ui.notify(boundedMessage, "warning");
+      projectDefaultsWarned.add(key);
+    } catch {
+      // Project/defaults diagnostics are advisory. A non-interactive or broken
+      // notification surface must never escape session_start or dispatch.
+    }
+  }
+
+  function warnPersistedProjectAgentTrustDenied(
+    ctx: ExtensionContext,
+    sessionId: string,
+    loaded: unknown,
+  ): void {
+    if (
+      ctx.hasUI === false ||
+      projectAgentTrustWarningSessionId === sessionId ||
+      !isPersistedProjectAgentTrustDenial(loaded)
+    ) {
+      return;
+    }
+    try {
+      ctx.ui.notify(
+        "TLH project custom agents are unavailable because persisted project trust does not authorize this project. Run /trust, persist trust for this project, then retry.",
+        "warning",
+      );
+      projectAgentTrustWarningSessionId = sessionId;
+    } catch {
+      // A non-interactive or unavailable UI must not affect the fail-closed load.
+    }
+  }
+
+  /** Emit a one-time info notice (once per key per session). */
+  function noticeOnce(ctx: ExtensionContext, key: string, message: string): void {
+    if (noticed.has(key)) {
+      return;
+    }
+    noticed.add(key);
+    try {
+      ctx.ui.notify(message, "info");
+    } catch {
+      // A broken UI must not abort a lifecycle boundary after defaults apply.
+    }
+  }
+
+  /**
+   * Validate and narrow the raw result from the project-defaults bridge.
+   * Treats the value as unknown (external I/O boundary).
+   */
+  function normalizeProjectDefaultsResult(
+    value: unknown,
+    cwd: string,
+  ): ActiveProjectDefaults | undefined {
+    if (!isRecord(value) || !Object.hasOwn(value, "status")) return undefined;
+    const status = value.status;
+    if (status !== "loaded" && status !== "denied" && status !== "unavailable") return undefined;
+
+    const warnings = normalizeProjectDefaultsWarnings(value.warnings);
+
+    if (status !== "loaded") {
+      return { status, projectRoot: undefined, primaryAgents: {}, subagents: {}, warnings };
+    }
+
+    const rawDefaults = Object.hasOwn(value, "defaults") ? value.defaults : undefined;
+    const primaryAgents: Partial<Record<ProjectPrimaryAgentName, ActiveProjectDefaultsEntry>> = {};
+    const subagents: Partial<Record<ProjectSubagentRoleName, ActiveProjectDefaultsEntry>> = {};
+
+    function normalizeSection<Role extends string>(
+      raw: unknown,
+      target: Partial<Record<Role, ActiveProjectDefaultsEntry>>,
+      isAllowedRole: (name: string) => name is Role,
+    ): void {
+      // Arrays, null, and other non-record section values are rejected rather
+      // than being treated as maps.
+      if (!isRecord(raw)) return;
+      for (const [name, rawEntry] of Object.entries(raw)) {
+        // Check the exact role allowlist before assigning to the target. In
+        // particular, __proto__ and constructor can never become target keys.
+        if (!isAllowedRole(name) || !isRecord(rawEntry)) continue;
+        if (Object.keys(rawEntry).some((key) => key !== "model" && key !== "effort")) {
+          continue;
+        }
+
+        let model: string | undefined;
+        if (Object.hasOwn(rawEntry, "model")) {
+          if (!isValidProjectModelReference(rawEntry.model)) continue;
+          model = rawEntry.model;
+        }
+
+        let effort: ThinkingLevel | undefined;
+        if (Object.hasOwn(rawEntry, "effort")) {
+          if (typeof rawEntry.effort !== "string" || !isThinkingLevel(rawEntry.effort)) {
+            continue;
+          }
+          effort = rawEntry.effort;
+        }
+
+        // Reject the whole entry when neither recognized field survives
+        // narrowing; do not apply effort on an invalid model entry.
+        if (model === undefined && effort === undefined) continue;
+
+        const entry: { model?: string; effort?: ThinkingLevel } = {};
+        if (model !== undefined) entry.model = model;
+        if (effort !== undefined) entry.effort = effort;
+        target[name] = entry;
+      }
+    }
+
+    if (isRecord(rawDefaults)) {
+      if (Object.hasOwn(rawDefaults, "primaryAgents")) {
+        normalizeSection(rawDefaults.primaryAgents, primaryAgents, isProjectPrimaryAgentName);
+      }
+      if (Object.hasOwn(rawDefaults, "subagents")) {
+        normalizeSection(rawDefaults.subagents, subagents, isProjectSubagentRoleName);
+      }
+    }
+
+    const projectRoot = Object.hasOwn(value, "projectRoot")
+      ? canonicalExistingProjectRoot(value.projectRoot)
+      : undefined;
+    const hasActiveDefaults =
+      Object.keys(primaryAgents).length > 0 || Object.keys(subagents).length > 0;
+    if (hasActiveDefaults) {
+      // Active values must carry a canonical root and be authorized by the
+      // configuration trust plane. A project-agent trust result is never valid
+      // here, even if it happens to report trusted=true.
+      if (!projectRoot) return undefined;
+      const cwdValidation = validatePrimaryProjectAgentCwdContainment(projectRoot, cwd, []);
+      if (!cwdValidation.valid) return undefined;
+      const trust = value.trust;
+      if (
+        !isRecord(trust) ||
+        !Object.hasOwn(trust, "kind") ||
+        !Object.hasOwn(trust, "trusted") ||
+        !Object.hasOwn(trust, "source") ||
+        trust.kind !== "project-config" ||
+        trust.trusted !== true ||
+        typeof trust.source !== "string" ||
+        !PROJECT_CONFIG_TRUST_POSITIVE_SOURCES.has(trust.source)
+      ) {
+        return undefined;
+      }
+    }
+
+    return {
+      status: "loaded",
+      projectRoot,
+      primaryAgents,
+      subagents,
+      warnings,
+    };
+  }
+
+  function activeProjectDefaultsForCwd(cwd: string): ActiveProjectDefaults | undefined {
+    if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch) return undefined;
+    const defaults = activeProjectDefaults;
+    if (defaults?.status !== "loaded" || !defaults.projectRoot) return undefined;
+    const validation = validatePrimaryProjectAgentCwdContainment(defaults.projectRoot, cwd, []);
+    return validation.valid ? defaults : undefined;
   }
 
   function warnInvalidPrimarySelection(ctx: ExtensionContext, source: string, value: string): void {
@@ -1310,7 +1921,14 @@ function createTlhPrimaryAgentRuntime(
     const commitAttributionState = resolveTlhCommitAttribution(settings.tlh?.attribution);
     const prompts = [
       baseSystemPrompt,
-      buildTlhSystemPrompt(primary, subagentMetadata, primaryEnabled),
+      // Project-agent guidance uses a once-per-session snapshot so it remains stable until /reload
+      // or a new session, while role changes select the matching entry from the same snapshot.
+      buildTlhSystemPrompt(
+        primary,
+        subagentMetadata,
+        primaryEnabled,
+        sessionProjectAgentGuidanceSnapshot,
+      ),
       // Experimental guidance reads settings fresh to preserve its existing mid-session behavior.
       buildPrimaryExperimentalPrompt(primary, settings.tlh?.experimental),
       buildTlhCommitAttributionPrompt(commitAttributionState),
@@ -1319,6 +1937,26 @@ function createTlhPrimaryAgentRuntime(
       prompts.push(GNOSIS_PROMPT);
     }
     return prompts.filter(Boolean).join("\n\n");
+  }
+
+  function notifyUndecidedProjectAgentGuidance(
+    ctx: ExtensionContext,
+    inventory: ProjectAgentGuidanceInventory,
+  ): void {
+    if (ctx.hasUI === false || inventory.trust !== "undecided" || inventory.files.length === 0) {
+      return;
+    }
+
+    const diagnostic = inventory.diagnostics.find(({ code }) => code === "project-not-trusted");
+    if (!diagnostic) {
+      return;
+    }
+
+    try {
+      ctx.ui.notify(diagnostic.message, "warning");
+    } catch {
+      // Startup should remain usable when a non-interactive UI rejects a notification.
+    }
   }
 
   function buildLaunchSystemPrompt(ctx: ExtensionContext, baseSystemPrompt: string): string {
@@ -1556,10 +2194,13 @@ function createTlhPrimaryAgentRuntime(
     return clamped;
   }
 
+  type PrimaryModelSource = "project" | "existing";
+
   async function applyPrimaryModel(
     ctx: ExtensionContext,
     primary: AgentPrompt,
     model: ActiveModel | undefined,
+    _source: PrimaryModelSource,
   ): Promise<ActiveModel | undefined> {
     if (!model) {
       const candidateValues = [
@@ -1601,30 +2242,45 @@ function createTlhPrimaryAgentRuntime(
     selection: TlhPrimaryAgentSelection,
     thinking: AgentPrompt["thinking"],
     model: ActiveModel | undefined,
-  ): void {
-    const sessionThinking = sessionThinkingLevelForPrimary(selection, model);
-    const durableThinking = getTlhDurableThinkingLevel(cwd);
-    const requestedThinking = sessionThinking ?? durableThinking ?? thinking;
+    /**
+     * Layer-2 effort from project defaults (.tlh/defaults.json).
+     * Beats persisted durable thinking (layer 3) and bundled frontmatter (layer 4),
+     * but yields to explicit in-session user actions (layer 1).
+     */
+    projectEffort?: ThinkingLevel,
+  ): ThinkingLevel | undefined {
+    const sessionThinking = sessionThinkingLevelForPrimary(selection, model); // layer 1
+    const durableThinking = getTlhDurableThinkingLevel(cwd); // layer 3
+    // Precedence: session (1) > project defaults (2) > durable/global setting (3) > bundled (4)
+    const requestedThinking = sessionThinking ?? projectEffort ?? durableThinking ?? thinking;
     if (requestedThinking === undefined) {
-      return;
+      return undefined;
     }
+
+    const projectEffortIsEffective = sessionThinking === undefined && projectEffort !== undefined;
     const targetThinking = clampThinkingLevelForModel(requestedThinking, model);
     if (pi.getThinkingLevel() === targetThinking) {
-      return;
+      return projectEffortIsEffective ? targetThinking : undefined;
     }
     setTlhThinkingLevel(targetThinking);
+    return projectEffortIsEffective ? targetThinking : undefined;
   }
 
   async function applyPrimaryDefaults(
     ctx: ExtensionContext,
-    options: { warnOnMissing?: boolean } = {},
+    options: {
+      warnOnMissing?: boolean;
+      sessionStartOperation?: SessionStartOperation;
+    } = {},
   ): Promise<void> {
-    const { warnOnMissing = true } = options;
+    const { warnOnMissing = true, sessionStartOperation } = options;
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     lastObservedModel = ctx.model;
     const selection = currentPrimaryAgentSelection();
     if (!isEnabledPrimaryAgentSelection(selection)) {
       // Disabled mode keeps the architect capability surface (tools only) while
       // omitting the architect persona and all of its model/thinking defaults.
+      if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
       try {
         applyPrimaryTools(ctx, primaryAgents.get(DEFAULT_PRIMARY_AGENT), warnOnMissing);
       } catch (error) {
@@ -1639,6 +2295,7 @@ function createTlhPrimaryAgentRuntime(
       return;
     }
 
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const primary = activePrimaryAgent();
     if (!primary) {
       restorePrimaryToolsIfAppropriate();
@@ -1646,6 +2303,7 @@ function createTlhPrimaryAgentRuntime(
     }
 
     applyPrimaryTools(ctx, primary, warnOnMissing);
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
 
     const primaryConfig = getTlhPrimaryAgentConfig(ctx.cwd);
     const shouldApplyModel = resolvePrimaryAutoApplySetting(primaryConfig, primary, "applyModel");
@@ -1662,41 +2320,127 @@ function createTlhPrimaryAgentRuntime(
       ctx.model,
     );
 
-    // Resolve model: stored override (if still available in registry) takes precedence over frontmatter default
+    // Layer 1: detect whether a session-only model is active (explicit in-session user action).
+    // Compute early so layers 2-4 can avoid overriding it.
+    const preservesSessionOnlyModel =
+      sessionOnlyModel !== undefined &&
+      ctx.model?.provider === sessionOnlyModel.provider &&
+      ctx.model?.id === sessionOnlyModel.id;
+    if (sessionOnlyModel && !preservesSessionOnlyModel) {
+      // An out-of-band model change must not leave the session-only gate stuck
+      // on another model.
+      updateSessionOnlyModel(undefined);
+    }
+
+    // 4-layer model/effort precedence (per field, independently):
+    //   1. Explicit in-session user action (session-only model / session thinking override)
+    //   2. Project defaults (.tlh/defaults.json primaryAgents entry)
+    //   3. Persisted user overrides (settings.tlh.primaryAgent.modelOverrides.<primary>)
+    //   4. Bundled tlhModelDefaults frontmatter
+
+    // Layer 4: bundled frontmatter
     let resolvedModel = primaryDefaults.model;
+    let resolvedModelSource: PrimaryModelSource = "existing";
+    let projectModelCandidate: { reference: string; model: ActiveModel } | undefined;
+    let projectEffort: ThinkingLevel | undefined;
+
+    // Layer 3: persisted user overrides
     const storedOverride = primaryConfig?.modelOverrides?.[selection];
     if (storedOverride) {
       const overrideRef = availableModels.find((m) => `${m.provider}/${m.id}` === storedOverride);
       if (overrideRef) {
         resolvedModel = overrideRef;
       }
-      // If override is unavailable, fall through to primaryDefaults.model (no error)
+      // If stored override is unavailable, fall through to layer 4 (no error)
     }
 
-    const preservesSessionOnlyModel =
-      sessionOnlyModel !== undefined &&
-      ctx.model?.provider === sessionOnlyModel.provider &&
-      ctx.model.id === sessionOnlyModel.id;
+    // Layer 2: project defaults — model and effort resolve independently per field.
+    // Model: gated by preservesSessionOnlyModel (session-only model wins for the model field).
+    // Effort: NOT gated by preservesSessionOnlyModel — the layer-1 guard for effort is
+    //   sessionThinkingOverride, checked inside applyPrimaryThinking.
+    const projectDefaults = activeProjectDefaultsForCwd(ctx.cwd);
+    const projectEntry =
+      projectDefaults && isProjectPrimaryAgentName(selection)
+        ? projectDefaults.primaryAgents[selection]
+        : undefined;
+    if (projectDefaults?.projectRoot && projectEntry) {
+      if (!preservesSessionOnlyModel && projectEntry.model !== undefined) {
+        const projectModelRef = availableModels.find(
+          (m) => `${m.provider}/${m.id}` === projectEntry.model,
+        );
+        if (projectModelRef) {
+          resolvedModel = projectModelRef;
+          resolvedModelSource = "project";
+          projectModelCandidate = { reference: projectEntry.model, model: projectModelRef };
+        } else {
+          // Unavailable model: warn once and fall through to layer 3 / layer 4.
+          const warning = unavailableProjectModelWarningMessage(selection, projectEntry.model);
+          warnProjectDefaultsOnce(
+            ctx,
+            projectDefaults.projectRoot,
+            selection,
+            warning,
+            `${warning}\0${projectEntry.model}`,
+          );
+        }
+      }
+      if (projectEntry.effort !== undefined && isThinkingLevel(projectEntry.effort)) {
+        projectEffort = projectEntry.effort;
+      }
+    }
+
+    // An out-of-band model change must not leave the session-only gate stuck on another model.
     if (sessionOnlyModel && !preservesSessionOnlyModel) {
-      // An out-of-band model change must not leave the session-only gate stuck
-      // on another model.
       updateSessionOnlyModel(undefined);
     }
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     const activePrimaryModel =
       shouldApplyModel && !preservesSessionOnlyModel
-        ? await applyPrimaryModel(ctx, primary, resolvedModel)
+        ? await applyPrimaryModel(ctx, primary, resolvedModel, resolvedModelSource)
         : undefined;
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
+    const appliedProjectModel =
+      projectModelCandidate !== undefined &&
+      modelsMatch(activePrimaryModel, projectModelCandidate.model)
+        ? projectModelCandidate.reference
+        : undefined;
+    let appliedProjectEffort: ThinkingLevel | undefined;
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     if (shouldApplyThinking) {
       // Thinking follows the model that is actually effective after stored pins
       // and model-application decisions, rather than the pre-pin selection.
       const effectiveModel = activePrimaryModel ?? ctx.model;
-      applyPrimaryThinking(
+      appliedProjectEffort = applyPrimaryThinking(
         ctx.cwd,
         selection,
         resolveProviderThinking(primary, effectiveModel?.provider),
         effectiveModel,
+        projectEffort, // layer 2
       );
     }
+
+    // Show a concise notice when project defaults are actually applied (once per primary per session).
+    // Each field is reported only after its project value wins precedence and is effective:
+    // the model must be returned by applyPrimaryModel, while thinking reports its clamped target.
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
+    if (appliedProjectModel !== undefined || appliedProjectEffort !== undefined) {
+      const appliedParts: string[] = [];
+      if (appliedProjectModel !== undefined) {
+        appliedParts.push(`model ${appliedProjectModel}`);
+      }
+      if (appliedProjectEffort !== undefined) {
+        appliedParts.push(`effort ${appliedProjectEffort}`);
+      }
+      if (appliedParts.length > 0) {
+        noticeOnce(
+          ctx,
+          `project-defaults-applied-${selection}`,
+          `TLH applied project defaults for ${selection}: ${appliedParts.join(", ")}.`,
+        );
+      }
+    }
+
+    if (sessionStartOperation && !isCurrentSessionStartOperation(sessionStartOperation)) return;
     lastObservedModel = activePrimaryModel ?? ctx.model;
   }
 
@@ -1975,30 +2719,227 @@ function createTlhPrimaryAgentRuntime(
     });
   }
 
+  function attachProjectAgentRuntimeCallbacks(snapshot: ActiveProjectAgentSnapshot): void {
+    if (!snapshot.trust) return;
+    snapshot.reauthorizeTrust = async () => {
+      try {
+        const current = await reauthorizeTlhProjectAgentTrust(snapshot.provenance.projectRoot, {
+          agentDir: getAgentDir(),
+          trustDependencies: PROJECT_AGENT_TRUST_DEPENDENCIES,
+        });
+        return current?.trusted === true;
+      } catch {
+        return false;
+      }
+    };
+    snapshot.rebindProjectAgent = async (request) => {
+      const runtimeLoadRequest = projectAgentLoadRequest;
+      const runtimeSessionId = PROJECT_AGENT_RUNTIME_STATE.sessionId;
+      const runtimeReferenceIdAtStart = runtimeReferenceId;
+      const activeSnapshotAtStart = activeProjectAgentSnapshot;
+      const agentMatch = /^embedded\.([a-z0-9][a-z0-9-]*)$/.exec(request.agent);
+      if (
+        !agentMatch ||
+        !runtimeSessionId ||
+        request.sessionId !== runtimeSessionId ||
+        runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch ||
+        activeSnapshotAtStart !== snapshot ||
+        PROJECT_AGENT_RUNTIME_STATE.referenceId !== runtimeReferenceIdAtStart
+      ) {
+        return undefined;
+      }
+      const cwdValidation = validatePrimaryProjectAgentCwdContainment(
+        request.projectRoot,
+        request.cwd,
+        [],
+      );
+      if (!cwdValidation.valid) return undefined;
+
+      let loaded: unknown;
+      try {
+        loaded = await projectAgentLoader({
+          cwd: request.cwd,
+          sessionId: request.sessionId,
+          agentDir: getAgentDir(),
+          trustDependencies: PROJECT_AGENT_TRUST_DEPENDENCIES,
+        });
+      } catch {
+        return undefined;
+      }
+      const rebound = normalizeActiveProjectAgentSnapshot(loaded);
+      if (!rebound) return undefined;
+
+      // A loader registers the capability before returning it. Retain it before
+      // any validation or stale-operation check can reject this load, then
+      // release the lease in the finally block on every non-adoption path.
+      const reboundLease = await retainProjectAgentReferenceTemporarily(
+        rebound.capability,
+        "rebind",
+      );
+      if (!reboundLease) return undefined;
+      let adopted = false;
+      try {
+        if (
+          !isCurrentProjectAgentOperation(runtimeLoadRequest, request.sessionId) ||
+          !activeSnapshotAtStart ||
+          rebound.trust?.trusted !== true ||
+          rebound.provenance.sessionId !== request.sessionId ||
+          rebound.provenance.processInstanceId !== snapshot.provenance.processInstanceId
+        ) {
+          return undefined;
+        }
+
+        let requestedRoot: string;
+        let activeRoot: string;
+        let reboundRoot: string;
+        let reboundCwd: string;
+        try {
+          requestedRoot = fs.realpathSync(request.projectRoot);
+          activeRoot = fs.realpathSync(snapshot.provenance.projectRoot);
+          reboundRoot = fs.realpathSync(rebound.provenance.projectRoot);
+          reboundCwd = fs.realpathSync(request.cwd);
+        } catch {
+          return undefined;
+        }
+        if (
+          requestedRoot !== activeRoot ||
+          requestedRoot !== reboundRoot ||
+          !pathWithinProjectRoot(requestedRoot, reboundCwd)
+        ) {
+          return undefined;
+        }
+
+        const rawManifest =
+          isRecord(loaded) && isRecord(loaded.manifest) ? loaded.manifest : undefined;
+        const rawEntries = rawManifest?.entries;
+        if (!Array.isArray(rawEntries)) return undefined;
+        const rawEntry = rawEntries.find(
+          (entry) => isRecord(entry) && isRecord(entry.agent) && entry.agent.name === request.agent,
+        );
+        if (!rawEntry || !isRecord(rawEntry.agent) || typeof rawEntry.digest !== "string") {
+          return undefined;
+        }
+        const expectedPath = join(
+          reboundRoot,
+          ".tlh",
+          "agents",
+          "custom",
+          `${agentMatch[1]!.toUpperCase()}.md`,
+        );
+        if (
+          rawEntry.agent.name !== request.agent ||
+          rawEntry.agent.localName !== agentMatch[1] ||
+          rawEntry.agent.packageName !== "embedded" ||
+          rawEntry.agent.source !== "project" ||
+          rawEntry.agent.filePath !== expectedPath
+        ) {
+          return undefined;
+        }
+
+        const sameActiveCapability =
+          activeSnapshotAtStart === snapshot &&
+          PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceIdAtStart &&
+          activeSnapshotAtStart.capability === rebound.capability;
+        const makeRebindResult = (): ProjectAgentRebindResult => ({
+          capability: rebound.capability,
+          expected: { ...rebound.provenance },
+          capture: {
+            provenance: {
+              ...rebound.provenance,
+              source: "project",
+              agent: request.agent,
+              digest: rawEntry.digest as string,
+            },
+            config: rawEntry.agent as Record<string, unknown>,
+          },
+        });
+        if (sameActiveCapability) return makeRebindResult();
+
+        if (
+          !isCurrentProjectAgentOperation(runtimeLoadRequest, request.sessionId) ||
+          activeProjectAgentSnapshot !== activeSnapshotAtStart ||
+          PROJECT_AGENT_RUNTIME_STATE.referenceId !== runtimeReferenceIdAtStart
+        ) {
+          return undefined;
+        }
+        try {
+          // Retain-before-release preserves authority while the active owner
+          // is transferred to this fresh generation.
+          await releaseTlhProjectAgentSnapshotReference(runtimeReferenceIdAtStart);
+        } catch {
+          return undefined;
+        }
+        if (
+          !isCurrentProjectAgentOperation(runtimeLoadRequest, request.sessionId) ||
+          activeProjectAgentSnapshot !== activeSnapshotAtStart ||
+          PROJECT_AGENT_RUNTIME_STATE.referenceId !== runtimeReferenceIdAtStart
+        ) {
+          return undefined;
+        }
+
+        attachProjectAgentRuntimeCallbacks(rebound);
+        runtimeReferenceId = reboundLease.referenceId;
+        PROJECT_AGENT_RUNTIME_STATE.referenceId = reboundLease.referenceId;
+        activeProjectAgentSnapshot = rebound;
+        adopted = true;
+        return makeRebindResult();
+      } finally {
+        if (!adopted) await reboundLease.release();
+      }
+    };
+  }
+
   async function loadProjectAgentSnapshotForSession(ctx: ExtensionContext): Promise<void> {
     // Replace only the active generation. Retained run references are owned by
     // the process-private snapshot registry and therefore survive same-session
     // reloads, while failed loads never authorize a new generation.
     const requestId = ++projectAgentLoadRequest;
+    const previousReferenceId =
+      runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch &&
+      PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceId
+        ? runtimeReferenceId
+        : undefined;
     activeProjectAgentSnapshot = undefined;
-    if (PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceId) {
-      await releaseTlhProjectAgentSnapshotReference(runtimeReferenceId);
+    if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch) return;
+    if (previousReferenceId) {
+      try {
+        await releaseTlhProjectAgentSnapshotReference(previousReferenceId);
+      } catch {
+        // A release failure leaves the old owner unavailable but must never
+        // authorize a new capability or create an ambiguous owner reference.
+        return;
+      }
+      if (
+        runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch ||
+        requestId !== projectAgentLoadRequest ||
+        PROJECT_AGENT_RUNTIME_STATE.referenceId !== previousReferenceId
+      ) {
+        return;
+      }
       PROJECT_AGENT_RUNTIME_STATE.referenceId = undefined;
     }
     const sessionId = sessionIdForContext(ctx);
     if (!sessionId) return;
-    if (
-      PROJECT_AGENT_RUNTIME_STATE.sessionId &&
-      PROJECT_AGENT_RUNTIME_STATE.sessionId !== sessionId
-    ) {
+    if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch || requestId !== projectAgentLoadRequest)
+      return;
+    const previousSessionId = PROJECT_AGENT_RUNTIME_STATE.sessionId;
+    if (previousSessionId && previousSessionId !== sessionId) {
       try {
-        await releaseTlhProjectAgentRunReferencesForSession(PROJECT_AGENT_RUNTIME_STATE.sessionId);
+        await releaseTlhProjectAgentRunReferencesForSession(previousSessionId);
       } catch {
-        // A bridge mismatch can only leave stale authority unavailable; the
-        // new session still starts with no active capability until this load
-        // succeeds and all resume gates require the new session id.
+        // Old-session run references cannot authorize a different current
+        // session; continue loading, but never use them as the new authority.
+      }
+      if (
+        runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch ||
+        requestId !== projectAgentLoadRequest ||
+        PROJECT_AGENT_RUNTIME_STATE.sessionId !== previousSessionId
+      ) {
+        return;
       }
     }
+    if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch || requestId !== projectAgentLoadRequest)
+      return;
     PROJECT_AGENT_RUNTIME_STATE.sessionId = sessionId;
 
     let loaded: unknown;
@@ -2007,13 +2948,75 @@ function createTlhPrimaryAgentRuntime(
         cwd: ctx.cwd,
         sessionId,
         agentDir: getAgentDir(),
-        defaultProjectTrust: defaultProjectTrustForCwd(ctx.cwd),
         trustDependencies: PROJECT_AGENT_TRUST_DEPENDENCIES,
-        context: {
+      });
+    } catch {
+      // Trust/scan failures are deliberately silent here. In particular, do
+      // not turn an exception into permission to use an untrusted definition.
+      return;
+    }
+    // Preserve the existing warning for a current persisted trust denial. A
+    // denied result has no registered capability, while a loaded result is
+    // retained immediately below before any stale-load rejection can abandon
+    // its generation.
+    if (isCurrentProjectAgentOperation(requestId, sessionId)) {
+      warnPersistedProjectAgentTrustDenied(ctx, sessionId, loaded);
+    }
+    const normalized = normalizeActiveProjectAgentSnapshot(loaded);
+    if (!normalized) return;
+
+    // Retain the loader's newly registered capability before the current-load
+    // check can reject a stale session start. The lease is transferred to the
+    // runtime owner only after all adoption checks pass.
+    const loadLease = await retainProjectAgentReferenceTemporarily(normalized.capability, "load");
+    if (!loadLease) return;
+    let adopted = false;
+    try {
+      if (!isCurrentProjectAgentOperation(requestId, sessionId)) return;
+      attachProjectAgentRuntimeCallbacks(normalized);
+      if (PROJECT_AGENT_RUNTIME_STATE.referenceId !== undefined) return;
+      runtimeReferenceId = loadLease.referenceId;
+      PROJECT_AGENT_RUNTIME_STATE.referenceId = loadLease.referenceId;
+      activeProjectAgentSnapshot = normalized;
+      adopted = true;
+    } finally {
+      if (!adopted) await loadLease.release();
+    }
+  }
+
+  /**
+   * Load .tlh/defaults.json project defaults for the current session.
+   *
+   * Configuration trust is deliberately separate from custom-agent execution
+   * trust. A session/defaults approval can authorize model/effort defaults,
+   * but can never authorize project custom-agent definitions.
+   */
+  async function loadProjectDefaultsForSession(
+    ctx: ExtensionContext,
+    operation: SessionStartOperation,
+  ): Promise<void> {
+    if (!isCurrentSessionStartOperation(operation)) return;
+    activeProjectDefaults = undefined;
+    const sessionId = sessionIdForContext(ctx);
+    if (!sessionId) return;
+
+    let loaded: unknown;
+    try {
+      const defaultProjectTrust = defaultProjectTrustForCwd(ctx.cwd);
+      loaded = await projectDefaultsLoaderFn({
+        cwd: ctx.cwd,
+        sessionId,
+        agentDir: getAgentDir(),
+        defaultProjectTrust,
+        trust: {
+          sessionId,
+          defaultProjectTrust,
+          createProjectTrustStore: PROJECT_AGENT_TRUST_DEPENDENCIES.createProjectTrustStore,
+          hasTrustRequiringProjectResources,
           isProjectTrusted: () => ctx.isProjectTrusted(),
           hasUI: ctx.hasUI,
           ui:
-            typeof ctx.ui.confirm === "function"
+            typeof ctx.ui?.confirm === "function"
               ? {
                   confirm: (title: string, message: string, options?: ExtensionUIDialogOptions) =>
                     ctx.ui.confirm(title, message, options),
@@ -2022,64 +3025,69 @@ function createTlhPrimaryAgentRuntime(
         },
       });
     } catch {
-      // Trust/scan failures are deliberately silent here. In particular, do
-      // not turn an exception into permission to use an untrusted definition.
+      // Defaults-load failures are deliberately silent; never crash the session.
       return;
     }
-    if (requestId !== projectAgentLoadRequest || runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch)
-      return;
-    const normalized = normalizeActiveProjectAgentSnapshot(loaded);
-    if (!normalized) return;
-    if (normalized.trust) {
-      const loadedTrust = normalized.trust;
-      normalized.reauthorizeTrust = async () => {
-        try {
-          const current = await reauthorizeTlhProjectAgentTrust(normalized.provenance.projectRoot, {
-            sessionId,
-            agentDir: getAgentDir(),
-            defaultProjectTrust: defaultProjectTrustForCwd(ctx.cwd),
-            trustDependencies: PROJECT_AGENT_TRUST_DEPENDENCIES,
-            hasUI: false,
-            isProjectTrusted: () => ctx.isProjectTrusted(),
-          });
-          return Boolean(
-            current?.trusted === true ||
-            (loadedTrust.source === "no-project-agents" &&
-              current?.source === "session-unavailable"),
-          );
-        } catch {
-          return false;
-        }
-      };
-    }
+
+    if (!isCurrentSessionStartOperation(operation)) return;
+
+    let normalized: ActiveProjectDefaults | undefined;
     try {
-      await retainTlhProjectAgentSnapshotReference(normalized.capability, runtimeReferenceId);
-      if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch) {
-        await releaseTlhProjectAgentSnapshotReference(runtimeReferenceId);
-        return;
-      }
-      PROJECT_AGENT_RUNTIME_STATE.referenceId = runtimeReferenceId;
+      normalized = normalizeProjectDefaultsResult(loaded, ctx.cwd);
     } catch {
-      // Injected test loaders can intentionally provide a capability from a
-      // source-module loader while this bridge resolves generated JavaScript.
-      // Keep the structurally valid capability active; the executor still
-      // rechecks its own process-private registry before execution.
+      // Malformed injected bridge values (including throwing getters/proxies)
+      // must fail closed without escaping session_start.
+      return;
     }
-    if (runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch) return;
-    activeProjectAgentSnapshot = normalized;
+    if (!isCurrentSessionStartOperation(operation)) return;
+    if (normalized?.status === "loaded") {
+      for (const warning of normalized.warnings) {
+        if (!isCurrentSessionStartOperation(operation)) return;
+        warnProjectDefaultsOnce(ctx, normalized.projectRoot, undefined, warning);
+      }
+    }
+    if (!isCurrentSessionStartOperation(operation)) return;
+    activeProjectDefaults = normalized ?? undefined;
   }
 
   async function applySessionStart(ctx: ExtensionContext): Promise<void> {
+    const sessionStartOperation: SessionStartOperation = {
+      requestId: ++sessionStartRequestId,
+      runtimeEpoch,
+    };
+    // Invalidate the prior session's configuration plane immediately. A slow
+    // capability load must not leave old project defaults available to a new
+    // session before its own defaults operation reaches the loader.
+    activeProjectDefaults = undefined;
+    projectDefaultsWarned.clear();
+    noticed.clear();
     // Session-only model intent does not cross session_start. This includes
     // /reload: a replacement runtime cannot safely prove that an older
     // process-global call belongs to the new session.
     beginModelSelectionSession(ctx);
     updateSessionOnlyModel(undefined);
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     clearSessionThinkingOverride();
+    // Treat session_start as a fresh notification scope even if the host did
+    // not deliver the prior session_shutdown event.
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
+    noticed.clear();
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     activateTlhTicketSessionScope(ctx.cwd);
     await loadProjectAgentSnapshotForSession(ctx);
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
+    sessionProjectAgentGuidanceSnapshot = inventoryProjectAgentGuidance(ctx.cwd, getAgentDir());
+    notifyUndecidedProjectAgentGuidance(ctx, sessionProjectAgentGuidanceSnapshot);
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
+    await loadProjectDefaultsForSession(ctx, sessionStartOperation);
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
     syncPrimaryAgentState(ctx);
-    await applyPrimaryDefaults(ctx, { warnOnMissing: false });
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
+    await applyPrimaryDefaults(ctx, {
+      warnOnMissing: false,
+      sessionStartOperation,
+    });
+    if (!isCurrentSessionStartOperation(sessionStartOperation)) return;
   }
 
   function registerLifecycleHooks(): void {
@@ -2197,16 +3205,51 @@ function createTlhPrimaryAgentRuntime(
     });
 
     pi.on("session_shutdown", async (_event, _ctx) => {
-      projectAgentLoadRequest += 1;
+      sessionStartRequestId += 1;
+      const shutdownRequestId = ++projectAgentLoadRequest;
+      const previousReferenceId =
+        runtimeEpoch === PROJECT_AGENT_RUNTIME_STATE.epoch &&
+        PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceId
+          ? runtimeReferenceId
+          : undefined;
+      activeProjectDefaults = undefined;
+      projectDefaultsWarned.clear();
+      noticed.clear();
       activeProjectAgentSnapshot = undefined;
-      if (PROJECT_AGENT_RUNTIME_STATE.referenceId === runtimeReferenceId) {
-        await releaseTlhProjectAgentSnapshotReference(runtimeReferenceId);
-        PROJECT_AGENT_RUNTIME_STATE.referenceId = undefined;
+      if (previousReferenceId) {
+        let released = true;
+        try {
+          await releaseTlhProjectAgentSnapshotReference(previousReferenceId);
+        } catch {
+          released = false;
+          // A release failure must not turn the stale capability into a new
+          // authorization path. Leave the owner id for a later retry while
+          // keeping this runtime's active snapshot unavailable.
+        }
+        if (
+          runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch ||
+          shutdownRequestId !== projectAgentLoadRequest
+        ) {
+          return;
+        }
+        if (released && PROJECT_AGENT_RUNTIME_STATE.referenceId === previousReferenceId) {
+          PROJECT_AGENT_RUNTIME_STATE.referenceId = undefined;
+        }
+      }
+      if (
+        runtimeEpoch !== PROJECT_AGENT_RUNTIME_STATE.epoch ||
+        shutdownRequestId !== projectAgentLoadRequest
+      ) {
+        return;
       }
       endModelSelectionSession();
       lastObservedModel = undefined;
       updateSessionOnlyModel(undefined);
       clearSessionThinkingOverride();
+      sessionProjectAgentGuidanceSnapshot = undefined;
+      // Applied-default notices are session-scoped; allow the next session to
+      // report its effective project fields again.
+      noticed.clear();
       restorePrimaryToolsIfAppropriate();
       // Clear session-scoped auth-notification state so that a new session
       // (which reuses this closure, because registerTlhPrimaryAgentRuntime runs
@@ -2220,6 +3263,7 @@ function createTlhPrimaryAgentRuntime(
       notifiedForReauth.clear();
       pendingReauthNotifications.clear();
       preflightThrottle.clear();
+      projectAgentTrustWarningSessionId = undefined;
     });
 
     pi.on("before_agent_start", async (event, ctx) => {
@@ -2253,7 +3297,9 @@ function createTlhPrimaryAgentRuntime(
         return undefined;
       }
       const subagentOverrides = getTlhSubagentOverrides(ctx.cwd);
-      applyProviderAwareSubagentModels(
+      const projectDefaults = activeProjectDefaultsForCwd(ctx.cwd);
+      const subagentProjectDefaults = projectDefaults?.subagents;
+      applyProviderAwareModelsToNonProjectTargets(
         event.input,
         subagentsByName,
         getUnfilteredAvailableModels(ctx.modelRegistry),
@@ -2261,8 +3307,14 @@ function createTlhPrimaryAgentRuntime(
         ctx.model,
         {
           agentOverrides: subagentOverrides,
-          onWarning: ({ agent, message }) =>
-            warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message),
+          projectDefaults: subagentProjectDefaults,
+          onWarning: ({ agent, message, source }) => {
+            if (source === "project-default") {
+              warnProjectDefaultsOnce(ctx, projectDefaults?.projectRoot, agent, message);
+              return;
+            }
+            warnOnce(ctx, `subagent-override-warning-${agent}-${message}`, message);
+          },
         },
       );
       capScoutSubagentTimeout(event.input);
@@ -2292,7 +3344,10 @@ function createTlhPrimaryAgentRuntime(
         : persistedProjectMarker
           ? "persisted project-agent marker"
           : "retained project-agent run";
-      if (persistedProjectMarker) {
+      if (
+        persistedProjectMarker &&
+        (!isSubagentResumeAction(event.input) || !activeProjectAgentSnapshot?.rebindProjectAgent)
+      ) {
         return {
           block: true,
           reason: `TLH project-agent control is unavailable because the process-private run reference is missing for ${retainedProjectLabel}; refusing profile fallback.`,
@@ -2305,15 +3360,9 @@ function createTlhPrimaryAgentRuntime(
             reason: `TLH project-agent ${String(event.input.action)} requires the architect primary agent. Target(s): ${retainedProjectLabel}.`,
           };
         }
-        if (projectTargets.length > 0 && !isOpaqueSubagentManagementActionInput(event.input)) {
-          return {
-            block: true,
-            reason: `TLH project-agent execution requires the architect primary agent. Target(s): ${projectTargets.join(", ")}.`,
-          };
-        }
-        // Disabled mode retains the normal TLH safety and provider-preflight
-        // path below; only project-agent requests are blocked here because
-        // project execution remains architect-only.
+        // Disabled mode retains the TLH safety plane and may initiate an
+        // explicitly requested project-agent execution. Retained project
+        // controls remain architect-only and are handled above.
       }
       if (selection === "rush" && isSubagentResumeAction(event.input)) {
         return { block: true, reason: rushResumeDelegationReason() };
@@ -2361,24 +3410,22 @@ function createTlhPrimaryAgentRuntime(
           (target) => isEmbeddedSubagentTarget(target) && !projectTargetSet.has(target),
         );
         if (requestedProfileTargets.length > 0) {
-          const authorizedEmbeddedTargets = new Set(
-            loadAuthorizedEmbeddedSubagentRuntimeNames(getAgentDir()),
-          );
-          const unauthorizedTargets = requestedProfileTargets.filter(
-            (target) => !authorizedEmbeddedTargets.has(target),
-          );
-          if (unauthorizedTargets.length > 0) {
-            const authorizationSubject =
-              selection === DISABLED_PRIMARY_AGENT
-                ? "TLH primary-agent infrastructure"
-                : "TLH architect";
-            return {
-              block: true,
-              reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition currently exists under ${formatHomePath(join(getAgentDir(), "agents"))}. Unauthorized target(s): ${unauthorizedTargets.join(", ")}.`,
-            };
-          }
+          const authorizationSubject =
+            selection === DISABLED_PRIMARY_AGENT
+              ? "TLH primary-agent infrastructure"
+              : "TLH architect";
+          return {
+            block: true,
+            reason: `${authorizationSubject} may delegate to embedded.<slug> only when a valid package: embedded / name: <slug> markdown definition exists at the validated Git-root path .tlh/agents/custom/<UPPERCASE-SLUG>.md. Persist project trust with /trust, then retry. Unauthorized target(s): ${requestedProfileTargets.join(", ")}.`,
+          };
         }
       }
+
+      // OpenRouter is the one provider-specific project-agent exception: an
+      // omitted model follows the live session model. All other providers
+      // leave the captured frontmatter model untouched, and explicit caller
+      // models remain authoritative on every provider.
+      applyOpenRouterModelToProjectTargets(event.input, projectTargets, ctx.model);
 
       // Credential preflight — fire-and-forget, never blocks or delays dispatch.
       //
@@ -2460,6 +3507,7 @@ function createTlhPrimaryAgentRuntime(
 
   return {
     applySessionStart,
+    projectAgentGuidanceSnapshot: () => sessionProjectAgentGuidanceSnapshot,
     currentPrimaryAgentLabel,
     activePrimaryAgentPrompt: activePrimaryAgent,
     recordUserThinkingLevel,
@@ -2482,7 +3530,10 @@ export function registerTlhPrimaryAgentRuntime(
   if (PROJECT_AGENT_RUNTIME_STATE.referenceId) {
     const previousReferenceId = PROJECT_AGENT_RUNTIME_STATE.referenceId;
     PROJECT_AGENT_RUNTIME_STATE.referenceId = undefined;
-    void releaseTlhProjectAgentSnapshotReference(previousReferenceId);
+    void releaseTlhProjectAgentSnapshotReference(previousReferenceId).catch(() => {
+      // The new runtime starts without active project authority. A failed
+      // cleanup cannot be used as authorization for the new runtime.
+    });
   }
   const env = options.env ?? process.env;
   const childPromptBuilder = (): string => buildChildSubagentSystemPrompt();
@@ -2505,6 +3556,7 @@ export function registerTlhPrimaryAgentRuntime(
     {
       getProviderAuthHealthStore: options.getProviderAuthHealthStore,
       projectAgentLoader: options.projectAgentLoader,
+      projectDefaultsLoader: options.projectDefaultsLoader,
       now: options.now,
     },
   );

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
-import { basename, dirname, join, normalize, parse, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -752,7 +752,7 @@ function mergeObject(
     }
 
     if (Array.isArray(value) && Array.isArray(target[key])) {
-      mergeArray(target[key], value, changes, { label, path });
+      mergeArray(target[key], value, changes, { label });
       continue;
     }
 
@@ -819,20 +819,7 @@ function mergePackages(target: JsonObject, packageDefaults: unknown, changes: st
   }
 }
 
-function normalizeAgentDirPath(value: string): string {
-  const normalized = normalize(value);
-  const root = parse(normalized).root;
-  let stripped = normalized;
-  while (stripped.length > root.length && stripped.endsWith(sep)) {
-    stripped = stripped.slice(0, -sep.length);
-  }
-  return stripped;
-}
-
-function arrayMergeKey(item: unknown, path: readonly string[]): string {
-  if (path.join(".") === "subagents.agentDirs" && typeof item === "string") {
-    return `path:${normalizeAgentDirPath(item)}`;
-  }
+function arrayMergeKey(item: unknown): string {
   return `json:${JSON.stringify(item)}`;
 }
 
@@ -840,11 +827,11 @@ function mergeArray(
   targetArray: unknown[],
   defaultArray: readonly unknown[],
   changes: string[],
-  { label, path }: { label: string; path: readonly string[] },
+  { label }: { label: string },
 ): void {
-  const seen = new Set(targetArray.map((item) => arrayMergeKey(item, path)));
+  const seen = new Set(targetArray.map((item) => arrayMergeKey(item)));
   for (const item of defaultArray) {
-    const key = arrayMergeKey(item, path);
+    const key = arrayMergeKey(item);
     if (seen.has(key)) continue;
     targetArray.push(clone(item));
     seen.add(key);

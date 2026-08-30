@@ -109,6 +109,31 @@ function formatIntercomDiagnostic(diagnostic, context) {
     ];
     return lines;
 }
+function formatHeartbeatSection(summary) {
+    if (!summary)
+        return [`- heartbeat: not available`];
+    if (!summary.enabled)
+        return [`- heartbeat: disabled (enabled: false in config)`];
+    const costStr = summary.totalBeatCostUsd > 0
+        ? `$${summary.totalBeatCostUsd.toFixed(5)} total beat cost`
+        : "$0 beat cost";
+    const gapsStr = [
+        summary.gapsSaved > 0 ? `${summary.gapsSaved} saved` : null,
+        summary.gapsWasted > 0 ? `${summary.gapsWasted} wasted` : null,
+        summary.gapsLost > 0 ? `${summary.gapsLost} lost` : null,
+        summary.gapsUnneeded > 0 ? `${summary.gapsUnneeded} unneeded` : null,
+    ]
+        .filter(Boolean)
+        .join(", ");
+    return [
+        `- heartbeat: enabled`,
+        `- beats this session: ${summary.totalBeats}`,
+        `- cache-read tokens: ${summary.totalCacheReadTokens}`,
+        `- ${costStr}`,
+        `- gaps: ${gapsStr || "none yet"}`,
+        `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after errors)" : "closed"}`,
+    ];
+}
 function formatPermissionSystemSection() {
     const lines = [];
     const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
@@ -153,6 +178,9 @@ export function buildDoctorReport(input) {
             context: input.context,
             orchestratorTarget: input.orchestratorTarget,
         }), input.context).join("\n")).split("\n"),
+        "",
+        "Heartbeat",
+        ...formatHeartbeatSection(input.heartbeat),
     ];
     return lines.join("\n");
 }

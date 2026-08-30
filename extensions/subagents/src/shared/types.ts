@@ -784,6 +784,8 @@ interface NestedRunAddress {
 export interface NestedStepSummary {
   agent: string;
   projectAgent?: ProjectAgentRunCapture;
+  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
+  projectAgentMarker?: true;
   status: "pending" | "running" | "complete" | "completed" | "failed" | "paused";
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
@@ -813,6 +815,10 @@ export interface NestedStepSummary {
 
 export interface NestedRunSummary extends NestedRunAddress {
   projectAgent?: ProjectAgentRunCapture;
+  /** Deny-only signal retained when a persisted project-agent marker is malformed. */
+  projectAgentMarker?: true;
+  /** Persisted execution cwd used to validate a process-starting revival. */
+  cwd?: string;
   asyncDir?: string;
   pid?: number;
   sessionId?: string;
@@ -1399,6 +1405,7 @@ export interface ExtensionConfig {
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
   intercomBridge?: IntercomBridgeConfig;
+  heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
 }
 
 // ============================================================================

@@ -110,7 +110,12 @@ export function createPiHarness() {
 export function createToolCallContext(branchEntries = [], notifications, overrides = {}) {
   return {
     cwd: process.cwd(),
-    sessionManager: { getBranch: () => branchEntries },
+    sessionManager: {
+      getBranch: () => branchEntries,
+      // Project-agent authorization is session-bound; keep this helper aligned
+      // with the real ExtensionContext contract used by session_start/tool_call.
+      getSessionId: () => "test-session",
+    },
     ui: {
       notify(message, type = "info") {
         notifications?.push({ message, type });

@@ -22,8 +22,11 @@ const REGISTRY_STATE = GLOBAL_STATE[GLOBAL_REGISTRY_KEY] ??
         registry: new WeakMap(),
         registeredCapabilities: new Set(),
         runReferences: new Map(),
+        referenceOwners: new Map(),
     });
 const PROCESS_INSTANCE_ID = REGISTRY_STATE.processInstanceId;
+const REFERENCE_OWNERS = REGISTRY_STATE.referenceOwners ??
+    (REGISTRY_STATE.referenceOwners = new Map());
 const REGISTRY = REGISTRY_STATE.registry;
 const REGISTERED_CAPABILITIES = REGISTRY_STATE.registeredCapabilities;
 const RUN_REFERENCES = REGISTRY_STATE.runReferences;
@@ -258,27 +261,61 @@ function validateRunCaptureAgainstManifest(manifest, capture) {
 function referenceIdForRun(runId) {
     return `run:${runId}`;
 }
+function findReferenceOwner(referenceId) {
+    const indexedOwner = REFERENCE_OWNERS.get(referenceId);
+    if (indexedOwner) {
+        const indexedSnapshot = REGISTRY.get(indexedOwner);
+        if (indexedSnapshot?.referenceIds.has(referenceId))
+            return indexedOwner;
+        REFERENCE_OWNERS.delete(referenceId);
+    }
+    for (const capability of REGISTERED_CAPABILITIES) {
+        const registered = REGISTRY.get(capability);
+        if (registered?.referenceIds.has(referenceId)) {
+            REFERENCE_OWNERS.set(referenceId, capability);
+            return capability;
+        }
+    }
+    return undefined;
+}
 function retainGenerationReference(capability, referenceId) {
     if (!isNonEmptyString(referenceId))
         throw new TypeError("Project agent snapshot reference id must be non-empty.");
     const registered = registeredSnapshot(capability);
+    const existingOwner = findReferenceOwner(referenceId);
+    if (existingOwner && existingOwner !== capability) {
+        throw new Error(`Project agent snapshot reference '${referenceId}' is already retained.`);
+    }
     registered.referenceIds.add(referenceId);
+    REFERENCE_OWNERS.set(referenceId, capability);
 }
 function releaseGenerationReference(capability, referenceId) {
     const registered = REGISTRY.get(capability);
     if (!registered)
-        return;
-    registered.referenceIds.delete(referenceId);
+        return false;
+    const released = registered.referenceIds.delete(referenceId);
+    if (released && REFERENCE_OWNERS.get(referenceId) === capability) {
+        REFERENCE_OWNERS.delete(referenceId);
+    }
+    return released;
+}
+function cleanupUnreferencedProjectAgentSnapshot(capability) {
+    const registered = REGISTRY.get(capability);
+    if (!registered || registered.referenceIds.size > 0)
+        return false;
+    REGISTRY.delete(capability);
+    REGISTERED_CAPABILITIES.delete(capability);
+    for (const [referenceId, owner] of REFERENCE_OWNERS) {
+        if (owner === capability)
+            REFERENCE_OWNERS.delete(referenceId);
+    }
+    return true;
 }
 function cleanupUnreferencedProjectAgentSnapshots() {
     let removed = 0;
     for (const capability of REGISTERED_CAPABILITIES) {
-        const registered = REGISTRY.get(capability);
-        if (!registered || registered.referenceIds.size > 0)
-            continue;
-        REGISTRY.delete(capability);
-        REGISTERED_CAPABILITIES.delete(capability);
-        removed++;
+        if (cleanupUnreferencedProjectAgentSnapshot(capability))
+            removed++;
     }
     return removed;
 }
@@ -437,14 +474,12 @@ export function retainProjectAgentSnapshotReference(capability, referenceId) {
     retainGenerationReference(asCapability(capability), referenceId);
 }
 export function releaseProjectAgentSnapshotReference(referenceId) {
-    for (const capability of REGISTERED_CAPABILITIES) {
-        const registered = REGISTRY.get(capability);
-        if (registered?.referenceIds.has(referenceId)) {
-            releaseGenerationReference(capability, referenceId);
-            break;
-        }
+    const capability = findReferenceOwner(referenceId);
+    if (!capability)
+        return;
+    if (releaseGenerationReference(capability, referenceId)) {
+        cleanupUnreferencedProjectAgentSnapshot(capability);
     }
-    cleanupUnreferencedProjectAgentSnapshots();
 }
 export function retainProjectAgentRunReference(capability, runId, captures) {
     if (!isRecord(capability))
@@ -513,7 +548,7 @@ export function releaseProjectAgentRunReference(runId) {
         return false;
     RUN_REFERENCES.delete(runId);
     releaseGenerationReference(reference.capability, referenceIdForRun(runId));
-    cleanupUnreferencedProjectAgentSnapshots();
+    cleanupUnreferencedProjectAgentSnapshot(reference.capability);
     return true;
 }
 export function lookupProjectAgentRunReference(runId) {
@@ -576,8 +611,7 @@ export function revokeProjectAgentSnapshot(capability) {
         throw invalidCapability();
     if (registered.referenceIds.size > 0)
         throw invalidCapability();
-    REGISTRY.delete(registeredCapability);
-    REGISTERED_CAPABILITIES.delete(registeredCapability);
+    cleanupUnreferencedProjectAgentSnapshot(registeredCapability);
 }
 function isEmbeddedProfileAgent(agent) {
     return agent.source === "user" && agent.packageName === "embedded";

@@ -10,10 +10,12 @@ import { cleanupTempDir, createIsolatedProfileFixture, withEnv } from "./test-fi
 import {
   registerTlhPrimaryAgentRuntime,
   createPiHarness,
+  createToolCallContext,
   registerRuntimeHarness,
   writePrimaryConfig,
   createPrimaryPrompt,
   rushLikePrimary,
+  selectablePrimaryAgents,
 } from "./the-last-harness-primary-agent-runtime-test-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
@@ -29,6 +31,224 @@ const {
 
 const PRE_BIND_RUNTIME_ERROR =
   "Extension runtime not initialized. Action methods cannot be called during extension loading.";
+
+const { getTlhProjectAgentAccess } =
+  await import("../extensions/the-last-harness/project-agent-access.mjs");
+
+function projectAgentSessionContext(fixture, notifications, sessionId) {
+  const branch = [
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "architect" },
+    },
+  ];
+  return createToolCallContext(branch, notifications, {
+    cwd: fixture.cwd,
+    hasUI: true,
+    sessionManager: {
+      getBranch: () => branch,
+      getSessionId: () => sessionId,
+    },
+  });
+}
+
+test("primary runtime warns once when persisted project trust denies an exact custom directory", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-warning-", {
+    cwd: true,
+    test: t,
+  });
+  const customDirectory = join(fixture.cwd, ".tlh", "agents", "custom");
+  mkdirSync(customDirectory, { recursive: true });
+  writeFileSync(join(customDirectory, "SECRET.md"), "definition content must not surface\n");
+  const notifications = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      projectAgentLoader: async () => ({
+        status: "denied",
+        projectRoot: fixture.cwd,
+        agentsDirectory: customDirectory,
+        trust: { kind: "project-agent", trusted: false, source: "no-persisted-trust" },
+        diagnostics: ["definition content must not surface"],
+      }),
+    });
+    await applySessionStart(projectAgentSessionContext(fixture, notifications, "trust-session"));
+
+    const trustWarnings = notifications.filter(
+      ({ message, type }) => type === "warning" && /project custom agents/i.test(message),
+    );
+    assert.equal(trustWarnings.length, 1);
+    assert.match(trustWarnings[0].message, /\/trust/);
+    assert.match(trustWarnings[0].message, /persist.*trust/i);
+    assert.match(trustWarnings[0].message, /retry/i);
+    assert.doesNotMatch(trustWarnings[0].message, /definition content must not surface/);
+  });
+});
+
+test("primary runtime does not treat project-config trust as persisted project-agent denial", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-kind-", {
+    cwd: true,
+    test: t,
+  });
+  const customDirectory = join(fixture.cwd, ".tlh", "agents", "custom");
+  mkdirSync(customDirectory, { recursive: true });
+  const notifications = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      projectAgentLoader: async () => ({
+        status: "denied",
+        projectRoot: fixture.cwd,
+        agentsDirectory: customDirectory,
+        // A configuration-plane denial must not trigger the persisted agent
+        // denial warning, even though its shape is otherwise valid.
+        trust: { kind: "project-config", trusted: false, source: "saved-negative" },
+        diagnostics: [],
+      }),
+    });
+    await applySessionStart(
+      projectAgentSessionContext(fixture, notifications, "trust-kind-session"),
+    );
+
+    assert.equal(
+      notifications.some(
+        ({ message, type }) => type === "warning" && /project custom agents/i.test(message),
+      ),
+      false,
+      "project-config trust must not trigger the persisted project-agent denial warning",
+    );
+  });
+});
+
+test("primary runtime rejects a config-plane-shaped result at the agent boundary", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-agent-trust-kind-", {
+    cwd: true,
+    test: t,
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      // Configuration defaults do not carry the capability/provenance/manifest
+      // required by the agent plane, so even a config trust tag cannot create
+      // project-agent authority.
+      projectAgentLoader: async () => ({
+        status: "loaded",
+        trust: { kind: "project-config", trusted: true, source: "saved-positive" },
+      }),
+      projectDefaultsLoader: async () => ({ status: "unavailable", warnings: [] }),
+    });
+    await applySessionStart(projectAgentSessionContext(fixture, [], "trust-kind-session"));
+
+    assert.equal(
+      getTlhProjectAgentAccess({ cwd: fixture.cwd, sessionId: "trust-kind-session" }),
+      undefined,
+      "a config-plane-shaped result must not create project-agent authority",
+    );
+  });
+});
+
+test("primary runtime keeps the absent project-agent fast path quiet", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-empty-", {
+    cwd: true,
+    test: t,
+  });
+  const notifications = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      projectAgentLoader: async () => ({
+        status: "loaded",
+        trust: { kind: "project-agent", trusted: true, source: "no-project-agents" },
+      }),
+    });
+    await applySessionStart(projectAgentSessionContext(fixture, notifications, "empty-session"));
+
+    assert.equal(
+      notifications.filter(
+        ({ message, type }) => type === "warning" && /project custom agents/i.test(message),
+      ).length,
+      0,
+    );
+  });
+});
+
+test("primary runtime deduplicates project trust warnings per session", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-primary-project-trust-dedupe-", {
+    cwd: true,
+    test: t,
+  });
+  const customDirectory = join(fixture.cwd, ".tlh", "agents", "custom");
+  mkdirSync(customDirectory, { recursive: true });
+  const notifications = [];
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const { applySessionStart } = registerRuntimeHarness({
+      primaryAgents: selectablePrimaryAgents(),
+      subagentMetadata: [],
+      projectAgentLoader: async () => ({
+        status: "denied",
+        projectRoot: fixture.cwd,
+        agentsDirectory: customDirectory,
+        trust: { kind: "project-agent", trusted: false, source: "saved-negative" },
+        diagnostics: [],
+      }),
+    });
+    await applySessionStart(projectAgentSessionContext(fixture, notifications, "same-session"));
+    await applySessionStart(projectAgentSessionContext(fixture, notifications, "same-session"));
+    assert.equal(
+      notifications.filter(({ message }) => /project custom agents/i.test(message)).length,
+      1,
+    );
+
+    await applySessionStart(projectAgentSessionContext(fixture, notifications, "new-session"));
+    assert.equal(
+      notifications.filter(({ message }) => /project custom agents/i.test(message)).length,
+      2,
+    );
+  });
+});
+
+test("primary runtime explains the canonical custom-agent path when blocking an unknown embedded target", async () => {
+  const { toolCall } = registerRuntimeHarness({
+    primaryAgents: selectablePrimaryAgents(),
+    subagentMetadata: [],
+  });
+  const ctx = createToolCallContext([
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "architect" },
+    },
+  ]);
+  const result = await toolCall(
+    {
+      toolName: "subagent",
+      input: { agent: "embedded.unknown-helper", task: "blocked" },
+    },
+    ctx,
+  );
+
+  assert.equal(result?.block, true);
+  assert.match(
+    result?.reason ?? "",
+    /validated Git-root path \.tlh\/agents\/custom\/<UPPERCASE-SLUG>\.md/,
+  );
+  assert.match(result?.reason ?? "", /\/trust/);
+  assert.match(result?.reason ?? "", /retry/i);
+  assert.doesNotMatch(
+    result?.reason ?? "",
+    /<agent-dir>\/agents|\.the-last-harness\/agent\/agents/,
+  );
+});
 
 test("primary runtime applies OpenAI Rush-like metadata defaults with no settings opt-in", async () => {
   const fixture = createIsolatedProfileFixture("tlh-primary-runtime-test-", { cwd: true });

@@ -69,22 +69,22 @@ describe("real Pi-session subagent E2E", { skip: win32Skip }, () => {
       run = await runRealSubagentSession({
         prompt: "Delegate to a helper and report its exact result.",
         childText: CHILD_MARKER,
-        setup({ cwd }) {
-          const agentsDir = path.join(cwd, ".pi", "agents");
-          fs.mkdirSync(agentsDir, { recursive: true });
+        setup({ home }) {
+          const developerPath = path.join(home, "tlh", "agents", "subagents", "developer.md");
+          fs.mkdirSync(path.dirname(developerPath), { recursive: true });
           fs.writeFileSync(
-            path.join(agentsDir, "helper.md"),
-            "---\nname: helper\ndescription: Project helper\n---\n\nReturn the task result.\n",
+            developerPath,
+            "---\nname: developer\ndescription: Canonical developer subagent\ntools: read\ndefaultContext: fresh\n---\n\nReturn the task result.\n",
             "utf-8",
           );
         },
         respond: routeParentThroughSubagent({
           childMarker: CHILD_MARKER,
           subagentArgs: {
-            agent: "helper",
+            agent: "developer",
             task: "Return the marker from the faux child provider.",
             context: "fresh",
-            agentScope: "project",
+            agentScope: "user",
           },
         }),
       });

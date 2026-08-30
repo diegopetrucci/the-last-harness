@@ -1,22 +1,23 @@
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { resolveValidatedGitWorktreeRoot, } from "../../../shared/project-agent-worktree.js";
 import { getAgentDir } from "../shared/utils.js";
 import { getProjectAgentSnapshotProvenance, registerProjectAgentSnapshot, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName } from "./identity.js";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
-export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents");
+export const PROJECT_AGENT_DIRECTORY = path.join(".tlh", "agents", "custom");
+export const PROJECT_AGENT_PARENT_DIRECTORY = path.join(".tlh", "agents");
 export const PROJECT_AGENT_PACKAGE = "embedded";
-export const MAX_PROJECT_AGENT_FILE_BYTES = 512 * 1024;
-export const PROJECT_AGENT_TRUST_UI_TIMEOUT_MS = 60_000;
+export const MAX_PROJECT_AGENT_FILE_BYTES = 64 * 1024;
 export const MAX_PROJECT_AGENT_FILES = 128;
 export const MAX_PROJECT_AGENT_TOTAL_BYTES = 8 * 1024 * 1024;
-export const MAX_PROJECT_AGENT_DEPTH = 16;
-export const MAX_PROJECT_AGENT_DIRECTORIES = 256;
+export const MAX_PROJECT_AGENT_DEPTH = 0;
+export const MAX_PROJECT_AGENT_DIRECTORIES = 4;
 export const MAX_PROJECT_AGENT_SCAN_ATTEMPTS = 3;
 const PROJECT_AGENT_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+const PROJECT_AGENT_FILE_BASENAME_PATTERN = /^[A-Z0-9][A-Z0-9-]*$/;
 const PROJECT_AGENT_RUNTIME_NAME_PATTERN = /^embedded\.[a-z0-9][a-z0-9-]*$/;
 const PROJECT_AGENT_TOOL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const PROJECT_AGENT_DEFINITION_SUFFIX = ".md";
@@ -49,28 +50,14 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
 ]);
 const DEFAULT_FILE_SYSTEM = {
     lstatSync: (filePath) => fs.lstatSync(filePath),
-    statSync: (filePath) => fs.statSync(filePath),
     readdirSync: (filePath, options) => fs.readdirSync(filePath, options),
     realpathSync: (filePath) => fs.realpathSync(filePath),
     readFileSync: (filePath) => fs.readFileSync(filePath),
-};
-const SESSION_TRUST_DECISIONS = new Map();
-const DEFAULT_GIT = {
-    showToplevel(cwd) {
-        try {
-            const output = execFileSync("git", ["-C", path.resolve(cwd), "rev-parse", "--show-toplevel"], {
-                encoding: "utf-8",
-                maxBuffer: 64 * 1024,
-                stdio: ["ignore", "pipe", "ignore"],
-                timeout: 5000,
-            });
-            const root = output.trim();
-            return root || undefined;
-        }
-        catch {
-            return undefined;
-        }
-    },
+    openSync: (filePath, flags) => fs.openSync(filePath, flags),
+    fstatSync: (fd) => fs.fstatSync(fd),
+    readSync: (fd, buffer, offset, length, position) => fs.readSync(fd, buffer, offset, length, position),
+    closeSync: (fd) => fs.closeSync(fd),
+    noFollowFlag: fs.constants.O_NOFOLLOW,
 };
 export class ProjectAgentDefinitionError extends Error {
     code = "INVALID_PROJECT_AGENT_DEFINITION";
@@ -171,9 +158,12 @@ function candidateBasename(fileName) {
         : fileName;
 }
 function runtimeNameForBasename(basename) {
-    if (!PROJECT_AGENT_NAME_PATTERN.test(basename))
+    if (!PROJECT_AGENT_FILE_BASENAME_PATTERN.test(basename))
         return undefined;
-    const runtimeName = buildRuntimeName(basename, PROJECT_AGENT_PACKAGE);
+    const localName = basename.toLowerCase();
+    if (!PROJECT_AGENT_NAME_PATTERN.test(localName))
+        return undefined;
+    const runtimeName = buildRuntimeName(localName, PROJECT_AGENT_PACKAGE);
     return PROJECT_AGENT_RUNTIME_NAME_PATTERN.test(runtimeName) ? runtimeName : undefined;
 }
 function normalizeBound(value, fallback) {
@@ -184,32 +174,10 @@ function normalizeAttempts(value) {
         ? value
         : MAX_PROJECT_AGENT_SCAN_ATTEMPTS;
 }
-function canonicalRootFromGit(cwd, git, fileSystem) {
-    if (typeof cwd !== "string" || cwd.trim().length === 0)
-        return undefined;
-    let reportedRoot;
-    try {
-        reportedRoot = git.showToplevel(cwd);
-    }
-    catch {
-        return undefined;
-    }
-    if (!reportedRoot || reportedRoot.trim().length === 0)
-        return undefined;
-    try {
-        const resolvedReportedRoot = path.resolve(cwd, reportedRoot.trim());
-        const canonicalRoot = fileSystem.realpathSync(resolvedReportedRoot);
-        const stat = fileSystem.lstatSync(canonicalRoot);
-        if (stat.isSymbolicLink() || !stat.isDirectory())
-            return undefined;
-        return canonicalRoot;
-    }
-    catch {
-        return undefined;
-    }
-}
 export function resolveCanonicalGitWorktreeRoot(cwd, options = {}) {
-    return canonicalRootFromGit(cwd, options.git ?? DEFAULT_GIT, options.fileSystem ?? DEFAULT_FILE_SYSTEM);
+    return resolveValidatedGitWorktreeRoot(cwd, {
+        fileSystem: options.fileSystem ?? DEFAULT_FILE_SYSTEM,
+    });
 }
 function trustEntryPathApplies(entryPath, projectRoot) {
     if (typeof entryPath !== "string" || entryPath.trim().length === 0)
@@ -220,20 +188,14 @@ function trustEntryPathApplies(entryPath, projectRoot) {
         return isPathWithin(canonicalEntryPath, canonicalProjectRoot);
     }
     catch {
-        try {
-            return isPathWithin(path.resolve(entryPath), path.resolve(projectRoot));
-        }
-        catch {
-            return false;
-        }
+        return false;
     }
 }
 function isUsableTrustStore(value) {
     try {
         return (Boolean(value) &&
             typeof value === "object" &&
-            (typeof value.getEntry === "function" ||
-                typeof value.get === "function"));
+            typeof value.getEntry === "function");
     }
     catch {
         return false;
@@ -248,7 +210,7 @@ function defaultTrustStore(options) {
     }
     const agentDir = options.agentDir ?? getAgentDir();
     if (!fs.existsSync(path.join(agentDir, "trust.json")))
-        return {};
+        return undefined;
     if (typeof options.createProjectTrustStore !== "function") {
         throw new Error("Project trust-store dependency is unavailable.");
     }
@@ -258,182 +220,132 @@ function defaultTrustStore(options) {
     }
     return store;
 }
-function resolveTrustUiTimeoutMs(value) {
-    return typeof value === "number" && Number.isFinite(value) && value > 0
-        ? value
-        : PROJECT_AGENT_TRUST_UI_TIMEOUT_MS;
-}
-function waitForTrustDecision(decision, timeoutMs) {
-    return new Promise((resolve) => {
-        let settled = false;
-        const timer = setTimeout(() => {
-            if (settled)
-                return;
-            settled = true;
-            resolve(undefined);
-        }, timeoutMs);
-        Promise.resolve(decision)
-            .then((value) => {
-            if (settled)
-                return;
-            settled = true;
-            clearTimeout(timer);
-            resolve(value);
-        })
-            .catch(() => {
-            if (settled)
-                return;
-            settled = true;
-            clearTimeout(timer);
-            resolve(undefined);
-        });
-    });
-}
 export async function resolveProjectAgentTrust(projectRoot, options = {}) {
     if (options.trustOverride === false) {
-        return { trusted: false, source: "explicit-negative" };
+        return { kind: "project-agent", trusted: false, source: "explicit-negative" };
     }
     let store;
     try {
         store = defaultTrustStore(options);
-        if (store.getEntry) {
-            const entry = store.getEntry(projectRoot);
-            if (entry !== null && typeof entry !== "object") {
-                return { trusted: false, source: "trust-store-error" };
-            }
-            if (entry && (typeof entry.path !== "string" || typeof entry.decision !== "boolean")) {
-                return { trusted: false, source: "trust-store-error" };
-            }
-            if (entry && trustEntryPathApplies(entry.path, projectRoot)) {
-                return entry.decision
-                    ? { trusted: true, source: "saved-positive" }
-                    : { trusted: false, source: "saved-negative" };
-            }
+        if (!store)
+            return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
+        const entry = store.getEntry(projectRoot);
+        if (entry !== null && typeof entry !== "object") {
+            return { kind: "project-agent", trusted: false, source: "trust-store-error" };
         }
-        else if (store.get) {
-            const decision = store.get(projectRoot);
-            if (decision === true)
-                return { trusted: true, source: "saved-positive" };
-            if (decision === false)
-                return { trusted: false, source: "saved-negative" };
-            if (decision !== null && decision !== undefined) {
-                return { trusted: false, source: "trust-store-error" };
-            }
+        if (entry && (typeof entry.path !== "string" || typeof entry.decision !== "boolean")) {
+            return { kind: "project-agent", trusted: false, source: "trust-store-error" };
         }
+        if (!entry)
+            return { kind: "project-agent", trusted: false, source: "no-persisted-trust" };
+        if (!trustEntryPathApplies(entry.path, projectRoot)) {
+            return { kind: "project-agent", trusted: false, source: "trust-path-mismatch" };
+        }
+        return entry.decision
+            ? { kind: "project-agent", trusted: true, source: "saved-positive" }
+            : { kind: "project-agent", trusted: false, source: "saved-negative" };
     }
     catch {
-        return { trusted: false, source: "trust-store-error" };
+        return { kind: "project-agent", trusted: false, source: "trust-store-error" };
     }
-    const hasTrustResources = (() => {
-        if (typeof options.hasTrustRequiringProjectResources !== "function")
-            return false;
-        try {
-            return options.hasTrustRequiringProjectResources(projectRoot);
-        }
-        catch {
-            return false;
-        }
-    })();
-    try {
-        const upstreamDecision = options.isProjectTrusted?.();
-        if (upstreamDecision === false) {
-            return { trusted: false, source: "explicit-negative" };
-        }
-        if (hasTrustResources && upstreamDecision === true) {
-            return { trusted: true, source: "upstream-positive" };
-        }
-    }
-    catch {
-    }
-    const sessionKey = typeof options.sessionId === "string" && options.sessionId.trim().length > 0
-        ? `${options.sessionId.trim()}\u0000${path.resolve(projectRoot)}`
-        : undefined;
-    const cachedSessionDecision = sessionKey ? SESSION_TRUST_DECISIONS.get(sessionKey) : undefined;
-    if (cachedSessionDecision !== undefined) {
-        return cachedSessionDecision
-            ? { trusted: true, source: "session-positive" }
-            : { trusted: false, source: "session-negative" };
-    }
-    switch (options.defaultProjectTrust ?? "ask") {
-        case "always":
-            return { trusted: true, source: "default-always" };
-        case "never":
-            return { trusted: false, source: "default-never" };
-        case "ask":
-            break;
-    }
-    if (options.hasUI === false) {
-        return { trusted: false, source: "session-unavailable" };
-    }
-    try {
-        const timeoutMs = resolveTrustUiTimeoutMs(options.trustUiTimeoutMs);
-        const trusted = await waitForTrustDecision(options.confirm
-            ? options.confirm(projectRoot)
-            : options.ui
-                ? options.ui.confirm("Trust project-local TLH agents?", `This allows repository-owned agent definitions under ${path.join(projectRoot, PROJECT_AGENT_DIRECTORY)} to be loaded for this session only.`, { timeout: timeoutMs })
-                : undefined, timeoutMs);
-        if (trusted === true || trusted === false) {
-            if (sessionKey) {
-                SESSION_TRUST_DECISIONS.set(sessionKey, trusted);
-                if (SESSION_TRUST_DECISIONS.size > 128) {
-                    const oldestKey = SESSION_TRUST_DECISIONS.keys().next().value;
-                    if (oldestKey)
-                        SESSION_TRUST_DECISIONS.delete(oldestKey);
-                }
-            }
-            return trusted
-                ? { trusted: true, source: "session-positive" }
-                : { trusted: false, source: "session-negative" };
-        }
-    }
-    catch {
-        return { trusted: false, source: "session-unavailable" };
-    }
-    return { trusted: false, source: "session-unavailable" };
 }
-function pathParts(relativePath) {
-    return relativePath.split(path.sep).filter((part) => part.length > 0 && part !== ".");
-}
-function symlinkTargetIsDirectory(filePath, fileSystem) {
-    if (!fileSystem.statSync)
-        return undefined;
-    try {
-        return fileSystem.statSync(filePath).isDirectory();
-    }
-    catch {
+function fileIdentity(stat) {
+    if (!Number.isSafeInteger(stat.dev) ||
+        !Number.isSafeInteger(stat.ino) ||
+        stat.dev <= 0 ||
+        stat.ino <= 0) {
         return undefined;
     }
+    return { dev: stat.dev, ino: stat.ino };
 }
-function inspectCandidate(projectRoot, agentsDirectory, filePath, fileName, stat, fileSystem) {
-    const relativePath = path.relative(agentsDirectory, filePath);
-    const regular = stat.isFile() && !stat.isSymbolicLink();
-    const symlink = stat.isSymbolicLink();
-    if (!symlink && regular) {
-        try {
-            const canonicalFilePath = fileSystem.realpathSync(filePath);
-            if (!isPathWithin(projectRoot, canonicalFilePath)) {
-                return {
-                    filePath,
-                    relativePath,
-                    basename: candidateBasename(fileName),
-                    signature: statSignature(stat),
-                    stat,
-                    regular: false,
-                    symlink: true,
-                };
-            }
-        }
-        catch {
-        }
+function sameFileIdentity(left, right) {
+    return left.dev === right.dev && left.ino === right.ino;
+}
+function inspectDirectorySnapshot(rootPath, directoryPath, label, stat, fileSystem) {
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        return {
+            status: "unavailable",
+            reason: `Project-agent ${label} is not a regular non-symlink directory: ${directoryPath}`,
+        };
+    }
+    const identity = fileIdentity(stat);
+    if (!identity) {
+        return {
+            status: "unavailable",
+            reason: `Project-agent ${label} directory identity is unavailable: ${directoryPath}`,
+        };
+    }
+    let canonicalPath;
+    try {
+        canonicalPath = fileSystem.realpathSync(directoryPath);
+    }
+    catch (error) {
+        return {
+            status: "unavailable",
+            reason: `Project-agent ${label} cannot be canonicalized: ${errorMessage(error)}`,
+        };
+    }
+    if (!isPathWithin(rootPath, canonicalPath)) {
+        return {
+            status: "unavailable",
+            reason: `Project-agent ${label} is outside the canonical project root: ${directoryPath}`,
+        };
     }
     return {
+        status: "present",
+        snapshot: {
+            path: directoryPath,
+            canonicalPath,
+            signature: statSignature(stat),
+            identity,
+        },
+    };
+}
+function inspectFixedDirectory(rootPath, parentPath, name, label, fileSystem) {
+    let entries;
+    try {
+        entries = fileSystem.readdirSync(parentPath, { withFileTypes: true });
+    }
+    catch (error) {
+        return isErrno(error, "ENOENT")
+            ? { status: "unstable", reason: `Project-agent parent disappeared: ${parentPath}` }
+            : {
+                status: "unavailable",
+                reason: `Unable to enumerate project-agent directory '${parentPath}': ${errorMessage(error)}`,
+            };
+    }
+    if (!entries.some((entry) => entry.name === name))
+        return { status: "missing" };
+    const directoryPath = path.join(parentPath, name);
+    let stat;
+    try {
+        stat = fileSystem.lstatSync(directoryPath);
+    }
+    catch (error) {
+        return isErrno(error, "ENOENT")
+            ? { status: "unstable", reason: `Project-agent directory disappeared: ${directoryPath}` }
+            : {
+                status: "unavailable",
+                reason: `Unable to inspect project-agent directory '${directoryPath}': ${errorMessage(error)}`,
+            };
+    }
+    const snapshot = inspectDirectorySnapshot(rootPath, directoryPath, label, stat, fileSystem);
+    return snapshot.status === "present"
+        ? snapshot
+        : { status: "unavailable", reason: snapshot.reason };
+}
+function inspectCandidate(agentsDirectory, filePath, fileName, stat, directories) {
+    const identity = fileIdentity(stat);
+    return {
         filePath,
-        relativePath,
+        relativePath: path.relative(agentsDirectory, filePath),
         basename: candidateBasename(fileName),
         signature: statSignature(stat),
         stat,
-        regular,
-        symlink,
+        identity,
+        regular: stat.isFile() && !stat.isSymbolicLink() && identity !== undefined,
+        symlink: stat.isSymbolicLink(),
+        directories,
     };
 }
 function collectCandidateInventory(projectRoot, options) {
@@ -441,154 +353,148 @@ function collectCandidateInventory(projectRoot, options) {
     const candidates = [];
     const diagnostics = [];
     let totalBytes = 0;
-    let directoryCount = 0;
-    let status = "ok";
-    let tlhDirectoryStat;
+    const directories = [];
+    let rootStat;
     try {
-        tlhDirectoryStat = options.fileSystem.lstatSync(path.join(projectRoot, ".tlh"));
+        rootStat = options.fileSystem.lstatSync(projectRoot);
     }
     catch (error) {
-        if (isErrno(error, "ENOENT")) {
-            return { status: "ok", candidates: [], diagnostics: [], totalBytes: 0 };
-        }
         return {
-            status: "unavailable",
+            status: isErrno(error, "ENOENT") ? "unstable" : "unavailable",
             candidates: [],
+            directories,
             diagnostics: [
-                `Unable to inspect project-agent directory '${agentsDirectory}': ${errorMessage(error)}`,
+                `Unable to inspect canonical project root '${projectRoot}': ${errorMessage(error)}`,
             ],
             totalBytes: 0,
         };
     }
-    if (tlhDirectoryStat.isSymbolicLink() || !tlhDirectoryStat.isDirectory()) {
+    const rootResult = inspectDirectorySnapshot(projectRoot, projectRoot, "root", rootStat, options.fileSystem);
+    if (rootResult.status !== "present") {
         return {
             status: "unavailable",
             candidates: [],
+            directories,
+            diagnostics: [rootResult.reason],
+            totalBytes: 0,
+        };
+    }
+    directories.push(rootResult.snapshot);
+    const tlhResult = inspectFixedDirectory(projectRoot, projectRoot, ".tlh", ".tlh", options.fileSystem);
+    if (tlhResult.status === "missing") {
+        return { status: "ok", candidates: [], directories, diagnostics: [], totalBytes: 0 };
+    }
+    if (tlhResult.status !== "present") {
+        return {
+            status: tlhResult.status,
+            candidates: [],
+            directories,
+            diagnostics: [tlhResult.reason],
+            totalBytes: 0,
+        };
+    }
+    directories.push(tlhResult.snapshot);
+    const agentsResult = inspectFixedDirectory(projectRoot, tlhResult.snapshot.path, "agents", ".tlh/agents", options.fileSystem);
+    if (agentsResult.status === "missing") {
+        return { status: "ok", candidates: [], directories, diagnostics: [], totalBytes: 0 };
+    }
+    if (agentsResult.status !== "present") {
+        return {
+            status: agentsResult.status,
+            candidates: [],
+            directories,
+            diagnostics: [agentsResult.reason],
+            totalBytes: 0,
+        };
+    }
+    directories.push(agentsResult.snapshot);
+    const customResult = inspectFixedDirectory(projectRoot, agentsResult.snapshot.path, "custom", ".tlh/agents/custom", options.fileSystem);
+    if (customResult.status === "missing") {
+        return { status: "ok", candidates: [], directories, diagnostics: [], totalBytes: 0 };
+    }
+    if (customResult.status !== "present") {
+        return {
+            status: customResult.status,
+            candidates: [],
+            directories,
+            diagnostics: [customResult.reason],
+            totalBytes: 0,
+        };
+    }
+    directories.push(customResult.snapshot);
+    const directory = agentsDirectory;
+    let entries;
+    try {
+        entries = options.fileSystem
+            .readdirSync(directory, { withFileTypes: true })
+            .slice()
+            .sort((left, right) => left.name.localeCompare(right.name));
+    }
+    catch (error) {
+        return {
+            status: isErrno(error, "ENOENT") ? "unstable" : "unavailable",
+            candidates: [],
+            directories,
             diagnostics: [
-                `Project-agent directory component is not a regular directory: ${path.join(projectRoot, ".tlh")}`,
+                `Unable to enumerate project-agent directory '${directory}': ${errorMessage(error)}`,
             ],
             totalBytes: 0,
         };
     }
-    const walk = (directory, depth) => {
-        if (status !== "ok")
-            return;
-        let directoryStat;
+    for (const entry of entries) {
+        if (!isDefinitionFile(entry.name))
+            continue;
+        const filePath = path.join(directory, entry.name);
+        let stat;
         try {
-            directoryStat = options.fileSystem.lstatSync(directory);
+            stat = options.fileSystem.lstatSync(filePath);
         }
         catch (error) {
-            status = isErrno(error, "ENOENT") ? "unstable" : "unavailable";
-            diagnostics.push(`Unable to inspect project-agent directory '${directory}': ${errorMessage(error)}`);
-            return;
-        }
-        if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
-            status = "unavailable";
-            diagnostics.push(`Project-agent directory component is not a regular directory: ${directory}`);
-            return;
-        }
-        if (depth > options.maxDepth) {
-            status = "bounded";
-            diagnostics.push(`Project-agent directory depth exceeds ${options.maxDepth}: ${directory}`);
-            return;
-        }
-        directoryCount += 1;
-        if (directoryCount > options.maxDirectories) {
-            status = "bounded";
-            diagnostics.push(`Project-agent directory count exceeds ${options.maxDirectories}.`);
-            return;
-        }
-        let entries;
-        try {
-            entries = options.fileSystem
-                .readdirSync(directory, { withFileTypes: true })
-                .slice()
-                .sort((left, right) => left.name.localeCompare(right.name));
-        }
-        catch (error) {
-            status = isErrno(error, "ENOENT") ? "unstable" : "unavailable";
-            diagnostics.push(`Unable to enumerate project-agent directory '${directory}': ${errorMessage(error)}`);
-            return;
-        }
-        for (const entry of entries) {
-            if (status !== "ok")
-                return;
-            const filePath = path.join(directory, entry.name);
-            let stat;
-            try {
-                stat = options.fileSystem.lstatSync(filePath);
-            }
-            catch (error) {
-                status = isErrno(error, "ENOENT") ? "unstable" : "unavailable";
-                diagnostics.push(`Unable to inspect project-agent path '${filePath}': ${errorMessage(error)}`);
-                return;
-            }
-            if (stat.isSymbolicLink()) {
-                const targetIsDirectory = symlinkTargetIsDirectory(filePath, options.fileSystem);
-                if (targetIsDirectory !== false) {
-                    status = "unavailable";
-                    diagnostics.push(`Symlinked project-agent directory/path is not allowed: ${filePath}`);
-                    return;
-                }
-                if (!isDefinitionFile(entry.name))
-                    continue;
-            }
-            if (isDefinitionFile(entry.name)) {
-                const candidate = inspectCandidate(projectRoot, agentsDirectory, filePath, entry.name, stat, options.fileSystem);
-                candidates.push(candidate);
-                totalBytes += candidate.stat.size;
-                if (candidates.length > options.maxFiles || totalBytes > options.maxTotalBytes) {
-                    status = "bounded";
-                    diagnostics.push(candidates.length > options.maxFiles
-                        ? `Project-agent file count exceeds ${options.maxFiles}.`
-                        : `Project-agent byte count exceeds ${options.maxTotalBytes}.`);
-                    return;
-                }
-                continue;
-            }
-            if (stat.isDirectory() && !stat.isSymbolicLink()) {
-                walk(filePath, depth + 1);
-                continue;
-            }
-        }
-    };
-    let agentsStat;
-    try {
-        agentsStat = options.fileSystem.lstatSync(agentsDirectory);
-    }
-    catch (error) {
-        if (isErrno(error, "ENOENT")) {
             return {
-                status: "ok",
+                status: isErrno(error, "ENOENT") ? "unstable" : "unavailable",
                 candidates: [],
-                diagnostics: [],
+                directories,
+                diagnostics: [`Unable to inspect project-agent path '${filePath}': ${errorMessage(error)}`],
                 totalBytes: 0,
             };
         }
-        return {
-            status: "unavailable",
-            diagnostics: [
-                `Unable to inspect project-agent directory '${agentsDirectory}': ${errorMessage(error)}`,
-            ],
-            candidates: [],
-            totalBytes: 0,
-        };
+        const candidate = inspectCandidate(directory, filePath, entry.name, stat, directories);
+        candidates.push(candidate);
+        totalBytes += Math.max(0, candidate.stat.size);
+        if (candidates.length > options.maxFiles || totalBytes > options.maxTotalBytes) {
+            return {
+                status: "bounded",
+                candidates,
+                directories,
+                diagnostics: [
+                    candidates.length > options.maxFiles
+                        ? `Project-agent file count exceeds ${options.maxFiles}.`
+                        : `Project-agent byte count exceeds ${options.maxTotalBytes}.`,
+                ],
+                totalBytes,
+            };
+        }
     }
-    if (agentsStat.isSymbolicLink() || !agentsStat.isDirectory()) {
-        return {
-            status: "unavailable",
-            candidates: [],
-            diagnostics: [`Project-agent directory is not a regular directory: ${agentsDirectory}`],
-            totalBytes: 0,
-        };
-    }
-    walk(agentsDirectory, 0);
     candidates.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-    return { status, candidates, diagnostics, totalBytes };
+    return { status: "ok", candidates, directories, diagnostics, totalBytes };
 }
 function sameInventory(left, right) {
     if (left.status !== "ok" || right.status !== "ok")
         return false;
+    if (left.totalBytes !== right.totalBytes)
+        return false;
+    if (left.directories.length !== right.directories.length)
+        return false;
+    for (const [index, directory] of left.directories.entries()) {
+        const other = right.directories[index];
+        if (!other ||
+            directory.path !== other.path ||
+            directory.canonicalPath !== other.canonicalPath ||
+            directory.signature !== other.signature ||
+            !sameFileIdentity(directory.identity, other.identity)) {
+            return false;
+        }
+    }
     if (left.candidates.length !== right.candidates.length)
         return false;
     return left.candidates.every((candidate, index) => {
@@ -597,34 +503,57 @@ function sameInventory(left, right) {
             candidate.relativePath === other.relativePath &&
             candidate.signature === other.signature &&
             candidate.regular === other.regular &&
-            candidate.symlink === other.symlink);
+            candidate.symlink === other.symlink &&
+            (candidate.identity === undefined) === (other.identity === undefined) &&
+            (candidate.identity === undefined ||
+                (other.identity !== undefined && sameFileIdentity(candidate.identity, other.identity))));
     });
 }
-function validateCandidatePath(projectRoot, candidate, fileSystem) {
-    if (!candidate.regular || candidate.symlink) {
-        return { valid: false, reason: "candidate is not a regular non-symlink file" };
-    }
-    const relative = path.relative(projectRoot, candidate.filePath);
-    if (!isPathWithin(projectRoot, candidate.filePath) || relative === "") {
-        return { valid: false, reason: "candidate is outside the canonical project root" };
-    }
-    const parts = pathParts(relative);
-    if (parts.length < 1)
-        return { valid: false, reason: "candidate path is empty" };
-    let current = projectRoot;
-    for (const component of parts.slice(0, -1)) {
-        current = path.join(current, component);
+function validateDirectorySnapshots(projectRoot, candidate, fileSystem) {
+    for (const directory of candidate.directories) {
         let stat;
         try {
-            stat = fileSystem.lstatSync(current);
+            stat = fileSystem.lstatSync(directory.path);
         }
         catch (error) {
-            return { valid: false, reason: `path component cannot be inspected: ${errorMessage(error)}` };
+            return { valid: false, reason: `directory cannot be inspected: ${errorMessage(error)}` };
         }
         if (stat.isSymbolicLink() || !stat.isDirectory()) {
-            return { valid: false, reason: "path component is not a regular non-symlink directory" };
+            return { valid: false, reason: "directory component is not a regular non-symlink directory" };
+        }
+        const identity = fileIdentity(stat);
+        if (!identity)
+            return { valid: false, reason: "directory identity cannot be proven" };
+        if (!sameFileIdentity(directory.identity, identity)) {
+            return { valid: false, reason: `directory identity changed: ${directory.path}` };
+        }
+        let canonicalPath;
+        try {
+            canonicalPath = fileSystem.realpathSync(directory.path);
+        }
+        catch (error) {
+            return { valid: false, reason: `directory cannot be canonicalized: ${errorMessage(error)}` };
+        }
+        if (!isPathWithin(projectRoot, canonicalPath) || canonicalPath !== directory.canonicalPath) {
+            return { valid: false, reason: "directory canonical containment changed" };
         }
     }
+    return { valid: true };
+}
+function validateCandidatePath(projectRoot, candidate, fileSystem) {
+    if (!candidate.regular || candidate.symlink || !candidate.identity) {
+        return { valid: false, reason: "candidate is not a regular non-symlink file" };
+    }
+    const customDirectory = candidate.directories[candidate.directories.length - 1];
+    if (!customDirectory)
+        return { valid: false, reason: "custom directory identity is unavailable" };
+    if (path.dirname(candidate.filePath) !== customDirectory.path ||
+        !isPathWithin(projectRoot, candidate.filePath)) {
+        return { valid: false, reason: "candidate is outside the canonical custom-agent directory" };
+    }
+    const directories = validateDirectorySnapshots(projectRoot, candidate, fileSystem);
+    if (!directories.valid)
+        return directories;
     let stat;
     try {
         stat = fileSystem.lstatSync(candidate.filePath);
@@ -635,6 +564,15 @@ function validateCandidatePath(projectRoot, candidate, fileSystem) {
     if (stat.isSymbolicLink() || !stat.isFile()) {
         return { valid: false, reason: "candidate is not a regular non-symlink file" };
     }
+    const identity = fileIdentity(stat);
+    if (!identity)
+        return { valid: false, reason: "candidate file identity cannot be proven" };
+    if (!sameFileIdentity(candidate.identity, identity)) {
+        return { valid: false, reason: "candidate file identity changed" };
+    }
+    if (statSignature(stat) !== candidate.signature) {
+        return { valid: false, reason: "candidate changed before reading" };
+    }
     let canonicalPath;
     try {
         canonicalPath = fileSystem.realpathSync(candidate.filePath);
@@ -642,10 +580,11 @@ function validateCandidatePath(projectRoot, candidate, fileSystem) {
     catch (error) {
         return { valid: false, reason: `file cannot be canonicalized: ${errorMessage(error)}` };
     }
-    if (!isPathWithin(projectRoot, canonicalPath)) {
-        return { valid: false, reason: "canonical file path is outside the project root" };
+    if (!isPathWithin(projectRoot, canonicalPath) ||
+        path.dirname(canonicalPath) !== customDirectory.canonicalPath) {
+        return { valid: false, reason: "canonical file path is outside the custom-agent directory" };
     }
-    return { valid: true, canonicalPath, stat };
+    return { valid: true, canonicalPath, stat, identity };
 }
 function bytesFromRead(value) {
     return Buffer.isBuffer(value) ? value : Buffer.from(value, "utf-8");
@@ -767,11 +706,15 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
     if (duplicateField) {
         throw new ProjectAgentDefinitionError(filePath, `frontmatter field '${duplicateField}' is declared more than once`);
     }
-    if (!PROJECT_AGENT_NAME_PATTERN.test(basename)) {
+    if (!PROJECT_AGENT_FILE_BASENAME_PATTERN.test(basename)) {
+        throw new ProjectAgentDefinitionError(filePath, "file basename must contain only uppercase ASCII letters, digits, and hyphens");
+    }
+    const localName = basename.toLowerCase();
+    if (!PROJECT_AGENT_NAME_PATTERN.test(localName)) {
         throw new ProjectAgentDefinitionError(filePath, "file basename is not a valid agent name");
     }
-    if (frontmatter.name !== basename) {
-        throw new ProjectAgentDefinitionError(filePath, `frontmatter name must exactly equal file basename '${basename}'`);
+    if (frontmatter.name !== localName) {
+        throw new ProjectAgentDefinitionError(filePath, `frontmatter name must exactly equal lowercase file basename '${localName}'`);
     }
     if (frontmatter.package !== PROJECT_AGENT_PACKAGE) {
         throw new ProjectAgentDefinitionError(filePath, `package must exactly be '${PROJECT_AGENT_PACKAGE}'`);
@@ -796,7 +739,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         Object.prototype.hasOwnProperty.call(frontmatter, "subagentOnlyExtensions")) {
         throw new ProjectAgentDefinitionError(filePath, "extensions and subagentOnlyExtensions are prohibited for project agents");
     }
-    const runtimeName = buildRuntimeName(basename, PROJECT_AGENT_PACKAGE);
+    const runtimeName = buildRuntimeName(localName, PROJECT_AGENT_PACKAGE);
     if (!PROJECT_AGENT_RUNTIME_NAME_PATTERN.test(runtimeName)) {
         throw new ProjectAgentDefinitionError(filePath, "runtime name is invalid");
     }
@@ -829,7 +772,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
         : parseStrictBoolean(frontmatter, "completionGuard", false, filePath);
     const defaultProgress = parseStrictBoolean(frontmatter, "defaultProgress", false, filePath);
     const interactive = parseStrictBoolean(frontmatter, "interactive", false, filePath);
-    const inheritProjectContext = parseStrictBoolean(frontmatter, "inheritProjectContext", basename === "delegate", filePath);
+    const inheritProjectContext = parseStrictBoolean(frontmatter, "inheritProjectContext", localName === "delegate", filePath);
     const inheritSkills = parseStrictBoolean(frontmatter, "inheritSkills", false, filePath);
     const extraFields = {};
     for (const [key, value] of Object.entries(frontmatter)) {
@@ -838,7 +781,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
     }
     const agent = {
         name: runtimeName,
-        localName: basename,
+        localName,
         packageName: PROJECT_AGENT_PACKAGE,
         description: frontmatter.description,
         tools,
@@ -849,7 +792,7 @@ function parseProjectAgentDefinitionFromText(filePath, content, exactBytes = Buf
             ? "append"
             : systemPromptMode === "replace"
                 ? "replace"
-                : basename === "delegate"
+                : localName === "delegate"
                     ? "append"
                     : "replace",
         inheritProjectContext,
@@ -878,7 +821,8 @@ export function parseProjectAgentDefinition(filePath, content) {
     return parseProjectAgentDefinitionFromText(filePath, parseUtf8(bytes), bytes);
 }
 function readCandidate(projectRoot, candidate, options) {
-    const validation = validateCandidatePath(projectRoot, candidate, options.fileSystem);
+    const fileSystem = options.fileSystem;
+    const validation = validateCandidatePath(projectRoot, candidate, fileSystem);
     if (!validation.valid)
         return { status: "invalid", reason: validation.reason };
     if (validation.stat.size > options.maxFileBytes) {
@@ -887,48 +831,123 @@ function readCandidate(projectRoot, candidate, options) {
             reason: `file size exceeds ${options.maxFileBytes} bytes`,
         };
     }
-    if (statSignature(validation.stat) !== candidate.signature) {
-        return { status: "unstable", reason: "candidate changed before reading" };
-    }
-    let raw;
-    try {
-        raw = options.fileSystem.readFileSync(validation.canonicalPath);
-    }
-    catch (error) {
-        let current;
-        try {
-            current = options.fileSystem.lstatSync(candidate.filePath);
-        }
-        catch {
-            return { status: "unstable", reason: "candidate disappeared while reading" };
-        }
-        return statSignature(current) === candidate.signature
-            ? { status: "invalid", reason: `file cannot be read: ${errorMessage(error)}` }
-            : { status: "unstable", reason: "candidate changed while reading" };
-    }
-    const bytes = bytesFromRead(raw);
-    if (bytes.byteLength !== validation.stat.size) {
-        return { status: "unstable", reason: "file size changed while reading" };
-    }
-    let afterRead;
-    try {
-        afterRead = options.fileSystem.lstatSync(candidate.filePath);
-    }
-    catch {
-        return { status: "unstable", reason: "candidate disappeared after reading" };
-    }
-    if (statSignature(afterRead) !== candidate.signature) {
-        return { status: "unstable", reason: "candidate changed after reading" };
-    }
-    try {
-        const entry = parseProjectAgentDefinitionFromText(candidate.filePath, parseUtf8(bytes), bytes);
-        return { status: "valid", entry };
-    }
-    catch (error) {
+    const noFollow = fileSystem.noFollowFlag;
+    if (typeof noFollow !== "number" || !Number.isSafeInteger(noFollow) || noFollow <= 0) {
         return {
             status: "invalid",
-            reason: error instanceof ProjectAgentDefinitionError ? error.message : errorMessage(error),
+            reason: "the O_NOFOLLOW open flag is unavailable; refusing an unbound path read",
         };
+    }
+    if (typeof fileSystem.openSync !== "function" ||
+        typeof fileSystem.fstatSync !== "function" ||
+        typeof fileSystem.readSync !== "function" ||
+        typeof fileSystem.closeSync !== "function") {
+        return {
+            status: "invalid",
+            reason: "safe descriptor operations are unavailable; refusing to read the definition",
+        };
+    }
+    let descriptor;
+    try {
+        descriptor = fileSystem.openSync(candidate.filePath, fs.constants.O_RDONLY | noFollow);
+    }
+    catch (error) {
+        if (isErrno(error, "ENOENT") || isErrno(error, "ELOOP")) {
+            return { status: "unstable", reason: "candidate changed before descriptor open" };
+        }
+        return { status: "invalid", reason: `file cannot be opened safely: ${errorMessage(error)}` };
+    }
+    try {
+        const descriptorStat = fileSystem.fstatSync(descriptor);
+        if (descriptorStat.isSymbolicLink() || !descriptorStat.isFile()) {
+            return { status: "invalid", reason: "opened descriptor is not a regular file" };
+        }
+        const descriptorIdentity = fileIdentity(descriptorStat);
+        if (!descriptorIdentity) {
+            return { status: "invalid", reason: "opened file identity cannot be proven" };
+        }
+        if (!sameFileIdentity(validation.identity, descriptorIdentity)) {
+            return { status: "unstable", reason: "opened descriptor identity changed" };
+        }
+        if (descriptorStat.size > options.maxFileBytes) {
+            return {
+                status: "invalid",
+                reason: `file size exceeds ${options.maxFileBytes} bytes`,
+            };
+        }
+        if (statSignature(descriptorStat) !== candidate.signature) {
+            return { status: "unstable", reason: "candidate changed before reading" };
+        }
+        const beforeReadPath = validateCandidatePath(projectRoot, candidate, fileSystem);
+        if (!beforeReadPath.valid) {
+            return { status: "unstable", reason: beforeReadPath.reason };
+        }
+        if (!sameFileIdentity(beforeReadPath.identity, descriptorIdentity)) {
+            return { status: "unstable", reason: "opened descriptor no longer matches candidate" };
+        }
+        const chunks = [];
+        let bytesRead = 0;
+        while (bytesRead <= options.maxFileBytes) {
+            const remaining = options.maxFileBytes + 1 - bytesRead;
+            if (remaining <= 0)
+                break;
+            const buffer = Buffer.allocUnsafe(Math.min(8192, remaining));
+            const count = fileSystem.readSync(descriptor, buffer, 0, buffer.byteLength, null);
+            if (!Number.isSafeInteger(count) || count < 0 || count > buffer.byteLength) {
+                return { status: "invalid", reason: "safe descriptor read returned an invalid byte count" };
+            }
+            if (count === 0)
+                break;
+            chunks.push(buffer.subarray(0, count));
+            bytesRead += count;
+            if (bytesRead > options.maxFileBytes) {
+                return {
+                    status: "invalid",
+                    reason: `file size exceeds ${options.maxFileBytes} bytes`,
+                };
+            }
+        }
+        const bytes = Buffer.concat(chunks, bytesRead);
+        const afterReadStat = fileSystem.fstatSync(descriptor);
+        if (!afterReadStat.isFile() ||
+            !fileIdentity(afterReadStat) ||
+            !sameFileIdentity(descriptorIdentity, fileIdentity(afterReadStat)) ||
+            statSignature(afterReadStat) !== candidate.signature) {
+            return { status: "unstable", reason: "candidate changed while being read" };
+        }
+        if (bytes.byteLength !== validation.stat.size) {
+            return { status: "unstable", reason: "file size changed while reading" };
+        }
+        const afterReadPath = validateCandidatePath(projectRoot, candidate, fileSystem);
+        if (!afterReadPath.valid) {
+            return { status: "unstable", reason: afterReadPath.reason };
+        }
+        if (!sameFileIdentity(afterReadPath.identity, descriptorIdentity)) {
+            return { status: "unstable", reason: "candidate path identity changed after reading" };
+        }
+        try {
+            const entry = parseProjectAgentDefinitionFromText(candidate.filePath, parseUtf8(bytes), bytes);
+            return { status: "valid", entry };
+        }
+        catch (error) {
+            return {
+                status: "invalid",
+                reason: error instanceof ProjectAgentDefinitionError ? error.message : errorMessage(error),
+            };
+        }
+    }
+    catch (error) {
+        if (isErrno(error, "ENOENT") || isErrno(error, "ELOOP")) {
+            return { status: "unstable", reason: "candidate changed while being read" };
+        }
+        return { status: "invalid", reason: `file cannot be read safely: ${errorMessage(error)}` };
+    }
+    finally {
+        try {
+            fileSystem.closeSync(descriptor);
+        }
+        catch {
+        }
     }
 }
 function emptyScanResult(projectRoot, status, diagnostics = []) {
@@ -949,8 +968,11 @@ function scanProjectAgentsOnce(projectRoot, options) {
         return emptyScanResult(projectRoot, before.status, before.diagnostics);
     }
     const basenameCounts = new Map();
+    const caseFoldedBasenameCounts = new Map();
     for (const candidate of before.candidates) {
         basenameCounts.set(candidate.basename, (basenameCounts.get(candidate.basename) ?? 0) + 1);
+        const caseFolded = candidate.basename.toLowerCase();
+        caseFoldedBasenameCounts.set(caseFolded, (caseFoldedBasenameCounts.get(caseFolded) ?? 0) + 1);
     }
     const entries = [];
     const tombstones = new Set();
@@ -962,9 +984,10 @@ function scanProjectAgentsOnce(projectRoot, options) {
             diagnostics.push(`Ignoring invalid project-agent basename '${candidate.basename}'.`);
             continue;
         }
-        if ((basenameCounts.get(candidate.basename) ?? 0) > 1) {
+        if ((basenameCounts.get(candidate.basename) ?? 0) > 1 ||
+            (caseFoldedBasenameCounts.get(candidate.basename.toLowerCase()) ?? 0) > 1) {
             tombstones.add(runtimeName);
-            diagnostics.push(`Duplicate project-agent basename '${candidate.basename}' fails closed.`);
+            diagnostics.push(`Case-insensitive duplicate project-agent basename '${candidate.basename}' fails closed.`);
             continue;
         }
         const result = readCandidate(projectRoot, candidate, options);
@@ -1002,13 +1025,17 @@ function scanProjectAgentsOnce(projectRoot, options) {
 }
 export function scanProjectAgentDefinitions(projectRoot, options = {}) {
     const fileSystem = options.fileSystem ?? DEFAULT_FILE_SYSTEM;
-    let canonicalRoot;
+    const canonicalRoot = resolveValidatedGitWorktreeRoot(projectRoot, { fileSystem });
+    if (!canonicalRoot) {
+        return emptyScanResult(projectRoot, "unavailable", [
+            "Canonical project root is not a validated Git worktree.",
+        ]);
+    }
     try {
-        canonicalRoot = fileSystem.realpathSync(projectRoot);
         const rootStat = fileSystem.lstatSync(canonicalRoot);
-        if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+        if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || !fileIdentity(rootStat)) {
             return emptyScanResult(projectRoot, "unavailable", [
-                "Canonical project root is not a regular directory.",
+                "Canonical project root is not a regular directory with a valid identity.",
             ]);
         }
     }
@@ -1028,18 +1055,18 @@ export function scanProjectAgentDefinitions(projectRoot, options = {}) {
     return scanProjectAgentsOnce(canonicalRoot, scanOptions);
 }
 function projectAgentDirectoryExists(projectRoot, fileSystem) {
-    const tlhDirectory = path.join(projectRoot, ".tlh");
-    const agentsDirectory = path.join(projectRoot, PROJECT_AGENT_DIRECTORY);
-    try {
-        const tlhStat = fileSystem.lstatSync(tlhDirectory);
-        if (tlhStat.isSymbolicLink() || !tlhStat.isDirectory())
-            return true;
-        fileSystem.lstatSync(agentsDirectory);
+    const tlh = inspectFixedDirectory(projectRoot, projectRoot, ".tlh", ".tlh", fileSystem);
+    if (tlh.status === "missing")
+        return false;
+    if (tlh.status !== "present")
         return true;
-    }
-    catch (error) {
-        return !isErrno(error, "ENOENT");
-    }
+    const agents = inspectFixedDirectory(projectRoot, tlh.snapshot.path, "agents", ".tlh/agents", fileSystem);
+    if (agents.status === "missing")
+        return false;
+    if (agents.status !== "present")
+        return true;
+    const custom = inspectFixedDirectory(projectRoot, agents.snapshot.path, "custom", ".tlh/agents/custom", fileSystem);
+    return custom.status !== "missing";
 }
 function registerLoadedProjectAgentSnapshot(projectRoot, options, trust, scan) {
     const generationId = typeof options.generationId === "string" && options.generationId.trim().length > 0
@@ -1070,16 +1097,9 @@ function registerLoadedProjectAgentSnapshot(projectRoot, options, trust, scan) {
 function mergeTrustOptions(options) {
     return {
         ...options.trust,
-        sessionId: options.trust?.sessionId ?? options.sessionId,
         agentDir: options.trust?.agentDir ?? options.agentDir,
         trustOverride: options.trust?.trustOverride ?? options.trustOverride,
-        defaultProjectTrust: options.trust?.defaultProjectTrust ?? options.defaultProjectTrust,
-        isProjectTrusted: options.trust?.isProjectTrusted ?? options.context?.isProjectTrusted,
-        hasUI: options.trust?.hasUI ?? options.context?.hasUI,
-        ui: options.trust?.ui ?? options.context?.ui,
         createProjectTrustStore: options.trust?.createProjectTrustStore ?? options.trustDependencies?.createProjectTrustStore,
-        hasTrustRequiringProjectResources: options.trust?.hasTrustRequiringProjectResources ??
-            options.trustDependencies?.hasTrustRequiringProjectResources,
     };
 }
 export async function loadProjectAgentSnapshot(options) {
@@ -1102,43 +1122,23 @@ export async function loadProjectAgentSnapshot(options) {
         };
     }
     const trustOptions = mergeTrustOptions(options);
-    if (typeof trustOptions.hasTrustRequiringProjectResources !== "function" ||
-        (typeof trustOptions.createProjectTrustStore !== "function" &&
-            !isUsableTrustStore(trustOptions.trustStore))) {
+    const projectAgentDirectoryPresent = projectAgentDirectoryExists(projectRoot, fileSystem);
+    if (!projectAgentDirectoryPresent && trustOptions.trustOverride !== false) {
+        const trust = {
+            kind: "project-agent",
+            trusted: true,
+            source: "no-project-agents",
+        };
+        return registerLoadedProjectAgentSnapshot(projectRoot, options, trust, emptyScanResult(projectRoot, "stable"));
+    }
+    if (typeof trustOptions.createProjectTrustStore !== "function" &&
+        !isUsableTrustStore(trustOptions.trustStore)) {
         return {
             status: "unavailable",
             projectRoot,
             agentsDirectory: path.join(projectRoot, PROJECT_AGENT_DIRECTORY),
             diagnostics: ["Project-agent trust dependencies are unavailable; loading is disabled."],
         };
-    }
-    const projectAgentDirectoryPresent = projectAgentDirectoryExists(projectRoot, fileSystem);
-    if (!projectAgentDirectoryPresent && trustOptions.trustOverride !== false) {
-        let upstreamDenied = false;
-        try {
-            upstreamDenied = trustOptions.isProjectTrusted?.() === false;
-        }
-        catch {
-            upstreamDenied = false;
-        }
-        if (upstreamDenied) {
-            const trust = {
-                trusted: false,
-                source: "explicit-negative",
-            };
-            return {
-                status: "denied",
-                projectRoot,
-                agentsDirectory: path.join(projectRoot, PROJECT_AGENT_DIRECTORY),
-                trust,
-                diagnostics: [`Project-agent loading denied (${trust.source}).`],
-            };
-        }
-        const trust = {
-            trusted: true,
-            source: "no-project-agents",
-        };
-        return registerLoadedProjectAgentSnapshot(projectRoot, options, trust, emptyScanResult(projectRoot, "stable"));
     }
     const trust = await resolveProjectAgentTrust(projectRoot, trustOptions);
     if (!trust.trusted) {

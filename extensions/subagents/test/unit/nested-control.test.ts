@@ -91,6 +91,11 @@ function createExecutor(
       return () => {};
     },
   },
+  options: {
+    discoverAgents?: (...args: any[]) => { agents: any[]; modelScope?: any };
+    executeAsyncSingle?: (...args: any[]) => any;
+    runSync?: (...args: any[]) => any;
+  } = {},
 ) {
   return createSubagentExecutor({
     pi: {
@@ -107,7 +112,9 @@ function createExecutor(
         ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
         : os.tmpdir(),
     expandTilde: (value) => value,
-    discoverAgents: () => ({ agents: agents as any }),
+    discoverAgents: options.discoverAgents ?? (() => ({ agents: agents as any })),
+    executeAsyncSingle: options.executeAsyncSingle,
+    runSync: options.runSync,
   });
 }
 
@@ -586,6 +593,75 @@ describe("nested run control behavior", () => {
       assert.match(text(result), /session file does not exist/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not trust forged cwd metadata for ordinary nested revival", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-forged-cwd-"));
+    const forgedCwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-nested-forged-cwd-target-"));
+    const runId = "nested-forged-cwd";
+    const nestedAsyncDir = path.join(TEMP_ROOT_DIR, "nested-subagent-runs", "root-control", runId);
+    try {
+      const parentSessionFile = path.join(root, "parent.jsonl");
+      const sessionFile = path.join(root, "parent", runId, "run-0", "session.jsonl");
+      fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+      fs.writeFileSync(parentSessionFile, "");
+      fs.writeFileSync(sessionFile, "");
+      fs.mkdirSync(nestedAsyncDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(nestedAsyncDir, "status.json"),
+        JSON.stringify({
+          runId,
+          mode: "single",
+          state: "complete",
+          cwd: forgedCwd,
+          steps: [
+            {
+              agent: "worker",
+              status: "complete",
+              cwd: forgedCwd,
+              sessionFile,
+            },
+          ],
+        }),
+        "utf-8",
+      );
+      const route = createNestedRun(runId, "complete", {
+        asyncDir: nestedAsyncDir,
+        sessionFile,
+        cwd: forgedCwd,
+      });
+      let discoveredCwd: string | undefined;
+      let startedCwd: string | undefined;
+      const result = await createExecutor(stateWithNestedRoute(route), [], undefined, {
+        discoverAgents: (cwd) => {
+          discoveredCwd = cwd;
+          return { agents: [{ name: "worker", description: "Worker", prompt: "Do work" }] };
+        },
+        executeAsyncSingle: (_id, params) => {
+          startedCwd = params.cwd;
+          return {
+            content: [{ type: "text", text: "revived ordinary nested run" }],
+            details: { asyncId: _id, results: [] },
+          };
+        },
+      }).execute(
+        "resume-forged-cwd",
+        { action: "resume", id: runId, message: "Continue ordinary nested work." },
+        new AbortController().signal,
+        undefined,
+        ctx(root, parentSessionFile),
+      );
+
+      const trustedCwd = fs.realpathSync(path.dirname(nestedAsyncDir));
+      assert.equal(result.isError, undefined, text(result));
+      assert.equal(discoveredCwd, trustedCwd);
+      assert.equal(startedCwd, trustedCwd);
+      assert.notEqual(discoveredCwd, forgedCwd);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(forgedCwd, { recursive: true, force: true });
+      fs.rmSync(nestedAsyncDir, { recursive: true, force: true });
     }
   });
 

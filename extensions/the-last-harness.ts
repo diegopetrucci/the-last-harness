@@ -90,6 +90,7 @@ const EMPTY_STARTUP_RESOURCES: StartupResources = {
   prompts: [],
   extensions: [],
   themes: [],
+  projectGuidance: [],
 };
 
 type DeferredStartupTaskScheduler = (task: () => void) => void;
@@ -424,6 +425,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
       })();
       void startupResourceCollector(ctx.cwd, {
         projectTrusted: getActiveProjectTrustDecision(ctx),
+        projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
       })
         .then((snapshot) => {
           if (activeTlhHeaderSessionToken !== sessionToken) {

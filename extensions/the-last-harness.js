@@ -58,6 +58,7 @@ const EMPTY_STARTUP_RESOURCES = {
     prompts: [],
     extensions: [],
     themes: [],
+    projectGuidance: [],
 };
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
@@ -315,6 +316,7 @@ export default function theLastHarness(pi) {
             })();
             void startupResourceCollector(ctx.cwd, {
                 projectTrusted: getActiveProjectTrustDecision(ctx),
+                projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
             })
                 .then((snapshot) => {
                 if (activeTlhHeaderSessionToken !== sessionToken) {

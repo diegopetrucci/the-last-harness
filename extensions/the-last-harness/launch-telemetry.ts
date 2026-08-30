@@ -194,8 +194,10 @@ function isDirectorySync(path: string): boolean {
 /**
  * Locate the nearest project root above `cwd`, mirroring findNearestProjectRoot in
  * extensions/subagents/src/agents/agents.ts:533. A directory qualifies when it contains the Pi
- * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` dir. The isolated profile's own
- * parent and `~/<CONFIG_DIR_NAME>` are ignored so the user profile is never mistaken for a project.
+ * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` marker. This marker is used only
+ * to locate canonical-role settings overrides; it does not re-enable `.agents` custom-agent
+ * discovery. The isolated profile's own parent and `~/<CONFIG_DIR_NAME>` are ignored so the user
+ * profile is never mistaken for a project.
  *
  * NOTE — Do NOT replace with `SettingsManager.getProjectSettings()`. `FileSettingsStorage` (from
  * `@earendil-works/pi-coding-agent`) sets `projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME,
@@ -257,21 +259,18 @@ function readTlhProjectSubagentOverrides(
 /**
  * Resolve the effective per-agent override the subagents runtime would actually apply.
  *
- * TLH's eight subagents are installed under `tlh/agents/subagents` and reach the runtime via
- * `subagents.agentDirs`, so they are resolved as USER-scope custom agents by
- * applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054), NOT by
- * applyBuiltinOverrides. That gives a two-rule precedence:
+ * TLH's eight canonical minor agents are installed under the fixed
+ * `<agent-dir>/tlh/agents/subagents/<name>.md` paths. They are loaded as canonical TLH roles by
+ * the runtime's fixed-path discovery; `subagents.agentDirs` is not required and does not select
+ * these files. Their settings precedence is still the two-rule override order:
  *   1. project-scope `agentOverrides[name]`
  *   2. user-scope `agentOverrides[name]`
  *   3. otherwise unmodified
  *
  * The winning entry replaces the loser WHOLESALE — the runtime picks one scope's override object
  * and never merges fields across scopes, so a project entry setting only `thinking` also discards
- * a user entry's `model`. Mirror that exactly.
- *
- * `disableBuiltins` and `disableThinking` have been removed from the extension and play no part
- * here: TLH's agents are resolved as custom agents via `agentDirs`, so only the two-rule custom
- * override precedence above applies.
+ * a user entry's `model`. Mirror that exactly. Project custom `embedded.<slug>` definitions are
+ * intentionally excluded from this telemetry path and never receive these settings overrides.
  */
 function resolveEffectiveSubagentOverrides(
   userOverrides: Record<string, SubagentOverrideEntry> | undefined,
@@ -606,6 +605,7 @@ async function sendTlhTelemetry(
  * user-hand-edited frontmatter that predates the provider-default block.
  *
  * Install path set by scripts/lib/tlh-install-subagents.mts: <agentDir>/tlh/agents/subagents/<name>.md.
+ * These are the canonical installer-managed minor-role files, not project custom-agent sources.
  * Returns empty object if the file is absent or unreadable.
  *
  * Must only be called from the deferred (setTimeout) send path, never synchronously.
@@ -685,10 +685,11 @@ function joinModelEffort(model: string, effort: string): string {
  * bundled minor agents.
  *
  * Precedence (highest first):
- *   1. The effective settings override for <name>, already resolved across project and user scope
- *      by resolveEffectiveSubagentOverrides (project outranks user).
- *   2. Provider-aware frontmatter in <agentDir>/tlh/agents/subagents/<name>.md, resolved via
- *      selectProviderAwareAgentDefaults for the active provider.
+ *   1. The effective settings override for canonical role <name>, already resolved across project
+ *      and user scope by resolveEffectiveSubagentOverrides (project outranks user).
+ *   2. Provider-aware frontmatter in the canonical installer-managed
+ *      <agentDir>/tlh/agents/subagents/<name>.md file, resolved via selectProviderAwareAgentDefaults
+ *      for the active provider. Project custom-agent files are not telemetry sources.
  *
  * When an agent override has disabled: true the agent will not run at all. In that case
  * the modelEffort key is reported as the single token "disabled" (not "disabled:disabled") —

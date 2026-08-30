@@ -10,7 +10,7 @@ import { criticalGitSourceSpec, packageSourceInstallDir, packageSourcePiSource, 
 import { assertProfilePathWithinAgent, assertSafeSettingsTarget, copySafeProfileFile, ensureSafeProfileDir, isSymlink, validateInstallerTargets, validateProfileRelativePath, } from "./lib/tlh-install-paths.mjs";
 import { FORCE_REMOVED_RETIRED_DEFAULT_EXTENSION_SOURCES, disabledDefaultExtensionIds, packageIdentity, packageSourceOf, readDefaultExtensions, RETIRED_TLH_DEFAULT_PACKAGE_SOURCES, } from "./lib/default-extensions.mjs";
 import { assignRequiredEqualsValue, backupPathWithTimestamp, isTlhOwnedBackupFilename, readJsonFile, renderShellWords, requiredValue, selectExpiredBackups, shellWord, } from "./lib/tlh-install-utils.mjs";
-import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
+import { TLH_SUBAGENT_PROMPTS, captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, defaultExtensionsRequireCriticalInstall as defaultExtensionsFileRequiresCriticalInstall, findTlhSubagentsDir as findTlhSubagentsDirFromSources, missingTlhSubagentPrompts, provisionSubagentExtensionConfig, subagentExtensionConfigMissingDefaults, } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
 import { findLocalRepoDir, ensureSupportFilesPrepared, installableSupportFilesArePrepared, preflightRuntimeSupportFiles, } from "./lib/tlh-install-support-files.mjs";
 import { formatSupportFileManifest, installableSupportFiles, supportFileManifest, } from "./lib/tlh-install-support-manifest.mjs";
@@ -1180,15 +1180,10 @@ async function installSupportFilesToProfile(config) {
         await ensureSupportFilesPrepared(config, supportFileIo(config));
     if (!installableSupportFilesArePrepared(config))
         return;
-    const requireSubagentPrompts = settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-        noSettings: config.noSettings,
+    const subagentsSrc = findTlhSubagentsDirFromSources(config, {
+        localRepoDir: findLocalRepoDir(config) || "",
+        prompts: config.subagentPrompts,
     });
-    const subagentsSrc = requireSubagentPrompts
-        ? findTlhSubagentsDirFromSources(config, {
-            localRepoDir: findLocalRepoDir(config) || "",
-            prompts: config.subagentPrompts,
-        })
-        : "";
     const supportSubagentsDir = join(config.supportDir, "agents", "subagents");
     if (config.dryRun) {
         printCommand(["mkdir", "-p", config.supportDir]);
@@ -1197,19 +1192,14 @@ async function installSupportFilesToProfile(config) {
             if (sourcePath)
                 printCommand(["cp", sourcePath, join(config.supportDir, file.installName)]);
         }
-        if (requireSubagentPrompts) {
-            if (subagentsSrc) {
-                printCommand(["mkdir", "-p", supportSubagentsDir]);
-                for (const prompt of config.subagentPrompts) {
-                    printCommand(["cp", join(subagentsSrc, prompt), join(supportSubagentsDir, prompt)]);
-                }
-            }
-            else {
-                log(config, "Would require TLH subagent prompts before enabling bundled subagents in settings.");
+        if (subagentsSrc) {
+            printCommand(["mkdir", "-p", supportSubagentsDir]);
+            for (const prompt of config.subagentPrompts) {
+                printCommand(["cp", join(subagentsSrc, prompt), join(supportSubagentsDir, prompt)]);
             }
         }
         else {
-            log(config, "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.");
+            throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
         }
         const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
         if (missingSubagentExtensionDefaults.length > 0) {
@@ -1227,8 +1217,6 @@ async function installSupportFilesToProfile(config) {
             copySafeProfileFile(config, sourcePath, `tlh/${file.installName}`, `TLH support file ${file.installName}`);
     }
     provisionSubagentExtensionConfig(config);
-    if (!requireSubagentPrompts)
-        return;
     if (!subagentsSrc) {
         throw new Error("TLH subagent prompts not found; re-run installer from a complete checkout or package.");
     }
