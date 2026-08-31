@@ -29,7 +29,10 @@ const LIVENESS_DRAIN_INTERVAL_MS = 5_000;
 const QUEUED_GRACE_MS = 30_000;
 
 export type TlhEffectiveActivitySnapshot = {
+  /** True when primary agent work or background async jobs are in flight. */
   inProgress: boolean;
+  /** True while at least one blocking extension UI prompt is open. */
+  waitingForUser: boolean;
   primaryReasons: string[];
   activeAsyncJobIds: string[];
 };
@@ -50,6 +53,9 @@ export type TlhEffectiveActivityTracker = {
   handleToolExecutionEnd(event: { toolCallId?: string }): void;
   handleSessionBeforeCompact(event: { reason?: string; willRetry?: boolean }): void;
   handleSessionCompact(event: { reason?: string; willRetry?: boolean }): void;
+  handleSessionCompactFailed(event?: { reason?: string; willRetry?: boolean }): void;
+  handleUIPromptStart(event?: { reason?: string; kind?: string; title?: string }): void;
+  handleUIPromptEnd(event?: { reason?: string; kind?: string; title?: string }): void;
   handleAsyncStarted(data: unknown): void;
   handleAsyncComplete(data: unknown): void;
   handleAsyncControl(data: unknown): void;
@@ -245,7 +251,9 @@ export function createTlhEffectiveActivityTracker(
   const retryGraceTimers = new Map<string, TimeoutHandle>();
   const listeners = new Set<TlhEffectiveActivityListener>();
   let disposed = false;
-  let lastSnapshotKey = "0::::";
+  /** Pi emits only the outer prompt lifecycle, but a depth counter keeps direct and nested events safe. */
+  let uiPromptDepth = 0;
+  let lastSnapshotKey = "0::0::::";
   /** Handle for the periodic read-only liveness drain timer. undefined when no jobs are tracked. */
   let livenessTimer: TimeoutHandle | undefined;
 
@@ -341,14 +349,34 @@ export function createTlhEffectiveActivityTracker(
     syncRetryGraceReason();
   };
 
+  const mergeAsyncJobRecord = (
+    existing: AsyncJobRecord | undefined,
+    incoming: AsyncJobRecord,
+  ): AsyncJobRecord => {
+    const incomingAsyncDir =
+      typeof incoming.asyncDir === "string" && incoming.asyncDir.length > 0
+        ? incoming.asyncDir
+        : undefined;
+    const existingAsyncDir =
+      typeof existing?.asyncDir === "string" && existing.asyncDir.length > 0
+        ? existing.asyncDir
+        : undefined;
+    const asyncDir = incomingAsyncDir ?? existingAsyncDir;
+    const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
+    return {
+      source: incoming.source,
+      ...(asyncDir ? { asyncDir } : {}),
+      ...(pid !== undefined ? { pid } : {}),
+    };
+  };
+
   const setAsyncJobActive = (runId: string, record: AsyncJobRecord): void => {
     if (disposed) return;
     cleanupCompletedAsyncJobTombstones();
     if (!runId || recentlyCompletedAsyncJobs.has(runId)) {
       return;
     }
-    const existing = activeAsyncJobs.get(runId);
-    activeAsyncJobs.set(runId, existing ? { ...existing, ...record } : record);
+    activeAsyncJobs.set(runId, mergeAsyncJobRecord(activeAsyncJobs.get(runId), record));
     // Start the periodic liveness drain if it isn't already running.
     scheduleLivenessCheck();
   };
@@ -472,6 +500,7 @@ export function createTlhEffectiveActivityTracker(
 
   const buildSnapshot = (): TlhEffectiveActivitySnapshot => ({
     inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+    waitingForUser: uiPromptDepth > 0,
     primaryReasons: [...primaryReasons.keys()].sort(),
     activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
   });
@@ -479,6 +508,7 @@ export function createTlhEffectiveActivityTracker(
   const snapshotKey = (snapshot: TlhEffectiveActivitySnapshot): string =>
     [
       snapshot.inProgress ? "1" : "0",
+      snapshot.waitingForUser ? "1" : "0",
       snapshot.primaryReasons.join(","),
       snapshot.activeAsyncJobIds.join(","),
     ].join("::");
@@ -555,6 +585,7 @@ export function createTlhEffectiveActivityTracker(
       primaryReasons.clear();
       activeAsyncJobs.clear();
       recentlyCompletedAsyncJobs.clear();
+      uiPromptDepth = 0;
       notifyIfChanged();
       listeners.clear();
     },
@@ -603,19 +634,35 @@ export function createTlhEffectiveActivityTracker(
       }
       notifyIfChanged();
     },
+    handleSessionCompactFailed(event) {
+      // Failed and aborted compactions must release the matching activity without
+      // inheriting the success-only retry grace. Pi 0.84.4 emits this event for
+      // both automatic and manual compactions, including extension cancellations.
+      removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
+      notifyIfChanged();
+    },
+    handleUIPromptStart() {
+      if (disposed) return;
+      uiPromptDepth += 1;
+      notifyIfChanged();
+    },
+    handleUIPromptEnd() {
+      if (uiPromptDepth === 0) return;
+      uiPromptDepth -= 1;
+      notifyIfChanged();
+    },
     handleAsyncStarted(data) {
       if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
         return;
       }
       // Validate pid: must be a positive integer. Reject 0 (targets the current process
       // group on POSIX and would report "alive" forever) and any non-integer value.
+      const record: AsyncJobRecord = { source: "started" };
+      const asyncDir = readNonEmptyStringField(data, "asyncDir");
+      if (asyncDir) record.asyncDir = asyncDir;
       const pid = toValidPid(data.pid);
-      setAsyncJobActive(data.id, {
-        asyncDir:
-          typeof data.asyncDir === "string" && data.asyncDir.length > 0 ? data.asyncDir : undefined,
-        pid,
-        source: "started",
-      });
+      if (pid !== undefined) record.pid = pid;
+      setAsyncJobActive(data.id, record);
       notifyIfChanged();
     },
     handleAsyncComplete(data) {
@@ -642,12 +689,12 @@ export function createTlhEffectiveActivityTracker(
       if (!isAsyncControlContext(data, data.event)) {
         return;
       }
-      setAsyncJobActive(data.event.runId, {
-        asyncDir:
-          readNonEmptyStringField(data, "asyncDir") ??
-          readNonEmptyStringField(data.event, "asyncDir"),
-        source: "control",
-      });
+      const record: AsyncJobRecord = { source: "control" };
+      const asyncDir =
+        readNonEmptyStringField(data, "asyncDir") ??
+        readNonEmptyStringField(data.event, "asyncDir");
+      if (asyncDir) record.asyncDir = asyncDir;
+      setAsyncJobActive(data.event.runId, record);
       notifyIfChanged();
     },
   };
@@ -674,6 +721,7 @@ export function registerTlhEffectiveActivityTracker(
       try {
         pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
           inProgress: snapshot.inProgress,
+          waitingForUser: snapshot.waitingForUser,
           activeAsyncJobIds: snapshot.activeAsyncJobIds,
         });
       } catch {
@@ -708,6 +756,15 @@ export function registerTlhEffectiveActivityTracker(
   });
   pi.on("session_compact", (event) => {
     tracker.handleSessionCompact(event);
+  });
+  pi.on("session_compact_failed", (event) => {
+    tracker.handleSessionCompactFailed(event);
+  });
+  pi.on("ui_prompt_start", (event) => {
+    tracker.handleUIPromptStart(event);
+  });
+  pi.on("ui_prompt_end", (event) => {
+    tracker.handleUIPromptEnd(event);
   });
   pi.on("session_shutdown", () => {
     for (const unsubscribe of unsubscribes) {

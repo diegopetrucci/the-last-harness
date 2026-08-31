@@ -2,15 +2,25 @@
 
 Subagent orchestration is part of TLH itself. The runtime entrypoint ships at `extensions/subagents/src/extension/index.js`, the bundled agent definitions ship under `agents/subagents/`, and the TLH package declares the runtime in `package.json` under `pi.extensions`. There is no separate subagent package to install, pin, publish, or update for TLH.
 
-Most users should delegate in natural language to the active primary agent. The architect chooses the appropriate bundled agent, supervises the run, and judges the result. The runtime details below are mainly useful when diagnosing a run or developing TLH.
+Most users should delegate in natural language to the active primary agent. The architect chooses the appropriate bundled agent, supervises the run, and judges the result. Implementation tickets go to `developer`, while a separate final-validation ticket with an explicit command list goes to the command-only `test-runner`; the latter reports results without editing, installing dependencies, fixing failures, or changing tickets. The runtime details below are mainly useful when diagnosing a run or developing TLH.
 
 ## Isolation and discovery
 
 The managed wrapper sets `PI_CODING_AGENT_DIR` to the isolated TLH profile before the upstream Pi runtime starts. Subagent settings, copied agent definitions, child sessions, and runtime state therefore stay under that active profile instead of normal `~/.pi/agent`. Child processes resolve the same private Pi runtime as their parent; an unusable resolved runtime fails clearly instead of silently falling back to an ambient global `pi`.
 
-TLH copies its eight minor-agent definitions to `<agent-dir>/tlh/agents/subagents` and keeps that directory in the isolated `subagents.agentDirs` setting. For primary-agent delegation, TLH also forces the bundled agents to user scope and fresh context. This prevents project or legacy-profile definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child. The underlying runtime retains generic project-scope and fork-context support for compatible non-primary entrypoints, but those are not the bundled TLH delegation policy.
+TLH copies its nine canonical minor-agent definitions to `<agent-dir>/tlh/agents/subagents/<role>.md` and loads them through that installer-managed path. No `subagents.agentDirs` default is installed or required for these first-party roles. For primary-agent delegation, TLH forces canonical minor agents to the isolated user scope and a fresh context, except that a mixed dispatch containing an embedded target is resolved in project scope. This prevents unrelated project, package, legacy-profile, or extra-directory definitions from shadowing them and prevents the parent's primary-agent or Gnosis context from leaking into a child. The underlying runtime retains generic project-scope and fork-context support for compatible non-primary entrypoints, but those are not the bundled TLH delegation policy.
 
-The bundled minor agents are `developer`, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright; only these eight TLH minor agents exist. Trusted user-owned `embedded.<slug>` agents are a separate default-off feature documented in [embedded-subagents.md](embedded-subagents.md).
+The canonical packaged TLH roles are thirteen roles: the four primaries `architect`, `rush`, `product`, and `bug-hunter`, plus nine bundled minors — `developer` for implementation, `test-runner` for exact final-validation commands, `code-reviewer`, `repo-scout`, `diff-summarizer`, `librarian`, `web-scout`, `oracle`, and `contrarian`. The built-in definitions that shipped with the upstream runtime have been removed outright. Stable, always-available project custom `embedded.<slug>` agents are a separate exact-root contract available to the architect or disabled primary mode; see [custom-subagents.md](custom-subagents.md).
+
+### Malformed custom-agent handling
+
+A malformed custom markdown definition is isolated during discovery instead of aborting the whole agent set. Definitions that fail validation (for example, missing required frontmatter or invalid package, acceptance-role, execution-limit, or tool-budget values) are skipped while valid peers remain executable. `subagent({ action: "list" })` reports an **Agent load warnings** section with the source path and validation error; requesting a skipped definition reports the same diagnostic when it can identify the file.
+
+### Project custom embedded agents
+
+Project custom embedded agents are discovered only as direct files at `<validated-git-root>/.tlh/agents/custom/<UPPERCASE-SLUG>.md`. The uppercase filename stem is authoritative and must map to the exact lowercase frontmatter `name`; `package: embedded` and a non-empty `description` are required. Persisted project trust must cover the Git root. No recursion, case-variant path, symlink, non-regular file, or definition larger than 64 KiB is accepted, and `extensions`/`subagentOnlyExtensions` are rejected. An explicit usable `tools` list is required; entries—including `bash`, `write`, and `edit`—remain supported. Settings/default model and agent overrides do not complete or replace this self-contained file; the only profile exception is an exact `disabled: true` entry for the `embedded.<slug>` target, which adds a deny-only tombstone (see [custom-subagents.md](custom-subagents.md)). A TLH-primary OpenRouter dispatch injects the live session model when the caller omits `model` (see [custom-subagents.md](custom-subagents.md)). TLH removes generic custom-agent discovery from active-profile `agents/**`, global `~/.agents`, project `.pi/agents/**` and `.agents/**`, configured `subagents.agentDirs`, and installed-package/extra-directory definitions; those definitions no longer appear in TLH's custom-agent `list`/`get` or direct-dispatch inventory and cannot authorize an `embedded.<slug>` target. Settings/default overrides cannot create or authorize a custom target.
+
+Only `architect` and `disabled` may initiate a custom embedded run. Such a call is forced to project scope and fresh context; a mixed call keeps canonical bundled roles available while every embedded target uses the same validated Git-root snapshot, and cwd overrides cannot leave it. The canonical installer-managed packaged TLH roles remain available from fixed `<agent-dir>/tlh/agents/subagents/<role>.md` paths, outside generic discovery or `subagents.agentDirs`. A live child keeps its initial configuration; a new-process resume/revival revalidates and rereads the current root file. See [custom-subagents.md](custom-subagents.md) for the full primary restrictions, migration, and undo procedure.
 
 ## Dispatch and tool surface
 
@@ -24,7 +34,19 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 
 The runtime capability gate drops a thinking level only when positive registry metadata rules it out: `reasoning: false`, a `null` level mapping, or a present map that omits `xhigh` or `max`. Missing capability metadata and unknown or unresolvable models fail open and still receive the suffix. Already-suffixed model arguments short-circuit before capability checks, and an explicit caller `thinkingOverride` is exempt from the gate. Each drop emits a note naming the level and model.
 
-The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; user-owned custom agents remain markdown files managed through the documented profile/project paths.
+### Child tool-policy translation
+
+The optional `tools` declaration has three distinct states, and the child CLI is enforced accordingly:
+
+- **Omitted:** no tool restriction flag is passed, so Pi's existing builtin and extension defaults remain available.
+- **Explicit empty or MCP-only:** all tools are disabled with `--no-tools`, except that runtime-required tools are added to an exact allowlist: `read` for lazy skills, `contact_supervisor` for an active supervisor bridge, and `structured_output` when structured output is requested. Entries are deduplicated in stable order.
+- **Named tools:** named entries become an exact `--tools` allowlist; extension paths are registered separately. A declaration containing only extension paths uses `--no-builtin-tools`, leaving those custom tools and runtime extension tools available.
+
+An agent may declare `supervisorBridge: false` to opt out of generic supervisor-bridge prompt injection and runtime `contact_supervisor` support. TLH emits `--exclude-tools contact_supervisor`; it does not rewrite the declared `tools` field, and `contact_supervisor` is omitted only from the runtime-required allowlist additions.
+
+A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
+
+The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
@@ -64,6 +86,8 @@ For built-in agents, an entry keyed by the agent's plain name under `subagents.a
   }
 }
 ```
+
+In config overrides, `"tools": false` clears the override so the agent inherits its normal tool behavior, while `"tools": []` is an explicit no-tools policy.
 
 Set `"skills": false` in the override to disable skills for agents whose frontmatter does NOT declare `skill:` or `skills:`; when the frontmatter declares them, the override is ignored entirely.
 
@@ -196,9 +220,154 @@ Paused/interrupted runs record acceptance as skipped rather than rejected. A con
 
 A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. The native child runtime does not register or advertise an `intercom` fallback, and the parent supervisor tool has no legacy list/send/ask/reply actions. Separately installed external intercom tools remain user-owned and are not overridden when TLH primary-agent filtering is disabled.
 
+### Child protocol and display boundaries
+
+Child stdout is a bounded newline-delimited protocol. Only validated event and message shapes drive orchestration; malformed or unknown lines cannot change run state and remain available through raw protocol/diagnostic artifacts when those artifacts are enabled. A protocol line over 16 MiB produces the deterministic `protocol_output_limit` failure and stops fallback retries, then the child receives SIGTERM and a bounded SIGKILL escalation if it does not exit. Surfaced child errors are bounded, in-memory message history is capped, and stderr is presented as a bounded diagnostic tail; raw stderr remains available in the child transcript when enabled. An oversized stderr line is diagnostic overflow, not a second control protocol.
+
+Terminal controls are removed only when child-derived text crosses a display boundary: TUI output, status/fleet views, and transcript/result views normalize line endings and strip terminal control sequences, with binary-looking leaf values replaced by a short placeholder. Durable child transcripts, output artifacts, metadata, logs, and raw protocol records are not rewritten for display, so inspect those artifacts when exact child bytes are required.
+
+## Prompt-cache heartbeat
+
+When one or more async subagent runs are live and the parent session is idle, the default-off trial silently replays the last captured provider payload through the provider stream. Each replay is a ghost request intended to keep the provider's prompt cache warm at cache-read prices. The trial treats a `cache_read` usage observation as evidence that the provider read the cached prompt, but the provider's handling of an aborted, usage-bearing request has not been verified against the live API, so that observation does not prove that the abort refreshed the prompt-cache TTL. If the cache is not kept warm, a cache miss on the parent's next turn after a long async gap forces a full cache rewrite at input-token prices.
+
+### Why default-off
+
+Heartbeat sends real provider requests that spend tokens even when the parent's next turn never benefits from them. During the current trial phase the default is `enabled: false`; you opt in knowing that beats cost money and the break-even depends on your gap length and context size.
+
+### How to enable
+
+Add a `heartbeat` block to the subagent extension config in the isolated profile:
+
+File: `~/.the-last-harness/agent/extensions/subagent/config.json`
+
+```json
+{
+  "heartbeat": {
+    "enabled": true,
+    "intervalMs": 255000,
+    "maxDurationMs": 3600000,
+    "maxBeatsPerGap": 11
+  }
+}
+```
+
+Only `enabled: true` is required; the other three knobs default to the values shown. Their meanings:
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Master switch. Must be set to `true` to activate. |
+| `intervalMs` | `255000` | Beat interval in ms (~4m15s). |
+| `maxDurationMs` | `3600000` | Hard ceiling per gap (1h). |
+| `maxBeatsPerGap` | `11` | Maximum beats per gap (~break-even limit). |
+
+Install and update do **not** provision `heartbeat` keys. A `heartbeat` block added manually is preserved untouched on subsequent installs and updates.
+
+### Cost model
+
+Each beat costs cache-read tokens for the full captured context — the same tokens that would have been charged on the parent's next real turn if the cache were warm. The roughly 11-beat break-even model applies only when usable cache-read usage is reported before generation begins. Providers that expose usage only after generation are cut off at the first generation boundary and are not recorded as `cache_read`/`saved`; if no usage arrived before the cutoff, the entire beat usage (including full captured-context input and cache-read charges plus any small output) may be unavailable for accounting. Up to three bounded attempts can occur before the existing session breaker disables heartbeat, so those providers are cost-bounded but heartbeat is functionally unavailable for that session. As above, any `cache_read` observation remains trial evidence rather than proof that the aborted request refreshed the live prompt-cache TTL. `maxBeatsPerGap` defaults to 11 and the gap closes when either the beat count or the 1-hour wall-clock ceiling is reached, whichever comes first.
+
+A beat that observes more than 256 cache-write tokens stops the gap immediately — that indicates the provider is rewriting the cache rather than reading it, so further beats would not save anything.
+
+### How to read `heartbeat.jsonl`
+
+The heartbeat log is at:
+
+```
+~/.the-last-harness/agent/subagents/heartbeat.jsonl
+```
+
+Each line is a JSON record. There are two record shapes:
+
+**Per-beat records** (one per ghost request or loggable skip):
+
+| Field | Description |
+|---|---|
+| `ts` | Unix timestamp (ms) when the beat started. |
+| `sessionId` | Parent session ID. |
+| `gapId` | Identifier for the current gap (one gap = one continuous stretch of live async runs). |
+| `beatIndex` | Zero-based beat count within the gap. |
+| `model` | Model ID used for the ghost request. |
+| `provider` | Provider name. |
+| `outcome` | See outcome table below. |
+| `usage` | Token counts (`input`, `cacheRead`, `cacheWrite`, `output`) — present when usage was reported; omitted when no usage arrived before a cutoff or error. |
+| `estCostUsd` | Estimated USD cost — present when usage and model cost rates are available. |
+| `latencyMs` | Round-trip latency for the ghost stream request. |
+
+Outcome values:
+
+| Outcome | Meaning |
+|---|---|
+| `cache_read` | A cache-read usage observation was recorded at read prices; this is trial evidence, not proof that the aborted request refreshed the cache TTL. |
+| `cache_write_mismatch` | The provider returned > 256 cache-write tokens — the cache was rewritten rather than read. The gap is stopped. |
+| `error` | Stream/auth error or generation cutoff before usable cache usage. Three consecutive errors disable heartbeat for the session. |
+| `cancelled` | The beat was in flight when the gap was closed by a lifecycle event (e.g. session switch, fork, or model change). The stream was aborted; no cache-read evidence was observed. |
+| `capped` | The per-gap beat cap or max-duration ceiling was reached; no further beats in this gap. |
+| `lost` | Elapsed time since the last provider request reached or exceeded ~290 s at beat time; the cache is considered/likely expired (290 s is a conservative client-side threshold, not proof of expiry). The gap is closed immediately. |
+
+**Per-gap summary records** (one per closed gap, identified by `"type": "gap_summary"`):
+
+| Field | Description |
+|---|---|
+| `type` | Always `"gap_summary"`. |
+| `ts` | Unix timestamp when the gap closed. |
+| `sessionId`, `gapId` | Same as per-beat records. |
+| `beats` | Total ghost-stream requests sent in this gap. |
+| `beatCostUsd` | Total estimated USD spent on beats. |
+| `avoidedCostUsd` | Estimated USD avoided on cache miss, computed from cache-read tokens × (input rate − cache-read rate). |
+| `verdict` | `saved`, `wasted`, `lost`, or `unneeded` — see below. |
+
+Verdict meanings:
+
+| Verdict | Meaning |
+|---|---|
+| `saved` | At least one beat produced a `cache_read` observation, so the trial recorded cache-read evidence. This does not prove that the aborted request refreshed the TTL. |
+| `wasted` | Beats were sent but none resulted in `cache_read` (errors, mismatches, or lifecycle cancellations). |
+| `lost` | The cache is considered/likely expired: the controller's late-beat timer fired at ≥290 s elapsed since the last provider request. This signal is explicit — it fires whether or not prior beats succeeded. |
+| `unneeded` | No beats were sent and no terminal-lost signal was received. The gap closed before its first beat; possible closures include a short run, parent turn, lifecycle event, model change, or compaction, and the telemetry does not record which closure occurred. The `gap_summary` record is still written so zero-beat gaps remain visible in the trial log. |
+
+### Circuit breakers
+
+Two automatic circuit breakers limit runaway spending:
+
+1. **Error breaker**: Three consecutive `error` outcomes permanently disable heartbeat for the session (`disabled` state). The error count resets on any successful `cache_read`.
+2. **Mismatch breaker**: A single `cache_write_mismatch` outcome (more than 256 cache-write tokens) closes the current gap to avoid further beat spend when the replay is causing a cache rewrite rather than the expected cache read. The session continues and the next gap (if one opens) starts fresh; this is the safeguard for the trial's unverified aborted-request TTL-refresh assumption.
+
+### Doctor output
+
+`/subagents-doctor` includes a heartbeat section. When enabled:
+
+```text
+- heartbeat: enabled
+- beats this session: 7
+- cache-read tokens: 84000
+- $0.00012 total beat cost
+- gaps: 3 saved, 1 wasted, 12 unneeded
+- circuit breaker: closed
+```
+
+When disabled:
+
+```text
+- heartbeat: disabled (enabled: false in config)
+```
+
+### How to undo
+
+Set `enabled: false` in the config block or remove the `heartbeat` key entirely. The change takes effect only after restarting the `tlh` process or reloading the extension.
+
+To discard the accumulated log: `rm ~/.the-last-harness/agent/subagents/heartbeat.jsonl`. The file is append-only and grows across sessions; delete it whenever you want a clean slate.
+
 ## Acceptance and artifacts
 
 TLH infers self-contained acceptance from the agent role and task intent. Read-only work normally uses an attested report; writer work normally uses checked evidence. Explicit `reviewed` dispatch is rejected because this runtime does not manufacture an independent reviewer result. Verified acceptance is meaningful only when the calling surface supplies actual verification commands. The architect remains the intelligent judge and decides when a separate `code-reviewer` pass is warranted.
+
+Acceptance evaluates and strips the same report candidate; malformed or invalid candidates remain in output. Blank or whitespace-only entries in report evidence arrays are ignored, and review wording such as `must-fix` or `no-fix` does not by itself imply a write task. When a saved deliverable is rejected by acceptance, its saved-output reference remains visible, including in `file-only` mode; ordinary failures, timeouts, and interruptions do not gain that reference. Rejection reasons remain attached even when child diagnostics must be bounded.
+
+### Fallback filtering and retry classification
+
+Fallbacks are filtered conservatively: a fallback is removed only when a complete model catalog identifies it and a non-empty availability snapshot positively excludes it. Unknown models and empty, stale, partial, or errored registry views remain candidates, and the primary model is never filtered. Notices about filtered fallbacks and retries are combined within a bounded display message.
+
+A fallback retry occurs only for classified provider or transient failures, such as rate/usage limits, network or timeout errors, and the specific `stream ended without finish_reason` condition. Deterministic child-tool failures (for example, a command failing with an exit code) are not retried under another model.
 
 Debug artifacts are enabled by default. Project-scoped artifact paths use `.pi-subagents/artifacts/`; otherwise the runtime uses a directory beside the parent session or a managed temporary directory. Explicit output paths are resolved from the run's working directory, and `outputMode: "file-only"` returns a concise saved-file reference. Inspect artifacts before retrying a failed or interrupted run; remove project artifacts with `rm -rf .pi-subagents` only after confirming they are no longer needed.
 

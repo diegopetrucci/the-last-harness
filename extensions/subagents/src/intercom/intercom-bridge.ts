@@ -19,6 +19,8 @@ const DEFAULT_INTERCOM_TARGET_PREFIX = "subagent-chat";
 export const INTERCOM_BRIDGE_MARKER = "Intercom orchestration channel:";
 const DEFAULT_INTERCOM_BRIDGE_TEMPLATE = `The inherited thread is reference-only. Do not continue that conversation or send questions, status updates, or completion handoffs to the supervisor in normal assistant text.
 
+- An agent with supervisorBridge: false opts out of this generic bridge guidance and runtime contact_supervisor support.
+
 Use contact_supervisor. It resolves the supervisor session "{orchestratorTarget}" and run metadata automatically.
 - Need a decision, blocked, approval, or product/API/scope ambiguity: contact_supervisor({ reason: "need_decision", message: "<question>" })
 - Blocking supervisor requests durably pause the child. Once that blocking tool call starts, this OS process will stop; no child process keeps running during the pause.
@@ -27,6 +29,13 @@ Use contact_supervisor. It resolves the supervisor session "{orchestratorTarget}
 - Meaningful progress or unexpected discoveries that change the plan: contact_supervisor({ reason: "progress_update", message: "UPDATE: <summary>" })
 
 Do not use contact_supervisor for routine completion handoffs. If no coordination is needed, return a focused task result.`;
+
+interface BridgedAgentMetadata {
+  source: AgentConfig;
+  instruction: string;
+}
+
+const BRIDGED_AGENT_CONFIGS = new WeakMap<AgentConfig, BridgedAgentMetadata>();
 
 export interface IntercomBridgeState {
   active: boolean;
@@ -125,7 +134,6 @@ function resolveInstructionTemplate(instructionFile: string, settingsDir: string
 
 function buildIntercomBridgeInstruction(orchestratorTarget: string, template: string): string {
   const instruction = template.replaceAll("{orchestratorTarget}", orchestratorTarget).trim();
-  if (instruction.startsWith(INTERCOM_BRIDGE_MARKER)) return instruction;
   return `${INTERCOM_BRIDGE_MARKER}\n${instruction}`;
 }
 
@@ -196,23 +204,18 @@ export function applyIntercomBridgeToAgent(
   bridge: IntercomBridgeState,
 ): AgentConfig {
   if (!bridge.active || !bridge.orchestratorTarget) return agent;
+  if (agent.supervisorBridge === false) return agent;
 
-  const bridgeTools = ["contact_supervisor"];
-  const tools = agent.tools
-    ? [...agent.tools, ...bridgeTools.filter((tool) => !agent.tools?.includes(tool))]
-    : agent.tools;
   const instruction = bridge.instruction;
-  const trimmedPrompt = agent.systemPrompt?.trim() || "";
-  const systemPrompt = trimmedPrompt.includes(INTERCOM_BRIDGE_MARKER)
-    ? trimmedPrompt
-    : trimmedPrompt
-      ? `${trimmedPrompt}\n\n${instruction}`
-      : instruction;
-
-  if (tools === agent.tools && systemPrompt === agent.systemPrompt) return agent;
-  return {
-    ...agent,
-    tools,
+  const metadata = BRIDGED_AGENT_CONFIGS.get(agent);
+  if (metadata?.instruction === instruction) return agent;
+  const source = metadata?.source ?? agent;
+  const trimmedPrompt = source.systemPrompt?.trim() || "";
+  const systemPrompt = trimmedPrompt ? `${trimmedPrompt}\n\n${instruction}` : instruction;
+  const bridgedAgent = {
+    ...source,
     systemPrompt,
   };
+  BRIDGED_AGENT_CONFIGS.set(bridgedAgent, { source, instruction });
+  return bridgedAgent;
 }

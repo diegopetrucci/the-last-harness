@@ -12,6 +12,7 @@ const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
 const FAST_STATUS_KEY = "fast";
+const NO_PROVIDER_WARNING_TEXT = "\u26a0 no provider \u2014 run /login";
 function formatCost(cost) {
     return cost < 0.001 ? "<$0.001" : `$${cost.toFixed(3)}`;
 }
@@ -169,6 +170,10 @@ function appendMcpContextEstimate(statusText, suffix) {
     }
     return `${statusText}${suffix}`;
 }
+function formatNoProviderWarningLine(width, theme) {
+    const warningText = theme.fg("warning", NO_PROVIDER_WARNING_TEXT);
+    return truncateToWidth(warningText, width, theme.fg("warning", "..."));
+}
 export function formatReauthWarningLine(providers, width, theme) {
     if (providers.length === 0)
         return undefined;
@@ -251,6 +256,9 @@ export function createTlhFooter(pi, ctx, theme, getPrimaryName, footerData, usag
                 line3Parts.push(subscriptionUsageState.segment);
             const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
             const lines = [pwdLine, agentLine2];
+            if (footerData?.getAvailableProviderCount?.() === 0) {
+                lines.push(formatNoProviderWarningLine(width, theme));
+            }
             if (providerAuthHealth) {
                 const reauthProviders = providerAuthHealth.getReauthProviders();
                 const warningLine = formatReauthWarningLine(reauthProviders, width, theme);

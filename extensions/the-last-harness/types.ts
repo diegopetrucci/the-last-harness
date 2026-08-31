@@ -1,11 +1,11 @@
 import type { ProviderModelReference } from "./model-defaults.js";
-
 export type StartupResources = {
   context: string[];
   skills: string[];
   prompts: string[];
   extensions: string[];
   themes: string[];
+  projectGuidance?: string[];
 };
 
 export type StartupPromptResourceMetadata = {
@@ -158,6 +158,8 @@ type TlhSubagentsConfig = {
 };
 
 export type TlhSettings = {
+  /** Upstream's durable thinking choice, when explicitly written by the user. */
+  defaultThinkingLevel?: ThinkingLevel;
   subagents?: TlhSubagentsConfig;
   tlh?: {
     usageLimits?: TlhUsageLimitsConfig;
@@ -261,22 +263,34 @@ export type TlhLatestRelease = {
   releaseUrl: string;
 };
 
+/**
+ * One provider's normalized model defaults. The new frontmatter parser keeps the
+ * first valid entry for each provider and ignores later valid duplicates; the
+ * legacy normalizer may emit repeated provider entries to preserve source order.
+ */
+export type TlhModelDefault = {
+  provider: string;
+  models?: ProviderModelReference[];
+  effort?: ThinkingLevel;
+};
+
+/** Whether normalized defaults came from the new block or legacy frontmatter. */
+export type TlhModelDefaultsSource = "frontmatter" | "legacy";
+
 export type AgentPrompt = {
   name: string;
   description: string;
   model?: string;
-  tlhOpenaiModels?: string[];
-  tlhAnthropicModels?: string[];
+  /** Primary-only normalized preferred model; legacy derives it from `model`. */
+  preferredModel?: ProviderModelReference;
+  tlhModelDefaults: TlhModelDefault[];
+  tlhModelDefaultsSource: TlhModelDefaultsSource;
   thinking?: ThinkingLevel;
-  tlhOpenaiThinking?: ThinkingLevel;
-  tlhAnthropicThinking?: ThinkingLevel;
-  tlhOpenrouterThinking?: ThinkingLevel;
   preferCurrentOpenaiModel?: boolean;
   preferOppositeProvider?: boolean;
   applyModel?: boolean;
   applyThinking?: boolean;
-  lockThinking?: boolean;
-  minThinking?: ThinkingLevel;
+  completionGuard?: boolean;
   tools: string[];
   systemPrompt: string;
   filePath: string;
@@ -286,13 +300,11 @@ export type SubagentMetadata = {
   name: string;
   description: string;
   model?: string;
-  tlhOpenaiModels?: string[];
-  tlhAnthropicModels?: string[];
+  tlhModelDefaults: TlhModelDefault[];
+  tlhModelDefaultsSource: TlhModelDefaultsSource;
   thinking?: ThinkingLevel;
-  tlhOpenaiThinking?: ThinkingLevel;
-  tlhAnthropicThinking?: ThinkingLevel;
-  tlhOpenrouterThinking?: ThinkingLevel;
   preferOppositeProvider?: boolean;
+  completionGuard?: boolean;
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";

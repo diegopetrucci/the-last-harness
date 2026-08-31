@@ -40,6 +40,7 @@ import {
   sanitizeSubagentModelResolution,
 } from "../shared/model-fallback.ts";
 import { parseThinkingLevel } from "../../shared/model-info.ts";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 
 type KillFn = (pid: number, signal?: NodeJS.Signals | 0) => boolean;
 
@@ -53,6 +54,7 @@ interface StartedRunMetadata {
   parallelGroups?: AsyncParallelGroupStatus[];
   startedAt?: number;
   sessionFile?: string;
+  projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
 }
 
 interface ReconcileAsyncRunOptions {
@@ -166,11 +168,13 @@ interface ResultChildOutcome {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
+  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }
 
 interface ResultRepairData {
   state: "complete" | "failed" | "paused" | "cancelled" | "continued" | "pausing";
   results?: ResultChildOutcome[];
+  projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
 }
 
 type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
@@ -208,11 +212,33 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
           : data.state === "paused" || data.exitCode === 0
             ? "paused"
             : "failed";
+    const projectMarkerPresent =
+      Object.hasOwn(data, "projectAgent") ||
+      Object.hasOwn(data, "projectAgents") ||
+      (Array.isArray(data.results) &&
+        data.results.some(
+          (entry) =>
+            typeof entry === "object" &&
+            entry !== null &&
+            !Array.isArray(entry) &&
+            Object.hasOwn(entry, "projectAgent"),
+        ));
+    const projectAgents = Array.isArray(data.projectAgents)
+      ? data.projectAgents
+          .map((capture) => normalizeProjectAgentRunCapture(capture))
+          .filter(
+            (
+              capture,
+            ): capture is import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture =>
+              Boolean(capture),
+          )
+      : undefined;
     const results = Array.isArray(data.results)
       ? data.results.map((entry): ResultChildOutcome => {
           if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
           const child = entry as Record<string, unknown>;
           const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+          const projectAgent = normalizeProjectAgentRunCapture(child.projectAgent);
           const contextPressure = parseContextPressureProjection(child.contextPressure);
           const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
             child.contextPressureCrossedThresholds,
@@ -231,6 +257,7 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
               : undefined;
           return {
             ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
+            ...(projectAgent ? { projectAgent } : {}),
             ...(typeof child.success === "boolean" ? { success: child.success } : {}),
             ...(typeof child.error === "string" ? { error: child.error } : {}),
             ...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
@@ -246,7 +273,11 @@ function readResultRepairData(resultPath: string): ResultRepairData | undefined 
           };
         })
       : undefined;
-    return { state, ...(results ? { results } : {}) };
+    return {
+      state,
+      ...(results ? { results } : {}),
+      ...(projectAgents ? { projectAgents } : projectMarkerPresent ? { projectAgents: [] } : {}),
+    };
   } catch (error) {
     if (isNotFoundError(error)) return undefined;
     throw new Error(`Failed to read async result file '${resultPath}': ${getErrorMessage(error)}`, {
@@ -311,6 +342,9 @@ function terminalStatusFromResult(
         step.terminationReason ??
         child?.terminationReason ??
         (state === "failed" ? "process_exit" : undefined),
+      ...((step.projectAgent ?? child?.projectAgent)
+        ? { projectAgent: step.projectAgent ?? child?.projectAgent }
+        : {}),
     };
   });
   return {
@@ -320,6 +354,7 @@ function terminalStatusFromResult(
     lastUpdate: now,
     endedAt: status.endedAt ?? now,
     steps,
+    ...(repair.projectAgents ? { projectAgents: repair.projectAgents } : {}),
   };
 }
 
@@ -346,6 +381,7 @@ function buildStartedStatus(
     currentStep: 0,
     ...(chainStepCount !== undefined ? { chainStepCount } : {}),
     ...(parallelGroups.length ? { parallelGroups } : {}),
+    ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
     steps: agents.map((agent) => ({
       agent,
       status: "running" as const,
@@ -423,6 +459,7 @@ function buildFailedRepair(
       summary: message,
       results: repairedSteps.map((step) => ({
         agent: step.agent,
+        ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
         output: step.status === "complete" || step.status === "completed" ? "" : message,
         error:
           step.status === "complete" || step.status === "completed"
@@ -450,6 +487,7 @@ function buildFailedRepair(
       durationMs: Math.max(0, now - status.startedAt),
       asyncDir,
       sessionId: status.sessionId,
+      ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
       sessionFile: status.sessionFile,
     } satisfies AsyncResultArtifact,
   };

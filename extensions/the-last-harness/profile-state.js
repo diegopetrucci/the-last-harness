@@ -1,9 +1,10 @@
 import { closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, unlinkSync, writeFileSync, } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isRecord, pathWithinOrEqual, readText, realpathForCompare } from "./common.js";
-export function isDefaultPiAgentDir(agentDir) {
+function isDefaultPiAgentDir(agentDir) {
     const home = process.env.HOME || process.env.USERPROFILE;
     if (!home)
         return false;
@@ -190,7 +191,7 @@ export function writeGuardedTlhStateFile(statePath, content, resolveExpectedPath
     }
     return writeTlhStateFileAtomically(statePath, content);
 }
-export function writeTlhStartupState(state) {
+function writeTlhStartupState(state) {
     try {
         const statePath = tlhStartupStatePath();
         if (!statePath) {
@@ -299,6 +300,18 @@ export function assertSafeTlhSettingsPath(settingsPath) {
     }
     if (isNormalPiConfigPath(resolvedSettingsPath)) {
         throw new Error(`Refusing to modify normal Pi config from The Last Harness: ${settingsPath}`);
+    }
+    if (process.env.NODE_TEST_CONTEXT !== undefined) {
+        let temporaryRoot;
+        try {
+            temporaryRoot = realpathForCompare(tmpdir());
+        }
+        catch {
+            throw new Error(`Refusing to write settings during Node tests unless the target is inside the operating system temporary directory: ${settingsPath}`);
+        }
+        if (!pathWithinOrEqual(temporaryRoot, resolvedSettingsPath)) {
+            throw new Error(`Refusing to write settings during Node tests unless the target is inside the operating system temporary directory: ${settingsPath}`);
+        }
     }
 }
 export const __testing = {

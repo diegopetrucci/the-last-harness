@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
+import type { AgentDiscoveryDiagnostic } from "../../src/agents/agents.ts";
 import {
   executeAsyncChain,
   executeAsyncSingle,
@@ -63,6 +64,7 @@ function createExecutor(
   root: string,
   events = createEvents(),
   agents = [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")],
+  agentDiagnostics: AgentDiscoveryDiagnostic[] = [],
 ) {
   return {
     events,
@@ -81,7 +83,7 @@ function createExecutor(
           ? path.join(path.dirname(parentSessionFile), path.basename(parentSessionFile, ".jsonl"))
           : root,
       expandTilde: (value) => value,
-      discoverAgents: () => ({ agents }),
+      discoverAgents: () => ({ agents, agentDiagnostics }),
       kill: () => true,
     }),
   };
@@ -126,6 +128,39 @@ describe("reviewed dispatch route preflight", () => {
       // The executor always returns TextContent for rejection results; ImageContent is not possible here.
       assertReviewedRejection((result.content[0] as TextContent | undefined)?.text ?? "");
     }
+  });
+
+  it("reports the malformed definition reason during execution lookup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-malformed-agent-lookup-"));
+    tempDirs.push(root);
+    const agentPath = path.join(root, ".pi", "agents", "broken.md");
+    const { executor } = createExecutor(
+      root,
+      createEvents(),
+      [],
+      [
+        {
+          source: "project",
+          filePath: agentPath,
+          error:
+            "Agent 'broken' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.",
+        },
+      ],
+    );
+
+    const result = await executor.execute(
+      "malformed-agent-lookup",
+      { agent: "broken", task: "Run the task" },
+      new AbortController().signal,
+      undefined,
+      makeMinimalCtx(root),
+    );
+
+    assert.equal(result.isError, true);
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    assert.match(text, /Unknown agent: broken/);
+    assert.match(text, /broken\.md/);
+    assert.match(text, /acceptanceRole/);
   });
 
   it("rejects reviewed acceptance through direct async single and chain entry points before artifacts are created", () => {

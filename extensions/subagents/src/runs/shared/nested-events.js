@@ -5,6 +5,7 @@ import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
+import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 export const NESTED_EVENTS_DIR = path.join(TEMP_ROOT_DIR, "nested-subagent-events");
 const ROUTE_FILE = "route.json";
@@ -192,6 +193,18 @@ function sanitizeState(value, fallback) {
         ? value
         : fallback;
 }
+function projectAgentProjection(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return { malformed: false };
+    }
+    const raw = value;
+    const hasCapture = Object.hasOwn(raw, "projectAgent");
+    const capture = hasCapture ? normalizeProjectAgentRunCapture(raw.projectAgent) : undefined;
+    return {
+        ...(capture ? { capture } : {}),
+        malformed: Object.hasOwn(raw, "projectAgentMarker") || (hasCapture && !capture),
+    };
+}
 function sanitizeStep(input, depth) {
     if (!input || typeof input !== "object")
         return undefined;
@@ -208,8 +221,11 @@ function sanitizeStep(input, depth) {
         ? raw.status
         : "pending";
     const terminationReason = parseSubagentTerminationReason(raw.terminationReason);
+    const projectAgent = projectAgentProjection(raw);
     return {
         agent,
+        ...(projectAgent.capture ? { projectAgent: projectAgent.capture } : {}),
+        ...(projectAgent.malformed ? { projectAgentMarker: true } : {}),
         status,
         ...(terminationReason
             ? { terminationReason: terminationReason }
@@ -279,6 +295,7 @@ export function sanitizeSummary(input, depth = 0) {
         : undefined;
     const totalTokens = sanitizeTokenUsage(raw.totalTokens);
     const totalCost = sanitizeCost(raw.totalCost);
+    const projectAgent = projectAgentProjection(raw);
     return {
         id: raw.id,
         parentRunId: raw.parentRunId,
@@ -291,6 +308,9 @@ export function sanitizeSummary(input, depth = 0) {
         depth: Math.min(Math.max(0, clampNumber(raw.depth) ?? 0), MAX_DEPTH),
         path: pathParts,
         state: sanitizeState(raw.state, "running"),
+        ...(projectAgent.capture ? { projectAgent: projectAgent.capture } : {}),
+        ...(projectAgent.malformed ? { projectAgentMarker: true } : {}),
+        ...(pathValue(raw.cwd, 2048) ? { cwd: pathValue(raw.cwd, 2048) } : {}),
         ...(pathValue(raw.asyncDir, 2048) ? { asyncDir: pathValue(raw.asyncDir, 2048) } : {}),
         ...(clampNumber(raw.pid) !== undefined &&
             clampNumber(raw.pid) > 0 &&
@@ -821,7 +841,37 @@ export function hasLiveNestedDescendants(children) {
     }
     return false;
 }
+function projectAgentProjectionFromAsyncStatus(status) {
+    const statusProjection = projectAgentProjection(status);
+    let capture = statusProjection.capture;
+    let malformed = statusProjection.malformed;
+    const projectAgents = status.projectAgents;
+    if (projectAgents !== undefined) {
+        if (!Array.isArray(projectAgents) || projectAgents.length === 0) {
+            malformed = true;
+        }
+        else {
+            for (const candidate of projectAgents) {
+                const normalized = normalizeProjectAgentRunCapture(candidate);
+                if (normalized)
+                    capture ??= normalized;
+                else
+                    malformed = true;
+            }
+        }
+    }
+    for (const step of status.steps ?? []) {
+        const stepProjection = projectAgentProjection(step);
+        capture ??= stepProjection.capture;
+        malformed ||= stepProjection.malformed;
+    }
+    return {
+        ...(capture ? { capture } : {}),
+        malformed,
+    };
+}
 export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
+    const projectAgent = projectAgentProjectionFromAsyncStatus(status);
     return {
         id: status.runId || fallback.id,
         parentRunId: fallback.parentRunId,
@@ -835,6 +885,7 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                 ...(fallback.parentStepIndex !== undefined ? { stepIndex: fallback.parentStepIndex } : {}),
             },
         ],
+        ...(status.cwd ? { cwd: status.cwd } : {}),
         asyncDir,
         ...(status.pid ? { pid: status.pid } : {}),
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
@@ -867,40 +918,49 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.endedAt !== undefined ? { endedAt: status.endedAt } : {}),
         lastUpdate: status.lastUpdate ?? fallback.ts,
         ...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
+        ...(projectAgent.capture ? { projectAgent: projectAgent.capture } : {}),
+        ...(projectAgent.malformed ? { projectAgentMarker: true } : {}),
         ...(status.steps?.length
             ? {
                 steps: status.steps
-                    .map((step) => ({
-                    agent: step.agent,
-                    status: nestedStepStatusFromAsyncStepStatus(step.status),
-                    ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-                    ...(step.activityState ? { activityState: step.activityState } : {}),
-                    ...(step.lastActivityAt !== undefined ? { lastActivityAt: step.lastActivityAt } : {}),
-                    ...(step.currentTool ? { currentTool: step.currentTool } : {}),
-                    ...(step.currentToolStartedAt !== undefined
-                        ? { currentToolStartedAt: step.currentToolStartedAt }
-                        : {}),
-                    ...(step.currentPath ? { currentPath: step.currentPath } : {}),
-                    ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
-                    ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
-                    ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
-                    ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
-                    ...(step.error ? { error: step.error } : {}),
-                    ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-                    ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
-                    ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-                    ...(step.turnBudgetExceeded !== undefined
-                        ? { turnBudgetExceeded: step.turnBudgetExceeded }
-                        : {}),
-                    ...(step.wrapUpRequested !== undefined
-                        ? { wrapUpRequested: step.wrapUpRequested }
-                        : {}),
-                    ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
-                    ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
-                    ...(step.contextPressureCrossedThresholds
-                        ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
-                        : {}),
-                }))
+                    .map((step) => {
+                    const stepProjectAgent = projectAgentProjection(step);
+                    return {
+                        agent: step.agent,
+                        ...(stepProjectAgent.capture ? { projectAgent: stepProjectAgent.capture } : {}),
+                        ...(stepProjectAgent.malformed ? { projectAgentMarker: true } : {}),
+                        status: nestedStepStatusFromAsyncStepStatus(step.status),
+                        ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+                        ...(step.activityState ? { activityState: step.activityState } : {}),
+                        ...(step.lastActivityAt !== undefined
+                            ? { lastActivityAt: step.lastActivityAt }
+                            : {}),
+                        ...(step.currentTool ? { currentTool: step.currentTool } : {}),
+                        ...(step.currentToolStartedAt !== undefined
+                            ? { currentToolStartedAt: step.currentToolStartedAt }
+                            : {}),
+                        ...(step.currentPath ? { currentPath: step.currentPath } : {}),
+                        ...(step.turnCount !== undefined ? { turnCount: step.turnCount } : {}),
+                        ...(step.toolCount !== undefined ? { toolCount: step.toolCount } : {}),
+                        ...(step.startedAt !== undefined ? { startedAt: step.startedAt } : {}),
+                        ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+                        ...(step.error ? { error: step.error } : {}),
+                        ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
+                        ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
+                        ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
+                        ...(step.turnBudgetExceeded !== undefined
+                            ? { turnBudgetExceeded: step.turnBudgetExceeded }
+                            : {}),
+                        ...(step.wrapUpRequested !== undefined
+                            ? { wrapUpRequested: step.wrapUpRequested }
+                            : {}),
+                        ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+                        ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
+                        ...(step.contextPressureCrossedThresholds
+                            ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+                            : {}),
+                    };
+                })
                     .slice(0, MAX_STEPS),
             }
             : {}),

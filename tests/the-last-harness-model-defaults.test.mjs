@@ -3,38 +3,121 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url);
-const {
-  applyProviderAwareSubagentModels,
-  findAvailableProviderModel,
-  formatProviderModelReference,
-  resolveProviderAwareSubagentResolution,
-  resolveProviderThinking,
-  selectProviderAwareAgentDefaults,
-  splitKnownThinkingSuffix,
-} = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const modelDefaults = await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const { normalizeAgentModelDefaults } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
+const { findAvailableProviderModel, formatProviderModelReference, splitKnownThinkingSuffix } =
+  modelDefaults;
+
+function frontmatterModelFields(agent) {
+  const frontmatter = {};
+  for (const key of [
+    "model",
+    "thinking",
+    "tlhOpenaiModels",
+    "tlhAnthropicModels",
+    "tlhOpenaiThinking",
+    "tlhAnthropicThinking",
+    "tlhOpenrouterThinking",
+  ]) {
+    const value = agent[key];
+    if (Array.isArray(value)) {
+      frontmatter[key] = value.join(",");
+    } else if (typeof value === "string") {
+      frontmatter[key] = value;
+    }
+  }
+  return frontmatter;
+}
+
+function normalizeAgentFixture(agent) {
+  if (!agent) {
+    return agent;
+  }
+  const {
+    tlhOpenaiModels: _openaiModels,
+    tlhAnthropicModels: _anthropicModels,
+    tlhOpenaiThinking: _openaiThinking,
+    tlhAnthropicThinking: _anthropicThinking,
+    tlhOpenrouterThinking: _openrouterThinking,
+    ...withoutLegacyFields
+  } = agent;
+  return {
+    ...withoutLegacyFields,
+    ...normalizeAgentModelDefaults(frontmatterModelFields(agent), agent.tlhModelDefaults),
+  };
+}
+
+function normalizeAgents(agents) {
+  return new Map([...agents].map(([name, agent]) => [name, normalizeAgentFixture(agent)]));
+}
+
+const applyProviderAwareSubagentModels = (input, agents, ...args) =>
+  modelDefaults.applyProviderAwareSubagentModels(input, normalizeAgents(agents), ...args);
+const resolveProviderAwareSubagentResolution = (agent, ...args) =>
+  modelDefaults.resolveProviderAwareSubagentResolution(normalizeAgentFixture(agent), ...args);
+const resolveProviderThinking = (agent, ...args) =>
+  modelDefaults.resolveProviderThinking(normalizeAgentFixture(agent), ...args);
+const selectProviderAwareAgentDefaults = (agent, ...args) =>
+  modelDefaults.selectProviderAwareAgentDefaults(normalizeAgentFixture(agent), ...args);
 const { applyThinkingSuffix: applyRuntimeThinkingSuffix } = await jiti.import(
   "../extensions/subagents/src/runs/shared/pi-args.ts",
 );
 
 const developer = {
   name: "developer",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-  tlhAnthropicThinking: "medium",
-  tlhOpenaiThinking: "max",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
 };
 
 const codeReviewer = {
   name: "code-reviewer",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
   preferOppositeProvider: true,
 };
 
 const oracle = {
   name: "oracle",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
   preferOppositeProvider: true,
 };
 
@@ -56,10 +139,21 @@ const openaiParentPrefersAnthropicReviewer = {
 
 const rushLikePrimary = {
   name: "rush",
-  model: "anthropic/claude-sonnet-4-6",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  thinking: "low",
-  tlhOpenaiThinking: "medium",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "low",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "low" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
   preferCurrentOpenaiModel: true,
 };
 
@@ -67,6 +161,44 @@ const anthropicFirstPrimary = {
   ...rushLikePrimary,
   name: "architect",
   preferCurrentOpenaiModel: undefined,
+};
+
+const productPrimary = {
+  name: "product",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+};
+
+const bugHunterPrimary = {
+  name: "bug-hunter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
 };
 
 const agents = new Map([
@@ -104,6 +236,82 @@ test("provider-aware model resolver follows active Anthropic provider for non-re
   const input = { agent: "developer", task: "Implement the ticket" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, anthropicAvailable, "anthropic"), 1);
   assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+});
+
+test("provider-aware model resolver follows ordered candidates for an active custom provider", () => {
+  const customProviderAgent = {
+    name: "custom-provider-developer",
+    tlhModelDefaults: [
+      {
+        provider: "google",
+        models: [
+          { provider: "google", id: "gemini-unavailable" },
+          { provider: "google", id: "gemini-available" },
+        ],
+        effort: "high",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const customAgents = new Map([[customProviderAgent.name, customProviderAgent]]);
+  const available = [
+    { provider: "google", id: "gemini-available" },
+    { provider: "openai-codex", id: "gpt-family-fallback" },
+  ];
+
+  assert.equal(
+    selectedProviderModelId(customProviderAgent, available, "google"),
+    "google/gemini-available",
+  );
+  const input = { agent: customProviderAgent.name, task: "Implement the ticket" };
+  assert.equal(applyProviderAwareSubagentModels(input, customAgents, available, "google"), 1);
+  assert.equal(input.model, "google/gemini-available:high");
+});
+
+test("provider-aware model resolver does not use custom defaults for unrelated providers", () => {
+  const customProviderAgent = {
+    name: "custom-provider-only",
+    tlhModelDefaults: [
+      {
+        provider: "google",
+        models: [{ provider: "google", id: "gemini-available" }],
+        effort: "high",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const customAgents = new Map([[customProviderAgent.name, customProviderAgent]]);
+  const available = [{ provider: "google", id: "gemini-available" }];
+
+  for (const currentProvider of ["anthropic", "unrelated-provider"]) {
+    assert.equal(
+      selectedProviderModelId(customProviderAgent, available, currentProvider),
+      undefined,
+    );
+    const input = { agent: customProviderAgent.name, task: "Implement the ticket" };
+    assert.equal(
+      applyProviderAwareSubagentModels(input, customAgents, available, currentProvider),
+      0,
+    );
+    assert.equal(input.model, undefined);
+  }
+
+  const oppositeAgent = {
+    ...customProviderAgent,
+    name: "custom-provider-reviewer",
+    preferOppositeProvider: true,
+  };
+  const oppositeInput = { agent: oppositeAgent.name, task: "Review the diff" };
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      oppositeInput,
+      new Map([[oppositeAgent.name, oppositeAgent]]),
+      available,
+      "google",
+    ),
+    0,
+  );
+  assert.equal(oppositeInput.model, undefined);
 });
 
 test("provider-aware model resolver follows active provider for non-review subagents when both providers are available", () => {
@@ -220,14 +428,14 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
 
   const anthropicInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
-  assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol");
-  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5"]);
+  assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5:high"]);
   assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const codexInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
-  assert.equal(codexInput.model, "anthropic/claude-opus-5");
-  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
+  assert.equal(codexInput.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
   assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const noOppositeInput = { agent: "code-reviewer" };
@@ -419,8 +627,8 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     }),
     1,
   );
-  assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol");
-  assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6"]);
+  assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol:high");
+  assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6:high"]);
   assert.equal(reviewerInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const oracleInput = { agent: "oracle" };
@@ -431,8 +639,8 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     }),
     1,
   );
-  assert.equal(oracleInput.model, "anthropic/claude-opus-5");
-  assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna"]);
+  assert.equal(oracleInput.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna:high"]);
   assert.equal(oracleInput.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -489,7 +697,20 @@ test("provider-aware primary defaults keep the Anthropic default first without t
   );
 });
 
-test("provider-aware primary defaults fall back to Anthropic thinking when OpenAI models are unavailable", () => {
+test("Product and Bug-hunter retain their provider-aware packaged defaults", () => {
+  for (const primary of [productPrimary, bugHunterPrimary]) {
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, anthropicAvailable, "anthropic"), {
+      model: { provider: "anthropic", id: "claude-opus-5" },
+      thinking: "high",
+    });
+    assert.deepEqual(selectProviderAwareAgentDefaults(primary, codexAvailable, "openai-codex"), {
+      model: { provider: "openai-codex", id: "gpt-5.6-sol" },
+      thinking: "high",
+    });
+  }
+});
+
+test("provider-aware primary defaults retain each declared provider effort", () => {
   assert.deepEqual(
     selectProviderAwareAgentDefaults(rushLikePrimary, anthropicAvailable, "openai-codex"),
     {
@@ -498,19 +719,77 @@ test("provider-aware primary defaults fall back to Anthropic thinking when OpenA
     },
   );
   assert.deepEqual(
-    selectProviderAwareAgentDefaults(
-      { ...rushLikePrimary, tlhOpenaiThinking: undefined },
-      codexAvailable,
-      "openai-codex",
-    ),
+    selectProviderAwareAgentDefaults(rushLikePrimary, codexAvailable, "openai-codex"),
     {
       model: { provider: "openai-codex", id: "gpt-5.6-luna" },
-      thinking: "low",
+      thinking: "medium",
     },
   );
 });
 
-// --- tlhAnthropicModels: new tests (ticket tlht-k7h8) ---
+test("new provider entries do not inherit generic thinking when effort is omitted", () => {
+  const agent = {
+    name: "new-format",
+    model: "anthropic/legacy-model",
+    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-new" }],
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const available = [{ provider: "anthropic", id: "claude-new" }];
+  assert.deepEqual(selectProviderAwareAgentDefaults(agent, available, "anthropic"), {
+    model: available[0],
+    thinking: undefined,
+  });
+  const input = { agent: agent.name, task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(input, new Map([[agent.name, agent]]), available, "anthropic"),
+    1,
+  );
+  assert.equal(input.model, "anthropic/claude-new");
+});
+
+test("a present provider block does not supplement an unmatched provider with generic model or thinking", () => {
+  const agent = {
+    name: "new-format-only-openai",
+    model: "anthropic/legacy-model",
+    thinking: "high",
+    tlhModelDefaults: [
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-new" }],
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const available = [{ provider: "anthropic", id: "claude-legacy" }];
+  assert.deepEqual(selectProviderAwareAgentDefaults(agent, available, "anthropic"), {
+    model: undefined,
+    thinking: undefined,
+  });
+  const input = { agent: agent.name, task: "Implement" };
+  assert.equal(
+    applyProviderAwareSubagentModels(input, new Map([[agent.name, agent]]), available, "anthropic"),
+    0,
+  );
+  assert.equal(input.model, undefined);
+});
+
+test("legacy-normalized generic thinking still applies when no provider entry matches", () => {
+  const agent = {
+    name: "legacy-generic",
+    thinking: "medium",
+    tlhOpenaiModels: ["openai-codex/gpt-legacy"],
+  };
+  const available = [{ provider: "anthropic", id: "claude-current" }];
+  assert.equal(selectProviderAwareAgentDefaults(agent, available, "anthropic").thinking, "medium");
+});
+
+// --- legacy provider model compatibility tests ---
 
 test("tlhAnthropicModels: selects Anthropic fallback when primary OpenAI model is absent from registry", () => {
   const agentWithAnthropicFallback = {
@@ -576,6 +855,32 @@ test("tlhAnthropicModels: regression – agents with only tlhOpenaiModels are un
   assert.equal(Object.hasOwn(input, "modelFallbackNotice"), false);
 });
 
+test("legacy provider lists do not treat generic model as an opposite candidate and still generate explicit-list fallback", () => {
+  const agent = {
+    name: "legacy-opposite-order",
+    model: "openai-codex/gpt-generic",
+    tlhOpenaiModels: ["openai-codex/gpt-review"],
+    tlhAnthropicModels: ["anthropic/claude-same"],
+    preferOppositeProvider: true,
+  };
+  const available = [
+    { provider: "openai-codex", id: "gpt-generic" },
+    { provider: "openai-codex", id: "gpt-review" },
+    { provider: "anthropic", id: "claude-same" },
+  ];
+  const currentModel = available[2];
+  const resolution = resolveProviderAwareSubagentResolution(
+    agent,
+    available,
+    "anthropic",
+    currentModel,
+  );
+
+  assert.deepEqual(resolution.model, available[1]);
+  assert.deepEqual(resolution.fallbackModels, [{ model: currentModel, thinking: undefined }]);
+  assert.equal(resolution.modelFallbackNotice, reducedIndependenceNotice);
+});
+
 test("provider-aware subagent mutation preserves explicit user-supplied model values", () => {
   const input = { agent: "developer", task: "Implement the ticket", model: "openai/gpt-5.6" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, codexAvailable, "openai-codex"), 0);
@@ -599,7 +904,7 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
     applyProviderAwareSubagentModels(withFallbackModels, agents, available, "anthropic"),
     1,
   );
-  assert.equal(withFallbackModels.model, "openai-codex/gpt-5.6-sol");
+  assert.equal(withFallbackModels.model, "openai-codex/gpt-5.6-sol:high");
   assert.deepEqual(withFallbackModels.fallbackModels, ["custom/provider-model"]);
   assert.equal(withFallbackModels.modelFallbackNotice, reducedIndependenceNotice);
 
@@ -610,8 +915,8 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
     applyProviderAwareSubagentModels(withFallbackNotice, agents, available, "openai-codex"),
     1,
   );
-  assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5");
-  assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
+  assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
   assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
   // Explicit model still prevents all injection regardless of other fallback fields.
@@ -2008,6 +2313,51 @@ test("openrouter follow rule: generic thinking key does NOT leak when tlhOpenrou
   assert.equal(result.thinking, undefined);
 });
 
+test("openrouter follow rule: normalized effort-only entry follows the session model", () => {
+  const agent = {
+    name: "normalized-openrouter-effort-only",
+    thinking: "high",
+    tlhModelDefaults: [{ provider: "openrouter", effort: "medium" }],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const result = selectProviderAwareAgentDefaults(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
+  assert.equal(result.thinking, "medium");
+
+  const resolution = resolveProviderAwareSubagentResolution(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+    undefined,
+  );
+  assert.deepEqual(resolution.model, openrouterAvailableModels[0]);
+  assert.equal(resolution.thinking, "medium");
+  assert.deepEqual(resolution.fallbackModels, []);
+});
+
+test("openrouter follow rule: generic thinking does not leak when normalized entry omits effort", () => {
+  const agent = {
+    name: "normalized-openrouter-no-effort",
+    thinking: "high",
+    tlhModelDefaults: [{ provider: "openrouter" }],
+    tlhModelDefaultsSource: "frontmatter",
+  };
+  const result = selectProviderAwareAgentDefaults(
+    agent,
+    openrouterAvailableModels,
+    "openrouter",
+    openrouterSessionModel,
+  );
+  assert.deepEqual(result.model, openrouterAvailableModels[0]);
+  assert.equal(result.thinking, undefined);
+});
+
 test("openrouter follow rule: applyProviderAwareSubagentModels follows session model without suffix when no tlhOpenrouterThinking", () => {
   const orAgents = new Map([
     [openrouterDeveloperNoOrThinking.name, openrouterDeveloperNoOrThinking],
@@ -2188,4 +2538,763 @@ test("openrouter follow rule: no session model available → fall through to exi
     0,
   );
   assert.equal(input.model, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// Project defaults integration tests (tlha-pf6l)
+// ---------------------------------------------------------------------------
+
+// Shared fixtures for project defaults tests.
+// Developer: anthropic effort "medium" (supported on reasoning:true), openai-codex effort "max"
+// (capability-gated to "off" on reasoning:true models without thinkingLevelMap).
+const pdDeveloper = {
+  name: "developer",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+};
+
+// code-reviewer: opposite-provider, effort "high" on both providers.
+const pdCodeReviewer = {
+  name: "code-reviewer",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  tlhModelDefaultsSource: "frontmatter",
+  preferOppositeProvider: true,
+};
+
+const pdAgents2 = new Map([
+  [pdDeveloper.name, pdDeveloper],
+  [pdCodeReviewer.name, pdCodeReviewer],
+]);
+
+// Available models: reasoning:true (no thinkingLevelMap), so effort "max" capability-gates to "off",
+// but effort levels up to "high" resolve correctly.
+const pdAnthropicModels = [
+  { provider: "anthropic", id: "claude-sonnet-4-6", reasoning: true },
+  { provider: "anthropic", id: "claude-opus-5", reasoning: true },
+];
+const pdCodexModels = [
+  { provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true },
+  { provider: "openai-codex", id: "gpt-5.6-sol", reasoning: true },
+];
+const pdAllModels = [...pdAnthropicModels, ...pdCodexModels];
+
+test("project defaults: prototype-chain agent names do not resolve inherited entries", () => {
+  const inheritedDefaults = {};
+  Object.defineProperty(inheritedDefaults, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    value: { model: "anthropic/claude-opus-5", effort: "high" },
+  });
+  Object.defineProperty(inheritedDefaults, "constructor", {
+    configurable: true,
+    enumerable: true,
+    value: { model: "anthropic/claude-opus-5", effort: "high" },
+  });
+  const projectDefaults = Object.create(inheritedDefaults);
+
+  for (const agentName of ["__proto__", "constructor"]) {
+    const input = { agent: agentName, task: "Ignore inherited project defaults" };
+    assert.equal(
+      applyProviderAwareSubagentModels(input, pdAgents2, pdAllModels, "anthropic", undefined, {
+        projectDefaults,
+      }),
+      0,
+    );
+    assert.equal(input.model, undefined);
+  }
+});
+
+// -----------------------------------------------------------------------
+// Precedence layer tests
+// -----------------------------------------------------------------------
+
+// Layer 4 (bundled): no project defaults, no persisted override → bundled defaults apply.
+// Bundled path is the "override === undefined" fast path using resolveThinkingForProvider
+// without capability gating, so "medium" appears directly.
+test("project defaults: layer 4 (bundled) applies when no project defaults and no persisted override", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAnthropicModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+  );
+  assert.equal(mutations, 1);
+  // Bundled defaults: anthropic/claude-sonnet-4-6 with effort "medium".
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+});
+
+// Layer 3 (persisted): persisted model override wins over bundled when no project defaults.
+// Note: the persisted-model path calls resolveStoredSubagentThinking, which capability-gates.
+// Developer's openai-codex bundled effort is "max", but max requires thinkingLevelMap;
+// without it, the capability gate falls to "off".
+test("project defaults: layer 3 (persisted) model wins over bundled when no project defaults", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { agentOverrides: new Map([["developer", { model: "openai-codex/gpt-5.6-luna" }]]) },
+  );
+  assert.equal(mutations, 1);
+  // Persisted model pin wins; developer's openai-codex bundled effort "max" is
+  // capability-gated to "off" for a reasoning:true model without thinkingLevelMap.
+  assert.equal(input.model, "openai-codex/gpt-5.6-luna:off");
+});
+
+// Layer 2 model: project model beats persisted model (per-field: model only).
+test("project defaults: layer 2 project model beats layer 3 persisted model (anthropic → anthropic)", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "anthropic/claude-sonnet-4-6", thinking: "low" }],
+      ]),
+      projectDefaults: { developer: { model: "anthropic/claude-opus-5" } },
+    },
+  );
+  assert.equal(mutations, 1);
+  // Project model (claude-opus-5) beats persisted model (claude-sonnet-4-6).
+  // Thinking falls through from persisted (low).
+  assert.equal(input.model, "anthropic/claude-opus-5:low");
+});
+
+// Layer 2 effort: project effort beats persisted thinking.
+test("project defaults: layer 2 project effort beats layer 3 persisted thinking", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "anthropic/claude-sonnet-4-6", thinking: "low" }],
+      ]),
+      projectDefaults: { developer: { effort: "high" } },
+    },
+  );
+  assert.equal(mutations, 1);
+  // Persisted model kept; project effort (high) beats persisted thinking (low).
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:high");
+});
+
+test("project and stored effort warnings retain their source provenance", () => {
+  const limitedModel = {
+    provider: "anthropic",
+    id: "claude-sonnet-4-6",
+    reasoning: true,
+    thinkingLevelMap: { medium: null, high: null },
+  };
+  const projectInput = { agent: "developer", task: "Implement" };
+  const projectWarnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      projectInput,
+      pdAgents2,
+      [limitedModel],
+      "anthropic",
+      limitedModel,
+      {
+        projectDefaults: { developer: { effort: "high" } },
+        onWarning: ({ message }) => projectWarnings.push(message),
+      },
+    ),
+    1,
+  );
+  assert.equal(projectInput.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(projectWarnings, [
+    'TLH project default effort "high" from .tlh/defaults.json is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+
+  const storedInput = { agent: "developer", task: "Implement" };
+  const storedWarnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(
+      storedInput,
+      pdAgents2,
+      [limitedModel],
+      "anthropic",
+      limitedModel,
+      {
+        agentOverrides: new Map([["developer", { thinking: "high" }]]),
+        onWarning: ({ message }) => storedWarnings.push(message),
+      },
+    ),
+    1,
+  );
+  assert.equal(storedInput.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(storedWarnings, [
+    'TLH stored minor-agent effort "high" is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+});
+
+test("project defaults: project model merge retains persisted effort warning provenance", () => {
+  const limitedModel = {
+    provider: "anthropic",
+    id: "claude-sonnet-4-6",
+    reasoning: true,
+    thinkingLevelMap: { medium: null, high: null },
+  };
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(input, pdAgents2, [limitedModel], "anthropic", limitedModel, {
+      agentOverrides: new Map([["developer", { thinking: "high" }]]),
+      projectDefaults: { developer: { model: "anthropic/claude-sonnet-4-6" } },
+      onWarning: ({ message }) => warnings.push(message),
+    }),
+    1,
+  );
+  // The project model is selected, while the persisted unsupported effort still
+  // follows the existing capability neutralization path.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:off");
+  assert.deepEqual(warnings, [
+    'TLH stored minor-agent effort "high" is not supported by anthropic/claude-sonnet-4-6; using explicit off for this run.',
+  ]);
+  assert.doesNotMatch(warnings[0], /project default|\.tlh\/defaults\.json/);
+});
+
+test("project defaults: no-model capability warning identifies the project defaults file", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  assert.equal(
+    applyProviderAwareSubagentModels(input, pdAgents2, [], "custom-provider", undefined, {
+      projectDefaults: { developer: { effort: "high" } },
+      onWarning: ({ message }) => warnings.push(message),
+    }),
+    0,
+  );
+  assert.equal(input.model, undefined);
+  assert.deepEqual(warnings, [
+    'TLH project default effort "high" from .tlh/defaults.json for developer could not be capability-checked because no bundled or current-session model is available; the subagents runtime will apply its capability gate if the model resolves and fail open otherwise.',
+  ]);
+  assert.match(warnings[0], /\.tlh\/defaults\.json/);
+});
+
+// Layer 1 (explicit dispatch model): human model wins; project effort still attaches.
+test("project defaults: layer 1 explicit dispatch model beats project model (human-only rule)", () => {
+  const input = { agent: "developer", task: "Implement", model: "anthropic/claude-opus-5" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { developer: { model: "openai-codex/gpt-5.6-luna" } } },
+  );
+  // Explicit dispatch model wins; no effort suffix (no thinking override).
+  assert.equal(mutations, 0);
+  assert.equal(input.model, "anthropic/claude-opus-5");
+});
+
+test("project defaults: explicit dispatch model wins; project effort attaches as suffix", () => {
+  const input = { agent: "developer", task: "Implement", model: "anthropic/claude-opus-5" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { developer: { effort: "high" } } },
+  );
+  // Human model wins; project effort (high) appends.
+  assert.equal(mutations, 1);
+  assert.equal(input.model, "anthropic/claude-opus-5:high");
+});
+
+test("project defaults: unavailable project model is ignored for explicit dispatch", () => {
+  const input = { agent: "developer", task: "Implement", model: "anthropic/claude-opus-5" };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      projectDefaults: { developer: { model: "anthropic/claude-not-available" } },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  assert.equal(mutations, 0);
+  assert.equal(input.model, "anthropic/claude-opus-5");
+  assert.deepEqual(warnings, []);
+});
+
+test("project defaults: explicit model keeps project effort when project model is unavailable", () => {
+  const input = { agent: "developer", task: "Implement", model: "anthropic/claude-opus-5" };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      projectDefaults: {
+        developer: { model: "anthropic/claude-not-available", effort: "high" },
+      },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  assert.equal(mutations, 1);
+  assert.equal(input.model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(warnings, []);
+});
+
+test("project defaults: explicit thinking suffix stays untouched when project model is unavailable", () => {
+  const input = {
+    agent: "developer",
+    task: "Implement",
+    model: "anthropic/claude-opus-5:low",
+  };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      projectDefaults: {
+        developer: { model: "anthropic/claude-not-available", effort: "high" },
+      },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  assert.equal(mutations, 0);
+  assert.equal(input.model, "anthropic/claude-opus-5:low");
+  assert.deepEqual(warnings, []);
+});
+
+// -----------------------------------------------------------------------
+// Per-field mixing tests
+// -----------------------------------------------------------------------
+
+// Project model only (no project effort) + persisted effort.
+test("project defaults: per-field — project model, effort from persisted thinking", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([["developer", { thinking: "low" }]]),
+      projectDefaults: { developer: { model: "anthropic/claude-opus-5" } },
+    },
+  );
+  assert.equal(mutations, 1);
+  // Project model + persisted thinking (low) from per-field merge.
+  assert.equal(input.model, "anthropic/claude-opus-5:low");
+});
+
+// Project effort only (no project model) + persisted model.
+test("project defaults: per-field — project effort, model from persisted override", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "anthropic/claude-sonnet-4-6", thinking: "low" }],
+      ]),
+      projectDefaults: { developer: { effort: "high" } },
+    },
+  );
+  assert.equal(mutations, 1);
+  // Persisted model + project effort (high); persisted thinking overridden by project.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:high");
+});
+
+// -----------------------------------------------------------------------
+// Opposite-role behavior tests (code-reviewer / oracle / contrarian)
+// -----------------------------------------------------------------------
+
+// Effort-only project entry preserves dynamic opposite-provider selection.
+test("project defaults: code-reviewer effort-only preserves opposite-provider selection (anthropic session → codex)", () => {
+  const input = { agent: "code-reviewer", task: "Review" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { "code-reviewer": { effort: "high" } } },
+  );
+  assert.equal(mutations, 1);
+  // Opposite-provider selection preserved: codex reviewer for anthropic session.
+  assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+  assert.ok(Array.isArray(input.fallbackModels), "fallback models generated for opposite-role");
+});
+
+test("project defaults: code-reviewer effort-only preserves opposite-provider selection (codex session → anthropic)", () => {
+  const input = { agent: "code-reviewer", task: "Review" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "openai-codex",
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+    { projectDefaults: { "code-reviewer": { effort: "high" } } },
+  );
+  assert.equal(mutations, 1);
+  // Opposite-provider selection preserved: anthropic reviewer for codex session.
+  assert.equal(input.model, "anthropic/claude-opus-5:high");
+  assert.ok(Array.isArray(input.fallbackModels), "fallback models generated for opposite-role");
+});
+
+// Model pin bypasses opposite-provider selection on both provider families.
+test("project defaults: code-reviewer model pin bypasses opposite-provider selection (anthropic session)", () => {
+  const input = { agent: "code-reviewer", task: "Review" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { "code-reviewer": { model: "anthropic/claude-opus-5" } } },
+  );
+  assert.equal(mutations, 1);
+  // Model pin bypasses opposite selection; no generated fallback.
+  assert.equal(input.model, "anthropic/claude-opus-5:high");
+  assert.equal(input.fallbackModels, undefined);
+});
+
+test("project defaults: code-reviewer model pin bypasses opposite-provider selection (codex session)", () => {
+  const input = { agent: "code-reviewer", task: "Review" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "openai-codex",
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+    { projectDefaults: { "code-reviewer": { model: "openai-codex/gpt-5.6-sol" } } },
+  );
+  assert.equal(mutations, 1);
+  // Model pin bypasses opposite selection; no generated fallback.
+  assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
+  assert.equal(input.fallbackModels, undefined);
+});
+
+// -----------------------------------------------------------------------
+// Unavailable project model: warn and fall through
+// -----------------------------------------------------------------------
+
+test("project defaults: implicit dispatch warns for unavailable project model and falls through to bundled defaults", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAnthropicModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      projectDefaults: { developer: { model: "anthropic/claude-not-available" } },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  assert.equal(mutations, 1);
+  // Falls through to bundled defaults; unavailable project pin warned, not forwarded.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+  assert.equal(warnings.length, 1, "implicit dispatch emits one project-model warning");
+  assert.ok(
+    warnings.some((w) => w.includes("claude-not-available")),
+    "warning mentions model",
+  );
+  assert.ok(
+    warnings.some((w) => w.includes("developer")),
+    "warning mentions role",
+  );
+});
+
+test("project defaults: unavailable project model warns and falls through to persisted override", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "anthropic/claude-sonnet-4-6", thinking: "low" }],
+      ]),
+      projectDefaults: { developer: { model: "anthropic/claude-not-available" } },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  assert.equal(mutations, 1);
+  // Falls through to persisted override (anthropic/claude-sonnet-4-6:low).
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:low");
+  assert.ok(warnings.length > 0, "warning emitted for unavailable project model");
+  assert.ok(
+    warnings.some((w) => w.includes("claude-not-available")),
+    "warning mentions model",
+  );
+});
+
+// -----------------------------------------------------------------------
+// model:false interaction: project defaults (layer 2) override persisted model:false (layer 3)
+// -----------------------------------------------------------------------
+
+test("project defaults: project model overrides persisted model:false (available project model wins)", () => {
+  // model:false is a persisted value for the model field (layer 3). Project defaults
+  // (layer 2) beat it, just as they beat a persisted model string.
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([["developer", { model: false }]]),
+      projectDefaults: { developer: { model: "anthropic/claude-opus-5" } },
+    },
+  );
+  // Project model wins over persisted model:false; step-1 resolution applies.
+  assert.equal(mutations, 1);
+  assert.equal(input.model, "anthropic/claude-opus-5:medium");
+});
+
+test("project defaults: unavailable project model + persisted model:false → warns, preserves false (session-inherit kept)", () => {
+  // When the project model is NOT in the registry, we warn and fall through to the
+  // persisted value — which is false here, so model:false is preserved.
+  const input = { agent: "developer", task: "Implement" };
+  const warnings = [];
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([["developer", { model: false }]]),
+      projectDefaults: { developer: { model: "anthropic/claude-not-available" } },
+      onWarning: ({ message }) => warnings.push(message),
+    },
+  );
+  // Project model unavailable → fall through to persisted false.
+  // model:false + thinking:undefined → fast path returns 0.
+  assert.equal(mutations, 0);
+  assert.equal(Object.hasOwn(input, "model"), false);
+  assert.ok(warnings.length > 0, "warning emitted");
+  assert.ok(
+    warnings.some((w) => w.includes("claude-not-available")),
+    "warning mentions model",
+  );
+});
+
+test("project defaults: effort-only project entry + persisted model:false → model stays false, project effort applied", () => {
+  // Project entry has only effort (no model). Effective model field stays false
+  // (session-inherit). Project effort is applied to the inherited session model.
+  // Merged override: { model: false, thinking: "high" } → step-3 path.
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([["developer", { model: false }]]),
+      projectDefaults: { developer: { effort: "high" } },
+    },
+  );
+  // step-3: inherits session model (anthropic/claude-sonnet-4-6) with project effort (high).
+  assert.equal(mutations, 1);
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:high");
+});
+
+// -----------------------------------------------------------------------
+// Denied/unavailable loader status: undefined projectDefaults = no effect
+// -----------------------------------------------------------------------
+
+test("project defaults: denied/unavailable status (undefined projectDefaults) applies nothing", () => {
+  // Callers must pass undefined when loader status is denied or unavailable.
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAnthropicModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: undefined },
+  );
+  assert.equal(mutations, 1);
+  // Falls through to bundled defaults.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+});
+
+test("project defaults: empty projectDefaults object (no entry for role) falls through to bundled", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAnthropicModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: {} },
+  );
+  assert.equal(mutations, 1);
+  // No project entry for developer → bundled defaults.
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:medium");
+});
+
+// -----------------------------------------------------------------------
+// Project model beats bundled defaults (layer 2 > layer 4)
+// -----------------------------------------------------------------------
+
+test("project defaults: project model beats bundled defaults with no persisted override", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { developer: { model: "anthropic/claude-opus-5" } } },
+  );
+  assert.equal(mutations, 1);
+  // Project model (claude-opus-5) wins over bundled (claude-sonnet-4-6).
+  // No thinking override → bundled effort "medium" for anthropic, capability-gated to "medium"
+  // (medium is supported on reasoning:true models).
+  assert.equal(input.model, "anthropic/claude-opus-5:medium");
+});
+
+test("project defaults: project effort overrides bundled effort for the resolved model", () => {
+  const input = { agent: "developer", task: "Implement" };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { developer: { effort: "low" } } },
+  );
+  assert.equal(mutations, 1);
+  // Bundled model selected, project effort (low) overrides bundled effort (medium).
+  assert.equal(input.model, "anthropic/claude-sonnet-4-6:low");
+});
+
+// -----------------------------------------------------------------------
+// tasks[] batch dispatch: project defaults apply to each task target
+// -----------------------------------------------------------------------
+
+test("project defaults: project defaults apply to each task target in tasks[] batch", () => {
+  const input = {
+    tasks: [
+      { agent: "developer", task: "Implement A" },
+      { agent: "developer", task: "Implement B" },
+    ],
+  };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    pdAgents2,
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    { projectDefaults: { developer: { model: "anthropic/claude-opus-5", effort: "high" } } },
+  );
+  assert.equal(mutations, 2);
+  assert.equal(input.tasks[0].model, "anthropic/claude-opus-5:high");
+  assert.equal(input.tasks[1].model, "anthropic/claude-opus-5:high");
+});
+
+test("project defaults: mixed packaged and embedded dispatch only mutates packaged targets", () => {
+  const input = {
+    tasks: [
+      { agent: "developer", task: "Implement the packaged task" },
+      { agent: "embedded.reviewer", task: "Run the captured project reviewer" },
+    ],
+  };
+  const beforeEmbedded = { ...input.tasks[1] };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    new Map([...pdAgents2, ["embedded.reviewer", { ...pdDeveloper, name: "embedded.reviewer" }]]),
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["developer", { model: "openai-codex/gpt-5.6-luna", thinking: "high" }],
+        ["embedded.reviewer", { model: "openai-codex/gpt-5.6-luna", thinking: "max" }],
+      ]),
+      projectDefaults: {
+        developer: { model: "anthropic/claude-opus-5", effort: "high" },
+        "embedded.reviewer": { model: "openai-codex/gpt-5.6-luna", effort: "max" },
+      },
+    },
+  );
+  assert.equal(mutations, 1);
+  assert.equal(input.tasks[0].model, "anthropic/claude-opus-5:high");
+  assert.deepEqual(input.tasks[1], beforeEmbedded);
+});
+
+test("project defaults: direct embedded target guard ignores project and stored model policy", () => {
+  const input = {
+    agent: "embedded.reviewer",
+    task: "Run from the exact captured configuration",
+    model: "anthropic/claude-sonnet-4-6",
+    fallbackModels: ["caller/fallback"],
+  };
+  const before = { ...input, fallbackModels: [...input.fallbackModels] };
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    new Map([["embedded.reviewer", { ...pdDeveloper, name: "embedded.reviewer" }]]),
+    pdAllModels,
+    "anthropic",
+    { provider: "anthropic", id: "claude-sonnet-4-6" },
+    {
+      agentOverrides: new Map([
+        ["embedded.reviewer", { model: "openai-codex/gpt-5.6-luna", thinking: "max" }],
+      ]),
+      projectDefaults: {
+        "embedded.reviewer": { model: "openai-codex/gpt-5.6-luna", effort: "high" },
+      },
+    },
+  );
+  assert.equal(mutations, 0);
+  assert.deepEqual(input, before);
 });

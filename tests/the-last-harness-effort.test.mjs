@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { ModelSelectorComponent, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { createJiti } from "jiti";
 
 import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const { registerEffortCommand } = await jiti.import("../extensions/the-last-harness/effort.ts");
-const {
-  installTlhModelSelectionPersistenceOverride,
-  persistTlhStandaloneThinkingDefaults,
-  replayAllTlhUnclaimedModelSelectionDefaults,
-  setTlhModelSelectionActiveModelResolver,
-} = await jiti.import("../extensions/the-last-harness/model-selection-scope.ts");
+
+initTheme("dark", false);
 
 // ---------------------------------------------------------------------------
 // Minimal harness and helpers
@@ -51,14 +47,16 @@ function createFakeRuntime(agentPrompt) {
  * @param {string|undefined} opts.provider  model provider (e.g. "anthropic", "openai")
  * @param {object|undefined} opts.model     full model object — if given, overrides provider
  * @param {boolean}          opts.hasUI     whether the ctx has interactive UI (default: false)
+ * @param {string}            opts.cwd      command working directory
  */
-function createCtx({ provider, model, hasUI = false } = {}) {
+function createCtx({ provider, model, hasUI = false, cwd = process.cwd() } = {}) {
   const notifications = [];
   const resolvedModel =
     model !== undefined ? model : provider ? { provider, id: "test-model" } : undefined;
   return {
     notifications,
     ctx: {
+      cwd,
       model: resolvedModel,
       hasUI,
       ui: {
@@ -77,46 +75,25 @@ function readSettings(agent) {
   return JSON.parse(readFileSync(join(agent, "settings.json"), "utf8"));
 }
 
-function createPersistedThinkingHarness(manager) {
-  const pi = createPiHarness();
-  pi.setThinkingLevel = (level) => {
-    if (pi.thinkingLevel === level) {
-      return;
-    }
-    pi.thinkingLevel = level;
-    manager.setDefaultThinkingLevel(level);
-  };
-  return pi;
-}
-
-async function queueFailedNativeModelWrite(manager, model) {
-  let callbackDone;
-  const selector = Object.create(ModelSelectorComponent.prototype);
-  selector.dispose = () => {};
-  selector.settingsManager = manager;
-  selector.onSelectCallback = () => {
-    callbackDone = Promise.resolve();
-  };
-  selector.handleSelect(model);
-  await callbackDone;
-}
-
-function createInteractiveThinkingContext(
-  model,
-  scopeSelection,
-  pickerCalls,
-  thinkingSelection = "high",
-) {
-  const { notifications, ctx } = createCtx({ model, hasUI: true });
+function createInteractiveThinkingContext(model, cwd = process.cwd()) {
+  const { notifications, ctx } = createCtx({ model, hasUI: true, cwd });
   ctx.mode = "tui";
-  ctx.ui.select = async (title, options) => {
-    pickerCalls.push(title);
-    if (title === "Pick thinking level") {
-      return options.find((option) => option.includes(` ${thinkingSelection} —`));
-    }
-    return options[scopeSelection];
+  let picker;
+  let resolveDone;
+  const done = new Promise((resolve) => {
+    resolveDone = resolve;
+  });
+  ctx.ui.custom = async (factory) => {
+    picker = factory({}, {}, {}, (result) => resolveDone(result));
+    return done;
   };
-  return { notifications, ctx };
+  return {
+    notifications,
+    ctx,
+    get picker() {
+      return picker;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -127,12 +104,22 @@ function rushPrimary() {
   return {
     name: "rush",
     description: "Rush primary",
-    model: "anthropic/claude-sonnet-4-6",
-    tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-    thinking: "low",
-    tlhOpenaiThinking: "medium",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+        effort: "low",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+        effort: "medium",
+      },
+      { provider: "openrouter", effort: "low" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
     preferCurrentOpenaiModel: true,
-    lockThinking: true,
     tools: [],
     systemPrompt: "rush",
     filePath: "agents/primary/rush.md",
@@ -143,9 +130,21 @@ function productPrimary() {
   return {
     name: "product",
     description: "Product primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
-    lockThinking: true,
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     tools: [],
     systemPrompt: "product",
     filePath: "agents/primary/product.md",
@@ -156,9 +155,21 @@ function bugHunterPrimary() {
   return {
     name: "bug-hunter",
     description: "Bug-hunter primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
-    lockThinking: true,
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     tools: [],
     systemPrompt: "bug-hunter",
     filePath: "agents/primary/bug-hunter.md",
@@ -169,9 +180,21 @@ function architectPrimary() {
   return {
     name: "architect",
     description: "Architect primary",
-    model: "anthropic/claude-opus-5",
-    thinking: "high",
-    minThinking: "medium",
+    tlhModelDefaults: [
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "claude-opus-5" }],
+        effort: "high",
+      },
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+        effort: "high",
+      },
+      { provider: "openrouter", effort: "high" },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferredModel: { provider: "anthropic", id: "claude-opus-5" },
     tools: [],
     systemPrompt: "architect",
     filePath: "agents/primary/architect.md",
@@ -189,219 +212,58 @@ function reasoningModel(provider = "anthropic") {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Locked primaries — rush, product, bug-hunter
+// 1. Overrideable primaries — rush, product, bug-hunter
 // ---------------------------------------------------------------------------
 
-test("getArgumentCompletions returns empty list for locked primary: rush", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary: product", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(productPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary: bug-hunter", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(bugHunterPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.deepEqual(completions, []);
-});
-
-test("getArgumentCompletions returns empty list for locked primary regardless of prefix", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const command = pi.commands.get("effort");
-  assert.deepEqual(command.getArgumentCompletions("m"), []);
-  assert.deepEqual(command.getArgumentCompletions("hi"), []);
-});
-
-test("handler errors with exact message for rush on anthropic (thinking: low)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "low" for the rush primary agent.',
-    type: "error",
+for (const [name, createPrimary] of [
+  ["rush", rushPrimary],
+  ["product", productPrimary],
+  ["bug-hunter", bugHunterPrimary],
+]) {
+  test(`${name} exposes every supported thinking level`, () => {
+    const pi = createPiHarness();
+    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
+    const completions = pi.commands.get("effort").getArgumentCompletions("");
+    assert.deepEqual(
+      completions.map((completion) => completion.value),
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    );
   });
-});
 
-test("handler errors with 'medium' for rush on OpenAI", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "openai" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "medium" for the rush primary agent.',
-    type: "error",
+  test(`${name} accepts a supported thinking selection without a primary floor`, async () => {
+    const pi = createPiHarness();
+    registerEffortCommand(pi, createFakeRuntime(createPrimary()));
+    const { notifications, ctx } = createCtx({ model: reasoningModel() });
+    await pi.commands.get("effort").handler("off", ctx);
+    assert.equal(pi.thinkingLevel, "off");
+    assert.deepEqual(notifications.at(-1), {
+      message: "Thinking level set to off for this session.",
+      type: "info",
+    });
   });
-});
-
-test("handler errors with 'medium' for rush on openai-codex provider", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "openai-codex" });
-  await pi.commands.get("effort").handler("high", ctx);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "medium" for the rush primary agent.',
-    type: "error",
-  });
-});
-
-test("handler errors with exact message for product (thinking: high)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(productPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("low", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "high" for the product primary agent.',
-    type: "error",
-  });
-});
-
-test("handler errors with exact message for bug-hunter (thinking: high)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(bugHunterPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("off", ctx);
-  assert.equal(notifications.length, 1);
-  assert.deepEqual(notifications[0], {
-    message: 'Thinking is locked at "high" for the bug-hunter primary agent.',
-    type: "error",
-  });
-});
-
-test("locked handler also fires with no args (handler called without a level)", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(rushPrimary()));
-  const { notifications, ctx } = createCtx({ provider: "anthropic" });
-  await pi.commands.get("effort").handler("", ctx);
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0].type, "error");
-  assert.match(
-    notifications[0].message,
-    /Thinking is locked at "low" for the rush primary agent\./,
-  );
-});
+}
 
 // ---------------------------------------------------------------------------
-// 2. minThinking floor — architect (minThinking: medium)
+// 2. Primary defaults do not constrain native effort choices
 // ---------------------------------------------------------------------------
 
-test("getArgumentCompletions for architect returns only medium/high/xhigh/max when no prefix", () => {
+test("architect completions expose every native thinking level", () => {
   const pi = createPiHarness();
   registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
   const completions = pi.commands.get("effort").getArgumentCompletions("");
   assert.deepEqual(
     completions.map((c) => c.value),
-    ["medium", "high", "xhigh", "max"],
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
   );
 });
 
-test("getArgumentCompletions for architect filters correctly with prefix 'h'", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const completions = pi.commands.get("effort").getArgumentCompletions("h");
-  assert.deepEqual(
-    completions.map((c) => c.value),
-    ["high"],
-  );
-});
-
-test("getArgumentCompletions for architect returns null for prefix below floor (not null vs empty)", () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  // "l" matches "low" but low is below the floor — nothing matches
-  const completions = pi.commands.get("effort").getArgumentCompletions("l");
-  assert.equal(completions, null);
-});
-
-test("architect handler accepts medium", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("medium", ctx);
-  assert.equal(pi.thinkingLevel, "medium");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("architect handler accepts high", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("high", ctx);
-  assert.equal(pi.thinkingLevel, "high");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("architect handler accepts xhigh when model supports it", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("xhigh", ctx);
-  assert.equal(pi.thinkingLevel, "xhigh");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("architect handler accepts max when model supports it", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("max", ctx);
-  assert.equal(pi.thinkingLevel, "max");
-  assert.equal(notifications.at(-1)?.type, "info");
-});
-
-test("architect handler rejects off with exact error message", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("off", ctx);
-  assert.deepEqual(notifications.at(-1), {
-    message: "architect requires at least medium thinking.",
-    type: "error",
-  });
-});
-
-test("architect handler rejects minimal with exact error message", async () => {
-  const pi = createPiHarness();
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { notifications, ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("minimal", ctx);
-  assert.deepEqual(notifications.at(-1), {
-    message: "architect requires at least medium thinking.",
-    type: "error",
-  });
-});
-
-test("architect handler rejects low with exact error message", async () => {
+test("architect accepts low as a session-only effort selection", async () => {
   const pi = createPiHarness();
   registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
   const { notifications, ctx } = createCtx({ model: reasoningModel() });
   await pi.commands.get("effort").handler("low", ctx);
-  assert.deepEqual(notifications.at(-1), {
-    message: "architect requires at least medium thinking.",
-    type: "error",
-  });
-});
-
-test("architect handler does not change thinking level when rejecting a below-floor selection", async () => {
-  const pi = createPiHarness();
-  pi.thinkingLevel = "high";
-  registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
-  const { ctx } = createCtx({ model: reasoningModel() });
-  await pi.commands.get("effort").handler("off", ctx);
-  // Level must be unchanged
-  assert.equal(pi.thinkingLevel, "high");
+  assert.equal(pi.thinkingLevel, "low");
+  assert.equal(notifications.at(-1)?.type, "info");
 });
 
 // ---------------------------------------------------------------------------
@@ -475,313 +337,282 @@ test("no runtime passed handler accepts any valid level", async () => {
   assert.equal(notifications.at(-1)?.type, "info");
 });
 
-test("interactive thinking scope replays a pending failed model selector before capturing its write", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-failed-selector-", {
+// ---------------------------------------------------------------------------
+// Native public thinking picker and guarded persistence
+// ---------------------------------------------------------------------------
+
+test("effort opens the native picker whose Enter action is session-only", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-native-picker-", {
     cwd: true,
     test: t,
   });
-  const previousModel = { provider: "anthropic", id: "claude-sonnet-4-6" };
-  const failedModel = { provider: "openai-codex", id: "unavailable-model" };
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({
-      defaultProvider: previousModel.provider,
-      defaultModel: previousModel.id,
-      defaultThinkingLevel: "low",
-    }),
-  );
+  const original = {
+    defaultThinkingLevel: "low",
+    unknownSetting: { preserved: true },
+  };
+  writeFileSync(join(fixture.agent, "settings.json"), JSON.stringify(original));
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    setTlhModelSelectionActiveModelResolver(() => previousModel);
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    await queueFailedNativeModelWrite(manager, failedModel);
-    assert.equal(readSettings(fixture.agent).defaultModel, previousModel.id);
-
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    registerEffortCommand(pi);
-    const pickerCalls = [];
-    const { ctx } = createInteractiveThinkingContext(reasoningModel(), 0, pickerCalls);
-
-    await pi.commands.get("thinking").handler("", ctx);
-    await manager.flush();
-
-    assert.equal(readSettings(fixture.agent).defaultModel, failedModel.id);
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
-    assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-  });
-});
-
-test("interactive thinking cancellation reports a failed restoration and resulting level", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-cancel-error-", {
-    cwd: true,
-    test: t,
-  });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    const upstreamSetThinkingLevel = pi.setThinkingLevel;
-    pi.setThinkingLevel = (level) => {
-      if (level === "low") {
-        throw new Error("thinking restoration unavailable");
-      }
-      upstreamSetThinkingLevel(level);
-    };
-    registerEffortCommand(pi);
-    const pickerCalls = [];
-    const { notifications, ctx } = createInteractiveThinkingContext(
-      reasoningModel(),
-      undefined,
-      pickerCalls,
-    );
-
-    await pi.commands.get("effort").handler("", ctx);
-    await manager.flush();
-
-    assert.equal(pi.thinkingLevel, "high");
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
-    assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-    assert.deepEqual(notifications, [
-      {
-        message:
-          "TLH could not restore thinking level to low after cancelling thinking selection; active level remains high.",
-        type: "warning",
-      },
-    ]);
-  });
-});
-
-test("interactive thinking All sessions warns when Pi emits no default write", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-no-write-", { cwd: true, test: t });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
     const pi = createPiHarness();
     pi.thinkingLevel = "low";
-    pi.setThinkingLevel = (level) => {
-      pi.thinkingLevel = level;
-    };
     registerEffortCommand(pi);
-    const pickerCalls = [];
-    const { notifications, ctx } = createInteractiveThinkingContext(
-      reasoningModel(),
-      1,
-      pickerCalls,
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker, "the public picker should be shown");
+    assert.match(
+      interactive.picker.render(120).join("\n"),
+      /Enter to select · Ctrl\+S to set as default · Esc to cancel/,
     );
-
-    await pi.commands.get("thinking").handler("", ctx);
-    await manager.flush();
-
-    assert.equal(pi.thinkingLevel, "high");
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
-    assert.deepEqual(notifications, [
-      {
-        message:
-          "Thinking level set to high for this session, but TLH could not update the persistent default.",
-        type: "warning",
-      },
-    ]);
-  });
-});
-
-for (const commandName of ["thinking", "effort"]) {
-  test(`${commandName} interactive session-only scope leaves the profile default unchanged`, async (t) => {
-    const fixture = createIsolatedProfileFixture(`tlh-${commandName}-session-only-`, {
-      cwd: true,
-      test: t,
-    });
-    writeFileSync(
-      join(fixture.agent, "settings.json"),
-      JSON.stringify({ defaultThinkingLevel: "low" }),
-    );
-    const model = reasoningModel();
-
-    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-      assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-      replayAllTlhUnclaimedModelSelectionDefaults();
-      const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-      const pi = createPersistedThinkingHarness(manager);
-      pi.thinkingLevel = "low";
-      registerEffortCommand(pi);
-      const pickerCalls = [];
-      const { notifications, ctx } = createInteractiveThinkingContext(model, 0, pickerCalls);
-
-      await pi.commands.get(commandName).handler("", ctx);
-      await manager.flush();
-
-      assert.equal(pi.thinkingLevel, "high");
-      assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
-      assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-      assert.equal(notifications.at(-1)?.type, "info");
-    });
-  });
-}
-
-test("interactive thinking All sessions preserves the profile default write", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-all-sessions-", {
-    cwd: true,
-    test: t,
-  });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-  const model = reasoningModel();
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    registerEffortCommand(pi);
-    const pickerCalls = [];
-    const { ctx } = createInteractiveThinkingContext(model, 1, pickerCalls);
-
-    await pi.commands.get("thinking").handler("", ctx);
-    await manager.flush();
-
-    assert.equal(pi.thinkingLevel, "high");
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "high");
-    assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-  });
-});
-
-test("pending thinking scope does not capture unrelated defaults and survives lifecycle replay", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-pending-scope-", {
-    cwd: true,
-    test: t,
-  });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-  const model = reasoningModel();
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    registerEffortCommand(pi);
-
-    let resolveScope;
-    let scopeOptions;
-    let markScopeOpen;
-    const scopeOpen = new Promise((resolve) => {
-      markScopeOpen = resolve;
-    });
-    const pickerCalls = [];
-    const { ctx } = createCtx({ model, hasUI: true });
-    ctx.mode = "tui";
-    ctx.ui.select = async (title, options) => {
-      pickerCalls.push(title);
-      if (title === "Pick thinking level") {
-        return options.find((option) => option.includes(" high —"));
-      }
-      scopeOptions = options;
-      markScopeOpen();
-      return new Promise((resolve) => {
-        resolveScope = resolve;
-      });
-    };
-
-    const commandPromise = pi.commands.get("thinking").handler("", ctx);
-    await scopeOpen;
-    assert.equal(pi.thinkingLevel, "high");
-
-    // Simulate an unrelated thinking write and lifecycle boundary while the
-    // scope picker is open. Only that unrelated write should replay here.
-    manager.setDefaultThinkingLevel("medium");
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "medium");
-
-    resolveScope(scopeOptions[1]);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput("\r");
     await commandPromise;
-    await manager.flush();
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "high");
-    assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-  });
-});
 
-test("interactive thinking cancellation restores the active level without persistence", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-cancel-", { cwd: true, test: t });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-  const model = reasoningModel();
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    registerEffortCommand(pi);
-    const pickerCalls = [];
-    const { notifications, ctx } = createInteractiveThinkingContext(model, undefined, pickerCalls);
-
-    await pi.commands.get("effort").handler("", ctx);
-    await manager.flush();
-
-    assert.equal(pi.thinkingLevel, "low");
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
-    assert.deepEqual(pickerCalls, ["Pick thinking level", "Thinking selection scope"]);
-    assert.match(notifications.at(-1)?.message ?? "", /Kept thinking level at low/);
-  });
-});
-
-test("unchanged interactive and typed thinking selections do not open the scope picker", async (t) => {
-  const fixture = createIsolatedProfileFixture("tlh-thinking-no-scope-", { cwd: true, test: t });
-  writeFileSync(
-    join(fixture.agent, "settings.json"),
-    JSON.stringify({ defaultThinkingLevel: "low" }),
-  );
-  const model = reasoningModel();
-
-  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
-    assert.equal(installTlhModelSelectionPersistenceOverride(), true);
-    replayAllTlhUnclaimedModelSelectionDefaults();
-    const manager = SettingsManager.create(fixture.cwd, fixture.agent);
-    const pi = createPersistedThinkingHarness(manager);
-    pi.thinkingLevel = "low";
-    registerEffortCommand(pi);
-
-    const unchangedCalls = [];
-    const unchanged = createInteractiveThinkingContext(model, 1, unchangedCalls, "low");
-    await pi.commands.get("thinking").handler("", unchanged.ctx);
-    assert.deepEqual(unchangedCalls, ["Pick thinking level"]);
-    assert.equal(pi.thinkingLevel, "low");
-    assert.deepEqual(unchanged.notifications, [
-      { message: "Thinking level set to low.", type: "info" },
-    ]);
-
-    const typedCalls = [];
-    const typed = createInteractiveThinkingContext(model, 1, typedCalls);
-    await pi.commands.get("effort").handler("high", typed.ctx);
-    await persistTlhStandaloneThinkingDefaults();
-    await manager.flush();
-    assert.deepEqual(typedCalls, []);
     assert.equal(pi.thinkingLevel, "high");
-    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "high");
+    assert.deepEqual(JSON.parse(readFileSync(join(fixture.agent, "settings.json"))), original);
+    assert.match(interactive.notifications.at(-1)?.message ?? "", /for this session/);
+  });
+});
+
+test("native effort picker marks a valid isolated-profile default", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-default-badge-", {
+    cwd: true,
+    test: t,
+  });
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    JSON.stringify({ defaultThinkingLevel: "high" }),
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    const highLine = interactive.picker
+      .render(120)
+      .find((line) => line.includes("  high") || line.includes("→ high"));
+    assert.match(highLine ?? "", /default/);
+    interactive.picker.handleInput("\u001b");
+    await commandPromise;
+  });
+});
+
+test("native effort picker ignores an invalid persisted default", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-invalid-default-badge-", {
+    cwd: true,
+    test: t,
+  });
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    JSON.stringify({ defaultThinkingLevel: "turbo" }),
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    const highLine = interactive.picker
+      .render(120)
+      .find((line) => line.includes("  high") || line.includes("→ high"));
+    assert.doesNotMatch(highLine ?? "", /default/);
+    interactive.picker.handleInput("\u001b");
+    await commandPromise;
+  });
+});
+
+test("native effort picker does not badge or write a non-isolated profile default", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-normal-profile-badge-", {
+    cwd: true,
+    test: t,
+  });
+  const normalAgent = join(fixture.home, ".pi", "agent");
+  mkdirSync(normalAgent, { recursive: true });
+  const original = { defaultThinkingLevel: "high", unknown: true };
+  writeFileSync(join(normalAgent, "settings.json"), JSON.stringify(original));
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: undefined }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    const highLine = interactive.picker
+      .render(120)
+      .find((line) => line.includes("  high") || line.includes("→ high"));
+    assert.doesNotMatch(highLine ?? "", /default/);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput(String.fromCharCode(19));
+    await commandPromise;
+
+    assert.deepEqual(JSON.parse(readFileSync(join(normalAgent, "settings.json"))), original);
+  });
+});
+
+test("native Ctrl+S persists a same-level selection with a guarded backup and unknown fields", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-native-save-", { cwd: true, test: t });
+  const original = {
+    defaultThinkingLevel: "low",
+    unknownSetting: { preserved: true },
+  };
+  writeFileSync(join(fixture.agent, "settings.json"), JSON.stringify(original));
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "high";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput(String.fromCharCode(19));
+    await commandPromise;
+
+    const written = JSON.parse(readFileSync(join(fixture.agent, "settings.json")));
+    assert.equal(pi.thinkingLevel, "high");
+    assert.equal(written.defaultThinkingLevel, "high");
+    assert.deepEqual(written.unknownSetting, original.unknownSetting);
+    const backups = readdirSync(fixture.agent).filter((name) =>
+      name.startsWith("settings.json.bak-"),
+    );
+    assert.equal(backups.length, 1);
+    assert.deepEqual(JSON.parse(readFileSync(join(fixture.agent, backups[0]))), original);
+  });
+});
+
+test("Esc cancels the native effort picker without changing session or profile", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-native-cancel-", {
+    cwd: true,
+    test: t,
+  });
+  const original = { defaultThinkingLevel: "low" };
+  writeFileSync(join(fixture.agent, "settings.json"), JSON.stringify(original));
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput("\u001b");
+    await commandPromise;
+
+    assert.equal(pi.thinkingLevel, "low");
+    assert.deepEqual(JSON.parse(readFileSync(join(fixture.agent, "settings.json"))), original);
+    assert.deepEqual(interactive.notifications, []);
+  });
+});
+
+test("effort typed levels are session-only", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-typed-session-", {
+    cwd: true,
+    test: t,
+  });
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    JSON.stringify({ defaultThinkingLevel: "low" }),
+  );
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const { ctx } = createCtx({ model: reasoningModel() });
+    await pi.commands.get("effort").handler("high", ctx);
+
+    assert.equal(pi.thinkingLevel, "high");
+    assert.equal(readSettings(fixture.agent).defaultThinkingLevel, "low");
+  });
+});
+
+test("native effort picker applies model capability filtering without a primary floor", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-filtered-picker-", {
+    cwd: true,
+    test: t,
+  });
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi, createFakeRuntime(architectPrimary()));
+    const model = {
+      provider: "anthropic",
+      id: "limited",
+      reasoning: true,
+      thinkingLevelMap: { low: null, high: null, xhigh: "xhigh", max: null },
+    };
+    const interactive = createInteractiveThinkingContext(model, fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    const rendered = interactive.picker.render(120).join("\n");
+    const hasLevel = (level) =>
+      rendered
+        .split("\n")
+        .some((line) => line.includes(`  ${level}`) || line.includes(`→ ${level}`));
+    for (const level of ["off", "minimal", "medium", "xhigh"]) {
+      assert.equal(hasLevel(level), true, `${level} should be available`);
+    }
+    for (const level of ["low", "high", "max"]) {
+      assert.equal(hasLevel(level), false, `${level} should be filtered`);
+    }
+    interactive.picker.handleInput("\u001b");
+    await commandPromise;
+  });
+});
+
+test("Ctrl+S persistence failure keeps the new level session-only", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-save-failure-", {
+    cwd: true,
+    test: t,
+  });
+  mkdirSync(join(fixture.agent, "settings.json"));
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput(String.fromCharCode(19));
+    await commandPromise;
+
+    assert.equal(pi.thinkingLevel, "high");
+    assert.match(interactive.notifications.at(-1)?.message ?? "", /session only/);
+    assert.equal(readdirSync(join(fixture.agent, "settings.json")).length, 0);
+  });
+});
+
+test("Ctrl+S refuses the normal Pi profile without changing it", async (t) => {
+  const fixture = createIsolatedProfileFixture("tlh-effort-normal-profile-", {
+    cwd: true,
+    test: t,
+  });
+  const normalAgent = join(fixture.home, ".pi", "agent");
+  mkdirSync(normalAgent, { recursive: true });
+  const original = { defaultThinkingLevel: "low", unknown: true };
+  writeFileSync(join(normalAgent, "settings.json"), JSON.stringify(original));
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: undefined }, async () => {
+    const pi = createPiHarness();
+    pi.thinkingLevel = "low";
+    registerEffortCommand(pi);
+    const interactive = createInteractiveThinkingContext(reasoningModel(), fixture.cwd);
+    const commandPromise = pi.commands.get("effort").handler("", interactive.ctx);
+    assert.ok(interactive.picker);
+    interactive.picker.getSelectList().setSelectedIndex(4);
+    interactive.picker.handleInput(String.fromCharCode(19));
+    await commandPromise;
+
+    assert.equal(pi.thinkingLevel, "high");
+    assert.match(interactive.notifications.at(-1)?.message ?? "", /session only/);
+    assert.deepEqual(JSON.parse(readFileSync(join(normalAgent, "settings.json"))), original);
   });
 });

@@ -1586,7 +1586,7 @@ describe("async execution utilities", () => {
       const childPids = startedMockPiPids(mockPi);
       assert.equal(childPids.length, 1);
       await waitForMockPiSignal(mockPi, childPids[0]!, "SIGTERM");
-      writeLifecycleLock(asyncDir);
+      await writeLifecycleLock(asyncDir);
       const lockedStatus = JSON.parse(
         fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8"),
       ) as AsyncStatusPayload;

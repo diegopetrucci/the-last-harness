@@ -443,6 +443,138 @@ test("Herdr reporter sends monotonic working/idle state with session refs", asyn
   );
 });
 
+test("Herdr reporter maps UI-prompt waiting to Herdr blocked state", async () => {
+  const timers = createFakeTimers();
+  const calls = [];
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_ENV: "1",
+      HERDR_TLH_HEARTBEAT_MS: "0",
+    },
+    sendRequest: async (request) => {
+      calls.push(request);
+    },
+    timers,
+    now: timers.now,
+    idleDebounceMs: 25,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+  });
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  let stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked"],
+  );
+  assert.equal(
+    stateCalls.some((call) => call.params.state === "waiting"),
+    false,
+    "Herdr protocol must receive blocked rather than internal waiting state",
+  );
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked", "idle"],
+    "Herdr must report the direct waiting-to-idle transition",
+  );
+
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    primaryReasons: ["primary:tool:tool-1"],
+    activeAsyncJobIds: [],
+  });
+  await flushAsyncWork();
+  stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked", "idle", "working"],
+    "real primary activity still wins over a simultaneous prompt wait",
+  );
+  reporter.dispose();
+});
+
+test("Herdr blocked state is retained by heartbeat and latest-state delivery", async () => {
+  const timers = createFakeTimers();
+  const calls = [];
+  const reporter = createHerdrActivityReporter({
+    env: {
+      HERDR_SOCKET_PATH: "/tmp/herdr.sock",
+      HERDR_PANE_ID: "pane-1",
+      HERDR_ENV: "1",
+      HERDR_TLH_HEARTBEAT_MS: "1000",
+    },
+    sendRequest: async (request) => {
+      calls.push(request);
+    },
+    timers,
+    now: timers.now,
+    idleDebounceMs: 25,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => undefined },
+  });
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  let stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked"],
+  );
+
+  timers.advance(1000);
+  await flushAsyncWork();
+  stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked", "blocked"],
+    "heartbeat must retain Herdr's blocked representation",
+  );
+
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  stateCalls = calls.filter((call) => call.method === "pane.report_agent");
+  assert.deepEqual(
+    stateCalls.map((call) => call.params.state),
+    ["blocked", "blocked", "idle"],
+  );
+  reporter.dispose();
+});
+
 test("Herdr reporter shutdown never emits pane.release_agent", async () => {
   const timers = createFakeTimers();
   const calls = [];
@@ -989,6 +1121,152 @@ test("cmux reporter uses per-surface status keys and status-only commands", asyn
   reporter.handleSessionShutdown();
   await flushAsyncWork();
   assert.deepEqual(commands.at(-1), { command: "cmux", args: ["clear-status", "tlh-pane-1-left"] });
+});
+
+test("cmux reporter exposes waiting status and keeps concurrent work as working", async () => {
+  const timers = createFakeTimers();
+  const commands = [];
+  const reporter = createCmuxActivityReporter({
+    env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
+    runner: async (command, args) => {
+      commands.push({ command, args: [...args] });
+    },
+    timers,
+    idleDebounceMs: 25,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" },
+  });
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(commands, [
+    { command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] },
+  ]);
+
+  reporter.handleSnapshot({
+    inProgress: true,
+    waitingForUser: true,
+    primaryReasons: ["primary:tool:tool-1"],
+    activeAsyncJobIds: ["run-1"],
+  });
+  await flushAsyncWork();
+  assert.deepEqual(commands.at(-1), {
+    command: "cmux",
+    args: ["set-status", "tlh-session-1", "working"],
+  });
+
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(commands.at(-1), {
+    command: "cmux",
+    args: ["clear-status", "tlh-session-1"],
+  });
+  reporter.dispose();
+});
+
+test("cmux reporter clears waiting directly when the prompt ends", async () => {
+  const timers = createFakeTimers();
+  const commands = [];
+  const reporter = createCmuxActivityReporter({
+    env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
+    runner: async (command, args) => {
+      commands.push({ command, args: [...args] });
+    },
+    timers,
+    idleDebounceMs: 25,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" },
+  });
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(commands, [
+    { command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] },
+  ]);
+
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(commands, [
+    { command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] },
+    { command: "cmux", args: ["clear-status", "tlh-session-1"] },
+  ]);
+  reporter.dispose();
+});
+
+test("cmux reporter serializes shutdown clear after an in-flight status and survives dispose", async () => {
+  const timers = createFakeTimers();
+  const commands = [];
+  const firstDelivery = createDeferred();
+  const reporter = createCmuxActivityReporter({
+    env: { CMUX_WORKSPACE_ID: "workspace:1", CMUX_BIN: "cmux" },
+    runner: async (command, args) => {
+      const delivery = { command, args: [...args] };
+      commands.push(delivery);
+      if (commands.length === 1) return firstDelivery.promise;
+    },
+    timers,
+    idleDebounceMs: 25,
+  });
+
+  reporter.handleSessionStart({
+    mode: "tui",
+    sessionManager: { getSessionFile: () => undefined, getSessionId: () => "session-1" },
+  });
+  reporter.handleSnapshot({
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+  timers.advance(25);
+  await flushAsyncWork();
+  assert.deepEqual(commands, [
+    { command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] },
+  ]);
+
+  reporter.handleSessionShutdown();
+  reporter.dispose();
+  await flushAsyncWork();
+  assert.deepEqual(
+    commands,
+    [{ command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] }],
+    "shutdown clear must wait for the in-flight status command",
+  );
+
+  firstDelivery.resolve();
+  await flushAsyncWork();
+  assert.deepEqual(commands, [
+    { command: "cmux", args: ["set-status", "tlh-session-1", "waiting"] },
+    { command: "cmux", args: ["clear-status", "tlh-session-1"] },
+  ]);
 });
 
 test("cmux reporter falls back to session id then global key", async () => {

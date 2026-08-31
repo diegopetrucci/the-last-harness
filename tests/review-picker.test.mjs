@@ -94,7 +94,7 @@ test("/review still opens the picker when the architect primary agent is active"
   assert.deepEqual(harness.notifications, []);
 });
 
-test("/review blocks non-architect primary mode before opening the picker or gathering diffs", async (t) => {
+test("/review blocks rush primary mode before opening the picker or gathering diffs", async (t) => {
   const fixture = makePrimaryFixture(t, "tlh-review-rush-primary-");
   writeFileSync(
     join(fixture.agent, "settings.json"),
@@ -104,7 +104,7 @@ test("/review blocks non-architect primary mode before opening the picker or gat
   const harness = createReviewHarness({
     cwd: fixture.cwd,
     custom: () => {
-      throw new Error("picker should not open outside architect mode");
+      throw new Error("picker should not open outside architect or disabled mode");
     },
     exec: async (command, args) => {
       throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
@@ -121,10 +121,83 @@ test("/review blocks non-architect primary mode before opening the picker or gat
   assert.deepEqual(harness.notifications, [
     {
       message:
-        "/review only works while the architect primary agent is active. Current primary agent: rush. Switch to architect with /switch-primary-agent architect (or Shift+Tab), then rerun /review.",
+        "/review only works while the architect or disabled primary agent is active. Current primary agent: rush. Switch to architect with /switch-primary-agent architect or disabled with /switch-primary-agent disabled (or Shift+Tab), then rerun /review.",
       level: "error",
     },
   ]);
+});
+
+test("/review blocks product and bug-hunter before opening the picker or gathering diffs", async (t) => {
+  for (const primary of ["product", "bug-hunter"]) {
+    const fixture = makePrimaryFixture(t, `tlh-review-${primary}-primary-`);
+    writeFileSync(
+      join(fixture.agent, "settings.json"),
+      `${JSON.stringify({ tlh: { primaryAgent: { enabled: true, selected: primary } } }, null, 2)}\n`,
+    );
+
+    const harness = createReviewHarness({
+      cwd: fixture.cwd,
+      custom: () => {
+        throw new Error(`picker should not open in ${primary} mode`);
+      },
+      exec: async (command, args) => {
+        throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+      },
+    });
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      await harness.handler("", harness.ctx);
+    });
+
+    assert.equal(harness.customCallCount, 0, primary);
+    assert.equal(harness.execCalls.length, 0, primary);
+    assert.equal(harness.sentMessages.length, 0, primary);
+    assert.equal(harness.notifications.length, 1, primary);
+    assert.match(
+      harness.notifications[0].message,
+      new RegExp(`Current primary agent: ${primary}\\.`),
+    );
+    assert.equal(harness.notifications[0].level, "error", primary);
+  }
+});
+
+test("/review dispatches the selected review from disabled primary mode", async (t) => {
+  const fixture = makePrimaryFixture(t, "tlh-review-disabled-primary-");
+  writeFileSync(
+    join(fixture.agent, "settings.json"),
+    `${JSON.stringify({ tlh: { primaryAgent: { enabled: false, selected: "disabled" } } }, null, 2)}\n`,
+  );
+
+  const harness = createReviewHarness({
+    cwd: fixture.cwd,
+    custom: () => "uncommitted",
+    exec: async (command, args) => {
+      if (command === "git" && args.join(" ") === "rev-parse --abbrev-ref HEAD") {
+        return { code: 0, stdout: "feature/review\n", stderr: "" };
+      }
+      if (command === "git" && args.join(" ") === "diff HEAD") {
+        return { code: 0, stdout: "diff --git a/src/app.ts b/src/app.ts\n", stderr: "" };
+      }
+      if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+        return { code: 0, stdout: `${fixture.cwd}\n`, stderr: "" };
+      }
+      if (command === "git" && args.join(" ") === "ls-files -z --others --exclude-standard -- .") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected exec: ${command} ${args.join(" ")}`);
+    },
+  });
+
+  await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+    await harness.handler("", harness.ctx);
+  });
+
+  assert.equal(harness.customCallCount, 1);
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.execCalls.length, 4);
+  assert.deepEqual(harness.notifications, []);
+  assert.match(harness.sentMessages[0], /^\[\/review\]\nmode: uncommitted/);
+  assert.match(harness.sentMessages[0], /current-branch: feature\/review/);
 });
 
 test("/review picker-selected branch prompts for a base and defaults blank input to main", async (t) => {

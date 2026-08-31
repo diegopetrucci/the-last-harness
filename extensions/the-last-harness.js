@@ -1,4 +1,4 @@
-import { getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
+import { AgentSession as TlhPiAgentSession, getMarkdownTheme, getSelectListTheme, getSettingsListTheme, } from "@earendil-works/pi-coding-agent";
 import { registerTlhActivityReporters } from "./the-last-harness/activity-reporters.js";
 import { registerTlhEffectiveActivityTracker } from "./the-last-harness/activity-tracker.js";
 import { registerToggleTlhGitAttributionCommand } from "./the-last-harness/attribution.js";
@@ -58,6 +58,7 @@ const EMPTY_STARTUP_RESOURCES = {
     prompts: [],
     extensions: [],
     themes: [],
+    projectGuidance: [],
 };
 let scheduleDeferredStartupTask = (task) => {
     setImmediate(task);
@@ -105,6 +106,7 @@ export default function theLastHarness(pi) {
     const primaryAgentRuntime = registerTlhPrimaryAgentRuntime(pi, {
         env: process.env,
         getProviderAuthHealthStore: () => activeProviderAuthHealthStore,
+        bundledAgentSessionConstructor: TlhPiAgentSession,
     });
     if (!primaryAgentRuntime) {
         return;
@@ -314,6 +316,7 @@ export default function theLastHarness(pi) {
             })();
             void startupResourceCollector(ctx.cwd, {
                 projectTrusted: getActiveProjectTrustDecision(ctx),
+                projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
             })
                 .then((snapshot) => {
                 if (activeTlhHeaderSessionToken !== sessionToken) {

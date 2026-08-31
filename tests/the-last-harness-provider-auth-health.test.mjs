@@ -813,7 +813,7 @@ test("pinned-runtime API contract: getProviderAuth exists on ModelRegistry proto
     [
       "ModelRegistry.prototype.getProviderAuth is missing or not a function in the pinned Pi runtime.",
       "The provider-auth-health footer warning silently degrades to no-warning when this method is absent.",
-      "If you bumped @earendil-works/pi-coding-agent past 0.84.2, check the new ModelRegistry API and",
+      "If you bumped @earendil-works/pi-coding-agent past 0.84.4, check the new ModelRegistry API and",
       "update the duck-typing guard hasGetProviderAuth() in extensions/the-last-harness/provider-auth-health.ts.",
       "See Gnosis mxhzwc for the precedent: Pi 0.81 removed ModelRegistry.authStorage and quietly broke",
       "the footer's subscription-usage segment in the same way.",
@@ -829,7 +829,7 @@ test("pinned-runtime API contract: getProviderAuthStatus exists on ModelRegistry
       "ModelRegistry.prototype.getProviderAuthStatus is missing or not a function in the pinned Pi runtime.",
       "The provider-auth-health feature uses this for synchronous configured-status checks (isConfigured).",
       "A missing method degrades to returning undefined from isConfigured() — silent failure.",
-      "If you bumped @earendil-works/pi-coding-agent past 0.84.2, check the new ModelRegistry API and",
+      "If you bumped @earendil-works/pi-coding-agent past 0.84.4, check the new ModelRegistry API and",
       "update the duck-typing guard hasGetProviderAuthStatus() in extensions/the-last-harness/provider-auth-health.ts.",
     ].join(" "),
   );

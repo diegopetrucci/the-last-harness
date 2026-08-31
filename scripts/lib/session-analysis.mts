@@ -23,7 +23,7 @@ import type { ToolPair } from "../../extensions/the-last-harness/tool-pairing.js
 // ---------------------------------------------------------------------------
 
 /** Session header — the first entry in every session JSONL file. */
-export interface SessionHeader {
+interface SessionHeader {
   type: "session";
   version: number;
   id: string;
@@ -73,7 +73,7 @@ export interface SessionScanResult {
  * tool result.  All fields come from data already present in the corpus —
  * nothing is synthesised.
  */
-export interface SubagentCorrelation {
+interface SubagentCorrelation {
   parentSessionFile: string;
   parentSessionId: string;
   toolCallId: string;

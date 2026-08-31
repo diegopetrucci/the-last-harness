@@ -81,7 +81,7 @@ function configureHealthyFixture(t) {
 
   const runtimeBin = join(fixture.runtimeDir, "bin");
   mkdirSync(runtimeBin, { recursive: true });
-  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.84.2'\n");
+  writeExecutable(join(runtimeBin, "pi"), "#!/bin/sh\necho 'pi 0.84.4'\n");
   writeFileSync(
     join(fixture.runtimeDir, ".tlh-runtime-owned"),
     JSON.stringify(
@@ -629,7 +629,7 @@ test("tlh doctor --repair restores isolated settings drift, preserves user value
   ).length;
 
   assert.equal(result.status, 0, output);
-  assert.deepEqual(repairedSettings.subagents.agentDirs, ["tlh/agents/subagents"]);
+  assert.equal(repairedSettings.subagents.agentDirs, undefined);
   assert.deepEqual(repairedSettings.subagents.agentOverrides, { developer: { model: "kept" } });
   assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
   assert.equal(
@@ -819,9 +819,7 @@ test("tlh doctor --repair repairs malformed subagents containers without --force
   const repairedSettings = JSON.parse(readFileSync(settingsPath, "utf8"));
 
   assert.equal(result.status, 0, output);
-  assert.deepEqual(repairedSettings.subagents, {
-    agentDirs: ["tlh/agents/subagents"],
-  });
+  assert.equal(repairedSettings.subagents, "broken");
   assert.ok(repairedSettings.packages.includes("git:github.com/example/unmanaged-extension"));
   assert.match(output, /OK\s+settings drift:/);
   assert.match(output, /Summary: .*0 FAIL/);

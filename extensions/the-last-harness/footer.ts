@@ -26,6 +26,7 @@ const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
 const MCP_STATUS_PREFIX = /^MCP:\s/i;
 const FAST_STATUS_KEY = "fast";
+const NO_PROVIDER_WARNING_TEXT = "\u26a0 no provider \u2014 run /login";
 
 type McpFooterContextEstimateCache = {
   key: string;
@@ -218,6 +219,11 @@ function appendMcpContextEstimate(statusText: string, suffix: string | undefined
   return `${statusText}${suffix}`;
 }
 
+function formatNoProviderWarningLine(width: number, theme: Theme): string {
+  const warningText = theme.fg("warning", NO_PROVIDER_WARNING_TEXT);
+  return truncateToWidth(warningText, width, theme.fg("warning", "..."));
+}
+
 type TlhFooterUsageOptions = TlhFooterSubscriptionUsageOptions;
 
 /**
@@ -353,6 +359,12 @@ export function createTlhFooter(
       const line3 = line3Parts.length > 0 ? line3Parts.join(" · ") : undefined;
 
       const lines: string[] = [pwdLine, agentLine2];
+
+      // Read the upstream cached count on every render so the warning dismisses after login.
+      // This is intentionally limited to footer data; it does not inspect credentials or probe.
+      if (footerData?.getAvailableProviderCount?.() === 0) {
+        lines.push(formatNoProviderWarningLine(width, theme));
+      }
 
       // Reauth warning line: rendered before cost/status lines so it is not the first
       // segment lost to truncation at narrow widths.

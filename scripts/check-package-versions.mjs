@@ -24,6 +24,7 @@ const DEFAULT_PI_INSTALL_SCRIPT_PATHS = Object.freeze([
   "scripts/tlh-install.mts",
   "scripts/tlh-install.mjs",
 ]);
+const DEFAULT_MODEL_SELECTION_SCOPE_PATH = "extensions/the-last-harness/model-selection-scope.ts";
 const DEFAULT_INSTALL_SH_PATH = "install.sh";
 const MANAGED_PI_DEPENDENCIES = Object.freeze([
   { field: "peerDependencies", name: "@earendil-works/pi-coding-agent" },
@@ -46,6 +47,7 @@ Options:
   --lockfile <path>            package-lock.json path (default: package-lock.json)
   --default-extensions <path>  Bundled default-extension manifest (default: config/default-extensions.json)
   --install-sh <path>          install.sh path for TLH_PINNED_PI_VERSION validation (default: install.sh)
+  --model-selection-scope <path> Authoritative model-selection scope to validate PINNED_PI_VERSION in (default: extensions/the-last-harness/model-selection-scope.ts)
   --node-modules-dir <path>    node_modules directory to check installed versions against (default: derived from --package path)
   --gnosis-script <path>       Managed Gnosis script to validate (repeatable; defaults: scripts/tlh-gnosis.mts, scripts/tlh-gnosis.mjs, scripts/tlh-install.mjs)
   --pi-install-script <path>   TLH install script to validate PINNED_PI_VERSION in (repeatable; defaults: scripts/tlh-install.mts, scripts/tlh-install.mjs)
@@ -59,6 +61,7 @@ function parseArgs(argv) {
     lockfilePath: "package-lock.json",
     defaultExtensionsPath: "config/default-extensions.json",
     installShPath: DEFAULT_INSTALL_SH_PATH,
+    modelSelectionScopePath: DEFAULT_MODEL_SELECTION_SCOPE_PATH,
     nodeModulesDir: "",
     gnosisScriptPaths: [...DEFAULT_GNOSIS_SCRIPT_PATHS],
     piInstallScriptPaths: [...DEFAULT_PI_INSTALL_SCRIPT_PATHS],
@@ -90,6 +93,11 @@ function parseArgs(argv) {
     }
     if (arg === "--install-sh") {
       args.installShPath = requiredValue(argv, index + 1, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--model-selection-scope") {
+      args.modelSelectionScopePath = requiredValue(argv, index + 1, arg);
       index += 1;
       continue;
     }
@@ -134,6 +142,12 @@ function parseArgs(argv) {
     if (arg.startsWith("--install-sh=")) {
       args.installShPath = arg.slice("--install-sh=".length);
       if (!args.installShPath) throw new Error("--install-sh requires a value");
+      continue;
+    }
+    if (arg.startsWith("--model-selection-scope=")) {
+      args.modelSelectionScopePath = arg.slice("--model-selection-scope=".length);
+      if (!args.modelSelectionScopePath)
+        throw new Error("--model-selection-scope requires a value");
       continue;
     }
     if (arg.startsWith("--node-modules-dir=")) {
@@ -645,7 +659,7 @@ function validateManagedPiPins(args, packageJson, problems) {
     problems.push(error.message);
   }
 
-  for (const path of args.piInstallScriptPaths) {
+  for (const path of [...args.piInstallScriptPaths, args.modelSelectionScopePath]) {
     try {
       const version = readDeclaredStringConstant(path, "PINNED_PI_VERSION");
       if (!isPinnedExactVersion(version)) {

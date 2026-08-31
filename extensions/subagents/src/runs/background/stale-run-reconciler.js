@@ -9,6 +9,7 @@ import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycl
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
 import { sanitizeSubagentModelIdentity, sanitizeSubagentModelResolution, } from "../shared/model-fallback.js";
 import { parseThinkingLevel } from "../../shared/model-info.js";
+import { normalizeProjectAgentRunCapture } from "../../agents/project-agent-snapshot.js";
 function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -105,12 +106,25 @@ function readResultRepairData(resultPath) {
                 : data.state === "paused" || data.exitCode === 0
                     ? "paused"
                     : "failed";
+        const projectMarkerPresent = Object.hasOwn(data, "projectAgent") ||
+            Object.hasOwn(data, "projectAgents") ||
+            (Array.isArray(data.results) &&
+                data.results.some((entry) => typeof entry === "object" &&
+                    entry !== null &&
+                    !Array.isArray(entry) &&
+                    Object.hasOwn(entry, "projectAgent")));
+        const projectAgents = Array.isArray(data.projectAgents)
+            ? data.projectAgents
+                .map((capture) => normalizeProjectAgentRunCapture(capture))
+                .filter((capture) => Boolean(capture))
+            : undefined;
         const results = Array.isArray(data.results)
             ? data.results.map((entry) => {
                 if (!entry || typeof entry !== "object" || Array.isArray(entry))
                     return {};
                 const child = entry;
                 const contextUsage = parseContextUsageDiagnostics(child.contextUsage);
+                const projectAgent = normalizeProjectAgentRunCapture(child.projectAgent);
                 const contextPressure = parseContextPressureProjection(child.contextPressure);
                 const contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(child.contextPressureCrossedThresholds);
                 const terminationReason = parseSubagentTerminationReason(child.terminationReason);
@@ -126,6 +140,7 @@ function readResultRepairData(resultPath) {
                     : undefined;
                 return {
                     ...(typeof child.agent === "string" ? { agent: child.agent } : {}),
+                    ...(projectAgent ? { projectAgent } : {}),
                     ...(typeof child.success === "boolean" ? { success: child.success } : {}),
                     ...(typeof child.error === "string" ? { error: child.error } : {}),
                     ...(typeof child.sessionFile === "string" ? { sessionFile: child.sessionFile } : {}),
@@ -141,7 +156,11 @@ function readResultRepairData(resultPath) {
                 };
             })
             : undefined;
-        return { state, ...(results ? { results } : {}) };
+        return {
+            state,
+            ...(results ? { results } : {}),
+            ...(projectAgents ? { projectAgents } : projectMarkerPresent ? { projectAgents: [] } : {}),
+        };
     }
     catch (error) {
         if (isNotFoundError(error))
@@ -198,6 +217,9 @@ function terminalStatusFromResult(status, resultPath, now) {
             terminationReason: step.terminationReason ??
                 child?.terminationReason ??
                 (state === "failed" ? "process_exit" : undefined),
+            ...((step.projectAgent ?? child?.projectAgent)
+                ? { projectAgent: step.projectAgent ?? child?.projectAgent }
+                : {}),
         };
     });
     return {
@@ -207,6 +229,7 @@ function terminalStatusFromResult(status, resultPath, now) {
         lastUpdate: now,
         endedAt: status.endedAt ?? now,
         steps,
+        ...(repair.projectAgents ? { projectAgents: repair.projectAgents } : {}),
     };
 }
 function buildStartedStatus(asyncDir, startedRun, now) {
@@ -227,6 +250,7 @@ function buildStartedStatus(asyncDir, startedRun, now) {
         currentStep: 0,
         ...(chainStepCount !== undefined ? { chainStepCount } : {}),
         ...(parallelGroups.length ? { parallelGroups } : {}),
+        ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
         steps: agents.map((agent) => ({
             agent,
             status: "running",
@@ -288,6 +312,7 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             summary: message,
             results: repairedSteps.map((step) => ({
                 agent: step.agent,
+                ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
                 output: step.status === "complete" || step.status === "completed" ? "" : message,
                 error: step.status === "complete" || step.status === "completed"
                     ? undefined
@@ -314,6 +339,7 @@ function buildFailedRepair(status, asyncDir, now, reason) {
             durationMs: Math.max(0, now - status.startedAt),
             asyncDir,
             sessionId: status.sessionId,
+            ...(status.projectAgents ? { projectAgents: status.projectAgents } : {}),
             sessionFile: status.sessionFile,
         },
     };

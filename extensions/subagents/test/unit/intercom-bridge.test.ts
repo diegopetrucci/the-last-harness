@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentConfig } from "../../src/agents/agents.ts";
+import { buildPiArgs } from "../../src/runs/shared/pi-args.ts";
 import {
   NATIVE_INTERCOM_EXTENSION_DIR,
   applyIntercomBridgeToAgent,
@@ -140,6 +141,10 @@ describe("resolveIntercomBridge", () => {
     assert.match(bridge.instruction, /reference-only/i);
     assert.match(bridge.instruction, /normal assistant text/i);
     assert.match(bridge.instruction, /contact_supervisor/);
+    assert.match(
+      bridge.instruction,
+      /supervisorBridge: false opts out of this generic bridge guidance and runtime contact_supervisor support/i,
+    );
     assert.match(bridge.instruction, /need_decision/);
     assert.match(bridge.instruction, /progress_update/);
     assert.doesNotMatch(bridge.instruction, /intercom\(\{/i);
@@ -172,32 +177,127 @@ describe("applyIntercomBridgeToAgent", () => {
       'Intercom orchestration channel:\n- Need a decision or blocked: contact_supervisor({ reason: "need_decision", message: "<question>" })\n- Blocking supervisor requests durably pause the child until the parent resumes or cancels it; no child process keeps running during that pause.\n- Blocked/update: contact_supervisor({ reason: "progress_update", message: "UPDATE: <summary>" })',
   };
 
-  it("injects only contact_supervisor and its prompt instructions", () => {
-    const updated = applyIntercomBridgeToAgent(
-      makeAgent({ tools: ["read", "bash"] }),
-      activeBridge,
-    );
-    assert.deepEqual(updated.tools, ["read", "bash", "contact_supervisor"]);
+  it("injects bridge instructions without changing the declared tool policy", () => {
+    const policies: Array<{ label: string; tools: AgentConfig["tools"] }> = [
+      { label: "omitted", tools: undefined },
+      { label: "null", tools: null },
+      { label: "empty", tools: [] },
+      { label: "extension path", tools: ["./custom-tool.ts"] },
+      { label: "named", tools: ["read", "bash"] },
+    ];
+
+    for (const { label, tools } of policies) {
+      const agent = makeAgent({ tools });
+      const updated = applyIntercomBridgeToAgent(agent, activeBridge);
+      assert.equal(updated.tools, agent.tools, `${label} tools identity changed`);
+      assert.deepEqual(updated.tools, tools, `${label} tools content changed`);
+      assert.match(updated.systemPrompt, /Intercom orchestration channel:/);
+      assert.match(updated.systemPrompt, /contact_supervisor/);
+      assert.doesNotMatch(updated.systemPrompt, /intercom\(\{/i);
+    }
+  });
+
+  it("uses the structured supervisorBridge opt-out without inspecting prompt prose", () => {
+    const agent = makeAgent({
+      name: "test-runner",
+      tools: ["bash"],
+      supervisorBridge: false,
+      systemPrompt:
+        "Run exact validation commands. This prose mentions contact_supervisor but is not a capability signal.",
+    });
+
+    const updated = applyIntercomBridgeToAgent(agent, activeBridge);
+    assert.equal(updated, agent);
+    assert.doesNotMatch(updated.systemPrompt, /Intercom orchestration channel:/);
+
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "Run validation",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: updated.tools,
+      supervisorBridge: updated.supervisorBridge,
+      systemPrompt: updated.systemPrompt,
+      systemPromptMode: updated.systemPromptMode,
+      orchestratorIntercomTarget: activeBridge.orchestratorTarget,
+    });
+    assert.equal(args[args.indexOf("--tools") + 1], "bash");
+    assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+  });
+
+  it("keeps omitted supervisorBridge behavior unchanged even when prompt prose forbids contact", () => {
+    const agent = makeAgent({
+      tools: null,
+      systemPrompt: "Do not use contact_supervisor unless blocked; this is ordinary agent prose.",
+    });
+    const updated = applyIntercomBridgeToAgent(agent, activeBridge);
+    assert.notEqual(updated, agent);
     assert.match(updated.systemPrompt, /Intercom orchestration channel:/);
-    assert.match(updated.systemPrompt, /contact_supervisor/);
-    assert.doesNotMatch(updated.systemPrompt, /intercom\(\{/i);
+
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: updated.tools,
+      supervisorBridge: updated.supervisorBridge,
+      orchestratorIntercomTarget: activeBridge.orchestratorTarget,
+    });
+    assert.equal(args[args.indexOf("--tools") + 1], "contact_supervisor");
+    assert.ok(!args.includes("--exclude-tools"));
   });
 
-  it("is idempotent", () => {
-    const first = applyIntercomBridgeToAgent(makeAgent({ tools: ["read"] }), activeBridge);
+  it("is idempotent while preserving the original tools declaration", () => {
+    const tools = ["read"];
+    const agent = makeAgent({ tools });
+    const first = applyIntercomBridgeToAgent(agent, activeBridge);
     const second = applyIntercomBridgeToAgent(first, activeBridge);
-    assert.equal(second.tools?.filter((tool) => tool === "intercom").length, 0);
-    assert.equal(second.tools?.filter((tool) => tool === "contact_supervisor").length, 1);
+    assert.equal(first.tools, tools);
+    assert.equal(second.tools, tools);
     assert.equal(second.systemPrompt, first.systemPrompt);
+    assert.equal(second, first);
   });
 
-  it("preserves explicit external intercom tools while adding contact_supervisor", () => {
+  it("rebuilds from the unbridged prompt when a reused agent gets a new bridge", () => {
+    const agent = makeAgent({ tools: ["read"] });
+    const first = applyIntercomBridgeToAgent(agent, activeBridge);
+    const alternateBridge = {
+      ...activeBridge,
+      orchestratorTarget: "alternate",
+      instruction: "Intercom orchestration channel:\nUse the alternate supervisor.",
+    };
+    const alternate = applyIntercomBridgeToAgent(agent, alternateBridge);
+    assert.notEqual(alternate, first);
+    assert.equal(alternate.systemPrompt, `Base prompt\n\n${alternateBridge.instruction}`);
+    assert.equal(applyIntercomBridgeToAgent(alternate, alternateBridge), alternate);
+  });
+
+  it("lets Pi CLI translation retain contact_supervisor for restricted bridge policies", () => {
+    const restricted = applyIntercomBridgeToAgent(makeAgent({ tools: null }), activeBridge);
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: restricted.tools,
+      orchestratorIntercomTarget: activeBridge.orchestratorTarget,
+    });
+
+    assert.equal(args[args.indexOf("--tools") + 1], "contact_supervisor");
+    assert.ok(!args.includes("--no-tools"));
+  });
+
+  it("preserves explicitly declared external intercom tools", () => {
     const agent = makeAgent({
       tools: ["read", "intercom"],
       extensions: ["/tmp/other-extension/index.ts"],
     });
     const updated = applyIntercomBridgeToAgent(agent, activeBridge);
-    assert.deepEqual(updated.tools, ["read", "intercom", "contact_supervisor"]);
+    assert.equal(updated.tools, agent.tools);
+    assert.deepEqual(updated.tools, ["read", "intercom"]);
     assert.match(updated.systemPrompt, /contact_supervisor/);
   });
 });

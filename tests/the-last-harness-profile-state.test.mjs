@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import {
+  createRedirectedTempProfileFixture,
+  createIsolatedProfileFixture,
+  withEnv,
+} from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const {
   writeGuardedTlhStateFile,
   tlhStartupStatePath,
-  writeTlhStartupState,
+  updateTlhStartupState,
   readTlhStartupState,
+  withLockedTlhSettingsWrite,
   __testing,
 } = await jiti.import("../extensions/the-last-harness/profile-state.ts");
 
@@ -72,14 +77,89 @@ test("writeGuardedTlhStateFile returns false when outside isolated profile (PI_C
 });
 
 // ---------------------------------------------------------------------------
+// Settings writes — test-process isolation
+// ---------------------------------------------------------------------------
+
+test("withLockedTlhSettingsWrite rejects non-temporary profiles during Node tests", async (t) => {
+  const fixture = createRedirectedTempProfileFixture("tlh-profile-state-test-", { test: t });
+  const agent = fixture.agent;
+  const settingsPath = join(agent, "settings.json");
+  const initialSettings = '{"tlh":{"attribution":{"commit":false}}}\n';
+  writeFileSync(settingsPath, initialSettings);
+  let updateCalls = 0;
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: agent,
+      NODE_TEST_CONTEXT: "child-v8",
+      TMPDIR: fixture.redirectedTemp,
+      TEMP: fixture.redirectedTemp,
+      TMP: fixture.redirectedTemp,
+    },
+    () => {
+      assert.throws(
+        () =>
+          withLockedTlhSettingsWrite(fixture.dir, "outside profile", () => {
+            updateCalls += 1;
+            return { changed: true, nextContent: '{"changed":true}\n' };
+          }),
+        /operating system temporary directory/i,
+      );
+    },
+  );
+
+  assert.equal(updateCalls, 0, "the update callback must not run for a rejected profile");
+  assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+  assert.deepEqual(
+    readdirSync(agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+    [],
+    "rejected settings write must not create a backup",
+  );
+});
+
+test("withLockedTlhSettingsWrite preserves non-test writes outside the temporary directory", async (t) => {
+  const fixture = createRedirectedTempProfileFixture("tlh-profile-state-test-", { test: t });
+  const agent = fixture.agent;
+  const settingsPath = join(agent, "settings.json");
+  const initialSettings = '{"before":true}\n';
+  const nextSettings = '{"after":true}\n';
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: agent,
+      NODE_TEST_CONTEXT: undefined,
+      TMPDIR: fixture.redirectedTemp,
+      TEMP: fixture.redirectedTemp,
+      TMP: fixture.redirectedTemp,
+    },
+    () => {
+      const result = withLockedTlhSettingsWrite(fixture.dir, "outside profile", () => ({
+        changed: true,
+        nextContent: nextSettings,
+      }));
+      assert.equal(result.changed, true);
+      assert.ok(result.backupPath, "an existing settings file should receive a backup");
+    },
+  );
+
+  assert.equal(readFileSync(settingsPath, "utf8"), nextSettings);
+  const backups = readdirSync(agent).filter((entry) => entry.startsWith("settings.json.bak-"));
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(join(agent, backups[0]), "utf8"), initialSettings);
+});
+
+// ---------------------------------------------------------------------------
 // Startup-state write — existing behaviour preserved after adding containment check
 // ---------------------------------------------------------------------------
 
-test("writeTlhStartupState still writes inside the managed dir", async (t) => {
+test("updateTlhStartupState still writes inside the managed dir", async (t) => {
   const fixture = createIsolatedProfileFixture("tlh-profile-state-test-", { test: t });
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     // Must not throw and the read-back must match.
-    writeTlhStartupState({ reconciledAt: "2026-01-01T00:00:00.000Z" });
+    updateTlhStartupState({ reconciledAt: "2026-01-01T00:00:00.000Z" });
     const statePath = tlhStartupStatePath();
     assert.ok(statePath, "startup state path must be defined inside isolated profile");
     assert.equal(existsSync(statePath), true, "startup state file must exist after write");

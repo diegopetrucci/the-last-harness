@@ -7,11 +7,6 @@
   "quietStartup": true,
   "collapseChangelog": true,
   "lastChangelogVersion": "9999.0.0",
-  "subagents": {
-    "agentDirs": [
-      "tlh/agents/subagents"
-    ]
-  },
   "warnings": {
     "anthropicExtraUsage": false
   },

@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installableSupportFiles, requiredSupportFiles, } from "./tlh-install-support-manifest.mjs";
-import { settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts } from "./tlh-install-subagents.mjs";
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 function callLog(config, message, io) {
     if (typeof io.log === "function")
@@ -18,17 +17,17 @@ function callWarn(message, io) {
     else
         console.error(`warning: ${message}`);
 }
-export function resetSupportFilePaths(config) {
+function resetSupportFilePaths(config) {
     for (const file of config.supportFiles)
         config.supportFilePaths[file.variable] = "";
 }
-export function supportFilePathsArePrepared(config) {
+function supportFilePathsArePrepared(config) {
     return config.supportFiles.some((file) => Boolean(config.supportFilePaths[file.variable]));
 }
 export function installableSupportFilesArePrepared(config) {
     return installableSupportFiles({ noSettings: config.noSettings }).some((file) => Boolean(config.supportFilePaths[file.variable]));
 }
-export function localRepoHasRequiredSupportFiles(config, dir) {
+function localRepoHasRequiredSupportFiles(config, dir) {
     return requiredSupportFiles({ noSettings: config.noSettings }).every((file) => existsSync(join(dir, file.relativePath)));
 }
 export function findLocalRepoDir(config) {
@@ -36,7 +35,7 @@ export function findLocalRepoDir(config) {
         return config.localRepoCandidate;
     return undefined;
 }
-export function prepareSupportFilesFromLocalRepo(config, localDir) {
+function prepareSupportFilesFromLocalRepo(config, localDir) {
     for (const file of config.supportFiles) {
         const sourcePath = join(localDir, file.relativePath);
         if (existsSync(sourcePath))
@@ -48,7 +47,7 @@ export function prepareSupportFilesFromLocalRepo(config, localDir) {
     }
     return true;
 }
-export function supportFileDryRunMessage(variable) {
+function supportFileDryRunMessage(variable) {
     if (variable === "TLH_GNOSIS_SCRIPT")
         return "Would fetch Gnosis integration support files.";
     if (variable === "TLH_TICKETS_SCRIPT")
@@ -61,7 +60,7 @@ export function supportFileDryRunMessage(variable) {
         return "Would fetch tlh install-state support files.";
     return "";
 }
-export function warnMissingOptionalSupportFile(config, variable, relativePath, io = {}) {
+function warnMissingOptionalSupportFile(config, variable, relativePath, io = {}) {
     if (variable === "TLH_UPDATE_SCRIPT") {
         callWarn(`tlh update support script not found for ref ${config.ref}; the wrapper update helper will be unavailable`, io);
     }
@@ -75,7 +74,7 @@ export function warnMissingOptionalSupportFile(config, variable, relativePath, i
         callWarn(`optional installer support file not found for ref ${config.ref}: ${relativePath}`, io);
     }
 }
-export async function fetchToFile(url, path, { fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
+async function fetchToFile(url, path, { fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
     const response = await fetchImpl(url, {
         headers: { "User-Agent": "tlh-stage-1-installer" },
         signal: AbortSignal.timeout(timeoutMs),
@@ -85,7 +84,7 @@ export async function fetchToFile(url, path, { fetchImpl = fetch, timeoutMs = DO
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, Buffer.from(await response.arrayBuffer()));
 }
-export async function prepareSupportFilesFromRemote(config, io = {}) {
+async function prepareSupportFilesFromRemote(config, io = {}) {
     if (typeof io.requireCommand === "function")
         io.requireCommand(config, "curl");
     config.tmpDir = mkdtempSync(join(tmpdir(), "tlh-install-"));
@@ -106,24 +105,20 @@ export async function prepareSupportFilesFromRemote(config, io = {}) {
             warnMissingOptionalSupportFile(config, file.variable, file.relativePath, io);
         }
     }
-    if (settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-        noSettings: config.noSettings,
-    })) {
-        const targetDir = join(config.tmpDir, "agents", "subagents");
-        mkdirSync(targetDir, { recursive: true });
-        for (const prompt of config.subagentPrompts) {
-            const targetPath = join(targetDir, prompt);
-            try {
-                await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
-            }
-            catch {
-                callWarn(`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`, io);
-                rmSync(targetPath, { force: true });
-            }
+    const targetDir = join(config.tmpDir, "agents", "subagents");
+    mkdirSync(targetDir, { recursive: true });
+    for (const prompt of config.subagentPrompts) {
+        const targetPath = join(targetDir, prompt);
+        try {
+            await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
+        }
+        catch {
+            callWarn(`TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`, io);
+            rmSync(targetPath, { force: true });
         }
     }
 }
-export async function prepareSupportFiles(config, io = {}) {
+async function prepareSupportFiles(config, io = {}) {
     resetSupportFilePaths(config);
     const localDir = findLocalRepoDir(config);
     if (localDir)
@@ -131,7 +126,7 @@ export async function prepareSupportFiles(config, io = {}) {
     await prepareSupportFilesFromRemote(config, io);
     return true;
 }
-export function prepareSupportFilesForDryRun(config, io = {}) {
+function prepareSupportFilesForDryRun(config, io = {}) {
     resetSupportFilePaths(config);
     const localDir = findLocalRepoDir(config);
     if (localDir)

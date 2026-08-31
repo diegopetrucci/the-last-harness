@@ -7,7 +7,6 @@ import {
   requiredSupportFiles,
   type SupportFileDescriptor,
 } from "./tlh-install-support-manifest.mjs";
-import { settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts } from "./tlh-install-subagents.mjs";
 
 const DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -53,11 +52,11 @@ function callWarn(message: string, io: SupportFilesIo): void {
   else console.error(`warning: ${message}`);
 }
 
-export function resetSupportFilePaths(config: SupportFilesConfig): void {
+function resetSupportFilePaths(config: SupportFilesConfig): void {
   for (const file of config.supportFiles) config.supportFilePaths[file.variable] = "";
 }
 
-export function supportFilePathsArePrepared(config: SupportFilesConfig): boolean {
+function supportFilePathsArePrepared(config: SupportFilesConfig): boolean {
   return config.supportFiles.some((file) => Boolean(config.supportFilePaths[file.variable]));
 }
 
@@ -67,7 +66,7 @@ export function installableSupportFilesArePrepared(config: SupportFilesConfig): 
   );
 }
 
-export function localRepoHasRequiredSupportFiles(config: SupportFilesConfig, dir: string): boolean {
+function localRepoHasRequiredSupportFiles(config: SupportFilesConfig, dir: string): boolean {
   return requiredSupportFiles({ noSettings: config.noSettings }).every((file) =>
     existsSync(join(dir, file.relativePath)),
   );
@@ -79,10 +78,7 @@ export function findLocalRepoDir(config: SupportFilesConfig): string | undefined
   return undefined;
 }
 
-export function prepareSupportFilesFromLocalRepo(
-  config: SupportFilesConfig,
-  localDir: string,
-): boolean {
+function prepareSupportFilesFromLocalRepo(config: SupportFilesConfig, localDir: string): boolean {
   for (const file of config.supportFiles) {
     const sourcePath = join(localDir, file.relativePath);
     if (existsSync(sourcePath)) config.supportFilePaths[file.variable] = sourcePath;
@@ -92,7 +88,7 @@ export function prepareSupportFilesFromLocalRepo(
   return true;
 }
 
-export function supportFileDryRunMessage(variable: string): string {
+function supportFileDryRunMessage(variable: string): string {
   if (variable === "TLH_GNOSIS_SCRIPT") return "Would fetch Gnosis integration support files.";
   if (variable === "TLH_TICKETS_SCRIPT") return "Would fetch tlh tickets support files.";
   if (variable === "TLH_UPDATE_SCRIPT") return "Would fetch tlh update support files.";
@@ -102,7 +98,7 @@ export function supportFileDryRunMessage(variable: string): string {
   return "";
 }
 
-export function warnMissingOptionalSupportFile(
+function warnMissingOptionalSupportFile(
   config: SupportFilesConfig,
   variable: string,
   relativePath: string,
@@ -131,7 +127,7 @@ export function warnMissingOptionalSupportFile(
   }
 }
 
-export async function fetchToFile(
+async function fetchToFile(
   url: string,
   path: string,
   { fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS }: FetchToFileOptions = {},
@@ -145,7 +141,7 @@ export async function fetchToFile(
   writeFileSync(path, Buffer.from(await response.arrayBuffer()));
 }
 
-export async function prepareSupportFilesFromRemote(
+async function prepareSupportFilesFromRemote(
   config: SupportFilesConfig,
   io: SupportFilesIo = {},
 ): Promise<void> {
@@ -171,29 +167,23 @@ export async function prepareSupportFilesFromRemote(
     }
   }
 
-  if (
-    settingsFileRequiresTlhSubagentPrompts(config.supportFilePaths.DEFAULTS_FILE, {
-      noSettings: config.noSettings,
-    })
-  ) {
-    const targetDir = join(config.tmpDir, "agents", "subagents");
-    mkdirSync(targetDir, { recursive: true });
-    for (const prompt of config.subagentPrompts) {
-      const targetPath = join(targetDir, prompt);
-      try {
-        await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
-      } catch {
-        callWarn(
-          `TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`,
-          io,
-        );
-        rmSync(targetPath, { force: true });
-      }
+  const targetDir = join(config.tmpDir, "agents", "subagents");
+  mkdirSync(targetDir, { recursive: true });
+  for (const prompt of config.subagentPrompts) {
+    const targetPath = join(targetDir, prompt);
+    try {
+      await fetchFile(`${config.rawBase}/agents/subagents/${prompt}`, targetPath, io);
+    } catch {
+      callWarn(
+        `TLH subagent prompt not found in raw support files: ${prompt}; will try the installed package checkout.`,
+        io,
+      );
+      rmSync(targetPath, { force: true });
     }
   }
 }
 
-export async function prepareSupportFiles(
+async function prepareSupportFiles(
   config: SupportFilesConfig,
   io: SupportFilesIo = {},
 ): Promise<boolean> {
@@ -204,7 +194,7 @@ export async function prepareSupportFiles(
   return true;
 }
 
-export function prepareSupportFilesForDryRun(
+function prepareSupportFilesForDryRun(
   config: SupportFilesConfig,
   io: SupportFilesIo = {},
 ): boolean {

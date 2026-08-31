@@ -36,8 +36,14 @@ import type {
   ContextUsageDiagnostics,
   SingleResult,
 } from "../../src/shared/types.ts";
-import { getThinkingLevelDropNote } from "../../src/runs/shared/pi-args.ts";
+import {
+  SUBAGENT_CHILD_AGENT_ENV,
+  SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
+  getThinkingLevelDropNote,
+  INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
+} from "../../src/runs/shared/pi-args.ts";
 import { waitForAsyncResultFile } from "../support/async-execution-helpers.ts";
+import { scaleTestTimeout } from "../support/scale-timeout.ts";
 
 interface ModelAttempt {
   success?: boolean;
@@ -80,6 +86,7 @@ interface RunSyncResult {
   skillsWarning?: string;
   attemptedModels?: string[];
   modelAttempts?: ModelAttempt[];
+  modelFallbackNotice?: string;
   modelIdentity?: { provider: string; model: string; thinking?: string };
   modelResolution?: {
     kind?: string;
@@ -151,7 +158,9 @@ interface RunSyncResult {
   outputReference?: { path: string; bytes: number; lines: number; message: string };
   outputSaveError?: string;
   sessionFile?: string;
+  tkTicket?: { id: string; title: string };
   acceptance?: {
+    explicit?: boolean;
     status?: string;
     verifyRuns?: Array<{ status?: string }>;
     runtimeChecks?: Array<{ id?: string; status?: string; message?: string }>;
@@ -190,6 +199,52 @@ function mockAssistantMessage(text: string, stopReason: "stop" | "tool_use" = "s
   };
 }
 
+function explicitAcceptanceRejectionOutput(output: string): string {
+  return [
+    output,
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [
+        {
+          id: "criterion-1",
+          status: "not-satisfied",
+          evidence: "The fixture intentionally rejects this criterion.",
+        },
+      ],
+      changedFiles: ["src/report.md"],
+      testsAddedOrUpdated: ["test/report.test.ts"],
+      commandsRun: [
+        { command: "false", result: "failed", summary: "Intentional rejection fixture." },
+      ],
+      validationOutput: ["Intentional rejection fixture."],
+      residualRisks: [],
+      noStagedFiles: true,
+      diffSummary: "Intentional rejection fixture.",
+      reviewFindings: [],
+      manualNotes: "Intentional rejection fixture.",
+    }),
+    "```",
+  ].join("\n");
+}
+
+function inferredAcceptanceRejectionOutput(output: string): string {
+  return [
+    output,
+    "```acceptance-report",
+    JSON.stringify({
+      criteriaSatisfied: [],
+      changedFiles: [],
+      testsAddedOrUpdated: ["test/report.test.ts"],
+      commandsRun: [
+        { command: "true", result: "passed", summary: "Intentional rejection fixture." },
+      ],
+      residualRisks: [],
+      noStagedFiles: true,
+    }),
+    "```",
+  ].join("\n");
+}
+
 interface ExecutionModule {
   runSync(
     runtimeCwd: string,
@@ -216,11 +271,19 @@ interface ExecutorToolResult {
     results?: Pick<
       SingleResult,
       | "agent"
+      | "exitCode"
+      | "error"
       | "attemptedModels"
       | "modelFallbackNotice"
       | "progress"
       | "tkTicket"
       | "controlEvents"
+      | "finalOutput"
+      | "artifactPaths"
+      | "savedOutputPath"
+      | "outputMode"
+      | "outputReference"
+      | "acceptance"
     >[];
   };
 }
@@ -346,6 +409,107 @@ describe(
 
       const output = getFinalOutput(result.messages);
       assert.equal(output, "Hello from mock agent");
+    });
+
+    it("propagates the packaged child identity through a foreground single launch", async () => {
+      mockPi.onCall({ echoEnv: [SUBAGENT_CHILD_AGENT_ENV] });
+      const result = await runSync(
+        tempDir,
+        [makeAgent("developer")],
+        "developer",
+        "Echo the packaged child identity.",
+        {},
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(JSON.parse(getFinalOutput(result.messages)), {
+        [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+      });
+    });
+
+    it("emits verified provenance only for the canonical foreground agent config", async () => {
+      const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+      const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+      const agentDir = path.join(tempDir, "profile");
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
+      try {
+        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        const canonical = makeAgent("developer", {
+          filePath: path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
+        });
+        const verified = await runSync(
+          tempDir,
+          [canonical],
+          "developer",
+          "Echo verified provenance.",
+          {},
+        );
+        assert.equal(verified.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(verified.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "1",
+        });
+
+        mockPi.onCall({ echoEnv: [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] });
+        const collision = await runSync(
+          tempDir,
+          [
+            makeAgent("developer", {
+              filePath: path.join(tempDir, "custom", "developer.md"),
+            }),
+          ],
+          "developer",
+          "Echo disabled provenance.",
+          {},
+        );
+        assert.equal(collision.exitCode, 0);
+        assert.deepEqual(JSON.parse(getFinalOutput(collision.messages)), {
+          [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+        });
+      } finally {
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        if (previousGuidanceMarker === undefined)
+          delete process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];
+        else process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = previousGuidanceMarker;
+      }
+    });
+
+    it("propagates each packaged child identity through a foreground parallel launch", async () => {
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      mockPi.onCall({
+        echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
+      });
+      const executor = makeExecutor([makeAgent("developer"), makeAgent("code-reviewer")]);
+      const result = await executor.execute(
+        "parallel-packaged-identities",
+        {
+          tasks: [
+            { agent: "developer", task: "Echo the developer identity." },
+            { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
+          ],
+        },
+        new AbortController().signal,
+        undefined,
+        makeMinimalCtx(tempDir),
+      );
+
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(
+        result.details?.results?.map((child) => JSON.parse(child.finalOutput ?? "{}")),
+        [
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "developer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+          },
+          {
+            [SUBAGENT_CHILD_AGENT_ENV]: "code-reviewer",
+            [SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV]: "0",
+          },
+        ],
+      );
     });
 
     it("classifies the #456 empty terminal as context exhausted and persists failure metadata", async () => {
@@ -1174,41 +1338,31 @@ describe(
       assert.equal(result.finalOutput, "Validation report after the patch");
     });
 
-    it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
-      mockPi.onCall({ output: "cold start test after patch" });
-      mockPi.onCall({ output: "cold start test after patch" });
-      const agents = [
-        makeAgent("test-runner", { tools: ["read", "grep", "bash", "ls"] }),
-        makeAgent("test-runner-optout", {
-          tools: ["read", "grep", "bash", "ls"],
-          completionGuard: false,
-        }),
-      ];
+    it("allows test-runner to report realistic final-validation wording without a mutation guard", async () => {
+      mockPi.onCall({ output: "Validation passed; no edits were needed." });
+      const runner = makeAgent("test-runner", {
+        tools: ["bash"],
+        completionGuard: false,
+        supervisorBridge: false,
+        systemPrompt: "Run exact validation commands. Prompt prose is not a capability signal.",
+      });
+      assert.equal(runner.completionGuard, false);
+      assert.equal(runner.supervisorBridge, false);
 
-      const withoutOptOut = await runSync(
+      const result = await runSync(
         tempDir,
-        agents,
+        [runner],
         "test-runner",
-        "Patch the cold start test",
-        {
-          runId: "guard-bash-conservative",
-        },
+        "Run the final-validation ticket's exact commands, report pass/fail results, and do not modify the repository.",
+        { runId: "test-runner-final-validation" },
       );
-      assert.equal(withoutOptOut.exitCode, 1);
-      assert.equal(withoutOptOut.terminationReason, "process_exit");
-      assert.match(withoutOptOut.error ?? "", /completed without making edits/);
 
-      const withOptOut = await runSync(
-        tempDir,
-        agents,
-        "test-runner-optout",
-        "Patch the cold start test",
-        {
-          runId: "guard-bash-optout",
-        },
-      );
-      assert.equal(withOptOut.exitCode, 0);
-      assert.equal(withOptOut.progress.status, "completed");
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.progress.status, "completed");
+      assert.equal(result.finalOutput, "Validation passed; no edits were needed.");
+      const args = readCallArgs();
+      assert.equal(args[args.indexOf("--tools") + 1], "bash");
+      assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
     });
 
     it("allows implementation runs when parsed messages include a real edit tool call", async () => {
@@ -1648,6 +1802,107 @@ describe(
       assert.equal(mockPi.callCount(), 2);
     });
 
+    it("reports conservative registry filtering in the foreground result", async () => {
+      mockPi.onCall({ output: "Primary completed" });
+      const primary = {
+        provider: "openai",
+        id: "gpt-5-mini",
+        fullId: "openai/gpt-5-mini",
+      };
+      const backup = {
+        provider: "anthropic",
+        id: "claude-sonnet-4",
+        fullId: "anthropic/claude-sonnet-4",
+      };
+      const result = await runSync(
+        tempDir,
+        [
+          makeAgent("echo", {
+            model: primary.fullId,
+            fallbackModels: [backup.fullId],
+          }),
+        ],
+        "echo",
+        "Task",
+        {
+          runId: "foreground-registry-filter-notice",
+          availableModels: [primary],
+          modelRegistry: { allModels: [primary, backup] },
+        },
+      );
+
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(result.attemptedModels, [primary.fullId]);
+      assert.match(result.modelFallbackNotice ?? "", /Skipped.*unavailable fallback model/);
+      assert.match(result.modelFallbackNotice ?? "", /provider credentials|fallbackModels/);
+      assert.ok((result.modelFallbackNotice ?? "").length <= 240);
+      assert.equal(mockPi.callCount(), 1);
+    });
+
+    it("keeps fallback attempts when optional registry snapshot APIs are missing or uncertain", async () => {
+      const primary = makeModel("primary", { provider: "openai" });
+      const backup = makeModel("backup", { provider: "anthropic" });
+      const primaryId = `${primary.provider}/${primary.id}`;
+      const backupId = `${backup.provider}/${backup.id}`;
+      for (const variant of ["missing-catalog", "catalog-throws", "availability-error"] as const) {
+        mockPi.reset();
+        mockPi.onCall({
+          jsonl: [
+            {
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "temporary provider failure" }],
+                model: primary.id,
+                errorMessage: "rate limit exceeded",
+                usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+              },
+            },
+          ],
+          exitCode: 1,
+        });
+        mockPi.onCall({ output: "Recovered on the preserved fallback" });
+
+        const ctx = makeMinimalCtx(tempDir);
+        ctx.modelRegistry.getAvailable = () => [primary];
+        if (variant === "missing-catalog") {
+          Object.defineProperty(ctx.modelRegistry, "getAll", {
+            configurable: true,
+            value: undefined,
+          });
+        } else if (variant === "catalog-throws") {
+          Object.defineProperty(ctx.modelRegistry, "getAll", {
+            configurable: true,
+            value: () => {
+              throw new Error("catalog unavailable");
+            },
+          });
+        } else {
+          Object.defineProperty(ctx.modelRegistry, "getError", {
+            configurable: true,
+            value: () => "availability snapshot is stale",
+          });
+        }
+
+        const result = await makeExecutor([
+          makeAgent("echo", {
+            model: primaryId,
+            fallbackModels: [backupId],
+          }),
+        ]).execute(
+          `optional-registry-${variant}`,
+          { agent: "echo", task: "Task" },
+          new AbortController().signal,
+          undefined,
+          ctx,
+        );
+
+        assert.equal(result.isError, undefined);
+        assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [primaryId, backupId]);
+        assert.equal(mockPi.callCount(), 2);
+      }
+    });
+
     it("keeps the fallback resolution's original identity free of thinking the first attempt dropped", async () => {
       mockPi.onCall({
         jsonl: [
@@ -1800,6 +2055,12 @@ describe(
             fallbackModels: ["google/gemini-2.5-pro"],
           }),
         ]);
+        const ctx = makeMinimalCtx(tempDir);
+        const primary = makeModel("gpt-5-mini", { provider: "openai" });
+        const dispatchFallback = makeModel("claude-sonnet-4", { provider: "anthropic" });
+        const agentFallback = makeModel("gemini-2.5-pro", { provider: "google" });
+        ctx.modelRegistry.getAvailable = () => [primary, dispatchFallback];
+        ctx.modelRegistry.getAll = () => [primary, dispatchFallback, agentFallback];
 
         const result = await executor.execute(
           "single-dispatch-fallback-order",
@@ -1811,19 +2072,26 @@ describe(
           },
           new AbortController().signal,
           undefined,
-          makeMinimalCtx(tempDir),
+          ctx,
         );
 
         assert.equal(result.isError, undefined);
         assert.match(
           result.content[0]?.text ?? "",
-          /Summary:\nNotice: Quota fallback engaged\n\nRecovered on the dispatch fallback/,
+          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the dispatch fallback/,
         );
         assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
           "openai/gpt-5-mini",
           "anthropic/claude-sonnet-4",
         ]);
-        assert.equal(result.details?.results?.[0]?.modelFallbackNotice, "Quota fallback engaged");
+        assert.match(
+          result.details?.results?.[0]?.modelFallbackNotice ?? "",
+          /Quota fallback engaged/,
+        );
+        assert.match(
+          result.details?.results?.[0]?.modelFallbackNotice ?? "",
+          /provider credentials|fallbackModels/,
+        );
         assert.equal(mockPi.callCount(), 2);
       },
     );
@@ -2417,7 +2685,7 @@ describe(
         transcriptRecords
           .filter((record) => record.recordType === "stdout")
           .map((record) => record.text),
-        ["null", '[1,"two"]', '"primitive"', "42"],
+        ["null", '[1,"two"]', '"primitive"', "42", JSON.stringify(unknownEvent)],
       );
     });
 
@@ -3023,6 +3291,128 @@ describe(
       );
     });
 
+    it(
+      "foreground acceptance rejection preserves an inline saved-output reference",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const outputPath = path.join(tempDir, "acceptance-rejected-inline.md");
+        const savedContent = "saved deliverable from an otherwise successful run";
+        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
+        const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
+
+        const result = await executor.execute(
+          "acceptance-rejected-inline",
+          {
+            agent: "echo",
+            task: "Write the report",
+            output: outputPath,
+            artifacts: true,
+            acceptance: { level: "checked", criteria: ["The report is accepted"] },
+          },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        const child = result.details?.results?.[0];
+        const display = result.content.map((item) => item.text ?? "").join("\n");
+
+        assert.equal(result.isError, true);
+        assert.equal(child?.exitCode, 1);
+        assert.equal(child?.acceptance?.explicit, true);
+        assert.equal(child?.acceptance?.status, "rejected");
+        assert.equal(child?.savedOutputPath, outputPath);
+        const savedBytes = fs.readFileSync(outputPath);
+        assert.equal(savedBytes.toString("utf-8"), savedContent);
+        const artifactOutputPath = child?.artifactPaths?.outputPath;
+        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
+        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
+        assert.match(child?.error ?? "", /Acceptance rejected/);
+        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
+      },
+    );
+
+    it(
+      "foreground file-only acceptance rejection preserves only the saved-output reference",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const outputPath = path.join(tempDir, "acceptance-rejected-file-only.md");
+        const savedContent = "saved file-only deliverable";
+        mockPi.onCall({ output: explicitAcceptanceRejectionOutput(savedContent) });
+        const executor = makeExecutor([makeAgent("echo", { completionGuard: false })]);
+
+        const result = await executor.execute(
+          "acceptance-rejected-file-only",
+          {
+            agent: "echo",
+            task: "Write the report",
+            output: outputPath,
+            outputMode: "file-only",
+            artifacts: true,
+            acceptance: { level: "checked", criteria: ["The report is accepted"] },
+          },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        const child = result.details?.results?.[0];
+        const display = result.content.map((item) => item.text ?? "").join("\n");
+
+        assert.equal(result.isError, true);
+        assert.equal(child?.exitCode, 1);
+        assert.equal(child?.acceptance?.explicit, true);
+        assert.equal(child?.acceptance?.status, "rejected");
+        assert.equal(child?.savedOutputPath, outputPath);
+        const savedBytes = fs.readFileSync(outputPath);
+        assert.equal(savedBytes.toString("utf-8"), savedContent);
+        const artifactOutputPath = child?.artifactPaths?.outputPath;
+        assert.ok(artifactOutputPath, "expected the supervisor-facing output artifact");
+        assert.deepEqual(fs.readFileSync(artifactOutputPath), savedBytes);
+        assert.match(child?.error ?? "", /Acceptance rejected/);
+        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
+        assert.doesNotMatch(display, new RegExp(escapeRegExp(savedContent)));
+      },
+    );
+
+    it(
+      "foreground inferred acceptance rejection preserves an inline saved-output reference",
+      {
+        skip: !createSubagentExecutor ? "executor not importable" : undefined,
+      },
+      async () => {
+        const outputPath = path.join(tempDir, "inferred-acceptance-rejected.md");
+        const savedContent = "saved deliverable without a report";
+        mockPi.onCall({ output: inferredAcceptanceRejectionOutput(savedContent) });
+        const executor = makeExecutor([makeAgent("worker", { completionGuard: false })]);
+
+        const result = await executor.execute(
+          "inferred-acceptance-rejected",
+          {
+            agent: "worker",
+            task: "Implement the approved change",
+            output: outputPath,
+            artifacts: true,
+          },
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+        const child = result.details?.results?.[0];
+        const display = result.content.map((item) => item.text ?? "").join("\n");
+
+        assert.equal(result.isError, undefined);
+        assert.equal(child?.exitCode, 0);
+        assert.equal(child?.acceptance?.explicit, false);
+        assert.equal(child?.acceptance?.status, "rejected");
+        assert.equal(child?.savedOutputPath, outputPath);
+        assert.equal(fs.readFileSync(outputPath, "utf-8"), savedContent);
+        assert.equal((display.match(/Output saved to:/g) ?? []).length, 1);
+      },
+    );
+
     it("passes maxSubagentDepth through to child execution env", async () => {
       mockPi.onCall({ echoEnv: ["PI_SUBAGENT_DEPTH", "PI_SUBAGENT_MAX_DEPTH"] });
       const agents = makeAgentConfigs(["echo"]);
@@ -3216,6 +3606,51 @@ describe(
         );
       },
     );
+
+    it("returns an actionable policy failure and writes foreground artifacts", async () => {
+      const skillName = "lazy-policy-skill";
+      writePackageSkill(tempDir, skillName);
+      const artifactsDir = path.join(tempDir, "policy-artifacts");
+      const agents = [
+        makeAgent("worker", {
+          tools: ["./custom-tool.ts"],
+          skills: [skillName],
+        }),
+      ];
+
+      const result = await runSync(tempDir, agents, "worker", "Inspect the task", {
+        runId: "invalid-tool-policy",
+        tkTicket: { id: "tlhsrhp-o76f", title: "Enforce child tool policy safely" },
+        artifactsDir,
+        artifactConfig: {
+          enabled: true,
+          includeInput: true,
+          includeOutput: true,
+          includeJsonl: true,
+          includeMetadata: true,
+          includeTranscript: true,
+        },
+      });
+
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(result.tkTicket, {
+        id: "tlhsrhp-o76f",
+        title: "Enforce child tool policy safely",
+      });
+      assert.equal(result.error, INVALID_LAZY_SKILL_TOOL_POLICY_ERROR);
+      assert.equal(mockPi.callCount(), 0, "invalid policy must not spawn Pi");
+      const artifactPaths = result.artifactPaths;
+      assert.ok(artifactPaths);
+      assert.ok(artifactPaths.outputPath);
+      assert.ok(
+        fs
+          .readFileSync(artifactPaths.outputPath, "utf-8")
+          .includes(INVALID_LAZY_SKILL_TOOL_POLICY_ERROR),
+      );
+      assert.ok(fs.existsSync(artifactPaths.metadataPath));
+      assert.ok(artifactPaths.transcriptPath);
+      assert.ok(fs.existsSync(artifactPaths.transcriptPath));
+    });
 
     it("treats forced drain after final assistant output as cleanup success", async () => {
       mockPi.onCall({
@@ -3622,16 +4057,21 @@ describe(
         noStagedFiles: true,
       });
       const report = ["Done", "```acceptance-report", reportBody, "```"].join("\n");
+      // Verify timeout artifact semantics, not 150ms latency: scale both budgets so
+      // the report arrives before timeout while the mock remains alive past it; keep
+      // the report non-terminal so the fixed 1s final-stop drain cannot win.
+      const timeoutMs = scaleTestTimeout(1_000);
+      const keepAliveAfterFinalMessageMs = scaleTestTimeout(10_000);
       mockPi.onCall({
-        jsonl: [events.assistantMessage(report)],
-        keepAliveAfterFinalMessageMs: 10000,
+        jsonl: [mockAssistantMessage(report, "tool_use")],
+        keepAliveAfterFinalMessageMs,
       });
       const agents = makeAgentConfigs(["slow"]);
       const digestArtifactsDir = path.join(tempDir, "artifacts-timeout-digest");
 
       const result = await runSync(tempDir, agents, "slow", "Slow task", {
         runId: "timeout-digest-split",
-        timeoutMs: 150,
+        timeoutMs,
         artifactsDir: digestArtifactsDir,
         artifactConfig: { enabled: true, includeOutput: true, includeMetadata: false },
       });

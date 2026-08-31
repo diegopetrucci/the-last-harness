@@ -1,13 +1,15 @@
-import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { expandTildePath, getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
+import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.js";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.js";
 import { mergeAgentsForScope } from "./agent-selection.js";
+import { mergeProjectAgentSnapshot, projectAgentSnapshotDiscoveryMetadata, ProjectAgentSnapshotCapabilityError, resolveProjectAgentSnapshot, } from "./project-agent-snapshot.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { buildRuntimeName, parsePackageName } from "./identity.js";
 import { parseModelScopeConfig } from "../runs/shared/model-scope.js";
+import { validateToolBudgetConfig } from "../runs/shared/tool-budget.js";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.js";
 import { isPositiveSafeInteger } from "./execution-ceiling.js";
 function defaultSystemPromptMode(name) {
@@ -43,303 +45,43 @@ const KNOWN_FIELDS = new Set([
     "maxSubagentDepth",
     "maxExecutionTimeMs",
     "completionGuard",
+    "supervisorBridge",
     "toolBudget",
 ]);
 const EMPTY_SUBAGENT_SETTINGS = { overrides: {} };
 const agentFrontmatterFields = new WeakMap();
+class AgentDefinitionValidationError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "AgentDefinitionValidationError";
+    }
+}
 function getUserChainDir() {
     return path.join(getAgentDir(), "chains");
 }
-let cachedGlobalNpmRoot = null;
-function isJsonValue(value) {
-    if (value === null)
-        return true;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-        return true;
-    if (Array.isArray(value))
-        return value.every(isJsonValue);
-    if (typeof value !== "object")
-        return false;
-    return Object.values(value).every(isJsonValue);
-}
-function readJsonFileBestEffort(filePath) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-        return isJsonValue(parsed) ? parsed : null;
-    }
-    catch {
-        return null;
-    }
-}
-function readOptionalJsonFile(filePath) {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-        return isJsonValue(parsed) ? parsed : null;
-    }
-    catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error
-            ? error.code
-            : undefined;
-        if (code === "ENOENT")
-            return null;
-        throw error;
-    }
-}
-function isSafePackagePath(value) {
-    return (value.length > 0 &&
-        !path.isAbsolute(value) &&
-        value.split(/[\\/]/).every((part) => part.length > 0 && part !== "." && part !== ".."));
-}
-function parseNpmPackageName(source) {
-    const spec = source.slice(4).trim();
-    if (!spec)
-        return undefined;
-    const match = spec.match(/^(@?[^@]+(?:\/[^@]+)?)(?:@(.+))?$/);
-    const packageName = match?.[1] ?? spec;
-    return isSafePackagePath(packageName) ? packageName : undefined;
-}
-function stripGitRef(repoPath) {
-    const atIndex = repoPath.indexOf("@");
-    const hashIndex = repoPath.indexOf("#");
-    const refIndex = [atIndex, hashIndex].filter((index) => index >= 0).sort((a, b) => a - b)[0];
-    return refIndex === undefined ? repoPath : repoPath.slice(0, refIndex);
-}
-function parseGitPackagePath(source) {
-    const spec = source.slice(4).trim();
-    if (!spec)
-        return undefined;
-    let host;
-    let repoPath;
-    const scpLike = spec.match(/^git@([^:]+):(.+)$/);
-    if (scpLike) {
-        host = scpLike[1] ?? "";
-        repoPath = scpLike[2] ?? "";
-    }
-    else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(spec)) {
-        try {
-            const url = new URL(spec);
-            host = url.hostname;
-            repoPath = url.pathname.replace(/^\/+/, "");
-        }
-        catch {
-            return undefined;
-        }
-    }
-    else {
-        const slashIndex = spec.indexOf("/");
-        if (slashIndex < 0)
-            return undefined;
-        host = spec.slice(0, slashIndex);
-        repoPath = spec.slice(slashIndex + 1);
-    }
-    const normalizedPath = stripGitRef(repoPath)
-        .replace(/\.git$/, "")
-        .replace(/^\/+/, "");
-    if (!host ||
-        !isSafePackagePath(host) ||
-        !isSafePackagePath(normalizedPath) ||
-        normalizedPath.split(/[\\/]/).length < 2) {
-        return undefined;
-    }
-    return { host, repoPath: normalizedPath };
-}
-function resolveSettingsPackageRoot(source, baseDir) {
-    const trimmed = source.trim();
-    if (!trimmed)
-        return undefined;
-    if (trimmed.startsWith("git:")) {
-        const parsed = parseGitPackagePath(trimmed);
-        return parsed ? path.join(baseDir, "git", parsed.host, parsed.repoPath) : undefined;
-    }
-    if (trimmed.startsWith("npm:")) {
-        const packageName = parseNpmPackageName(trimmed);
-        return packageName ? path.join(baseDir, "npm", "node_modules", packageName) : undefined;
-    }
-    const normalized = trimmed.startsWith("file:") ? trimmed.slice(5) : trimmed;
-    if (normalized === "~")
-        return os.homedir();
-    if (normalized.startsWith("~/"))
-        return path.join(os.homedir(), normalized.slice(2));
-    if (path.isAbsolute(normalized))
-        return normalized;
-    if (normalized === "." ||
-        normalized === ".." ||
-        normalized.startsWith("./") ||
-        normalized.startsWith("../")) {
-        return path.resolve(baseDir, normalized);
-    }
-    return undefined;
-}
-function getGlobalNpmRoot() {
-    if (cachedGlobalNpmRoot !== null)
-        return cachedGlobalNpmRoot;
-    try {
-        cachedGlobalNpmRoot = fs.realpathSync(execSync("npm root -g", { encoding: "utf-8", timeout: 5000 }).trim());
-        return cachedGlobalNpmRoot;
-    }
-    catch {
-        cachedGlobalNpmRoot = "";
-        return null;
-    }
-}
-function stringArray(value) {
-    if (!Array.isArray(value))
-        return [];
-    return value.filter((entry) => typeof entry === "string" && entry.trim().length > 0);
-}
-function getPackageSubagentConfigRoots(packageRoot) {
-    const packageJsonPath = path.join(packageRoot, "package.json");
-    const pkg = readJsonFileBestEffort(packageJsonPath);
-    if (!pkg || typeof pkg !== "object" || Array.isArray(pkg))
-        return [];
-    const roots = [];
-    const piSubagents = pkg["pi-subagents"];
-    if (piSubagents && typeof piSubagents === "object" && !Array.isArray(piSubagents)) {
-        roots.push(piSubagents);
-    }
-    const pi = pkg.pi;
-    if (pi && typeof pi === "object" && !Array.isArray(pi)) {
-        const subagents = pi.subagents;
-        if (subagents && typeof subagents === "object" && !Array.isArray(subagents)) {
-            roots.push(subagents);
-        }
-    }
-    return roots;
-}
-function hasPackageSubagentConfig(packageRoot) {
-    return getPackageSubagentConfigRoots(packageRoot).some((root) => stringArray(root.agents).length > 0);
-}
-function extractSubagentPathsFromPackageRoot(packageRoot) {
-    const roots = getPackageSubagentConfigRoots(packageRoot);
-    const agents = [];
-    for (const root of roots) {
-        for (const entry of stringArray(root.agents))
-            agents.push(path.resolve(packageRoot, entry));
-    }
-    return { agents };
-}
-function collectPackageRootsFromNodeModules(nodeModulesDir) {
-    const roots = [];
-    if (!fs.existsSync(nodeModulesDir))
-        return roots;
-    let entries;
-    try {
-        entries = fs.readdirSync(nodeModulesDir, { withFileTypes: true });
-    }
-    catch {
-        return roots;
-    }
-    for (const entry of entries) {
-        if (entry.name.startsWith("."))
-            continue;
-        if (!entry.isDirectory() && !entry.isSymbolicLink())
-            continue;
-        if (entry.name.startsWith("@")) {
-            const scopeDir = path.join(nodeModulesDir, entry.name);
-            let scopeEntries;
-            try {
-                scopeEntries = fs.readdirSync(scopeDir, { withFileTypes: true });
-            }
-            catch {
-                continue;
-            }
-            for (const scopeEntry of scopeEntries) {
-                if (scopeEntry.name.startsWith("."))
-                    continue;
-                if (!scopeEntry.isDirectory() && !scopeEntry.isSymbolicLink())
-                    continue;
-                roots.push(path.join(scopeDir, scopeEntry.name));
-            }
-            continue;
-        }
-        roots.push(path.join(nodeModulesDir, entry.name));
-    }
-    return roots;
-}
-function collectSettingsPackageRoots(settingsFile, baseDir) {
-    const settings = readOptionalJsonFile(settingsFile);
-    if (!settings || typeof settings !== "object" || Array.isArray(settings))
-        return [];
-    const packages = settings.packages;
-    if (!Array.isArray(packages))
-        return [];
-    const roots = [];
-    for (const entry of packages) {
-        const packageSource = typeof entry === "string"
-            ? entry
-            : typeof entry === "object" &&
-                entry !== null &&
-                typeof entry.source === "string"
-                ? entry.source
-                : undefined;
-        if (!packageSource)
-            continue;
-        const packageRoot = resolveSettingsPackageRoot(packageSource, baseDir);
-        if (packageRoot)
-            roots.push(packageRoot);
-    }
-    return roots;
-}
-function findNearestPackageSubagentRoot(cwd) {
-    let currentDir = cwd;
-    while (true) {
-        if (hasPackageSubagentConfig(currentDir))
-            return currentDir;
-        const parentDir = path.dirname(currentDir);
-        if (parentDir === currentDir)
-            return null;
-        currentDir = parentDir;
-    }
-}
-function collectPackageSubagentPaths(cwd, options = {
-    includeUser: true,
-    includeProject: true,
-}) {
-    const agentDir = getAgentDir();
-    const projectRoot = findNearestProjectRoot(cwd) ?? findNearestPackageSubagentRoot(cwd) ?? cwd;
-    const packageRoots = [projectRoot];
-    if (options.includeProject) {
-        const projectConfigDir = getProjectConfigDir(projectRoot);
-        packageRoots.push(...collectPackageRootsFromNodeModules(path.join(projectConfigDir, "npm", "node_modules")), ...collectSettingsPackageRoots(path.join(projectConfigDir, "settings.json"), projectConfigDir));
-    }
-    if (options.includeUser) {
-        packageRoots.push(...collectPackageRootsFromNodeModules(path.join(agentDir, "npm", "node_modules")), ...collectSettingsPackageRoots(path.join(agentDir, "settings.json"), agentDir));
-    }
-    if (options.includeUser) {
-        const globalRoot = getGlobalNpmRoot();
-        if (globalRoot)
-            packageRoots.push(...collectPackageRootsFromNodeModules(globalRoot));
-    }
-    const seenRoots = new Set();
-    const seenAgents = new Set();
-    const agents = [];
-    for (const packageRoot of packageRoots) {
-        const resolvedRoot = path.resolve(packageRoot);
-        if (seenRoots.has(resolvedRoot))
-            continue;
-        seenRoots.add(resolvedRoot);
-        const paths = extractSubagentPathsFromPackageRoot(resolvedRoot);
-        for (const agentDir of paths.agents) {
-            if (seenAgents.has(agentDir))
-                continue;
-            seenAgents.add(agentDir);
-            agents.push(agentDir);
-        }
-    }
-    return { agents };
-}
 function splitToolList(rawTools) {
-    const tools = (rawTools ?? []).filter((tool) => !tool.startsWith("mcp:"));
-    return tools.length > 0 ? { tools } : {};
+    if (rawTools === undefined)
+        return {};
+    const tools = rawTools.filter((tool) => !tool.startsWith("mcp:"));
+    return { tools: tools.length > 0 ? tools : null };
 }
 function parsePositiveIntegerFrontmatter(value, field, label) {
     if (value === undefined || !value.trim())
         return undefined;
     const parsed = Number(value);
     if (!isPositiveSafeInteger(parsed)) {
-        throw new Error(`${label} has invalid ${field} frontmatter; expected a positive safe integer.`);
+        throw new AgentDefinitionValidationError(`${label} has invalid ${field} frontmatter; expected a positive safe integer.`);
     }
     return parsed;
+}
+function parseOptionalBooleanFrontmatter(value, field, label) {
+    if (value === undefined)
+        return undefined;
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    throw new AgentDefinitionValidationError(`${label} has invalid ${field} frontmatter; expected 'true' or 'false'.`);
 }
 function cloneOverrideBase(agent) {
     return {
@@ -354,16 +96,17 @@ function cloneOverrideBase(agent) {
         disabled: agent.disabled,
         systemPrompt: agent.systemPrompt,
         skills: agent.skills ? [...agent.skills] : undefined,
-        tools: agent.tools ? [...agent.tools] : undefined,
+        tools: agent.tools === undefined ? undefined : agent.tools === null ? null : [...agent.tools],
         subagentOnlyExtensions: agent.subagentOnlyExtensions
             ? [...agent.subagentOnlyExtensions]
             : undefined,
         completionGuard: agent.completionGuard,
+        supervisorBridge: agent.supervisorBridge,
         toolBudget: agent.toolBudget,
         maxExecutionTimeMs: agent.maxExecutionTimeMs,
     };
 }
-export function findNearestProjectRoot(cwd) {
+function findNearestProjectRoot(cwd) {
     const ignoredProjectConfigDirs = new Set([
         path.resolve(path.dirname(getAgentDir())),
         path.resolve(getProjectConfigDir(os.homedir())),
@@ -512,6 +255,14 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'completionGuard'; expected a boolean.`);
         }
     }
+    if ("supervisorBridge" in input) {
+        if (typeof input.supervisorBridge === "boolean") {
+            override.supervisorBridge = input.supervisorBridge;
+        }
+        else {
+            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'supervisorBridge'; expected a boolean.`);
+        }
+    }
     if ("toolBudget" in input) {
         if (input.toolBudget === false) {
             override.toolBudget = false;
@@ -564,23 +315,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
         override.subagentOnlyExtensions = subagentOnlyExtensions;
     return Object.keys(override).length > 0 ? override : undefined;
 }
-function parseSettingsStringArray(value, meta) {
-    if (value === undefined)
-        return undefined;
-    if (!Array.isArray(value)) {
-        throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${meta.field}'; expected an array of strings.`);
-    }
-    const items = [];
-    for (const item of value) {
-        if (typeof item !== "string") {
-            throw new Error(`Subagent settings in '${meta.filePath}' have invalid '${meta.field}'; expected an array of strings.`);
-        }
-        const trimmed = item.trim();
-        if (trimmed)
-            items.push(trimmed);
-    }
-    return items;
-}
 function readSubagentSettings(filePath) {
     if (!filePath)
         return EMPTY_SUBAGENT_SETTINGS;
@@ -589,10 +323,6 @@ function readSubagentSettings(filePath) {
     if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
         return EMPTY_SUBAGENT_SETTINGS;
     const subagentsObject = subagents;
-    const agentDirs = parseSettingsStringArray(subagentsObject.agentDirs, {
-        filePath,
-        field: "agentDirs",
-    });
     let defaultModel;
     if ("defaultModel" in subagentsObject) {
         if (typeof subagentsObject.defaultModel === "string" && subagentsObject.defaultModel.trim()) {
@@ -606,14 +336,14 @@ function readSubagentSettings(filePath) {
     const parsed = {};
     const agentOverrides = subagentsObject.agentOverrides;
     if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-        return { overrides: parsed, defaultModel, agentDirs, modelScope };
+        return { overrides: parsed, defaultModel, modelScope };
     }
     for (const [name, value] of Object.entries(agentOverrides)) {
         const override = parseBuiltinOverrideEntry(name, value, filePath);
         if (override)
             parsed[name] = override;
     }
-    return { overrides: parsed, defaultModel, agentDirs, modelScope };
+    return { overrides: parsed, defaultModel, modelScope };
 }
 function resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath) {
     if (projectSettingsPath && projectSettings.defaultModel !== undefined) {
@@ -646,21 +376,6 @@ function applySubagentDefaultModel(agents, defaultModel) {
         return next;
     });
 }
-function projectScopeUserBuiltinSettings(filePath) {
-    if (!filePath)
-        return EMPTY_SUBAGENT_SETTINGS;
-    let settings;
-    try {
-        settings = readSettingsFileStrict(filePath);
-    }
-    catch {
-        return EMPTY_SUBAGENT_SETTINGS;
-    }
-    const subagents = settings.subagents;
-    if (!subagents || typeof subagents !== "object" || Array.isArray(subagents))
-        return EMPTY_SUBAGENT_SETTINGS;
-    return EMPTY_SUBAGENT_SETTINGS;
-}
 function customAgentHasFrontmatterField(agent, ...fields) {
     const frontmatterFields = agentFrontmatterFields.get(agent);
     return frontmatterFields ? fields.some((field) => frontmatterFields.has(field)) : false;
@@ -669,7 +384,12 @@ function applyCustomAgentOverride(agent, override, meta) {
     let next;
     let anyFilled = false;
     const mutable = () => {
-        next ??= { ...agent };
+        if (!next) {
+            next = { ...agent };
+            const frontmatterFields = agentFrontmatterFields.get(agent);
+            if (frontmatterFields)
+                agentFrontmatterFields.set(next, frontmatterFields);
+        }
         return next;
     };
     const fill = (field, frontmatterFields, value) => {
@@ -710,7 +430,7 @@ function applyCustomAgentOverride(agent, override, meta) {
         fill("skills", ["skill", "skills"], override.skills === false ? undefined : [...override.skills]);
     }
     if (override.tools !== undefined && !customAgentHasFrontmatterField(agent, "tools")) {
-        const { tools } = splitToolList(override.tools === false ? [] : override.tools);
+        const tools = override.tools === false ? undefined : splitToolList(override.tools).tools;
         const target = mutable();
         target.tools = tools;
         anyFilled = true;
@@ -720,6 +440,9 @@ function applyCustomAgentOverride(agent, override, meta) {
     }
     if (override.completionGuard !== undefined) {
         fill("completionGuard", ["completionGuard"], override.completionGuard);
+    }
+    if (override.supervisorBridge !== undefined) {
+        fill("supervisorBridge", ["supervisorBridge"], override.supervisorBridge);
     }
     if (override.toolBudget !== undefined) {
         fill("toolBudget", ["toolBudget"], override.toolBudget === false ? undefined : override.toolBudget);
@@ -786,7 +509,7 @@ function isLegacyAgentSkillPath(rootDir, filePath) {
     }
     return parts.some((part, index) => part === ".agents" && parts[index + 1] === "skills");
 }
-function loadAgentsFromDir(dir, source) {
+function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
     const agents = [];
     for (const filePath of listFilesRecursive(dir, (fileName) => fileName.endsWith(".md") && !fileName.endsWith(".chain.md"))) {
         if (isLegacyAgentSkillPath(dir, filePath)) {
@@ -799,128 +522,159 @@ function loadAgentsFromDir(dir, source) {
         catch {
             continue;
         }
-        const { frontmatter, body } = parseFrontmatter(content);
-        if (!frontmatter.name || !frontmatter.description) {
-            continue;
-        }
-        const localName = frontmatter.name;
-        const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
-        if (parsedPackage.error)
-            continue;
-        const packageName = parsedPackage.packageName;
-        const runtimeName = buildRuntimeName(localName, packageName);
-        const tools = frontmatter.tools
-            ?.split(",")
-            .map((t) => t.trim())
-            .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
-        const defaultReads = frontmatter.defaultReads
-            ?.split(",")
-            .map((f) => f.trim())
-            .filter(Boolean);
-        const skillStr = frontmatter.skill || frontmatter.skills;
-        const skills = skillStr
-            ?.split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        const fallbackModels = frontmatter.fallbackModels
-            ?.split(",")
-            .map((model) => model.trim())
-            .filter(Boolean);
-        const systemPromptMode = frontmatter.systemPromptMode === "replace"
-            ? "replace"
-            : frontmatter.systemPromptMode === "append"
-                ? "append"
-                : defaultSystemPromptMode(localName);
-        const inheritProjectContext = frontmatter.inheritProjectContext === "true"
-            ? true
-            : frontmatter.inheritProjectContext === "false"
-                ? false
-                : defaultInheritProjectContext(localName);
-        const inheritSkills = frontmatter.inheritSkills === "true"
-            ? true
-            : frontmatter.inheritSkills === "false"
-                ? false
-                : defaultInheritSkills();
-        const defaultContext = frontmatter.defaultContext === "fork"
-            ? "fork"
-            : frontmatter.defaultContext === "fresh"
-                ? "fresh"
-                : undefined;
-        let acceptanceRole;
-        if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
-            if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
-                acceptanceRole = frontmatter.acceptanceRole;
-            else
-                throw new Error(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
-        }
-        let extensions;
-        if (frontmatter.extensions !== undefined) {
-            extensions = frontmatter.extensions
-                .split(",")
-                .map((e) => e.trim())
-                .filter(Boolean);
-        }
-        let subagentOnlyExtensions;
-        if (frontmatter.subagentOnlyExtensions !== undefined) {
-            subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
-                .split(",")
-                .map((e) => e.trim())
-                .filter(Boolean);
-        }
-        const extraFields = {};
-        for (const [key, value] of Object.entries(frontmatter)) {
-            if (!KNOWN_FIELDS.has(key))
-                extraFields[key] = value;
-        }
-        const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
-        const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(frontmatter.maxExecutionTimeMs, "maxExecutionTimeMs", `Agent '${localName}'`);
-        let toolBudget;
-        if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
-            const parsed = JSON.parse(frontmatter.toolBudget);
-            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                throw new Error(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`);
+        try {
+            const { frontmatter, body } = parseFrontmatter(content);
+            if (Object.keys(frontmatter).length === 0)
+                continue;
+            const missingRequiredFields = ["name", "description"].filter((field) => !frontmatter[field]);
+            if (missingRequiredFields.length > 0) {
+                agentDiagnosticsOut?.push({
+                    source,
+                    filePath,
+                    error: `Agent frontmatter is missing required fields: ${missingRequiredFields.join(", ")}.`,
+                });
+                continue;
             }
-            toolBudget = parsed;
-        }
-        const completionGuard = frontmatter.completionGuard === "false"
-            ? false
-            : frontmatter.completionGuard === "true"
+            const localName = frontmatter.name;
+            const parsedPackage = parsePackageName(frontmatter.package, `Agent '${localName}' package`);
+            if (parsedPackage.error) {
+                throw new AgentDefinitionValidationError(parsedPackage.error);
+            }
+            const packageName = parsedPackage.packageName;
+            const runtimeName = buildRuntimeName(localName, packageName);
+            const hasDeclaredToolsField = "tools" in frontmatter;
+            const tools = frontmatter.tools
+                ?.split(",")
+                .map((t) => t.trim())
+                .filter((t) => Boolean(t) && !t.startsWith("mcp:")) ?? [];
+            const defaultReads = frontmatter.defaultReads
+                ?.split(",")
+                .map((f) => f.trim())
+                .filter(Boolean);
+            const skillStr = frontmatter.skill || frontmatter.skills;
+            const skills = skillStr
+                ?.split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+            const fallbackModels = frontmatter.fallbackModels
+                ?.split(",")
+                .map((model) => model.trim())
+                .filter(Boolean);
+            const systemPromptMode = frontmatter.systemPromptMode === "replace"
+                ? "replace"
+                : frontmatter.systemPromptMode === "append"
+                    ? "append"
+                    : defaultSystemPromptMode(localName);
+            const inheritProjectContext = frontmatter.inheritProjectContext === "true"
                 ? true
-                : undefined;
-        const agent = {
-            name: runtimeName,
-            localName,
-            packageName,
-            description: frontmatter.description,
-            tools: tools.length > 0 ? tools : undefined,
-            model: frontmatter.model,
-            fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
-            thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
-            systemPromptMode,
-            inheritProjectContext,
-            inheritSkills,
-            defaultContext,
-            acceptanceRole,
-            systemPrompt: body,
-            source,
-            filePath,
-            skills: skills && skills.length > 0 ? skills : undefined,
-            extensions,
-            subagentOnlyExtensions,
-            output: frontmatter.output,
-            defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
-            defaultProgress: frontmatter.defaultProgress === "true",
-            interactive: frontmatter.interactive === "true",
-            maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
-                ? parsedMaxSubagentDepth
-                : undefined,
-            completionGuard,
-            toolBudget,
-            maxExecutionTimeMs,
-            extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
-        };
-        agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
-        agents.push(agent);
+                : frontmatter.inheritProjectContext === "false"
+                    ? false
+                    : defaultInheritProjectContext(localName);
+            const inheritSkills = frontmatter.inheritSkills === "true"
+                ? true
+                : frontmatter.inheritSkills === "false"
+                    ? false
+                    : defaultInheritSkills();
+            const defaultContext = frontmatter.defaultContext === "fork"
+                ? "fork"
+                : frontmatter.defaultContext === "fresh"
+                    ? "fresh"
+                    : undefined;
+            let acceptanceRole;
+            if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
+                if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
+                    acceptanceRole = frontmatter.acceptanceRole;
+                else
+                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid acceptanceRole frontmatter; expected 'read-only' or 'writer'.`);
+            }
+            let extensions;
+            if (frontmatter.extensions !== undefined) {
+                extensions = frontmatter.extensions
+                    .split(",")
+                    .map((e) => e.trim())
+                    .filter(Boolean);
+            }
+            let subagentOnlyExtensions;
+            if (frontmatter.subagentOnlyExtensions !== undefined) {
+                subagentOnlyExtensions = frontmatter.subagentOnlyExtensions
+                    .split(",")
+                    .map((e) => e.trim())
+                    .filter(Boolean);
+            }
+            const extraFields = {};
+            for (const [key, value] of Object.entries(frontmatter)) {
+                if (!KNOWN_FIELDS.has(key))
+                    extraFields[key] = value;
+            }
+            const parsedMaxSubagentDepth = Number(frontmatter.maxSubagentDepth);
+            const maxExecutionTimeMs = parsePositiveIntegerFrontmatter(frontmatter.maxExecutionTimeMs, "maxExecutionTimeMs", `Agent '${localName}'`);
+            let toolBudget;
+            if (frontmatter.toolBudget !== undefined && frontmatter.toolBudget.trim()) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(frontmatter.toolBudget);
+                }
+                catch (error) {
+                    if (!(error instanceof SyntaxError))
+                        throw error;
+                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object: ${error.message}`);
+                }
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter; expected a JSON object.`);
+                }
+                const normalizedToolBudget = validateToolBudgetConfig(parsed);
+                if (normalizedToolBudget.error) {
+                    throw new AgentDefinitionValidationError(`Agent '${localName}' has invalid toolBudget frontmatter: ${normalizedToolBudget.error}`);
+                }
+                toolBudget = normalizedToolBudget.budget;
+            }
+            const completionGuard = frontmatter.completionGuard === "false"
+                ? false
+                : frontmatter.completionGuard === "true"
+                    ? true
+                    : undefined;
+            const supervisorBridge = parseOptionalBooleanFrontmatter(frontmatter.supervisorBridge, "supervisorBridge", `Agent '${localName}'`);
+            const agent = {
+                name: runtimeName,
+                localName,
+                packageName,
+                description: frontmatter.description,
+                tools: hasDeclaredToolsField ? (tools.length > 0 ? tools : null) : undefined,
+                model: frontmatter.model,
+                fallbackModels: fallbackModels && fallbackModels.length > 0 ? fallbackModels : undefined,
+                thinking: frontmatter.thinking === "false" ? false : frontmatter.thinking,
+                systemPromptMode,
+                inheritProjectContext,
+                inheritSkills,
+                defaultContext,
+                acceptanceRole,
+                systemPrompt: body,
+                source,
+                filePath,
+                skills: skills && skills.length > 0 ? skills : undefined,
+                extensions,
+                subagentOnlyExtensions,
+                output: frontmatter.output,
+                defaultReads: defaultReads && defaultReads.length > 0 ? defaultReads : undefined,
+                defaultProgress: frontmatter.defaultProgress === "true",
+                interactive: frontmatter.interactive === "true",
+                maxSubagentDepth: Number.isInteger(parsedMaxSubagentDepth) && parsedMaxSubagentDepth >= 0
+                    ? parsedMaxSubagentDepth
+                    : undefined,
+                completionGuard,
+                supervisorBridge,
+                toolBudget,
+                maxExecutionTimeMs,
+                extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+            };
+            agentFrontmatterFields.set(agent, new Set(Object.keys(frontmatter)));
+            agents.push(agent);
+        }
+        catch (error) {
+            if (!(error instanceof AgentDefinitionValidationError))
+                throw error;
+            agentDiagnosticsOut?.push({ source, filePath, error: error.message });
+        }
     }
     return agents;
 }
@@ -935,140 +689,91 @@ function isDirectory(p) {
 function resolveNearestProjectAgentDirs(cwd) {
     const projectRoot = findNearestProjectRoot(cwd);
     if (!projectRoot)
-        return { readDirs: [], preferredDir: null };
-    const legacyDir = path.join(projectRoot, ".agents");
-    const preferredDir = path.join(getProjectConfigDir(projectRoot), "agents");
-    const readDirs = [];
-    if (isDirectory(legacyDir) && !isGlobalAgentsDir(legacyDir))
-        readDirs.push(legacyDir);
-    if (isDirectory(preferredDir))
-        readDirs.push(preferredDir);
-    return {
-        readDirs,
-        preferredDir,
-    };
+        return { preferredDir: null };
+    return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
 function resolveNearestProjectChainDirs(cwd) {
     const projectRoot = findNearestProjectRoot(cwd);
     if (!projectRoot)
-        return { readDirs: [], preferredDir: null };
-    const preferredDir = path.join(getProjectConfigDir(projectRoot), "chains");
-    return {
-        readDirs: isDirectory(preferredDir) ? [preferredDir] : [],
-        preferredDir,
-    };
-}
-function uniqueResolvedDirs(dirs) {
-    const seen = new Set();
-    const result = [];
-    for (const dir of dirs) {
-        const resolved = path.resolve(dir);
-        if (seen.has(resolved))
-            continue;
-        seen.add(resolved);
-        result.push(resolved);
-    }
-    return result;
-}
-function resolveConfiguredAgentDirs(settings, baseDir) {
-    return uniqueResolvedDirs((settings.agentDirs ?? []).map((dir) => {
-        const expanded = expandTildePath(dir);
-        return path.isAbsolute(expanded) ? expanded : path.join(baseDir, expanded);
-    }));
-}
-function loadAgentsFromDirs(dirs, source) {
-    const agentMap = new Map();
-    for (const dir of uniqueResolvedDirs(dirs)) {
-        for (const agent of loadAgentsFromDir(dir, source)) {
-            agentMap.set(agent.name, agent);
-        }
-    }
-    return Array.from(agentMap.values());
-}
-function projectSettingsBaseDir(projectSettingsPath) {
-    return projectSettingsPath ? path.dirname(path.dirname(projectSettingsPath)) : null;
+        return { preferredDir: null };
+    return { preferredDir: path.join(getProjectConfigDir(projectRoot), "chains") };
 }
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
-function extraUserAgentDirs() {
-    const raw = process.env[EXTRA_AGENT_DIRS_ENV];
-    if (!raw)
-        return [];
-    return raw
-        .split(path.delimiter)
-        .map((dir) => dir.trim())
-        .filter((dir) => dir.length > 0);
+function loadCanonicalPackagedAgents(agentDiagnostics) {
+    const canonicalDir = path.resolve(getAgentDir(), "tlh", "agents", "subagents");
+    const byName = new Map();
+    for (const agent of loadAgentsFromDir(canonicalDir, "user", agentDiagnostics)) {
+        if (!isCanonicalPackagedMinorAgent(agent))
+            continue;
+        byName.set(agent.name, agent);
+    }
+    return Array.from(byName.values());
 }
-export function discoverAgents(cwd, scope) {
-    const userDirOld = path.join(getAgentDir(), "agents");
-    const userDirNew = getLegacyGlobalAgentsDir();
-    const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
+export function discoverAgents(cwd, scope, _options = {}) {
+    const { preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
-    const userSettings = scope === "project"
-        ? projectScopeUserBuiltinSettings(userSettingsPath)
-        : readSubagentSettings(userSettingsPath);
+    const userSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(userSettingsPath);
     const projectSettings = scope === "user" ? EMPTY_SUBAGENT_SETTINGS : readSubagentSettings(projectSettingsPath);
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const customUserSettings = scope === "project" ? EMPTY_SUBAGENT_SETTINGS : userSettings;
     const modelScope = projectSettings.modelScope ?? userSettings.modelScope;
-    const packageSubagentPaths = collectPackageSubagentPaths(cwd, {
-        includeUser: scope !== "project",
-        includeProject: scope !== "user",
-    });
-    const builtinAgents = [];
-    const userConfiguredAgentDirs = scope === "project" ? [] : resolveConfiguredAgentDirs(customUserSettings, getAgentDir());
-    const projectBaseDir = projectSettingsBaseDir(projectSettingsPath);
-    const projectConfiguredAgentDirs = scope === "user" || !projectBaseDir
-        ? []
-        : resolveConfiguredAgentDirs(projectSettings, projectBaseDir);
-    const userAgents = applyCustomAgentOverrides(applySubagentDefaultModel(scope === "project"
-        ? []
-        : loadAgentsFromDirs([
-            ...extraUserAgentDirs(),
-            ...userConfiguredAgentDirs,
-            userDirOld,
-            ...(userDirNew ? [userDirNew] : []),
-        ], "user"), defaultModel), customUserSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const projectAgents = applyCustomAgentOverrides(applySubagentDefaultModel(scope === "user"
-        ? []
-        : loadAgentsFromDirs([...projectConfiguredAgentDirs, ...projectAgentDirs], "project"), defaultModel), customUserSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageAgents = applyCustomAgentOverrides(applySubagentDefaultModel(packageSubagentPaths.agents.flatMap((dir) => loadAgentsFromDir(dir, "package")), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const agents = mergeAgentsForScope(scope, userAgents, projectAgents, builtinAgents, packageAgents).filter((agent) => agent.disabled !== true);
-    return { agents, projectAgentsDir, modelScope };
+    const agentDiagnostics = [];
+    const canonicalAgents = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
+    const agents = mergeAgentsForScope(scope, [], [], canonicalAgents, []).filter((agent) => agent.disabled !== true);
+    return { agents, projectAgentsDir, modelScope, agentDiagnostics };
+}
+export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
+    const manifest = resolveProjectAgentSnapshot(capability, expected);
+    let canonicalCwd;
+    let canonicalProjectRoot;
+    try {
+        canonicalCwd = fs.realpathSync(cwd);
+        canonicalProjectRoot = fs.realpathSync(manifest.provenance.projectRoot);
+    }
+    catch {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const relativeCwd = path.relative(canonicalProjectRoot, canonicalCwd);
+    if (relativeCwd !== "" && (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd))) {
+        throw new ProjectAgentSnapshotCapabilityError();
+    }
+    const discovered = discoverAgents(cwd, "user", { excludeProjectPackages: true });
+    const userSettings = readSubagentSettings(getUserAgentSettingsPath());
+    for (const entry of manifest.entries) {
+        agentFrontmatterFields.set(entry.agent, new Set(entry.frontmatterFields));
+    }
+    const disabledNames = manifest.entries
+        .filter((entry) => userSettings.overrides[entry.agent.name]?.disabled === true)
+        .map((entry) => entry.agent.name);
+    const disabledNameSet = new Set(disabledNames);
+    const activeEntries = manifest.entries.filter((entry) => !disabledNameSet.has(entry.agent.name));
+    const mergeOptions = {
+        entries: activeEntries,
+        tombstones: [...manifest.tombstones, ...disabledNames],
+    };
+    return {
+        ...discovered,
+        agents: mergeProjectAgentSnapshot(discovered.agents, manifest, mergeOptions),
+        projectAgentsDir: null,
+        projectSnapshot: projectAgentSnapshotDiscoveryMetadata(manifest, disabledNames),
+    };
 }
 export function discoverAgentsAll(cwd) {
     const userDirOld = path.join(getAgentDir(), "agents");
     const userDirNew = getLegacyGlobalAgentsDir();
     const userChainDir = getUserChainDir();
-    const { readDirs: projectDirs, preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
+    const { preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
     const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
     const userSettings = readSubagentSettings(userSettingsPath);
     const projectSettings = readSubagentSettings(projectSettingsPath);
     const defaultModel = resolveSubagentDefaultModel(userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageSubagentPaths = collectPackageSubagentPaths(cwd);
     const builtin = [];
-    const userConfiguredAgentDirs = resolveConfiguredAgentDirs(userSettings, getAgentDir());
-    const projectBaseDir = projectSettingsBaseDir(projectSettingsPath);
-    const projectConfiguredAgentDirs = projectBaseDir
-        ? resolveConfiguredAgentDirs(projectSettings, projectBaseDir)
-        : [];
-    const user = applyCustomAgentOverrides(applySubagentDefaultModel(loadAgentsFromDirs([
-        ...extraUserAgentDirs(),
-        ...userConfiguredAgentDirs,
-        userDirOld,
-        ...(userDirNew ? [userDirNew] : []),
-    ], "user"), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const packageMap = new Map();
-    for (const dir of packageSubagentPaths.agents) {
-        for (const agent of loadAgentsFromDir(dir, "package")) {
-            if (!packageMap.has(agent.name))
-                packageMap.set(agent.name, agent);
-        }
-    }
-    const packageAgents = applyCustomAgentOverrides(applySubagentDefaultModel(Array.from(packageMap.values()), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
-    const project = applyCustomAgentOverrides(applySubagentDefaultModel(loadAgentsFromDirs([...projectConfiguredAgentDirs, ...projectDirs], "project"), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
+    const agentDiagnostics = [];
+    const user = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
+    const packageAgents = [];
+    const project = [];
     const chains = [];
     const chainDiagnostics = [];
     const userDir = userDirNew && fs.existsSync(userDirNew) ? userDirNew : userDirOld;
@@ -1079,6 +784,7 @@ export function discoverAgentsAll(cwd) {
         project,
         chains,
         chainDiagnostics,
+        agentDiagnostics,
         userDir,
         projectDir,
         userChainDir,

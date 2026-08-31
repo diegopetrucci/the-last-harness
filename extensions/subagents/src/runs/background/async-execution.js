@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.js";
+import { applyThinkingSuffix, getThinkingLevelDropNote, validatePiToolPolicy, } from "../shared/pi-args.js";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
 import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
 import { isParallelGroup, } from "../shared/parallel-utils.js";
@@ -10,7 +10,7 @@ import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
 import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.js";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.js";
-import { buildFallbackModelList, buildModelCandidates, canonicalSubagentModelIdentity, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
+import { buildFallbackModelList, buildModelCandidatePlan, canonicalSubagentModelIdentity, modelReferenceFromIdentity, resolveSubagentModelOverride, } from "../shared/model-fallback.js";
 import { resolveEffectiveThinking } from "../../shared/model-info.js";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.js";
 import { ChainOutputValidationError, validateChainOutputBindings, } from "../shared/chain-outputs.js";
@@ -22,6 +22,7 @@ import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 const piPackageRoot = resolvePiPackageRoot();
 export function formatAsyncStartedMessage(headline) {
     return headline;
@@ -266,6 +267,12 @@ export function buildAsyncRunnerSteps(id, params) {
         const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, stepCwd, ctx.cwd);
         if (missingSkills.includes("pi-subagents"))
             throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+        const toolPolicyError = validatePiToolPolicy({
+            tools: a.tools,
+            requireReadTool: a.inheritSkills || resolvedSkills.length > 0,
+        });
+        if (toolPolicyError)
+            throw new AsyncStartValidationError(toolPolicyError);
         let systemPrompt = a.systemPrompt?.trim() ?? "";
         if (resolvedSkills.length > 0) {
             const injection = buildSkillInjection(resolvedSkills);
@@ -298,15 +305,19 @@ export function buildAsyncRunnerSteps(id, params) {
         const modelIdentity = canonicalSubagentModelIdentity(model, primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking));
         const modelThinking = modelIdentity?.thinking ??
             (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-        const modelCandidates = buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+        const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, registry: params.modelRegistry });
+        const modelCandidates = candidatePlan.candidates
             .map((candidate) => {
             appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
             return applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
         })
             .filter((candidate) => candidate !== undefined);
+        const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === s.agent);
         return {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(projectAgent ? { projectAgent } : {}),
             agent: s.agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
             task,
             phase: s.phase,
             label: s.label,
@@ -322,11 +333,15 @@ export function buildAsyncRunnerSteps(id, params) {
                 .map((candidate) => [candidate.fullId, candidate.contextWindow])),
             ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
             ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+            ...(candidatePlan.filteringNotice
+                ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+                : {}),
             modelFallbackNotice: behavior.modelFallbackNotice,
             tools: a.tools,
             extensions: a.extensions,
             subagentOnlyExtensions: a.subagentOnlyExtensions,
             completionGuard: a.completionGuard,
+            supervisorBridge: a.supervisorBridge,
             systemPrompt,
             systemPromptMode: a.systemPromptMode,
             inheritProjectContext: a.inheritProjectContext,
@@ -441,6 +456,7 @@ export function executeAsyncChain(id, params) {
         agents,
         ctx,
         availableModels: params.availableModels,
+        modelRegistry: params.modelRegistry,
         cwd,
         sessionFilesByFlatIndex,
         thinkingOverridesByFlatIndex,
@@ -455,6 +471,7 @@ export function executeAsyncChain(id, params) {
         asyncDir,
         timeoutMs: params.timeoutMs,
         toolBudget: params.toolBudget,
+        projectAgentCaptures: params.projectAgentCaptures,
     });
     if ("error" in built) {
         try {
@@ -495,6 +512,9 @@ export function executeAsyncChain(id, params) {
             return [childIntercomTarget(step.agent, childTargetIndex++)];
         })
         : undefined;
+    const projectAgents = [
+        ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
+    ];
     let spawnResult;
     try {
         spawnResult = spawnRunner({
@@ -525,6 +545,7 @@ export function executeAsyncChain(id, params) {
             workflowGraph,
             tkTicket,
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             nestedSelf: inheritedNestedRoute && nestedAddress
                 ? {
                     parentRunId: nestedAddress.parentRunId,
@@ -576,6 +597,7 @@ export function executeAsyncChain(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -619,6 +641,7 @@ export function executeAsyncChain(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,
@@ -665,6 +688,12 @@ export function executeAsyncSingle(id, params) {
     const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, runnerCwd, ctx.cwd);
     if (missingSkills.includes("pi-subagents"))
         return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+    const toolPolicyError = validatePiToolPolicy({
+        tools: agentConfig.tools,
+        requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
+    });
+    if (toolPolicyError)
+        return formatAsyncStartError("single", toolPolicyError);
     let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
     if (resolvedSkills.length > 0) {
         const injection = buildSkillInjection(resolvedSkills);
@@ -730,10 +759,12 @@ export function executeAsyncSingle(id, params) {
         attemptNotes.push(`Notice: Persisted model '${modelReferenceFromIdentity(params.restoredModelIdentity)}' was not present in the current model registry; retaining it so configured runtime fallback policy can apply.`);
     }
     const modelIdentity = canonicalSubagentModelIdentity(model, primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-    const modelCandidates = buildModelCandidates(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, {
+    const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, {
         scope: ctx.modelScope,
+        registry: params.modelRegistry,
         ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
-    })
+    });
+    const modelCandidates = candidatePlan.candidates
         .map((candidate) => {
         appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
         return applyThinkingSuffix(candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
@@ -772,7 +803,9 @@ export function executeAsyncSingle(id, params) {
             steps: [
                 {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+                    ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
                     agent,
+                    projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
                     task: taskWithOutputInstruction,
                     cwd: runnerCwd,
                     model,
@@ -785,11 +818,15 @@ export function executeAsyncSingle(id, params) {
                         .map((candidate) => [candidate.fullId, candidate.contextWindow])),
                     ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
                     ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+                    ...(candidatePlan.filteringNotice
+                        ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+                        : {}),
                     modelFallbackNotice: params.modelFallbackNotice,
                     tools: agentConfig.tools,
                     extensions: agentConfig.extensions,
                     subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
                     completionGuard: agentConfig.completionGuard,
+                    supervisorBridge: agentConfig.supervisorBridge,
                     systemPrompt,
                     systemPromptMode: agentConfig.systemPromptMode,
                     inheritProjectContext: agentConfig.inheritProjectContext,
@@ -847,6 +884,7 @@ export function executeAsyncSingle(id, params) {
             controlIntercomTarget,
             childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
             tkTicket,
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
             resultMode: "single",
             nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -882,6 +920,7 @@ export function executeAsyncSingle(id, params) {
                         parentStepIndex: nestedAddress.parentStepIndex,
                         depth: nestedAddress.depth,
                         path: nestedAddress.path,
+                        cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
                         ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -917,6 +956,7 @@ export function executeAsyncSingle(id, params) {
             cwd: runnerCwd,
             asyncDir,
             ...(tkTicket ? { tkTicket } : {}),
+            ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
             ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,

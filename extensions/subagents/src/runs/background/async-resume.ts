@@ -11,6 +11,10 @@ import {
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
 import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
+import {
+  normalizeProjectAgentRunCapture,
+  type ProjectAgentRunCapture,
+} from "../../agents/project-agent-snapshot.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.ts";
 import {
@@ -141,7 +145,7 @@ interface AsyncResumeOptions {
   readOnly?: boolean;
 }
 
-export type AsyncResumeTarget = {
+type AsyncResumeTarget = {
   kind: "live" | "revive";
   runId: string;
   asyncDir?: string;
@@ -162,6 +166,9 @@ export type AsyncResumeTarget = {
   claimed?: boolean;
   continuationAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   activeRuntimeMs?: number;
+  projectAgent?: ProjectAgentRunCapture;
+  /** Present only when the persisted run carried a run-level project inventory. */
+  projectAgents?: ProjectAgentRunCapture[];
 };
 
 /**
@@ -197,6 +204,8 @@ type AsyncResultFile = Defensive<AsyncResultArtifact> & {
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
+  projectAgent?: ProjectAgentRunCapture;
+  projectAgents?: ProjectAgentRunCapture[];
   // Override results to add legacy per-item `thinking` field (written by
   // older runners but not part of the current canonical result item type).
   results?: Array<
@@ -394,6 +403,11 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         !Array.isArray(child.acceptance)
           ? (child.acceptance as import("../../shared/types.ts").AcceptanceLedger)
           : undefined;
+      const projectAgent = parseProjectAgentCapture(
+        child.projectAgent,
+        resultPath,
+        `results[${index}].projectAgent`,
+      );
       return {
         agent,
         sessionFile,
@@ -410,12 +424,26 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         ...(terminationReason ? { terminationReason } : {}),
         ...(typeof activeRuntimeMs === "number" ? { activeRuntimeMs } : {}),
         ...(acceptance ? { acceptance } : {}),
+        ...(projectAgent ? { projectAgent } : {}),
       };
     });
   }
   const success = data.success;
   if (success !== undefined && typeof success !== "boolean")
     throw new Error(`Invalid async result file '${resultPath}': success must be a boolean.`);
+  const projectAgent =
+    data.projectAgent === undefined
+      ? undefined
+      : parseProjectAgentCapture(data.projectAgent, resultPath, "projectAgent");
+  const projectAgents = data.projectAgents;
+  if (projectAgents !== undefined && !Array.isArray(projectAgents)) {
+    throw new Error(`Invalid async result file '${resultPath}': projectAgents must be an array.`);
+  }
+  const normalizedProjectAgents = projectAgents
+    ?.map((capture, index) =>
+      parseProjectAgentCapture(capture, resultPath, `projectAgents[${index}]`),
+    )
+    .filter((capture): capture is ProjectAgentRunCapture => Boolean(capture));
   return {
     id: validateOptionalString(data, "id", resultPath),
     runId: validateOptionalString(data, "runId", resultPath),
@@ -447,7 +475,20 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       : {}),
     ...(typeof success === "boolean" ? { success } : {}),
     ...(results ? { results } : {}),
+    ...(projectAgent ? { projectAgent } : {}),
+    ...(normalizedProjectAgents ? { projectAgents: normalizedProjectAgents } : {}),
   };
+}
+
+function parseProjectAgentCapture(
+  value: unknown,
+  source: string,
+  field: string,
+): ProjectAgentRunCapture | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalizeProjectAgentRunCapture(value);
+  if (!normalized) throw new Error(`Invalid async result file '${source}': ${field} is invalid.`);
+  return normalized;
 }
 
 function readResultFile(resultPath: string): AsyncResultFile {
@@ -577,6 +618,112 @@ export function resolveAsyncRunLocation(
   return matching[0]!.location;
 }
 
+/**
+ * Read one optional object property without asserting through an intermediate
+ * unknown value. This keeps the untrusted persisted boundary explicit.
+ */
+function ownObjectProperty(value: unknown, key: string): { present: boolean; value: unknown } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { present: false, value: undefined };
+  }
+  const record = value as Record<string, unknown>;
+  return { present: Object.hasOwn(record, key), value: record[key] };
+}
+
+/**
+ * Detect project-agent fields in persisted control data without granting any
+ * authority. This intentionally recognizes even malformed marker values: a
+ * missing process-private reference must deny rather than downgrade a control
+ * request to profile behavior.
+ */
+function hasPersistedProjectAgentMarker(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (Object.hasOwn(record, "projectAgent") || Object.hasOwn(record, "projectAgents")) {
+    return true;
+  }
+  for (const field of ["steps", "results", "children", "nestedChildren"] as const) {
+    const children = record[field];
+    if (
+      Array.isArray(children) &&
+      children.some((child) => hasPersistedProjectAgentMarker(child))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function persistedProjectAgentMarkerFromFile(
+  filePath: string,
+): "present" | "absent" | "unavailable" {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unavailable";
+  }
+  try {
+    return hasPersistedProjectAgentMarker(JSON.parse(content)) ? "present" : "absent";
+  } catch {
+    // A malformed artifact with marker-shaped bytes is still denied. A
+    // malformed artifact without a marker will fail its normal parser later.
+    return /["']projectAgents?["']\s*:/.test(content) ? "present" : "unavailable";
+  }
+}
+
+export type AsyncProjectAgentMarkerProbe = {
+  status: "present" | "absent" | "unavailable";
+};
+
+/**
+ * Narrow, read-only probe used by the primary hook before its executor. It
+ * reuses canonical async id/path resolution and never returns a capability or
+ * config; the result can only deny a potentially project-owned control.
+ */
+export function probeAsyncRunForProjectAgentMarker(
+  params: AsyncResumeParams,
+  deps: Pick<AsyncResumeDeps, "asyncDirRoot" | "resultsDir"> = {},
+): AsyncProjectAgentMarkerProbe {
+  let location: AsyncRunLocation;
+  try {
+    location = resolveAsyncRunLocation(
+      params,
+      deps.asyncDirRoot ?? ASYNC_DIR,
+      deps.resultsDir ?? RESULTS_DIR,
+    );
+  } catch {
+    return { status: "unavailable" };
+  }
+  // Exercise the canonical status/result parser first. Its result is not used
+  // as authority and may legitimately fail for a terminal or malformed run;
+  // the raw known-field scan below preserves the deny-only marker signal.
+  try {
+    resolveAsyncResumeTarget(
+      params,
+      {
+        asyncDirRoot: deps.asyncDirRoot ?? ASYNC_DIR,
+        resultsDir: deps.resultsDir ?? RESULTS_DIR,
+      },
+      { requireSessionFile: false, readOnly: true },
+    );
+  } catch {
+    // Continue to the marker-only scan; parsing failures never authorize.
+  }
+  const files = [
+    location.asyncDir ? path.join(location.asyncDir, "status.json") : undefined,
+    location.resultPath ?? undefined,
+  ].filter((filePath): filePath is string => Boolean(filePath));
+  if (files.length === 0) return { status: "absent" };
+  let unavailable = false;
+  for (const filePath of files) {
+    const result = persistedProjectAgentMarkerFromFile(filePath);
+    if (result === "present") return { status: "present" };
+    if (result === "unavailable") unavailable = true;
+  }
+  return { status: unavailable ? "unavailable" : "absent" };
+}
+
 function persistedModelIdentity(input: {
   identity?: unknown;
   model?: string;
@@ -614,6 +761,19 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
     throw new Error(`Invalid async status '${source}': cwd must be a string.`);
   if (status.sessionFile !== undefined && typeof status.sessionFile !== "string")
     throw new Error(`Invalid async status '${source}': sessionFile must be a string.`);
+  const statusProjectAgent = ownObjectProperty(status, "projectAgent");
+  if (statusProjectAgent.present) {
+    if (!normalizeProjectAgentRunCapture(statusProjectAgent.value))
+      throw new Error(`Invalid async status '${source}': projectAgent is invalid.`);
+  }
+  if (status.projectAgents !== undefined) {
+    if (!Array.isArray(status.projectAgents))
+      throw new Error(`Invalid async status '${source}': projectAgents must be an array.`);
+    for (const [index, capture] of status.projectAgents.entries()) {
+      if (!normalizeProjectAgentRunCapture(capture))
+        throw new Error(`Invalid async status '${source}': projectAgents[${index}] is invalid.`);
+    }
+  }
   if (status.steps !== undefined) {
     if (!Array.isArray(status.steps))
       throw new Error(`Invalid async status '${source}': steps must be an array.`);
@@ -627,6 +787,10 @@ function validateStatusForResume(status: AsyncStatus | null, source: string): vo
       if (step.sessionFile !== undefined && typeof step.sessionFile !== "string")
         throw new Error(
           `Invalid async status '${source}': steps[${index}].sessionFile must be a string.`,
+        );
+      if (step.projectAgent !== undefined && !normalizeProjectAgentRunCapture(step.projectAgent))
+        throw new Error(
+          `Invalid async status '${source}': steps[${index}].projectAgent is invalid.`,
         );
       if (step.model !== undefined && typeof step.model !== "string")
         throw new Error(
@@ -743,6 +907,40 @@ function resolveResumeDiagnosticMetadata(
   };
 }
 
+type AsyncResumeProjectAgentMetadata = Pick<AsyncResumeTarget, "projectAgent" | "projectAgents">;
+
+function resolveProjectAgentMetadata(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+): AsyncResumeProjectAgentMetadata {
+  const selectedCandidate = statusStep?.projectAgent ?? context.resultSteps[index]?.projectAgent;
+  let projectAgent: ProjectAgentRunCapture | undefined;
+  if (selectedCandidate !== undefined) {
+    projectAgent = normalizeProjectAgentRunCapture(selectedCandidate);
+    if (!projectAgent) {
+      throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
+    }
+  }
+  const topLevelProjectAgent =
+    normalizeProjectAgentRunCapture(ownObjectProperty(context.status, "projectAgent").value) ??
+    context.result?.projectAgent;
+  const explicitProjectAgents = context.status?.projectAgents ?? context.result?.projectAgents;
+  const childProjectAgents = [...context.statusSteps, ...context.resultSteps].flatMap((step) => {
+    const candidate = step?.projectAgent;
+    if (candidate === undefined) return [];
+    const normalized = normalizeProjectAgentRunCapture(candidate);
+    return normalized ? [normalized] : [];
+  });
+  const projectAgents =
+    explicitProjectAgents ?? (childProjectAgents.length > 0 ? childProjectAgents : undefined);
+  return {
+    ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
+    ...(projectAgents !== undefined ? { projectAgents } : {}),
+    ...(projectAgent ? { projectAgent } : {}),
+  };
+}
+
 function buildLiveAsyncResumeTarget(
   context: AsyncResumeResolutionContext,
   index: number,
@@ -766,8 +964,11 @@ function buildLiveAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
   return {
     ...target,
+    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
     ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
@@ -933,8 +1134,11 @@ function resolveTerminalAsyncResumeTarget(
     context.resultSteps,
     context.result,
   );
+  const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
   const targetWithModelMetadata: AsyncResumeTarget = {
     ...target,
+    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
     ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
     ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
     ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),

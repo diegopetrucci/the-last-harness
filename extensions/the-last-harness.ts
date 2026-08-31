@@ -1,4 +1,5 @@
 import {
+  AgentSession as TlhPiAgentSession,
   getMarkdownTheme,
   getSelectListTheme,
   getSettingsListTheme,
@@ -89,6 +90,7 @@ const EMPTY_STARTUP_RESOURCES: StartupResources = {
   prompts: [],
   extensions: [],
   themes: [],
+  projectGuidance: [],
 };
 
 type DeferredStartupTaskScheduler = (task: () => void) => void;
@@ -148,6 +150,10 @@ export default function theLastHarness(pi: ExtensionAPI) {
     // Share the session-scoped store so dispatch-time credential preflights
     // and the footer renderer use the same instance.
     getProviderAuthHealthStore: () => activeProviderAuthHealthStore,
+    // The bundled loader may expose the active bundle constructor here. The
+    // model seam validates it and falls back to the canonical CLI artifact
+    // when this generated extension is loaded through native ESM instead.
+    bundledAgentSessionConstructor: TlhPiAgentSession,
   });
   if (!primaryAgentRuntime) {
     return;
@@ -419,6 +425,7 @@ export default function theLastHarness(pi: ExtensionAPI) {
       })();
       void startupResourceCollector(ctx.cwd, {
         projectTrusted: getActiveProjectTrustDecision(ctx),
+        projectAgentGuidance: primaryAgentRuntime.projectAgentGuidanceSnapshot(),
       })
         .then((snapshot) => {
           if (activeTlhHeaderSessionToken !== sessionToken) {

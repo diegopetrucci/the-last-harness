@@ -31,6 +31,14 @@ function createPiHarness() {
 }
 
 test("validateSubagentToolInput allows bundled read-only delegation targets", () => {
+  const testRunner = {
+    agent: "test-runner",
+    task: "Run the assigned validation commands and report the results",
+  };
+  assertAllowed(testRunner);
+  assert.equal(testRunner.agentScope, "user");
+  assert.equal(testRunner.context, "fresh");
+
   const webScout = {
     agent: "web-scout",
     task: "research the general web for upstream release notes",
@@ -105,6 +113,7 @@ test("validateSubagentToolInput allows approved execution and forces fresh user 
       { agent: "oracle", task: "provide a second opinion", context: "fresh" },
       { agent: "developer", task: "fix one issue" },
       { agent: "repo-scout", task: "inspect one area", context: "fresh" },
+      { agent: "test-runner", task: "run the exact validation commands" },
     ],
   };
   assertAllowed(batched);
@@ -317,13 +326,13 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   // single
   const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
   assertAllowed(single, opts);
-  assert.equal(single.agentScope, "user");
+  assert.equal(single.agentScope, "project");
   assert.equal(single.context, "fresh");
 
   // tasks (parallel batch)
   const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
   assertAllowed(tasks, opts);
-  assert.equal(tasks.agentScope, "user");
+  assert.equal(tasks.agentScope, "project");
   assert.equal(tasks.context, "fresh");
 
   // mixed: bundled + embedded
@@ -334,6 +343,21 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
     ],
   };
   assertAllowed(mixed, opts);
+  assert.equal(mixed.agentScope, "project");
+  assert.equal(mixed.context, "fresh");
+
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "user" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
+    /project scope is required/,
+  );
+  assert.match(
+    validateSubagentToolInput({ agent: "embedded.repo-helper", context: "fork" }, opts),
+    /may not use context: "fork"/,
+  );
 });
 
 test("validateSubagentToolInput with allowEmbeddedTargets:true rejects malformed embedded names", () => {

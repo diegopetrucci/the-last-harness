@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { disabledDefaultExtensionIds, packageIdentity, readDefaultExtensions, } from "./lib/default-extensions.mjs";
-import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, settingsRequireTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
+import { captureManagedRetiredSubagentPackages, captureRetiredSubagentNpmCommand, cleanupManagedRetiredSubagentPackages, copyTlhSubagentPrompts, missingTlhSubagentPrompts, restoreNeededTlhSubagentPrompts, } from "./lib/tlh-install-subagents.mjs";
 import { pathWithinOrEqual, realpathForCompare } from "./lib/tlh-install-paths.mjs";
 import { assignOptionValue, defaultTlhSettingsPath, expandHomePath, pathIsInNormalPiConfig, readJsonFile, resolveTlhAgentDir, } from "./lib/tlh-install-utils.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -227,11 +227,6 @@ function addSettingsDriftCheck(results, packageRoot, settingsPath, env) {
     recordCheck(results, "WARN", "settings drift", detail);
 }
 function addBundledSubagentCheck(results, packageRoot, agentDir) {
-    const packagedDefaultsPath = defaultsPath(packageRoot);
-    if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-        recordCheck(results, "OK", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
-        return;
-    }
     const sourceDir = join(packageRoot, "agents", "subagents");
     const sourceMissing = missingTlhSubagentPrompts(sourceDir);
     if (sourceMissing.length > 0) {
@@ -570,10 +565,6 @@ function repairSettings(packageRoot, agentDir, settingsPath, env) {
     return repairAction("OK", "settings drift", `${output || "reapplied packaged defaults with existing backup behavior"}${physicalCleanupDetail}`);
 }
 function repairBundledSubagentPrompts(packageRoot, agentDir) {
-    const packagedDefaultsPath = defaultsPath(packageRoot);
-    if (!settingsRequireTlhSubagentPrompts(packagedDefaultsPath)) {
-        return repairAction("SKIP", "bundled subagent resources", "packaged defaults do not require copied subagent prompts");
-    }
     const sourceDir = join(packageRoot, "agents", "subagents");
     const sourceMissing = missingTlhSubagentPrompts(sourceDir);
     if (sourceMissing.length > 0) {

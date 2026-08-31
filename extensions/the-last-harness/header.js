@@ -128,6 +128,7 @@ export function createTlhHeader(theme, resources, headerUpdate, options = {}) {
             section("Prompts", startupResources.prompts, width),
             section("Extensions", startupResources.extensions, width),
             section("Themes", startupResources.themes, width),
+            section("Project guidance", startupResources.projectGuidance ?? [], width),
         ].filter((resourceSection) => resourceSection.length > 0);
         for (const resourceSection of resourceSections) {
             lines.push("", ...resourceSection);

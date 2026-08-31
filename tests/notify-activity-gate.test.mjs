@@ -515,6 +515,34 @@ test("[ts-hehb] final errored settle with retry grace active and no background j
   assert.equal(notifyCount, 1, "expected notification: retry grace alone must not suppress");
 });
 
+test("UI-prompt waiting does not suppress notifications without background work", async () => {
+  const timers = createFakeTimers();
+  const pi = createPiHarness();
+  let notifyCount = 0;
+
+  const ext = createNotifyExtension({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    settleDebounceMs: 50,
+    onNotify: () => {
+      notifyCount += 1;
+    },
+  });
+  ext(pi);
+
+  // Waiting is deliberately separate from active async work. It must not
+  // trigger suppressWhileActive even though it is surfaced on the activity bus.
+  pi.emitChannel(TLH_EFFECTIVE_ACTIVITY_EVENT, {
+    inProgress: false,
+    waitingForUser: true,
+    activeAsyncJobIds: [],
+  });
+  pi.fireEvent("agent_settled", {}, makeCtx());
+  await timers.advance(50);
+
+  assert.equal(notifyCount, 1, "waiting alone must not suppress a ready notification");
+});
+
 test("[ts-hehb] primary-only activity never suppresses notifications", async () => {
   // Scenario: the tracker has a primary-agent-loop reason (or any primaryReasons entry)
   // but activeAsyncJobIds is empty. inProgress is true, but no background work.

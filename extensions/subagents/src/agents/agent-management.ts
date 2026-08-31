@@ -1,11 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   type AgentConfig,
+  type AgentDiscoveryDiagnostic,
   type AgentScope,
   discoverAgentsAll,
   frontmatterNameForConfig,
 } from "./agents.ts";
 import type { Details, ExtensionConfig, SubagentToolResult } from "../shared/types.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.ts";
 
 type ManagementAction = "list" | "get";
 type ManagementContext = Pick<ExtensionContext, "cwd"> & { config?: ExtensionConfig };
@@ -58,6 +60,13 @@ function allAgents(d: {
   return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
 
+function isSourceVisibleInScope(
+  source: AgentDiscoveryDiagnostic["source"],
+  scope: AgentScope,
+): boolean {
+  return scope === "both" || source === "builtin" || source === "package" || source === scope;
+}
+
 function availableNames(cwd: string): string[] {
   return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) =>
     a.localeCompare(b),
@@ -76,7 +85,6 @@ function findAgents(name: string, cwd: string, scope: AgentScope = "both"): Agen
 }
 
 function formatAgentDetail(agent: AgentConfig): string {
-  const tools = [...(agent.tools ?? [])];
   const lines: string[] = [
     `Agent: ${agent.name} (${agent.source})`,
     `Path: ${agent.filePath}`,
@@ -89,7 +97,8 @@ function formatAgentDetail(agent: AgentConfig): string {
   if (agent.model) lines.push(`Model: ${agent.model}`);
   if (agent.fallbackModels?.length)
     lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
-  if (tools.length) lines.push(`Tools: ${tools.join(", ")}`);
+  if (agent.tools !== undefined)
+    lines.push(`Tools: ${agent.tools?.length ? agent.tools.join(", ") : "(none)"}`);
   if (agent.skills?.length) lines.push(`Skills: ${agent.skills.join(", ")}`);
   lines.push(`System prompt mode: ${agent.systemPromptMode}`);
   lines.push(`Inherit project context: ${agent.inheritProjectContext ? "true" : "false"}`);
@@ -112,6 +121,7 @@ function formatAgentDetail(agent: AgentConfig): string {
   if (agent.maxExecutionTimeMs !== undefined)
     lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
   if (agent.completionGuard === false) lines.push("Completion guard: false");
+  if (agent.supervisorBridge === false) lines.push("Supervisor bridge: false");
   if (agent.toolBudget) lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
   if (agent.systemPrompt.trim()) lines.push("", "System Prompt:", agent.systemPrompt);
   return lines.join("\n");
@@ -126,7 +136,11 @@ export function handleList(
   const scopedAgents = allAgents(d)
     .filter(
       (a) =>
-        scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope,
+        scope === "both" ||
+        a.source === "builtin" ||
+        a.source === "package" ||
+        a.source === scope ||
+        (scope === "project" && isCanonicalPackagedMinorAgent(a)),
     )
     .sort((a, b) => a.name.localeCompare(b.name));
   const agents = scopedAgents.filter((a) => !a.disabled);
@@ -139,6 +153,16 @@ export function handleList(
         )
       : ["- (none)"]),
   ];
+  const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) =>
+    isSourceVisibleInScope(diagnostic.source, scope),
+  );
+  if (visibleDiagnostics.length > 0) {
+    lines.push(
+      "",
+      "Agent load warnings:",
+      ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`),
+    );
+  }
   return result(lines.join("\n"));
 }
 

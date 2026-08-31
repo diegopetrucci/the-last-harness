@@ -44,6 +44,7 @@ import {
   isProtectedPausedLifecycle,
   protectedLifecycleText,
 } from "../shared/lifecycle-privacy.ts";
+import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
 import { acceptanceRejectionReason } from "../shared/acceptance.ts";
 import { formatRejectionReason } from "../../shared/string-utils.ts";
 
@@ -104,19 +105,20 @@ function formatResumeGuidance(
     .filter(({ child }) => typeof child.agent === "string");
   if (!runId || knownChildren.length === 0)
     return "Resume: unavailable; no child session file was persisted.";
+  const safeRunId = safeTerminalText(runId);
   const singleSessionFile = knownChildren[0]?.child.sessionFile ?? fallbackSessionFile;
   if (
     children.length === 1 &&
     knownChildren.length === 1 &&
     hasExistingSessionFile(singleSessionFile)
   ) {
-    return `Revive: subagent({ action: "resume", id: "${runId}", message: "..." })`;
+    return `Revive: subagent({ action: "resume", id: "${safeRunId}", message: "..." })`;
   }
   const childWithSession = knownChildren.find(({ child }) =>
     hasExistingSessionFile(child.sessionFile),
   );
   if (childWithSession) {
-    return `Revive child: subagent({ action: "resume", id: "${runId}", index: ${childWithSession.index}, message: "..." })`;
+    return `Revive child: subagent({ action: "resume", id: "${safeRunId}", index: ${childWithSession.index}, message: "..." })`;
   }
   return "Resume: unavailable; no child session file was persisted.";
 }
@@ -199,32 +201,37 @@ function formatAsyncStepStatusLines(
     step.status === "running"
       ? formatActivityLabel(step.lastActivityAt, step.activityState)
       : undefined;
-  const modelThinking = formatModelThinking(step.model, step.thinking);
+  const modelThinking = safeTerminalText(formatModelThinking(step.model, step.thinking));
   const modelText = modelThinking ? ` (${modelThinking})` : "";
   const steeringText = formatSteeringSummary(step);
   const steeringSuffix = steeringText ? `, steering: ${steeringText}` : "";
   const errorText = step.error
-    ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : step.error}`
+    ? `, error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error").replace(/\.$/, "") : safeTerminalText(step.error)}`
     : "";
-  const acceptanceText = step.acceptance?.status ? `, acceptance: ${step.acceptance.status}` : "";
+  const acceptanceText = step.acceptance?.status
+    ? `, acceptance: ${safeTerminalText(step.acceptance.status)}`
+    : "";
   const budgetText = step.turnBudget
-    ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
+    ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${safeTerminalText(step.turnBudget.outcome)})`
     : "";
-  const display = step.label ? `${step.label} (${step.agent})` : step.agent;
-  const phase = step.phase ? `[${step.phase}] ` : "";
+  const display = step.label
+    ? `${safeTerminalText(step.label)} (${safeTerminalText(step.agent)})`
+    : safeTerminalText(step.agent);
+  const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
   lines.push(
-    `${stepLineLabel(status, index)}: ${phase}${display} ${step.status}${modelText}${stepActivityText ? `, ${stepActivityText}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`,
+    `${stepLineLabel(status, index)}: ${phase}${display} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`,
   );
   if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
     const reason = acceptanceRejectionReason(step.acceptance);
-    if (reason) lines.push(`  Acceptance reason: ${formatRejectionReason(reason)}`);
+    if (reason)
+      lines.push(`  Acceptance reason: ${safeTerminalText(formatRejectionReason(reason))}`);
   }
   const stepContinuation = lifecycleContinuationForIndex(status, index);
   const stepClaimed =
     typeof stepContinuation?.claimToken === "string" && stepContinuation.claimToken.length > 0;
   if (isPausedAwaitingSupervisorStep(status, step)) {
     lines.push(
-      `  Pause: awaiting supervisor${step.pause?.summary ? ` (${step.pause.summary})` : ""}`,
+      `  Pause: awaiting supervisor${step.pause?.summary ? ` (${safeTerminalText(step.pause.summary)})` : ""}`,
     );
     lines.push("  No child process is running.");
     if (stepClaimed) {
@@ -237,27 +244,27 @@ function formatAsyncStepStatusLines(
       lines.push("  Cancel: unavailable while continuation launch is finalizing.");
     } else {
       lines.push(
-        `  Resume unchanged: subagent({ action: "resume", id: "${status.runId}", index: ${index} })`,
+        `  Resume unchanged: subagent({ action: "resume", id: "${safeTerminalText(status.runId)}", index: ${index} })`,
       );
       lines.push(
-        `  Resume with guidance: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "Supervisor replied: ..." })`,
+        `  Resume with guidance: subagent({ action: "resume", id: "${safeTerminalText(status.runId)}", index: ${index}, message: "Supervisor replied: ..." })`,
       );
       lines.push(
-        `  Cancel: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`,
+        `  Cancel: subagent({ action: "interrupt", id: "${safeTerminalText(status.runId)}", index: ${index} })`,
       );
     }
   } else if (isPausedCohortStep(status, step)) {
     lines.push("  Pause: cohort pause while another child awaited supervisor.");
     lines.push(
-      `  Resume child: subagent({ action: "resume", id: "${status.runId}", index: ${index}, message: "..." })`,
+      `  Resume child: subagent({ action: "resume", id: "${safeTerminalText(status.runId)}", index: ${index}, message: "..." })`,
     );
     lines.push(
-      `  Cancel child: subagent({ action: "interrupt", id: "${status.runId}", index: ${index} })`,
+      `  Cancel child: subagent({ action: "interrupt", id: "${safeTerminalText(status.runId)}", index: ${index} })`,
     );
   } else if (isPausingLifecycleStep(status, step)) {
     if (step.pause?.kind === "awaiting_supervisor")
       lines.push(
-        `  Pause: awaiting supervisor${step.pause.summary ? ` (${step.pause.summary})` : ""}`,
+        `  Pause: awaiting supervisor${step.pause.summary ? ` (${safeTerminalText(step.pause.summary)})` : ""}`,
       );
     else lines.push("  Pause: cohort pause while another child awaited supervisor.");
     lines.push("  Stopping/reaping child; not resumable yet; check status again.");
@@ -270,7 +277,7 @@ function formatAsyncStepStatusLines(
     );
     if (!privacySafeAwaitingSupervisorLifecycle)
       for (const warning of step.processCleanup.warnings ?? [])
-        lines.push(`  Cleanup warning: ${warning}`);
+        lines.push(`  Cleanup warning: ${safeTerminalText(warning)}`);
   }
   lines.push(
     ...formatNestedRunStatusLines(step.children, {
@@ -286,13 +293,13 @@ function formatAsyncStepStatusLines(
     stepOutputPath !== outputPath &&
     fs.existsSync(stepOutputPath)
   )
-    lines.push(`  Output: ${stepOutputPath}`);
+    lines.push(`  Output: ${safeTerminalText(stepOutputPath)}`);
   if (step.status === "running") {
     lines.push(
-      `  Intercom target: ${resolveSubagentIntercomTarget(status.runId, step.agent, index)} (if registered)`,
+      `  Intercom target: ${safeTerminalText(resolveSubagentIntercomTarget(status.runId, step.agent, index))} (if registered)`,
     );
     lines.push(
-      `  Steer: subagent({ action: "steer", id: "${status.runId}", index: ${index}, message: "..." })`,
+      `  Steer: subagent({ action: "steer", id: "${safeTerminalText(status.runId)}", index: ${index}, message: "..." })`,
     );
   }
   return lines;
@@ -312,22 +319,23 @@ function rememberedForegroundChildOutput(child: ForegroundResumeRun["children"][
 }
 
 function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
+  const runId = safeTerminalText(run.runId);
   const lines = [
-    `Run: ${run.runId}`,
+    `Run: ${runId}`,
     "State: remembered foreground",
-    `Mode: ${run.mode}`,
+    `Mode: ${safeTerminalText(run.mode)}`,
     `Updated: ${new Date(run.updatedAt).toISOString()}`,
   ];
   for (const child of run.children) {
-    const output = rememberedForegroundChildOutput(child)
+    const output = safeTerminalText(rememberedForegroundChildOutput(child))
       .trim()
       .split(/\r?\n/)
       .find((line) => line.trim());
-    const statusLabel = child.cancel?.cancelledAt ? "cancelled" : child.status;
+    const statusLabel = child.cancel?.cancelledAt ? "cancelled" : safeTerminalText(child.status);
     const parts = [
-      `${child.index + 1}. ${child.agent} ${statusLabel}`,
+      `${child.index + 1}. ${safeTerminalText(child.agent)} ${statusLabel}`,
       child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
-      child.detachedReason ? `detached: ${child.detachedReason}` : undefined,
+      child.detachedReason ? `detached: ${safeTerminalText(child.detachedReason)}` : undefined,
       child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt
         ? "awaiting supervisor"
         : undefined,
@@ -335,18 +343,22 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
     ].filter(Boolean);
     lines.push(parts.join(", "));
     if (child.pause?.kind !== "awaiting_supervisor") {
-      if (child.transcriptPath) lines.push(`  Transcript: ${shortenPath(child.transcriptPath)}`);
+      if (child.transcriptPath)
+        lines.push(`  Transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`);
       if (child.artifactPaths?.outputPath)
-        lines.push(`  Output: ${shortenPath(child.artifactPaths.outputPath)}`);
+        lines.push(`  Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`);
     }
-    if (child.transcriptError) lines.push(`  Transcript warning: ${child.transcriptError}`);
+    if (child.transcriptError)
+      lines.push(`  Transcript warning: ${safeTerminalText(child.transcriptError)}`);
     if (child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt) {
       lines.push(
         ...formatForegroundSupervisorPauseMessage({
           headline: `Child ${child.index + 1} is paused awaiting supervisor.`,
-          runId: run.runId,
-          agent: child.agent,
-          requestSummary: child.pause.summary,
+          runId,
+          agent: safeTerminalText(child.agent),
+          requestSummary: child.pause.summary
+            ? safeTerminalText(child.pause.summary)
+            : child.pause.summary,
           index: child.index,
         })
           .split("\n")
@@ -354,14 +366,12 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
       );
     }
   }
-  lines.push("", `Status: subagent({ action: "status", id: "${run.runId}" })`);
+  lines.push("", `Status: subagent({ action: "status", id: "${runId}" })`);
   if (run.children.length === 1)
-    lines.push(
-      `Transcript: subagent({ action: "status", id: "${run.runId}", view: "transcript" })`,
-    );
+    lines.push(`Transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
   else
     lines.push(
-      `Transcript: subagent({ action: "status", id: "${run.runId}", index: 0, view: "transcript" })`,
+      `Transcript: subagent({ action: "status", id: "${runId}", index: 0, view: "transcript" })`,
     );
   const resumable = run.children.find(
     (child) =>
@@ -375,8 +385,8 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
   if (resumable && !awaitingSupervisor) {
     lines.push(
       run.children.length === 1
-        ? `Resume with guidance: subagent({ action: "resume", id: "${run.runId}", message: "..." })`
-        : `Resume child with guidance: subagent({ action: "resume", id: "${run.runId}", index: ${resumable.index}, message: "..." })`,
+        ? `Resume with guidance: subagent({ action: "resume", id: "${runId}", message: "..." })`
+        : `Resume child with guidance: subagent({ action: "resume", id: "${runId}", index: ${resumable.index}, message: "..." })`,
     );
   } else if (run.children.some((child) => child.cancel?.cancelledAt)) {
     lines.push(
@@ -389,7 +399,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
   } else {
     lines.push("Resume: unavailable; no child session file was persisted.");
   }
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 function formatRememberedForegroundTranscript(
@@ -401,56 +411,60 @@ function formatRememberedForegroundTranscript(
     throw new Error("Transcript index must be an integer.");
   if (index === undefined && run.children.length === 1) index = 0;
   if (index === undefined)
-    return `Transcript view requires index for foreground run '${run.runId}' with ${run.children.length} children.`;
+    return `Transcript view requires index for foreground run '${safeTerminalText(run.runId)}' with ${run.children.length} children.`;
   if (index < 0 || index >= run.children.length)
     throw new Error(
       `Transcript index ${index} is out of range for ${run.children.length} foreground children.`,
     );
   const child = run.children[index]!;
   const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
-  const outputLines = rememberedForegroundChildOutput(child)
+  const outputLines = safeTerminalText(rememberedForegroundChildOutput(child))
     .split(/\r?\n/)
     .filter((line) => line.trim())
     .slice(-lineLimit);
   const lines = [
-    `Run: ${run.runId}`,
-    `State: ${child.cancel?.cancelledAt ? "cancelled" : child.status}`,
-    `Child: ${index} (${child.agent})`,
-    child.transcriptPath ? `Transcript: ${shortenPath(child.transcriptPath)}` : undefined,
+    `Run: ${safeTerminalText(run.runId)}`,
+    `State: ${safeTerminalText(child.cancel?.cancelledAt ? "cancelled" : child.status)}`,
+    `Child: ${index} (${safeTerminalText(child.agent)})`,
+    child.transcriptPath
+      ? `Transcript: ${safeTerminalText(shortenPath(child.transcriptPath))}`
+      : undefined,
     child.artifactPaths?.outputPath
-      ? `Output: ${shortenPath(child.artifactPaths.outputPath)}`
+      ? `Output: ${safeTerminalText(shortenPath(child.artifactPaths.outputPath))}`
       : undefined,
   ].filter((line): line is string => Boolean(line));
   lines.push("Result transcript tail:");
   if (outputLines.length === 0) lines.push("  (no recovered final output available yet)");
-  else for (const line of outputLines) lines.push(`  ${line}`);
-  return lines.join("\n");
+  else for (const line of outputLines) lines.push(`  ${safeTerminalText(line)}`);
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): string {
+  const runId = safeTerminalText(run.id);
+  const safeRootRunId = safeTerminalText(rootRunId);
   const lines = [
-    `Nested run: ${run.id}`,
-    `Root: ${rootRunId}`,
-    `Parent: ${run.parentRunId}${run.parentStepIndex !== undefined ? ` step ${run.parentStepIndex + 1}` : ""}`,
-    `State: ${run.state}`,
+    `Nested run: ${runId}`,
+    `Root: ${safeRootRunId}`,
+    `Parent: ${safeTerminalText(run.parentRunId)}${run.parentStepIndex !== undefined ? ` step ${run.parentStepIndex + 1}` : ""}`,
+    `State: ${safeTerminalText(run.state)}`,
     run.activityState || run.lastActivityAt
       ? `Activity: ${formatActivityLabel(run.lastActivityAt, run.activityState)}`
       : undefined,
-    run.mode ? `Mode: ${run.mode}` : undefined,
-    `Agent: ${nestedRunDisplayName(run)}`,
+    run.mode ? `Mode: ${safeTerminalText(run.mode)}` : undefined,
+    `Agent: ${safeTerminalText(nestedRunDisplayName(run))}`,
     run.currentStep !== undefined
       ? `Progress: step ${run.currentStep + 1}/${run.chainStepCount ?? run.steps?.length ?? 1}`
       : undefined,
     run.turnBudget
-      ? `Turn budget: ${run.turnBudget.turnCount}/${run.turnBudget.maxTurns}+${run.turnBudget.graceTurns} (${run.turnBudget.outcome})`
+      ? `Turn budget: ${run.turnBudget.turnCount}/${run.turnBudget.maxTurns}+${run.turnBudget.graceTurns} (${safeTerminalText(run.turnBudget.outcome)})`
       : undefined,
-    run.asyncDir ? `Dir: ${run.asyncDir}` : undefined,
-    run.sessionFile ? `Session: ${run.sessionFile}` : undefined,
-    run.error ? `Error: ${run.error}` : undefined,
+    run.asyncDir ? `Dir: ${safeTerminalText(run.asyncDir)}` : undefined,
+    run.sessionFile ? `Session: ${safeTerminalText(run.sessionFile)}` : undefined,
+    run.error ? `Error: ${safeTerminalText(run.error)}` : undefined,
   ].filter((line): line is string => Boolean(line));
   if (run.path.length) {
     lines.push(
-      `Path: ${run.path.map((part) => `${part.runId}${part.stepIndex !== undefined ? `:${part.stepIndex + 1}` : ""}${part.agent ? `:${part.agent}` : ""}`).join(" > ")} > ${run.id}`,
+      `Path: ${safeTerminalText(run.path.map((part) => `${part.runId}${part.stepIndex !== undefined ? `:${part.stepIndex + 1}` : ""}${part.agent ? `:${part.agent}` : ""}`).join(" > "))} > ${runId}`,
     );
   }
   if (run.steps?.length) {
@@ -461,10 +475,10 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
           ? formatActivityLabel(step.lastActivityAt, step.activityState)
           : undefined;
       const budget = step.turnBudget
-        ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${step.turnBudget.outcome})`
+        ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${safeTerminalText(step.turnBudget.outcome)})`
         : "";
       lines.push(
-        `  ${index + 1}. ${step.agent} ${step.status}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${step.error}` : ""}`,
+        `  ${index + 1}. ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${safeTerminalText(step.error)}` : ""}`,
       );
       lines.push(
         ...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true }),
@@ -474,13 +488,13 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
   lines.push(...formatNestedRunStatusLines(run.children, { indent: "  ", commandHints: true }));
   lines.push(
     "Commands:",
-    `  Status: subagent({ action: "status", id: "${run.id}" })`,
-    `  Interrupt: subagent({ action: "interrupt", id: "${run.id}" })`,
-    `  Resume: subagent({ action: "resume", id: "${run.id}", message: "..." })`,
-    `  Steer: subagent({ action: "steer", id: "${run.id}", message: "..." })`,
-    `  Root status: subagent({ action: "status", id: "${rootRunId}" })`,
+    `  Status: subagent({ action: "status", id: "${runId}" })`,
+    `  Interrupt: subagent({ action: "interrupt", id: "${runId}" })`,
+    `  Resume: subagent({ action: "resume", id: "${runId}", message: "..." })`,
+    `  Steer: subagent({ action: "steer", id: "${runId}", message: "..." })`,
+    `  Root status: subagent({ action: "status", id: "${safeRootRunId}" })`,
   );
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 function formatDetailedAsyncStatus(
@@ -517,34 +531,38 @@ function formatDetailedAsyncStatus(
   const pausedAwaitingSupervisor = isPausedAwaitingSupervisorStatus(status);
   const privacySafeAwaitingSupervisorLifecycle = isProtectedPausedLifecycle(status);
   const lines = [
-    `Run: ${status.runId}`,
-    `State: ${status.state}`,
+    `Run: ${safeTerminalText(status.runId)}`,
+    `State: ${safeTerminalText(status.state)}`,
     status.error
-      ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : status.error}`
+      ? `Error: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("error") : safeTerminalText(status.error)}`
       : undefined,
     statusActivityText ? `Activity: ${statusActivityText}` : undefined,
     steeringText ? `Steering: ${steeringText}` : undefined,
-    `Mode: ${status.mode}`,
+    `Mode: ${safeTerminalText(status.mode)}`,
     !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
       ? `PID: ${status.pid}`
       : undefined,
-    !privacySafeAwaitingSupervisorLifecycle && status.cwd ? `Cwd: ${status.cwd}` : undefined,
-    `Progress: ${progressLabel}`,
+    !privacySafeAwaitingSupervisorLifecycle && status.cwd
+      ? `Cwd: ${safeTerminalText(status.cwd)}`
+      : undefined,
+    `Progress: ${safeTerminalText(progressLabel)}`,
     status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
     `Started: ${started}`,
     `Updated: ${updated}`,
     status.turnBudget
-      ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${status.turnBudget.outcome})`
+      ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${safeTerminalText(status.turnBudget.outcome)})`
       : undefined,
-    !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${asyncDir}` : undefined,
-    !privacySafeAwaitingSupervisorLifecycle && outputPath ? `Output: ${outputPath}` : undefined,
+    !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${safeTerminalText(asyncDir)}` : undefined,
+    !privacySafeAwaitingSupervisorLifecycle && outputPath
+      ? `Output: ${safeTerminalText(outputPath)}`
+      : undefined,
     reconciliation.message
-      ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : reconciliation.message}`
+      ? `Diagnosis: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("diagnosis") : safeTerminalText(reconciliation.message)}`
       : undefined,
     !privacySafeAwaitingSupervisorLifecycle &&
     reconciliation.resultPath &&
     fs.existsSync(reconciliation.resultPath)
-      ? `Result: ${reconciliation.resultPath}`
+      ? `Result: ${safeTerminalText(reconciliation.resultPath)}`
       : undefined,
   ].filter((line): line is string => Boolean(line));
   for (const [index, step] of (status.steps ?? []).entries())
@@ -572,21 +590,23 @@ function formatDetailedAsyncStatus(
   );
   if (nestedWarning)
     lines.push(
-      `Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : nestedWarning}`,
+      `Warning: ${privacySafeAwaitingSupervisorLifecycle ? protectedLifecycleText("nested_warning") : safeTerminalText(nestedWarning)}`,
     );
   if (!privacySafeAwaitingSupervisorLifecycle && status.sessionFile)
-    lines.push(`Session: ${status.sessionFile}`);
+    lines.push(`Session: ${safeTerminalText(status.sessionFile)}`);
   if (status.state === "running")
     lines.push(
-      `Steer running child: subagent({ action: "steer", id: "${status.runId}", message: "..." })`,
+      `Steer running child: subagent({ action: "steer", id: "${safeTerminalText(status.runId)}", message: "..." })`,
     );
   if (pausedAwaitingSupervisor && (status.steps?.length ?? 0) <= 1) {
     lines.push(
       ...formatForegroundSupervisorPauseMessage({
         headline: "Paused lifecycle actions:",
-        runId: status.runId,
-        agent: status.steps?.[0]?.agent ?? "subagent",
-        requestSummary: status.pause?.summary,
+        runId: safeTerminalText(status.runId),
+        agent: status.steps?.[0]?.agent ? safeTerminalText(status.steps[0].agent) : "subagent",
+        requestSummary: status.pause?.summary
+          ? safeTerminalText(status.pause.summary)
+          : status.pause?.summary,
         claimUnavailable:
           typeof lifecycleContinuationForIndex(status, 0)?.claimToken === "string" &&
           lifecycleContinuationForIndex(status, 0)!.claimToken!.length > 0,
@@ -597,7 +617,7 @@ function formatDetailedAsyncStatus(
     lines.push("Paused lifecycle actions are listed per child above.");
   } else if (status.state === "continued") {
     lines.push(
-      `Continuation: ${lifecycleContinuationForIndex(status, requestedIndex ?? 0)?.continuationRunId ?? status.lifecycle?.continuation?.continuationRunId ?? "unknown"}`,
+      `Continuation: ${safeTerminalText(lifecycleContinuationForIndex(status, requestedIndex ?? 0)?.continuationRunId ?? status.lifecycle?.continuation?.continuationRunId ?? "unknown")}`,
     );
     lines.push(
       "Resume: unavailable; this paused supervisor run already launched its continuation.",
@@ -606,11 +626,11 @@ function formatDetailedAsyncStatus(
     lines.push(formatResumeGuidance(status.runId, status.steps ?? [], status.sessionFile));
   }
   if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(logPath))
-    lines.push(`Log: ${logPath}`);
+    lines.push(`Log: ${safeTerminalText(logPath)}`);
   if (!privacySafeAwaitingSupervisorLifecycle && fs.existsSync(eventsPath))
-    lines.push(`Events: ${eventsPath}`);
+    lines.push(`Events: ${safeTerminalText(eventsPath)}`);
 
-  return lines.join("\n");
+  return safeTerminalDocument(lines.join("\n"));
 }
 
 function inspectAsyncResultFile(
@@ -657,9 +677,9 @@ function inspectAsyncResultFile(
       pause: data.pause,
     });
     const lines = [
-      `Run: ${runId}`,
-      `State: ${status}`,
-      ...(privacySafeResult ? [] : [`Result: ${resultPath}`]),
+      `Run: ${safeTerminalText(runId ?? "unknown")}`,
+      `State: ${safeTerminalText(status)}`,
+      ...(privacySafeResult ? [] : [`Result: ${safeTerminalText(resultPath)}`]),
     ];
     const children = Array.isArray(data.results)
       ? data.results
@@ -668,9 +688,12 @@ function inspectAsyncResultFile(
         : [];
     lines.push(formatResumeGuidance(runId, children, data.sessionFile));
     if (data.summary)
-      lines.push("", privacySafeResult ? "Paused awaiting supervisor." : data.summary);
+      lines.push(
+        "",
+        privacySafeResult ? "Paused awaiting supervisor." : safeTerminalText(data.summary),
+      );
     return {
-      content: [{ type: "text", text: lines.join("\n") }],
+      content: [{ type: "text", text: safeTerminalDocument(lines.join("\n")) }],
       details: { mode: "single", results: [] },
     };
   } catch (error) {

@@ -47,7 +47,6 @@ import {
   provisionSubagentExtensionConfig,
   restoreNeededTlhSubagentPrompts,
   subagentExtensionConfigMissingDefaults,
-  settingsRequireTlhSubagentPrompts,
 } from "../scripts/lib/tlh-install-subagents.mjs";
 
 function tempFixture(t, prefix = "tlh-install-lib-test-") {
@@ -62,6 +61,10 @@ function writePromptSet(dir, label = "prompt") {
     writeFileSync(join(dir, prompt), `${label}:${prompt}\n`);
   }
 }
+
+test("installer manages the canonical test-runner prompt", () => {
+  assert.ok(TLH_SUBAGENT_PROMPTS.includes("test-runner.md"));
+});
 
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -1298,17 +1301,11 @@ test("subagent prompt discovery honors source precedence and copies prompt files
   }
 });
 
-test("settings defaults declare when bundled subagent prompts are required", (t) => {
-  const root = tempFixture(t);
-  const defaults = join(root, "settings.defaults.json");
-  writeFileSync(defaults, JSON.stringify({ subagents: { agentDirs: ["tlh/agents/subagents"] } }));
-  assert.equal(settingsRequireTlhSubagentPrompts(defaults), true);
-
-  writeFileSync(defaults, JSON.stringify({ subagents: { agentDirs: ["other"] } }));
-  assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
-
-  writeFileSync(defaults, "not json");
-  assert.equal(settingsRequireTlhSubagentPrompts(defaults), false);
+test("settings defaults no longer declare a subagents.agentDirs default", () => {
+  const defaults = JSON.parse(
+    readFileSync(join(process.cwd(), "config", "settings.defaults.json"), "utf8"),
+  );
+  assert.equal(defaults.subagents, undefined);
 });
 
 test("subagentExtensionConfigMissingDefaults reports only the active-notice default", (t) => {

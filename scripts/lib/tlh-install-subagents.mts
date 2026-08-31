@@ -33,6 +33,7 @@ interface SubagentConfig {
 
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
   "developer.md",
+  "test-runner.md",
   "code-reviewer.md",
   "repo-scout.md",
   "diff-summarizer.md",
@@ -48,7 +49,7 @@ function isPlainObject(value: unknown): value is PlainObject {
 
 export { TLH_SUBAGENT_PROMPTS };
 
-export interface RetiredSubagentPackageCandidate {
+interface RetiredSubagentPackageCandidate {
   source: string;
   identity: string;
 }
@@ -79,7 +80,7 @@ interface RetiredSubagentCleanupConfig {
   ) => PackageManagerRunResult;
 }
 
-export interface RetiredSubagentCleanupResult {
+interface RetiredSubagentCleanupResult {
   uninstalledNpmPackages: string[];
   removedGitPaths: string[];
   plannedNpmPackages: string[];
@@ -459,22 +460,6 @@ export function cleanupManagedRetiredSubagentPackages(
     }
   }
   return cleanupResult;
-}
-
-export function settingsRequireTlhSubagentPrompts(
-  defaultsFile: string,
-  { noSettings = false }: { noSettings?: boolean } = {},
-): boolean {
-  if (noSettings || !defaultsFile || !existsSync(defaultsFile)) return false;
-  try {
-    const settings = readJsonFile(defaultsFile);
-    if (!isPlainObject(settings)) return false;
-    const subagents = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-    const agentDirs = subagents?.agentDirs;
-    return Array.isArray(agentDirs) && agentDirs.includes("tlh/agents/subagents");
-  } catch {
-    return false;
-  }
 }
 
 export function defaultExtensionsRequireCriticalInstall(

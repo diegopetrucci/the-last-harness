@@ -86,6 +86,130 @@ test("tracker keeps primary activity busy through retry grace and compaction ret
   assert.equal(tracker.isInProgress(), false);
 });
 
+test("tracker clears failed and aborted compaction without success retry grace", () => {
+  const timers = createFakeTimers();
+  const tracker = createTlhEffectiveActivityTracker({
+    now: timers.now,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    retryGraceMs: 25,
+  });
+
+  // An unmatched failure is a no-op and must not create retry grace.
+  tracker.handleSessionCompactFailed();
+  tracker.handleSessionCompactFailed({
+    type: "session_compact_failed",
+    reason: "unmatched",
+    aborted: true,
+    willRetry: true,
+  });
+  assert.deepEqual(tracker.getSnapshot().primaryReasons, []);
+  assert.equal(timers.pendingCount(), 0, "unmatched failure must not schedule retry grace");
+
+  tracker.handleSessionBeforeCompact({ reason: "overflow", willRetry: true });
+  assert.deepEqual(tracker.getSnapshot().primaryReasons, ["primary:compaction:overflow"]);
+  // A failure for another compaction reason must not clear the active one.
+  tracker.handleSessionCompactFailed({
+    type: "session_compact_failed",
+    reason: "different",
+    aborted: true,
+    willRetry: false,
+  });
+  assert.deepEqual(tracker.getSnapshot().primaryReasons, ["primary:compaction:overflow"]);
+  tracker.handleSessionCompactFailed({
+    type: "session_compact_failed",
+    reason: "overflow",
+    errorMessage: "Context overflow recovery failed",
+    aborted: false,
+    willRetry: false,
+    fromExtension: false,
+  });
+  assert.deepEqual(tracker.getSnapshot().primaryReasons, []);
+  assert.equal(tracker.isInProgress(), false);
+  assert.equal(timers.pendingCount(), 0, "failure must not schedule retry grace");
+
+  tracker.handleSessionBeforeCompact({ reason: "manual", willRetry: false });
+  tracker.handleSessionCompactFailed({
+    type: "session_compact_failed",
+    reason: "manual",
+    aborted: true,
+    willRetry: true,
+    fromExtension: true,
+  });
+  assert.deepEqual(tracker.getSnapshot().primaryReasons, []);
+  assert.equal(timers.pendingCount(), 0, "aborted compaction must not schedule retry grace");
+});
+
+test("tracker tracks nested Pi UI prompts separately from primary activity", () => {
+  const tracker = createTlhEffectiveActivityTracker();
+
+  tracker.handleUIPromptStart({
+    type: "ui_prompt_start",
+    reason: "ui_prompt",
+    kind: "confirm",
+    title: "Approve change?",
+  });
+  assert.deepEqual(tracker.getSnapshot(), {
+    inProgress: false,
+    waitingForUser: true,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+
+  // Pi emits only the outer prompt, but direct duplicate/nested events must be
+  // balanced safely rather than turning waiting into model activity.
+  tracker.handleUIPromptStart({
+    type: "ui_prompt_start",
+    reason: "ui_prompt",
+    kind: "custom",
+  });
+  tracker.handleUIPromptEnd({
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "custom",
+  });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  assert.equal(tracker.getSnapshot().inProgress, false);
+
+  tracker.handleUIPromptEnd({
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "confirm",
+    title: "Approve change?",
+  });
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+  // An unmatched end must not underflow or affect later starts.
+  tracker.handleUIPromptEnd({
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "confirm",
+  });
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+
+  tracker.handleBeforeAgentStart();
+  tracker.handleAgentStart();
+  tracker.handleUIPromptStart({
+    type: "ui_prompt_start",
+    reason: "ui_prompt",
+    kind: "input",
+  });
+  assert.equal(tracker.getSnapshot().inProgress, true);
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  tracker.handleUIPromptEnd({
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "input",
+  });
+  tracker.handleAgentEnd({ messages: [] });
+  assert.equal(tracker.getSnapshot().inProgress, false);
+
+  const disposedTracker = createTlhEffectiveActivityTracker();
+  disposedTracker.handleUIPromptStart({ type: "ui_prompt_start", reason: "ui_prompt" });
+  assert.equal(disposedTracker.getSnapshot().waitingForUser, true);
+  disposedTracker.dispose();
+  assert.equal(disposedTracker.getSnapshot().waitingForUser, false);
+});
+
 test("tracker treats duplicate retry-grace scheduling for the same key as idempotent", () => {
   const timers = createFakeTimers();
   const tracker = createTlhEffectiveActivityTracker({
@@ -178,6 +302,7 @@ test("tracker keeps concurrent async jobs active across duplicate, out-of-order,
     tracker.dispose();
     assert.deepEqual(tracker.getSnapshot(), {
       inProgress: false,
+      waitingForUser: false,
       primaryReasons: [],
       activeAsyncJobIds: [],
     });
@@ -313,14 +438,25 @@ test("tracker notifies snapshot listeners only when effective state changes", ()
   tracker.handleAsyncStarted({ id: "job-1" });
 
   assert.deepEqual(snapshots, [
-    { inProgress: true, primaryReasons: ["primary:pending-start"], activeAsyncJobIds: [] },
     {
       inProgress: true,
+      waitingForUser: false,
+      primaryReasons: ["primary:pending-start"],
+      activeAsyncJobIds: [],
+    },
+    {
+      inProgress: true,
+      waitingForUser: false,
       primaryReasons: ["primary:agent-loop", "primary:pending-start"],
       activeAsyncJobIds: [],
     },
-    { inProgress: true, primaryReasons: ["primary:retry-grace"], activeAsyncJobIds: [] },
-    { inProgress: false, primaryReasons: [], activeAsyncJobIds: [] },
+    {
+      inProgress: true,
+      waitingForUser: false,
+      primaryReasons: ["primary:retry-grace"],
+      activeAsyncJobIds: [],
+    },
+    { inProgress: false, waitingForUser: false, primaryReasons: [], activeAsyncJobIds: [] },
   ]);
 });
 
@@ -397,6 +533,7 @@ test("tracker ignores late async mutations after dispose", () => {
     tracker.handleAsyncComplete({ id: "job-1" });
     assert.deepEqual(tracker.getSnapshot(), {
       inProgress: false,
+      waitingForUser: false,
       primaryReasons: [],
       activeAsyncJobIds: [],
     });
@@ -650,6 +787,78 @@ test("regression: job is retained when asyncDir exists but status.json not yet w
   }
 });
 
+test("regression: partial control events preserve started async anchors during startup", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-start-control-anchors-"));
+  try {
+    const asyncDir = join(root, "run-start-control");
+    mkdirSync(asyncDir, { recursive: true });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    // The parent emits async-started before the child has written status.json.
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir, pid: 12345 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+
+    // Duplicate async-started events can omit or invalidate the PID. Losing the
+    // PID in this missing-status startup window would make the job unverifiable.
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+    tracker.handleAsyncStarted({ id: "run-start-control", asyncDir, pid: 0 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+
+    // A later control event can also be partial: neither an omitted nor an invalid
+    // asyncDir may erase the startup evidence needed to bridge that race.
+    tracker.handleAsyncControl({
+      event: { runId: "run-start-control", mode: "background" },
+    });
+    tracker.handleAsyncControl({
+      event: { runId: "run-start-control", mode: "background" },
+      asyncDir: {},
+    });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-start-control"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("regression: valid control and started evidence survives a later partial started event", () => {
+  const root = mkdtempSync(join(tmpdir(), "tlh-control-start-anchors-"));
+  try {
+    const originalDir = makeAsyncDir(root, "run-control-start-original", {
+      runId: "run-control-start",
+      state: "running",
+      pid: 12346,
+    });
+    const newerDir = makeAsyncDir(root, "run-control-start-newer", {
+      runId: "run-control-start",
+      state: "running",
+      pid: 12347,
+    });
+    const tracker = createTlhEffectiveActivityTracker({
+      checkPidLiveness: () => "alive",
+    });
+
+    tracker.handleAsyncControl({
+      event: { runId: "run-control-start", mode: "background" },
+      asyncDir: originalDir,
+    });
+    tracker.handleAsyncStarted({ id: "run-control-start", asyncDir: newerDir, pid: 12347 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-control-start"]);
+
+    // Make the old anchor terminal. If the valid newer evidence was not retained,
+    // the next partial started event would either follow this tombstone or be dropped.
+    writeFileSync(
+      join(originalDir, "status.json"),
+      JSON.stringify({ runId: "run-control-start", state: "complete", pid: 12346 }),
+    );
+    tracker.handleAsyncStarted({ id: "run-control-start", asyncDir: "", pid: -1 });
+    assert.deepEqual(tracker.getSnapshot().activeAsyncJobIds, ["run-control-start"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("regression: started job with dead pid and no status.json is dropped (startup window with dead pid)", () => {
   const root = mkdtempSync(join(tmpdir(), "tlh-start-race-dead-"));
   try {
@@ -829,6 +1038,85 @@ test("registered tracker emits tlh:effective-activity on pi.events when snapshot
   // Last emission: inProgress=false (agent_end with no retry).
   assert.equal(activityEmits[2].payload.inProgress, false);
   assert.deepEqual(activityEmits[2].payload.activeAsyncJobIds, []);
+});
+
+test("registered tracker handles Pi 0.84.4 compaction and UI prompt event order", () => {
+  const eventHandlers = new Map();
+  const emitted = [];
+  const pi = {
+    on(event, handler) {
+      eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+    },
+    events: {
+      on(_channel, _handler) {
+        return () => {};
+      },
+      emit(channel, payload) {
+        emitted.push({ channel, payload });
+      },
+    },
+  };
+  const tracker = registerTlhEffectiveActivityTracker(pi);
+  const fire = (name, event) => {
+    for (const handler of eventHandlers.get(name) ?? []) handler(event);
+  };
+
+  fire("session_before_compact", {
+    type: "session_before_compact",
+    preparation: { tokensBefore: 240000, firstKeptEntryId: "entry-1" },
+    branchEntries: [],
+    reason: "overflow",
+    willRetry: true,
+    signal: new AbortController().signal,
+  });
+  fire("session_compact_failed", {
+    type: "session_compact_failed",
+    reason: "overflow",
+    errorMessage: "Context overflow recovery failed",
+    aborted: false,
+    willRetry: false,
+    fromExtension: false,
+  });
+  assert.deepEqual(tracker.getSnapshot(), {
+    inProgress: false,
+    waitingForUser: false,
+    primaryReasons: [],
+    activeAsyncJobIds: [],
+  });
+
+  fire("ui_prompt_start", {
+    type: "ui_prompt_start",
+    reason: "ui_prompt",
+    kind: "confirm",
+    title: "Continue?",
+  });
+  fire("ui_prompt_start", {
+    type: "ui_prompt_start",
+    reason: "ui_prompt",
+    kind: "custom",
+  });
+  fire("ui_prompt_end", {
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "custom",
+  });
+  assert.equal(tracker.getSnapshot().waitingForUser, true);
+  fire("ui_prompt_end", {
+    type: "ui_prompt_end",
+    reason: "ui_prompt",
+    kind: "confirm",
+    title: "Continue?",
+  });
+  assert.equal(tracker.getSnapshot().waitingForUser, false);
+
+  const activityEmits = emitted.filter((entry) => entry.channel === TLH_EFFECTIVE_ACTIVITY_EVENT);
+  assert.equal(activityEmits.length, 4);
+  assert.equal(activityEmits[0].payload.inProgress, true);
+  assert.equal(activityEmits[0].payload.waitingForUser, false);
+  assert.equal(activityEmits[1].payload.inProgress, false);
+  assert.equal(activityEmits[1].payload.waitingForUser, false);
+  assert.equal(activityEmits[2].payload.waitingForUser, true);
+  assert.equal(activityEmits[3].payload.waitingForUser, false);
 });
 
 test("registered tracker does not emit on pi.events when snapshot is unchanged", () => {

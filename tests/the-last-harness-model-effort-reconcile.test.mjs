@@ -16,6 +16,9 @@ const {
 } = await jiti.import("../extensions/the-last-harness/model-effort-reconcile.ts");
 const { selectProviderAwareAgentDefaults, parseProviderModelReference, splitKnownThinkingSuffix } =
   await jiti.import("../extensions/the-last-harness/model-defaults.ts");
+const { normalizeAgentModelDefaults } = await jiti.import(
+  "../extensions/the-last-harness/prompts.ts",
+);
 
 /**
  * Mirrors the module's provider-filtered packaged catalog so the parity test can
@@ -30,14 +33,15 @@ function packagedCandidateModelsForProvider(agent, provider) {
     return [];
   }
   const seen = new Map();
-  for (const raw of [
-    agent.model,
-    ...(agent.tlhOpenaiModels ?? []),
-    ...(agent.tlhAnthropicModels ?? []),
-  ]) {
+  const rawModels = [
+    ...(agent.tlhModelDefaultsSource === "legacy" ? [agent.model] : []),
+    ...(agent.tlhModelDefaults ?? []).flatMap((entry) =>
+      (entry.models ?? []).map((model) => `${model.provider}/${model.id}`),
+    ),
+  ];
+  for (const raw of rawModels) {
     const parsed = parseProviderModelReference(splitKnownThinkingSuffix(raw).baseModel);
-    if (!parsed) continue;
-    if (parsed.provider !== provider) continue;
+    if (!parsed || parsed.provider !== provider) continue;
     const key = `${parsed.provider}/${parsed.id}`;
     if (!seen.has(key)) seen.set(key, parsed);
   }
@@ -52,11 +56,21 @@ function packagedCandidateModelsForProvider(agent, provider) {
 const architectAgent = {
   name: "architect",
   description: "Primary architect agent",
-  model: "anthropic/claude-opus-5",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
-  tlhAnthropicThinking: "high",
-  tlhOpenaiThinking: "high",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/architect.md",
@@ -66,47 +80,141 @@ const architectAgent = {
 const rushAgent = {
   name: "rush",
   description: "Rush primary agent",
-  model: "anthropic/claude-sonnet-4-6",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  thinking: "low",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "low",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "low" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
+  preferCurrentOpenaiModel: true,
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/rush.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const productAgent = {
+  name: "product",
+  description: "Product primary agent",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/product.md",
+};
+
+/** @type {import("../extensions/the-last-harness/types.ts").AgentPrompt} */
+const bugHunterAgent = {
+  name: "bug-hunter",
+  description: "Bug-hunter primary agent",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-opus-5" },
+  tools: [],
+  systemPrompt: "",
+  filePath: "/fake/agents/primary/bug-hunter.md",
 };
 
 /** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
 const developerSubagent = {
   name: "developer",
   description: "Developer subagent",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
-  tlhAnthropicThinking: "medium",
-  tlhOpenaiThinking: "max",
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "max",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "medium",
+    },
+    { provider: "openrouter", effort: "medium" },
+  ],
 };
 
 /** @type {import("../extensions/the-last-harness/types.ts").SubagentMetadata} */
 const codeReviewerSubagent = {
   name: "code-reviewer",
   description: "Code reviewer subagent",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-sol"],
-  tlhAnthropicModels: ["anthropic/claude-opus-5"],
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-sol" }],
+      effort: "high",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-opus-5" }],
+      effort: "high",
+    },
+    { provider: "openrouter", effort: "high" },
+  ],
   preferOppositeProvider: true,
 };
 
 /**
- * Mirrors agents/primary/rush.md, which sets preferCurrentOpenaiModel alongside an
- * anthropic `model`. Kept separate from rushAgent so the plain fallback tests stay
- * focused on generic thinking resolution.
+ * Mirrors agents/primary/rush.md, which sets preferCurrentOpenaiModel alongside its
+ * provider-default block. Kept separate from rushAgent so the plain fallback tests stay
+ * focused on provider-default resolution.
  * @type {import("../extensions/the-last-harness/types.ts").AgentPrompt}
  */
 const rushOpenaiAgent = {
   name: "rush-openai",
   description: "Rush primary agent with preferCurrentOpenaiModel",
-  model: "anthropic/claude-sonnet-4-6",
-  tlhOpenaiModels: ["openai-codex/gpt-5.6-luna"],
-  tlhAnthropicModels: ["anthropic/claude-sonnet-4-6"],
+  tlhModelDefaultsSource: "frontmatter",
+  tlhModelDefaults: [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "medium",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-sonnet-4-6" }],
+      effort: "low",
+    },
+    { provider: "openrouter", effort: "low" },
+  ],
+  preferredModel: { provider: "anthropic", id: "claude-sonnet-4-6" },
   preferCurrentOpenaiModel: true,
-  thinking: "low",
   tools: [],
   systemPrompt: "",
   filePath: "/fake/agents/primary/rush-openai.md",
@@ -115,6 +223,8 @@ const rushOpenaiAgent = {
 const primaryAgents = new Map([
   ["architect", architectAgent],
   ["rush", rushAgent],
+  ["product", productAgent],
+  ["bug-hunter", bugHunterAgent],
   ["rush-openai", rushOpenaiAgent],
 ]);
 
@@ -203,6 +313,55 @@ test("primary override drift — empty or invalid override values are skipped", 
   const result = computeModelEffortDrift(primaryAgents, subagentMetadata, settings, "anthropic");
   assert.equal(result.length, 1);
   assert.equal(result[0].name, "rush");
+});
+
+test("unlocked primary overrides for Rush, Product, and Bug-hunter are surfaced after packaged drift", () => {
+  const settings = {
+    tlh: {
+      primaryAgent: {
+        modelOverrides: {
+          rush: "anthropic/claude-opus-5",
+          product: "anthropic/claude-sonnet-4-6",
+          "bug-hunter": "anthropic/claude-sonnet-4-6",
+        },
+      },
+    },
+  };
+  const acknowledgedSnapshot = {
+    rush: { byProvider: { anthropic: { model: "anthropic/old-rush", thinking: "medium" } } },
+    product: {
+      byProvider: { anthropic: { model: "anthropic/old-product", thinking: "low" } },
+    },
+    "bug-hunter": {
+      byProvider: { anthropic: { model: "anthropic/old-bug-hunter", thinking: "low" } },
+    },
+  };
+
+  const result = computeModelEffortDrift(
+    primaryAgents,
+    subagentMetadata,
+    settings,
+    "anthropic",
+    acknowledgedSnapshot,
+  );
+  const byName = new Map(result.map((entry) => [entry.name, entry]));
+  assert.deepEqual([...byName.keys()], ["rush", "product", "bug-hunter"]);
+  assert.deepEqual(byName.get("rush")?.packaged, {
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+  });
+  assert.deepEqual(byName.get("product")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  assert.deepEqual(byName.get("bug-hunter")?.packaged, {
+    model: "anthropic/claude-opus-5",
+    thinking: "high",
+  });
+  for (const name of ["rush", "product", "bug-hunter"]) {
+    assert.equal(byName.get(name)?.role, "primary");
+    assert.equal(byName.get(name)?.packagedDefaultsChanged, true);
+  }
 });
 
 // --- Subagent overrides ---
@@ -351,6 +510,24 @@ test("preferOppositeProvider subagent resolves to same-provider fallback in prov
   assert.equal(onOpenai.packaged.model, "openai-codex/gpt-5.6-sol");
 });
 
+test("legacy reconcile catalog includes generic model separately from normalized provider lists", () => {
+  const normalized = normalizeAgentModelDefaults({
+    model: "anthropic/claude-generic",
+    tlhOpenaiModels: "openai-codex/gpt-review",
+  });
+  const agent = {
+    name: "legacy-generic-reconcile",
+    description: "Legacy generic reconcile fixture",
+    ...normalized,
+  };
+  const settings = {
+    subagents: { agentOverrides: { [agent.name]: { thinking: "high" } } },
+  };
+
+  const [entry] = computeModelEffortDrift(new Map(), [agent], settings, "anthropic");
+  assert.equal(entry.packaged.model, "anthropic/claude-generic");
+});
+
 test("preferCurrentOpenaiModel primary reports the current-provider packaged default", () => {
   const settings = {
     tlh: { primaryAgent: { modelOverrides: { "rush-openai": "anthropic/claude-opus-5" } } },
@@ -393,18 +570,18 @@ test("packaged defaults agree with selectProviderAwareAgentDefaults across a fix
   }
 });
 
-test("rush primary agent falls back to generic thinking when provider is unknown", () => {
+test("new-format rush primary does not synthesize effort for an unknown provider", () => {
   const settings = {
     tlh: { primaryAgent: { modelOverrides: { rush: "anthropic/claude-opus-5" } } },
   };
-  // rush has generic thinking: "low" and no provider-specific thinking fields
+  // Generic thinking is intentionally not reintroduced for migrated frontmatter.
   const [entry] = computeModelEffortDrift(
     primaryAgents,
     subagentMetadata,
     settings,
     "unknown-provider",
   );
-  assert.equal(entry.packaged.thinking, "low");
+  assert.equal(entry.packaged.thinking, undefined);
 });
 
 // --- packagedDefaultsChanged detection ---
@@ -1076,9 +1253,14 @@ test("sanitize: empty-string provider key in byProvider is dropped and does not 
           "architect",
           {
             name: "architect",
-            model: "anthropic/claude-opus-5",
-            tlhAnthropicModels: ["anthropic/claude-opus-5"],
-            tlhAnthropicThinking: "high",
+            tlhModelDefaultsSource: "frontmatter",
+            tlhModelDefaults: [
+              {
+                provider: "anthropic",
+                models: [{ provider: "anthropic", id: "claude-opus-5" }],
+                effort: "high",
+              },
+            ],
             tools: [],
             systemPrompt: "",
             filePath: "/fake/architect.md",

@@ -8,8 +8,13 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../../agents/agents.ts";
+import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
-import { applyThinkingSuffix, getThinkingLevelDropNote } from "../shared/pi-args.ts";
+import {
+  applyThinkingSuffix,
+  getThinkingLevelDropNote,
+  validatePiToolPolicy,
+} from "../shared/pi-args.ts";
 import {
   injectOutputPathSystemPrompt,
   injectSingleOutputInstruction,
@@ -39,11 +44,12 @@ import { remainingExecutionTimeMs } from "../../agents/execution-ceiling.ts";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveChildCwd } from "../../shared/utils.ts";
 import {
   buildFallbackModelList,
-  buildModelCandidates,
+  buildModelCandidatePlan,
   canonicalSubagentModelIdentity,
   modelReferenceFromIdentity,
   resolveSubagentModelOverride,
   type AvailableModelInfo,
+  type ModelRegistryEvidence,
   type ParentModel,
 } from "../shared/model-fallback.ts";
 import type { ModelScopeConfig } from "../shared/model-scope.ts";
@@ -102,6 +108,7 @@ import {
   resolveTkTicketMetadata,
   resolveTkTicketTaskContext,
 } from "../shared/tk-ticket.ts";
+import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.ts";
 
 const piPackageRoot = resolvePiPackageRoot();
 
@@ -124,6 +131,7 @@ interface AsyncChainParams {
   agents: AgentConfig[];
   ctx: AsyncExecutionContext;
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   cwd?: string;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
@@ -142,6 +150,8 @@ interface AsyncChainParams {
   timeoutMs?: number;
   turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
+  /** Exact approved project-agent captures for the detached runner steps. */
+  projectAgentCaptures?: readonly ProjectAgentRunCapture[];
 }
 
 interface AsyncSingleParams {
@@ -150,8 +160,16 @@ interface AsyncSingleParams {
   agentConfig: AgentConfig;
   ctx: AsyncExecutionContext;
   cwd?: string;
-  continuationSource?: { asyncDir: string; runId: string; index: number; claimToken: string };
+  continuationSource?: {
+    asyncDir: string;
+    runId: string;
+    index: number;
+    claimToken: string;
+    projectAgent?: ProjectAgentRunCapture;
+  };
   inheritedTkTicket?: TkTicketMetadata;
+  /** Exact approved project-agent config/provenance for this child. */
+  projectAgent?: ProjectAgentRunCapture;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig: ArtifactConfig;
@@ -175,6 +193,7 @@ interface AsyncSingleParams {
   modelFallbackNotice?: string;
   thinkingOverride?: AgentConfig["thinking"];
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   maxSubagentDepth: number;
   controlConfig?: ResolvedControlConfig;
   controlIntercomTarget?: string;
@@ -199,13 +218,14 @@ interface AsyncRunnerLogPathConfig {
   asyncDir?: string;
 }
 
-export interface AsyncRunnerStepBuildParams {
+interface AsyncRunnerStepBuildParams {
   chain: ChainStep[];
   task?: string;
   resultMode?: SubagentRunMode;
   agents: AgentConfig[];
   ctx: AsyncExecutionContext;
   availableModels?: AvailableModelInfo[];
+  modelRegistry?: ModelRegistryEvidence;
   cwd?: string;
   sessionFilesByFlatIndex?: (string | undefined)[];
   thinkingOverridesByFlatIndex?: (AgentConfig["thinking"] | undefined)[];
@@ -216,6 +236,7 @@ export interface AsyncRunnerStepBuildParams {
   validateOutputBindings?: boolean;
   timeoutMs?: number;
   toolBudget?: ResolvedToolBudget;
+  projectAgentCaptures?: readonly ProjectAgentRunCapture[];
 }
 
 type AsyncRunnerStepBuildResult =
@@ -555,6 +576,11 @@ export function buildAsyncRunnerSteps(
     );
     if (missingSkills.includes("pi-subagents"))
       throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+    const toolPolicyError = validatePiToolPolicy({
+      tools: a.tools,
+      requireReadTool: a.inheritSkills || resolvedSkills.length > 0,
+    });
+    if (toolPolicyError) throw new AsyncStartValidationError(toolPolicyError);
 
     let systemPrompt = a.systemPrompt?.trim() ?? "";
     if (resolvedSkills.length > 0) {
@@ -639,13 +665,14 @@ export function buildAsyncRunnerSteps(
     const modelThinking =
       modelIdentity?.thinking ??
       (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
-    const modelCandidates = buildModelCandidates(
+    const candidatePlan = buildModelCandidatePlan(
       primaryModel,
       fallbackModels,
       availableModels,
       ctx.currentModelProvider,
-      { scope: ctx.modelScope },
-    )
+      { scope: ctx.modelScope, registry: params.modelRegistry },
+    );
+    const modelCandidates = candidatePlan.candidates
       .map((candidate) => {
         appendThinkingDropNote(
           attemptNotes,
@@ -663,9 +690,14 @@ export function buildAsyncRunnerSteps(
         );
       })
       .filter((candidate): candidate is string => candidate !== undefined);
+    const projectAgent = params.projectAgentCaptures?.find(
+      (capture) => capture.provenance.agent === s.agent,
+    );
     return {
       parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+      ...(projectAgent ? { projectAgent } : {}),
       agent: s.agent,
+      projectAgentGuidance: isCanonicalPackagedMinorAgent(a),
       task,
       phase: s.phase,
       label: s.label,
@@ -686,11 +718,15 @@ export function buildAsyncRunnerSteps(
       ),
       ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
       ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+      ...(candidatePlan.filteringNotice
+        ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+        : {}),
       modelFallbackNotice: behavior.modelFallbackNotice,
       tools: a.tools,
       extensions: a.extensions,
       subagentOnlyExtensions: a.subagentOnlyExtensions,
       completionGuard: a.completionGuard,
+      supervisorBridge: a.supervisorBridge,
       systemPrompt,
       systemPromptMode: a.systemPromptMode,
       inheritProjectContext: a.inheritProjectContext,
@@ -854,6 +890,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
     agents,
     ctx,
     availableModels: params.availableModels,
+    modelRegistry: params.modelRegistry,
     cwd,
     sessionFilesByFlatIndex,
     thinkingOverridesByFlatIndex,
@@ -869,6 +906,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
     asyncDir,
     timeoutMs: params.timeoutMs,
     toolBudget: params.toolBudget,
+    projectAgentCaptures: params.projectAgentCaptures,
   });
   if ("error" in built) {
     try {
@@ -908,6 +946,11 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
         return [childIntercomTarget(step.agent, childTargetIndex++)];
       })
     : undefined;
+  const projectAgents = [
+    ...new Map(
+      params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? [],
+    ).values(),
+  ];
 
   let spawnResult: { pid?: number; error?: string };
   try {
@@ -940,6 +983,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
         workflowGraph,
         tkTicket,
         nestedRoute: nestedRoute ?? inheritedNestedRoute,
+        ...(projectAgents.length > 0 ? { projectAgents } : {}),
         nestedSelf:
           inheritedNestedRoute && nestedAddress
             ? {
@@ -1001,6 +1045,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
             parentStepIndex: nestedAddress.parentStepIndex,
             depth: nestedAddress.depth,
             path: nestedAddress.path,
+            cwd: runnerCwd,
             asyncDir,
             pid: spawnResult.pid,
             ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -1045,6 +1090,7 @@ export function executeAsyncChain(id: string, params: AsyncChainParams): AsyncEx
       cwd: runnerCwd,
       asyncDir,
       ...(tkTicket ? { tkTicket } : {}),
+      ...(projectAgents.length > 0 ? { projectAgents } : {}),
       ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,
@@ -1119,6 +1165,11 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
   );
   if (missingSkills.includes("pi-subagents"))
     return formatAsyncStartError("single", UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+  const toolPolicyError = validatePiToolPolicy({
+    tools: agentConfig.tools,
+    requireReadTool: agentConfig.inheritSkills || resolvedSkills.length > 0,
+  });
+  if (toolPolicyError) return formatAsyncStartError("single", toolPolicyError);
   let systemPrompt = agentConfig.systemPrompt?.trim() ?? "";
   if (resolvedSkills.length > 0) {
     const injection = buildSkillInjection(resolvedSkills);
@@ -1229,16 +1280,18 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
     model,
     primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking),
   );
-  const modelCandidates = buildModelCandidates(
+  const candidatePlan = buildModelCandidatePlan(
     primaryModel,
     fallbackModels,
     availableModels,
     ctx.currentModelProvider,
     {
       scope: ctx.modelScope,
+      registry: params.modelRegistry,
       ...(durableResume ? { onWarn: (violation) => scopeWarnings.push(violation.message) } : {}),
     },
-  )
+  );
+  const modelCandidates = candidatePlan.candidates
     .map((candidate) => {
       appendThinkingDropNote(
         attemptNotes,
@@ -1299,7 +1352,9 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
         steps: [
           {
             parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
             agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(agentConfig),
             task: taskWithOutputInstruction,
             cwd: runnerCwd,
             model,
@@ -1317,11 +1372,15 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
             ),
             ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
             ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+            ...(candidatePlan.filteringNotice
+              ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+              : {}),
             modelFallbackNotice: params.modelFallbackNotice,
             tools: agentConfig.tools,
             extensions: agentConfig.extensions,
             subagentOnlyExtensions: agentConfig.subagentOnlyExtensions,
             completionGuard: agentConfig.completionGuard,
+            supervisorBridge: agentConfig.supervisorBridge,
             systemPrompt,
             systemPromptMode: agentConfig.systemPromptMode,
             inheritProjectContext: agentConfig.inheritProjectContext,
@@ -1387,6 +1446,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
         controlIntercomTarget,
         childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
         tkTicket,
+        ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
         ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
         resultMode: "single",
         nestedRoute: nestedRoute ?? inheritedNestedRoute,
@@ -1430,6 +1490,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
             parentStepIndex: nestedAddress.parentStepIndex,
             depth: nestedAddress.depth,
             path: nestedAddress.path,
+            cwd: runnerCwd,
             asyncDir,
             pid: spawnResult.pid,
             ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
@@ -1464,6 +1525,7 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
       cwd: runnerCwd,
       asyncDir,
       ...(tkTicket ? { tkTicket } : {}),
+      ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
       ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
       ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
       nestedRoute,

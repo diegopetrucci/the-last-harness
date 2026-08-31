@@ -1,4 +1,5 @@
 import { discoverAgentsAll, frontmatterNameForConfig, } from "./agents.js";
+import { isCanonicalPackagedMinorAgent } from "../../../shared/project-agent-guidance.js";
 function result(text, isError = false) {
     return {
         content: [{ type: "text", text }],
@@ -29,6 +30,9 @@ function sanitizeName(name) {
 function allAgents(d) {
     return [...d.builtin, ...d.package, ...d.user, ...d.project];
 }
+function isSourceVisibleInScope(source, scope) {
+    return scope === "both" || source === "builtin" || source === "package" || source === scope;
+}
 function availableNames(cwd) {
     return [...new Set(allAgents(discoverAgentsAll(cwd)).map((agent) => agent.name))].sort((a, b) => a.localeCompare(b));
 }
@@ -41,7 +45,6 @@ function findAgents(name, cwd, scope = "both") {
         .sort((a, b) => a.source.localeCompare(b.source));
 }
 function formatAgentDetail(agent) {
-    const tools = [...(agent.tools ?? [])];
     const lines = [
         `Agent: ${agent.name} (${agent.source})`,
         `Path: ${agent.filePath}`,
@@ -55,8 +58,8 @@ function formatAgentDetail(agent) {
         lines.push(`Model: ${agent.model}`);
     if (agent.fallbackModels?.length)
         lines.push(`Fallback models: ${agent.fallbackModels.join(", ")}`);
-    if (tools.length)
-        lines.push(`Tools: ${tools.join(", ")}`);
+    if (agent.tools !== undefined)
+        lines.push(`Tools: ${agent.tools?.length ? agent.tools.join(", ") : "(none)"}`);
     if (agent.skills?.length)
         lines.push(`Skills: ${agent.skills.join(", ")}`);
     lines.push(`System prompt mode: ${agent.systemPromptMode}`);
@@ -86,6 +89,8 @@ function formatAgentDetail(agent) {
         lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
     if (agent.completionGuard === false)
         lines.push("Completion guard: false");
+    if (agent.supervisorBridge === false)
+        lines.push("Supervisor bridge: false");
     if (agent.toolBudget)
         lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
     if (agent.systemPrompt.trim())
@@ -96,7 +101,11 @@ export function handleList(params, ctx) {
     const scope = normalizeListScope(params.agentScope) ?? "both";
     const d = discoverAgentsAll(ctx.cwd);
     const scopedAgents = allAgents(d)
-        .filter((a) => scope === "both" || a.source === "builtin" || a.source === "package" || a.source === scope)
+        .filter((a) => scope === "both" ||
+        a.source === "builtin" ||
+        a.source === "package" ||
+        a.source === scope ||
+        (scope === "project" && isCanonicalPackagedMinorAgent(a)))
         .sort((a, b) => a.name.localeCompare(b.name));
     const agents = scopedAgents.filter((a) => !a.disabled);
     const lines = [
@@ -105,6 +114,10 @@ export function handleList(params, ctx) {
             ? agents.map((a) => `- ${a.name} (${a.source}${a.defaultContext ? `, context: ${a.defaultContext}` : ""}): ${a.description}`)
             : ["- (none)"]),
     ];
+    const visibleDiagnostics = (d.agentDiagnostics ?? []).filter((diagnostic) => isSourceVisibleInScope(diagnostic.source, scope));
+    if (visibleDiagnostics.length > 0) {
+        lines.push("", "Agent load warnings:", ...visibleDiagnostics.map((diagnostic) => `- ${diagnostic.filePath}: ${diagnostic.error}`));
+    }
     return result(lines.join("\n"));
 }
 function handleGet(params, ctx) {

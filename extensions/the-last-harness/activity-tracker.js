@@ -137,7 +137,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const retryGraceTimers = new Map();
     const listeners = new Set();
     let disposed = false;
-    let lastSnapshotKey = "0::::";
+    let uiPromptDepth = 0;
+    let lastSnapshotKey = "0::0::::";
     let livenessTimer;
     const stopLivenessTimer = () => {
         if (livenessTimer !== undefined) {
@@ -211,6 +212,21 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         }, retryGraceMs));
         syncRetryGraceReason();
     };
+    const mergeAsyncJobRecord = (existing, incoming) => {
+        const incomingAsyncDir = typeof incoming.asyncDir === "string" && incoming.asyncDir.length > 0
+            ? incoming.asyncDir
+            : undefined;
+        const existingAsyncDir = typeof existing?.asyncDir === "string" && existing.asyncDir.length > 0
+            ? existing.asyncDir
+            : undefined;
+        const asyncDir = incomingAsyncDir ?? existingAsyncDir;
+        const pid = toValidPid(incoming.pid) ?? toValidPid(existing?.pid);
+        return {
+            source: incoming.source,
+            ...(asyncDir ? { asyncDir } : {}),
+            ...(pid !== undefined ? { pid } : {}),
+        };
+    };
     const setAsyncJobActive = (runId, record) => {
         if (disposed)
             return;
@@ -218,8 +234,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
         if (!runId || recentlyCompletedAsyncJobs.has(runId)) {
             return;
         }
-        const existing = activeAsyncJobs.get(runId);
-        activeAsyncJobs.set(runId, existing ? { ...existing, ...record } : record);
+        activeAsyncJobs.set(runId, mergeAsyncJobRecord(activeAsyncJobs.get(runId), record));
         scheduleLivenessCheck();
     };
     const drainDeadAsyncJobs = () => {
@@ -295,11 +310,13 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     };
     const buildSnapshot = () => ({
         inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+        waitingForUser: uiPromptDepth > 0,
         primaryReasons: [...primaryReasons.keys()].sort(),
         activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
     });
     const snapshotKey = (snapshot) => [
         snapshot.inProgress ? "1" : "0",
+        snapshot.waitingForUser ? "1" : "0",
         snapshot.primaryReasons.join(","),
         snapshot.activeAsyncJobIds.join(","),
     ].join("::");
@@ -378,6 +395,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             primaryReasons.clear();
             activeAsyncJobs.clear();
             recentlyCompletedAsyncJobs.clear();
+            uiPromptDepth = 0;
             notifyIfChanged();
             listeners.clear();
         },
@@ -428,16 +446,34 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             }
             notifyIfChanged();
         },
+        handleSessionCompactFailed(event) {
+            removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
+            notifyIfChanged();
+        },
+        handleUIPromptStart() {
+            if (disposed)
+                return;
+            uiPromptDepth += 1;
+            notifyIfChanged();
+        },
+        handleUIPromptEnd() {
+            if (uiPromptDepth === 0)
+                return;
+            uiPromptDepth -= 1;
+            notifyIfChanged();
+        },
         handleAsyncStarted(data) {
             if (!isRecord(data) || typeof data.id !== "string" || data.id.length === 0) {
                 return;
             }
+            const record = { source: "started" };
+            const asyncDir = readNonEmptyStringField(data, "asyncDir");
+            if (asyncDir)
+                record.asyncDir = asyncDir;
             const pid = toValidPid(data.pid);
-            setAsyncJobActive(data.id, {
-                asyncDir: typeof data.asyncDir === "string" && data.asyncDir.length > 0 ? data.asyncDir : undefined,
-                pid,
-                source: "started",
-            });
+            if (pid !== undefined)
+                record.pid = pid;
+            setAsyncJobActive(data.id, record);
             notifyIfChanged();
         },
         handleAsyncComplete(data) {
@@ -463,11 +499,12 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             if (!isAsyncControlContext(data, data.event)) {
                 return;
             }
-            setAsyncJobActive(data.event.runId, {
-                asyncDir: readNonEmptyStringField(data, "asyncDir") ??
-                    readNonEmptyStringField(data.event, "asyncDir"),
-                source: "control",
-            });
+            const record = { source: "control" };
+            const asyncDir = readNonEmptyStringField(data, "asyncDir") ??
+                readNonEmptyStringField(data.event, "asyncDir");
+            if (asyncDir)
+                record.asyncDir = asyncDir;
+            setAsyncJobActive(data.event.runId, record);
             notifyIfChanged();
         },
     };
@@ -486,6 +523,7 @@ export function registerTlhEffectiveActivityTracker(pi) {
             try {
                 pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
                     inProgress: snapshot.inProgress,
+                    waitingForUser: snapshot.waitingForUser,
                     activeAsyncJobIds: snapshot.activeAsyncJobIds,
                 });
             }
@@ -519,6 +557,15 @@ export function registerTlhEffectiveActivityTracker(pi) {
     });
     pi.on("session_compact", (event) => {
         tracker.handleSessionCompact(event);
+    });
+    pi.on("session_compact_failed", (event) => {
+        tracker.handleSessionCompactFailed(event);
+    });
+    pi.on("ui_prompt_start", (event) => {
+        tracker.handleUIPromptStart(event);
+    });
+    pi.on("ui_prompt_end", (event) => {
+        tracker.handleUIPromptEnd(event);
     });
     pi.on("session_shutdown", () => {
         for (const unsubscribe of unsubscribes) {

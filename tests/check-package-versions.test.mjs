@@ -47,6 +47,7 @@ function tempFixture({
   installShPiVersion = FIXTURE_MANAGED_PI_VERSION,
   installMtsPiVersion = installShPiVersion,
   installMjsPiVersion = installShPiVersion,
+  modelSelectionScopeVersion = installMtsPiVersion,
   piTypeboxVersion = FIXTURE_MANAGED_TYPEBOX_VERSION,
   includeLatestReleaseUrl = true,
   installedVersions = {},
@@ -59,6 +60,7 @@ function tempFixture({
   const lockfilePath = join(dir, "package-lock.json");
   const defaultExtensionsPath = join(dir, "default-extensions.json");
   const installShPath = join(dir, "install.sh");
+  const modelSelectionScopePath = join(dir, "model-selection-scope.ts");
   const gnosisScriptMtsPath = join(dir, "tlh-gnosis.mts");
   const gnosisScriptPath = join(dir, "tlh-gnosis.mjs");
   const installMtsPath = join(dir, "tlh-install.mts");
@@ -158,6 +160,10 @@ function tempFixture({
     [`const PINNED_PI_VERSION = ${JSON.stringify(installMtsPiVersion)};`, ""].join("\n"),
   );
   writeFileSync(
+    modelSelectionScopePath,
+    [`const PINNED_PI_VERSION = ${JSON.stringify(modelSelectionScopeVersion)};`, ""].join("\n"),
+  );
+  writeFileSync(
     installMjsPath,
     [
       `const PINNED_PI_VERSION = ${JSON.stringify(installMjsPiVersion)};`,
@@ -174,6 +180,7 @@ function tempFixture({
     lockfilePath,
     defaultExtensionsPath,
     installShPath,
+    modelSelectionScopePath,
     gnosisScriptMtsPath,
     gnosisScriptPath,
     installMtsPath,
@@ -195,6 +202,8 @@ function runCheckPackageVersions(fixture) {
       fixture.defaultExtensionsPath,
       "--install-sh",
       fixture.installShPath,
+      "--model-selection-scope",
+      fixture.modelSelectionScopePath,
       "--gnosis-script",
       fixture.gnosisScriptMtsPath,
       "--gnosis-script",
@@ -550,6 +559,19 @@ test("check-package-versions rejects managed Pi pin drift across package metadat
     /package\.json#peerDependencies\.@earendil-works\/pi-coding-agent: "9\.8\.7"/,
   );
   assert.match(result.stderr, /tlh-install\.mts#PINNED_PI_VERSION: "9\.8\.6"/);
+});
+
+test("check-package-versions rejects model-selection scope Pi pin drift", () => {
+  const fixture = tempFixture({
+    packageVersion: "1.2.3",
+    modelSelectionScopeVersion: FIXTURE_MANAGED_PI_DRIFT_VERSION,
+  });
+
+  const result = runCheckPackageVersions(fixture);
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Managed Pi pins must stay in sync:/);
+  assert.match(result.stderr, /model-selection-scope\.ts#PINNED_PI_VERSION: "9\.8\.6"/);
 });
 
 test("check-package-versions manages direct Pi type dependencies with the shared Pi pin", () => {

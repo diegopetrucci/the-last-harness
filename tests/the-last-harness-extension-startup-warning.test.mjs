@@ -503,6 +503,30 @@ test("Ctrl+Shift+E toggles the TLH header without changing the default collapsed
   assert.equal(requestRenderCalls(), 2);
 });
 
+test("startup surfaces one undecided project-guidance trust notice without exposing the file", async () => {
+  const { header, notifications } = await runSessionStart({
+    reason: "restore",
+    installState: LATEST_STABLE_INSTALL_STATE,
+    setupWorkspace(cwd) {
+      mkdirSync(join(cwd, ".tlh", "agents", "builtin"), { recursive: true });
+      writeFileSync(
+        join(cwd, ".tlh", "agents", "builtin", "ARCHITECT_PROMPT_APPEND.md"),
+        "private architect guidance",
+        "utf8",
+      );
+    },
+  });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].type, "warning");
+  assert.match(notifications[0].message, /`\/trust`/);
+  assert.match(notifications[0].message, /`\/reload` or restart/);
+  assert.doesNotMatch(notifications[0].message, /private architect guidance/);
+  assert.ok(header);
+  header.setExpanded(true);
+  assert.equal(header.render(200).includes("[Project guidance]"), false);
+});
+
 test("startup resources use the active session trust decision", async () => {
   const { header } = await runSessionStart({
     reason: "restore",

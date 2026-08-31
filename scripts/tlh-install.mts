@@ -63,7 +63,6 @@ import {
   findTlhSubagentsDir as findTlhSubagentsDirFromSources,
   missingTlhSubagentPrompts,
   provisionSubagentExtensionConfig,
-  settingsRequireTlhSubagentPrompts as settingsFileRequiresTlhSubagentPrompts,
   subagentExtensionConfigMissingDefaults,
 } from "./lib/tlh-install-subagents.mjs";
 import { assertGitSourceTargetSafe, refreshGitCheckout } from "./lib/tlh-install-git.mjs";
@@ -85,7 +84,7 @@ import {
 const DEFAULT_REPO = "diegopetrucci/the-last-harness";
 const DEFAULT_REF = "main";
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const PINNED_PI_VERSION = "0.84.2";
+const PINNED_PI_VERSION = "0.84.4";
 const PI_PACKAGE_SPEC = `${PI_PACKAGE_NAME}@${PINNED_PI_VERSION}`;
 // Keep in sync with TLH_MIN_NODE_VERSION and TLH_PINNED_PI_VERSION in install.sh.
 const MIN_NODE_VERSION = "22.19.0";
@@ -110,7 +109,7 @@ const VALID_UPDATE_TRACKS = ["latest-release", "pinned-tag", "ref", "custom"] as
 const RUNTIME_MARKER_FILENAME = ".tlh-runtime-owned";
 const RUNTIME_MARKER_SCHEMA_VERSION = 1;
 // npm 11.x --prefix layout; empirically confirmed: npm 11.16.0 +
-// @earendil-works/pi-coding-agent@0.84.2.  Mirrors the advisory exclusivity
+// @earendil-works/pi-coding-agent@0.84.4.  Mirrors the advisory exclusivity
 // tripwire in uninstall.sh (demoted from gate): the only top-level entries a
 // TLH-owned runtime prefix should contain are those created by
 // npm install -g --ignore-scripts --prefix, plus the TLH runtime ownership
@@ -921,7 +920,7 @@ function assertSupportedPiVersion(
     versionCommandDisplay = "pi --version",
   }: SupportedPiVersionOptions = {},
 ): void {
-  // `pi --version` prints a bare semver (e.g. "0.84.2") on stdout. Older builds may
+  // `pi --version` prints a bare semver (e.g. "0.84.4") on stdout. Older builds may
   // differ, so we extract the first semver-shaped substring rather than match strictly.
   const result = spawnCapture(config, [piCommand, "--version"], {
     allowFailure: true,
@@ -1562,18 +1561,10 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
     await ensureSupportFilesPrepared(config, supportFileIo(config));
   if (!installableSupportFilesArePrepared(config)) return;
 
-  const requireSubagentPrompts = settingsFileRequiresTlhSubagentPrompts(
-    config.supportFilePaths.DEFAULTS_FILE,
-    {
-      noSettings: config.noSettings,
-    },
-  );
-  const subagentsSrc = requireSubagentPrompts
-    ? findTlhSubagentsDirFromSources(config, {
-        localRepoDir: findLocalRepoDir(config) || "",
-        prompts: config.subagentPrompts,
-      })
-    : "";
+  const subagentsSrc = findTlhSubagentsDirFromSources(config, {
+    localRepoDir: findLocalRepoDir(config) || "",
+    prompts: config.subagentPrompts,
+  });
   const supportSubagentsDir = join(config.supportDir, "agents", "subagents");
 
   if (config.dryRun) {
@@ -1582,22 +1573,14 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
       const sourcePath = config.supportFilePaths[file.variable];
       if (sourcePath) printCommand(["cp", sourcePath, join(config.supportDir, file.installName)]);
     }
-    if (requireSubagentPrompts) {
-      if (subagentsSrc) {
-        printCommand(["mkdir", "-p", supportSubagentsDir]);
-        for (const prompt of config.subagentPrompts) {
-          printCommand(["cp", join(subagentsSrc, prompt), join(supportSubagentsDir, prompt)]);
-        }
-      } else {
-        log(
-          config,
-          "Would require TLH subagent prompts before enabling bundled subagents in settings.",
-        );
+    if (subagentsSrc) {
+      printCommand(["mkdir", "-p", supportSubagentsDir]);
+      for (const prompt of config.subagentPrompts) {
+        printCommand(["cp", join(subagentsSrc, prompt), join(supportSubagentsDir, prompt)]);
       }
     } else {
-      log(
-        config,
-        "Would skip TLH subagent prompts because this ref does not enable bundled subagents in settings.",
+      throw new Error(
+        "TLH subagent prompts not found; re-run installer from a complete checkout or package.",
       );
     }
     const missingSubagentExtensionDefaults = subagentExtensionConfigMissingDefaults(config);
@@ -1627,7 +1610,6 @@ async function installSupportFilesToProfile(config: InstallConfig): Promise<void
       );
   }
   provisionSubagentExtensionConfig(config);
-  if (!requireSubagentPrompts) return;
   if (!subagentsSrc) {
     throw new Error(
       "TLH subagent prompts not found; re-run installer from a complete checkout or package.",

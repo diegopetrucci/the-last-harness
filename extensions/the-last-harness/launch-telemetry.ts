@@ -36,8 +36,7 @@ import {
 import { getUnfilteredAvailableModels } from "./model-visibility.js";
 import { getTlhVersion } from "./package-version.js";
 import { tlhStateDir, tlhTelemetryStatePath } from "./profile-state.js";
-import { parseFrontmatter } from "./prompts.js";
-import { isThinkingLevel } from "./thinking.js";
+import { normalizeAgentModelDefaults, parseFrontmatter } from "./prompts.js";
 import type {
   TlhExperimentalConfig,
   TlhOsMetadata,
@@ -91,7 +90,7 @@ const PUBLIC_PROVIDER_IDS = new Set([
 
 const BUNDLED_PRIMARY_AGENT_NAMES = new Set(["architect", "bug-hunter", "product", "rush"]);
 
-// Ordered to match the TLH_SUBAGENT_PROMPTS list in scripts/lib/tlh-install-subagents.mts.
+// Keep this catalog aligned with the installer-managed TLH minor-agent prompts.
 // Never emit a telemetry key for an agent name outside this set.
 const BUNDLED_SUBAGENT_NAMES = Object.freeze([
   "code-reviewer",
@@ -101,6 +100,7 @@ const BUNDLED_SUBAGENT_NAMES = Object.freeze([
   "librarian",
   "oracle",
   "repo-scout",
+  "test-runner",
   "web-scout",
 ]) as readonly string[];
 
@@ -143,7 +143,7 @@ type TlhLaunchSettings = {
   experimental?: TlhExperimentalConfig;
   /**
    * Per-agent overrides extracted from settings.subagents.agentOverrides, restricted to the
-   * eight bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
+   * nine bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
    * so it can never appear as a telemetry key.
    *
    * This is the USER-scope layer only. Project-scope overrides outrank it; see
@@ -154,7 +154,7 @@ type TlhLaunchSettings = {
 
 /**
  * Extract `subagents.agentOverrides` from an already-parsed settings object, keeping only the
- * eight bundled subagent names so a user-authored agent name can never become a telemetry key.
+ * nine bundled subagent names so a user-authored agent name can never become a telemetry key.
  */
 function extractBundledSubagentOverrides(
   settings: Record<string, unknown>,
@@ -195,8 +195,10 @@ function isDirectorySync(path: string): boolean {
 /**
  * Locate the nearest project root above `cwd`, mirroring findNearestProjectRoot in
  * extensions/subagents/src/agents/agents.ts:533. A directory qualifies when it contains the Pi
- * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` dir. The isolated profile's own
- * parent and `~/<CONFIG_DIR_NAME>` are ignored so the user profile is never mistaken for a project.
+ * project config dir (`CONFIG_DIR_NAME`) or a legacy `.agents` marker. This marker is used only
+ * to locate canonical-role settings overrides; it does not re-enable `.agents` custom-agent
+ * discovery. The isolated profile's own parent and `~/<CONFIG_DIR_NAME>` are ignored so the user
+ * profile is never mistaken for a project.
  *
  * NOTE — Do NOT replace with `SettingsManager.getProjectSettings()`. `FileSettingsStorage` (from
  * `@earendil-works/pi-coding-agent`) sets `projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME,
@@ -258,21 +260,18 @@ function readTlhProjectSubagentOverrides(
 /**
  * Resolve the effective per-agent override the subagents runtime would actually apply.
  *
- * TLH's eight subagents are installed under `tlh/agents/subagents` and reach the runtime via
- * `subagents.agentDirs`, so they are resolved as USER-scope custom agents by
- * applyCustomAgentOverrides (extensions/subagents/src/agents/agents.ts:1035-1054), NOT by
- * applyBuiltinOverrides. That gives a two-rule precedence:
+ * TLH's nine canonical minor agents are installed under the fixed
+ * `<agent-dir>/tlh/agents/subagents/<name>.md` paths. They are loaded as canonical TLH roles by
+ * the runtime's fixed-path discovery; `subagents.agentDirs` is not required and does not select
+ * these files. Their settings precedence is still the two-rule override order:
  *   1. project-scope `agentOverrides[name]`
  *   2. user-scope `agentOverrides[name]`
  *   3. otherwise unmodified
  *
  * The winning entry replaces the loser WHOLESALE — the runtime picks one scope's override object
  * and never merges fields across scopes, so a project entry setting only `thinking` also discards
- * a user entry's `model`. Mirror that exactly.
- *
- * `disableBuiltins` and `disableThinking` have been removed from the extension and play no part
- * here: TLH's agents are resolved as custom agents via `agentDirs`, so only the two-rule custom
- * override precedence above applies.
+ * a user entry's `model`. Mirror that exactly. Project custom `embedded.<slug>` definitions are
+ * intentionally excluded from this telemetry path and never receive these settings overrides.
  */
 function resolveEffectiveSubagentOverrides(
   userOverrides: Record<string, SubagentOverrideEntry> | undefined,
@@ -551,7 +550,7 @@ async function getTlhOsMetadata(): Promise<TlhOsMetadata> {
   }
 }
 
-export async function sendTlhTelemetry(
+async function sendTlhTelemetry(
   envelopes: readonly TlhTelemetryEnvelope[],
   version: string,
   /**
@@ -598,16 +597,16 @@ export async function sendTlhTelemetry(
 /**
  * Read provider-aware thinking and model from the installed subagent frontmatter file.
  *
- * Parses provider-aware keys (tlhOpenaiModels, tlhAnthropicModels, tlhOpenaiThinking,
- * tlhAnthropicThinking) using parseFrontmatter, then resolves the effective model and
- * thinking level for the active provider via selectProviderAwareAgentDefaults. This is
- * the same resolver the runtime uses for model selection, ensuring reported values match
- * what would actually be used.
+ * Parses the installed agent frontmatter through the same normalization helper used by
+ * the runtime loader, then resolves the effective model and thinking level for the active
+ * provider via selectProviderAwareAgentDefaults. This is the same resolver the runtime uses
+ * for model selection, ensuring reported values match what would actually be used.
  *
- * Falls back to generic `model:` and `thinking:` keys for compatibility with user-hand-edited
- * frontmatter that predates the provider-aware format.
+ * The shared normalizer retains generic `model:` and `thinking:` compatibility for
+ * user-hand-edited frontmatter that predates the provider-default block.
  *
  * Install path set by scripts/lib/tlh-install-subagents.mts: <agentDir>/tlh/agents/subagents/<name>.md.
+ * These are the canonical installer-managed minor-role files, not project custom-agent sources.
  * Returns empty object if the file is absent or unreadable.
  *
  * Must only be called from the deferred (setTimeout) send path, never synchronously.
@@ -622,48 +621,20 @@ function readSubagentFrontmatterConfig(
   const filePath = join(agentDir, "tlh", "agents", "subagents", `${name}.md`);
   const content = readText(filePath);
   if (!content) return {};
-  const { frontmatter } = parseFrontmatter(content);
-
-  // Split comma-separated model lists (e.g. "openai-codex/gpt-5.6-luna, openai/gpt-4o")
-  const splitList = (val: string | undefined): string[] =>
-    (val ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const { frontmatter, tlhModelDefaults } = parseFrontmatter(content);
+  const normalized = normalizeAgentModelDefaults(frontmatter, tlhModelDefaults);
+  const parseBoolean = (value: string | undefined): boolean | undefined => {
+    const normalizedValue = value?.trim().toLowerCase();
+    if (normalizedValue === "true") return true;
+    if (normalizedValue === "false") return false;
+    return undefined;
+  };
 
   const agentDefaults: AgentModelDefaults = {
     name,
-    model: frontmatter.model || undefined,
-    tlhOpenaiModels: splitList(frontmatter.tlhOpenaiModels),
-    tlhAnthropicModels: splitList(frontmatter.tlhAnthropicModels),
-    thinking:
-      frontmatter.thinking && isThinkingLevel(frontmatter.thinking)
-        ? frontmatter.thinking
-        : undefined,
-    tlhOpenaiThinking:
-      frontmatter.tlhOpenaiThinking && isThinkingLevel(frontmatter.tlhOpenaiThinking)
-        ? frontmatter.tlhOpenaiThinking
-        : undefined,
-    tlhAnthropicThinking:
-      frontmatter.tlhAnthropicThinking && isThinkingLevel(frontmatter.tlhAnthropicThinking)
-        ? frontmatter.tlhAnthropicThinking
-        : undefined,
-    tlhOpenrouterThinking:
-      frontmatter.tlhOpenrouterThinking && isThinkingLevel(frontmatter.tlhOpenrouterThinking)
-        ? frontmatter.tlhOpenrouterThinking
-        : undefined,
-    preferOppositeProvider:
-      frontmatter.preferOppositeProvider?.trim() === "true"
-        ? true
-        : frontmatter.preferOppositeProvider?.trim() === "false"
-          ? false
-          : undefined,
-    preferCurrentOpenaiModel:
-      frontmatter.preferCurrentOpenaiModel?.trim() === "true"
-        ? true
-        : frontmatter.preferCurrentOpenaiModel?.trim() === "false"
-          ? false
-          : undefined,
+    ...normalized,
+    preferOppositeProvider: parseBoolean(frontmatter.preferOppositeProvider),
+    preferCurrentOpenaiModel: parseBoolean(frontmatter.preferCurrentOpenaiModel),
   };
 
   // Resolve against the real available-models list captured at schedule time rather than
@@ -679,14 +650,15 @@ function readSubagentFrontmatterConfig(
 
   // For provider-qualified model names (e.g. "anthropic/claude-opus-5"), only report
   // the model if it was found in the real available list — a plausible-but-wrong value
-  // is worse than "unknown". For bare model names (no slash, e.g. "claude-opus-4-5"),
-  // fall back to the raw frontmatter value since they cannot be verified against the
-  // registry; reporting them is still useful and matches historical behaviour.
+  // is worse than "unknown". For bare model names (no slash, e.g. "claude-opus-4-5")
+  // on legacy frontmatter, fall back to the raw value since it cannot be verified against
+  // the registry; a present provider-default block remains authoritative.
   const model = result.model
     ? formatProviderModelReference(result.model)
-    : parseProviderModelReference(agentDefaults.model) === undefined
-      ? agentDefaults.model // bare name: cannot verify, report as-is
-      : undefined; // provider-qualified but not in available list: report unknown
+    : agentDefaults.tlhModelDefaultsSource === "legacy" &&
+        parseProviderModelReference(agentDefaults.model) === undefined
+      ? agentDefaults.model // bare legacy name: cannot verify, report as-is
+      : undefined; // provider-qualified or block model unavailable: report unknown
 
   return { thinking, model };
 }
@@ -710,14 +682,15 @@ function joinModelEffort(model: string, effort: string): string {
 }
 
 /**
- * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all eight
+ * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all nine
  * bundled minor agents.
  *
  * Precedence (highest first):
- *   1. The effective settings override for <name>, already resolved across project and user scope
- *      by resolveEffectiveSubagentOverrides (project outranks user).
- *   2. Provider-aware frontmatter in <agentDir>/tlh/agents/subagents/<name>.md, resolved via
- *      selectProviderAwareAgentDefaults for the active provider.
+ *   1. The effective settings override for canonical role <name>, already resolved across project
+ *      and user scope by resolveEffectiveSubagentOverrides (project outranks user).
+ *   2. Provider-aware frontmatter in the canonical installer-managed
+ *      <agentDir>/tlh/agents/subagents/<name>.md file, resolved via selectProviderAwareAgentDefaults
+ *      for the active provider. Project custom-agent files are not telemetry sources.
  *
  * When an agent override has disabled: true the agent will not run at all. In that case
  * the modelEffort key is reported as the single token "disabled" (not "disabled:disabled") —

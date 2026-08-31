@@ -8,6 +8,7 @@ import { readJsonFile } from "./tlh-install-utils.mjs";
 import { writeSafeProfileFile } from "./tlh-safe-profile-write.mjs";
 const TLH_SUBAGENT_PROMPTS = Object.freeze([
     "developer.md",
+    "test-runner.md",
     "code-reviewer.md",
     "repo-scout.md",
     "diff-summarizer.md",
@@ -325,21 +326,6 @@ export function cleanupManagedRetiredSubagentPackages(config, candidates) {
         }
     }
     return cleanupResult;
-}
-export function settingsRequireTlhSubagentPrompts(defaultsFile, { noSettings = false } = {}) {
-    if (noSettings || !defaultsFile || !existsSync(defaultsFile))
-        return false;
-    try {
-        const settings = readJsonFile(defaultsFile);
-        if (!isPlainObject(settings))
-            return false;
-        const subagents = isPlainObject(settings.subagents) ? settings.subagents : undefined;
-        const agentDirs = subagents?.agentDirs;
-        return Array.isArray(agentDirs) && agentDirs.includes("tlh/agents/subagents");
-    }
-    catch {
-        return false;
-    }
 }
 export function defaultExtensionsRequireCriticalInstall(defaultExtensionsFile, { noSettings = false } = {}) {
     if (noSettings || !defaultExtensionsFile || !existsSync(defaultExtensionsFile))

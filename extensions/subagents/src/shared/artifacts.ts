@@ -86,6 +86,7 @@ interface ForegroundSubagentArtifactMetadata extends Pick<
   SingleResult,
   | "agent"
   | "task"
+  | "projectAgent"
   | "exitCode"
   | "exitSignal"
   | "timedOut"
@@ -103,6 +104,9 @@ interface ForegroundSubagentArtifactMetadata extends Pick<
   | "modelAttempts"
   | "modelFallbackNotice"
   | "error"
+  | "stderr"
+  | "stderrTruncated"
+  | "protocolOutputLimit"
   | "transcriptPath"
   | "transcriptError"
   | "skills"

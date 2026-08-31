@@ -36,14 +36,14 @@ Deterministic boundaries for the hermetic integration test:
 
 ### Trace-policy fixtures
 
-`tests/evals/trace-policy/trace-policy-evals.test.mjs` replays curated transcript fixtures against deterministic policy assertions. Use it when changing agent prompts, workflow rules, transcript interpretation, or policy-sensitive docs.
+`tests/evals/trace-policy/trace-policy-evals.test.mjs` replays curated transcript fixtures against deterministic policy assertions. Use it when changing agent prompts, workflow rules, transcript interpretation, or policy-sensitive docs. Architect implementation tickets route to `developer`; final-validation tickets must carry exact commands and route to the command-only `test-runner`, whose policy allows `tk show` and non-mutating validation commands while rejecting edits, mutating shell/package/ticket commands, and delegation.
 
 The fixtures are designed to stay reviewable:
 
 - explicit actor/tool/output sequences;
 - stable fixture IDs and expected outcomes;
 - deterministic assertions instead of model scoring;
-- coverage for architect, developer, code-reviewer, product, Rush, bug-hunter, web-scout, and oracle boundaries.
+- direct deterministic trace-policy coverage for architect, developer, test-runner, code-reviewer, product, Rush, bug-hunter, web-scout, oracle, contrarian, diff-summarizer, librarian, and repo-scout boundaries, including final-validation routing and the test-runner's command-only policy.
 
 ### Incident-to-fixture loop
 
@@ -76,6 +76,7 @@ Treat the importer output as a reviewable starting point, not an auto-commit art
 Typical targeted validation after an incident-loop change:
 
 - fixture/importer-only changes: `node --test tests/evals/trace-policy/trace-policy-fixture-importer.test.mjs tests/evals/trace-policy/trace-policy-evals.test.mjs`
+- architect/test-runner routing or trace-policy changes: `node --test tests/evals/trace-policy/trace-policy-evals.test.mjs tests/the-last-harness-primary-agent-runtime-prompt-guidance.test.mjs tests/the-last-harness-primary-agent-runtime-delegation.test.mjs`
 - live-runner/result-schema changes: run the relevant `tests/evals/tlh-live-evals*.test.mjs` file alongside the trace-policy tests
 
 ### Importer and redaction expectations

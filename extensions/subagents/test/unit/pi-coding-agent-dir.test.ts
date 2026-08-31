@@ -141,16 +141,16 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(getProjectConfigDir(cwd), path.join(cwd, runtimeConfigDirName));
   });
 
-  it("discovers user agents and settings while preserving chain paths without discovering saved chains", () => {
+  it("discovers canonical packaged agents and settings while preserving chain paths", () => {
     const settingsPath = path.join(agentDir, "settings.json");
     writeFile(
-      path.join(agentDir, "agents", "env-agent.md"),
+      path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
       `---
-name: env-agent
-description: Env agent
+name: developer
+description: TLH developer
 ---
 
-Use env agent.
+Use TLH developer.
 `,
     );
     writeFile(
@@ -171,7 +171,7 @@ Inspect env.
         {
           subagents: {
             agentOverrides: {
-              "env-agent": { model: "deepseek-v4-pro" },
+              developer: { model: "deepseek-v4-pro" },
             },
           },
         },
@@ -186,18 +186,20 @@ Inspect env.
     assert.equal(discovered.userSettingsPath, settingsPath);
     assert.deepEqual(discovered.chains, []);
 
-    const envAgent = discovered.user.find(
+    const developer = discovered.user.find(
       (agent) =>
-        agent.name === "env-agent" &&
-        agent.filePath === path.join(agentDir, "agents", "env-agent.md"),
+        agent.name === "developer" &&
+        agent.filePath === path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
     );
-    assert.ok(envAgent);
-    assert.equal(envAgent?.model, "deepseek-v4-pro");
-    assert.equal(envAgent?.override?.path, settingsPath);
-    assert.equal(envAgent?.override?.scope, "user");
+    assert.ok(developer);
+    assert.equal(developer?.model, "deepseek-v4-pro");
+    assert.equal(developer?.override?.path, settingsPath);
+    assert.equal(developer?.override?.scope, "user");
   });
 
-  it("loads configured user agent dirs relative to PI_CODING_AGENT_DIR without leaking legacy ~/.agents", () => {
+  // Negative hard-cutover coverage: legacy `~/.agents` and configured `agentDirs` fixtures
+  // are intentionally seeded and must not leak into TLH's canonical packaged-agent surface.
+  it("loads canonical packaged agents without leaking legacy ~/.agents or configured dirs", () => {
     const homeWorkspace = path.join(tempHome, "workspace", "nested");
     fs.mkdirSync(homeWorkspace, { recursive: true });
     writeFile(
