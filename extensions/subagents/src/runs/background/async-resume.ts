@@ -219,6 +219,36 @@ type AsyncResultFile = Defensive<AsyncResultArtifact> & {
   >;
 };
 
+type AsyncStatusStep = NonNullable<AsyncStatus["steps"]>[number];
+type AsyncResultStep = NonNullable<AsyncResultFile["results"]>[number];
+
+type AsyncResumeModelMetadata = Pick<AsyncResumeTarget, "modelIdentity" | "modelResolution">;
+
+type AsyncResumeDiagnosticMetadata = Pick<
+  AsyncResumeTarget,
+  "contextUsage" | "contextPressure" | "contextPressureCrossedThresholds" | "terminationReason"
+>;
+
+interface AsyncResumeResolutionContext {
+  asyncDirRoot: string;
+  resultsDir: string;
+  requireSessionFile: boolean;
+  location: AsyncRunLocation;
+  status: AsyncStatus | null;
+  result?: AsyncResultFile;
+  runId: string;
+  state: AsyncStatus["state"];
+  statusSteps: AsyncStatusStep[];
+  resultSteps: AsyncResultStep[];
+  stepCount: number;
+  requestedIndex?: number;
+  deps: AsyncResumeDeps;
+  options: AsyncResumeOptions;
+  tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
+}
+
+const RESUME_TERMINAL_STEP_STATUSES = new Set(["complete", "completed", "failed", "paused"]);
+
 export interface AsyncRunLocation {
   asyncDir: string | null;
   resultPath: string | null;
@@ -816,6 +846,339 @@ function validateResumeSessionFile(
   return resolved;
 }
 
+function resolveResumeModelMetadata(
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+  resultSteps: AsyncResultStep[],
+  result: AsyncResultFile | undefined,
+): AsyncResumeModelMetadata {
+  const resultStep = resultSteps[index];
+  const modelIdentity =
+    persistedModelIdentity({
+      identity: statusStep?.modelIdentity,
+      model: statusStep?.model,
+      thinking: statusStep?.thinking,
+    }) ??
+    persistedModelIdentity({
+      identity: resultStep?.modelIdentity,
+      model: resultStep?.model,
+      thinking: resultStep?.thinking,
+    }) ??
+    persistedModelIdentity({
+      identity: result?.modelIdentity,
+      model: result?.model,
+      thinking: result?.thinking,
+    });
+  const modelResolution =
+    sanitizeSubagentModelResolution(statusStep?.modelResolution) ??
+    sanitizeSubagentModelResolution(resultStep?.modelResolution) ??
+    sanitizeSubagentModelResolution(result?.modelResolution);
+  return {
+    ...(modelIdentity ? { modelIdentity } : {}),
+    ...(modelResolution ? { modelResolution } : {}),
+  };
+}
+
+function resolveResumeDiagnosticMetadata(
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+  resultSteps: AsyncResultStep[],
+  result: AsyncResultFile | undefined,
+): AsyncResumeDiagnosticMetadata {
+  const resultStep = resultSteps[index];
+  const contextUsage =
+    parseContextUsageDiagnostics(statusStep?.contextUsage) ??
+    parseContextUsageDiagnostics(resultStep?.contextUsage) ??
+    parseContextUsageDiagnostics(result?.contextUsage);
+  const contextPressure =
+    parseContextPressureProjection(statusStep?.contextPressure) ??
+    parseContextPressureProjection(resultStep?.contextPressure) ??
+    parseContextPressureProjection(result?.contextPressure);
+  const contextPressureCrossedThresholds =
+    parseContextPressureCrossedThresholds(statusStep?.contextPressureCrossedThresholds) ??
+    parseContextPressureCrossedThresholds(resultStep?.contextPressureCrossedThresholds) ??
+    parseContextPressureCrossedThresholds(result?.contextPressureCrossedThresholds);
+  const terminationReason = statusStep?.terminationReason ?? resultStep?.terminationReason;
+  return {
+    ...(contextUsage ? { contextUsage } : {}),
+    ...(contextPressure ? { contextPressure } : {}),
+    ...(contextPressureCrossedThresholds ? { contextPressureCrossedThresholds } : {}),
+    ...(terminationReason ? { terminationReason } : {}),
+  };
+}
+
+type AsyncResumeProjectAgentMetadata = Pick<AsyncResumeTarget, "projectAgent" | "projectAgents">;
+
+function resolveProjectAgentMetadata(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  statusStep: AsyncStatusStep | undefined,
+): AsyncResumeProjectAgentMetadata {
+  const selectedCandidate = statusStep?.projectAgent ?? context.resultSteps[index]?.projectAgent;
+  let projectAgent: ProjectAgentRunCapture | undefined;
+  if (selectedCandidate !== undefined) {
+    projectAgent = normalizeProjectAgentRunCapture(selectedCandidate);
+    if (!projectAgent) {
+      throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
+    }
+  }
+  const topLevelProjectAgent =
+    normalizeProjectAgentRunCapture(ownObjectProperty(context.status, "projectAgent").value) ??
+    context.result?.projectAgent;
+  const explicitProjectAgents = context.status?.projectAgents ?? context.result?.projectAgents;
+  const childProjectAgents = [...context.statusSteps, ...context.resultSteps].flatMap((step) => {
+    const candidate = step?.projectAgent;
+    if (candidate === undefined) return [];
+    const normalized = normalizeProjectAgentRunCapture(candidate);
+    return normalized ? [normalized] : [];
+  });
+  const projectAgents =
+    explicitProjectAgents ?? (childProjectAgents.length > 0 ? childProjectAgents : undefined);
+  return {
+    ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
+    ...(projectAgents !== undefined ? { projectAgents } : {}),
+    ...(projectAgent ? { projectAgent } : {}),
+  };
+}
+
+function buildLiveAsyncResumeTarget(
+  context: AsyncResumeResolutionContext,
+  index: number,
+  statusStep: AsyncStatusStep,
+): AsyncResumeTarget {
+  const target: AsyncResumeTarget = {
+    kind: "live",
+    runId: context.runId,
+    asyncDir: context.location.asyncDir ?? undefined,
+    state: context.state,
+    agent: statusStep.agent,
+    index,
+    intercomTarget: resolveSubagentIntercomTarget(context.runId, statusStep.agent, index),
+    cwd: context.status?.cwd ?? context.result?.cwd,
+    sessionFile:
+      statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
+  };
+  const metadata = resolveResumeModelMetadata(
+    index,
+    statusStep,
+    context.resultSteps,
+    context.result,
+  );
+  const projectMetadata = resolveProjectAgentMetadata(context, index, statusStep);
+  return {
+    ...target,
+    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+    ...(metadata.modelIdentity ? { modelIdentity: metadata.modelIdentity } : {}),
+    ...(metadata.modelResolution ? { modelResolution: metadata.modelResolution } : {}),
+    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+  };
+}
+
+function resolveLiveAsyncResumeTarget(
+  context: AsyncResumeResolutionContext,
+): AsyncResumeTarget | undefined {
+  const requestedIndex = context.requestedIndex;
+  if (requestedIndex !== undefined) {
+    if (requestedIndex < 0 || requestedIndex >= context.stepCount)
+      throw new Error(
+        `Async run '${context.runId}' has ${context.stepCount} children. Index ${requestedIndex} is out of range.`,
+      );
+    const selectedStep = context.statusSteps[requestedIndex];
+    if (selectedStep?.status === "running")
+      return buildLiveAsyncResumeTarget(context, requestedIndex, selectedStep);
+    if (selectedStep?.status === "pending")
+      throw new Error(
+        `Async run '${context.runId}' child ${requestedIndex} is pending and has not started yet. Wait for it to run or complete before resuming.`,
+      );
+    if (selectedStep && !RESUME_TERMINAL_STEP_STATUSES.has(selectedStep.status))
+      throw new Error(
+        `Async run '${context.runId}' child ${requestedIndex} is ${selectedStep.status} and cannot be revived yet.`,
+      );
+    return undefined;
+  }
+
+  const running = context.statusSteps
+    .map((step, index) => ({ step, index }))
+    .filter(({ step }) => step.status === "running");
+  const selected = running.length === 1 ? running[0] : undefined;
+  if (!selected)
+    throw new Error(
+      `Async run '${context.runId}' has ${running.length} running children. Provide index to choose one.`,
+    );
+  return buildLiveAsyncResumeTarget(context, selected.index, selected.step);
+}
+
+function resolveTerminalAsyncResumeTarget(
+  context: AsyncResumeResolutionContext,
+): AsyncResumeTarget {
+  const requestedIndex = context.requestedIndex;
+  if (context.stepCount > 1 && requestedIndex === undefined) {
+    throw new Error(
+      `Async run '${context.runId}' has ${context.stepCount} children. Provide index to choose one.`,
+    );
+  }
+  const index = requestedIndex ?? 0;
+  if (!Number.isInteger(index))
+    throw new Error(`Async run '${context.runId}' index must be an integer.`);
+  if (index < 0 || index >= context.stepCount)
+    throw new Error(
+      `Async run '${context.runId}' has ${context.stepCount} children. Index ${index} is out of range.`,
+    );
+
+  let selectedStatusStep = context.statusSteps[index];
+  let selectedContinuation = lifecycleContinuationForIndex(context.status, index);
+  if (
+    !context.options.readOnly &&
+    typeof selectedContinuation?.claimToken === "string" &&
+    selectedContinuation.claimToken.length > 0 &&
+    context.location.asyncDir
+  ) {
+    const recovered = recoverStaleLifecycleContinuationClaim(context.location.asyncDir, index, {
+      kill: context.deps.kill,
+      now: context.deps.now,
+      asyncDirRoot: context.asyncDirRoot,
+      resultsDir: context.resultsDir,
+    });
+    if (recovered.recovered) {
+      context.status = recovered.status ?? context.status;
+      context.statusSteps = context.status?.steps ?? [];
+      selectedStatusStep = context.statusSteps[index];
+      selectedContinuation = lifecycleContinuationForIndex(context.status, index);
+    }
+  }
+
+  if (context.state === "continued")
+    throw new Error(
+      `Async run '${context.runId}' already launched continuation '${selectedContinuation?.continuationRunId ?? context.status?.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and cannot be resumed again.`,
+    );
+  if (selectedStatusStep?.status === "cancelled")
+    throw new Error(
+      `Async run '${context.runId}' child ${index} was cancelled and cannot be resumed.`,
+    );
+  if (selectedStatusStep?.status === "continued")
+    throw new Error(
+      `Async run '${context.runId}' child ${index} already launched its continuation and cannot be resumed again.`,
+    );
+  if (
+    !context.options.readOnly &&
+    typeof selectedContinuation?.claimToken === "string" &&
+    selectedContinuation.claimToken.length > 0
+  ) {
+    const continuationRunId = selectedContinuation.continuationRunId;
+    if (
+      (selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") &&
+      continuationRunId
+    ) {
+      throw new Error(
+        `Async run '${context.runId}' child ${index} already launched continuation '${continuationRunId}' and cannot be resumed again.`,
+      );
+    }
+    throw new Error(
+      `Async run '${context.runId}' child ${index} was already claimed for continuation and cannot be resumed again.`,
+    );
+  }
+
+  const agent =
+    selectedStatusStep?.agent ?? context.resultSteps[index]?.agent ?? context.result?.agent;
+  if (!agent) throw new Error(`Could not determine child agent for async run '${context.runId}'.`);
+  const sessionFile =
+    context.statusSteps[index]?.sessionFile ??
+    context.resultSteps[index]?.sessionFile ??
+    (context.stepCount === 1
+      ? (context.status?.sessionFile ?? context.result?.sessionFile)
+      : undefined);
+  const selectedChildPaused =
+    context.statusSteps[index]?.status === "paused" ||
+    (context.statusSteps.length === 0 &&
+      context.state === "paused" &&
+      context.resultSteps[index]?.interrupted === true);
+  if (!sessionFile && context.requireSessionFile)
+    throw new Error(
+      `Async run '${context.runId}' child ${index} does not have a persisted session file to resume from.`,
+    );
+  const resolvedSessionFile = sessionFile
+    ? validateResumeSessionFile(context.runId, sessionFile, { allowMissing: selectedChildPaused })
+    : undefined;
+  // When the status file is absent (result-only revival), read acceptance from the
+  // result artifact’s per-child entry; otherwise mirror the status-path behaviour.
+  const pausedStepAcceptance =
+    context.statusSteps.length > 0
+      ? context.statusSteps[index]?.acceptance
+      : context.resultSteps[index]?.acceptance;
+  if (selectedChildPaused && pausedStepAcceptance === undefined) {
+    throw new Error(
+      `Async run '${context.runId}' is paused but its skipped acceptance ledger has not been persisted yet. Retry the resume once pause metadata is written.`,
+    );
+  }
+  // Fail closed at this common read site (covers both status and result-only paths)
+  // so only explicitly compatible paused ledgers can resume without re-inferring a
+  // contract, and malformed or terminal statuses never reach continuation merge logic.
+  const continuationAcceptance = selectedChildPaused
+    ? resolvePausedContinuationAcceptance(context.runId, pausedStepAcceptance)
+    : undefined;
+  const target: AsyncResumeTarget = {
+    kind: "revive",
+    runId: context.runId,
+    asyncDir: context.location.asyncDir ?? undefined,
+    state: context.state,
+    agent,
+    index,
+    intercomTarget: resolveSubagentIntercomTarget(context.runId, agent, index),
+    cwd: context.status?.cwd ?? context.result?.cwd,
+    ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
+  };
+  const modelMetadata = resolveResumeModelMetadata(
+    index,
+    selectedStatusStep,
+    context.resultSteps,
+    context.result,
+  );
+  const projectMetadata = resolveProjectAgentMetadata(context, index, selectedStatusStep);
+  const targetWithModelMetadata: AsyncResumeTarget = {
+    ...target,
+    ...(projectMetadata.projectAgent ? { projectAgent: projectMetadata.projectAgent } : {}),
+    ...(projectMetadata.projectAgents ? { projectAgents: projectMetadata.projectAgents } : {}),
+    ...(modelMetadata.modelIdentity ? { modelIdentity: modelMetadata.modelIdentity } : {}),
+    ...(modelMetadata.modelResolution ? { modelResolution: modelMetadata.modelResolution } : {}),
+    ...(context.tkTicket ? { tkTicket: context.tkTicket } : {}),
+    ...(selectedStatusStep?.pause?.kind
+      ? { pauseKind: selectedStatusStep.pause.kind }
+      : context.status?.pause?.kind
+        ? { pauseKind: context.status.pause.kind }
+        : {}),
+    ...(typeof selectedContinuation?.claimToken === "string" &&
+    selectedContinuation.claimToken.length > 0
+      ? { claimed: true }
+      : {}),
+    ...(continuationAcceptance ? { continuationAcceptance } : {}),
+  };
+  const diagnosticMetadata = resolveResumeDiagnosticMetadata(
+    index,
+    selectedStatusStep,
+    context.resultSteps,
+    context.result,
+  );
+  return {
+    ...targetWithModelMetadata,
+    ...(diagnosticMetadata.contextUsage ? { contextUsage: diagnosticMetadata.contextUsage } : {}),
+    ...(diagnosticMetadata.contextPressure
+      ? { contextPressure: diagnosticMetadata.contextPressure }
+      : {}),
+    ...(diagnosticMetadata.contextPressureCrossedThresholds
+      ? { contextPressureCrossedThresholds: diagnosticMetadata.contextPressureCrossedThresholds }
+      : {}),
+    ...(diagnosticMetadata.terminationReason
+      ? { terminationReason: diagnosticMetadata.terminationReason }
+      : {}),
+    ...(selectedStatusStep?.activeRuntimeMs !== undefined
+      ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
+      : context.resultSteps[index]?.activeRuntimeMs !== undefined
+        ? { activeRuntimeMs: context.resultSteps[index]!.activeRuntimeMs }
+        : {}),
+  };
+}
+
 export function resolveAsyncResumeTarget(
   params: AsyncResumeParams,
   deps: AsyncResumeDeps = {},
@@ -855,326 +1218,35 @@ export function resolveAsyncResumeTarget(
   if (state === "pausing")
     throw new Error(`Async run '${runId}' is still pausing and cannot be resumed yet.`);
 
-  let statusSteps = status?.steps ?? [];
+  const statusSteps = status?.steps ?? [];
   const resultSteps = result?.results ?? [];
   const stepCount = statusSteps.length || resultSteps.length || (result?.agent ? 1 : 0);
   const requestedIndex = params.index;
   if (requestedIndex !== undefined && !Number.isInteger(requestedIndex))
     throw new Error(`Async run '${runId}' index must be an integer.`);
-  const terminalStepStatuses = new Set(["complete", "completed", "failed", "paused"]);
-  const modelIdentityForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): SubagentModelIdentity | undefined => {
-    const resultStep = resultSteps[index];
-    return (
-      persistedModelIdentity({
-        identity: step?.modelIdentity,
-        model: step?.model,
-        thinking: step?.thinking,
-      }) ??
-      persistedModelIdentity({
-        identity: resultStep?.modelIdentity,
-        model: resultStep?.model,
-        thinking: resultStep?.thinking,
-      }) ??
-      persistedModelIdentity({
-        identity: result?.modelIdentity,
-        model: result?.model,
-        thinking: result?.thinking,
-      })
-    );
-  };
-  const modelResolutionForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): SubagentModelResolution | undefined =>
-    sanitizeSubagentModelResolution(step?.modelResolution) ??
-    sanitizeSubagentModelResolution(resultSteps[index]?.modelResolution) ??
-    sanitizeSubagentModelResolution(result?.modelResolution);
-  const contextUsageForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): ContextUsageDiagnostics | undefined =>
-    parseContextUsageDiagnostics(step?.contextUsage) ??
-    parseContextUsageDiagnostics(resultSteps[index]?.contextUsage) ??
-    parseContextUsageDiagnostics(result?.contextUsage);
-  const contextPressureForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): ContextPressureProjection | undefined =>
-    parseContextPressureProjection(step?.contextPressure) ??
-    parseContextPressureProjection(resultSteps[index]?.contextPressure) ??
-    parseContextPressureProjection(result?.contextPressure);
-  const crossedPressureThresholdsForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): import("../../shared/types.ts").ContextPressureThreshold[] | undefined =>
-    parseContextPressureCrossedThresholds(step?.contextPressureCrossedThresholds) ??
-    parseContextPressureCrossedThresholds(resultSteps[index]?.contextPressureCrossedThresholds) ??
-    parseContextPressureCrossedThresholds(result?.contextPressureCrossedThresholds);
-  const terminationReasonForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): SubagentTerminationReason | undefined =>
-    step?.terminationReason ?? resultSteps[index]?.terminationReason;
-  const projectAgentForStep = (
-    index: number,
-    step = statusSteps[index],
-  ): ProjectAgentRunCapture | undefined => {
-    // A selected child must carry its own marker. Top-level projectAgents is
-    // only a display/config summary and must not backfill a removed child field;
-    // otherwise artifact-marker removal could silently bypass the private gate.
-    const candidate = step?.projectAgent ?? resultSteps[index]?.projectAgent;
-    if (candidate === undefined) return undefined;
-    const normalized = normalizeProjectAgentRunCapture(candidate);
-    if (!normalized) {
-      throw new Error(`Invalid persisted project-agent capture for async run child ${index}.`);
-    }
-    return normalized;
-  };
-  const topLevelProjectAgent =
-    normalizeProjectAgentRunCapture(ownObjectProperty(status, "projectAgent").value) ??
-    result?.projectAgent;
-  const explicitProjectAgents = status?.projectAgents ?? result?.projectAgents;
-  const childProjectAgents = [...statusSteps, ...resultSteps].flatMap((step) => {
-    const candidate = step?.projectAgent;
-    if (candidate === undefined) return [];
-    const normalized = normalizeProjectAgentRunCapture(candidate);
-    return normalized ? [normalized] : [];
-  });
-  // A marker on any sibling is a deny-only run signal. Preserve it on the
-  // resolved target so a selected ordinary child cannot trigger profile
-  // fallback after the private project reference has disappeared.
-  const projectAgents =
-    explicitProjectAgents ?? (childProjectAgents.length > 0 ? childProjectAgents : undefined);
-  const topLevelProjectMarkerFields = {
-    ...(topLevelProjectAgent ? { projectAgent: topLevelProjectAgent } : {}),
-    ...(projectAgents !== undefined ? { projectAgents } : {}),
-  };
 
-  if (state === "running") {
-    if (requestedIndex !== undefined) {
-      if (requestedIndex < 0 || requestedIndex >= stepCount)
-        throw new Error(
-          `Async run '${runId}' has ${stepCount} children. Index ${requestedIndex} is out of range.`,
-        );
-      const selectedStep = statusSteps[requestedIndex];
-      if (selectedStep?.status === "running") {
-        return {
-          kind: "live",
-          runId,
-          asyncDir: location.asyncDir ?? undefined,
-          state,
-          agent: selectedStep.agent,
-          index: requestedIndex,
-          intercomTarget: resolveSubagentIntercomTarget(runId, selectedStep.agent, requestedIndex),
-          cwd: status?.cwd ?? result?.cwd,
-          sessionFile: selectedStep.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-          ...topLevelProjectMarkerFields,
-          ...(projectAgentForStep(requestedIndex, selectedStep)
-            ? {
-                projectAgent: projectAgentForStep(requestedIndex, selectedStep),
-              }
-            : {}),
-          ...(modelIdentityForStep(requestedIndex, selectedStep)
-            ? { modelIdentity: modelIdentityForStep(requestedIndex, selectedStep) }
-            : {}),
-          ...(modelResolutionForStep(requestedIndex, selectedStep)
-            ? { modelResolution: modelResolutionForStep(requestedIndex, selectedStep) }
-            : {}),
-          ...(tkTicket ? { tkTicket } : {}),
-        };
-      }
-      if (selectedStep?.status === "pending")
-        throw new Error(
-          `Async run '${runId}' child ${requestedIndex} is pending and has not started yet. Wait for it to run or complete before resuming.`,
-        );
-      if (selectedStep && !terminalStepStatuses.has(selectedStep.status))
-        throw new Error(
-          `Async run '${runId}' child ${requestedIndex} is ${selectedStep.status} and cannot be revived yet.`,
-        );
-    } else {
-      const running = statusSteps
-        .map((step, index) => ({ step, index }))
-        .filter(({ step }) => step.status === "running");
-      const selected = running.length === 1 ? running[0] : undefined;
-      if (!selected) {
-        throw new Error(
-          `Async run '${runId}' has ${running.length} running children. Provide index to choose one.`,
-        );
-      }
-      return {
-        kind: "live",
-        runId,
-        asyncDir: location.asyncDir ?? undefined,
-        state,
-        agent: selected.step.agent,
-        index: selected.index,
-        intercomTarget: resolveSubagentIntercomTarget(runId, selected.step.agent, selected.index),
-        cwd: status?.cwd ?? result?.cwd,
-        sessionFile: selected.step.sessionFile ?? status?.sessionFile ?? result?.sessionFile,
-        ...topLevelProjectMarkerFields,
-        ...(projectAgentForStep(selected.index, selected.step)
-          ? {
-              projectAgent: projectAgentForStep(selected.index, selected.step),
-            }
-          : {}),
-        ...(modelIdentityForStep(selected.index, selected.step)
-          ? { modelIdentity: modelIdentityForStep(selected.index, selected.step) }
-          : {}),
-        ...(modelResolutionForStep(selected.index, selected.step)
-          ? { modelResolution: modelResolutionForStep(selected.index, selected.step) }
-          : {}),
-        ...(tkTicket ? { tkTicket } : {}),
-      };
-    }
-  }
-
-  if (stepCount > 1 && requestedIndex === undefined) {
-    throw new Error(`Async run '${runId}' has ${stepCount} children. Provide index to choose one.`);
-  }
-  const index = requestedIndex ?? 0;
-  if (!Number.isInteger(index)) throw new Error(`Async run '${runId}' index must be an integer.`);
-  if (index < 0 || index >= stepCount)
-    throw new Error(
-      `Async run '${runId}' has ${stepCount} children. Index ${index} is out of range.`,
-    );
-  let selectedStatusStep = statusSteps[index];
-  let selectedContinuation = lifecycleContinuationForIndex(status, index);
-  if (
-    !options.readOnly &&
-    typeof selectedContinuation?.claimToken === "string" &&
-    selectedContinuation.claimToken.length > 0 &&
-    location.asyncDir
-  ) {
-    const recovered = recoverStaleLifecycleContinuationClaim(location.asyncDir, index, {
-      kill: deps.kill,
-      now: deps.now,
-      asyncDirRoot,
-      resultsDir,
-    });
-    if (recovered.recovered) {
-      status = recovered.status ?? status;
-      statusSteps = status?.steps ?? [];
-      selectedStatusStep = statusSteps[index];
-      selectedContinuation = lifecycleContinuationForIndex(status, index);
-    }
-  }
-  if (state === "continued")
-    throw new Error(
-      `Async run '${runId}' already launched continuation '${selectedContinuation?.continuationRunId ?? status?.lifecycle?.continuation?.continuationRunId ?? "unknown"}' and cannot be resumed again.`,
-    );
-  if (selectedStatusStep?.status === "cancelled")
-    throw new Error(`Async run '${runId}' child ${index} was cancelled and cannot be resumed.`);
-  if (selectedStatusStep?.status === "continued")
-    throw new Error(
-      `Async run '${runId}' child ${index} already launched its continuation and cannot be resumed again.`,
-    );
-  if (
-    !options.readOnly &&
-    typeof selectedContinuation?.claimToken === "string" &&
-    selectedContinuation.claimToken.length > 0
-  ) {
-    const continuationRunId = selectedContinuation.continuationRunId;
-    if (
-      (selectedContinuation.phase === "reserved" || selectedContinuation.phase === "launched") &&
-      continuationRunId
-    ) {
-      throw new Error(
-        `Async run '${runId}' child ${index} already launched continuation '${continuationRunId}' and cannot be resumed again.`,
-      );
-    }
-    throw new Error(
-      `Async run '${runId}' child ${index} was already claimed for continuation and cannot be resumed again.`,
-    );
-  }
-  const agent = selectedStatusStep?.agent ?? resultSteps[index]?.agent ?? result?.agent;
-  if (!agent) throw new Error(`Could not determine child agent for async run '${runId}'.`);
-  const sessionFile =
-    statusSteps[index]?.sessionFile ??
-    resultSteps[index]?.sessionFile ??
-    (stepCount === 1 ? (status?.sessionFile ?? result?.sessionFile) : undefined);
-  const selectedChildPaused =
-    statusSteps[index]?.status === "paused" ||
-    (statusSteps.length === 0 && state === "paused" && resultSteps[index]?.interrupted === true);
-  if (!sessionFile && requireSessionFile)
-    throw new Error(
-      `Async run '${runId}' child ${index} does not have a persisted session file to resume from.`,
-    );
-  const resolvedSessionFile = sessionFile
-    ? validateResumeSessionFile(runId, sessionFile, { allowMissing: selectedChildPaused })
-    : undefined;
-  // When the status file is absent (result-only revival), read acceptance from the
-  // result artifact’s per-child entry; otherwise mirror the status-path behaviour.
-  const pausedStepAcceptance =
-    statusSteps.length > 0 ? statusSteps[index]?.acceptance : resultSteps[index]?.acceptance;
-  if (selectedChildPaused && pausedStepAcceptance === undefined) {
-    throw new Error(
-      `Async run '${runId}' is paused but its skipped acceptance ledger has not been persisted yet. Retry the resume once pause metadata is written.`,
-    );
-  }
-  // Fail closed at this common read site (covers both status and result-only paths)
-  // so only explicitly compatible paused ledgers can resume without re-inferring a
-  // contract, and malformed or terminal statuses never reach continuation merge logic.
-  const continuationAcceptance = selectedChildPaused
-    ? resolvePausedContinuationAcceptance(runId, pausedStepAcceptance)
-    : undefined;
-
-  return {
-    kind: "revive",
+  const context: AsyncResumeResolutionContext = {
+    asyncDirRoot,
+    resultsDir,
+    requireSessionFile,
+    location,
+    status,
+    result,
     runId,
-    asyncDir: location.asyncDir ?? undefined,
     state,
-    agent,
-    index,
-    intercomTarget: resolveSubagentIntercomTarget(runId, agent, index),
-    cwd: status?.cwd ?? result?.cwd,
-    ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
-    ...topLevelProjectMarkerFields,
-    ...(projectAgentForStep(index, selectedStatusStep)
-      ? { projectAgent: projectAgentForStep(index, selectedStatusStep) }
-      : {}),
-    ...(modelIdentityForStep(index, selectedStatusStep)
-      ? { modelIdentity: modelIdentityForStep(index, selectedStatusStep) }
-      : {}),
-    ...(modelResolutionForStep(index, selectedStatusStep)
-      ? { modelResolution: modelResolutionForStep(index, selectedStatusStep) }
-      : {}),
-    ...(tkTicket ? { tkTicket } : {}),
-    ...(selectedStatusStep?.pause?.kind
-      ? { pauseKind: selectedStatusStep.pause.kind }
-      : status?.pause?.kind
-        ? { pauseKind: status.pause.kind }
-        : {}),
-    ...(typeof selectedContinuation?.claimToken === "string" &&
-    selectedContinuation.claimToken.length > 0
-      ? { claimed: true }
-      : {}),
-    ...(continuationAcceptance ? { continuationAcceptance } : {}),
-    ...(contextUsageForStep(index, selectedStatusStep)
-      ? { contextUsage: contextUsageForStep(index, selectedStatusStep) }
-      : {}),
-    ...(contextPressureForStep(index, selectedStatusStep)
-      ? { contextPressure: contextPressureForStep(index, selectedStatusStep) }
-      : {}),
-    ...(crossedPressureThresholdsForStep(index, selectedStatusStep)
-      ? {
-          contextPressureCrossedThresholds: crossedPressureThresholdsForStep(
-            index,
-            selectedStatusStep,
-          ),
-        }
-      : {}),
-    ...(terminationReasonForStep(index, selectedStatusStep)
-      ? { terminationReason: terminationReasonForStep(index, selectedStatusStep) }
-      : {}),
-    ...(selectedStatusStep?.activeRuntimeMs !== undefined
-      ? { activeRuntimeMs: selectedStatusStep.activeRuntimeMs }
-      : resultSteps[index]?.activeRuntimeMs !== undefined
-        ? { activeRuntimeMs: resultSteps[index]!.activeRuntimeMs }
-        : {}),
+    statusSteps,
+    resultSteps,
+    stepCount,
+    requestedIndex,
+    deps,
+    options,
+    tkTicket,
   };
+  if (state === "running") {
+    const liveTarget = resolveLiveAsyncResumeTarget(context);
+    if (liveTarget) return liveTarget;
+  }
+  return resolveTerminalAsyncResumeTarget(context);
 }
 
 export function buildRevivedAsyncTask(target: AsyncResumeTarget, message: string): string {

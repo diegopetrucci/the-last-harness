@@ -1282,12 +1282,9 @@ interface ModelAttemptStart {
   modelAttempts?: ModelAttempt[];
 }
 
-/** Run a single pi agent step, returning output and metadata */
-async function runSingleStep(
-  step: SubagentStep,
-  ctx: SingleStepContext,
-): Promise<{
+type SingleStepResultValue = {
   agent: string;
+  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
   output: string;
   exitCode: number | null;
   exitSignal?: NodeJS.Signals;
@@ -1325,8 +1322,54 @@ async function runSingleStep(
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   activeRuntimeMs?: number;
-  projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
-}> {
+};
+
+type SingleStepAcceptance = import("../../shared/types.ts").AcceptanceLedger;
+type SingleStepAcceptanceReport = ReturnType<typeof parseAndStripAcceptanceReport>["report"];
+type SingleStepResolvedOutput = ReturnType<typeof resolveSingleOutput>;
+type SingleStepStructuredOutput = ReturnType<typeof createStructuredOutputRuntime>;
+type SingleStepRuntimeResult = RunPiStreamingResult & { structuredOutput?: unknown };
+
+interface SingleStepExecutionState {
+  candidates: Array<string | undefined>;
+  attemptedModels: string[];
+  modelAttempts: ModelAttempt[];
+  attemptNotes: string[];
+  modelResolution?: SubagentModelResolution;
+  finalResult?: SingleStepRuntimeResult;
+  finalOutputSnapshot?: SingleOutputSnapshot;
+  completionGuardTriggeredFinal: boolean;
+  turnBudget?: TurnBudgetState;
+  toolBudget?: ToolBudgetState;
+  toolBudgetBlocked: boolean;
+  contextExhaustedDetected: boolean;
+  firstAttemptIdentity?: SubagentModelIdentity;
+  aggregateContextUsage?: ContextUsageDiagnostics;
+  finalAttemptContextUsage?: ContextUsageDiagnostics;
+}
+
+interface SingleStepSetup {
+  segmentStartedAt: number;
+  priorActiveRuntimeMs: number;
+  stepTimeoutTimer?: DeadlineTimer;
+  inheritedTimeoutSignal?: AbortSignal;
+  relayInheritedTimeout: () => void;
+  parentRegisterTimeout?: (interrupt: (() => void) | undefined) => void;
+  childDeadlineAt?: number;
+  ctx: SingleStepContext;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  task: string;
+  taskForCompletionGuard: string;
+  sessionEnabled: boolean;
+  sessionDir?: string;
+  artifactPaths?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  eventsPath: string;
+  restoredSession: boolean;
+  state: SingleStepExecutionState;
+}
+
+function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): SingleStepSetup {
   const segmentStartedAt = ctx.startedAt ?? Date.now();
   const priorActiveRuntimeMs = Math.max(0, step.activeRuntimeMs ?? 0);
   const stepTimeoutController = new AbortController();
@@ -1346,7 +1389,7 @@ async function runSingleStep(
         })
       : undefined;
   const parentRegisterTimeout = ctx.registerTimeout;
-  ctx = {
+  const stepContext: SingleStepContext = {
     ...ctx,
     timeoutSignal: stepTimeoutController.signal,
     timeoutMessage:
@@ -1363,37 +1406,40 @@ async function runSingleStep(
     (step.structuredOutputSchema
       ? createStructuredOutputRuntime(
           step.structuredOutputSchema,
-          path.join(path.dirname(ctx.outputFile), "structured-output"),
+          path.join(path.dirname(stepContext.outputFile), "structured-output"),
         )
       : undefined);
-  const placeholderRegex = new RegExp(ctx.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-  let task = step.task.replace(placeholderRegex, () => ctx.previousOutput);
-  task = resolveOutputReferences(task, ctx.outputs ?? {});
+  const placeholderRegex = new RegExp(
+    stepContext.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "g",
+  );
+  let task = step.task.replace(placeholderRegex, () => stepContext.previousOutput);
+  task = resolveOutputReferences(task, stepContext.outputs ?? {});
   const taskForCompletionGuard = task;
   if (step.effectiveAcceptance) {
     const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance);
     if (acceptancePrompt) task = `${task}\n${acceptancePrompt}`;
   }
-  const sessionEnabled = Boolean(step.sessionFile) || ctx.sessionEnabled;
-  const sessionDir = step.sessionFile ? undefined : ctx.sessionDir;
+  const sessionEnabled = Boolean(step.sessionFile) || stepContext.sessionEnabled;
+  const sessionDir = step.sessionFile ? undefined : stepContext.sessionDir;
 
   let artifactPaths: ArtifactPaths | undefined;
   let transcriptWriter: ChildTranscriptWriter | undefined;
-  if (ctx.artifactsDir && ctx.artifactConfig?.enabled !== false) {
-    const index = ctx.flatStepCount > 1 ? ctx.flatIndex : undefined;
-    artifactPaths = getArtifactPaths(ctx.artifactsDir, ctx.id, step.agent, index);
-    fs.mkdirSync(ctx.artifactsDir, { recursive: true });
-    if (ctx.artifactConfig?.includeInput !== false) {
+  if (stepContext.artifactsDir && stepContext.artifactConfig?.enabled !== false) {
+    const index = stepContext.flatStepCount > 1 ? stepContext.flatIndex : undefined;
+    artifactPaths = getArtifactPaths(stepContext.artifactsDir, stepContext.id, step.agent, index);
+    fs.mkdirSync(stepContext.artifactsDir, { recursive: true });
+    if (stepContext.artifactConfig?.includeInput !== false) {
       fs.writeFileSync(artifactPaths.inputPath, `# Task for ${step.agent}\n\n${task}`, "utf-8");
     }
-    if (ctx.artifactConfig?.includeTranscript !== false) {
+    if (stepContext.artifactConfig?.includeTranscript !== false) {
       transcriptWriter = createChildTranscriptWriter({
         transcriptPath: artifactPaths.transcriptPath,
         source: "async",
-        runId: ctx.id,
+        runId: stepContext.id,
         agent: step.agent,
-        childIndex: ctx.flatIndex,
-        cwd: step.cwd ?? ctx.cwd,
+        childIndex: stepContext.flatIndex,
+        cwd: step.cwd ?? stepContext.cwd,
       });
     }
   }
@@ -1409,15 +1455,11 @@ async function runSingleStep(
   const modelAttempts: ModelAttempt[] = [];
   const attemptNotes: string[] = [...(step.attemptNotes ?? [])];
   let modelResolution = step.modelResolution;
-  const eventsPath = path.join(path.dirname(ctx.outputFile), "events.jsonl");
-  let finalResult: RunPiStreamingResult | undefined;
-  let finalOutputSnapshot: SingleOutputSnapshot | undefined;
-  let completionGuardTriggeredFinal = false;
-  let turnBudget = ctx.turnBudget ? initialTurnBudgetState(ctx.turnBudget) : undefined;
-  let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
-  let toolBudgetBlocked = false;
-  let contextExhaustedDetected = false;
-  let firstAttemptIdentity: SubagentModelIdentity | undefined;
+  const eventsPath = path.join(path.dirname(stepContext.outputFile), "events.jsonl");
+  const initialTurnBudget = stepContext.turnBudget
+    ? initialTurnBudgetState(stepContext.turnBudget)
+    : undefined;
+  const initialToolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
   // Async fresh runs commonly receive a preallocated session path. Snapshot
   // whether its artifact existed before the first child is spawned so fallback
   // attempts in this invocation cannot become restored attempts.
@@ -1432,369 +1474,369 @@ async function runSingleStep(
           : {}),
       }
     : undefined;
-  let finalAttemptContextUsage: ContextUsageDiagnostics | undefined;
+  return {
+    segmentStartedAt,
+    priorActiveRuntimeMs,
+    stepTimeoutTimer,
+    inheritedTimeoutSignal,
+    relayInheritedTimeout,
+    parentRegisterTimeout,
+    childDeadlineAt,
+    ctx: stepContext,
+    effectiveStructuredOutput,
+    task,
+    taskForCompletionGuard,
+    sessionEnabled,
+    sessionDir,
+    artifactPaths,
+    transcriptWriter,
+    eventsPath,
+    restoredSession,
+    state: {
+      candidates,
+      attemptedModels,
+      modelAttempts,
+      attemptNotes,
+      modelResolution,
+      finalResult: undefined,
+      finalOutputSnapshot: undefined,
+      completionGuardTriggeredFinal: false,
+      turnBudget: initialTurnBudget,
+      toolBudget: initialToolBudget,
+      toolBudgetBlocked: false,
+      contextExhaustedDetected: false,
+      firstAttemptIdentity: undefined,
+      aggregateContextUsage,
+      finalAttemptContextUsage: undefined,
+    },
+  };
+}
 
-  for (let index = 0; index < candidates.length; index++) {
-    if (ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
-    const candidate = candidates[index];
-    // Support-aware effective identity for this attempt: never persist a
-    // thinking level that dispatch preparation already dropped as unsupported.
-    const attemptThinking = dispatchThinkingDropped(step, candidate)
-      ? undefined
-      : resolveEffectiveThinking(candidate, step.thinking);
-    const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
-    if (index === 0) firstAttemptIdentity = attemptIdentity;
-    // If the process dies mid-attempt, the last status write must still carry
-    // the original identity, fallback reason, and completed attempt history so
-    // durable resume does not mistake a runtime fallback for the original
-    // selection. Persist the full transition in one status write.
-    let attemptResolution = modelResolution;
-    if (index > 0) {
-      modelResolution = appendRuntimeFallbackResolution({
-        previous: modelResolution,
-        sourceAttempt: modelAttempts.at(-1),
-        currentIdentity: attemptIdentity,
-        originalIdentity: firstAttemptIdentity,
-      });
-      attemptResolution = modelResolution;
-    }
-    ctx.onAttemptStart?.({
-      model: candidate,
-      thinking: attemptThinking,
-      modelIdentity: attemptIdentity,
-      modelResolution: attemptResolution,
-      attemptedModels: candidate ? [...attemptedModels, candidate] : undefined,
-      modelAttempts: modelAttempts.length > 0 ? [...modelAttempts] : undefined,
+interface SingleStepAttemptPreparation {
+  candidate: string | undefined;
+  attemptThinking?: string;
+  outputSnapshot?: SingleOutputSnapshot;
+  args?: string[];
+  env?: Record<string, string | undefined>;
+  tempDir?: string;
+  buildError?: string;
+}
+
+function prepareSingleStepAttempt(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  candidate: string | undefined;
+  index: number;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  task: string;
+  sessionEnabled: boolean;
+  sessionDir?: string;
+}): SingleStepAttemptPreparation {
+  const {
+    step,
+    ctx,
+    state,
+    candidate,
+    index,
+    effectiveStructuredOutput,
+    task,
+    sessionEnabled,
+    sessionDir,
+  } = input;
+  // Support-aware effective identity for this attempt: never persist a
+  // thinking level that dispatch preparation already dropped as unsupported.
+  const attemptThinking = dispatchThinkingDropped(step, candidate)
+    ? undefined
+    : resolveEffectiveThinking(candidate, step.thinking);
+  const attemptIdentity = canonicalSubagentModelIdentity(candidate, attemptThinking);
+  if (index === 0) state.firstAttemptIdentity = attemptIdentity;
+  // If the process dies mid-attempt, the last status write must still carry the
+  // original identity, fallback reason, and completed attempt history so
+  // durable resume does not mistake a runtime fallback for the original
+  // selection. Persist the full transition in one status write.
+  let attemptResolution = state.modelResolution;
+  if (index > 0) {
+    state.modelResolution = appendRuntimeFallbackResolution({
+      previous: state.modelResolution,
+      sourceAttempt: state.modelAttempts.at(-1),
+      currentIdentity: attemptIdentity,
+      originalIdentity: state.firstAttemptIdentity,
     });
-    const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
-    if (effectiveStructuredOutput) {
-      try {
-        if (fs.existsSync(effectiveStructuredOutput.outputPath))
-          fs.unlinkSync(effectiveStructuredOutput.outputPath);
-      } catch {
-        // Missing/stale structured-output files are handled after the child exits.
-      }
-    }
-    let args: string[] | undefined;
-    let env: Record<string, string | undefined> | undefined;
-    let tempDir: string | undefined;
-    let buildError: string | undefined;
+    attemptResolution = state.modelResolution;
+  }
+  ctx.onAttemptStart?.({
+    model: candidate,
+    thinking: attemptThinking,
+    modelIdentity: attemptIdentity,
+    modelResolution: attemptResolution,
+    attemptedModels: candidate ? [...state.attemptedModels, candidate] : undefined,
+    modelAttempts: state.modelAttempts.length > 0 ? [...state.modelAttempts] : undefined,
+  });
+  const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+  if (effectiveStructuredOutput) {
     try {
-      const supervisorBridgeActive = step.supervisorBridge !== false;
-      ({ args, env, tempDir } = buildPiArgs({
-        parentSessionId: step.parentSessionId,
-        baseArgs: ["--mode", "json", "-p"],
-        task,
-        sessionEnabled,
-        sessionDir,
-        sessionFile: step.sessionFile,
-        model: candidate,
-        inheritProjectContext: step.inheritProjectContext,
-        inheritSkills: step.inheritSkills,
-        requireReadTool: step.inheritSkills || Boolean(step.skills?.length),
-        tools: step.tools,
-        extensions: step.extensions,
-        subagentOnlyExtensions: step.subagentOnlyExtensions,
-        supervisorBridge: step.supervisorBridge,
-        systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
-        systemPromptMode: step.systemPromptMode,
-        cwd: step.cwd ?? ctx.cwd,
-        promptFileStem: step.agent,
-        intercomSessionName: supervisorBridgeActive ? ctx.childIntercomTarget : undefined,
-        orchestratorIntercomTarget: supervisorBridgeActive
-          ? ctx.orchestratorIntercomTarget
-          : undefined,
-        runId: ctx.id,
-        childAgentName: step.agent,
-        projectAgentGuidance: step.projectAgentGuidance === true,
-        childIndex: ctx.flatIndex,
-        steerInboxDir: ctx.steerInboxDir,
-        structuredOutput: effectiveStructuredOutput,
-        toolBudget: step.toolBudget,
-      }));
-    } catch (error) {
-      buildError =
-        boundChildError(error instanceof Error ? error.message : String(error)) ??
-        "Unknown child setup error.";
+      if (fs.existsSync(effectiveStructuredOutput.outputPath))
+        fs.unlinkSync(effectiveStructuredOutput.outputPath);
+    } catch {
+      // Missing/stale structured-output files are handled after the child exits.
     }
-    if (buildError) {
-      const attempt: ModelAttempt = {
-        model: candidate ?? step.model ?? "default",
-        success: false,
-        exitCode: 1,
-        error: buildError,
-        usage: emptyUsage(),
-      };
-      modelAttempts.push(attempt);
-      if (candidate) attemptedModels.push(candidate);
-      finalOutputSnapshot = outputSnapshot;
-      finalResult = {
-        stderr: "",
-        exitCode: 1,
-        messages: [],
-        usage: emptyUsage(),
-        model: candidate,
-        configuredModel: candidate,
-        error: buildError,
-        finalOutput: buildError,
-      };
-      break;
-    }
-    const run = await runPiStreaming(
-      args!,
-      step.cwd ?? ctx.cwd,
-      ctx.outputFile,
-      env,
-      ctx.piPackageRoot,
-      ctx.piArgv1,
-      step.maxSubagentDepth,
-      { eventsPath, runId: ctx.id, stepIndex: ctx.flatIndex, agent: step.agent },
-      ctx.registerInterrupt,
-      ctx.onChildEvent,
-      transcriptWriter,
-      ctx.registerTimeout,
-      ctx.timeoutMessage,
-      ctx.registerTurnBudgetAbort,
-      ctx.onChildProtocolOutputLimit,
-      {
-        restored: restoredSession,
-        configuredModel: candidate,
-        contextWindow: contextWindowForModel(candidate, step.contextWindows),
-        contextWindows: step.contextWindows,
-      },
-    );
-    finalAttemptContextUsage = run.contextUsage;
-    aggregateContextUsage = mergeContextUsageDiagnostics(aggregateContextUsage, run.contextUsage);
-    if (run.turnBudget) turnBudget = run.turnBudget;
-    else if (ctx.turnBudget) {
-      const assistantMessages = run.messages.filter((message) => message.role === "assistant");
-      const turnCount = assistantMessages.length;
-      const lastAssistantMessage = assistantMessages.at(-1);
-      if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
-        turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
-      } else if (turnCount >= ctx.turnBudget.maxTurns) {
-        turnBudget = turnBudgetState(
+  }
+  let args: string[] | undefined;
+  let env: Record<string, string | undefined> | undefined;
+  let tempDir: string | undefined;
+  let buildError: string | undefined;
+  try {
+    const supervisorBridgeActive = step.supervisorBridge !== false;
+    ({ args, env, tempDir } = buildPiArgs({
+      parentSessionId: step.parentSessionId,
+      baseArgs: ["--mode", "json", "-p"],
+      task,
+      sessionEnabled,
+      sessionDir,
+      sessionFile: step.sessionFile,
+      model: candidate,
+      inheritProjectContext: step.inheritProjectContext,
+      inheritSkills: step.inheritSkills,
+      requireReadTool: step.inheritSkills || Boolean(step.skills?.length),
+      tools: step.tools,
+      extensions: step.extensions,
+      subagentOnlyExtensions: step.subagentOnlyExtensions,
+      supervisorBridge: step.supervisorBridge,
+      systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
+      systemPromptMode: step.systemPromptMode,
+      cwd: step.cwd ?? ctx.cwd,
+      promptFileStem: step.agent,
+      intercomSessionName: supervisorBridgeActive ? ctx.childIntercomTarget : undefined,
+      orchestratorIntercomTarget: supervisorBridgeActive
+        ? ctx.orchestratorIntercomTarget
+        : undefined,
+      runId: ctx.id,
+      childAgentName: step.agent,
+      projectAgentGuidance: step.projectAgentGuidance === true,
+      childIndex: ctx.flatIndex,
+      steerInboxDir: ctx.steerInboxDir,
+      structuredOutput: effectiveStructuredOutput,
+      toolBudget: step.toolBudget,
+    }));
+  } catch (error) {
+    buildError =
+      boundChildError(error instanceof Error ? error.message : String(error)) ??
+      "Unknown child setup error.";
+  }
+  return { candidate, attemptThinking, outputSnapshot, args, env, tempDir, buildError };
+}
+
+interface SingleStepAttemptAssessment {
+  attempt: ModelAttempt;
+  completionGuardTriggered: boolean;
+}
+
+function assessSingleStepAttempt(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  run: RunPiStreamingResult;
+  candidate: string | undefined;
+  outputSnapshot?: SingleOutputSnapshot;
+  tempDir?: string;
+  effectiveStructuredOutput?: SingleStepStructuredOutput;
+  taskForCompletionGuard: string;
+}): SingleStepAttemptAssessment {
+  const {
+    step,
+    ctx,
+    state,
+    run,
+    candidate,
+    outputSnapshot,
+    tempDir,
+    effectiveStructuredOutput,
+    taskForCompletionGuard,
+  } = input;
+  state.finalAttemptContextUsage = run.contextUsage;
+  state.aggregateContextUsage = mergeContextUsageDiagnostics(
+    state.aggregateContextUsage,
+    run.contextUsage,
+  );
+  if (run.turnBudget) state.turnBudget = run.turnBudget;
+  else if (ctx.turnBudget) {
+    const assistantMessages = run.messages.filter((message) => message.role === "assistant");
+    const turnCount = assistantMessages.length;
+    const lastAssistantMessage = assistantMessages.at(-1);
+    if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
+      state.turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
+    } else if (turnCount >= ctx.turnBudget.maxTurns) {
+      state.turnBudget = turnBudgetState(
+        ctx.turnBudget,
+        turnCount,
+        shouldAbortForTurnBudget(
           ctx.turnBudget,
           turnCount,
-          shouldAbortForTurnBudget(
-            ctx.turnBudget,
-            turnCount,
-            lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
-          ),
-        );
-      }
-    }
-    cleanupTempDir(tempDir);
-
-    const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
-    const runTerminationReason = resolveSubagentTerminationReason({
-      assistantStopReason: run.assistantStopReason,
-      effectiveExitCode: run.exitCode ?? undefined,
-      processCompleted: true,
-    });
-    const contextExhaustedSignature = run.protocolOutputLimit
-      ? undefined
-      : classifyContextExhaustedTermination({
-          messages: run.messages,
-          // A retry is a new diagnostic scope; prior attempts remain aggregate
-          // reporting data but cannot pressure-classify this attempt.
-          contextUsage: run.contextUsage,
-          exitCode: run.exitCode ?? undefined,
-          error: run.error,
-          terminationReason: runTerminationReason,
-        });
-    // Keep this scoped to the current attempt; a failed prior attempt must
-    // never make a later fallback look context-exhausted.
-    contextExhaustedDetected =
-      run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
-    const missingStructuredOutput = effectiveStructuredOutput
-      ? !fs.existsSync(effectiveStructuredOutput.outputPath)
-      : false;
-    const emptyOutputError =
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !contextExhaustedSignature &&
-      !run.finalOutput.trim() &&
-      (!effectiveStructuredOutput || missingStructuredOutput)
-        ? "Subagent produced no output (possible model cold-start or empty response)."
-        : undefined;
-    let structuredOutput: unknown;
-    let structuredError: string | undefined;
-    if (
-      effectiveStructuredOutput &&
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !emptyOutputError
-    ) {
-      const structured = readStructuredOutput({
-        schema: effectiveStructuredOutput.schema,
-        schemaPath: effectiveStructuredOutput.schemaPath,
-        outputPath: effectiveStructuredOutput.outputPath,
-      });
-      if (structured.error) structuredError = structured.error;
-      else structuredOutput = structured.value;
-    }
-    const completionGuard =
-      run.exitCode === 0 &&
-      !run.error &&
-      !hiddenError?.hasError &&
-      !emptyOutputError &&
-      step.completionGuard !== false
-        ? evaluateCompletionMutationGuard({
-            agent: step.agent,
-            task: taskForCompletionGuard,
-            messages: run.messages,
-            tools: step.tools,
-          })
-        : undefined;
-    const completionGuardTriggered =
-      completionGuard?.triggered === true && !run.observedMutationAttempt;
-    const completionGuardError = completionGuardTriggered
-      ? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
-      : undefined;
-    const effectiveExitCode = run.protocolOutputLimit
-      ? 1
-      : completionGuardTriggered
-        ? 1
-        : structuredError
-          ? 1
-          : hiddenError?.hasError
-            ? (hiddenError.exitCode ?? 1)
-            : emptyOutputError
-              ? 1
-              : run.error && run.exitCode === 0
-                ? 1
-                : run.exitCode;
-    const childFailureError = hiddenError?.hasError
-      ? hiddenError.details
-        ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
-        : `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
-      : (emptyOutputError ??
-        (run.error ||
-          (run.exitCode !== 0
-            ? boundChildStderrError(run.stderr.trim(), run.stderrTruncated === true)
-            : undefined)));
-    const error = boundChildError(
-      run.protocolOutputLimit
-        ? formatProtocolOutputLimit(run.protocolOutputLimit)
-        : (completionGuardError ?? structuredError ?? childFailureError),
-    );
-    const attempt: ModelAttempt = {
-      model: candidate ?? run.model ?? step.model ?? "default",
-      success: effectiveExitCode === 0 && !error,
-      exitCode: effectiveExitCode,
-      error,
-      usage: run.usage,
-    };
-    modelAttempts.push(attempt);
-    if (candidate) attemptedModels.push(candidate);
-    completionGuardTriggeredFinal = completionGuardTriggered;
-    finalOutputSnapshot = outputSnapshot;
-    if (step.toolBudget) {
-      const toolMessages = run.messages.filter((message) => message.role === "toolResult");
-      const blockedMessage = toolMessages.find((message) =>
-        extractTextFromContent(message.content).includes("Tool budget hard limit reached"),
-      );
-      toolBudgetBlocked = Boolean(blockedMessage);
-      toolBudget = toolBudgetState(
-        step.toolBudget,
-        toolMessages.length,
-        blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined,
+          lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
+        ),
       );
     }
-    finalResult = {
-      ...run,
-      exitCode: effectiveExitCode,
-      model: candidate ?? run.model,
-      error,
-      structuredOutput,
-    } as RunPiStreamingResult & { structuredOutput?: unknown };
-    if (run.protocolOutputLimit || run.turnBudgetExceeded) break;
-    if (run.timedOut || ctx.timeoutSignal?.aborted || ctx.skipAcceptance?.()) break;
-    if (attempt.success || completionGuardTriggered) break;
-    if (!isRetryableModelFailure(error) || index === candidates.length - 1) break;
-    attemptNotes.push(formatModelAttemptNote(attempt, candidates[index + 1]));
   }
+  cleanupTempDir(tempDir);
 
-  const processCleanup =
-    finalResult?.processCleanup ??
-    skipOwnedProcessGroupCleanup(
-      supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform",
-      finalResult?.processGroupId,
-    );
-  const modelFallbackNotice = combineModelFallbackNotices(
-    modelAttempts.length > 1 ? sanitizeModelFallbackNotice(step.modelFallbackNotice) : undefined,
-    sanitizeModelFallbackNotice(step.modelFallbackFilterNotice),
-  );
-  const finalModel = finalResult?.model;
-  // A dispatched candidate is authoritative. For an unconfigured run, only the
-  // first validated child report is eligible to become the effective identity;
-  // runtime observation is not a model-resolution override or fallback.
-  const finalConfiguredIdentity = finalResult?.configuredModel
-    ? canonicalSubagentModelIdentity(
-        finalResult.configuredModel,
-        dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking,
-      )
-    : undefined;
-  const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
-  if (modelAttempts.length > 1 && finalConfiguredIdentity) {
-    modelResolution = appendRuntimeFallbackResolution({
-      previous: modelResolution,
-      sourceAttempt: modelAttempts.at(-2),
-      currentIdentity: finalConfiguredIdentity,
-      originalIdentity: firstAttemptIdentity,
-    });
-  } else if (modelResolution && finalConfiguredIdentity) {
-    modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
-  }
-  if (modelResolution) {
-    const resolutionNotice = `Notice: ${modelResolution.reason}`;
-    if (!attemptNotes.some((note) => note.includes(modelResolution!.reason)))
-      attemptNotes.push(resolutionNotice);
-  }
-  const rawOutput = finalResult?.finalOutput ?? "";
-  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
-    parseAndStripAcceptanceReport(rawOutput);
-  const resolvedOutput =
-    step.outputPath && finalResult?.exitCode === 0
-      ? resolveSingleOutput(step.outputPath, outputForPersistence, finalOutputSnapshot)
-      : { fullOutput: outputForPersistence };
-  const output = resolvedOutput.fullOutput;
-  const outputReference = resolvedOutput.savedPath
-    ? formatSavedOutputReference(resolvedOutput.savedPath, output)
-    : undefined;
-  let outputForSummary = output;
-  if (modelFallbackNotice) {
-    outputForSummary = `Notice: ${modelFallbackNotice}\n\n${outputForSummary}`.trim();
-  }
-  if (attemptNotes.length > 0) {
-    outputForSummary = `${attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
-  }
-  if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && turnBudget) {
-    outputForSummary = formatTurnBudgetOutput(
-      turnBudgetExceededMessage(turnBudget, turnBudget.turnCount),
-      outputForSummary,
-    );
-  } else if (!finalResult?.timedOut && turnBudget?.outcome === "wrap-up-requested") {
-    const note = turnBudgetSoftNote(
-      turnBudget,
-      turnBudget.wrapUpRequestedAtTurn ?? turnBudget.turnCount,
-    );
-    outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
-  }
-  const outputForAcceptance = rawOutput;
-  const finalizedOutput = finalizeSingleOutput({
-    fullOutput: outputForSummary,
-    outputPath: step.outputPath,
-    outputMode: step.outputMode,
-    exitCode: finalResult?.exitCode ?? 1,
-    savedPath: resolvedOutput.savedPath,
-    outputReference,
-    saveError: resolvedOutput.saveError,
+  const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
+  const runTerminationReason = resolveSubagentTerminationReason({
+    assistantStopReason: run.assistantStopReason,
+    effectiveExitCode: run.exitCode ?? undefined,
+    processCompleted: true,
   });
-  outputForSummary = finalizedOutput.displayOutput;
+  const contextExhaustedSignature = run.protocolOutputLimit
+    ? undefined
+    : classifyContextExhaustedTermination({
+        messages: run.messages,
+        // A retry is a new diagnostic scope; prior attempts remain aggregate
+        // reporting data but cannot pressure-classify this attempt.
+        contextUsage: run.contextUsage,
+        exitCode: run.exitCode ?? undefined,
+        error: run.error,
+        terminationReason: runTerminationReason,
+      });
+  // Keep this scoped to the current attempt; a failed prior attempt must
+  // never make a later fallback look context-exhausted.
+  state.contextExhaustedDetected =
+    run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
+  const missingStructuredOutput = effectiveStructuredOutput
+    ? !fs.existsSync(effectiveStructuredOutput.outputPath)
+    : false;
+  const emptyOutputError =
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !contextExhaustedSignature &&
+    !run.finalOutput.trim() &&
+    (!effectiveStructuredOutput || missingStructuredOutput)
+      ? "Subagent produced no output (possible model cold-start or empty response)."
+      : undefined;
+  let structuredOutput: unknown;
+  let structuredError: string | undefined;
+  if (
+    effectiveStructuredOutput &&
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !emptyOutputError
+  ) {
+    const structured = readStructuredOutput({
+      schema: effectiveStructuredOutput.schema,
+      schemaPath: effectiveStructuredOutput.schemaPath,
+      outputPath: effectiveStructuredOutput.outputPath,
+    });
+    if (structured.error) structuredError = structured.error;
+    else structuredOutput = structured.value;
+  }
+  const completionGuard =
+    run.exitCode === 0 &&
+    !run.error &&
+    !hiddenError?.hasError &&
+    !emptyOutputError &&
+    step.completionGuard !== false
+      ? evaluateCompletionMutationGuard({
+          agent: step.agent,
+          task: taskForCompletionGuard,
+          messages: run.messages,
+          tools: step.tools,
+        })
+      : undefined;
+  const completionGuardTriggered =
+    completionGuard?.triggered === true && !run.observedMutationAttempt;
+  const completionGuardError = completionGuardTriggered
+    ? "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes."
+    : undefined;
+  const effectiveExitCode = run.protocolOutputLimit
+    ? 1
+    : completionGuardTriggered
+      ? 1
+      : structuredError
+        ? 1
+        : hiddenError?.hasError
+          ? (hiddenError.exitCode ?? 1)
+          : emptyOutputError
+            ? 1
+            : run.error && run.exitCode === 0
+              ? 1
+              : run.exitCode;
+  const childFailureError = hiddenError?.hasError
+    ? hiddenError.details
+      ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
+      : `${hiddenError.errorType} failed with exit code ${effectiveExitCode}`
+    : (emptyOutputError ??
+      (run.error ||
+        (run.exitCode !== 0
+          ? boundChildStderrError(run.stderr.trim(), run.stderrTruncated === true)
+          : undefined)));
+  const error = boundChildError(
+    run.protocolOutputLimit
+      ? formatProtocolOutputLimit(run.protocolOutputLimit)
+      : (completionGuardError ?? structuredError ?? childFailureError),
+  );
+  const attempt: ModelAttempt = {
+    model: candidate ?? run.model ?? step.model ?? "default",
+    success: effectiveExitCode === 0 && !error,
+    exitCode: effectiveExitCode,
+    error,
+    usage: run.usage,
+  };
+  state.modelAttempts.push(attempt);
+  if (candidate) state.attemptedModels.push(candidate);
+  state.completionGuardTriggeredFinal = completionGuardTriggered;
+  state.finalOutputSnapshot = outputSnapshot;
+  if (step.toolBudget) {
+    const toolMessages = run.messages.filter((message) => message.role === "toolResult");
+    const blockedMessage = toolMessages.find((message) =>
+      extractTextFromContent(message.content).includes("Tool budget hard limit reached"),
+    );
+    state.toolBudgetBlocked = Boolean(blockedMessage);
+    state.toolBudget = toolBudgetState(
+      step.toolBudget,
+      toolMessages.length,
+      blockedMessage ? (blockedMessage as { toolName?: string }).toolName : undefined,
+    );
+  }
+  state.finalResult = {
+    ...run,
+    exitCode: effectiveExitCode,
+    model: candidate ?? run.model,
+    error,
+    structuredOutput,
+  };
+  return { attempt, completionGuardTriggered };
+}
+
+function shouldStopSingleStepAttempt(input: {
+  run: RunPiStreamingResult;
+  ctx: SingleStepContext;
+  attempt: ModelAttempt;
+  completionGuardTriggered: boolean;
+  index: number;
+  candidateCount: number;
+}): boolean {
+  if (input.run.protocolOutputLimit || input.run.turnBudgetExceeded) return true;
+  if (input.run.timedOut || input.ctx.timeoutSignal?.aborted || input.ctx.skipAcceptance?.())
+    return true;
+  if (input.attempt.success || input.completionGuardTriggered) return true;
+  return !isRetryableModelFailure(input.attempt.error) || input.index === input.candidateCount - 1;
+}
+
+interface SingleStepAcceptanceEvaluation {
+  acceptance: SingleStepAcceptance | Promise<SingleStepAcceptance> | undefined;
+  wasInterrupted: () => boolean;
+  teardown: () => void;
+}
+
+function prepareSingleStepAcceptance(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  finalResult?: SingleStepRuntimeResult;
+  output: string;
+  report?: SingleStepAcceptanceReport;
+}): SingleStepAcceptanceEvaluation {
+  const { step, ctx, finalResult, output, report } = input;
   const acceptanceAbortController = new AbortController();
   const acceptanceAbortListeners: Array<() => void> = [];
   const relayAcceptanceAbort = (signal: AbortSignal | undefined, abort: () => void) => {
@@ -1816,6 +1858,10 @@ async function runSingleStep(
     interruptedDuringAcceptance = true;
     acceptanceAbortController.abort();
   });
+  const teardown = () => {
+    ctx.registerInterrupt?.(undefined);
+    for (const removeAbortListener of acceptanceAbortListeners) removeAbortListener();
+  };
   const acceptance =
     step.effectiveAcceptance &&
     !finalResult?.interrupted &&
@@ -1824,10 +1870,10 @@ async function runSingleStep(
     !ctx.interruptSignal?.aborted &&
     !acceptanceAbortController.signal.aborted &&
     !ctx.skipAcceptance?.()
-      ? await evaluateAcceptance({
+      ? evaluateAcceptance({
           acceptance: step.effectiveAcceptance,
-          output: outputForAcceptance,
-          report: rawAcceptanceReport,
+          output,
+          report,
           cwd: step.cwd ?? ctx.cwd,
           signal: acceptanceAbortController.signal,
           abortMessage: interruptedDuringAcceptance
@@ -1835,12 +1881,163 @@ async function runSingleStep(
             : (ctx.timeoutMessage ?? "Subagent timed out."),
         })
       : undefined;
-  ctx.registerInterrupt?.(undefined);
-  for (const removeAbortListener of acceptanceAbortListeners) removeAbortListener();
+  return {
+    acceptance,
+    wasInterrupted: () => interruptedDuringAcceptance,
+    teardown,
+  };
+}
+
+interface SingleStepOutputFinalization {
+  processCleanup: ChildProcessCleanupResult;
+  modelFallbackNotice?: string;
+  finalModel?: string;
+  finalModelIdentity?: SubagentModelIdentity;
+  rawOutput: string;
+  rawAcceptanceReport?: SingleStepAcceptanceReport;
+  resolvedOutput: SingleStepResolvedOutput;
+  output: string;
+  outputForSummary: string;
+  acceptance: SingleStepAcceptance | Promise<SingleStepAcceptance> | undefined;
+  acceptanceWasInterrupted: () => boolean;
+  acceptanceTeardown: () => void;
+}
+
+function finalizeSingleStepOutput(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+}): SingleStepOutputFinalization {
+  const { step, ctx, state } = input;
+  const finalResult = state.finalResult;
+  const processCleanup =
+    finalResult?.processCleanup ??
+    skipOwnedProcessGroupCleanup(
+      supportsOwnedProcessGroupCleanup() ? "process_group_unavailable" : "unsupported_platform",
+      finalResult?.processGroupId,
+    );
+  const modelFallbackNotice = combineModelFallbackNotices(
+    state.modelAttempts.length > 1
+      ? sanitizeModelFallbackNotice(step.modelFallbackNotice)
+      : undefined,
+    sanitizeModelFallbackNotice(step.modelFallbackFilterNotice),
+  );
+  const finalModel = finalResult?.model;
+  // A dispatched candidate is authoritative. For an unconfigured run, only the
+  // first validated child report is eligible to become the effective identity;
+  // runtime observation is not a model-resolution override or fallback.
+  const finalConfiguredIdentity = finalResult?.configuredModel
+    ? canonicalSubagentModelIdentity(
+        finalResult.configuredModel,
+        dispatchThinkingDropped(step, finalResult.configuredModel) ? undefined : step.thinking,
+      )
+    : undefined;
+  const finalModelIdentity = finalConfiguredIdentity ?? finalResult?.runtimeModelIdentity;
+  let modelResolution = state.modelResolution;
+  if (state.modelAttempts.length > 1 && finalConfiguredIdentity) {
+    modelResolution = appendRuntimeFallbackResolution({
+      previous: modelResolution,
+      sourceAttempt: state.modelAttempts.at(-2),
+      currentIdentity: finalConfiguredIdentity,
+      originalIdentity: state.firstAttemptIdentity,
+    });
+  } else if (modelResolution && finalConfiguredIdentity) {
+    modelResolution = { ...modelResolution, resumed: finalConfiguredIdentity };
+  }
+  state.modelResolution = modelResolution;
+  if (modelResolution) {
+    const resolutionNotice = `Notice: ${modelResolution.reason}`;
+    if (!state.attemptNotes.some((note) => note.includes(modelResolution!.reason)))
+      state.attemptNotes.push(resolutionNotice);
+  }
+  const rawOutput = finalResult?.finalOutput ?? "";
+  const { stripped: outputForPersistence, report: rawAcceptanceReport } =
+    parseAndStripAcceptanceReport(rawOutput);
+  const resolvedOutput =
+    step.outputPath && finalResult?.exitCode === 0
+      ? resolveSingleOutput(step.outputPath, outputForPersistence, state.finalOutputSnapshot)
+      : { fullOutput: outputForPersistence };
+  const output = resolvedOutput.fullOutput;
+  const outputReference = resolvedOutput.savedPath
+    ? formatSavedOutputReference(resolvedOutput.savedPath, output)
+    : undefined;
+  let outputForSummary = output;
+  if (modelFallbackNotice) {
+    outputForSummary = `Notice: ${modelFallbackNotice}\n\n${outputForSummary}`.trim();
+  }
+  if (state.attemptNotes.length > 0) {
+    outputForSummary = `${state.attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
+  }
+  if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && state.turnBudget) {
+    outputForSummary = formatTurnBudgetOutput(
+      turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount),
+      outputForSummary,
+    );
+  } else if (!finalResult?.timedOut && state.turnBudget?.outcome === "wrap-up-requested") {
+    const note = turnBudgetSoftNote(
+      state.turnBudget,
+      state.turnBudget.wrapUpRequestedAtTurn ?? state.turnBudget.turnCount,
+    );
+    outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
+  }
+  const outputForAcceptance = rawOutput;
+  const finalizedOutput = finalizeSingleOutput({
+    fullOutput: outputForSummary,
+    outputPath: step.outputPath,
+    outputMode: step.outputMode,
+    exitCode: finalResult?.exitCode ?? 1,
+    savedPath: resolvedOutput.savedPath,
+    outputReference,
+    saveError: resolvedOutput.saveError,
+  });
+  outputForSummary = finalizedOutput.displayOutput;
+  const acceptanceEvaluation = prepareSingleStepAcceptance({
+    step,
+    ctx,
+    finalResult,
+    output: outputForAcceptance,
+    report: rawAcceptanceReport,
+  });
+  return {
+    processCleanup,
+    modelFallbackNotice,
+    finalModel,
+    finalModelIdentity,
+    rawOutput,
+    rawAcceptanceReport,
+    resolvedOutput,
+    output,
+    outputForSummary,
+    acceptance: acceptanceEvaluation.acceptance,
+    acceptanceWasInterrupted: acceptanceEvaluation.wasInterrupted,
+    acceptanceTeardown: acceptanceEvaluation.teardown,
+  };
+}
+
+interface SingleStepOutcome {
+  effectiveInterrupted: boolean;
+  interruptedAcceptance?: SingleStepAcceptance;
+  timedOutAfterAcceptance: boolean;
+  turnBudgetExceeded: boolean;
+  effectiveAcceptance?: SingleStepAcceptance;
+  effectiveFinalExitCode: number | null;
+  terminationReason: SubagentTerminationReason;
+  effectiveFinalError?: string;
+}
+
+function finalizeSingleStepOutcome(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  acceptance?: SingleStepAcceptance;
+  acceptanceWasInterrupted: () => boolean;
+}): SingleStepOutcome {
+  const { step, ctx, state, acceptance, acceptanceWasInterrupted } = input;
+  const finalResult = state.finalResult;
   const effectiveInterrupted =
     !finalResult?.protocolOutputLimit &&
     (finalResult?.interrupted === true ||
-      interruptedDuringAcceptance ||
+      acceptanceWasInterrupted() ||
       (ctx.interruptSignal?.aborted === true &&
         !ctx.timeoutSignal?.aborted &&
         !ctx.skipAcceptance?.()));
@@ -1889,7 +2086,7 @@ async function runSingleStep(
         paused: effectiveInterrupted,
         timedOut: timedOutAfterAcceptance,
         turnBudgetExceeded,
-        toolBudgetBlocked,
+        toolBudgetBlocked: state.toolBudgetBlocked,
         interrupted: effectiveInterrupted,
         assistantStopReason: finalResult?.assistantStopReason,
         effectiveExitCode: effectiveFinalExitCode,
@@ -1902,8 +2099,8 @@ async function runSingleStep(
       : turnBudgetExceeded
         ? boundChildError(
             finalResult?.error ??
-              (turnBudget
-                ? turnBudgetExceededMessage(turnBudget, turnBudget.turnCount)
+              (state.turnBudget
+                ? turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount)
                 : "Subagent exceeded turn budget."),
           )
         : effectiveInterrupted
@@ -1913,7 +2110,7 @@ async function runSingleStep(
             : boundChildError(finalResult?.error);
   const contextExhaustedReason = finalResult?.protocolOutputLimit
     ? undefined
-    : contextExhaustedDetected &&
+    : state.contextExhaustedDetected &&
         !timedOutAfterAcceptance &&
         !turnBudgetExceeded &&
         !effectiveInterrupted &&
@@ -1925,7 +2122,7 @@ async function runSingleStep(
           messages: finalResult?.messages,
           // Use only the final attempt for false-success classification;
           // aggregateContextUsage remains the persisted reporting diagnostic.
-          contextUsage: finalAttemptContextUsage,
+          contextUsage: state.finalAttemptContextUsage,
           exitCode: effectiveFinalExitCode,
           error: effectiveFinalError,
           terminationReason,
@@ -1935,13 +2132,51 @@ async function runSingleStep(
     effectiveFinalError = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
     terminationReason = contextExhaustedReason;
   }
+  return {
+    effectiveInterrupted,
+    interruptedAcceptance,
+    timedOutAfterAcceptance,
+    turnBudgetExceeded,
+    effectiveAcceptance,
+    effectiveFinalExitCode,
+    terminationReason,
+    effectiveFinalError,
+  };
+}
 
+function finalizeSingleStepArtifacts(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  output: SingleStepOutputFinalization;
+  outcome: SingleStepOutcome;
+  artifactPaths?: ArtifactPaths;
+  transcriptWriter?: ChildTranscriptWriter;
+  childDeadlineAt?: number;
+  task: string;
+  priorActiveRuntimeMs: number;
+  segmentStartedAt: number;
+}): void {
+  const {
+    step,
+    ctx,
+    state,
+    output,
+    outcome,
+    artifactPaths,
+    transcriptWriter,
+    childDeadlineAt,
+    task,
+    priorActiveRuntimeMs,
+    segmentStartedAt,
+  } = input;
+  const { finalResult } = state;
   if (artifactPaths && ctx.artifactConfig?.enabled !== false) {
     if (ctx.artifactConfig?.includeOutput !== false) {
       const artifactBaseOutput =
-        effectiveFinalExitCode !== 0 && !effectiveInterrupted
-          ? formatErrorWithOutput(effectiveFinalError, output)
-          : output;
+        outcome.effectiveFinalExitCode !== 0 && !outcome.effectiveInterrupted
+          ? formatErrorWithOutput(outcome.effectiveFinalError, output.output)
+          : output.output;
       // The artifact file is the supervisor-facing surface; the digest goes here
       // only, keeping `output`/`outputForSummary` (the returned semantic value and
       // any persisted output file) free of appended text.
@@ -1949,14 +2184,14 @@ async function runSingleStep(
       // Exception: when the run saved a user-requested output file, the artifact is
       // a verbatim archive of that deliverable, so it stays byte-exact.
       const artifactOutput =
-        rawAcceptanceReport && !resolvedOutput.savedPath
-          ? appendAcceptanceReportDigest(artifactBaseOutput, rawAcceptanceReport)
+        output.rawAcceptanceReport && !output.resolvedOutput.savedPath
+          ? appendAcceptanceReportDigest(artifactBaseOutput, output.rawAcceptanceReport)
           : artifactBaseOutput;
       writeArtifactWithFloor(
         artifactPaths.outputPath,
         artifactOutput,
-        rawOutput,
-        !!resolvedOutput.savedPath,
+        output.rawOutput,
+        !!output.resolvedOutput.savedPath,
       );
     }
     if (ctx.artifactConfig?.includeMetadata !== false) {
@@ -1966,24 +2201,25 @@ async function runSingleStep(
           {
             runId: ctx.id,
             agent: step.agent,
+            projectAgent: step.projectAgent,
             task,
-            exitCode: effectiveFinalExitCode,
+            exitCode: outcome.effectiveFinalExitCode,
             exitSignal: finalResult?.exitSignal,
             model: finalResult?.model,
-            modelIdentity: finalModelIdentity,
-            modelResolution,
-            attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
-            modelAttempts,
-            modelFallbackNotice,
-            error: effectiveFinalError,
+            modelIdentity: output.finalModelIdentity,
+            modelResolution: state.modelResolution,
+            attemptedModels: state.attemptedModels.length > 0 ? state.attemptedModels : undefined,
+            modelAttempts: state.modelAttempts,
+            modelFallbackNotice: output.modelFallbackNotice,
+            error: outcome.effectiveFinalError,
             stderr: finalResult?.stderr,
             stderrTruncated: finalResult?.stderrTruncated,
             protocolOutputLimit: finalResult?.protocolOutputLimit,
-            terminationReason,
-            contextUsage: aggregateContextUsage,
+            terminationReason: outcome.terminationReason,
+            contextUsage: state.aggregateContextUsage,
             contextPressure: step.contextPressure,
             contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
-            processCleanup,
+            processCleanup: output.processCleanup,
             ...(transcriptWriter ? { transcriptPath: artifactPaths.transcriptPath } : {}),
             transcriptError: transcriptWriter?.getError(),
             skills: step.skills,
@@ -1999,66 +2235,215 @@ async function runSingleStep(
       );
     }
   }
+}
 
-  stepTimeoutTimer?.cancel();
-  inheritedTimeoutSignal?.removeEventListener("abort", relayInheritedTimeout);
-  parentRegisterTimeout?.(undefined);
+function cleanupSingleStepSetup(setup: SingleStepSetup): void {
+  setup.stepTimeoutTimer?.cancel();
+  setup.inheritedTimeoutSignal?.removeEventListener("abort", setup.relayInheritedTimeout);
+  setup.parentRegisterTimeout?.(undefined);
+}
 
+function buildSingleStepResult(input: {
+  step: SubagentStep;
+  ctx: SingleStepContext;
+  state: SingleStepExecutionState;
+  setup: SingleStepSetup;
+  output: SingleStepOutputFinalization;
+  outcome: SingleStepOutcome;
+}): SingleStepResultValue {
+  const { step, ctx, state, setup, output, outcome } = input;
+  const finalResult = state.finalResult;
   return {
     agent: step.agent,
     ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
-    output: outputForSummary,
-    exitCode: effectiveFinalExitCode,
+    output: output.outputForSummary,
+    exitCode: outcome.effectiveFinalExitCode,
     exitSignal: finalResult?.exitSignal,
-    error: effectiveFinalError,
+    error: outcome.effectiveFinalError,
     stderr: finalResult?.stderr,
     stderrTruncated: finalResult?.stderrTruncated,
     protocolOutputLimit: finalResult?.protocolOutputLimit,
     sessionFile: step.sessionFile,
     intercomTarget: ctx.childIntercomTarget,
-    model: finalModel,
-    modelIdentity: finalModelIdentity,
-    modelResolution,
-    attemptedModels: attemptedModels.length > 0 ? attemptedModels : undefined,
-    modelAttempts,
-    modelFallbackNotice,
-    totalCost: costSummaryFromAttempts(modelAttempts),
-    artifactPaths,
-    processCleanup,
-    contextUsage: aggregateContextUsage,
+    model: output.finalModel,
+    modelIdentity: output.finalModelIdentity,
+    modelResolution: state.modelResolution,
+    attemptedModels: state.attemptedModels.length > 0 ? state.attemptedModels : undefined,
+    modelAttempts: state.modelAttempts,
+    modelFallbackNotice: output.modelFallbackNotice,
+    totalCost: costSummaryFromAttempts(state.modelAttempts),
+    artifactPaths: setup.artifactPaths,
+    processCleanup: output.processCleanup,
+    contextUsage: state.aggregateContextUsage,
     contextPressure: step.contextPressure,
     contextPressureCrossedThresholds: step.contextPressureCrossedThresholds,
-    terminationReason,
-    transcriptPath: transcriptWriter ? artifactPaths?.transcriptPath : undefined,
-    transcriptError: transcriptWriter?.getError(),
-    interrupted: timedOutAfterAcceptance || turnBudgetExceeded ? false : effectiveInterrupted,
-    timedOut: timedOutAfterAcceptance ? true : finalResult?.timedOut,
-    turnBudget,
-    turnBudgetExceeded: turnBudgetExceeded || undefined,
+    terminationReason: outcome.terminationReason,
+    transcriptPath: setup.transcriptWriter ? setup.artifactPaths?.transcriptPath : undefined,
+    transcriptError: setup.transcriptWriter?.getError(),
+    interrupted:
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
+        ? false
+        : outcome.effectiveInterrupted,
+    timedOut: outcome.timedOutAfterAcceptance ? true : finalResult?.timedOut,
+    turnBudget: state.turnBudget,
+    turnBudgetExceeded: outcome.turnBudgetExceeded || undefined,
     wrapUpRequested:
       finalResult?.wrapUpRequested ||
-      turnBudget?.outcome === "wrap-up-requested" ||
-      turnBudgetExceeded ||
+      state.turnBudget?.outcome === "wrap-up-requested" ||
+      outcome.turnBudgetExceeded ||
       undefined,
-    toolBudget,
-    toolBudgetBlocked: toolBudgetBlocked || undefined,
-    completionGuardTriggered: completionGuardTriggeredFinal,
+    toolBudget: state.toolBudget,
+    toolBudgetBlocked: state.toolBudgetBlocked || undefined,
+    completionGuardTriggered: state.completionGuardTriggeredFinal,
     structuredOutput:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : (finalResult as (RunPiStreamingResult & { structuredOutput?: unknown }) | undefined)
-            ?.structuredOutput,
+        : finalResult?.structuredOutput,
     structuredOutputPath:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : effectiveStructuredOutput?.outputPath,
+        : setup.effectiveStructuredOutput?.outputPath,
     structuredOutputSchemaPath:
-      timedOutAfterAcceptance || turnBudgetExceeded
+      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
         ? undefined
-        : effectiveStructuredOutput?.schemaPath,
-    acceptance: effectiveAcceptance,
-    activeRuntimeMs: priorActiveRuntimeMs + (Date.now() - segmentStartedAt),
+        : setup.effectiveStructuredOutput?.schemaPath,
+    acceptance: outcome.effectiveAcceptance,
+    activeRuntimeMs: setup.priorActiveRuntimeMs + (Date.now() - setup.segmentStartedAt),
   };
+}
+
+/** Run a single pi agent step, returning output and metadata */
+async function runSingleStep(
+  step: SubagentStep,
+  ctx: SingleStepContext,
+): Promise<SingleStepResultValue> {
+  const setup = prepareSingleStepSetup(step, ctx);
+  const stepCtx = setup.ctx;
+  const state = setup.state;
+
+  for (let index = 0; index < state.candidates.length; index++) {
+    if (stepCtx.timeoutSignal?.aborted || stepCtx.skipAcceptance?.()) break;
+    const candidate = state.candidates[index];
+    const attempt = prepareSingleStepAttempt({
+      step,
+      ctx: stepCtx,
+      state,
+      candidate,
+      index,
+      effectiveStructuredOutput: setup.effectiveStructuredOutput,
+      task: setup.task,
+      sessionEnabled: setup.sessionEnabled,
+      sessionDir: setup.sessionDir,
+    });
+    if (attempt.buildError) {
+      const attemptResult: ModelAttempt = {
+        model: candidate ?? step.model ?? "default",
+        success: false,
+        exitCode: 1,
+        error: attempt.buildError,
+        usage: emptyUsage(),
+      };
+      state.modelAttempts.push(attemptResult);
+      if (candidate) state.attemptedModels.push(candidate);
+      state.finalOutputSnapshot = attempt.outputSnapshot;
+      state.finalResult = {
+        stderr: "",
+        exitCode: 1,
+        messages: [],
+        usage: emptyUsage(),
+        model: candidate,
+        configuredModel: candidate,
+        error: attempt.buildError,
+        finalOutput: attempt.buildError,
+      };
+      break;
+    }
+    // Keep this await in runSingleStep: settling a child attempt must not gain a
+    // promise continuation from an extracted async helper.
+    const run = await runPiStreaming(
+      attempt.args!,
+      step.cwd ?? stepCtx.cwd,
+      stepCtx.outputFile,
+      attempt.env,
+      stepCtx.piPackageRoot,
+      stepCtx.piArgv1,
+      step.maxSubagentDepth,
+      {
+        eventsPath: setup.eventsPath,
+        runId: stepCtx.id,
+        stepIndex: stepCtx.flatIndex,
+        agent: step.agent,
+      },
+      stepCtx.registerInterrupt,
+      stepCtx.onChildEvent,
+      setup.transcriptWriter,
+      stepCtx.registerTimeout,
+      stepCtx.timeoutMessage,
+      stepCtx.registerTurnBudgetAbort,
+      stepCtx.onChildProtocolOutputLimit,
+      {
+        restored: setup.restoredSession,
+        configuredModel: candidate,
+        contextWindow: contextWindowForModel(candidate, step.contextWindows),
+        contextWindows: step.contextWindows,
+      },
+    );
+    const assessment = assessSingleStepAttempt({
+      step,
+      ctx: stepCtx,
+      state,
+      run,
+      candidate,
+      outputSnapshot: attempt.outputSnapshot,
+      tempDir: attempt.tempDir,
+      effectiveStructuredOutput: setup.effectiveStructuredOutput,
+      taskForCompletionGuard: setup.taskForCompletionGuard,
+    });
+    if (
+      shouldStopSingleStepAttempt({
+        run,
+        ctx: stepCtx,
+        attempt: assessment.attempt,
+        completionGuardTriggered: assessment.completionGuardTriggered,
+        index,
+        candidateCount: state.candidates.length,
+      })
+    )
+      break;
+    state.attemptNotes.push(
+      formatModelAttemptNote(assessment.attempt, state.candidates[index + 1]),
+    );
+  }
+
+  const output = finalizeSingleStepOutput({ step, ctx: stepCtx, state });
+  let acceptance: SingleStepAcceptance | undefined;
+  try {
+    acceptance = output.acceptance instanceof Promise ? await output.acceptance : output.acceptance;
+  } finally {
+    output.acceptanceTeardown();
+  }
+  const outcome = finalizeSingleStepOutcome({
+    step,
+    ctx: stepCtx,
+    state,
+    acceptance,
+    acceptanceWasInterrupted: output.acceptanceWasInterrupted,
+  });
+  finalizeSingleStepArtifacts({
+    step,
+    ctx: stepCtx,
+    state,
+    output,
+    outcome,
+    artifactPaths: setup.artifactPaths,
+    transcriptWriter: setup.transcriptWriter,
+    childDeadlineAt: setup.childDeadlineAt,
+    task: setup.task,
+    priorActiveRuntimeMs: setup.priorActiveRuntimeMs,
+    segmentStartedAt: setup.segmentStartedAt,
+  });
+  cleanupSingleStepSetup(setup);
+  return buildSingleStepResult({ step, ctx: stepCtx, state, setup, output, outcome });
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2216,149 +2601,160 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
   let latestSessionFile: string | undefined;
 
-  const flatSteps = flattenSteps(steps);
-  for (const step of flatSteps) {
-    step.contextPressure = parseContextPressureProjection(step.contextPressure);
-    step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
-      step.contextPressureCrossedThresholds,
-    );
-  }
-  const initialFlatStepCount = flatSteps.length;
-  const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
-  const initialStatusSteps: RunnerStatusStep[] = [];
-  let flatStepCount = 0;
-  for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
-    const step = steps[stepIndex]!;
-    if (isParallelGroup(step)) {
-      parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
-      for (const task of step.parallel) {
-        const taskFlatIndex = flatStepCount;
+  const initializeRun = (): {
+    flatSteps: SubagentStep[];
+    initialStatusSteps: RunnerStatusStep[];
+    sessionEnabled: boolean;
+    statusPayload: RunnerStatusPayload;
+  } => {
+    const flatSteps = flattenSteps(steps);
+    for (const step of flatSteps) {
+      step.contextPressure = parseContextPressureProjection(step.contextPressure);
+      step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
+        step.contextPressureCrossedThresholds,
+      );
+    }
+    const initialFlatStepCount = flatSteps.length;
+    const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
+    const initialStatusSteps: RunnerStatusStep[] = [];
+    let flatStepCount = 0;
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+      const step = steps[stepIndex]!;
+      if (isParallelGroup(step)) {
+        parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
+        for (const task of step.parallel) {
+          const taskFlatIndex = flatStepCount;
+          const transcriptPath = resolveAsyncStepTranscriptPath({
+            artifactsDir,
+            artifactConfig,
+            runId: id,
+            agent: task.agent,
+            flatIndex: taskFlatIndex,
+            flatStepCount: initialFlatStepCount,
+          });
+          initialStatusSteps.push({
+            agent: task.agent,
+            ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+            phase: task.phase,
+            label: task.label,
+            outputName: task.outputName,
+            structured: task.structured,
+            status: "pending",
+            ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
+            ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
+              ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
+              : {}),
+            ...(task.activeRuntimeMs !== undefined
+              ? { activeRuntimeMs: task.activeRuntimeMs }
+              : {}),
+            ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
+            ...(transcriptPath ? { transcriptPath } : {}),
+            skills: task.skills,
+            model: task.model,
+            thinking: task.thinking,
+            ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
+            ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
+            ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
+            ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
+            ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
+            ...(task.contextPressureCrossedThresholds
+              ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
+              : {}),
+            attemptedModels:
+              task.modelCandidates && task.modelCandidates.length > 0
+                ? task.modelCandidates
+                : task.model
+                  ? [task.model]
+                  : undefined,
+            recentTools: [],
+            recentOutput: [],
+          });
+          flatStepCount++;
+        }
+      } else {
+        const stepFlatIndex = flatStepCount;
         const transcriptPath = resolveAsyncStepTranscriptPath({
           artifactsDir,
           artifactConfig,
           runId: id,
-          agent: task.agent,
-          flatIndex: taskFlatIndex,
+          agent: step.agent,
+          flatIndex: stepFlatIndex,
           flatStepCount: initialFlatStepCount,
         });
         initialStatusSteps.push({
-          agent: task.agent,
-          ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-          phase: task.phase,
-          label: task.label,
-          outputName: task.outputName,
-          structured: task.structured,
+          agent: step.agent,
+          ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
+          phase: step.phase,
+          label: step.label,
+          outputName: step.outputName,
+          structured: step.structured,
           status: "pending",
-          ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
-          ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
-            ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
+          ...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
+          ...(step.timeoutMs !== undefined || config.timeoutMs !== undefined
+            ? { timeoutMs: step.timeoutMs ?? config.timeoutMs }
             : {}),
-          ...(task.activeRuntimeMs !== undefined ? { activeRuntimeMs: task.activeRuntimeMs } : {}),
-          ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
+          ...(step.activeRuntimeMs !== undefined ? { activeRuntimeMs: step.activeRuntimeMs } : {}),
+          ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
           ...(transcriptPath ? { transcriptPath } : {}),
-          skills: task.skills,
-          model: task.model,
-          thinking: task.thinking,
-          ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
-          ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
-          ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
-          ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
-          ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
-          ...(task.contextPressureCrossedThresholds
-            ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
+          skills: step.skills,
+          model: step.model,
+          thinking: step.thinking,
+          ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
+          ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
+          ...projectInitialModelFallbackFilterNotice(step.modelFallbackFilterNotice),
+          ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
+          ...(step.contextPressure ? { contextPressure: { ...step.contextPressure } } : {}),
+          ...(step.contextPressureCrossedThresholds
+            ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
             : {}),
           attemptedModels:
-            task.modelCandidates && task.modelCandidates.length > 0
-              ? task.modelCandidates
-              : task.model
-                ? [task.model]
+            step.modelCandidates && step.modelCandidates.length > 0
+              ? step.modelCandidates
+              : step.model
+                ? [step.model]
                 : undefined,
           recentTools: [],
           recentOutput: [],
         });
         flatStepCount++;
       }
-    } else {
-      const stepFlatIndex = flatStepCount;
-      const transcriptPath = resolveAsyncStepTranscriptPath({
-        artifactsDir,
-        artifactConfig,
-        runId: id,
-        agent: step.agent,
-        flatIndex: stepFlatIndex,
-        flatStepCount: initialFlatStepCount,
-      });
-      initialStatusSteps.push({
-        agent: step.agent,
-        ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
-        phase: step.phase,
-        label: step.label,
-        outputName: step.outputName,
-        structured: step.structured,
-        status: "pending",
-        ...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
-        ...(step.timeoutMs !== undefined || config.timeoutMs !== undefined
-          ? { timeoutMs: step.timeoutMs ?? config.timeoutMs }
-          : {}),
-        ...(step.activeRuntimeMs !== undefined ? { activeRuntimeMs: step.activeRuntimeMs } : {}),
-        ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
-        ...(transcriptPath ? { transcriptPath } : {}),
-        skills: step.skills,
-        model: step.model,
-        thinking: step.thinking,
-        ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
-        ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
-        ...projectInitialModelFallbackFilterNotice(step.modelFallbackFilterNotice),
-        ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
-        ...(step.contextPressure ? { contextPressure: { ...step.contextPressure } } : {}),
-        ...(step.contextPressureCrossedThresholds
-          ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
-          : {}),
-        attemptedModels:
-          step.modelCandidates && step.modelCandidates.length > 0
-            ? step.modelCandidates
-            : step.model
-              ? [step.model]
-              : undefined,
-        recentTools: [],
-        recentOutput: [],
-      });
-      flatStepCount++;
     }
-  }
-  const sessionEnabled =
-    Boolean(config.sessionDir) ||
-    shareEnabled ||
-    flatSteps.some((step) => Boolean(step.sessionFile));
-  const statusPayload: RunnerStatusPayload = {
-    lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-    runId: id,
-    ...(config.sessionId ? { sessionId: config.sessionId } : {}),
-    mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
-    state: "running",
-    lastActivityAt: overallStartTime,
-    startedAt: overallStartTime,
-    lastUpdate: overallStartTime,
-    ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
-    ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
-    ...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
-    ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
-    pid: process.pid,
-    cwd,
-    currentStep: 0,
-    chainStepCount: steps.length,
-    parallelGroups,
-    workflowGraph: config.workflowGraph,
-    steps: initialStatusSteps,
-    ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
-    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
-    artifactsDir,
-    sessionDir: config.sessionDir,
-    outputFile: path.join(asyncDir, "output-0.log"),
-  };
+    const sessionEnabled =
+      Boolean(config.sessionDir) ||
+      shareEnabled ||
+      flatSteps.some((step) => Boolean(step.sessionFile));
+    const statusPayload: RunnerStatusPayload = {
+      lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+      runId: id,
+      ...(config.sessionId ? { sessionId: config.sessionId } : {}),
+      mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
+      state: "running",
+      lastActivityAt: overallStartTime,
+      startedAt: overallStartTime,
+      lastUpdate: overallStartTime,
+      ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+      ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+      ...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
+      ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
+      pid: process.pid,
+      cwd,
+      currentStep: 0,
+      chainStepCount: steps.length,
+      parallelGroups,
+      workflowGraph: config.workflowGraph,
+      steps: initialStatusSteps,
+      ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
+      ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+      artifactsDir,
+      sessionDir: config.sessionDir,
+      outputFile: path.join(asyncDir, "output-0.log"),
+    };
 
-  fs.mkdirSync(asyncDir, { recursive: true });
-  writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+    fs.mkdirSync(asyncDir, { recursive: true });
+    writeNormalizedLifecycleStatus(asyncDir, statusPayload);
+    return { flatSteps, initialStatusSteps, sessionEnabled, statusPayload };
+  };
+  const { flatSteps, initialStatusSteps, sessionEnabled, statusPayload } = initializeRun();
   if (config.continuationSource) {
     const gate = finalizeLifecycleContinuationLaunch(
       config.continuationSource.asyncDir,
@@ -3779,6 +4175,312 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   let flatIndex = 0;
   let stepCursor = 0;
 
+  const settleParallelGroup = (
+    group: Extract<RunnerStep, { parallel: SubagentStep[] }>,
+    parallelResults: ParallelStepExecutionResult[],
+    groupStartFlatIndex: number,
+    stepIndex: number,
+  ): void => {
+    for (let t = 0; t < group.parallel.length; t++) {
+      const fi = groupStartFlatIndex + t;
+      const sessionTokens = config.sessionDir
+        ? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
+        : null;
+      const taskTokens = sessionTokens ?? tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
+      if (!taskTokens) continue;
+      statusPayload.steps[fi].tokens = taskTokens;
+      previousCumulativeTokens = {
+        input: previousCumulativeTokens.input + taskTokens.input,
+        output: previousCumulativeTokens.output + taskTokens.output,
+        total: previousCumulativeTokens.total + taskTokens.total,
+      };
+    }
+    statusPayload.totalTokens = { ...previousCumulativeTokens };
+    statusPayload.lastUpdate = Date.now();
+    writeStatusPayload();
+
+    for (let t = 0; t < parallelResults.length; t++) {
+      const pr = parallelResults[t]!;
+      const fi = groupStartFlatIndex + t;
+      results.push({
+        agent: pr.agent,
+        ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
+        output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
+        error: pr.error,
+        stderr: pr.stderr,
+        stderrTruncated: pr.stderrTruncated,
+        protocolOutputLimit: pr.protocolOutputLimit,
+        success: pr.interrupted !== true && pr.exitCode === 0,
+        exitCode: pr.interrupted === true ? 0 : pr.exitCode,
+        exitSignal: pr.exitSignal,
+        skipped: pr.skipped,
+        interrupted: pr.interrupted,
+        timedOut: pr.timedOut,
+        turnBudget: pr.turnBudget,
+        turnBudgetExceeded: pr.turnBudgetExceeded,
+        wrapUpRequested: pr.wrapUpRequested,
+        toolBudget: pr.toolBudget,
+        toolBudgetBlocked: pr.toolBudgetBlocked,
+        contextUsage: pr.contextUsage,
+        contextPressure: pr.contextPressure,
+        contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
+        terminationReason: pr.terminationReason,
+        sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
+        intercomTarget: pr.intercomTarget,
+        model: pr.model,
+        modelIdentity: pr.modelIdentity,
+        modelResolution: pr.modelResolution,
+        attemptedModels: pr.attemptedModels,
+        modelAttempts: pr.modelAttempts,
+        modelFallbackNotice: pr.modelFallbackNotice,
+        totalCost: pr.totalCost,
+        artifactPaths: pr.artifactPaths,
+        processCleanup: pr.processCleanup,
+        transcriptPath: pr.transcriptPath,
+        transcriptError: pr.transcriptError,
+        structuredOutput: pr.structuredOutput,
+        structuredOutputPath: pr.structuredOutputPath,
+        structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
+        acceptance: pr.acceptance,
+        pause: pr.interrupted
+          ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
+          : undefined,
+        activeRuntimeMs: pr.activeRuntimeMs,
+      });
+    }
+    for (let t = 0; t < group.parallel.length; t++) {
+      const outputName = group.parallel[t]?.outputName;
+      if (outputName)
+        outputs[outputName] = outputEntryFromAsyncResult(
+          {
+            agent: parallelResults[t]!.agent,
+            output: parallelResults[t]!.output,
+            structuredOutput: parallelResults[t]!.structuredOutput,
+          },
+          stepIndex,
+        );
+    }
+    statusPayload.outputs = outputs;
+
+    previousOutput = aggregateParallelOutputs(
+      parallelResults.map((r) => ({
+        agent: r.agent,
+        output: r.output,
+        exitCode: r.exitCode,
+        error: r.error,
+        model: r.model,
+        attemptedModels: r.attemptedModels,
+      })),
+    );
+  };
+
+  const settleSequentialStep = (
+    seqStep: SubagentStep,
+    stepIndex: number,
+    stepStartTime: number,
+    singleResult: SingleStepResult,
+  ): void => {
+    const resolvedSeqSessionFile = resolveTrackedSessionFile(
+      flatIndex,
+      singleResult.sessionFile ?? seqStep.sessionFile,
+    );
+    if (resolvedSeqSessionFile) {
+      statusPayload.steps[flatIndex].sessionFile = resolvedSeqSessionFile;
+      latestSessionFile = resolvedSeqSessionFile;
+    }
+
+    previousOutput = singleResult.output;
+    results.push({
+      agent: singleResult.agent,
+      ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
+      output: timedOut
+        ? (timeoutMessage ?? "Subagent timed out.")
+        : singleResult.interrupted
+          ? pausedOutputForIndex(flatIndex, singleResult.agent)
+          : singleResult.output,
+      error: timedOut
+        ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+        : singleResult.error,
+      stderr: singleResult.stderr,
+      stderrTruncated: singleResult.stderrTruncated,
+      protocolOutputLimit: singleResult.protocolOutputLimit,
+      success: !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
+      exitCode: timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
+      exitSignal: singleResult.exitSignal,
+      sessionFile: resolvedSeqSessionFile,
+      intercomTarget: singleResult.intercomTarget,
+      model: singleResult.model,
+      modelIdentity: singleResult.modelIdentity,
+      modelResolution: singleResult.modelResolution,
+      attemptedModels: singleResult.attemptedModels,
+      modelAttempts: singleResult.modelAttempts,
+      modelFallbackNotice: singleResult.modelFallbackNotice,
+      totalCost: singleResult.totalCost,
+      artifactPaths: singleResult.artifactPaths,
+      processCleanup: singleResult.processCleanup,
+      transcriptPath: singleResult.transcriptPath,
+      transcriptError: singleResult.transcriptError,
+      structuredOutput: singleResult.structuredOutput,
+      structuredOutputPath: singleResult.structuredOutputPath,
+      structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
+      acceptance: singleResult.acceptance,
+      pause: singleResult.interrupted ? pauseMetadataForIndex(flatIndex) : undefined,
+      interrupted: singleResult.interrupted,
+      timedOut: timedOut || singleResult.timedOut ? true : undefined,
+      turnBudget: singleResult.turnBudget,
+      turnBudgetExceeded: singleResult.turnBudgetExceeded,
+      wrapUpRequested: singleResult.wrapUpRequested,
+      toolBudget: singleResult.toolBudget,
+      toolBudgetBlocked: singleResult.toolBudgetBlocked,
+      contextUsage: singleResult.contextUsage,
+      contextPressure: singleResult.contextPressure,
+      contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
+      terminationReason: singleResult.terminationReason,
+      activeRuntimeMs: singleResult.activeRuntimeMs,
+    });
+    if (seqStep.outputName) {
+      outputs[seqStep.outputName] = outputEntryFromAsyncResult(
+        {
+          agent: singleResult.agent,
+          output: singleResult.output,
+          structuredOutput: singleResult.structuredOutput,
+        },
+        stepIndex,
+      );
+    }
+    statusPayload.outputs = outputs;
+
+    const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
+    let stepTokens: TokenUsage | null = cumulativeTokens
+      ? {
+          input: cumulativeTokens.input - previousCumulativeTokens.input,
+          output: cumulativeTokens.output - previousCumulativeTokens.output,
+          total: cumulativeTokens.total - previousCumulativeTokens.total,
+        }
+      : null;
+    if (cumulativeTokens) {
+      previousCumulativeTokens = cumulativeTokens;
+    } else {
+      stepTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
+      if (stepTokens) {
+        previousCumulativeTokens = {
+          input: previousCumulativeTokens.input + stepTokens.input,
+          output: previousCumulativeTokens.output + stepTokens.output,
+          total: previousCumulativeTokens.total + stepTokens.total,
+        };
+      }
+    }
+
+    const stepEndTime = Date.now();
+    const childInterrupted = singleResult.interrupted === true;
+    if (childInterrupted) interrupted = true;
+    const priorStepStatus = statusPayload.steps[flatIndex].status;
+    const pausedStep = childInterrupted || isPausedStepStatus(priorStepStatus);
+    statusPayload.steps[flatIndex].status = timedOut
+      ? "failed"
+      : pausedStep
+        ? "paused"
+        : singleResult.exitCode === 0
+          ? "complete"
+          : "failed";
+    statusPayload.steps[flatIndex].endedAt = stepEndTime;
+    statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
+    statusPayload.steps[flatIndex].activeRuntimeMs = singleResult.activeRuntimeMs;
+    statusPayload.steps[flatIndex].exitCode = timedOut
+      ? 1
+      : childInterrupted
+        ? 0
+        : singleResult.exitCode;
+    statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
+    statusPayload.steps[flatIndex].timedOut = timedOut || singleResult.timedOut ? true : undefined;
+    statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
+    statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
+    statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
+    statusPayload.steps[flatIndex].wrapUpRequested = singleResult.wrapUpRequested;
+    statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
+    statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
+    statusPayload.steps[flatIndex].contextUsage = singleResult.contextUsage;
+    statusPayload.steps[flatIndex].contextPressure = singleResult.contextPressure;
+    statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
+      singleResult.contextPressureCrossedThresholds;
+    statusPayload.steps[flatIndex].terminationReason = singleResult.terminationReason;
+    if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
+    if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
+    if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
+    if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
+    if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
+    statusPayload.steps[flatIndex].model = singleResult.model;
+    statusPayload.steps[flatIndex].thinking = singleResult.modelIdentity
+      ? singleResult.modelIdentity.thinking
+      : resolveEffectiveThinking(singleResult.model, statusPayload.steps[flatIndex].thinking);
+    statusPayload.steps[flatIndex].modelIdentity = singleResult.modelIdentity;
+    statusPayload.steps[flatIndex].modelResolution = singleResult.modelResolution;
+    statusPayload.steps[flatIndex].modelFallbackNotice = singleResult.modelFallbackNotice;
+    statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
+    statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
+    statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
+    statusPayload.steps[flatIndex].error = timedOut
+      ? boundChildError(timeoutMessage ?? "Subagent timed out.")
+      : singleResult.error;
+    statusPayload.steps[flatIndex].stderr = singleResult.stderr
+      ? boundChildStderrError(
+          singleResult.stderr,
+          singleResult.stderrTruncated === true,
+          MAX_CHILD_ERROR_BYTES,
+        )
+      : undefined;
+    statusPayload.steps[flatIndex].stderrTruncated = singleResult.stderrTruncated;
+    statusPayload.steps[flatIndex].protocolOutputLimit = singleResult.protocolOutputLimit;
+    statusPayload.steps[flatIndex].transcriptPath =
+      singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
+    statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
+    statusPayload.steps[flatIndex].structuredOutput = singleResult.structuredOutput;
+    statusPayload.steps[flatIndex].structuredOutputPath = singleResult.structuredOutputPath;
+    statusPayload.steps[flatIndex].structuredOutputSchemaPath =
+      singleResult.structuredOutputSchemaPath;
+    statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
+    if (pausedStep) applyPausedStepMetadata(flatIndex, stepEndTime);
+    if (stepTokens) {
+      statusPayload.steps[flatIndex].tokens = stepTokens;
+      statusPayload.totalTokens = { ...previousCumulativeTokens };
+    }
+    statusPayload.lastUpdate = stepEndTime;
+    writeStatusPayload();
+
+    appendJsonl(
+      eventsPath,
+      JSON.stringify({
+        type: timedOut
+          ? "subagent.step.failed"
+          : childInterrupted
+            ? "subagent.step.paused"
+            : singleResult.exitCode === 0
+              ? "subagent.step.completed"
+              : "subagent.step.failed",
+        ts: stepEndTime,
+        runId: id,
+        stepIndex: flatIndex,
+        agent: seqStep.agent,
+        exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
+        durationMs: stepEndTime - stepStartTime,
+        tokens: stepTokens,
+      }),
+    );
+    if (singleResult.completionGuardTriggered) {
+      const event = buildControlEvent({
+        from: statusPayload.steps[flatIndex].activityState,
+        to: "needs_attention",
+        runId: id,
+        agent: seqStep.agent,
+        index: flatIndex,
+        ts: stepEndTime,
+        message: `${seqStep.agent} completed without making edits for an implementation task`,
+        reason: "completion_guard",
+      });
+      appendControlEvent(event);
+    }
+  };
+
   while (true) {
     // Once a concurrent terminal state (non-paused) has been adopted, disk owns
     // the final record and no further step may start. For the paused case,
@@ -4059,99 +4761,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       );
 
       flatIndex += group.parallel.length;
-
-      for (let t = 0; t < group.parallel.length; t++) {
-        const fi = groupStartFlatIndex + t;
-        const sessionTokens = config.sessionDir
-          ? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
-          : null;
-        const taskTokens =
-          sessionTokens ?? tokenUsageFromAttempts(parallelResults[t]?.modelAttempts);
-        if (!taskTokens) continue;
-        statusPayload.steps[fi].tokens = taskTokens;
-        previousCumulativeTokens = {
-          input: previousCumulativeTokens.input + taskTokens.input,
-          output: previousCumulativeTokens.output + taskTokens.output,
-          total: previousCumulativeTokens.total + taskTokens.total,
-        };
-      }
-      statusPayload.totalTokens = { ...previousCumulativeTokens };
-      statusPayload.lastUpdate = Date.now();
-      writeStatusPayload();
-
-      for (let t = 0; t < parallelResults.length; t++) {
-        const pr = parallelResults[t]!;
-        const fi = groupStartFlatIndex + t;
-        results.push({
-          agent: pr.agent,
-          ...(pr.projectAgent ? { projectAgent: pr.projectAgent } : {}),
-          output: pr.interrupted ? pausedOutputForIndex(fi, pr.agent) : pr.output,
-          error: pr.error,
-          stderr: pr.stderr,
-          stderrTruncated: pr.stderrTruncated,
-          protocolOutputLimit: pr.protocolOutputLimit,
-          success: pr.interrupted !== true && pr.exitCode === 0,
-          exitCode: pr.interrupted === true ? 0 : pr.exitCode,
-          exitSignal: pr.exitSignal,
-          skipped: pr.skipped,
-          interrupted: pr.interrupted,
-          timedOut: pr.timedOut,
-          turnBudget: pr.turnBudget,
-          turnBudgetExceeded: pr.turnBudgetExceeded,
-          wrapUpRequested: pr.wrapUpRequested,
-          toolBudget: pr.toolBudget,
-          toolBudgetBlocked: pr.toolBudgetBlocked,
-          contextUsage: pr.contextUsage,
-          contextPressure: pr.contextPressure,
-          contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
-          terminationReason: pr.terminationReason,
-          sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
-          intercomTarget: pr.intercomTarget,
-          model: pr.model,
-          modelIdentity: pr.modelIdentity,
-          modelResolution: pr.modelResolution,
-          attemptedModels: pr.attemptedModels,
-          modelAttempts: pr.modelAttempts,
-          modelFallbackNotice: pr.modelFallbackNotice,
-          totalCost: pr.totalCost,
-          artifactPaths: pr.artifactPaths,
-          processCleanup: pr.processCleanup,
-          transcriptPath: pr.transcriptPath,
-          transcriptError: pr.transcriptError,
-          structuredOutput: pr.structuredOutput,
-          structuredOutputPath: pr.structuredOutputPath,
-          structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
-          acceptance: pr.acceptance,
-          pause: pr.interrupted
-            ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
-            : undefined,
-          activeRuntimeMs: pr.activeRuntimeMs,
-        });
-      }
-      for (let t = 0; t < group.parallel.length; t++) {
-        const outputName = group.parallel[t]?.outputName;
-        if (outputName)
-          outputs[outputName] = outputEntryFromAsyncResult(
-            {
-              agent: parallelResults[t]!.agent,
-              output: parallelResults[t]!.output,
-              structuredOutput: parallelResults[t]!.structuredOutput,
-            },
-            stepIndex,
-          );
-      }
-      statusPayload.outputs = outputs;
-
-      previousOutput = aggregateParallelOutputs(
-        parallelResults.map((r) => ({
-          agent: r.agent,
-          output: r.output,
-          exitCode: r.exitCode,
-          error: r.error,
-          model: r.model,
-          attemptedModels: r.attemptedModels,
-        })),
-      );
+      settleParallelGroup(group, parallelResults, groupStartFlatIndex, stepIndex);
 
       const parallelGroupInterrupted =
         interrupted || parallelResults.some((result) => result.interrupted === true);
@@ -4247,206 +4857,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         onChildProtocolOutputLimit,
         skipAcceptance: () => timedOut,
       });
-      const resolvedSeqSessionFile = resolveTrackedSessionFile(
-        flatIndex,
-        singleResult.sessionFile ?? seqStep.sessionFile,
-      );
-      if (resolvedSeqSessionFile) {
-        statusPayload.steps[flatIndex].sessionFile = resolvedSeqSessionFile;
-        latestSessionFile = resolvedSeqSessionFile;
-      }
-
-      previousOutput = singleResult.output;
-      results.push({
-        agent: singleResult.agent,
-        ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
-        output: timedOut
-          ? (timeoutMessage ?? "Subagent timed out.")
-          : singleResult.interrupted
-            ? pausedOutputForIndex(flatIndex, singleResult.agent)
-            : singleResult.output,
-        error: timedOut
-          ? boundChildError(timeoutMessage ?? "Subagent timed out.")
-          : singleResult.error,
-        stderr: singleResult.stderr,
-        stderrTruncated: singleResult.stderrTruncated,
-        protocolOutputLimit: singleResult.protocolOutputLimit,
-        success: !timedOut && singleResult.interrupted !== true && singleResult.exitCode === 0,
-        exitCode: timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
-        exitSignal: singleResult.exitSignal,
-        sessionFile: resolvedSeqSessionFile,
-        intercomTarget: singleResult.intercomTarget,
-        model: singleResult.model,
-        modelIdentity: singleResult.modelIdentity,
-        modelResolution: singleResult.modelResolution,
-        attemptedModels: singleResult.attemptedModels,
-        modelAttempts: singleResult.modelAttempts,
-        modelFallbackNotice: singleResult.modelFallbackNotice,
-        totalCost: singleResult.totalCost,
-        artifactPaths: singleResult.artifactPaths,
-        processCleanup: singleResult.processCleanup,
-        transcriptPath: singleResult.transcriptPath,
-        transcriptError: singleResult.transcriptError,
-        structuredOutput: singleResult.structuredOutput,
-        structuredOutputPath: singleResult.structuredOutputPath,
-        structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
-        acceptance: singleResult.acceptance,
-        pause: singleResult.interrupted ? pauseMetadataForIndex(flatIndex) : undefined,
-        interrupted: singleResult.interrupted,
-        timedOut: timedOut || singleResult.timedOut ? true : undefined,
-        turnBudget: singleResult.turnBudget,
-        turnBudgetExceeded: singleResult.turnBudgetExceeded,
-        wrapUpRequested: singleResult.wrapUpRequested,
-        toolBudget: singleResult.toolBudget,
-        toolBudgetBlocked: singleResult.toolBudgetBlocked,
-        contextUsage: singleResult.contextUsage,
-        contextPressure: singleResult.contextPressure,
-        contextPressureCrossedThresholds: singleResult.contextPressureCrossedThresholds,
-        terminationReason: singleResult.terminationReason,
-        activeRuntimeMs: singleResult.activeRuntimeMs,
-      });
-      if (seqStep.outputName) {
-        outputs[seqStep.outputName] = outputEntryFromAsyncResult(
-          {
-            agent: singleResult.agent,
-            output: singleResult.output,
-            structuredOutput: singleResult.structuredOutput,
-          },
-          stepIndex,
-        );
-      }
-      statusPayload.outputs = outputs;
-
-      const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
-      let stepTokens: TokenUsage | null = cumulativeTokens
-        ? {
-            input: cumulativeTokens.input - previousCumulativeTokens.input,
-            output: cumulativeTokens.output - previousCumulativeTokens.output,
-            total: cumulativeTokens.total - previousCumulativeTokens.total,
-          }
-        : null;
-      if (cumulativeTokens) {
-        previousCumulativeTokens = cumulativeTokens;
-      } else {
-        stepTokens = tokenUsageFromAttempts(singleResult.modelAttempts);
-        if (stepTokens) {
-          previousCumulativeTokens = {
-            input: previousCumulativeTokens.input + stepTokens.input,
-            output: previousCumulativeTokens.output + stepTokens.output,
-            total: previousCumulativeTokens.total + stepTokens.total,
-          };
-        }
-      }
-
-      const stepEndTime = Date.now();
-      const childInterrupted = singleResult.interrupted === true;
-      if (childInterrupted) interrupted = true;
-      const priorStepStatus = statusPayload.steps[flatIndex].status;
-      const pausedStep = childInterrupted || isPausedStepStatus(priorStepStatus);
-      statusPayload.steps[flatIndex].status = timedOut
-        ? "failed"
-        : pausedStep
-          ? "paused"
-          : singleResult.exitCode === 0
-            ? "complete"
-            : "failed";
-      statusPayload.steps[flatIndex].endedAt = stepEndTime;
-      statusPayload.steps[flatIndex].durationMs = stepEndTime - stepStartTime;
-      statusPayload.steps[flatIndex].activeRuntimeMs = singleResult.activeRuntimeMs;
-      statusPayload.steps[flatIndex].exitCode = timedOut
-        ? 1
-        : childInterrupted
-          ? 0
-          : singleResult.exitCode;
-      statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
-      statusPayload.steps[flatIndex].timedOut =
-        timedOut || singleResult.timedOut ? true : undefined;
-      statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
-      statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
-      statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
-      statusPayload.steps[flatIndex].wrapUpRequested = singleResult.wrapUpRequested;
-      statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
-      statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
-      statusPayload.steps[flatIndex].contextUsage = singleResult.contextUsage;
-      statusPayload.steps[flatIndex].contextPressure = singleResult.contextPressure;
-      statusPayload.steps[flatIndex].contextPressureCrossedThresholds =
-        singleResult.contextPressureCrossedThresholds;
-      statusPayload.steps[flatIndex].terminationReason = singleResult.terminationReason;
-      if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
-      if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-      if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-      if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-      if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
-      statusPayload.steps[flatIndex].model = singleResult.model;
-      statusPayload.steps[flatIndex].thinking = singleResult.modelIdentity
-        ? singleResult.modelIdentity.thinking
-        : resolveEffectiveThinking(singleResult.model, statusPayload.steps[flatIndex].thinking);
-      statusPayload.steps[flatIndex].modelIdentity = singleResult.modelIdentity;
-      statusPayload.steps[flatIndex].modelResolution = singleResult.modelResolution;
-      statusPayload.steps[flatIndex].modelFallbackNotice = singleResult.modelFallbackNotice;
-      statusPayload.steps[flatIndex].attemptedModels = singleResult.attemptedModels;
-      statusPayload.steps[flatIndex].modelAttempts = singleResult.modelAttempts;
-      statusPayload.steps[flatIndex].totalCost = singleResult.totalCost;
-      statusPayload.steps[flatIndex].error = timedOut
-        ? boundChildError(timeoutMessage ?? "Subagent timed out.")
-        : singleResult.error;
-      statusPayload.steps[flatIndex].stderr = singleResult.stderr
-        ? boundChildStderrError(
-            singleResult.stderr,
-            singleResult.stderrTruncated === true,
-            MAX_CHILD_ERROR_BYTES,
-          )
-        : undefined;
-      statusPayload.steps[flatIndex].stderrTruncated = singleResult.stderrTruncated;
-      statusPayload.steps[flatIndex].protocolOutputLimit = singleResult.protocolOutputLimit;
-      statusPayload.steps[flatIndex].transcriptPath =
-        singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
-      statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
-      statusPayload.steps[flatIndex].structuredOutput = singleResult.structuredOutput;
-      statusPayload.steps[flatIndex].structuredOutputPath = singleResult.structuredOutputPath;
-      statusPayload.steps[flatIndex].structuredOutputSchemaPath =
-        singleResult.structuredOutputSchemaPath;
-      statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
-      if (pausedStep) applyPausedStepMetadata(flatIndex, stepEndTime);
-      if (stepTokens) {
-        statusPayload.steps[flatIndex].tokens = stepTokens;
-        statusPayload.totalTokens = { ...previousCumulativeTokens };
-      }
-      statusPayload.lastUpdate = stepEndTime;
-      writeStatusPayload();
-
-      appendJsonl(
-        eventsPath,
-        JSON.stringify({
-          type: timedOut
-            ? "subagent.step.failed"
-            : childInterrupted
-              ? "subagent.step.paused"
-              : singleResult.exitCode === 0
-                ? "subagent.step.completed"
-                : "subagent.step.failed",
-          ts: stepEndTime,
-          runId: id,
-          stepIndex: flatIndex,
-          agent: seqStep.agent,
-          exitCode: timedOut ? 1 : childInterrupted ? 0 : singleResult.exitCode,
-          durationMs: stepEndTime - stepStartTime,
-          tokens: stepTokens,
-        }),
-      );
-      if (singleResult.completionGuardTriggered) {
-        const event = buildControlEvent({
-          from: statusPayload.steps[flatIndex].activityState,
-          to: "needs_attention",
-          runId: id,
-          agent: seqStep.agent,
-          index: flatIndex,
-          ts: stepEndTime,
-          message: `${seqStep.agent} completed without making edits for an implementation task`,
-          reason: "completion_guard",
-        });
-        appendControlEvent(event);
-      }
+      settleSequentialStep(seqStep, stepIndex, stepStartTime, singleResult);
 
       flatIndex++;
       if (singleResult.exitCode !== 0) {
@@ -4686,221 +5097,225 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       }
     }
   }
-  if (!pausedAwaitingSupervisor && !skipFinalStatusWrite && !concurrentTerminalStatusAdopted) {
-    statusPayload.state =
-      terminalReason.reason === "output_limit"
-        ? "failed"
-        : supervisorPauseTransitionFailed
+  const persistTerminalRun = (): void => {
+    if (!pausedAwaitingSupervisor && !skipFinalStatusWrite && !concurrentTerminalStatusAdopted) {
+      statusPayload.state =
+        terminalReason.reason === "output_limit"
           ? "failed"
-          : timedOut || turnBudgetExceeded
-            ? "failed"
-            : interrupted
-              ? "paused"
-              : results.every((r) => r.success)
-                ? "complete"
-                : "failed";
-    statusPayload.activityState = undefined;
-    if (timedOut) {
-      statusPayload.timedOut = true;
-      statusPayload.error = timeoutMessage ?? "Subagent timed out.";
-    }
-    if (turnBudgetExceeded && !statusPayload.error) {
-      const budget = statusPayload.turnBudget;
-      statusPayload.error = budget
-        ? turnBudgetExceededMessage(budget, budget.turnCount)
-        : "Subagent exceeded turn budget.";
-    }
-    if (supervisorPauseTransitionFailed && statusPayload.state === "failed") {
-      statusPayload.error = statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
-    }
-    statusPayload.endedAt = runEndedAt;
-    statusPayload.lastUpdate = runEndedAt;
-    statusPayload.sessionFile = effectiveSessionFile;
-    statusPayload.totalCost = finalTotalCost;
-    statusPayload.shareUrl = shareUrl;
-    statusPayload.gistUrl = gistUrl;
-    statusPayload.shareError = shareError;
-    if (statusPayload.state === "failed" && !statusPayload.error) {
-      const failedStep = statusPayload.steps.find((s) => s.status === "failed");
-      if (failedStep?.agent) {
-        statusPayload.error = failedStep.error ?? `Step failed: ${failedStep.agent}`;
-      }
-    }
-    writeStatusPayload();
-  }
-  if (pausedAwaitingSupervisor) emitNestedSelfEvent("subagent.nested.completed");
-  appendJsonl(
-    eventsPath,
-    JSON.stringify({
-      type: "subagent.run.completed",
-      lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-      ts: runEndedAt,
-      runId: id,
-      status: statusPayload.state,
-      durationMs: runEndedAt - overallStartTime,
-      totalTokens: statusPayload.totalTokens,
-      totalCost: finalTotalCost,
-    }),
-  );
-  writeRunLog(logPath, {
-    id,
-    mode: statusPayload.mode,
-    cwd,
-    startedAt: overallStartTime,
-    endedAt: runEndedAt,
-    steps: statusPayload.steps.map((step) => ({
-      agent: step.agent,
-      status: step.status,
-      durationMs: step.durationMs,
-      processCleanup: step.processCleanup,
-    })),
-    summary,
-    truncated,
-    artifactsDir,
-    sessionFile: effectiveSessionFile,
-    shareUrl,
-    shareError,
-  });
-
-  const resultPausedAwaitingSupervisor =
-    pausedAwaitingSupervisor ??
-    (safePausedResultAfterReap &&
-    !supervisorPauseTransitionFailed &&
-    !concurrentTerminalStatusAdopted
-      ? safePausedResultAfterReap
-      : undefined);
-  const resultState = concurrentTerminalStatusAdopted
-    ? statusPayload.state
-    : terminalReason.reason === "output_limit"
-      ? "failed"
-      : timedOut || turnBudgetExceeded
-        ? "failed"
-        : resultPausedAwaitingSupervisor
-          ? "paused"
           : supervisorPauseTransitionFailed
             ? "failed"
-            : statusPayload.state === "failed" ||
-                statusPayload.state === "paused" ||
-                statusPayload.state === "cancelled" ||
-                statusPayload.state === "continued"
-              ? statusPayload.state
+            : timedOut || turnBudgetExceeded
+              ? "failed"
               : interrupted
                 ? "paused"
                 : results.every((r) => r.success)
                   ? "complete"
                   : "failed";
-  const resultSuccess = resultState === "complete";
-  const resultSummary =
-    !concurrentTerminalStatusAdopted && timedOut
-      ? (timeoutMessage ?? "Subagent timed out.")
-      : !concurrentTerminalStatusAdopted && turnBudgetExceeded
-        ? (statusPayload.error ?? "Subagent exceeded turn budget.")
-        : resultPausedAwaitingSupervisor
-          ? pausedOutputForIndex(
-              supervisorPauseRequest?.requesterIndex ?? 0,
-              statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName,
-            )
-          : resultState === "failed"
-            ? (statusPayload.error ??
-              (supervisorPauseTransitionFailed
-                ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
-                : summary))
-            : resultState === "paused"
-              ? "Paused after interrupt. Waiting for explicit next action."
-              : summary;
-
-  try {
-    writeAtomicJson(resultPath, {
-      lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+      statusPayload.activityState = undefined;
+      if (timedOut) {
+        statusPayload.timedOut = true;
+        statusPayload.error = timeoutMessage ?? "Subagent timed out.";
+      }
+      if (turnBudgetExceeded && !statusPayload.error) {
+        const budget = statusPayload.turnBudget;
+        statusPayload.error = budget
+          ? turnBudgetExceededMessage(budget, budget.turnCount)
+          : "Subagent exceeded turn budget.";
+      }
+      if (supervisorPauseTransitionFailed && statusPayload.state === "failed") {
+        statusPayload.error = statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
+      }
+      statusPayload.endedAt = runEndedAt;
+      statusPayload.lastUpdate = runEndedAt;
+      statusPayload.sessionFile = effectiveSessionFile;
+      statusPayload.totalCost = finalTotalCost;
+      statusPayload.shareUrl = shareUrl;
+      statusPayload.gistUrl = gistUrl;
+      statusPayload.shareError = shareError;
+      if (statusPayload.state === "failed" && !statusPayload.error) {
+        const failedStep = statusPayload.steps.find((s) => s.status === "failed");
+        if (failedStep?.agent) {
+          statusPayload.error = failedStep.error ?? `Step failed: ${failedStep.agent}`;
+        }
+      }
+      writeStatusPayload();
+    }
+    if (pausedAwaitingSupervisor) emitNestedSelfEvent("subagent.nested.completed");
+    appendJsonl(
+      eventsPath,
+      JSON.stringify({
+        type: "subagent.run.completed",
+        lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+        ts: runEndedAt,
+        runId: id,
+        status: statusPayload.state,
+        durationMs: runEndedAt - overallStartTime,
+        totalTokens: statusPayload.totalTokens,
+        totalCost: finalTotalCost,
+      }),
+    );
+    writeRunLog(logPath, {
       id,
-      agent: agentName,
-      mode: resultMode,
-      success: resultSuccess,
-      state: resultState,
-      summary: resultSummary,
-      ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
-      ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
-      ...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
-      ...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
-      ...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
-      ...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
-      ...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
-      ...(!concurrentTerminalStatusAdopted && timedOut
-        ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
-        : !concurrentTerminalStatusAdopted && turnBudgetExceeded
-          ? { error: statusPayload.error ?? "Subagent exceeded turn budget." }
-          : resultState === "failed"
-            ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
-            : {}),
-      ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
-      results: results.map((r) => ({
-        agent: r.agent,
-        ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
-        output: r.output,
-        error: r.error,
-        stderr: r.stderr,
-        stderrTruncated: r.stderrTruncated,
-        protocolOutputLimit: r.protocolOutputLimit,
-        success: r.success,
-        exitCode: r.exitCode,
-        exitSignal: r.exitSignal,
-        skipped: r.skipped || undefined,
-        interrupted: r.interrupted || undefined,
-        timedOut: r.timedOut || undefined,
-        turnBudget: r.turnBudget,
-        turnBudgetExceeded: r.turnBudgetExceeded || undefined,
-        wrapUpRequested: r.wrapUpRequested || undefined,
-        toolBudget: r.toolBudget,
-        toolBudgetBlocked: r.toolBudgetBlocked || undefined,
-        contextUsage: r.contextUsage,
-        contextPressure: r.contextPressure,
-        contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
-        terminationReason: r.terminationReason,
-        sessionFile: r.sessionFile,
-        intercomTarget: r.intercomTarget,
-        model: r.model,
-        modelIdentity: r.modelIdentity,
-        modelResolution: r.modelResolution,
-        attemptedModels: r.attemptedModels,
-        modelAttempts: r.modelAttempts,
-        modelFallbackNotice: r.modelFallbackNotice,
-        totalCost: r.totalCost,
-        artifactPaths: r.artifactPaths,
-        processCleanup: r.processCleanup,
-        truncated: r.truncated,
-        transcriptPath: r.transcriptPath,
-        transcriptError: r.transcriptError,
-        structuredOutput: r.structuredOutput,
-        structuredOutputPath: r.structuredOutputPath,
-        structuredOutputSchemaPath: r.structuredOutputSchemaPath,
-        acceptance: r.acceptance,
-        pause: r.pause,
-        activeRuntimeMs: r.activeRuntimeMs,
+      mode: statusPayload.mode,
+      cwd,
+      startedAt: overallStartTime,
+      endedAt: runEndedAt,
+      steps: statusPayload.steps.map((step) => ({
+        agent: step.agent,
+        status: step.status,
+        durationMs: step.durationMs,
+        processCleanup: step.processCleanup,
       })),
-      outputs,
-      workflowGraph: statusPayload.workflowGraph,
-      exitCode: resultState === "failed" ? 1 : 0,
-      timestamp: runEndedAt,
-      durationMs: runEndedAt - overallStartTime,
-      totalTokens: statusPayload.totalTokens,
-      totalCost: finalTotalCost,
+      summary,
       truncated,
       artifactsDir,
-      cwd,
-      asyncDir,
-      sessionId: config.sessionId,
-      ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
       sessionFile: effectiveSessionFile,
-      intercomTarget: config.controlIntercomTarget,
       shareUrl,
-      gistUrl,
       shareError,
-      ...(taskIndex !== undefined && { taskIndex }),
-      ...(totalTasks !== undefined && { totalTasks }),
-    } satisfies AsyncResultArtifact);
-  } catch (err) {
-    console.error(`Failed to write result file ${resultPath}:`, err);
-  }
+    });
+
+    const resultPausedAwaitingSupervisor =
+      pausedAwaitingSupervisor ??
+      (safePausedResultAfterReap &&
+      !supervisorPauseTransitionFailed &&
+      !concurrentTerminalStatusAdopted
+        ? safePausedResultAfterReap
+        : undefined);
+    const resultState = concurrentTerminalStatusAdopted
+      ? statusPayload.state
+      : terminalReason.reason === "output_limit"
+        ? "failed"
+        : timedOut || turnBudgetExceeded
+          ? "failed"
+          : resultPausedAwaitingSupervisor
+            ? "paused"
+            : supervisorPauseTransitionFailed
+              ? "failed"
+              : statusPayload.state === "failed" ||
+                  statusPayload.state === "paused" ||
+                  statusPayload.state === "cancelled" ||
+                  statusPayload.state === "continued"
+                ? statusPayload.state
+                : interrupted
+                  ? "paused"
+                  : results.every((r) => r.success)
+                    ? "complete"
+                    : "failed";
+    const resultSuccess = resultState === "complete";
+    const resultSummary =
+      !concurrentTerminalStatusAdopted && timedOut
+        ? (timeoutMessage ?? "Subagent timed out.")
+        : !concurrentTerminalStatusAdopted && turnBudgetExceeded
+          ? (statusPayload.error ?? "Subagent exceeded turn budget.")
+          : resultPausedAwaitingSupervisor
+            ? pausedOutputForIndex(
+                supervisorPauseRequest?.requesterIndex ?? 0,
+                statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ??
+                  agentName,
+              )
+            : resultState === "failed"
+              ? (statusPayload.error ??
+                (supervisorPauseTransitionFailed
+                  ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
+                  : summary))
+              : resultState === "paused"
+                ? "Paused after interrupt. Waiting for explicit next action."
+                : summary;
+
+    try {
+      writeAtomicJson(resultPath, {
+        lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+        id,
+        agent: agentName,
+        mode: resultMode,
+        success: resultSuccess,
+        state: resultState,
+        summary: resultSummary,
+        ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+        ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+        ...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
+        ...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
+        ...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
+        ...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
+        ...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
+        ...(!concurrentTerminalStatusAdopted && timedOut
+          ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
+          : !concurrentTerminalStatusAdopted && turnBudgetExceeded
+            ? { error: statusPayload.error ?? "Subagent exceeded turn budget." }
+            : resultState === "failed"
+              ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
+              : {}),
+        ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
+        results: results.map((r) => ({
+          agent: r.agent,
+          ...(r.projectAgent ? { projectAgent: r.projectAgent } : {}),
+          output: r.output,
+          error: r.error,
+          stderr: r.stderr,
+          stderrTruncated: r.stderrTruncated,
+          protocolOutputLimit: r.protocolOutputLimit,
+          success: r.success,
+          exitCode: r.exitCode,
+          exitSignal: r.exitSignal,
+          skipped: r.skipped || undefined,
+          interrupted: r.interrupted || undefined,
+          timedOut: r.timedOut || undefined,
+          turnBudget: r.turnBudget,
+          turnBudgetExceeded: r.turnBudgetExceeded || undefined,
+          wrapUpRequested: r.wrapUpRequested || undefined,
+          toolBudget: r.toolBudget,
+          toolBudgetBlocked: r.toolBudgetBlocked || undefined,
+          contextUsage: r.contextUsage,
+          contextPressure: r.contextPressure,
+          contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
+          terminationReason: r.terminationReason,
+          sessionFile: r.sessionFile,
+          intercomTarget: r.intercomTarget,
+          model: r.model,
+          modelIdentity: r.modelIdentity,
+          modelResolution: r.modelResolution,
+          attemptedModels: r.attemptedModels,
+          modelAttempts: r.modelAttempts,
+          modelFallbackNotice: r.modelFallbackNotice,
+          totalCost: r.totalCost,
+          artifactPaths: r.artifactPaths,
+          processCleanup: r.processCleanup,
+          truncated: r.truncated,
+          transcriptPath: r.transcriptPath,
+          transcriptError: r.transcriptError,
+          structuredOutput: r.structuredOutput,
+          structuredOutputPath: r.structuredOutputPath,
+          structuredOutputSchemaPath: r.structuredOutputSchemaPath,
+          acceptance: r.acceptance,
+          pause: r.pause,
+          activeRuntimeMs: r.activeRuntimeMs,
+        })),
+        outputs,
+        workflowGraph: statusPayload.workflowGraph,
+        exitCode: resultState === "failed" ? 1 : 0,
+        timestamp: runEndedAt,
+        durationMs: runEndedAt - overallStartTime,
+        totalTokens: statusPayload.totalTokens,
+        totalCost: finalTotalCost,
+        truncated,
+        artifactsDir,
+        cwd,
+        asyncDir,
+        sessionId: config.sessionId,
+        ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+        sessionFile: effectiveSessionFile,
+        intercomTarget: config.controlIntercomTarget,
+        shareUrl,
+        gistUrl,
+        shareError,
+        ...(taskIndex !== undefined && { taskIndex }),
+        ...(totalTasks !== undefined && { totalTasks }),
+      } satisfies AsyncResultArtifact);
+    } catch (err) {
+      console.error(`Failed to write result file ${resultPath}:`, err);
+    }
+  };
+  persistTerminalRun();
 }
 
 const configArg = process.argv[2];

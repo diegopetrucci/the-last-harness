@@ -25,6 +25,7 @@
     }
   ],
   "rules": {
+    "complexity": ["error", { "max": 100, "variant": "classic" }],
     // Anti-slop rules are adopted one at a time after reviewing their diagnostics.
     "anti-slop/no-chained-type-assertions": "error",
     // "anti-slop/no-conditional-empty-object-spread": "error",
@@ -41,5 +42,43 @@
     // "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
     // "anti-slop/require-safety-comment-for-type-assertion": "error"
-  }
+  },
+  // Generated runtime mirrors keep every rule except the complexity ceiling.
+  "overrides": [
+    {
+      "files": [
+        "extensions/the-last-harness.js",
+        "extensions/the-last-harness/*.js",
+        "extensions/the-last-harness/annotate-last-message/*.js",
+        "extensions/annotate-git-diff/*.js",
+        "extensions/shared/*.js",
+        "extensions/notify/*.js",
+        "extensions/subagents/src/**/*.js",
+        "scripts/lib/default-extensions.mjs",
+        "scripts/lib/session-analysis.mjs",
+        "scripts/lib/tlh-install-git.mjs",
+        "scripts/lib/tlh-install-package-source.mjs",
+        "scripts/lib/tlh-install-paths.mjs",
+        "scripts/lib/tlh-install-subagents.mjs",
+        "scripts/lib/tlh-install-support-files.mjs",
+        "scripts/lib/tlh-install-support-manifest.mjs",
+        "scripts/lib/tlh-install-utils.mjs",
+        "scripts/lib/tlh-safe-profile-write.mjs",
+        "scripts/merge-keybindings.mjs",
+        "scripts/merge-settings.mjs",
+        "scripts/tlh-defaults.mjs",
+        "scripts/tlh-doctor.mjs",
+        "scripts/tlh-gnosis.mjs",
+        "scripts/tlh-install.mjs",
+        "scripts/tlh-recover-update.mjs",
+        "scripts/tlh-sessions.mjs",
+        "scripts/tlh-tickets.mjs",
+        "scripts/tlh-update.mjs",
+        "scripts/tlh-wrapper.mjs"
+      ],
+      "rules": {
+        "complexity": "off"
+      }
+    }
+  ]
 }

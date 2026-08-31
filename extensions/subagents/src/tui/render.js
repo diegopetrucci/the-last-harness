@@ -2048,138 +2048,125 @@ function renderMultiCompact(d, theme, frame) {
         lines.push(theme.fg("dim", `    ${liveDetailHintText()}`));
     return collapsedForegroundComponent(lines, theme);
 }
-export function renderSubagentResult(result, options, theme, frame) {
-    const d = result.details;
-    const hideAsyncPlaceholderBody = Boolean(d?.asyncId && !d.results.length && d.mode !== "management" && !result.isError);
-    if (hideAsyncPlaceholderBody)
-        return new Container();
-    if (!d || !d.results.length) {
-        const t = result.content[0];
-        const text = safeTerminalText(t?.type === "text" ? t.text : "(no output)");
-        const contextPrefix = d?.context === "fork" ? `${theme.fg("warning", "[fork]")} ` : "";
-        const width = getTermWidth() - 4;
-        if (!text.includes("\n")) {
-            const c = new Container();
-            addWrappedText(c, `${contextPrefix}${text}`, width);
-            return c;
-        }
-        if (d && !options.expanded && !result.isError) {
-            const lines = text.split(/\r?\n/);
-            const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
-            const c = new Container();
-            addWrappedText(c, `${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width);
-            addWrappedText(c, theme.fg("dim", `  Press ${liveDetailKeyText()} for full output`), width);
-            return c;
-        }
+function renderZeroResult(result, d, options, theme) {
+    const t = result.content[0];
+    const text = safeTerminalText(t?.type === "text" ? t.text : "(no output)");
+    const contextPrefix = d?.context === "fork" ? `${theme.fg("warning", "[fork]")} ` : "";
+    const width = getTermWidth() - 4;
+    if (!text.includes("\n")) {
         const c = new Container();
-        for (const line of wrapDisplayLine(`${contextPrefix}${text}`, width))
-            c.addChild(new Text(line, 0, 0));
+        addWrappedText(c, `${contextPrefix}${text}`, width);
         return c;
     }
-    const expanded = options.expanded;
-    const mdTheme = getMarkdownTheme();
-    if (d.mode === "single" && d.results.length === 1) {
-        const r = d.results[0];
-        if (!expanded)
-            return renderSingleCompact(d, r, theme, frame);
-        const isRunning = r.progress?.status === "running";
-        const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
-        const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
-        const icon = isRunning
-            ? resultGlyph(r, output, theme, true, progressRunningSeed(r.progress ?? r.progressSummary), frame)
-            : r.pause?.kind === "awaiting_supervisor"
-                ? theme.fg("warning", "paused")
-                : r.detached
-                    ? theme.fg("warning", "detached")
-                    : r.exitCode === 0
-                        ? theme.fg("success", "ok")
-                        : theme.fg("error", "failed");
-        const progressInfo = isRunning && r.progress
-            ? ` | ${r.progress.toolCount} tools, ${formatTokens(r.progress.tokens)} tok, ${formatDuration(r.progress.durationMs)}`
-            : r.progressSummary
-                ? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
-                : "";
-        const w = getTermWidth() - 4;
-        const toolCallLines = getToolCallLines(r, expanded);
+    if (d && !options.expanded && !result.isError) {
+        const lines = text.split(/\r?\n/);
+        const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
         const c = new Container();
-        c.addChild(new Text(`${icon} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${contextBadge}${progressInfo}`, 0, 0));
-        const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
-        if (ticketLine)
-            c.addChild(new Text(ticketLine, 0, 0));
-        c.addChild(new Spacer(1));
-        c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
-        c.addChild(new Spacer(1));
-        const outputTarget = extractOutputTarget(r.task);
-        if (outputTarget) {
-            c.addChild(new Text(theme.fg("dim", `Output: ${safeTerminalText(outputTarget)}`), 0, 0));
+        addWrappedText(c, `${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width);
+        addWrappedText(c, theme.fg("dim", `  Press ${liveDetailKeyText()} for full output`), width);
+        return c;
+    }
+    const c = new Container();
+    for (const line of wrapDisplayLine(`${contextPrefix}${text}`, width))
+        c.addChild(new Text(line, 0, 0));
+    return c;
+}
+function renderExpandedSingleResult(d, r, theme, mdTheme, frame) {
+    const isRunning = r.progress?.status === "running";
+    const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
+    const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
+    const icon = isRunning
+        ? resultGlyph(r, output, theme, true, progressRunningSeed(r.progress ?? r.progressSummary), frame)
+        : r.pause?.kind === "awaiting_supervisor"
+            ? theme.fg("warning", "paused")
+            : r.detached
+                ? theme.fg("warning", "detached")
+                : r.exitCode === 0
+                    ? theme.fg("success", "ok")
+                    : theme.fg("error", "failed");
+    const progressInfo = isRunning && r.progress
+        ? ` | ${r.progress.toolCount} tools, ${formatTokens(r.progress.tokens)} tok, ${formatDuration(r.progress.durationMs)}`
+        : r.progressSummary
+            ? ` | ${r.progressSummary.toolCount} tools, ${formatTokens(r.progressSummary.tokens)} tok, ${formatDuration(r.progressSummary.durationMs)}`
+            : "";
+    const w = getTermWidth() - 4;
+    const toolCallLines = getToolCallLines(r, true);
+    const c = new Container();
+    c.addChild(new Text(`${icon} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${contextBadge}${progressInfo}`, 0, 0));
+    const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
+    if (ticketLine)
+        c.addChild(new Text(ticketLine, 0, 0));
+    c.addChild(new Spacer(1));
+    c.addChild(new Text(theme.fg("dim", `Task: ${safeTerminalText(r.task)}`), 0, 0));
+    c.addChild(new Spacer(1));
+    const outputTarget = extractOutputTarget(r.task);
+    if (outputTarget) {
+        c.addChild(new Text(theme.fg("dim", `Output: ${safeTerminalText(outputTarget)}`), 0, 0));
+    }
+    if (isRunning && r.progress) {
+        const progressSnapshotNow = snapshotNowForProgress(r.progress);
+        const toolLines = formatCurrentToolLines(r.progress, w - visibleWidth("> "), w - visibleWidth("  "), true, progressSnapshotNow);
+        for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
+            const prefix = toolLineIndex === 0 ? "> " : "  ";
+            c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
         }
-        if (isRunning && r.progress) {
-            const progressSnapshotNow = snapshotNowForProgress(r.progress);
-            const toolLines = formatCurrentToolLines(r.progress, w - visibleWidth("> "), w - visibleWidth("  "), expanded, progressSnapshotNow);
-            for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
-                const prefix = toolLineIndex === 0 ? "> " : "  ";
-                c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
-            }
-            const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
-            if (liveStatusLine) {
-                c.addChild(new Text(theme.fg("accent", liveStatusLine), 0, 0));
-            }
-            c.addChild(new Text(theme.fg("dim", liveDetailHintText()), 0, 0));
-            if (r.artifactPaths) {
-                c.addChild(new Text(theme.fg("dim", `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
-            }
-            if (r.progress.recentTools?.length) {
-                for (const t of r.progress.recentTools.slice(-3)) {
-                    c.addChild(new Text(theme.fg("dim", `${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`), 0, 0));
-                }
-            }
-            for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-                c.addChild(new Text(theme.fg("dim", `  ${safeTerminalText(line)}`), 0, 0));
-            }
-            if (toolLines?.length ||
-                liveStatusLine ||
-                r.progress.recentTools?.length ||
-                r.progress.recentOutput?.length ||
-                r.artifactPaths) {
-                c.addChild(new Spacer(1));
+        const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
+        if (liveStatusLine) {
+            c.addChild(new Text(theme.fg("accent", liveStatusLine), 0, 0));
+        }
+        c.addChild(new Text(theme.fg("dim", liveDetailHintText()), 0, 0));
+        if (r.artifactPaths) {
+            c.addChild(new Text(theme.fg("dim", `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
+        }
+        if (r.progress.recentTools?.length) {
+            for (const t of r.progress.recentTools.slice(-3)) {
+                c.addChild(new Text(theme.fg("dim", `${safeTerminalText(t.tool)}: ${safeTerminalText(t.args)}`), 0, 0));
             }
         }
-        if (expanded) {
-            for (const line of toolCallLines) {
-                c.addChild(new Text(theme.fg("muted", line), 0, 0));
-            }
-            if (toolCallLines.length)
-                c.addChild(new Spacer(1));
+        for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
+            c.addChild(new Text(theme.fg("dim", `  ${safeTerminalText(line)}`), 0, 0));
         }
-        if (output)
-            c.addChild(new Markdown(safeTerminalText(output), 0, 0, mdTheme));
-        c.addChild(new Spacer(1));
-        if (r.skills?.length) {
-            c.addChild(new Text(theme.fg("dim", `Skills: ${r.skills.map((skill) => safeTerminalText(skill)).join(", ")}`), 0, 0));
-        }
-        if (r.skillsWarning) {
-            c.addChild(new Text(theme.fg("warning", `Warning: ${safeTerminalText(r.skillsWarning)}`), 0, 0));
-        }
-        if (r.attemptedModels && r.attemptedModels.length > 1) {
-            c.addChild(new Text(theme.fg("dim", `Fallbacks: ${r.attemptedModels.map((model) => safeTerminalText(model)).join(" → ")}`), 0, 0));
-        }
-        c.addChild(new Text(theme.fg("dim", safeTerminalText(formatUsage(r.usage, r.model ? safeTerminalText(r.model) : r.model))), 0, 0));
-        if (r.sessionFile) {
-            c.addChild(new Text(theme.fg("dim", `Session: ${safeTerminalText(shortenPath(r.sessionFile))}`), 0, 0));
-        }
-        if ((!isRunning && r.artifactPaths) || r.truncation?.artifactPath) {
+        if (toolLines?.length ||
+            liveStatusLine ||
+            r.progress.recentTools?.length ||
+            r.progress.recentOutput?.length ||
+            r.artifactPaths) {
             c.addChild(new Spacer(1));
-            if (!isRunning && r.artifactPaths) {
-                c.addChild(new Text(theme.fg("dim", `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
-            }
-            if (r.truncation?.artifactPath) {
-                c.addChild(new Text(theme.fg("dim", `Full output: ${safeTerminalText(shortenPath(r.truncation.artifactPath))}`), 0, 0));
-            }
         }
-        return c;
     }
-    if (!expanded)
-        return renderMultiCompact(d, theme, frame);
+    for (const line of toolCallLines) {
+        c.addChild(new Text(theme.fg("muted", line), 0, 0));
+    }
+    if (toolCallLines.length)
+        c.addChild(new Spacer(1));
+    if (output)
+        c.addChild(new Markdown(safeTerminalText(output), 0, 0, mdTheme));
+    c.addChild(new Spacer(1));
+    if (r.skills?.length) {
+        c.addChild(new Text(theme.fg("dim", `Skills: ${r.skills.map((skill) => safeTerminalText(skill)).join(", ")}`), 0, 0));
+    }
+    if (r.skillsWarning) {
+        c.addChild(new Text(theme.fg("warning", `Warning: ${safeTerminalText(r.skillsWarning)}`), 0, 0));
+    }
+    if (r.attemptedModels && r.attemptedModels.length > 1) {
+        c.addChild(new Text(theme.fg("dim", `Fallbacks: ${r.attemptedModels.map((model) => safeTerminalText(model)).join(" → ")}`), 0, 0));
+    }
+    c.addChild(new Text(theme.fg("dim", safeTerminalText(formatUsage(r.usage, r.model ? safeTerminalText(r.model) : r.model))), 0, 0));
+    if (r.sessionFile) {
+        c.addChild(new Text(theme.fg("dim", `Session: ${safeTerminalText(shortenPath(r.sessionFile))}`), 0, 0));
+    }
+    if ((!isRunning && r.artifactPaths) || r.truncation?.artifactPath) {
+        c.addChild(new Spacer(1));
+        if (!isRunning && r.artifactPaths) {
+            c.addChild(new Text(theme.fg("dim", `Artifacts: ${safeTerminalText(shortenPath(r.artifactPaths.outputPath))}`), 0, 0));
+        }
+        if (r.truncation?.artifactPath) {
+            c.addChild(new Text(theme.fg("dim", `Full output: ${safeTerminalText(shortenPath(r.truncation.artifactPath))}`), 0, 0));
+        }
+    }
+    return c;
+}
+function renderExpandedMultiResult(d, theme, frame) {
     const hasRunning = d.progress?.some((p) => p.status === "running") ||
         d.results.some((r) => r.progress?.status === "running") ||
         workflowGraphHasStatus(d, ["running"]);
@@ -2293,7 +2280,7 @@ export function renderSubagentResult(result, options, theme, frame) {
         const stepHeader = rRunning
             ? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", safeTerminalText(r.agent)))}${modelDisplay}${stats}`
             : `${statusIcon} ${stepLabel}: ${theme.bold(safeTerminalText(r.agent))}${modelDisplay}${stats}`;
-        const toolCallLines = getToolCallLines(r, expanded);
+        const toolCallLines = getToolCallLines(r, true);
         c.addChild(new Text(stepHeader, 0, 0));
         const ticketLine = foregroundTkTicketLine(r, theme, rRunning, "    ");
         if (ticketLine)
@@ -2317,7 +2304,7 @@ export function renderSubagentResult(result, options, theme, frame) {
                 c.addChild(new Text(theme.fg("accent", `    skills: ${liveProgress.skills.map((skill) => safeTerminalText(skill)).join(", ")}`), 0, 0));
             }
             const progressSnapshotNow = snapshotNowForProgress(liveProgress);
-            const toolLines = formatCurrentToolLines(liveProgress, w - visibleWidth("    > "), w - visibleWidth("      "), expanded, progressSnapshotNow);
+            const toolLines = formatCurrentToolLines(liveProgress, w - visibleWidth("    > "), w - visibleWidth("      "), true, progressSnapshotNow);
             for (const [toolLineIndex, toolLine] of (toolLines ?? []).entries()) {
                 const prefix = toolLineIndex === 0 ? "    > " : "      ";
                 c.addChild(new Text(theme.fg("warning", `${prefix}${toolLine}`), 0, 0));
@@ -2346,9 +2333,9 @@ export function renderSubagentResult(result, options, theme, frame) {
         if (r.truncation?.artifactPath) {
             c.addChild(new Text(theme.fg("dim", `    full output: ${safeTerminalText(shortenPath(r.truncation.artifactPath))}`), 0, 0));
         }
-        if (expanded && !rRunning) {
+        if (!rRunning) {
             for (const line of toolCallLines) {
-                c.addChild(new Text(theme.fg("muted", `      ${line}`), 0, 0));
+                c.addChild(new Text(theme.fg("muted", `      ${safeTerminalText(line)}`), 0, 0));
             }
             if (toolCallLines.length)
                 c.addChild(new Spacer(1));
@@ -2360,4 +2347,23 @@ export function renderSubagentResult(result, options, theme, frame) {
         c.addChild(new Text(theme.fg("dim", `Artifacts dir: ${safeTerminalText(shortenPath(d.artifacts.dir))}`), 0, 0));
     }
     return c;
+}
+export function renderSubagentResult(result, options, theme, frame) {
+    const d = result.details;
+    const hideAsyncPlaceholderBody = Boolean(d?.asyncId && !d.results.length && d.mode !== "management" && !result.isError);
+    if (hideAsyncPlaceholderBody)
+        return new Container();
+    if (!d || !d.results.length)
+        return renderZeroResult(result, d, options, theme);
+    const expanded = options.expanded;
+    const mdTheme = getMarkdownTheme();
+    if (d.mode === "single" && d.results.length === 1) {
+        const r = d.results[0];
+        if (!expanded)
+            return renderSingleCompact(d, r, theme, frame);
+        return renderExpandedSingleResult(d, r, theme, mdTheme, frame);
+    }
+    if (!expanded)
+        return renderMultiCompact(d, theme, frame);
+    return renderExpandedMultiResult(d, theme, frame);
 }

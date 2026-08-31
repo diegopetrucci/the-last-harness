@@ -4250,6 +4250,128 @@ async function authorizeProjectInterruptTarget(input: {
   }
 }
 
+async function resolveResumeActionTarget(input: {
+  params: SubagentParamsLike;
+  requestedId: string | undefined;
+  requestedFollowUp: string;
+  privateProjectLookup: ProjectAgentRunReferenceLookup;
+  ctx: ExtensionContext;
+  deps: ExecutorDeps;
+  requestCwd: string;
+  parentSessionFile: string | null;
+}): Promise<ResumeSourceTarget | SubagentToolResult<Details>> {
+  let target: ResumeSourceTarget;
+  try {
+    let resolved: ResolvedSubagentRunId | undefined;
+    try {
+      resolved = input.requestedId
+        ? resolveSubagentRunId(input.requestedId, { state: input.deps.state })
+        : undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const asyncMatches = message.match(/async:/g)?.length ?? 0;
+      if (!isResumeAmbiguity(error) || !message.includes("foreground:") || asyncMatches !== 1)
+        throw error;
+    }
+    if (resolved?.kind === "nested") {
+      if (input.privateProjectLookup.status === "found") {
+        throw projectRunAuthorizationError(
+          "the retained project-agent run resolved to an unsupported nested control target.",
+        );
+      }
+      if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
+        return resumeLiveNestedRun(resolved);
+      }
+      const trustedSessionRoots = input.parentSessionFile
+        ? [input.deps.getSubagentSessionRoot(input.parentSessionFile)]
+        : [];
+      target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
+    } else if (resolved?.kind === "async" || input.params.dir) {
+      const preResolutionDir =
+        resolved?.kind === "async"
+          ? resolved.location.asyncDir
+          : input.params.dir
+            ? path.resolve(input.params.dir)
+            : null;
+      const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
+      const hadLiveResumeIntent = Boolean(
+        input.requestedFollowUp && preResolutionStatus?.state === "running",
+      );
+      const asyncTarget: AsyncResumeSourceTarget = {
+        source: "async",
+        ...resolveAsyncResumeTarget(
+          input.privateProjectLookup.status === "found"
+            ? { ...input.params, id: input.privateProjectLookup.runId }
+            : input.params,
+          { kill: input.deps.kill, resultsDir: RESULTS_DIR },
+          { requireSessionFile: true, readOnly: preResolutionStatus?.state !== "running" },
+        ),
+      };
+      rejectMissingPrivateProjectReference(input.privateProjectLookup, asyncTarget, {
+        allowFreshResume: asyncTarget.kind === "revive",
+      });
+      if (hadLiveResumeIntent && asyncTarget.kind !== "live") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Async run '${asyncTarget.runId}' was running when resume began, but its runner or selected child went stale before the live follow-up could be accepted. No durable revival was started.`,
+            },
+          ],
+          isError: true,
+          details: { mode: "management", results: [] },
+        };
+      }
+      if (asyncTarget.kind === "live") {
+        if (!input.requestedFollowUp)
+          return {
+            content: [{ type: "text", text: "action='resume' requires message." }],
+            isError: true,
+            details: { mode: "management", results: [] },
+          };
+        if (input.privateProjectLookup.status === "found") {
+          try {
+            requirePersistedProjectCaptureForTarget(input.privateProjectLookup, asyncTarget);
+            await authorizePersistedProjectAgentRun({
+              target: asyncTarget,
+              ctx: input.ctx,
+              deps: input.deps,
+            });
+          } catch (error) {
+            return {
+              content: [
+                { type: "text", text: error instanceof Error ? error.message : String(error) },
+              ],
+              isError: true,
+              details: { mode: "management", results: [] },
+            };
+          }
+        }
+        return queueLiveAsyncResume({
+          target: asyncTarget as AsyncResumeSourceTarget & { kind: "live" },
+          followUp: input.requestedFollowUp,
+          state: input.deps.state,
+          kill: input.deps.kill,
+        });
+      }
+      target = asyncTarget;
+    } else {
+      target = resolveResumeTarget(input.params, input.deps.state, {
+        asyncRequireSessionFile: true,
+        readOnly: true,
+      });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text: message }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  return target;
+}
+
 async function resumeAsyncRun(input: {
   params: SubagentParamsLike;
   requestCwd: string;
@@ -4279,114 +4401,19 @@ async function resumeAsyncRun(input: {
       : input.params;
   const requestedId = resolutionParams.id;
 
-  let target: ResumeSourceTarget;
   const parentSessionFile = input.ctx.sessionManager.getSessionFile() ?? null;
-  try {
-    let resolved: ResolvedSubagentRunId | undefined;
-    try {
-      resolved = requestedId
-        ? resolveSubagentRunId(requestedId, { state: input.deps.state })
-        : undefined;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      const asyncMatches = message.match(/async:/g)?.length ?? 0;
-      if (!isResumeAmbiguity(error) || !message.includes("foreground:") || asyncMatches !== 1)
-        throw error;
-    }
-    if (resolved?.kind === "nested") {
-      if (privateProjectLookup.status === "found") {
-        throw projectRunAuthorizationError(
-          "the retained project-agent run resolved to an unsupported nested control target.",
-        );
-      }
-      if (resolved.match.run.state === "running" || resolved.match.run.state === "queued") {
-        return resumeLiveNestedRun(resolved);
-      }
-      const trustedSessionRoots = parentSessionFile
-        ? [input.deps.getSubagentSessionRoot(parentSessionFile)]
-        : [];
-      target = resolveNestedResumeTarget(resolved, trustedSessionRoots);
-    } else if (resolved?.kind === "async" || input.params.dir) {
-      const preResolutionDir =
-        resolved?.kind === "async"
-          ? resolved.location.asyncDir
-          : input.params.dir
-            ? path.resolve(input.params.dir)
-            : null;
-      const preResolutionStatus = preResolutionDir ? readStatus(preResolutionDir) : undefined;
-      const hadLiveResumeIntent = Boolean(
-        requestedFollowUp && preResolutionStatus?.state === "running",
-      );
-      const asyncTarget: AsyncResumeSourceTarget = {
-        source: "async",
-        ...resolveAsyncResumeTarget(
-          resolutionParams,
-          { kill: input.deps.kill, resultsDir: RESULTS_DIR },
-          { requireSessionFile: true, readOnly: preResolutionStatus?.state !== "running" },
-        ),
-      };
-      rejectMissingPrivateProjectReference(privateProjectLookup, asyncTarget, {
-        allowFreshResume: asyncTarget.kind === "revive",
-      });
-      if (hadLiveResumeIntent && asyncTarget.kind !== "live") {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Async run '${asyncTarget.runId}' was running when resume began, but its runner or selected child went stale before the live follow-up could be accepted. No durable revival was started.`,
-            },
-          ],
-          isError: true,
-          details: { mode: "management", results: [] },
-        };
-      }
-      if (asyncTarget.kind === "live") {
-        if (!requestedFollowUp)
-          return {
-            content: [{ type: "text", text: "action='resume' requires message." }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        if (privateProjectLookup.status === "found") {
-          try {
-            requirePersistedProjectCaptureForTarget(privateProjectLookup, asyncTarget);
-            await authorizePersistedProjectAgentRun({
-              target: asyncTarget,
-              ctx: input.ctx,
-              deps: input.deps,
-            });
-          } catch (error) {
-            return {
-              content: [
-                { type: "text", text: error instanceof Error ? error.message : String(error) },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-        }
-        return queueLiveAsyncResume({
-          target: asyncTarget as AsyncResumeSourceTarget & { kind: "live" },
-          followUp: requestedFollowUp,
-          state: input.deps.state,
-          kill: input.deps.kill,
-        });
-      }
-      target = asyncTarget;
-    } else {
-      target = resolveResumeTarget(resolutionParams, input.deps.state, {
-        asyncRequireSessionFile: true,
-        readOnly: true,
-      });
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: "text", text: message }],
-      isError: true,
-      details: { mode: "management", results: [] },
-    };
-  }
+  const targetResolution = await resolveResumeActionTarget({
+    params: resolutionParams,
+    requestedId,
+    requestedFollowUp,
+    privateProjectLookup,
+    ctx: input.ctx,
+    deps: input.deps,
+    requestCwd: input.requestCwd,
+    parentSessionFile,
+  });
+  if ("content" in targetResolution) return targetResolution;
+  const target = targetResolution;
 
   try {
     rejectMissingPrivateProjectReference(privateProjectLookup, target, {
@@ -6655,6 +6682,573 @@ function duplicateSubagentCallResult(params: SubagentParamsLike): SubagentToolRe
   };
 }
 
+function executeDoctorAction(
+  params: SubagentParamsLike,
+  requestCwd: string,
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): SubagentToolResult<Details> {
+  let currentSessionFile: string | null = null;
+  let currentSessionId = deps.state.currentSessionId;
+  let sessionError: string | undefined;
+  try {
+    currentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
+    currentSessionId = ctx.sessionManager.getSessionId();
+  } catch (error) {
+    sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  }
+  let orchestratorTarget: string | undefined;
+  try {
+    orchestratorTarget = resolveIntercomSessionTarget(
+      deps.pi.getSessionName(),
+      ctx.sessionManager.getSessionId(),
+    );
+  } catch (error) {
+    if (!sessionError)
+      sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  }
+  return {
+    content: [
+      {
+        type: "text",
+        text: buildDoctorReport({
+          cwd: requestCwd,
+          config: deps.config,
+          state: deps.state,
+          context: params.context,
+          requestedSessionDir: params.sessionDir,
+          currentSessionFile,
+          currentSessionId,
+          orchestratorTarget,
+          sessionError,
+          expandTilde: deps.expandTilde,
+          ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
+        }),
+      },
+    ],
+    details: { mode: "management", results: [] },
+  };
+}
+
+function executeStatusAction(
+  params: SubagentParamsLike,
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): SubagentToolResult<Details> {
+  const targetRunId = params.id;
+  const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+  if (params.view === "fleet") {
+    return inspectSubagentStatus(buildRunStatusParams(params), {
+      state: deps.state,
+      sessionRoots,
+    });
+  }
+  if (targetRunId) {
+    try {
+      const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
+      if (resolved?.kind === "foreground") {
+        const foreground = getForegroundControl(deps.state, resolved.id);
+        if (foreground) {
+          if (params.view === "transcript") {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+                },
+              ],
+              details: { mode: "management", results: [] },
+            };
+          }
+          return foregroundStatusResult(foreground);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: message }],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+  } else {
+    const foreground = getForegroundControl(deps.state, undefined);
+    if (foreground && params.view !== "transcript") return foregroundStatusResult(foreground);
+    if (foreground && params.view === "transcript") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+          },
+        ],
+        details: { mode: "management", results: [] },
+      };
+    }
+  }
+  return inspectSubagentStatus(buildRunStatusParams(params), {
+    state: deps.state,
+    sessionRoots,
+  });
+}
+
+async function executeSteerAction(
+  params: SubagentParamsLike,
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): Promise<SubagentToolResult<Details>> {
+  deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+  const privateProjectLookup = lookupPrivateProjectActionReference(params);
+  if (privateProjectLookup.status === "ambiguous")
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            `the requested run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  const message = (params.message ?? params.task ?? "").trim();
+  if (!message)
+    return {
+      content: [{ type: "text", text: "action='steer' requires message." }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  const targetRunId = params.id;
+  const retainedRunId =
+    privateProjectLookup.status === "found" ? privateProjectLookup.runId : undefined;
+  if (params.dir) {
+    try {
+      const location = resolveAsyncRunLocation(
+        retainedRunId ? { ...params, id: retainedRunId } : params,
+        ASYNC_DIR,
+        RESULTS_DIR,
+      );
+      const runId =
+        retainedRunId ??
+        location.resolvedId ??
+        targetRunId ??
+        path.basename(location.asyncDir ?? params.dir);
+      await authorizeProjectSteerTarget({
+        params: { ...params, id: runId, dir: location.asyncDir ?? params.dir },
+        lookup: privateProjectLookup,
+        ctx,
+        deps,
+      });
+      return steerAsyncRun({
+        state: deps.state,
+        runId,
+        message,
+        index: params.index,
+        kill: deps.kill,
+        location,
+        projectLookup: privateProjectLookup,
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text }],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+  }
+  if (!targetRunId)
+    return {
+      content: [{ type: "text", text: "action='steer' requires id or dir." }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  let resolved: ResolvedSubagentRunId | undefined;
+  try {
+    resolved = resolveSubagentRunId(retainedRunId ?? targetRunId, { state: deps.state });
+  } catch (error) {
+    const text = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  if (privateProjectLookup.status === "found" && resolved?.kind !== "async")
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            "the retained project-agent run is not an async control target.",
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  if (resolved?.kind === "nested") {
+    if (
+      privateProjectLookup.status === "missing" &&
+      hasProjectAgentControlMarker(resolved.match.run)
+    )
+      return {
+        content: [
+          {
+            type: "text",
+            text: projectRunAuthorizationError(
+              "the nested target carries a project-agent marker, but its process-private reference is unavailable; refusing nested control fallback.",
+            ).message,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    return steerNestedRun({ target: resolved, message, index: params.index });
+  }
+  if (resolved?.kind === "foreground")
+    return {
+      content: [
+        {
+          type: "text",
+          text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs.",
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  if (resolved?.kind !== "async")
+    return {
+      content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  try {
+    await authorizeProjectSteerTarget({
+      params: { ...params, ...(retainedRunId ? { id: retainedRunId } : {}) },
+      lookup: privateProjectLookup,
+      ctx,
+      deps,
+    });
+  } catch (error) {
+    return {
+      content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  return steerAsyncRun({
+    state: deps.state,
+    runId: resolved.id,
+    message,
+    index: params.index,
+    kill: deps.kill,
+    location: resolved.location,
+    projectLookup: privateProjectLookup,
+  });
+}
+
+async function executeInterruptAction(
+  params: SubagentParamsLike,
+  ctx: ExtensionContext,
+  deps: ExecutorDeps,
+): Promise<SubagentToolResult<Details>> {
+  deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
+  const requestedProjectLookup = lookupPrivateProjectActionReference(params);
+  if (requestedProjectLookup.status === "ambiguous") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            `the requested run id is ambiguous in the retained project-agent registry (${requestedProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  const targetRunId = params.id;
+  const rememberedPaused = resolveRememberedForegroundRun(params, deps.state);
+  if (
+    rememberedPaused?.child.status === "paused" &&
+    rememberedPaused.child.pause &&
+    !getForegroundControl(deps.state, rememberedPaused.run.runId)
+  ) {
+    const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
+    if (fs.existsSync(pausedAsyncDir)) {
+      const projectResolutionError = projectInterruptResolutionMismatch(
+        requestedProjectLookup,
+        rememberedPaused.run.runId,
+      );
+      if (projectResolutionError)
+        return projectInterruptAuthorizationResult(projectResolutionError);
+      try {
+        await authorizeProjectInterruptTarget({
+          params: { ...params, id: rememberedPaused.run.runId },
+          lookup: requestedProjectLookup,
+          ctx,
+          deps,
+        });
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+          details: { mode: "management", results: [] },
+        };
+      }
+      return cancelPersistedPausedForegroundRun(
+        deps.state,
+        pausedAsyncDir,
+        rememberedPaused.run.runId,
+        rememberedPaused.index,
+      );
+    }
+  }
+  let resolved: ResolvedSubagentRunId | undefined;
+  let selectedParams = params;
+  try {
+    const selected = selectInterruptTarget(params, deps.state);
+    resolved = selected.target;
+    selectedParams = selected.params;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text: message }],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  const privateProjectLookup =
+    targetRunId || params.dir
+      ? requestedProjectLookup
+      : lookupPrivateProjectActionReference(selectedParams);
+  if (privateProjectLookup.status === "ambiguous") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: projectRunAuthorizationError(
+            `the selected run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
+          ).message,
+        },
+      ],
+      isError: true,
+      details: { mode: "management", results: [] },
+    };
+  }
+  const projectResolutionError = projectInterruptResolutionMismatch(
+    privateProjectLookup,
+    resolved?.id,
+  );
+  if (projectResolutionError) return projectInterruptAuthorizationResult(projectResolutionError);
+  let asyncInterruptTarget = resolved?.kind === "async" ? resolved : undefined;
+  let asyncInterruptParams = selectedParams;
+  let asyncInterruptLookup: ProjectAgentRunReferenceLookup = privateProjectLookup;
+  if (resolved?.kind === "nested") {
+    if (
+      hasMalformedProjectAgentControlMarker(resolved.match.run) ||
+      (privateProjectLookup.status === "missing" &&
+        hasProjectAgentControlMarker(resolved.match.run))
+    ) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: projectRunAuthorizationError(
+              "the nested target carries a malformed or unavailable project-agent marker; refusing nested interrupt fallback.",
+            ).message,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    if (privateProjectLookup.status === "found" && resolved.match.run.projectAgent) {
+      try {
+        privateProjectCaptureForTarget(privateProjectLookup, {
+          runId: resolved.id,
+          agent: resolved.match.run.agent ?? resolved.match.run.projectAgent.provenance.agent,
+          projectAgent: resolved.match.run.projectAgent,
+        });
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+          details: { mode: "management", results: [] },
+        };
+      }
+    }
+    return interruptNestedRun(resolved);
+  }
+  if (resolved?.kind === "foreground") {
+    const foregroundRun = deps.state.foregroundRuns?.get(resolved.id);
+    const foregroundProjectChildren = (foregroundRun?.children ?? []).filter(
+      (child) => child.projectAgent !== undefined,
+    );
+    if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "missing") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: projectRunAuthorizationError(
+              "the foreground target carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
+            ).message,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "found") {
+      try {
+        for (const foregroundChild of foregroundProjectChildren) {
+          privateProjectCaptureForTarget(privateProjectLookup, {
+            runId: resolved.id,
+            agent: foregroundChild.agent,
+            projectAgent: foregroundChild.projectAgent,
+          });
+        }
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+          isError: true,
+          details: { mode: "management", results: [] },
+        };
+      }
+    }
+    const foreground = getForegroundControl(deps.state, resolved.id);
+    if (foreground) {
+      if (requestForegroundInterrupt(foreground)) {
+        return {
+          content: [
+            { type: "text", text: `Interrupt requested for foreground run ${foreground.runId}.` },
+          ],
+          details: { mode: "management", results: [] },
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
+          },
+        ],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+    const asyncTarget = getAsyncInterruptTarget(deps.state, resolved.id);
+    if (asyncTarget) {
+      asyncInterruptTarget = resolvedAsyncInterruptTarget(asyncTarget);
+      asyncInterruptParams = {
+        ...selectedParams,
+        id: asyncInterruptTarget.id,
+        dir: asyncTarget.asyncDir,
+      };
+      asyncInterruptLookup = lookupPrivateProjectActionReference(asyncInterruptParams);
+      if (asyncInterruptLookup.status === "ambiguous") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: projectRunAuthorizationError(
+                `the selected async run id is ambiguous in the retained project-agent registry (${asyncInterruptLookup.runIds.join(", ")}). Provide a full run id.`,
+              ).message,
+            },
+          ],
+          isError: true,
+          details: { mode: "management", results: [] },
+        };
+      }
+      const asyncProjectResolutionError = projectInterruptResolutionMismatch(
+        asyncInterruptLookup,
+        asyncInterruptTarget.id,
+      );
+      if (asyncProjectResolutionError)
+        return projectInterruptAuthorizationResult(asyncProjectResolutionError);
+    } else {
+      const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
+      const persistedStatus = readStatus(pausedAsyncDir);
+      if (
+        persistedStatus?.state === "paused" ||
+        persistedStatus?.state === "continued" ||
+        persistedStatus?.state === "cancelled"
+      ) {
+        return cancelPersistedPausedForegroundRun(
+          deps.state,
+          pausedAsyncDir,
+          resolved.id,
+          params.index,
+        );
+      }
+    }
+  }
+  if (asyncInterruptTarget) {
+    const selectedAsyncJob = deps.state.asyncJobs.get(asyncInterruptTarget.id);
+    if (
+      asyncInterruptLookup.status === "missing" &&
+      hasInMemoryProjectAgentCapture(selectedAsyncJob)
+    ) {
+      return projectInterruptAuthorizationResult(
+        projectRunAuthorizationError(
+          "the selected async run carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
+        ),
+      );
+    }
+    try {
+      await authorizeProjectInterruptTarget({
+        params: asyncInterruptParams,
+        lookup: asyncInterruptLookup,
+        ctx,
+        deps,
+      });
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+        isError: true,
+        details: { mode: "management", results: [] },
+      };
+    }
+  }
+  if (
+    asyncInterruptTarget &&
+    resolved?.kind === "async" &&
+    targetRunId?.trim() &&
+    asyncInterruptTarget.location.asyncDir
+  ) {
+    const persistedStatus = readStatus(asyncInterruptTarget.location.asyncDir);
+    if (
+      persistedStatus?.state === "paused" ||
+      persistedStatus?.state === "continued" ||
+      persistedStatus?.state === "cancelled"
+    ) {
+      return cancelPersistedPausedForegroundRun(
+        deps.state,
+        asyncInterruptTarget.location.asyncDir,
+        asyncInterruptTarget.id,
+        params.index,
+      );
+    }
+  }
+  const asyncInterruptResult = asyncInterruptTarget
+    ? interruptAsyncRun(
+        deps.state,
+        asyncInterruptTarget.id,
+        deps.kill,
+        asyncInterruptTarget.location,
+      )
+    : null;
+  if (asyncInterruptResult) return asyncInterruptResult;
+  return {
+    content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
+    isError: true,
+    details: { mode: "management", results: [] },
+  };
+}
+
 export function createSubagentExecutor(deps: ExecutorDeps): {
   execute: (
     id: string,
@@ -6684,583 +7278,14 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
       return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);
     const action = paramsWithResolvedCwd.action;
     if (action) {
-      if (action === "doctor") {
-        let currentSessionFile: string | null = null;
-        let currentSessionId = deps.state.currentSessionId;
-        let sessionError: string | undefined;
-        try {
-          currentSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-          currentSessionId = ctx.sessionManager.getSessionId();
-        } catch (error) {
-          sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-        }
-        let orchestratorTarget: string | undefined;
-        try {
-          orchestratorTarget = resolveIntercomSessionTarget(
-            deps.pi.getSessionName(),
-            ctx.sessionManager.getSessionId(),
-          );
-        } catch (error) {
-          if (!sessionError)
-            sessionError =
-              error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text: buildDoctorReport({
-                cwd: requestCwd,
-                config: deps.config,
-                state: deps.state,
-                context: paramsWithResolvedCwd.context,
-                requestedSessionDir: paramsWithResolvedCwd.sessionDir,
-                currentSessionFile,
-                currentSessionId,
-                orchestratorTarget,
-                sessionError,
-                expandTilde: deps.expandTilde,
-                ...(deps.getHeartbeatSummary ? { heartbeat: deps.getHeartbeatSummary() } : {}),
-              }),
-            },
-          ],
-          details: { mode: "management", results: [] },
-        };
-      }
-      if (action === "status") {
-        const targetRunId = paramsWithResolvedCwd.id;
-        const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
-        if (paramsWithResolvedCwd.view === "fleet") {
-          return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
-            state: deps.state,
-            sessionRoots,
-          });
-        }
-        if (targetRunId) {
-          try {
-            const resolved = resolveSubagentRunId(targetRunId, { state: deps.state });
-            if (resolved?.kind === "foreground") {
-              const foreground = getForegroundControl(deps.state, resolved.id);
-              if (foreground) {
-                if (paramsWithResolvedCwd.view === "transcript") {
-                  return {
-                    content: [
-                      {
-                        type: "text",
-                        text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
-                      },
-                    ],
-                    details: { mode: "management", results: [] },
-                  };
-                }
-                return foregroundStatusResult(foreground);
-              }
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text", text: message }],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-        } else {
-          const foreground = getForegroundControl(deps.state, undefined);
-          if (foreground && paramsWithResolvedCwd.view !== "transcript")
-            return foregroundStatusResult(foreground);
-          if (foreground && paramsWithResolvedCwd.view === "transcript") {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
-                },
-              ],
-              details: { mode: "management", results: [] },
-            };
-          }
-        }
-        return inspectSubagentStatus(buildRunStatusParams(paramsWithResolvedCwd), {
-          state: deps.state,
-          sessionRoots,
-        });
-      }
+      if (action === "doctor")
+        return executeDoctorAction(paramsWithResolvedCwd, requestCwd, ctx, deps);
+      if (action === "status") return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
       if (action === "resume") {
         return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
       }
-      if (action === "steer") {
-        deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        const privateProjectLookup = lookupPrivateProjectActionReference(paramsWithResolvedCwd);
-        if (privateProjectLookup.status === "ambiguous")
-          return {
-            content: [
-              {
-                type: "text",
-                text: projectRunAuthorizationError(
-                  `the requested run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
-                ).message,
-              },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        const message = (paramsWithResolvedCwd.message ?? paramsWithResolvedCwd.task ?? "").trim();
-        if (!message)
-          return {
-            content: [{ type: "text", text: "action='steer' requires message." }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        const targetRunId = paramsWithResolvedCwd.id;
-        const retainedRunId =
-          privateProjectLookup.status === "found" ? privateProjectLookup.runId : undefined;
-        if (paramsWithResolvedCwd.dir) {
-          try {
-            const location = resolveAsyncRunLocation(
-              retainedRunId
-                ? { ...paramsWithResolvedCwd, id: retainedRunId }
-                : paramsWithResolvedCwd,
-              ASYNC_DIR,
-              RESULTS_DIR,
-            );
-            const runId =
-              retainedRunId ??
-              location.resolvedId ??
-              targetRunId ??
-              path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir);
-            await authorizeProjectSteerTarget({
-              params: {
-                ...paramsWithResolvedCwd,
-                id: runId,
-                dir: location.asyncDir ?? paramsWithResolvedCwd.dir,
-              },
-              lookup: privateProjectLookup,
-              ctx,
-              deps,
-            });
-            return steerAsyncRun({
-              state: deps.state,
-              runId,
-              message,
-              index: paramsWithResolvedCwd.index,
-              kill: deps.kill,
-              location,
-              projectLookup: privateProjectLookup,
-            });
-          } catch (error) {
-            const text = error instanceof Error ? error.message : String(error);
-            return {
-              content: [{ type: "text", text }],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-        }
-        if (!targetRunId)
-          return {
-            content: [{ type: "text", text: "action='steer' requires id or dir." }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        let resolved: ResolvedSubagentRunId | undefined;
-        try {
-          resolved = resolveSubagentRunId(retainedRunId ?? targetRunId, { state: deps.state });
-        } catch (error) {
-          const text = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: "text", text }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        if (privateProjectLookup.status === "found" && resolved?.kind !== "async")
-          return {
-            content: [
-              {
-                type: "text",
-                text: projectRunAuthorizationError(
-                  "the retained project-agent run is not an async control target.",
-                ).message,
-              },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        if (resolved?.kind === "nested") {
-          if (
-            privateProjectLookup.status === "missing" &&
-            hasProjectAgentControlMarker(resolved.match.run)
-          )
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: projectRunAuthorizationError(
-                    "the nested target carries a project-agent marker, but its process-private reference is unavailable; refusing nested control fallback.",
-                  ).message,
-                },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          return steerNestedRun({ target: resolved, message, index: paramsWithResolvedCwd.index });
-        }
-        if (resolved?.kind === "foreground")
-          return {
-            content: [
-              {
-                type: "text",
-                text: "action='steer' currently supports live async Pi child sessions only; use action='interrupt' or action='resume' for foreground runs.",
-              },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        if (resolved?.kind !== "async")
-          return {
-            content: [{ type: "text", text: `No async run found for '${targetRunId}'.` }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        try {
-          await authorizeProjectSteerTarget({
-            params: {
-              ...paramsWithResolvedCwd,
-              ...(retainedRunId ? { id: retainedRunId } : {}),
-            },
-            lookup: privateProjectLookup,
-            ctx,
-            deps,
-          });
-        } catch (error) {
-          return {
-            content: [
-              { type: "text", text: error instanceof Error ? error.message : String(error) },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        return steerAsyncRun({
-          state: deps.state,
-          runId: resolved.id,
-          message,
-          index: paramsWithResolvedCwd.index,
-          kill: deps.kill,
-          location: resolved.location,
-          projectLookup: privateProjectLookup,
-        });
-      }
-      if (action === "interrupt") {
-        deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);
-        const requestedProjectLookup = lookupPrivateProjectActionReference(paramsWithResolvedCwd);
-        if (requestedProjectLookup.status === "ambiguous") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: projectRunAuthorizationError(
-                  `the requested run id is ambiguous in the retained project-agent registry (${requestedProjectLookup.runIds.join(", ")}). Provide a full run id.`,
-                ).message,
-              },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        const targetRunId = paramsWithResolvedCwd.id;
-        const rememberedPaused = resolveRememberedForegroundRun(paramsWithResolvedCwd, deps.state);
-        if (
-          rememberedPaused?.child.status === "paused" &&
-          rememberedPaused.child.pause &&
-          !getForegroundControl(deps.state, rememberedPaused.run.runId)
-        ) {
-          const pausedAsyncDir = pausedForegroundStatusPath(rememberedPaused.run.runId);
-          if (fs.existsSync(pausedAsyncDir)) {
-            const projectResolutionError = projectInterruptResolutionMismatch(
-              requestedProjectLookup,
-              rememberedPaused.run.runId,
-            );
-            if (projectResolutionError) {
-              return projectInterruptAuthorizationResult(projectResolutionError);
-            }
-            try {
-              await authorizeProjectInterruptTarget({
-                params: { ...paramsWithResolvedCwd, id: rememberedPaused.run.runId },
-                lookup: requestedProjectLookup,
-                ctx,
-                deps,
-              });
-            } catch (error) {
-              return {
-                content: [
-                  { type: "text", text: error instanceof Error ? error.message : String(error) },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-              };
-            }
-            return cancelPersistedPausedForegroundRun(
-              deps.state,
-              pausedAsyncDir,
-              rememberedPaused.run.runId,
-              rememberedPaused.index,
-            );
-          }
-        }
-        let resolved: ResolvedSubagentRunId | undefined;
-        let selectedParams = paramsWithResolvedCwd;
-        try {
-          const selected = selectInterruptTarget(paramsWithResolvedCwd, deps.state);
-          resolved = selected.target;
-          selectedParams = selected.params;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: "text", text: message }],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        const privateProjectLookup =
-          targetRunId || paramsWithResolvedCwd.dir
-            ? requestedProjectLookup
-            : lookupPrivateProjectActionReference(selectedParams);
-        if (privateProjectLookup.status === "ambiguous") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: projectRunAuthorizationError(
-                  `the selected run id is ambiguous in the retained project-agent registry (${privateProjectLookup.runIds.join(", ")}). Provide a full run id.`,
-                ).message,
-              },
-            ],
-            isError: true,
-            details: { mode: "management", results: [] },
-          };
-        }
-        const projectResolutionError = projectInterruptResolutionMismatch(
-          privateProjectLookup,
-          resolved?.id,
-        );
-        if (projectResolutionError) {
-          return projectInterruptAuthorizationResult(projectResolutionError);
-        }
-        let asyncInterruptTarget = resolved?.kind === "async" ? resolved : undefined;
-        let asyncInterruptParams = selectedParams;
-        let asyncInterruptLookup: ProjectAgentRunReferenceLookup = privateProjectLookup;
-        if (resolved?.kind === "nested") {
-          if (
-            hasMalformedProjectAgentControlMarker(resolved.match.run) ||
-            (privateProjectLookup.status === "missing" &&
-              hasProjectAgentControlMarker(resolved.match.run))
-          ) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: projectRunAuthorizationError(
-                    "the nested target carries a malformed or unavailable project-agent marker; refusing nested interrupt fallback.",
-                  ).message,
-                },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-          if (privateProjectLookup.status === "found" && resolved.match.run.projectAgent) {
-            try {
-              privateProjectCaptureForTarget(privateProjectLookup, {
-                runId: resolved.id,
-                agent: resolved.match.run.agent ?? resolved.match.run.projectAgent.provenance.agent,
-                projectAgent: resolved.match.run.projectAgent,
-              });
-            } catch (error) {
-              return {
-                content: [
-                  { type: "text", text: error instanceof Error ? error.message : String(error) },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-              };
-            }
-          }
-          return interruptNestedRun(resolved);
-        }
-        if (resolved?.kind === "foreground") {
-          const foregroundRun = deps.state.foregroundRuns?.get(resolved.id);
-          const foregroundProjectChildren = (foregroundRun?.children ?? []).filter(
-            (child) => child.projectAgent !== undefined,
-          );
-          if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "missing") {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: projectRunAuthorizationError(
-                    "the foreground target carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
-                  ).message,
-                },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-          if (foregroundProjectChildren.length > 0 && privateProjectLookup.status === "found") {
-            try {
-              for (const foregroundChild of foregroundProjectChildren) {
-                privateProjectCaptureForTarget(privateProjectLookup, {
-                  runId: resolved.id,
-                  agent: foregroundChild.agent,
-                  projectAgent: foregroundChild.projectAgent,
-                });
-              }
-            } catch (error) {
-              return {
-                content: [
-                  { type: "text", text: error instanceof Error ? error.message : String(error) },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-              };
-            }
-          }
-          const foreground = getForegroundControl(deps.state, resolved.id);
-          if (foreground) {
-            if (requestForegroundInterrupt(foreground)) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Interrupt requested for foreground run ${foreground.runId}.`,
-                  },
-                ],
-                details: { mode: "management", results: [] },
-              };
-            }
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Foreground run ${foreground.runId} has no active child step to interrupt.`,
-                },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-          const asyncTarget = getAsyncInterruptTarget(deps.state, resolved.id);
-          if (asyncTarget) {
-            asyncInterruptTarget = resolvedAsyncInterruptTarget(asyncTarget);
-            asyncInterruptParams = {
-              ...selectedParams,
-              id: asyncInterruptTarget.id,
-              dir: asyncTarget.asyncDir,
-            };
-            asyncInterruptLookup = lookupPrivateProjectActionReference(asyncInterruptParams);
-            if (asyncInterruptLookup.status === "ambiguous") {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: projectRunAuthorizationError(
-                      `the selected async run id is ambiguous in the retained project-agent registry (${asyncInterruptLookup.runIds.join(", ")}). Provide a full run id.`,
-                    ).message,
-                  },
-                ],
-                isError: true,
-                details: { mode: "management", results: [] },
-              };
-            }
-            const asyncProjectResolutionError = projectInterruptResolutionMismatch(
-              asyncInterruptLookup,
-              asyncInterruptTarget.id,
-            );
-            if (asyncProjectResolutionError) {
-              return projectInterruptAuthorizationResult(asyncProjectResolutionError);
-            }
-          } else {
-            const pausedAsyncDir = pausedForegroundStatusPath(resolved.id);
-            const persistedStatus = readStatus(pausedAsyncDir);
-            if (
-              persistedStatus?.state === "paused" ||
-              persistedStatus?.state === "continued" ||
-              persistedStatus?.state === "cancelled"
-            ) {
-              return cancelPersistedPausedForegroundRun(
-                deps.state,
-                pausedAsyncDir,
-                resolved.id,
-                paramsWithResolvedCwd.index,
-              );
-            }
-          }
-        }
-        if (asyncInterruptTarget) {
-          const selectedAsyncJob = deps.state.asyncJobs.get(asyncInterruptTarget.id);
-          if (
-            asyncInterruptLookup.status === "missing" &&
-            hasInMemoryProjectAgentCapture(selectedAsyncJob)
-          ) {
-            return projectInterruptAuthorizationResult(
-              projectRunAuthorizationError(
-                "the selected async run carries a project-agent marker, but its process-private reference is unavailable; refusing interrupt fallback.",
-              ),
-            );
-          }
-          try {
-            await authorizeProjectInterruptTarget({
-              params: asyncInterruptParams,
-              lookup: asyncInterruptLookup,
-              ctx,
-              deps,
-            });
-          } catch (error) {
-            return {
-              content: [
-                { type: "text", text: error instanceof Error ? error.message : String(error) },
-              ],
-              isError: true,
-              details: { mode: "management", results: [] },
-            };
-          }
-        }
-        if (
-          asyncInterruptTarget &&
-          resolved?.kind === "async" &&
-          targetRunId?.trim() &&
-          asyncInterruptTarget.location.asyncDir
-        ) {
-          const persistedStatus = readStatus(asyncInterruptTarget.location.asyncDir);
-          if (
-            persistedStatus?.state === "paused" ||
-            persistedStatus?.state === "continued" ||
-            persistedStatus?.state === "cancelled"
-          ) {
-            return cancelPersistedPausedForegroundRun(
-              deps.state,
-              asyncInterruptTarget.location.asyncDir,
-              asyncInterruptTarget.id,
-              paramsWithResolvedCwd.index,
-            );
-          }
-        }
-        const asyncInterruptResult = asyncInterruptTarget
-          ? interruptAsyncRun(
-              deps.state,
-              asyncInterruptTarget.id,
-              deps.kill,
-              asyncInterruptTarget.location,
-            )
-          : null;
-        if (asyncInterruptResult) return asyncInterruptResult;
-        return {
-          content: [{ type: "text", text: "No interrupt-capable run found in this session." }],
-          isError: true,
-          details: { mode: "management", results: [] },
-        };
-      }
+      if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
+      if (action === "interrupt") return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
       if (!(SUBAGENT_ACTIONS as readonly string[]).includes(action)) {
         return {
           content: [

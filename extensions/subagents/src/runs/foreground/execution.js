@@ -292,6 +292,423 @@ function resolveResultSessionFile(result, options, shareEnabled) {
             result.sessionFile = sessionFile;
     }
 }
+function setupForegroundArtifacts(runtimeCwd, agentName, taskWithAcceptance, options) {
+    let artifactPathsResult;
+    let jsonlPath;
+    let transcriptWriter;
+    if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
+        artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
+        ensureArtifactsDir(options.artifactsDir);
+        if (options.artifactConfig?.includeInput !== false) {
+            writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${taskWithAcceptance}`);
+        }
+        if (options.artifactConfig?.includeJsonl !== false) {
+            jsonlPath = artifactPathsResult.jsonlPath;
+        }
+        if (options.artifactConfig?.includeTranscript !== false) {
+            transcriptWriter = createChildTranscriptWriter({
+                transcriptPath: artifactPathsResult.transcriptPath,
+                source: "foreground",
+                runId: options.runId,
+                agent: agentName,
+                childIndex: options.index,
+                cwd: options.cwd ?? runtimeCwd,
+            });
+            transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
+        }
+    }
+    return { artifactPathsResult, jsonlPath, transcriptWriter };
+}
+function normalizeSingleAttemptResult(result, options) {
+    if (result.error && result.exitCode === 0) {
+        result.exitCode = 1;
+    }
+    if (result.exitCode !== 0 && !result.error) {
+        result.error = synthesizeChildExitDiagnostic({
+            exitCode: result.exitCode,
+            signal: result.exitSignal,
+        });
+    }
+    if (result.exitCode === 0 && !result.error) {
+        const errInfo = detectSubagentError(result.messages ?? []);
+        if (errInfo.hasError) {
+            result.exitCode = errInfo.exitCode ?? 1;
+            result.error = boundChildError(errInfo.details
+                ? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
+                : `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`);
+        }
+    }
+    const preNormalizationTerminationReason = result.protocolOutputLimit
+        ? "output_limit"
+        : result.timedOut
+            ? "timed_out"
+            : result.turnBudgetExceeded
+                ? "turn_budget_exceeded"
+                : result.toolBudgetBlocked
+                    ? "tool_budget_blocked"
+                    : result.interrupted
+                        ? "interrupted"
+                        : "completed";
+    const contextExhaustedSignature = classifyContextExhaustedTermination({
+        messages: result.messages,
+        contextUsage: result.contextUsage,
+        exitCode: result.exitCode,
+        error: result.error,
+        terminationReason: preNormalizationTerminationReason,
+    });
+    if (result.exitCode === 0 && !result.error) {
+        const finalText = getFinalOutput(result.messages ?? []);
+        const missingStructuredOutput = options.structuredOutput
+            ? !existsSync(options.structuredOutput.outputPath)
+            : false;
+        if (!contextExhaustedSignature &&
+            !finalText?.trim() &&
+            (!options.structuredOutput || missingStructuredOutput)) {
+            result.exitCode = 1;
+            result.error = "Subagent produced no output (possible model cold-start or empty response).";
+        }
+    }
+    if (options.structuredOutput && result.exitCode === 0 && !result.error) {
+        const structured = readStructuredOutput({
+            schema: options.structuredOutput.schema,
+            schemaPath: options.structuredOutput.schemaPath,
+            outputPath: options.structuredOutput.outputPath,
+        });
+        result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
+        result.structuredOutputPath = options.structuredOutput.outputPath;
+        if (structured.error) {
+            result.exitCode = 1;
+            result.error = structured.error;
+        }
+        else {
+            result.structuredOutput = structured.value;
+        }
+    }
+}
+function finalizeSingleAttemptOutput(input) {
+    const { result, progress, agent, task, options, originalTask, outputSnapshot, observedMutationAttempt, allControlEvents, emitControlEvent, } = input;
+    const acceptanceOutput = getFinalOutput(result.messages ?? []);
+    const acceptanceParsed = parseAndStripAcceptanceReport(acceptanceOutput);
+    const { report: finalAcceptanceReport } = acceptanceParsed;
+    let fullOutput = result.protocolOutputLimit
+        ? boundChildError(formatProtocolOutputLimit(result.protocolOutputLimit))
+        : acceptanceParsed.stripped;
+    if (result.timedOut) {
+        const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
+        fullOutput = fullOutput.trim()
+            ? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
+            : timeoutMessage;
+    }
+    else if (result.turnBudgetExceeded && result.turnBudget) {
+        fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
+    }
+    else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
+        const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
+        fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
+    }
+    const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
+        ? evaluateCompletionMutationGuard({
+            agent: agent.name,
+            task: originalTask ?? task,
+            messages: result.messages ?? [],
+            tools: agent.tools,
+        })
+        : undefined;
+    if (completionGuard?.triggered && !observedMutationAttempt) {
+        result.exitCode = 1;
+        result.error =
+            "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
+        progress.status = "failed";
+        progress.error = result.error;
+        emitControlEvent(buildControlEvent({
+            from: progress.activityState,
+            to: "needs_attention",
+            runId: options.runId ?? agent.name,
+            agent: agent.name,
+            index: options.index,
+            ts: Date.now(),
+            message: `${agent.name} completed without making edits for an implementation task`,
+            reason: "completion_guard",
+        }));
+    }
+    if (options.outputPath && result.exitCode === 0) {
+        const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, outputSnapshot);
+        fullOutput = parseAndStripAcceptanceReport(resolvedOutput.fullOutput).stripped;
+        result.savedOutputPath = resolvedOutput.savedPath;
+        result.outputSaveError = resolvedOutput.saveError;
+        if (resolvedOutput.savedPath) {
+            result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
+        }
+    }
+    const artifactBaseOutput = result.timedOut
+        ? fullOutput
+        : result.exitCode !== 0 && !result.interrupted
+            ? formatErrorWithOutput(result.error, fullOutput)
+            : fullOutput;
+    artifactOutputByResult.set(result, finalAcceptanceReport && !result.savedOutputPath
+        ? appendAcceptanceReportDigest(artifactBaseOutput, finalAcceptanceReport)
+        : artifactBaseOutput);
+    acceptanceOutputByResult.set(result, acceptanceOutput);
+    result.outputMode = options.outputMode ?? "inline";
+    const preservedFinalOutput = result.finalOutput;
+    result.finalOutput =
+        options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
+            ? result.outputReference.message
+            : fullOutput;
+    if (result.exitCode !== 0 &&
+        !result.finalOutput.trim() &&
+        typeof preservedFinalOutput === "string" &&
+        preservedFinalOutput.trim()) {
+        result.finalOutput = preservedFinalOutput;
+    }
+    if (result.error) {
+        result.error = boundChildError(result.error);
+        progress.error = result.error;
+    }
+    result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+    finalizeTerminationReason(result);
+    if (options.onUpdate) {
+        const finalText = result.finalOutput || result.error || "(no output)";
+        const progressSnapshot = snapshotProgress(progress);
+        const resultSnapshot = snapshotResult(result, progressSnapshot);
+        options.onUpdate({
+            content: [{ type: "text", text: finalText }],
+            details: {
+                mode: "single",
+                results: [resultSnapshot],
+                progress: [progressSnapshot],
+                controlEvents: allControlEvents.length ? allControlEvents : undefined,
+            },
+        });
+    }
+    return result;
+}
+function finalizeSingleAttempt(input) {
+    const { result, progress, startTime, agent, options, sessionEnabled, supervisorPauseRequested, interruptedByControl, } = input;
+    if (!result.protocolOutputLimit && supervisorPauseRequested) {
+        resolveResultSessionFile(result, options, sessionEnabled);
+        result.exitCode = 0;
+        result.interrupted = true;
+        result.error = undefined;
+        if (result.pause)
+            result.pause = { ...result.pause, ownerPid: undefined };
+        result.finalOutput =
+            result.finalOutput ||
+                formatForegroundSupervisorPauseMessage({
+                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
+                    runId: options.runId,
+                    agent: agent.name,
+                    requestSummary: result.pause?.summary,
+                });
+        result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
+        progress.activityState = undefined;
+        progress.durationMs = Date.now() - startTime;
+        result.progressSummary = {
+            toolCount: progress.toolCount,
+            tokens: progress.tokens,
+            durationMs: progress.durationMs,
+        };
+        return result;
+    }
+    if (!result.protocolOutputLimit && interruptedByControl) {
+        resolveResultSessionFile(result, options, sessionEnabled);
+        result.exitCode = 0;
+        result.interrupted = true;
+        result.error = undefined;
+        result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
+        result.controlEvents = input.allControlEvents.length ? input.allControlEvents : undefined;
+        progress.activityState = undefined;
+        progress.durationMs = Date.now() - startTime;
+        result.progressSummary = {
+            toolCount: progress.toolCount,
+            tokens: progress.tokens,
+            durationMs: progress.durationMs,
+        };
+        return result;
+    }
+    if (result.detached) {
+        result.exitCode = 0;
+        result.finalOutput =
+            result.pause?.kind === "awaiting_supervisor"
+                ? formatForegroundSupervisorPauseMessage({
+                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
+                    runId: options.runId,
+                    agent: agent.name,
+                    requestSummary: result.pause.summary,
+                    ...(options.index !== undefined ? { index: options.index } : {}),
+                })
+                : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
+        return result;
+    }
+    normalizeSingleAttemptResult(result, options);
+    progress.status = result.exitCode === 0 ? "completed" : "failed";
+    progress.durationMs = Date.now() - startTime;
+    if (result.error) {
+        progress.error = result.error;
+        if (progress.currentTool) {
+            progress.failedTool = progress.currentTool;
+        }
+    }
+    result.progressSummary = {
+        toolCount: progress.toolCount,
+        tokens: progress.tokens,
+        durationMs: progress.durationMs,
+    };
+    return finalizeSingleAttemptOutput(input);
+}
+function prepareForegroundRunFinalization(input) {
+    const { result, options, shareEnabled, artifactPathsResult, transcriptWriter } = input;
+    resolveResultSessionFile(result, options, shareEnabled);
+    if (result.timedOut) {
+        const timeoutDiagnostics = formatTimeoutDiagnostics(result, options, artifactPathsResult ?? result.artifactPaths);
+        result.finalOutput = timeoutDiagnostics;
+        const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
+        const timeoutReport = storedAcceptanceOutput
+            ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
+            : undefined;
+        artifactOutputByResult.set(result, timeoutReport && !result.savedOutputPath
+            ? appendAcceptanceReportDigest(timeoutDiagnostics, timeoutReport)
+            : timeoutDiagnostics);
+    }
+    if (transcriptWriter)
+        result.transcriptPath = artifactPathsResult?.transcriptPath;
+    if (transcriptWriter?.getError())
+        result.transcriptError = transcriptWriter.getError();
+    finalizeTerminationReason(result);
+}
+function evaluateSingleAcceptance(input) {
+    const { result, effectiveAcceptance, options, runtimeCwd } = input;
+    const interruptedAcceptance = buildSkippedAcceptanceLedger({
+        acceptance: effectiveAcceptance,
+        ledgerStatus: "skipped",
+        runtimeCheckStatus: "not-applicable",
+        id: "paused",
+        message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+    });
+    const interruptedBeforeAcceptance = !result.protocolOutputLimit &&
+        (result.interrupted || options.interruptSignal?.aborted === true);
+    if (result.timedOut) {
+        return {
+            interruptedAcceptance,
+            acceptance: buildSkippedAcceptanceLedger({
+                acceptance: effectiveAcceptance,
+                ledgerStatus: "rejected",
+                runtimeCheckStatus: "failed",
+                id: "timeout",
+                message: "Acceptance was not evaluated because the subagent timed out.",
+            }),
+        };
+    }
+    if (result.turnBudgetExceeded) {
+        return {
+            interruptedAcceptance,
+            acceptance: buildSkippedAcceptanceLedger({
+                acceptance: effectiveAcceptance,
+                ledgerStatus: "rejected",
+                runtimeCheckStatus: "failed",
+                id: "turn-budget",
+                message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
+            }),
+        };
+    }
+    if (interruptedBeforeAcceptance) {
+        return { interruptedAcceptance, acceptance: interruptedAcceptance };
+    }
+    return {
+        interruptedAcceptance,
+        acceptance: evaluateAcceptance({
+            acceptance: effectiveAcceptance,
+            output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
+            cwd: options.cwd ?? runtimeCwd,
+            signal: options.interruptSignal,
+            abortMessage: "Interrupted. Waiting for explicit next action.",
+        }),
+    };
+}
+function finalizeForegroundArtifacts(input) {
+    const { result, options, artifactPathsResult, transcriptWriter, agentName, task, finalAttemptContextUsage, } = input;
+    finalizeTerminationReason(result);
+    const contextExhaustedReason = result.protocolOutputLimit
+        ? undefined
+        : classifyContextExhaustedTermination({
+            messages: result.messages,
+            contextUsage: finalAttemptContextUsage,
+            exitCode: result.exitCode,
+            error: result.error,
+            terminationReason: result.terminationReason,
+        });
+    if (contextExhaustedReason) {
+        result.exitCode = 1;
+        result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
+        result.terminationReason = contextExhaustedReason;
+        if (result.progress) {
+            result.progress.status = "failed";
+            result.progress.error = result.error;
+        }
+        artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
+    }
+    if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
+        result.artifactPaths = artifactPathsResult;
+        if (options.artifactConfig?.includeOutput !== false) {
+            writeArtifactWithFloor(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "", acceptanceOutputByResult.get(result) ?? "", !!result.savedOutputPath);
+        }
+        if (options.maxOutput) {
+            const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+            const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
+            if (truncationResult.truncated)
+                result.truncation = truncationResult;
+        }
+    }
+    else if (options.maxOutput) {
+        const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
+        const truncationResult = truncateOutput(result.finalOutput ?? "", config);
+        if (truncationResult.truncated)
+            result.truncation = truncationResult;
+    }
+    stripAcceptanceReportsFromMessages(result.messages);
+    if (artifactPathsResult &&
+        options.artifactConfig?.enabled !== false &&
+        options.artifactConfig?.includeMetadata !== false) {
+        writeMetadata(artifactPathsResult.metadataPath, {
+            runId: options.runId,
+            agent: agentName,
+            projectAgent: result.projectAgent,
+            task,
+            exitCode: result.exitCode,
+            exitSignal: result.exitSignal,
+            timedOut: result.timedOut,
+            terminationReason: result.terminationReason,
+            contextUsage: result.contextUsage,
+            contextPressure: result.contextPressure,
+            contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
+            ...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
+                ? { sessionFile: result.sessionFile }
+                : {}),
+            usage: result.usage,
+            model: result.model,
+            thinking: result.thinking,
+            modelIdentity: result.modelIdentity,
+            modelResolution: result.modelResolution,
+            attemptedModels: result.attemptedModels,
+            modelAttempts: result.modelAttempts,
+            modelFallbackNotice: result.modelFallbackNotice,
+            durationMs: result.progressSummary?.durationMs,
+            activeRuntimeMs: result.activeRuntimeMs,
+            timeoutMs: options.timeoutMs,
+            deadlineAt: options.deadlineAt,
+            toolCount: result.progressSummary?.toolCount,
+            error: result.error,
+            stderr: result.stderr,
+            stderrTruncated: result.stderrTruncated,
+            protocolOutputLimit: result.protocolOutputLimit,
+            ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
+            transcriptError: result.transcriptError,
+            skills: result.skills,
+            skillsWarning: result.skillsWarning,
+            timestamp: Date.now(),
+        });
+    }
+}
 async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared) {
     const effectiveThinking = options.thinkingOverride ?? agent.thinking;
     const thinkingSuffixOptions = {
@@ -1323,233 +1740,22 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
     });
     result.exitCode = exitCode;
-    if (!result.protocolOutputLimit && supervisorPauseRequested) {
-        resolveResultSessionFile(result, options, shared.sessionEnabled);
-        result.exitCode = 0;
-        result.interrupted = true;
-        result.error = undefined;
-        if (result.pause)
-            result.pause = { ...result.pause, ownerPid: undefined };
-        result.finalOutput =
-            result.finalOutput ||
-                formatForegroundSupervisorPauseMessage({
-                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-                    runId: options.runId,
-                    agent: agent.name,
-                    requestSummary: result.pause?.summary,
-                });
-        result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
-        progress.activityState = undefined;
-        progress.durationMs = Date.now() - startTime;
-        result.progressSummary = {
-            toolCount: progress.toolCount,
-            tokens: progress.tokens,
-            durationMs: progress.durationMs,
-        };
-        return result;
-    }
-    if (!result.protocolOutputLimit && interruptedByControl) {
-        resolveResultSessionFile(result, options, shared.sessionEnabled);
-        result.exitCode = 0;
-        result.interrupted = true;
-        result.error = undefined;
-        result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
-        result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
-        progress.activityState = undefined;
-        progress.durationMs = Date.now() - startTime;
-        result.progressSummary = {
-            toolCount: progress.toolCount,
-            tokens: progress.tokens,
-            durationMs: progress.durationMs,
-        };
-        return result;
-    }
-    if (result.detached) {
-        result.exitCode = 0;
-        result.finalOutput =
-            result.pause?.kind === "awaiting_supervisor"
-                ? formatForegroundSupervisorPauseMessage({
-                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-                    runId: options.runId,
-                    agent: agent.name,
-                    requestSummary: result.pause.summary,
-                    ...(options.index !== undefined ? { index: options.index } : {}),
-                })
-                : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
-        return result;
-    }
-    if (result.error && result.exitCode === 0) {
-        result.exitCode = 1;
-    }
-    if (result.exitCode !== 0 && !result.error) {
-        result.error = synthesizeChildExitDiagnostic({
-            exitCode: result.exitCode,
-            signal: result.exitSignal,
-        });
-    }
-    if (result.exitCode === 0 && !result.error) {
-        const errInfo = detectSubagentError(result.messages ?? []);
-        if (errInfo.hasError) {
-            result.exitCode = errInfo.exitCode ?? 1;
-            result.error = boundChildError(errInfo.details
-                ? `${errInfo.errorType} failed (exit ${errInfo.exitCode}): ${errInfo.details}`
-                : `${errInfo.errorType} failed with exit code ${errInfo.exitCode}`);
-        }
-    }
-    const preNormalizationTerminationReason = result.protocolOutputLimit
-        ? "output_limit"
-        : result.timedOut
-            ? "timed_out"
-            : result.turnBudgetExceeded
-                ? "turn_budget_exceeded"
-                : result.toolBudgetBlocked
-                    ? "tool_budget_blocked"
-                    : result.interrupted
-                        ? "interrupted"
-                        : "completed";
-    const contextExhaustedSignature = classifyContextExhaustedTermination({
-        messages: result.messages,
-        contextUsage: result.contextUsage,
-        exitCode: result.exitCode,
-        error: result.error,
-        terminationReason: preNormalizationTerminationReason,
+    return finalizeSingleAttempt({
+        result,
+        progress,
+        startTime,
+        agent,
+        task,
+        options,
+        sessionEnabled: shared.sessionEnabled,
+        originalTask: shared.originalTask,
+        outputSnapshot: shared.outputSnapshot,
+        supervisorPauseRequested,
+        interruptedByControl,
+        observedMutationAttempt,
+        allControlEvents,
+        emitControlEvent,
     });
-    if (result.exitCode === 0 && !result.error) {
-        const finalText = getFinalOutput(result.messages ?? []);
-        const missingStructuredOutput = options.structuredOutput
-            ? !existsSync(options.structuredOutput.outputPath)
-            : false;
-        if (!contextExhaustedSignature &&
-            !finalText?.trim() &&
-            (!options.structuredOutput || missingStructuredOutput)) {
-            result.exitCode = 1;
-            result.error = "Subagent produced no output (possible model cold-start or empty response).";
-        }
-    }
-    if (options.structuredOutput && result.exitCode === 0 && !result.error) {
-        const structured = readStructuredOutput({
-            schema: options.structuredOutput.schema,
-            schemaPath: options.structuredOutput.schemaPath,
-            outputPath: options.structuredOutput.outputPath,
-        });
-        result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
-        result.structuredOutputPath = options.structuredOutput.outputPath;
-        if (structured.error) {
-            result.exitCode = 1;
-            result.error = structured.error;
-        }
-        else {
-            result.structuredOutput = structured.value;
-        }
-    }
-    progress.status = result.exitCode === 0 ? "completed" : "failed";
-    progress.durationMs = Date.now() - startTime;
-    if (result.error) {
-        progress.error = result.error;
-        if (progress.currentTool) {
-            progress.failedTool = progress.currentTool;
-        }
-    }
-    result.progressSummary = {
-        toolCount: progress.toolCount,
-        tokens: progress.tokens,
-        durationMs: progress.durationMs,
-    };
-    const acceptanceOutput = getFinalOutput(result.messages ?? []);
-    const acceptanceParsed = parseAndStripAcceptanceReport(acceptanceOutput);
-    const { report: finalAcceptanceReport } = acceptanceParsed;
-    let fullOutput = result.protocolOutputLimit
-        ? boundChildError(formatProtocolOutputLimit(result.protocolOutputLimit))
-        : acceptanceParsed.stripped;
-    if (result.timedOut) {
-        const timeoutMessage = formatTimeoutMessage(options.timeoutMs ?? 0);
-        fullOutput = fullOutput.trim()
-            ? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
-            : timeoutMessage;
-    }
-    else if (result.turnBudgetExceeded && result.turnBudget) {
-        fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
-    }
-    else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
-        const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
-        fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
-    }
-    const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
-        ? evaluateCompletionMutationGuard({
-            agent: agent.name,
-            task: shared.originalTask ?? task,
-            messages: result.messages ?? [],
-            tools: agent.tools,
-        })
-        : undefined;
-    if (completionGuard?.triggered && !observedMutationAttempt) {
-        result.exitCode = 1;
-        result.error =
-            "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
-        progress.status = "failed";
-        progress.error = result.error;
-        emitControlEvent(buildControlEvent({
-            from: progress.activityState,
-            to: "needs_attention",
-            runId: options.runId ?? agent.name,
-            agent: agent.name,
-            index: options.index,
-            ts: Date.now(),
-            message: `${agent.name} completed without making edits for an implementation task`,
-            reason: "completion_guard",
-        }));
-    }
-    if (options.outputPath && result.exitCode === 0) {
-        const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
-        fullOutput = parseAndStripAcceptanceReport(resolvedOutput.fullOutput).stripped;
-        result.savedOutputPath = resolvedOutput.savedPath;
-        result.outputSaveError = resolvedOutput.saveError;
-        if (resolvedOutput.savedPath) {
-            result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
-        }
-    }
-    const artifactBaseOutput = result.timedOut
-        ? fullOutput
-        : result.exitCode !== 0 && !result.interrupted
-            ? formatErrorWithOutput(result.error, fullOutput)
-            : fullOutput;
-    artifactOutputByResult.set(result, finalAcceptanceReport && !result.savedOutputPath
-        ? appendAcceptanceReportDigest(artifactBaseOutput, finalAcceptanceReport)
-        : artifactBaseOutput);
-    acceptanceOutputByResult.set(result, acceptanceOutput);
-    result.outputMode = options.outputMode ?? "inline";
-    const preservedFinalOutput = result.finalOutput;
-    result.finalOutput =
-        options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
-            ? result.outputReference.message
-            : fullOutput;
-    if (result.exitCode !== 0 &&
-        !result.finalOutput.trim() &&
-        typeof preservedFinalOutput === "string" &&
-        preservedFinalOutput.trim()) {
-        result.finalOutput = preservedFinalOutput;
-    }
-    if (result.error) {
-        result.error = boundChildError(result.error);
-        progress.error = result.error;
-    }
-    result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
-    finalizeTerminationReason(result);
-    if (options.onUpdate) {
-        const finalText = result.finalOutput || result.error || "(no output)";
-        const progressSnapshot = snapshotProgress(progress);
-        const resultSnapshot = snapshotResult(result, progressSnapshot);
-        options.onUpdate({
-            content: [{ type: "text", text: finalText }],
-            details: {
-                mode: "single",
-                results: [resultSnapshot],
-                progress: [progressSnapshot],
-                controlEvents: allControlEvents.length ? allControlEvents : undefined,
-            },
-        });
-    }
-    return result;
 }
 export async function runSync(runtimeCwd, agents, agentName, task, options) {
     const agent = agents.find((a) => a.name === agentName);
@@ -1635,30 +1841,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     let contextPressure = parseContextPressureProjection(options.contextPressure);
     let totalToolCount = 0;
     let totalDurationMs = 0;
-    let artifactPathsResult;
-    let jsonlPath;
-    let transcriptWriter;
-    if (options.artifactsDir && options.artifactConfig?.enabled !== false) {
-        artifactPathsResult = getArtifactPaths(options.artifactsDir, options.runId, agentName, options.index);
-        ensureArtifactsDir(options.artifactsDir);
-        if (options.artifactConfig?.includeInput !== false) {
-            writeArtifact(artifactPathsResult.inputPath, `# Task for ${agentName}\n\n${taskWithAcceptance}`);
-        }
-        if (options.artifactConfig?.includeJsonl !== false) {
-            jsonlPath = artifactPathsResult.jsonlPath;
-        }
-        if (options.artifactConfig?.includeTranscript !== false) {
-            transcriptWriter = createChildTranscriptWriter({
-                transcriptPath: artifactPathsResult.transcriptPath,
-                source: "foreground",
-                runId: options.runId,
-                agent: agentName,
-                childIndex: options.index,
-                cwd: options.cwd ?? runtimeCwd,
-            });
-            transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
-        }
-    }
+    const { artifactPathsResult, jsonlPath, transcriptWriter } = setupForegroundArtifacts(runtimeCwd, agentName, taskWithAcceptance, options);
     let lastResult;
     let aggregateContextUsage;
     let finalAttemptContextUsage;
@@ -1774,57 +1957,21 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             result.progress.recentOutput.splice(50);
         }
     }
-    resolveResultSessionFile(result, options, shareEnabled);
-    if (result.timedOut) {
-        const timeoutDiagnostics = formatTimeoutDiagnostics(result, options, artifactPathsResult ?? result.artifactPaths);
-        result.finalOutput = timeoutDiagnostics;
-        const storedAcceptanceOutput = acceptanceOutputByResult.get(result);
-        const timeoutReport = storedAcceptanceOutput
-            ? parseAndStripAcceptanceReport(storedAcceptanceOutput).report
-            : undefined;
-        artifactOutputByResult.set(result, timeoutReport && !result.savedOutputPath
-            ? appendAcceptanceReportDigest(timeoutDiagnostics, timeoutReport)
-            : timeoutDiagnostics);
-    }
-    if (transcriptWriter)
-        result.transcriptPath = artifactPathsResult?.transcriptPath;
-    if (transcriptWriter?.getError())
-        result.transcriptError = transcriptWriter.getError();
-    finalizeTerminationReason(result);
-    const interruptedAcceptance = buildSkippedAcceptanceLedger({
-        acceptance: effectiveAcceptance,
-        ledgerStatus: "skipped",
-        runtimeCheckStatus: "not-applicable",
-        id: "paused",
-        message: "Acceptance was not evaluated because the run was paused/interrupted and will be evaluated on resumed completion.",
+    prepareForegroundRunFinalization({
+        result,
+        options,
+        shareEnabled,
+        artifactPathsResult,
+        transcriptWriter,
     });
-    const interruptedBeforeAcceptance = !result.protocolOutputLimit &&
-        (result.interrupted || options.interruptSignal?.aborted === true);
-    result.acceptance = result.timedOut
-        ? buildSkippedAcceptanceLedger({
-            acceptance: effectiveAcceptance,
-            ledgerStatus: "rejected",
-            runtimeCheckStatus: "failed",
-            id: "timeout",
-            message: "Acceptance was not evaluated because the subagent timed out.",
-        })
-        : result.turnBudgetExceeded
-            ? buildSkippedAcceptanceLedger({
-                acceptance: effectiveAcceptance,
-                ledgerStatus: "rejected",
-                runtimeCheckStatus: "failed",
-                id: "turn-budget",
-                message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
-            })
-            : interruptedBeforeAcceptance
-                ? interruptedAcceptance
-                : await evaluateAcceptance({
-                    acceptance: effectiveAcceptance,
-                    output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
-                    cwd: options.cwd ?? runtimeCwd,
-                    signal: options.interruptSignal,
-                    abortMessage: "Interrupted. Waiting for explicit next action.",
-                });
+    const acceptanceEvaluation = evaluateSingleAcceptance({
+        result,
+        effectiveAcceptance,
+        options,
+        runtimeCwd,
+    });
+    const { interruptedAcceptance, acceptance } = acceptanceEvaluation;
+    result.acceptance = acceptance instanceof Promise ? await acceptance : acceptance;
     if (!result.protocolOutputLimit &&
         !result.timedOut &&
         !result.turnBudgetExceeded &&
@@ -1855,91 +2002,14 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             result.progress.error = result.error;
         }
     }
-    finalizeTerminationReason(result);
-    const contextExhaustedReason = result.protocolOutputLimit
-        ? undefined
-        : classifyContextExhaustedTermination({
-            messages: result.messages,
-            contextUsage: finalAttemptContextUsage,
-            exitCode: result.exitCode,
-            error: result.error,
-            terminationReason: result.terminationReason,
-        });
-    if (contextExhaustedReason) {
-        result.exitCode = 1;
-        result.error = CONTEXT_EXHAUSTED_TERMINATION_MESSAGE;
-        result.terminationReason = contextExhaustedReason;
-        if (result.progress) {
-            result.progress.status = "failed";
-            result.progress.error = result.error;
-        }
-        artifactOutputByResult.set(result, formatErrorWithOutput(result.error, result.finalOutput ?? ""));
-    }
-    if (result.error) {
-        result.error = boundChildError(result.error);
-        if (result.progress)
-            result.progress.error = result.error;
-    }
-    if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
-        result.artifactPaths = artifactPathsResult;
-        if (options.artifactConfig?.includeOutput !== false) {
-            writeArtifactWithFloor(artifactPathsResult.outputPath, artifactOutputByResult.get(result) ?? result.finalOutput ?? "", acceptanceOutputByResult.get(result) ?? "", !!result.savedOutputPath);
-        }
-        if (options.maxOutput) {
-            const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-            const truncationResult = truncateOutput(result.finalOutput ?? "", config, artifactPathsResult.outputPath);
-            if (truncationResult.truncated)
-                result.truncation = truncationResult;
-        }
-    }
-    else if (options.maxOutput) {
-        const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
-        const truncationResult = truncateOutput(result.finalOutput ?? "", config);
-        if (truncationResult.truncated)
-            result.truncation = truncationResult;
-    }
-    stripAcceptanceReportsFromMessages(result.messages);
-    if (artifactPathsResult &&
-        options.artifactConfig?.enabled !== false &&
-        options.artifactConfig?.includeMetadata !== false) {
-        writeMetadata(artifactPathsResult.metadataPath, {
-            runId: options.runId,
-            agent: agentName,
-            projectAgent: result.projectAgent,
-            task,
-            exitCode: result.exitCode,
-            exitSignal: result.exitSignal,
-            timedOut: result.timedOut,
-            terminationReason: result.terminationReason,
-            contextUsage: result.contextUsage,
-            contextPressure: result.contextPressure,
-            contextPressureCrossedThresholds: result.contextPressureCrossedThresholds,
-            ...(result.timedOut && result.sessionFile && existsSync(result.sessionFile)
-                ? { sessionFile: result.sessionFile }
-                : {}),
-            usage: result.usage,
-            model: result.model,
-            thinking: result.thinking,
-            modelIdentity: result.modelIdentity,
-            modelResolution: result.modelResolution,
-            attemptedModels: result.attemptedModels,
-            modelAttempts: result.modelAttempts,
-            modelFallbackNotice: result.modelFallbackNotice,
-            durationMs: result.progressSummary?.durationMs,
-            activeRuntimeMs: result.activeRuntimeMs,
-            timeoutMs: options.timeoutMs,
-            deadlineAt: options.deadlineAt,
-            toolCount: result.progressSummary?.toolCount,
-            error: result.error,
-            stderr: result.stderr,
-            stderrTruncated: result.stderrTruncated,
-            protocolOutputLimit: result.protocolOutputLimit,
-            ...(transcriptWriter ? { transcriptPath: artifactPathsResult.transcriptPath } : {}),
-            transcriptError: result.transcriptError,
-            skills: result.skills,
-            skillsWarning: result.skillsWarning,
-            timestamp: Date.now(),
-        });
-    }
+    finalizeForegroundArtifacts({
+        result,
+        options,
+        artifactPathsResult,
+        transcriptWriter,
+        agentName,
+        task,
+        finalAttemptContextUsage,
+    });
     return result;
 }
