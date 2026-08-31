@@ -390,6 +390,23 @@ test("test-runner final-validation allows tk show, exact validation commands, an
   assert.deepEqual(result.violations, []);
 });
 
+test("test-runner rejects contact_supervisor despite generic escalation guidance", () => {
+  assert.deepEqual(
+    violationCodes({
+      agent: "test-runner",
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        {
+          type: "tool",
+          tool: "contact_supervisor",
+          input: { reason: "need_decision", message: "Validation is blocked." },
+        },
+      ],
+    }),
+    ["test-runner.read_only"],
+  );
+});
+
 test("test-runner normalizes surrounding assigned command metadata whitespace", () => {
   const result = evaluateTracePolicy({
     agent: "test-runner",

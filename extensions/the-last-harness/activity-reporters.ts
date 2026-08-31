@@ -24,7 +24,21 @@ type TimerApi = {
   clearTimeout: typeof clearTimeout;
 };
 
-type StateSender = (state: "working" | "idle") => Promise<void>;
+type HerdrProtocolState = "working" | "blocked" | "idle";
+type CmuxStatusState = "working" | "waiting" | "idle";
+type ActivityReportState = HerdrProtocolState | CmuxStatusState;
+type StateSender<State extends ActivityReportState> = (state: State) => Promise<void>;
+type StateResolver<State extends ActivityReportState> = (
+  snapshot: TlhEffectiveActivitySnapshot,
+) => State;
+type TerminalSender = () => Promise<void>;
+
+type QueuedStateReporter = Pick<
+  TlhActivityReporter,
+  "handleSnapshot" | "handleSessionShutdown" | "dispose"
+> & {
+  enqueueAfterDrain(sendTerminal: TerminalSender): void;
+};
 
 type TlhActivityReporter = {
   handleSessionStart(ctx: Pick<ExtensionContext, "mode" | "sessionManager">): void;
@@ -93,11 +107,12 @@ function createNoopReporter(): TlhActivityReporter {
   };
 }
 
-function createQueuedStateReporter(
-  sendState: StateSender,
+function createQueuedStateReporter<State extends ActivityReportState>(
+  sendState: StateSender<State>,
+  resolveState: StateResolver<State>,
   options: TlhActivityReporterOptions = {},
-  onStateCommitted?: (state: "working" | "idle") => void,
-): Pick<TlhActivityReporter, "handleSnapshot" | "handleSessionShutdown" | "dispose"> {
+  onStateCommitted?: (state: State) => void,
+): QueuedStateReporter {
   const timers: TimerApi = {
     setTimeout: options.timers?.setTimeout ?? setTimeout,
     clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
@@ -105,8 +120,11 @@ function createQueuedStateReporter(
   const idleDebounceMs = options.idleDebounceMs ?? DEFAULT_IDLE_DEBOUNCE_MS;
   let idleTimer: TimeoutHandle | undefined;
   let sendInFlight = false;
-  let queuedState: "working" | "idle" | undefined;
-  let lastQueuedState: "working" | "idle" | undefined;
+  let queuedState: State | undefined;
+  let lastQueuedState: State | undefined;
+  let terminalSender: TerminalSender | undefined;
+  let terminalQueued = false;
+  let terminalSent = false;
   let disposed = false;
 
   const clearIdleTimer = (): void => {
@@ -115,8 +133,8 @@ function createQueuedStateReporter(
     idleTimer = undefined;
   };
 
-  const queueState = (state: "working" | "idle"): void => {
-    if (disposed || lastQueuedState === state) return;
+  const queueState = (state: State): void => {
+    if (disposed || terminalQueued || terminalSent || lastQueuedState === state) return;
     queuedState = state;
     lastQueuedState = state;
     onStateCommitted?.(state);
@@ -126,21 +144,33 @@ function createQueuedStateReporter(
   };
 
   const drainQueue = async (): Promise<void> => {
-    if (sendInFlight || disposed) return;
+    if (sendInFlight || (disposed && !terminalQueued)) return;
     sendInFlight = true;
     try {
-      while (!disposed && queuedState) {
-        const nextState = queuedState;
-        queuedState = undefined;
+      while ((!disposed && queuedState !== undefined) || terminalQueued) {
+        if (!disposed && queuedState !== undefined) {
+          const nextState = queuedState;
+          queuedState = undefined;
+          try {
+            await sendState(nextState);
+          } catch {
+            // Reporter failures must never block or crash TLH.
+          }
+          continue;
+        }
+        const sendTerminal = terminalSender;
+        terminalSender = undefined;
+        terminalQueued = false;
+        terminalSent = true;
         try {
-          await sendState(nextState);
+          await sendTerminal?.();
         } catch {
           // Reporter failures must never block or crash TLH.
         }
       }
     } finally {
       sendInFlight = false;
-      if (!disposed && queuedState) {
+      if ((!disposed && queuedState !== undefined) || terminalQueued) {
         void drainQueue();
       }
     }
@@ -148,26 +178,36 @@ function createQueuedStateReporter(
 
   return {
     handleSnapshot(snapshot) {
-      if (disposed) return;
-      if (snapshot.inProgress) {
+      if (disposed || terminalQueued || terminalSent) return;
+      const nextState = resolveState(snapshot);
+      if (nextState === "working") {
         clearIdleTimer();
-        queueState("working");
+        queueState(nextState);
         return;
       }
       clearIdleTimer();
       idleTimer = timers.setTimeout(() => {
         idleTimer = undefined;
-        queueState("idle");
+        queueState(nextState);
       }, idleDebounceMs);
       (idleTimer as { unref?: () => void }).unref?.();
     },
     handleSessionShutdown() {
       clearIdleTimer();
     },
+    enqueueAfterDrain(sendTerminal) {
+      if (disposed || terminalQueued || terminalSent) return;
+      terminalSender = sendTerminal;
+      terminalQueued = true;
+      void drainQueue();
+    },
     dispose() {
       disposed = true;
       clearIdleTimer();
       queuedState = undefined;
+      // A terminal sender queued by handleSessionShutdown must still drain after
+      // disposal; otherwise an in-flight cmux status can finish after clear-status.
+      void drainQueue();
     },
   };
 }
@@ -314,8 +354,8 @@ export function createHerdrActivityReporter(
     setTimeout: options.timers?.setTimeout ?? setTimeout,
     clearTimeout: options.timers?.clearTimeout ?? clearTimeout,
   };
-  let desiredState: "working" | "idle" | undefined;
-  let lastReportedState: "working" | "idle" | undefined;
+  let desiredState: HerdrProtocolState | undefined;
+  let lastReportedState: HerdrProtocolState | undefined;
   let heartbeatTimer: TimeoutHandle | undefined;
   let heartbeatStopped = false;
   let heartbeatStarted = false;
@@ -334,7 +374,7 @@ export function createHerdrActivityReporter(
     return delivery;
   };
 
-  const sendStateCore = async (state: "working" | "idle"): Promise<void> => {
+  const sendStateCore = async (state: HerdrProtocolState): Promise<void> => {
     await sendRequest({
       id: `${HERDR_SOURCE}:${now()}:${Math.random().toString(36).slice(2)}`,
       method: "pane.report_agent",
@@ -386,9 +426,12 @@ export function createHerdrActivityReporter(
     (heartbeatTimer as { unref?: () => void }).unref?.();
   };
 
-  const sendState: StateSender = () => {
+  const sendState: StateSender<HerdrProtocolState> = (_state) => {
     return enqueueOutbound(async () => {
       if (!rootSession || disposed) return;
+      // Resolve the latest committed state when the outbound task reaches the
+      // front of the chain; an earlier queued transition must not replay stale
+      // idle or blocked after a newer working snapshot.
       const state = desiredState;
       if (state === undefined) return;
       await sendStateCore(state);
@@ -404,6 +447,8 @@ export function createHerdrActivityReporter(
 
   const queuedReporter = createQueuedStateReporter(
     sendState,
+    (snapshot): HerdrProtocolState =>
+      snapshot.inProgress ? "working" : snapshot.waitingForUser ? "blocked" : "idle",
     {
       idleDebounceMs:
         options.idleDebounceMs ??
@@ -488,8 +533,10 @@ function defaultCommandRunner(command: string, args: readonly string[]): Promise
   });
 }
 
-function cmuxStatusValue(_snapshot: TlhEffectiveActivitySnapshot): string {
-  return "working";
+function cmuxStatusValue(snapshot: TlhEffectiveActivitySnapshot): CmuxStatusState {
+  if (snapshot.inProgress) return "working";
+  if (snapshot.waitingForUser) return "waiting";
+  return "idle";
 }
 
 function sanitizeCmuxStatusKeySegment(value: string): string | undefined {
@@ -535,18 +582,17 @@ export function createCmuxActivityReporter(
     options.cmuxBin ?? env.CMUX_PI_CMUX_BIN ?? env.CMUX_BUNDLED_CLI_PATH ?? env.CMUX_BIN ?? "cmux";
   const runner = options.runner ?? defaultCommandRunner;
   let rootSession = false;
-  let lastValue: string | undefined;
   let statusKey = CMUX_STATUS_KEY;
-  const sendState = async (state: "working" | "idle"): Promise<void> => {
+  const sendState: StateSender<CmuxStatusState> = async (state) => {
     if (state === "idle") {
-      lastValue = undefined;
       await runner(cmuxBin, ["clear-status", statusKey]);
       return;
     }
-    const value = lastValue ?? "working";
-    await runner(cmuxBin, ["set-status", statusKey, value]);
+    // cmux status values are display labels, so it can expose a distinct
+    // waiting state while Herdr uses its own blocked protocol state.
+    await runner(cmuxBin, ["set-status", statusKey, state]);
   };
-  const queuedReporter = createQueuedStateReporter(sendState, options);
+  const queuedReporter = createQueuedStateReporter(sendState, cmuxStatusValue, options);
   return {
     handleSessionStart(ctx) {
       rootSession = ctx.mode === "tui";
@@ -555,15 +601,22 @@ export function createCmuxActivityReporter(
     },
     handleSnapshot(snapshot) {
       if (!rootSession) return;
-      lastValue = snapshot.inProgress ? cmuxStatusValue(snapshot) : undefined;
       queuedReporter.handleSnapshot(snapshot);
     },
     handleSessionShutdown() {
       if (!rootSession) return;
+      rootSession = false;
       queuedReporter.handleSessionShutdown();
-      void runner(cmuxBin, ["clear-status", statusKey]).catch(() => undefined);
+      const finalStatusKey = statusKey;
+      queuedReporter.enqueueAfterDrain(() => runner(cmuxBin, ["clear-status", finalStatusKey]));
     },
     dispose() {
+      if (rootSession) {
+        rootSession = false;
+        queuedReporter.handleSessionShutdown();
+        const finalStatusKey = statusKey;
+        queuedReporter.enqueueAfterDrain(() => runner(cmuxBin, ["clear-status", finalStatusKey]));
+      }
       queuedReporter.dispose();
     },
   };

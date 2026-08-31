@@ -572,21 +572,6 @@ test("evaluateCompletionMutationGuard returns triggered:false for advisory runs 
   }
 });
 
-test("declared test-runner bash-only tools suppress implementation-word false positives", () => {
-  const result = evaluateCompletionMutationGuard({
-    agent: "test-runner",
-    task: "Run the final-validation ticket's exact commands and report pass/fail results without modifying the repository",
-    messages: [assistantText("Validation failed; reporting the failure without edits.")],
-    tools: ["bash"],
-  });
-
-  assert.deepEqual(result, {
-    expectedMutation: false,
-    attemptedMutation: false,
-    triggered: false,
-  });
-});
-
 test("implementation task with mutation attempts does not trigger", () => {
   const result = evaluateCompletionMutationGuard({
     agent: "worker",

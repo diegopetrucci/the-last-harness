@@ -45,6 +45,7 @@ const KNOWN_FIELDS = new Set([
     "maxSubagentDepth",
     "maxExecutionTimeMs",
     "completionGuard",
+    "supervisorBridge",
     "toolBudget",
 ]);
 const EMPTY_SUBAGENT_SETTINGS = { overrides: {} };
@@ -73,6 +74,15 @@ function parsePositiveIntegerFrontmatter(value, field, label) {
     }
     return parsed;
 }
+function parseOptionalBooleanFrontmatter(value, field, label) {
+    if (value === undefined)
+        return undefined;
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    throw new AgentDefinitionValidationError(`${label} has invalid ${field} frontmatter; expected 'true' or 'false'.`);
+}
 function cloneOverrideBase(agent) {
     return {
         model: agent.model,
@@ -91,6 +101,7 @@ function cloneOverrideBase(agent) {
             ? [...agent.subagentOnlyExtensions]
             : undefined,
         completionGuard: agent.completionGuard,
+        supervisorBridge: agent.supervisorBridge,
         toolBudget: agent.toolBudget,
         maxExecutionTimeMs: agent.maxExecutionTimeMs,
     };
@@ -242,6 +253,14 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
         }
         else {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'completionGuard'; expected a boolean.`);
+        }
+    }
+    if ("supervisorBridge" in input) {
+        if (typeof input.supervisorBridge === "boolean") {
+            override.supervisorBridge = input.supervisorBridge;
+        }
+        else {
+            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'supervisorBridge'; expected a boolean.`);
         }
     }
     if ("toolBudget" in input) {
@@ -421,6 +440,9 @@ function applyCustomAgentOverride(agent, override, meta) {
     }
     if (override.completionGuard !== undefined) {
         fill("completionGuard", ["completionGuard"], override.completionGuard);
+    }
+    if (override.supervisorBridge !== undefined) {
+        fill("supervisorBridge", ["supervisorBridge"], override.supervisorBridge);
     }
     if (override.toolBudget !== undefined) {
         fill("toolBudget", ["toolBudget"], override.toolBudget === false ? undefined : override.toolBudget);
@@ -611,6 +633,7 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                 : frontmatter.completionGuard === "true"
                     ? true
                     : undefined;
+            const supervisorBridge = parseOptionalBooleanFrontmatter(frontmatter.supervisorBridge, "supervisorBridge", `Agent '${localName}'`);
             const agent = {
                 name: runtimeName,
                 localName,
@@ -639,6 +662,7 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                     ? parsedMaxSubagentDepth
                     : undefined,
                 completionGuard,
+                supervisorBridge,
                 toolBudget,
                 maxExecutionTimeMs,
                 extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,

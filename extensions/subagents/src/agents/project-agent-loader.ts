@@ -68,6 +68,7 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
   "maxSubagentDepth",
   "maxExecutionTimeMs",
   "completionGuard",
+  "supervisorBridge",
   "toolBudget",
 ]);
 
@@ -1146,6 +1147,10 @@ function parseProjectAgentDefinitionFromText(
     frontmatter.completionGuard === undefined
       ? undefined
       : parseStrictBoolean(frontmatter, "completionGuard", false, filePath);
+  const supervisorBridge =
+    frontmatter.supervisorBridge === undefined
+      ? undefined
+      : parseStrictBoolean(frontmatter, "supervisorBridge", false, filePath);
   const defaultProgress = parseStrictBoolean(frontmatter, "defaultProgress", false, filePath);
   const interactive = parseStrictBoolean(frontmatter, "interactive", false, filePath);
   const inheritProjectContext = parseStrictBoolean(
@@ -1192,6 +1197,7 @@ function parseProjectAgentDefinitionFromText(
     interactive,
     maxSubagentDepth: parsedMaxSubagentDepth,
     completionGuard,
+    supervisorBridge,
     toolBudget,
     maxExecutionTimeMs,
     extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,

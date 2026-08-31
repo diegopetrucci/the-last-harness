@@ -1338,41 +1338,31 @@ describe(
       assert.equal(result.finalOutput, "Validation report after the patch");
     });
 
-    it("keeps bash-enabled implementation tasks conservative unless completion guard is disabled", async () => {
-      mockPi.onCall({ output: "cold start test after patch" });
-      mockPi.onCall({ output: "cold start test after patch" });
-      const agents = [
-        makeAgent("test-runner", { tools: ["read", "grep", "bash", "ls"] }),
-        makeAgent("test-runner-optout", {
-          tools: ["read", "grep", "bash", "ls"],
-          completionGuard: false,
-        }),
-      ];
+    it("allows test-runner to report realistic final-validation wording without a mutation guard", async () => {
+      mockPi.onCall({ output: "Validation passed; no edits were needed." });
+      const runner = makeAgent("test-runner", {
+        tools: ["bash"],
+        completionGuard: false,
+        supervisorBridge: false,
+        systemPrompt: "Run exact validation commands. Prompt prose is not a capability signal.",
+      });
+      assert.equal(runner.completionGuard, false);
+      assert.equal(runner.supervisorBridge, false);
 
-      const withoutOptOut = await runSync(
+      const result = await runSync(
         tempDir,
-        agents,
+        [runner],
         "test-runner",
-        "Patch the cold start test",
-        {
-          runId: "guard-bash-conservative",
-        },
+        "Run the final-validation ticket's exact commands, report pass/fail results, and do not modify the repository.",
+        { runId: "test-runner-final-validation" },
       );
-      assert.equal(withoutOptOut.exitCode, 1);
-      assert.equal(withoutOptOut.terminationReason, "process_exit");
-      assert.match(withoutOptOut.error ?? "", /completed without making edits/);
 
-      const withOptOut = await runSync(
-        tempDir,
-        agents,
-        "test-runner-optout",
-        "Patch the cold start test",
-        {
-          runId: "guard-bash-optout",
-        },
-      );
-      assert.equal(withOptOut.exitCode, 0);
-      assert.equal(withOptOut.progress.status, "completed");
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.progress.status, "completed");
+      assert.equal(result.finalOutput, "Validation passed; no edits were needed.");
+      const args = readCallArgs();
+      assert.equal(args[args.indexOf("--tools") + 1], "bash");
+      assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
     });
 
     it("allows implementation runs when parsed messages include a real edit tool call", async () => {

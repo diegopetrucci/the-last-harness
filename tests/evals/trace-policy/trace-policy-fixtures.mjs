@@ -654,6 +654,23 @@ export const TRACE_POLICY_FIXTURES = [
     },
   },
   {
+    id: "test-runner-invalid-contact-supervisor",
+    name: "test-runner invalid if it uses contact_supervisor despite generic bridge guidance",
+    expectedResult: "reject",
+    expectedCodes: ["test-runner.read_only"],
+    transcript: {
+      agent: "test-runner",
+      steps: [
+        { type: "tool", tool: "bash", argv: ["tk", "show", "tlht-0qod"] },
+        {
+          type: "tool",
+          tool: "contact_supervisor",
+          input: { reason: "need_decision", message: "Validation is blocked." },
+        },
+      ],
+    },
+  },
+  {
     id: "test-runner-invalid-validation-before-ticket-show",
     name: "test-runner invalid if it validates before a successful ticket inspection",
     expectedResult: "reject",

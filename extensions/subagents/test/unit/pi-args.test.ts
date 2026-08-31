@@ -814,6 +814,23 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
     assert.ok(!args.includes("--no-builtin-tools"));
   });
 
+  it("omits contact_supervisor runtime injection for a structured bridge opt-out", () => {
+    const { args } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      tools: ["bash"],
+      supervisorBridge: false,
+      systemPrompt: "Prompt prose mentions contact_supervisor but is not a capability signal.",
+      orchestratorIntercomTarget: "subagent-chat-parent",
+    });
+
+    assert.equal(toolsFlag(args), "bash");
+    assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+  });
+
   it("fails closed for explicit empty and MCP-only policies", () => {
     for (const tools of [null, [], ["mcp:server/lookup"]] as Array<string[] | null>) {
       const { args } = buildPiArgs({

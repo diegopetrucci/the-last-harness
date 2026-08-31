@@ -36,26 +36,24 @@ test("attribution facade registers the toggle-tlh-git-attribution command", () =
   assert.equal(command?.description, "Toggle TLH git commit attribution");
 });
 
-test("effort facade registers effort and thinking commands with correct completions", () => {
+test("effort facade registers only the alias with native level completions", () => {
   const pi = createPiHarness();
-  const runtime = {
-    activePrimaryAgentPrompt: () => ({ name: "architect", minThinking: "medium" }),
-  };
-  registerEffortCommand(pi, runtime);
+  const nativeThinkingCommand = { native: true };
+  pi.commands.set("thinking", nativeThinkingCommand);
+  registerEffortCommand(pi, { activePrimaryAgentPrompt: () => undefined });
 
   assert.ok(pi.commands.has("effort"), "effort command must be registered");
-  assert.ok(pi.commands.has("thinking"), "thinking command must be registered");
+  assert.equal(
+    pi.commands.get("thinking"),
+    nativeThinkingCommand,
+    "native thinking must remain untouched",
+  );
 
   const completions = pi.commands.get("effort").getArgumentCompletions("");
-  assert.ok(Array.isArray(completions), "completions must be an array");
-  assert.ok(
-    completions.some((item) => item.value === "medium"),
-    "completions must include medium",
-  );
   assert.deepEqual(
     completions.map((item) => item.value),
-    ["medium", "high", "xhigh", "max"],
-    "completions must respect minThinking filter",
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    "completions must expose all native thinking levels",
   );
 });
 

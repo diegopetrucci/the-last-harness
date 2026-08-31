@@ -1065,28 +1065,62 @@ Named tools field.
 });
 
 describe("agent frontmatter completionGuard", () => {
-  it("parses completionGuard from discovered agent frontmatter", () => {
+  it("loads test-runner completionGuard false without widening its bash-only tools", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-completion-guard-"));
     tempDirs.push(dir);
     const agentsDir = canonicalAgentDir(dir);
     fs.mkdirSync(agentsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(agentsDir, "developer.md"),
+      path.join(agentsDir, "test-runner.md"),
       `---
-name: developer
+name: test-runner
 description: Test runner
+tools: bash
 completionGuard: false
+supervisorBridge: false
 ---
 
-Validate changes
+Validate changes without edits.
 `,
       "utf-8",
     );
 
     const result = discoverAgents(dir, "project");
-    const runner = result.agents.find((agent) => agent.name === "developer");
+    const runner = result.agents.find((agent) => agent.name === "test-runner");
     assert.equal(runner?.completionGuard, false);
+    assert.equal(runner?.supervisorBridge, false);
+    assert.deepEqual(runner?.tools, ["bash"]);
     assert.equal(runner?.extraFields?.completionGuard, undefined);
+    assert.equal(runner?.extraFields?.supervisorBridge, undefined);
+  });
+
+  it("preserves omitted supervisorBridge as the default behavior and rejects invalid values", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-supervisor-bridge-"));
+    tempDirs.push(dir);
+    const agentsDir = canonicalAgentDir(dir);
+    writeAgent(
+      path.join(agentsDir, "developer.md"),
+      "---\nname: developer\ndescription: Default bridge behavior\n---\n\nUse ordinary bridge behavior.\n",
+    );
+    const defaultAgent = discoverAgents(dir, "project").agents.find(
+      (agent) => agent.name === "developer",
+    );
+    assert.equal(defaultAgent?.supervisorBridge, undefined);
+    assert.equal(defaultAgent?.extraFields?.supervisorBridge, undefined);
+
+    const invalidPath = path.join(agentsDir, "repo-scout.md");
+    writeAgent(
+      invalidPath,
+      "---\nname: repo-scout\ndescription: Invalid bridge value\nsupervisorBridge: maybe\n---\n\nInvalid.\n",
+    );
+    const discovered = discoverAgentsAll(dir);
+    assert.equal(
+      discovered.user.some((agent) => agent.name === "repo-scout"),
+      false,
+    );
+    const diagnostic = discovered.agentDiagnostics?.find((entry) => entry.filePath === invalidPath);
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /supervisorBridge/);
   });
 });
 

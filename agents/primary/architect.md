@@ -12,7 +12,6 @@ tlhModelDefaults:
     effort: high
 applyModel: true
 applyThinking: true
-minThinking: medium
 tools: read, write, edit, grep, find, ls, bash, subagent, subagent_supervisor, mcp
 systemPromptMode: append
 inheritProjectContext: true

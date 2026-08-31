@@ -110,12 +110,13 @@ describe("project agent snapshot provider", () => {
   it("registers a frozen capability and resists caller mutation", () => {
     const agent = makeAgent("immutable");
     agent.tools = ["read"];
+    agent.supervisorBridge = false;
     agent.toolBudget = { hard: 2, block: ["bash"] };
     const input = {
       projectRoot: tempProject,
       sessionId: "session-immutable",
       generationId: "generation-immutable",
-      entries: [makeEntry(agent, "digest-immutable", ["tools", "toolBudget"])],
+      entries: [makeEntry(agent, "digest-immutable", ["tools", "supervisorBridge", "toolBudget"])],
       tombstones: ["removed-profile"],
     };
 
@@ -130,9 +131,14 @@ describe("project agent snapshot provider", () => {
     assert.ok(Object.isFrozen(manifest.entries));
     assert.ok(Object.isFrozen(manifest.entries[0]));
     assert.ok(Object.isFrozen(manifest.entries[0]?.frontmatterFields));
-    assert.deepEqual(manifest.entries[0]?.frontmatterFields, ["tools", "toolBudget"]);
+    assert.deepEqual(manifest.entries[0]?.frontmatterFields, [
+      "tools",
+      "supervisorBridge",
+      "toolBudget",
+    ]);
     assert.ok(Object.isFrozen(manifest.entries[0]?.agent));
     assert.ok(Object.isFrozen(manifest.entries[0]?.agent.tools));
+    assert.equal(manifest.entries[0]?.agent.supervisorBridge, false);
     assert.ok(Object.isFrozen(manifest.entries[0]?.agent.toolBudget));
     assert.ok(Object.isFrozen(manifest.entries[0]?.agent.toolBudget?.block));
 

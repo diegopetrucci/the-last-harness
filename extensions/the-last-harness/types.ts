@@ -290,8 +290,7 @@ export type AgentPrompt = {
   preferOppositeProvider?: boolean;
   applyModel?: boolean;
   applyThinking?: boolean;
-  lockThinking?: boolean;
-  minThinking?: ThinkingLevel;
+  completionGuard?: boolean;
   tools: string[];
   systemPrompt: string;
   filePath: string;
@@ -305,6 +304,7 @@ export type SubagentMetadata = {
   tlhModelDefaultsSource: TlhModelDefaultsSource;
   thinking?: ThinkingLevel;
   preferOppositeProvider?: boolean;
+  completionGuard?: boolean;
 };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";

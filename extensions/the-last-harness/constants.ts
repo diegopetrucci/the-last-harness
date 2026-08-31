@@ -64,14 +64,6 @@ export const THINKING_LEVELS: ThinkingLevel[] = [
   "xhigh",
   "max",
 ];
-export const FALLBACK_THINKING_LEVELS: ThinkingLevel[] = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-];
-
 export const THINKING_LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
   off: "No extra reasoning effort",
   minimal: "Smallest reasoning budget",

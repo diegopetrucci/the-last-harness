@@ -137,7 +137,8 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     const retryGraceTimers = new Map();
     const listeners = new Set();
     let disposed = false;
-    let lastSnapshotKey = "0::::";
+    let uiPromptDepth = 0;
+    let lastSnapshotKey = "0::0::::";
     let livenessTimer;
     const stopLivenessTimer = () => {
         if (livenessTimer !== undefined) {
@@ -309,11 +310,13 @@ export function createTlhEffectiveActivityTracker(options = {}) {
     };
     const buildSnapshot = () => ({
         inProgress: primaryReasons.size > 0 || activeAsyncJobs.size > 0,
+        waitingForUser: uiPromptDepth > 0,
         primaryReasons: [...primaryReasons.keys()].sort(),
         activeAsyncJobIds: [...activeAsyncJobs.keys()].sort(),
     });
     const snapshotKey = (snapshot) => [
         snapshot.inProgress ? "1" : "0",
+        snapshot.waitingForUser ? "1" : "0",
         snapshot.primaryReasons.join(","),
         snapshot.activeAsyncJobIds.join(","),
     ].join("::");
@@ -392,6 +395,7 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             primaryReasons.clear();
             activeAsyncJobs.clear();
             recentlyCompletedAsyncJobs.clear();
+            uiPromptDepth = 0;
             notifyIfChanged();
             listeners.clear();
         },
@@ -440,6 +444,22 @@ export function createTlhEffectiveActivityTracker(options = {}) {
             if (event.willRetry) {
                 scheduleRetryGrace(`compaction:${event.reason ?? "unknown"}`);
             }
+            notifyIfChanged();
+        },
+        handleSessionCompactFailed(event) {
+            removePrimaryReason(`primary:compaction:${event?.reason ?? "unknown"}`);
+            notifyIfChanged();
+        },
+        handleUIPromptStart() {
+            if (disposed)
+                return;
+            uiPromptDepth += 1;
+            notifyIfChanged();
+        },
+        handleUIPromptEnd() {
+            if (uiPromptDepth === 0)
+                return;
+            uiPromptDepth -= 1;
             notifyIfChanged();
         },
         handleAsyncStarted(data) {
@@ -503,6 +523,7 @@ export function registerTlhEffectiveActivityTracker(pi) {
             try {
                 pi.events?.emit(TLH_EFFECTIVE_ACTIVITY_EVENT, {
                     inProgress: snapshot.inProgress,
+                    waitingForUser: snapshot.waitingForUser,
                     activeAsyncJobIds: snapshot.activeAsyncJobIds,
                 });
             }
@@ -536,6 +557,15 @@ export function registerTlhEffectiveActivityTracker(pi) {
     });
     pi.on("session_compact", (event) => {
         tracker.handleSessionCompact(event);
+    });
+    pi.on("session_compact_failed", (event) => {
+        tracker.handleSessionCompactFailed(event);
+    });
+    pi.on("ui_prompt_start", (event) => {
+        tracker.handleUIPromptStart(event);
+    });
+    pi.on("ui_prompt_end", (event) => {
+        tracker.handleUIPromptEnd(event);
     });
     pi.on("session_shutdown", () => {
         for (const unsubscribe of unsubscribes) {

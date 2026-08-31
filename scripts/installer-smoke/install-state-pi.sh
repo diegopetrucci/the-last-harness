@@ -128,7 +128,7 @@ EOF_PRESENT_GIT
   # Seed a valid private runtime pi (pinned version) at the expected location.
   cat >"${present_runtime_bin}/pi" <<'EOF_PRESENT_RUNTIME_PI'
 #!/bin/sh
-if [ "${1:-}" = "--version" ]; then printf '0.84.2\n'; exit 0; fi
+if [ "${1:-}" = "--version" ]; then printf '0.84.4\n'; exit 0; fi
 printf 'fake private runtime pi invoked unexpectedly\n' >&2; exit 98
 EOF_PRESENT_RUNTIME_PI
   chmod +x "${present_runtime_bin}/pi"

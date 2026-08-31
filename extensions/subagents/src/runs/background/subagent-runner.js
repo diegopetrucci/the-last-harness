@@ -1024,6 +1024,7 @@ async function runSingleStep(step, ctx) {
         let tempDir;
         let buildError;
         try {
+            const supervisorBridgeActive = step.supervisorBridge !== false;
             ({ args, env, tempDir } = buildPiArgs({
                 parentSessionId: step.parentSessionId,
                 baseArgs: ["--mode", "json", "-p"],
@@ -1038,12 +1039,15 @@ async function runSingleStep(step, ctx) {
                 tools: step.tools,
                 extensions: step.extensions,
                 subagentOnlyExtensions: step.subagentOnlyExtensions,
+                supervisorBridge: step.supervisorBridge,
                 systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
                 systemPromptMode: step.systemPromptMode,
                 cwd: step.cwd ?? ctx.cwd,
                 promptFileStem: step.agent,
-                intercomSessionName: ctx.childIntercomTarget,
-                orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
+                intercomSessionName: supervisorBridgeActive ? ctx.childIntercomTarget : undefined,
+                orchestratorIntercomTarget: supervisorBridgeActive
+                    ? ctx.orchestratorIntercomTarget
+                    : undefined,
                 runId: ctx.id,
                 childAgentName: step.agent,
                 projectAgentGuidance: step.projectAgentGuidance === true,

@@ -308,6 +308,7 @@ describe("canonical packaged agent overrides", () => {
             skills: ["tdd"],
             subagentOnlyExtensions: ["./tools/child-review.ts"],
             completionGuard: false,
+            supervisorBridge: false,
           },
         },
       },
@@ -331,6 +332,7 @@ describe("canonical packaged agent overrides", () => {
     assert.deepEqual(developer.skills, ["tdd"]);
     assert.deepEqual(developer.subagentOnlyExtensions, ["./tools/child-review.ts"]);
     assert.equal(developer.completionGuard, false);
+    assert.equal(developer.supervisorBridge, false);
     assert.equal(developer.override?.scope, "project");
     assert.equal(developer.override?.path, path.join(tempProject, ".pi", "settings.json"));
   });
@@ -396,13 +398,14 @@ describe("canonical packaged agent overrides", () => {
             defaultContext: "fork",
             acceptanceRole: "writer",
             completionGuard: true,
+            supervisorBridge: true,
           },
         },
       },
     });
     writeCanonicalAgent(
       "developer",
-      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\n---\n\nImplement the change.\n",
+      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
     );
 
     const developer = findAgent("developer");
@@ -414,6 +417,7 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.defaultContext, "fresh");
     assert.equal(developer.acceptanceRole, "read-only");
     assert.equal(developer.completionGuard, false);
+    assert.equal(developer.supervisorBridge, false);
     assert.equal(developer.override, undefined);
   });
 

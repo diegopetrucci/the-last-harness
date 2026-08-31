@@ -5,7 +5,11 @@ import test from "node:test";
 
 import { createJiti } from "jiti";
 
-import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mjs";
+import {
+  createRedirectedTempProfileFixture,
+  createIsolatedProfileFixture,
+  withEnv,
+} from "./test-fixture-helpers.mjs";
 
 const jiti = createJiti(import.meta.url);
 const {
@@ -856,6 +860,41 @@ test("toggle attribution command disables the default footer by writing false", 
     assert.match(notice?.message ?? "", /TLH commit attribution is disabled\./);
     assert.doesNotMatch(notice?.message ?? "", /Backup:/);
   });
+});
+
+test("toggle attribution command refuses non-temporary profiles during Node tests", async (t) => {
+  const fixture = createRedirectedTempProfileFixture("tlh-attribution-test-", { test: t });
+  const agent = fixture.agent;
+  const settingsPath = join(agent, "settings.json");
+  const initialSettings = `${JSON.stringify({ tlh: { attribution: { commit: false } } }, null, 2)}\n`;
+  writeFileSync(settingsPath, initialSettings);
+
+  await withEnv(
+    {
+      HOME: fixture.home,
+      PI_CODING_AGENT_DIR: agent,
+      NODE_TEST_CONTEXT: "child-v8",
+      TMPDIR: fixture.redirectedTemp,
+      TEMP: fixture.redirectedTemp,
+      TMP: fixture.redirectedTemp,
+    },
+    async () => {
+      const command = registeredToggleCommand();
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+
+      await command.handler("", ctx);
+
+      assert.deepEqual(notifications.at(-1)?.type, "error");
+      assert.match(notifications.at(-1)?.message ?? "", /operating system temporary directory/i);
+    },
+  );
+
+  assert.equal(readFileSync(settingsPath, "utf8"), initialSettings);
+  assert.deepEqual(
+    readdirSync(agent).filter((entry) => entry.startsWith("settings.json.bak-")),
+    [],
+    "rejected handler write must not create a backup",
+  );
 });
 
 test("toggle attribution command re-enables by writing true and creating a backup", async (t) => {

@@ -49,13 +49,20 @@ describe("async runner execution", () => {
     assert.equal(resolveAsyncRunnerLogPaths({}), undefined);
   });
 
-  it("carries the exact project-agent capture into detached runner config steps", () => {
+  it("carries the exact project-agent capture and supervisor bridge capability into detached runner config steps", () => {
     const selected = agent("embedded.worker");
+    selected.supervisorBridge = false;
     const capability = registerProjectAgentSnapshot({
       projectRoot: process.cwd(),
       sessionId: "session-1",
       generationId: "generation-config",
-      entries: [{ agent: selected, digest: "digest-config", frontmatterFields: ["tools"] }],
+      entries: [
+        {
+          agent: selected,
+          digest: "digest-config",
+          frontmatterFields: ["tools", "supervisorBridge"],
+        },
+      ],
     });
     const manifest = resolveProjectAgentSnapshot(
       capability,
@@ -74,6 +81,7 @@ describe("async runner execution", () => {
     const step = result.steps[0] as RunnerSubagentStep;
     assert.deepEqual(step.projectAgent?.provenance, capture.provenance);
     assert.deepEqual(step.projectAgent?.config, capture.config);
+    assert.equal(step.supervisorBridge, false);
     assert.equal(JSON.stringify(step).includes("capability"), false);
     revokeProjectAgentSnapshot(capability);
   });

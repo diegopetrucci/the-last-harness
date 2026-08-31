@@ -328,6 +328,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             tools: agent.tools,
             extensions: agent.extensions,
             subagentOnlyExtensions: agent.subagentOnlyExtensions,
+            supervisorBridge: agent.supervisorBridge,
             systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
             cwd: options.cwd ?? runtimeCwd,
             promptFileStem: agent.name,
@@ -1567,6 +1568,14 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         ...options,
         timeoutMs: effectiveTimeoutMs,
         deadlineAt: resolveEffectiveTimeoutDeadline(options.deadlineAt, effectiveTimeoutMs),
+        ...(agent.supervisorBridge === false
+            ? {
+                allowIntercomDetach: false,
+                pauseBlockingSupervisor: false,
+                intercomSessionName: undefined,
+                orchestratorIntercomTarget: undefined,
+            }
+            : {}),
     };
     const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
     if (outputModeValidationError) {
