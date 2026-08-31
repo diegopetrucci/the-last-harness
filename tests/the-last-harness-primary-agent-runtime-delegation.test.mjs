@@ -51,6 +51,28 @@ test("enabled primary mode allows approved delegation targets and forces safe to
   assert.equal(event.input.context, "fresh");
 });
 
+test("enabled primary mode allows final-validation delegation to test-runner", async () => {
+  const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
+  const event = {
+    toolName: "subagent",
+    input: {
+      agent: "test-runner",
+      task: "Run the exact commands from the final-validation ticket and report the outcomes.",
+    },
+  };
+  const ctx = createToolCallContext([
+    {
+      type: "custom",
+      customType: PRIMARY_AGENT_SESSION_STATE_ENTRY,
+      data: { selected: "architect" },
+    },
+  ]);
+
+  assert.equal(await toolCall(event, ctx), undefined);
+  assert.equal(event.input.agentScope, "user");
+  assert.equal(event.input.context, "fresh");
+});
+
 test("tool_call caps targeted scout execution timeouts without affecting stricter or non-target calls", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const ctx = createToolCallContext([
@@ -318,7 +340,7 @@ test("enabled primary mode blocks disallowed task delegation targets after forci
     assert.deepEqual(await toolCall(event, ctx), {
       block: true,
       reason:
-        "TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
+        "TLH primary agents may delegate only to: developer, test-runner, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
     });
     assert.equal(event.input.agentScope, "user");
     assert.equal(event.input.context, "fresh");
@@ -433,7 +455,7 @@ test("disabled primary mode enforces architect-equivalent subagent safety and sc
     assert.deepEqual(await toolCall(blockedTargetEvent, ctx), {
       block: true,
       reason:
-        "TLH primary agents may delegate only to: developer, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
+        "TLH primary agents may delegate only to: developer, test-runner, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
     });
     assert.equal(blockedTargetEvent.input.agentScope, "user");
     assert.equal(blockedTargetEvent.input.context, "fresh");

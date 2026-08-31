@@ -320,6 +320,42 @@ describe("async execution utilities", () => {
     });
   });
 
+  it("omits supervisor bridge runtime support for an opted-out async child", async () => {
+    mockPi.onCall({ output: "async validation complete" });
+    const id = `async-supervisor-bridge-optout-${Date.now().toString(36)}`;
+    const run = executeAsyncSingle(id, {
+      agent: "test-runner",
+      task: "Run validation and report the result without editing files.",
+      agentConfig: makeAgent("test-runner", {
+        tools: ["bash"],
+        supervisorBridge: false,
+        systemPrompt: "Prompt prose is not a capability signal.",
+      }),
+      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+      artifactConfig: {
+        enabled: false,
+        includeInput: false,
+        includeOutput: false,
+        includeJsonl: false,
+        includeMetadata: false,
+        cleanupDays: 7,
+      },
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+      controlIntercomTarget: "subagent-chat-parent",
+      childIntercomTarget: (agent: string, index: number) => `subagent-${agent}-${id}-${index + 1}`,
+    });
+    assert.equal(run.isError, undefined);
+    const resultPath = await waitForAsyncResultFile(id);
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    assert.equal(payload.success, true);
+
+    const args = readMockPiArgs(mockPi, 0);
+    assert.equal(args[args.indexOf("--tools") + 1], "bash");
+    assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+    assert.equal(args.includes("--no-tools"), false);
+  });
+
   it("propagates verified packaged provenance through async single and parallel launches", async () => {
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     const previousGuidanceMarker = process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV];

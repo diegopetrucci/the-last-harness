@@ -17,7 +17,7 @@ Run these checks against the packaged TLH release candidate, without creating or
 - [ ] **Compact parent-facing description:** the live `subagent` tool description always renders in compact form while retaining its safety-critical delegation guidance.
 - [ ] **Native supervisor coordination:** a minor agent's `contact_supervisor` request reaches the architect through the native supervisor channel and the pause/resume choice is delivered correctly.
 - [ ] **Maximum-thinking badge:** a supported `:max` model renders the expected `max` thinking badge in a live child run.
-- [ ] **Delegation and lifecycle smoke:** delegate to the eight supported TLH minor agents, confirm a non-allowlisted target is blocked, confirm primary delegation uses user scope plus fresh context, and exercise an async run through `status` and `resume`.
+- [ ] **Delegation and lifecycle smoke:** delegate to the nine supported TLH minor agents, including the command-only `test-runner`, confirm a non-allowlisted target is blocked, confirm primary delegation uses user scope plus fresh context, and exercise an async run through `status` and `resume`.
 
 Record the release candidate, profile, session evidence, and outcomes on `tlh-2ej0`. Do not mark this debt complete from static validation alone.
 

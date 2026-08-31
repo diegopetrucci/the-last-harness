@@ -89,6 +89,8 @@ function formatAgentDetail(agent) {
         lines.push(`Max execution time: ${agent.maxExecutionTimeMs}ms`);
     if (agent.completionGuard === false)
         lines.push("Completion guard: false");
+    if (agent.supervisorBridge === false)
+        lines.push("Supervisor bridge: false");
     if (agent.toolBudget)
         lines.push(`Tool budget: ${JSON.stringify(agent.toolBudget)}`);
     if (agent.systemPrompt.trim())

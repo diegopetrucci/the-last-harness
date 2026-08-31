@@ -22,6 +22,7 @@ export const PACKAGED_PRIMARY_AGENT_ROLES = ["architect", "rush", "product", "bu
 
 export const PACKAGED_MINOR_AGENT_ROLES = [
   "developer",
+  "test-runner",
   "code-reviewer",
   "repo-scout",
   "diff-summarizer",
@@ -50,6 +51,7 @@ const ROLE_FILENAMES: Readonly<Record<ProjectAgentGuidanceRole, string>> = {
   product: "PRODUCT_PROMPT_APPEND.md",
   "bug-hunter": "BUG-HUNTER_PROMPT_APPEND.md",
   developer: "DEVELOPER_PROMPT_APPEND.md",
+  "test-runner": "TEST-RUNNER_PROMPT_APPEND.md",
   "code-reviewer": "CODE-REVIEWER_PROMPT_APPEND.md",
   "repo-scout": "REPO-SCOUT_PROMPT_APPEND.md",
   "diff-summarizer": "DIFF-SUMMARIZER_PROMPT_APPEND.md",

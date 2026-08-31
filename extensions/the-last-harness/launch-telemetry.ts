@@ -90,7 +90,7 @@ const PUBLIC_PROVIDER_IDS = new Set([
 
 const BUNDLED_PRIMARY_AGENT_NAMES = new Set(["architect", "bug-hunter", "product", "rush"]);
 
-// Ordered to match the TLH_SUBAGENT_PROMPTS list in scripts/lib/tlh-install-subagents.mts.
+// Keep this catalog aligned with the installer-managed TLH minor-agent prompts.
 // Never emit a telemetry key for an agent name outside this set.
 const BUNDLED_SUBAGENT_NAMES = Object.freeze([
   "code-reviewer",
@@ -100,6 +100,7 @@ const BUNDLED_SUBAGENT_NAMES = Object.freeze([
   "librarian",
   "oracle",
   "repo-scout",
+  "test-runner",
   "web-scout",
 ]) as readonly string[];
 
@@ -142,7 +143,7 @@ type TlhLaunchSettings = {
   experimental?: TlhExperimentalConfig;
   /**
    * Per-agent overrides extracted from settings.subagents.agentOverrides, restricted to the
-   * eight bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
+   * nine bundled subagent names. Any name outside BUNDLED_SUBAGENT_NAMES is dropped here
    * so it can never appear as a telemetry key.
    *
    * This is the USER-scope layer only. Project-scope overrides outrank it; see
@@ -153,7 +154,7 @@ type TlhLaunchSettings = {
 
 /**
  * Extract `subagents.agentOverrides` from an already-parsed settings object, keeping only the
- * eight bundled subagent names so a user-authored agent name can never become a telemetry key.
+ * nine bundled subagent names so a user-authored agent name can never become a telemetry key.
  */
 function extractBundledSubagentOverrides(
   settings: Record<string, unknown>,
@@ -259,7 +260,7 @@ function readTlhProjectSubagentOverrides(
 /**
  * Resolve the effective per-agent override the subagents runtime would actually apply.
  *
- * TLH's eight canonical minor agents are installed under the fixed
+ * TLH's nine canonical minor agents are installed under the fixed
  * `<agent-dir>/tlh/agents/subagents/<name>.md` paths. They are loaded as canonical TLH roles by
  * the runtime's fixed-path discovery; `subagents.agentDirs` is not required and does not select
  * these files. Their settings precedence is still the two-rule override order:
@@ -681,7 +682,7 @@ function joinModelEffort(model: string, effort: string): string {
 }
 
 /**
- * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all eight
+ * Build the per-agent Tlh.Subagent.NAME.modelEffort telemetry payload for all nine
  * bundled minor agents.
  *
  * Precedence (highest first):

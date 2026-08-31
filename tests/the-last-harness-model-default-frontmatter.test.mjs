@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -223,6 +224,48 @@ test("loaded primaries preserve preferred selection relationships", () => {
     }
   }
   assert.ok(currentOpenaiOptInCount > 0, "a loaded primary must exercise current OpenAI opt-in");
+});
+
+test("test-runner is a fresh, non-mutating validation role with cheap provider defaults", () => {
+  const role = loadSubagentMetadata().find((agent) => agent.name === "test-runner");
+  assert.ok(role, "production loader must return test-runner");
+  assert.equal(role.tlhModelDefaultsSource, "frontmatter");
+  assert.equal(role.completionGuard, false);
+  assert.deepEqual(role.tlhModelDefaults, [
+    {
+      provider: "openai-codex",
+      models: [{ provider: "openai-codex", id: "gpt-5.6-luna" }],
+      effort: "low",
+    },
+    {
+      provider: "anthropic",
+      models: [{ provider: "anthropic", id: "claude-haiku-4-5" }],
+      effort: "low",
+    },
+    { provider: "openrouter", effort: "low" },
+  ]);
+
+  const source = readFileSync(
+    new URL("../agents/subagents/test-runner.md", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseFrontmatter(source);
+  assert.equal(parsed.frontmatter.tools, "bash");
+  assert.equal(parsed.frontmatter.inheritProjectContext, "false");
+  assert.equal(parsed.frontmatter.inheritSkills, "false");
+  assert.equal(parsed.frontmatter.defaultContext, "fresh");
+  assert.equal(parsed.frontmatter.completionGuard, "false");
+  assert.equal(parsed.frontmatter.supervisorBridge, "false");
+  assert.doesNotMatch(parsed.body, /contact_supervisor/);
+  assert.match(
+    parsed.body,
+    /If a blocker prevents validation, report it in your final result and stop/i,
+  );
+  assert.match(parsed.body, /tk show <id>/);
+  assert.match(parsed.body, /if inspection fails, stop/);
+  assert.match(parsed.body, /exact validation commands/);
+  assert.match(parsed.body, /Stop on the first failed command\./);
+  assert.match(parsed.body, /install dependencies.*fix failures/);
 });
 
 test("loaded normal subagents follow each declared provider without primary preferred metadata", () => {

@@ -82,7 +82,6 @@ import { createForkContextResolver } from "../../shared/fork-context.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import {
   applyIntercomBridgeToAgent,
-  INTERCOM_BRIDGE_MARKER,
   resolveIntercomBridge,
   resolveIntercomSessionTarget,
   resolveSubagentIntercomTarget,
@@ -5780,6 +5779,9 @@ async function runForegroundParallelTasks(
         });
       }
       const agentConfig = input.agents.find((agent) => agent.name === task.agent);
+      const supervisorBridgeActive =
+        Boolean(input.orchestratorIntercomTarget?.trim()) &&
+        agentConfig?.supervisorBridge !== false;
       return (input.runSync ?? runSync)(input.ctx.cwd, input.agents, task.agent, taskText, {
         onSupervisorPauseTransition: (transition) => {
           const { stage, result } = transition;
@@ -5801,9 +5803,8 @@ async function runForegroundParallelTasks(
         cwd: taskCwd,
         signal: input.signal,
         interruptSignal: interruptController.signal,
-        allowIntercomDetach: agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-        pauseBlockingSupervisor:
-          agentConfig?.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+        allowIntercomDetach: supervisorBridgeActive,
+        pauseBlockingSupervisor: supervisorBridgeActive,
         intercomEvents: input.intercomEvents,
         runId: input.runId,
         index,
@@ -5826,8 +5827,12 @@ async function runForegroundParallelTasks(
             index,
             result,
           }),
-        intercomSessionName: input.childIntercomTarget?.(task.agent, index),
-        orchestratorIntercomTarget: input.orchestratorIntercomTarget,
+        intercomSessionName: supervisorBridgeActive
+          ? input.childIntercomTarget?.(task.agent, index)
+          : undefined,
+        orchestratorIntercomTarget: supervisorBridgeActive
+          ? input.orchestratorIntercomTarget
+          : undefined,
         steerInboxDir,
         nestedRoute: input.foregroundControl?.nestedRoute,
         modelOverride: input.modelOverrides[index],
@@ -6280,6 +6285,8 @@ async function runSinglePath(
       details: { mode: "single", results: [] },
     };
   }
+  const supervisorBridgeActive =
+    data.intercomBridge.active && agentConfig.supervisorBridge !== false;
   const effectiveToolBudget = resolveEffectiveToolBudget({
     runBudget: data.toolBudget,
     agentBudget: agentConfig.toolBudget,
@@ -6399,8 +6406,8 @@ async function runSinglePath(
       cwd: effectiveCwd,
       signal,
       interruptSignal: interruptController.signal,
-      allowIntercomDetach: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
-      pauseBlockingSupervisor: agentConfig.systemPrompt?.includes(INTERCOM_BRIDGE_MARKER) === true,
+      allowIntercomDetach: supervisorBridgeActive,
+      pauseBlockingSupervisor: supervisorBridgeActive,
       intercomEvents: deps.pi.events,
       runId,
       sessionDir: sessionDirForIndex(0),
@@ -6415,8 +6422,8 @@ async function runSinglePath(
       onUpdate: forwardSingleUpdate,
       controlConfig,
       onControlEvent,
-      intercomSessionName: childIntercomTarget,
-      orchestratorIntercomTarget: data.intercomBridge.active
+      intercomSessionName: supervisorBridgeActive ? childIntercomTarget : undefined,
+      orchestratorIntercomTarget: supervisorBridgeActive
         ? data.intercomBridge.orchestratorTarget
         : undefined,
       steerInboxDir,

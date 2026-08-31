@@ -26,6 +26,7 @@ Custom dimensions sent on this event:
 - `Tlh.Subagent.librarian.modelEffort`
 - `Tlh.Subagent.oracle.modelEffort`
 - `Tlh.Subagent.repo-scout.modelEffort`
+- `Tlh.Subagent.test-runner.modelEffort`
 - `Tlh.Subagent.web-scout.modelEffort`
 
 Experimental feature dimensions are always reported for registered TLH features as `on` or `off`. Unknown, custom, or legacy `tlh.experimental.enabledFeatures` values are ignored and never sent.

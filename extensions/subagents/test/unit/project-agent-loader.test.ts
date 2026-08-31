@@ -169,7 +169,7 @@ describe("trusted project-agent loader", () => {
     const project = tempProject();
     const filePath = writeDefinition(project, "REVIEWER.md", {
       tools: "read,bash,write,edit,mcp:ignored",
-      extraFrontmatter: "model: openai/reviewer\ncustomField: retained",
+      extraFrontmatter: "model: openai/reviewer\nsupervisorBridge: false\ncustomField: retained",
       body: "Review the repository.",
     });
     const bytes = fs.readFileSync(filePath);
@@ -181,6 +181,7 @@ describe("trusted project-agent loader", () => {
     assert.equal(entry.agent.source, "project");
     assert.deepEqual(entry.agent.tools, ["read", "bash", "write", "edit"]);
     assert.equal(entry.agent.model, "openai/reviewer");
+    assert.equal(entry.agent.supervisorBridge, false);
     assert.equal(entry.agent.extraFields?.customField, "retained");
     assert.deepEqual(entry.frontmatterFields, [
       "name",
@@ -188,6 +189,7 @@ describe("trusted project-agent loader", () => {
       "description",
       "tools",
       "model",
+      "supervisorBridge",
       "customField",
     ]);
     assert.equal(entry.digest, createHash("sha256").update(bytes).digest("hex"));
@@ -230,6 +232,11 @@ describe("trusted project-agent loader", () => {
       ],
       ["INVALID-TOOL.md", { tools: "read,grep[]" }, /valid runtime tool name/],
       ["INVALID-TOOL-PREFIX.md", { tools: "-read" }, /valid runtime tool name/],
+      [
+        "INVALID-SUPERVISOR-BRIDGE.md",
+        { extraFrontmatter: "supervisorBridge: maybe" },
+        /supervisorBridge must be true or false/,
+      ],
     ] as const;
 
     for (const [fileName, options, expected] of cases) {

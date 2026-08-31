@@ -40,7 +40,8 @@ Use the `subagent` tool for minor agents:
 
 - `repo-scout`: scan an unfamiliar repository for stack, conventions, and commands.
 - `diff-summarizer`: summarize existing local diffs and risk hotspots.
-- `developer`: implement exactly one approved task at a time.
+- `developer`: implement exactly one approved implementation task at a time and run its ticket-local validation.
+- `test-runner`: execute the exact commands listed on an approved final-validation ticket and report pass/fail without editing.
 - `code-reviewer`: review diffs against the active task(s) and report findings.
 - `librarian`: research external GitHub repositories, issues, pull requests, releases, or docs read-only when outside evidence is needed.
 - `web-scout`: research the general web outside GitHub via Exa-backed search and fetch in an isolated read-only context.
@@ -92,10 +93,10 @@ After approval:
 3. Capture any ticket-specific validation expectations in the ticket when they differ from the repository's normal validation flow.
 4. Use `tk dep <id> <depends-on-id>` to wire dependencies.
 5. Present the ticket tree to the user.
-6. Do not launch `developer` until the user approves the created tickets.
-7. Just before launching `developer`, if still on `main`/`master` branch, create a new branch for the work.
+6. Do not launch `developer` or `test-runner` until the user approves the created tickets.
+7. Just before launching a worker, if still on `main`/`master` branch, create a new branch for the work.
 
-The approved `tk` tickets are the only implementation artifacts `developer` should rely on. Keep them concise, specific, and free of secrets or PII.
+The approved `tk` tickets are the only implementation artifacts `developer` and `test-runner` should rely on. Keep them concise, specific, and free of secrets or PII.
 
 ## Validation planning
 
@@ -103,22 +104,26 @@ When implementation work needs broader verification:
 
 1. Split implementation work into normal implementation tickets.
 2. Put broad final verification in a separate final-validation ticket that depends on all implementation tickets.
-3. Keep implementation-ticket validation narrow and ticket-scoped; defer only the final cross-ticket validation work.
-4. Make any validation deferral explicit in the ticket text so developer can follow it without guessing.
-5. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
-6. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
+3. Keep implementation-ticket validation narrow and ticket-scoped; the developer must run those checks as part of implementation. Defer only the final cross-ticket validation work.
+4. Every final-validation ticket must list the exact commands, including arguments, that `test-runner` must execute. Derive them from `VALIDATING.md` or repository discovery; do not leave command selection or validation planning to `test-runner`.
+5. Make any validation deferral explicit in the ticket text so `developer` can follow it without guessing.
+6. When `VALIDATING.md` is present, use it as the reference for the final-validation ticket; otherwise use repo-discovered validation commands.
+7. Do not defer meaningful ticket-local checks that are needed to implement a ticket safely.
 
 ## Implementation loop
 
 For each ready task:
 
 1. Use `tk ready` to pick the next dependency-unblocked ticket.
-2. Delegate one ticket to `developer` and instruct it to run `tk show <id>`.
-3. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
-4. Evaluate the developer report against the ticket and overall plan.
-5. If needed, send focused corrections back to `developer`.
-6. Close the `tk` ticket only when its intent is met.
-7. Use `code-reviewer` checkpoints for high-risk changes.
+2. Inspect the ticket type and route it to the matching worker:
+   - implementation tickets go to `developer`, who must run `tk show <id>` before making changes and perform the ticket-local validation;
+   - final-validation tickets go to `test-runner`, who must run `tk show <id>` first and execute only the exact commands listed in the ticket.
+3. Do not send a final-validation ticket to `developer`, and do not send an implementation ticket to `test-runner`.
+4. Call out any ticket-specific validation constraints or sequencing that the approved plan requires.
+5. Evaluate the worker report against the ticket and overall plan.
+6. If needed, send focused corrections back to the matching worker.
+7. Close the `tk` ticket only when its intent is met.
+8. Use `code-reviewer` checkpoints for high-risk changes.
 
 ## Async child steering
 

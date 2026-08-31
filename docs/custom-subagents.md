@@ -2,7 +2,7 @@
 
 TLH supports stable, always-available **project custom embedded subagents**. A project custom agent is a repository-controlled Markdown definition whose runtime name is `embedded.<slug>`. The `architect` primary agent and `disabled` primary mode may start one when its exact file, persisted project trust, and safety checks all pass. This is a trusted extension point, not a sandbox: a custom agent with write-capable tools can edit files and run commands with the local user's access.
 
-This guide is about project custom agents. It is separate from the twelve canonical packaged TLH roles and their project prompt appends; see [Per-agent project guidance](../README.md#per-agent-project-guidance) for those files.
+This guide is about project custom agents. It is separate from the thirteen canonical packaged TLH roles and their project prompt appends; see [Per-agent project guidance](../README.md#per-agent-project-guidance) for those files.
 
 ## Canonical packaged roles and append files
 
@@ -15,6 +15,7 @@ Project prompt appends are plain Markdown files for these exact roles and paths:
 | `product` | `.tlh/agents/builtin/PRODUCT_PROMPT_APPEND.md` |
 | `bug-hunter` | `.tlh/agents/builtin/BUG-HUNTER_PROMPT_APPEND.md` |
 | `developer` | `.tlh/agents/builtin/DEVELOPER_PROMPT_APPEND.md` |
+| `test-runner` | `.tlh/agents/builtin/TEST-RUNNER_PROMPT_APPEND.md` |
 | `code-reviewer` | `.tlh/agents/builtin/CODE-REVIEWER_PROMPT_APPEND.md` |
 | `repo-scout` | `.tlh/agents/builtin/REPO-SCOUT_PROMPT_APPEND.md` |
 | `diff-summarizer` | `.tlh/agents/builtin/DIFF-SUMMARIZER_PROMPT_APPEND.md` |
@@ -71,7 +72,7 @@ Inspect the repository and report concise findings.
 
 `package: embedded`, the exact lowercase `name`, a non-empty `description`, and an explicit usable `tools` list are required. The runtime name is `embedded.<name>`; only lowercase letters, digits, and hyphens are accepted in the slug.
 
-After the required fields, project custom definitions may declare the optional child-agent fields `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `skill`/`skills`, `output`, `defaultReads`, `defaultProgress`, `interactive`, `maxSubagentDepth`, `completionGuard`, `maxExecutionTimeMs`, and `toolBudget`. These optional fields use existing child-runtime semantics; see the [first-party dispatch reference](subagents.md) for related dispatch, tool, skill, and lifecycle behavior. The frontmatter parser accepts `defaultContext: fresh` and `defaultContext: fork`, but every project custom embedded execution is runtime-forced to `context: fresh`; `defaultContext: fork` therefore does not produce a forked child. Omitted fields use the runtime's ordinary agent defaults; TLH does not fill them from settings/default overrides. Unsupported YAML shapes and unknown fields are not a way to extend this contract.
+After the required fields, project custom definitions may declare the optional child-agent fields `model`, `fallbackModels`, `thinking`, `systemPromptMode`, `inheritProjectContext`, `inheritSkills`, `defaultContext`, `acceptanceRole`, `skill`/`skills`, `output`, `defaultReads`, `defaultProgress`, `interactive`, `maxSubagentDepth`, `completionGuard`, `supervisorBridge`, `maxExecutionTimeMs`, and `toolBudget`. These optional fields use existing child-runtime semantics; see the [first-party dispatch reference](subagents.md) for related dispatch, tool, skill, and lifecycle behavior. Set `supervisorBridge: false` to suppress generic supervisor-bridge guidance and runtime `contact_supervisor` support; TLH emits `--exclude-tools contact_supervisor` without rewriting the declared `tools` field, while omitting `contact_supervisor` from runtime-required allowlist additions. The frontmatter parser accepts `defaultContext: fresh` and `defaultContext: fork`, but every project custom embedded execution is runtime-forced to `context: fresh`; `defaultContext: fork` therefore does not produce a forked child. Omitted fields use the runtime's ordinary agent defaults; TLH does not fill them from settings/default overrides. Unsupported YAML shapes and unknown fields are not a way to extend this contract.
 
 `tools` must be explicit and contain at least one usable entry. Named entries become the explicit tool policy; `bash`, `write`, and `edit` are valid entries and are not stripped merely because the definition is project-controlled. For example, a trusted developer-like agent may declare:
 
@@ -156,7 +157,7 @@ The timing boundaries are intentionally different for each surface:
 
 | Surface | When the file is read | What changes an existing run sees |
 | --- | --- | --- |
-| Primary role append | At primary session start; all twelve role candidates share one inventory snapshot, and switching primary roles selects from that snapshot | Edits or newly persisted trust take effect after `/reload`/new session, not in the current primary snapshot |
+| Primary role append | At primary session start; all thirteen role candidates share one inventory snapshot, and switching primary roles selects from that snapshot | Edits or newly persisted trust take effect after `/reload`/new session, not in the current primary snapshot |
 | Minor role append | When each child process starts, for foreground, parallel, async, and any resume/revival that starts a new process | A live async `resume`/`steer` that keeps the same child process keeps its session-start append snapshot; a new process reads current content |
 | Project custom definition | At project snapshot capture and through the private snapshot capability when a child starts | A live child and same-process resume keep the captured configuration, but same-process `resume`/`steer` reauthorize current persisted project trust; a process-restarted resume/revival revalidates the current trusted root file and reads current configuration, while a resume from a genuine new session fails closed |
 
@@ -191,7 +192,7 @@ To undo a builtin append, remove its exact `.tlh/agents/builtin/<ROLE>_PROMPT_AP
 
 The upstream global/project `APPEND_SYSTEM.md` mechanism appends **general system instructions**. In a default TLH install, the global file is `<agent-dir>/APPEND_SYSTEM.md` (normally `~/.the-last-harness/agent/APPEND_SYSTEM.md`) and the project file is `.pi/APPEND_SYSTEM.md` when the project is trusted. Those files do not authorize custom agents and do not select a role.
 
-Conversely, `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` is an append for one of the twelve packaged TLH roles only. It does not replace or reconfigure the packaged system prompt. A project custom definition at `.tlh/agents/custom/<UPPERCASE-SLUG>.md` is a separate child-agent definition and must satisfy its own exact-path, trust, frontmatter, and snapshot-capability checks.
+Conversely, `.tlh/agents/builtin/<ROLE>_PROMPT_APPEND.md` is an append for one of the thirteen packaged TLH roles only. It does not replace or reconfigure the packaged system prompt. A project custom definition at `.tlh/agents/custom/<UPPERCASE-SLUG>.md` is a separate child-agent definition and must satisfy its own exact-path, trust, frontmatter, and snapshot-capability checks.
 
 ## Diagnostics and safety reminders
 

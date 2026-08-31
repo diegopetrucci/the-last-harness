@@ -73,6 +73,8 @@ interface BuildPiArgsInput {
   tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
+  /** Explicit agent capability; omitted preserves the historical bridge behavior. */
+  supervisorBridge?: boolean;
   systemPrompt?: string | null;
   cwd?: string;
   promptFileStem?: string;
@@ -250,7 +252,9 @@ function buildPiArgsInternal(
   }
 
   const hasStructuredOutput = Boolean(input.structuredOutput);
-  const requiresContactSupervisor = Boolean(input.orchestratorIntercomTarget?.trim());
+  const contactSupervisorDisallowed = input.supervisorBridge === false;
+  const requiresContactSupervisor =
+    Boolean(input.orchestratorIntercomTarget?.trim()) && !contactSupervisorDisallowed;
   const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
   const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
   if (toolPolicy.error) throw new Error(toolPolicy.error);
@@ -279,6 +283,9 @@ function buildPiArgsInternal(
         args.push("--no-tools");
       }
     }
+  }
+  if (contactSupervisorDisallowed) {
+    args.push("--exclude-tools", CONTACT_SUPERVISOR_TOOL_NAME);
   }
 
   const runtimeExtensions = [PROMPT_RUNTIME_EXTENSION_PATH];

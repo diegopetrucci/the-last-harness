@@ -310,7 +310,13 @@ function validCapturedAgentConfig(value: unknown): value is AgentConfig {
     value.acceptanceRole !== "writer"
   )
     return false;
-  for (const field of ["defaultProgress", "interactive", "completionGuard", "disabled"] as const) {
+  for (const field of [
+    "defaultProgress",
+    "interactive",
+    "completionGuard",
+    "supervisorBridge",
+    "disabled",
+  ] as const) {
     if (value[field] !== undefined && typeof value[field] !== "boolean") return false;
   }
   for (const field of ["maxSubagentDepth", "maxExecutionTimeMs"] as const) {
@@ -577,6 +583,12 @@ function validateRegistrationInput(input: ProjectAgentSnapshotInput): void {
     }
     if (typeof entry.agent.inheritSkills !== "boolean") {
       throw new TypeError("Project agent snapshot agent inheritSkills must be a boolean.");
+    }
+    if (
+      entry.agent.supervisorBridge !== undefined &&
+      typeof entry.agent.supervisorBridge !== "boolean"
+    ) {
+      throw new TypeError("Project agent snapshot agent supervisorBridge must be a boolean.");
     }
     if (entry.agent.source !== "project") {
       throw new TypeError("Project agent snapshot agents must preserve source 'project'.");

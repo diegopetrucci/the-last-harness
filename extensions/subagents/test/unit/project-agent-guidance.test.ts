@@ -84,6 +84,7 @@ const EXPECTED_ROLE_FILENAMES = [
   ["product", "PRODUCT_PROMPT_APPEND.md"],
   ["bug-hunter", "BUG-HUNTER_PROMPT_APPEND.md"],
   ["developer", "DEVELOPER_PROMPT_APPEND.md"],
+  ["test-runner", "TEST-RUNNER_PROMPT_APPEND.md"],
   ["code-reviewer", "CODE-REVIEWER_PROMPT_APPEND.md"],
   ["repo-scout", "REPO-SCOUT_PROMPT_APPEND.md"],
   ["diff-summarizer", "DIFF-SUMMARIZER_PROMPT_APPEND.md"],

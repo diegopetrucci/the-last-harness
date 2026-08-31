@@ -52,6 +52,8 @@ export interface RunnerSubagentStep {
   extensions?: string[];
   subagentOnlyExtensions?: string[];
   completionGuard?: boolean;
+  /** Explicit agent capability controlling generic supervisor bridge support. */
+  supervisorBridge?: boolean;
   systemPrompt?: string | null;
   systemPromptMode?: "append" | "replace";
   inheritProjectContext: boolean;

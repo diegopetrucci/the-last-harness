@@ -10,6 +10,7 @@
 
 export const ALLOWED_SUBAGENTS = Object.freeze([
   "developer",
+  "test-runner",
   "code-reviewer",
   "repo-scout",
   "diff-summarizer",
