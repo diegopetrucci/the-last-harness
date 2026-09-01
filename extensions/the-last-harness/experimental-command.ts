@@ -82,7 +82,10 @@ function formatExperimentalFeatureStatus(
   const nextStep = enabled
     ? `Disable with /experimental disable ${feature.id}.`
     : `Enable with /experimental enable ${feature.id}.`;
-  return `- ${feature.id}: ${enabledLabel}. ${feature.description} ${nextStep}`;
+  const activationNotice = feature.nextSessionOnly
+    ? " Changes apply on the next session; this session keeps its current activation."
+    : "";
+  return `- ${feature.id}: ${enabledLabel}. ${feature.description}${activationNotice} ${nextStep}`;
 }
 
 function formatExperimentalStatusMessage(
@@ -137,13 +140,17 @@ function notifyExperimentalWriteResult(
   const undoLabel = result.enabled
     ? `Undo with /experimental disable ${featureId}.`
     : `Undo with /experimental enable ${featureId}.`;
+  const feature = getExperimentalFeature(featureId);
+  const activationNotice = feature?.nextSessionOnly
+    ? " Changes apply on the next session; this session keeps its current activation."
+    : "";
   pi.events?.emit?.(TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT, {
     cwd: ctx.cwd,
     enabled: result.enabled,
     featureId,
   });
   ctx.ui.notify(
-    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}. ${undoLabel}${backupLabel}`,
+    `${changedLabel} TLH experimental feature ${featureId} at ${formatHomePath(result.settingsPath)}. It is now ${stateLabel}.${activationNotice} ${undoLabel}${backupLabel}`,
     "info",
   );
 }

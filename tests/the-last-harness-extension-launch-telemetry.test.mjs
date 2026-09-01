@@ -11,9 +11,11 @@ import { createIsolatedProfileFixture, withEnv } from "./test-fixture-helpers.mj
 const jiti = createJiti(import.meta.url);
 const { TLH_LAUNCH_TELEMETRY_EVENT_TYPE, TLH_NAME, TLH_TELEMETRY_STATE_SCHEMA_VERSION } =
   await jiti.import("../extensions/the-last-harness/constants.ts");
-const { CI_FAILURE_INVESTIGATION_FEATURE, DELTA_FOLLOW_UP_REVIEWS_FEATURE } = await jiti.import(
-  "../extensions/the-last-harness/experimental.ts",
-);
+const {
+  CI_FAILURE_INVESTIGATION_FEATURE,
+  DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  SESSION_MIRROR_OBSERVER_FEATURE,
+} = await jiti.import("../extensions/the-last-harness/experimental.ts");
 const { THINKING_LEVELS } = await jiti.import("../extensions/the-last-harness/constants.ts");
 const {
   privacySafeTlhTelemetryProviderId,
@@ -45,7 +47,12 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
       {
         tlh: {
           experimental: {
-            enabledFeatures: [" delta-follow-up-reviews ", "embedded-subagents", "legacy-flag"],
+            enabledFeatures: [
+              " delta-follow-up-reviews ",
+              SESSION_MIRROR_OBSERVER_FEATURE,
+              "embedded-subagents",
+              "legacy-flag",
+            ],
           },
         },
       },
@@ -105,6 +112,7 @@ test("launch telemetry sends allowlisted experimental feature states and reuses 
   assert.equal(event.payload[`Tlh.Experimental.${CI_FAILURE_INVESTIGATION_FEATURE}`], "off");
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.embedded-subagents"), false);
   assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.legacy-flag"), false);
+  assert.equal(Object.hasOwn(event.payload, "Tlh.Experimental.session-mirror-observer"), false);
   assert.equal(readFileSync(telemetryStatePath(fixture), "utf8"), originalState);
 
   // Regression: no key ending in ".thinking" must appear in the payload.

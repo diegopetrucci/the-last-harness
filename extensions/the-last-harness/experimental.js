@@ -2,6 +2,7 @@ import { SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { normalizeEnabledExperimentalFeatures, normalizeExperimentalFeatureId, readEnabledExperimentalFeatures, } from "../the-last-harness-subagent-safety.mjs";
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE = "ci-failure-investigation";
+export const SESSION_MIRROR_OBSERVER_FEATURE = "session-mirror-observer";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 export const EXPERIMENTAL_COMMAND_HELP = [
     "Usage: /experimental [list|status [feature]|enable <feature>|disable <feature>|toggle <feature>]",
@@ -60,6 +61,12 @@ export const TLH_EXPERIMENTAL_FEATURES = [
             architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
         },
     },
+    {
+        id: SESSION_MIRROR_OBSERVER_FEATURE,
+        description: "Opt-in aggregate-only in-process session source observation with deferred snapshots; changes apply on the next session.",
+        telemetry: false,
+        nextSessionOnly: true,
+    },
 ];
 const TLH_EXPERIMENTAL_FEATURES_BY_ID = new Map(TLH_EXPERIMENTAL_FEATURES.map((feature) => [feature.id, feature]));
 export function hasRegisteredExperimentalFeatures() {
@@ -90,7 +97,7 @@ function telemetryExperimentalFeatureKey(featureId) {
 }
 export function buildExperimentalFeatureTelemetryPayload(config) {
     const enabledFeatures = new Set(readEnabledFeatures(config));
-    return Object.fromEntries(TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+    return Object.fromEntries(TLH_EXPERIMENTAL_FEATURES.filter((feature) => feature.telemetry !== false).map((feature) => [
         telemetryExperimentalFeatureKey(feature.id),
         enabledFeatures.has(feature.id) ? "on" : "off",
     ]));

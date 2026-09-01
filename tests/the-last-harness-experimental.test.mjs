@@ -14,6 +14,7 @@ const jiti = createJiti(import.meta.url);
 const {
   CI_FAILURE_INVESTIGATION_FEATURE,
   DELTA_FOLLOW_UP_REVIEWS_FEATURE,
+  SESSION_MIRROR_OBSERVER_FEATURE,
   buildPrimaryExperimentalPrompt,
   getTlhExperimentalConfig,
   isTlhExperimentalFeatureEnabled,
@@ -83,7 +84,11 @@ test(
       const command = registeredExperimentalCommand();
       assert.deepEqual(
         (await command.getArgumentCompletions("enable ")).map((completion) => completion.value),
-        [`enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`, `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`],
+        [
+          `enable ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
+          `enable ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+          `enable ${SESSION_MIRROR_OBSERVER_FEATURE}`,
+        ],
       );
       assert.deepEqual(
         (await command.getArgumentCompletions("status ")).map((completion) => completion.value),
@@ -91,6 +96,7 @@ test(
           "status",
           `status ${DELTA_FOLLOW_UP_REVIEWS_FEATURE}`,
           `status ${CI_FAILURE_INVESTIGATION_FEATURE}`,
+          `status ${SESSION_MIRROR_OBSERVER_FEATURE}`,
         ],
       );
       assert.equal(await command.getArgumentCompletions("unknown"), null);
@@ -113,6 +119,8 @@ test(
         notifications.at(-1)?.message ?? "",
         /\/experimental enable ci-failure-investigation/,
       );
+      assert.match(notifications.at(-1)?.message ?? "", /session-mirror-observer/);
+      assert.match(notifications.at(-1)?.message ?? "", /changes apply on the next session/i);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /embedded-subagents/);
       assert.doesNotMatch(notifications.at(-1)?.message ?? "", /run-tests-last/);
 
@@ -122,6 +130,23 @@ test(
         staleStatus.notifications.at(-1)?.message ?? "",
         /unknown tlh experimental feature/i,
       );
+    });
+  },
+);
+
+test(
+  "session-mirror observer writes explicitly defer activation to the next session",
+  SERIAL_TEST,
+  async (t) => {
+    const fixture = createIsolatedProfileFixture("tlh-experimental-test-", { test: t });
+
+    await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
+      const command = registeredExperimentalCommand();
+      const { ctx, notifications } = createCommandContext(fixture.dir);
+      await command.handler(`enable ${SESSION_MIRROR_OBSERVER_FEATURE}`, ctx);
+      assert.equal(notifications.at(-1)?.type, "info");
+      assert.match(notifications.at(-1)?.message ?? "", /changes apply on the next session/i);
+      assert.match(notifications.at(-1)?.message ?? "", /current activation/i);
     });
   },
 );

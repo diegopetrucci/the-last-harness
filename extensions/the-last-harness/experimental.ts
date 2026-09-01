@@ -14,6 +14,7 @@ import type {
 export const DELTA_FOLLOW_UP_REVIEWS_FEATURE: TlhExperimentalFeatureId = "delta-follow-up-reviews";
 export const CI_FAILURE_INVESTIGATION_FEATURE: TlhExperimentalFeatureId =
   "ci-failure-investigation";
+export const SESSION_MIRROR_OBSERVER_FEATURE: TlhExperimentalFeatureId = "session-mirror-observer";
 export const TLH_EXPERIMENTAL_FEATURE_CHANGED_EVENT = "tlh:experimental-feature-changed";
 
 export const EXPERIMENTAL_COMMAND_HELP = [
@@ -61,12 +62,16 @@ After TLH opens a PR and CI/status checks fail:
 5. Before any edits, commits, pushes, reruns, PR changes, or other follow-up changes, ask for explicit user approval.
 `;
 
-type TlhExperimentalFeature = {
+export type TlhExperimentalFeature = {
   id: TlhExperimentalFeatureId;
   description: string;
   primaryAgentPrompt?: string;
   primaryAgentPrompts?: Partial<Record<string, string>>;
   codeReviewerPrompt?: string;
+  /** Whether this feature contributes a launch-telemetry key. */
+  telemetry?: boolean;
+  /** Whether preference changes are intentionally deferred to the next session. */
+  nextSessionOnly?: boolean;
 };
 
 type TlhExperimentalSlashAction =
@@ -92,6 +97,13 @@ export const TLH_EXPERIMENTAL_FEATURES: TlhExperimentalFeature[] = [
     primaryAgentPrompts: {
       architect: CI_FAILURE_INVESTIGATION_ARCHITECT_PROMPT.trim(),
     },
+  },
+  {
+    id: SESSION_MIRROR_OBSERVER_FEATURE,
+    description:
+      "Opt-in aggregate-only in-process session source observation with deferred snapshots; changes apply on the next session.",
+    telemetry: false,
+    nextSessionOnly: true,
   },
 ];
 
@@ -137,7 +149,7 @@ export function buildExperimentalFeatureTelemetryPayload(
 ): Record<string, "on" | "off"> {
   const enabledFeatures = new Set(readEnabledFeatures(config));
   return Object.fromEntries(
-    TLH_EXPERIMENTAL_FEATURES.map((feature) => [
+    TLH_EXPERIMENTAL_FEATURES.filter((feature) => feature.telemetry !== false).map((feature) => [
       telemetryExperimentalFeatureKey(feature.id),
       enabledFeatures.has(feature.id) ? "on" : "off",
     ]),
