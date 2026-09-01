@@ -828,6 +828,86 @@ test("enabled isolated sessions snapshot the flag and apply changes only on the 
   });
 });
 
+test("reload fails closed when its activation snapshot is removed or invalidated after a settings change", async (t) => {
+  const fixture = makeFixture(t, false);
+  const snapshotKey = Symbol.for("the-last-harness.session-mirror-observer-activation-snapshot");
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, snapshotKey);
+  const originalSettingsCreate = SettingsManager.create;
+  let settingsReads = 0;
+  SettingsManager.create = (...args) => {
+    settingsReads += 1;
+    return originalSettingsCreate.apply(SettingsManager, args);
+  };
+
+  try {
+    await withFixtureEnv(fixture, async () => {
+      const ctx = createContext(fixture);
+      for (const invalidation of ["deleted", "malformed"]) {
+        assert.equal(Reflect.deleteProperty(globalThis, snapshotKey), true, invalidation);
+        writeFeatureSetting(fixture, false);
+        const baseline = createSessionMirrorObserverFacade();
+        await baseline.sessionStart(ctx, "new");
+        assert.equal(baseline.getStatus(ctx).sessionConfigured, false, invalidation);
+
+        writeFeatureSetting(fixture, true);
+        let invalidSnapshot;
+        if (invalidation === "deleted") {
+          assert.equal(Reflect.deleteProperty(globalThis, snapshotKey), true);
+        } else {
+          invalidSnapshot = Object.freeze({ sessionConfigured: "invalid" });
+          Object.defineProperty(globalThis, snapshotKey, {
+            value: invalidSnapshot,
+            writable: true,
+            configurable: true,
+          });
+        }
+
+        let loadCalls = 0;
+        let attestationCalls = 0;
+        const reloaded = createSessionMirrorObserverFacade({
+          attest: () => {
+            attestationCalls += 1;
+            return { ok: true, phase: "session-file" };
+          },
+          loadProbe: async () => {
+            loadCalls += 1;
+            return createProbeFactory();
+          },
+        });
+        const settingsReadsBeforeReload = settingsReads;
+        await reloaded.sessionStart(ctx, "reload");
+        assert.equal(
+          settingsReads,
+          settingsReadsBeforeReload,
+          `${invalidation} reload settings read`,
+        );
+        const status = reloaded.getStatus(ctx);
+        assert.equal(status.configured, true, invalidation);
+        assert.equal(status.nextSessionConfigured, true, invalidation);
+        assert.equal(status.sessionConfigured, false, invalidation);
+        assert.equal(status.active, "disabled", invalidation);
+        assert.equal(status.load, "not-loaded", invalidation);
+        assert.equal(loadCalls, 0, invalidation);
+        assert.equal(attestationCalls, 0, invalidation);
+
+        const descriptor = Object.getOwnPropertyDescriptor(globalThis, snapshotKey);
+        if (invalidation === "deleted") {
+          assert.equal(descriptor, undefined);
+        } else {
+          assert.equal(descriptor?.value, invalidSnapshot);
+        }
+      }
+    });
+  } finally {
+    SettingsManager.create = originalSettingsCreate;
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, snapshotKey, originalDescriptor);
+    } else {
+      Reflect.deleteProperty(globalThis, snapshotKey);
+    }
+  }
+});
+
 test("fresh facade instances preserve activation across reload but recapture new conversation sessions", async (t) => {
   const fixture = makeFixture(t, true);
   const calls = [];

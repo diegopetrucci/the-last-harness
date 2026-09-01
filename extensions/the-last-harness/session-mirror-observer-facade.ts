@@ -760,6 +760,10 @@ export function createSessionMirrorObserverFacade(
 
     const previousActivation = reason === "reload" ? readActivationSnapshot() : undefined;
     if (!isCurrent(nextState)) return Promise.resolve();
+    if (reason === "reload" && previousActivation === undefined) {
+      nextState.sessionConfigured = false;
+      return Promise.resolve();
+    }
     const configured = previousActivation ?? configuredForCwd(cwd);
     if (!isCurrent(nextState)) return Promise.resolve();
     if (reason !== "reload" || previousActivation === undefined) {
