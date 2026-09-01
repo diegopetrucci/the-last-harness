@@ -396,7 +396,6 @@ describe("project agent snapshot provider", () => {
             thinking: "high",
             systemPrompt: "user prompt",
             tools: ["write"],
-            defaultContext: "fork",
             disabled: false,
           },
           "embedded.explicit-tools": { tools: ["write"], model: "user-tools-model" },

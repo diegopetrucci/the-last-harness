@@ -157,33 +157,6 @@ function sanitizeCost(value) {
         ? { inputTokens, outputTokens, costUsd }
         : undefined;
 }
-function sanitizeTurnBudget(value) {
-    if (!value || typeof value !== "object")
-        return undefined;
-    const raw = value;
-    const maxTurns = clampNumber(raw.maxTurns);
-    const graceTurns = clampNumber(raw.graceTurns);
-    const turnCount = clampNumber(raw.turnCount);
-    const outcome = raw.outcome === "within-budget" ||
-        raw.outcome === "wrap-up-requested" ||
-        raw.outcome === "exceeded"
-        ? raw.outcome
-        : undefined;
-    if (maxTurns === undefined || graceTurns === undefined || turnCount === undefined || !outcome)
-        return undefined;
-    return {
-        maxTurns,
-        graceTurns,
-        turnCount,
-        outcome,
-        ...(clampNumber(raw.wrapUpRequestedAtTurn) !== undefined
-            ? { wrapUpRequestedAtTurn: clampNumber(raw.wrapUpRequestedAtTurn) }
-            : {}),
-        ...(clampNumber(raw.exceededAtTurn) !== undefined
-            ? { exceededAtTurn: clampNumber(raw.exceededAtTurn) }
-            : {}),
-    };
-}
 function sanitizeState(value, fallback) {
     return value === "queued" ||
         value === "running" ||
@@ -252,11 +225,6 @@ function sanitizeStep(input, depth) {
         ...(clampNumber(raw.endedAt) !== undefined ? { endedAt: clampNumber(raw.endedAt) } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget)
-            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-            : {}),
-        ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-        ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(parseContextUsageDiagnostics(raw.contextUsage)
             ? { contextUsage: parseContextUsageDiagnostics(raw.contextUsage) }
             : {}),
@@ -319,15 +287,6 @@ export function sanitizeSummary(input, depth = 0) {
             : {}),
         ...(stringValue(raw.sessionId, 256) ? { sessionId: stringValue(raw.sessionId, 256) } : {}),
         ...(pathValue(raw.sessionFile, 2048) ? { sessionFile: pathValue(raw.sessionFile, 2048) } : {}),
-        ...(stringValue(raw.intercomTarget, 256)
-            ? { intercomTarget: stringValue(raw.intercomTarget, 256) }
-            : {}),
-        ...(stringValue(raw.ownerIntercomTarget, 256)
-            ? { ownerIntercomTarget: stringValue(raw.ownerIntercomTarget, 256) }
-            : {}),
-        ...(stringValue(raw.leafIntercomTarget, 256)
-            ? { leafIntercomTarget: stringValue(raw.leafIntercomTarget, 256) }
-            : {}),
         ...(raw.ownerState === "live" || raw.ownerState === "gone" || raw.ownerState === "unknown"
             ? { ownerState: raw.ownerState }
             : {}),
@@ -384,11 +343,6 @@ export function sanitizeSummary(input, depth = 0) {
             ? { deadlineAt: clampNumber(raw.deadlineAt) }
             : {}),
         ...(raw.timedOut === true ? { timedOut: true } : {}),
-        ...(sanitizeTurnBudget(raw.turnBudget)
-            ? { turnBudget: sanitizeTurnBudget(raw.turnBudget) }
-            : {}),
-        ...(raw.turnBudgetExceeded === true ? { turnBudgetExceeded: true } : {}),
-        ...(raw.wrapUpRequested === true ? { wrapUpRequested: true } : {}),
         ...(stringValue(raw.error, 1024) ? { error: stringValue(raw.error, 1024) } : {}),
         ...(steps && steps.length > 0 ? { steps } : {}),
         ...(depth < MAX_DEPTH && Array.isArray(raw.children)
@@ -906,11 +860,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
-        ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-        ...(status.turnBudgetExceeded !== undefined
-            ? { turnBudgetExceeded: status.turnBudgetExceeded }
-            : {}),
-        ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
         ...(status.error ? { error: status.error } : {}),
         ...(status.startedAt !== undefined
             ? { startedAt: status.startedAt }
@@ -947,13 +896,6 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
                         ...(step.error ? { error: step.error } : {}),
                         ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
                         ...(step.terminationReason ? { terminationReason: step.terminationReason } : {}),
-                        ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-                        ...(step.turnBudgetExceeded !== undefined
-                            ? { turnBudgetExceeded: step.turnBudgetExceeded }
-                            : {}),
-                        ...(step.wrapUpRequested !== undefined
-                            ? { wrapUpRequested: step.wrapUpRequested }
-                            : {}),
                         ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
                         ...(step.contextPressure ? { contextPressure: step.contextPressure } : {}),
                         ...(step.contextPressureCrossedThresholds

@@ -47,6 +47,7 @@ import {
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
+import { getAsyncConfigPath } from "../../src/shared/types.ts";
 import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
 
 function inferredAcceptanceRejectionOutput(output: string): string {
@@ -140,6 +141,11 @@ describe("async execution utilities", () => {
       });
 
       assert.equal(result.isError, undefined);
+      const persistedConfig = JSON.parse(
+        fs.readFileSync(getAsyncConfigPath(id), "utf-8"),
+      ) as SubagentRunConfig;
+      assert.equal(persistedConfig.steps, undefined);
+      assert.equal(persistedConfig.plan?.kind, "single");
       const resultPath = await waitForAsyncResultFile(id);
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       assert.equal(payload.success, true);
@@ -281,8 +287,7 @@ describe("async execution utilities", () => {
   it("passes native supervisor metadata to background children", async () => {
     mockPi.onCall({
       echoEnv: [
-        "PI_SUBAGENT_INTERCOM_SESSION_NAME",
-        "PI_SUBAGENT_ORCHESTRATOR_TARGET",
+        "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID",
         "PI_SUBAGENT_RUN_ID",
         "PI_SUBAGENT_CHILD_AGENT",
         "PI_SUBAGENT_CHILD_INDEX",
@@ -304,16 +309,13 @@ describe("async execution utilities", () => {
       },
       shareEnabled: false,
       maxSubagentDepth: 2,
-      controlIntercomTarget: "subagent-chat-parent",
-      childIntercomTarget: (agent: string, index: number) => `subagent-${agent}-${id}-${index + 1}`,
     });
     assert.equal(run.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id);
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     assert.equal(payload.success, true);
     assert.deepEqual(JSON.parse(payload.results[0]?.output ?? "{}"), {
-      PI_SUBAGENT_INTERCOM_SESSION_NAME: `subagent-worker-${id}-1`,
-      PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
+      PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: "session-1",
       PI_SUBAGENT_RUN_ID: id,
       PI_SUBAGENT_CHILD_AGENT: "worker",
       PI_SUBAGENT_CHILD_INDEX: "0",
@@ -342,8 +344,6 @@ describe("async execution utilities", () => {
       },
       shareEnabled: false,
       maxSubagentDepth: 2,
-      controlIntercomTarget: "subagent-chat-parent",
-      childIntercomTarget: (agent: string, index: number) => `subagent-${agent}-${id}-${index + 1}`,
     });
     assert.equal(run.isError, undefined);
     const resultPath = await waitForAsyncResultFile(id);
@@ -503,7 +503,7 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     };
     mockPi.onCall({ output: "single done" });
-    const singleId = `async-handoff-single-${Date.now().toString(36)}`;
+    const singleId = `async-receipt-single-${Date.now().toString(36)}`;
     const singleResult = executeAsyncSingle(singleId, {
       agent: "worker",
       task: "Do work",
@@ -520,7 +520,7 @@ describe("async execution utilities", () => {
 
     mockPi.onCall({ output: "parallel one done" });
     mockPi.onCall({ output: "parallel two done" });
-    const parallelId = `async-handoff-parallel-${Date.now().toString(36)}`;
+    const parallelId = `async-receipt-parallel-${Date.now().toString(36)}`;
     const parallelResult = executeAsyncChain(parallelId, {
       chain: [
         {
@@ -549,7 +549,7 @@ describe("async execution utilities", () => {
     assert.equal(parallelPayload.agent, "parallel:worker+reviewer");
 
     mockPi.onCall({ output: "chain done" });
-    const chainId = `async-handoff-chain-${Date.now().toString(36)}`;
+    const chainId = `async-receipt-chain-${Date.now().toString(36)}`;
     const chainResult = executeAsyncChain(chainId, {
       chain: [{ agent: "worker", task: "Do chained work" }],
       agents: [makeAgent("worker")],
@@ -699,6 +699,15 @@ describe("async execution utilities", () => {
 
     const asyncId = result.details?.asyncId;
     assert.ok(asyncId, "expected asyncId");
+    const persistedConfig = JSON.parse(
+      fs.readFileSync(getAsyncConfigPath(asyncId), "utf-8"),
+    ) as SubagentRunConfig;
+    assert.equal(persistedConfig.steps, undefined);
+    assert.equal(persistedConfig.plan?.kind, "parallel");
+    assert.equal(
+      persistedConfig.plan?.kind === "parallel" ? persistedConfig.plan.tasks.length : undefined,
+      1,
+    );
     const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
     const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
     const deadline = Date.now() + scaleTestTimeout(10_000);
@@ -715,6 +724,10 @@ describe("async execution utilities", () => {
     assert.equal(payload.results[0]?.acceptance?.status, "checked");
     assert.equal(status.sessionId, parentSessionFile);
     assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
+    assert.equal(status.workflowGraph?.mode, "parallel");
+    assert.equal(status.workflowGraph?.nodes[0]?.kind, "parallel-group");
+    assert.equal(status.workflowGraph?.nodes[0]?.children?.[0]?.agent, "worker");
+    assert.equal(status.chainStepCount, 1);
     const outputPath = path.join(
       tempDir,
       "parent-session",
@@ -1157,6 +1170,53 @@ describe("async execution utilities", () => {
     }
   });
 
+  it("rejects a durable runner config without a direct plan or legacy steps", () => {
+    const id = `async-missing-run-plan-${Date.now().toString(36)}`;
+    const asyncDir = path.join(tempDir, id);
+    const resultPath = path.join(tempDir, `${id}-result.json`);
+    const configPath = path.join(tempDir, `${id}-config.json`);
+    const config = {
+      id,
+      resultPath,
+      cwd: tempDir,
+      placeholder: "{previous}",
+      asyncDir,
+      resultMode: "single",
+      sessionId: "session-missing-run-plan",
+    } satisfies Omit<SubagentRunConfig, "plan" | "steps">;
+    fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
+
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const runner = spawnSync(process.execPath, [runnerPath, configPath], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+
+    assert.equal(runner.status, 1, runner.stderr);
+    assert.equal(fs.existsSync(configPath), false, "runner should consume its persisted config");
+    assert.match(runner.stderr, /direct plan or a non-empty legacy steps array/);
+    assert.ok(fs.existsSync(resultPath), "runner should persist a result artifact");
+    const statusPath = path.join(asyncDir, "status.json");
+    assert.ok(fs.existsSync(statusPath), "runner should persist status");
+
+    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+    const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+    const expectedDiagnostic =
+      "Async runner config must include a direct plan or a non-empty legacy steps array.";
+    assert.equal(payload.state, "failed");
+    assert.equal(payload.success, false);
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.error, expectedDiagnostic);
+    assert.equal(payload.results.length, 0);
+    assert.equal(status.state, "failed");
+    assert.equal(status.error, expectedDiagnostic);
+    assert.equal(status.steps?.length, 0);
+  });
+
   it("persists a failed runner result for invalid path-only lazy-skill policy", () => {
     const id = `async-invalid-tool-policy-${Date.now().toString(36)}`;
     const asyncDir = path.join(tempDir, id);
@@ -1251,7 +1311,9 @@ describe("async execution utilities", () => {
       modelFallbackFilterNotice: persistedNotice,
       inheritProjectContext: false,
       inheritSkills: false,
-    } satisfies SubagentRunConfig["steps"][number] & { modelFallbackFilterNotice: string };
+    } satisfies NonNullable<SubagentRunConfig["steps"]>[number] & {
+      modelFallbackFilterNotice: string;
+    };
     const config: SubagentRunConfig = {
       id,
       steps: [step, { parallel: [{ ...step, task: "Inspect the parallel task" }] }],

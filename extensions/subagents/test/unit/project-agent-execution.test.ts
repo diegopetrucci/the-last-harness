@@ -204,7 +204,6 @@ function asyncParallelTooLargeParams(projectRoot: string): SubagentParamsLike {
       })),
     ],
     agentScope: "project",
-    context: "fresh",
     cwd: projectRoot,
     async: true,
   };
@@ -328,7 +327,6 @@ describe("project-agent executor authorization", () => {
           agent: "embedded.xyz",
           task: "must reject malformed registered identity",
           agentScope: "project",
-          context: "fresh",
           cwd: projectRoot,
         },
       },
@@ -343,7 +341,6 @@ describe("project-agent executor authorization", () => {
             },
           ],
           agentScope: "project",
-          context: "fresh",
           cwd: projectRoot,
         },
       },
@@ -391,7 +388,6 @@ describe("project-agent executor authorization", () => {
         agent: "embedded.xyz",
         task: "must stay in the containing worktree",
         agentScope: "project",
-        context: "fresh",
         cwd: linkedRoot,
       } as never,
       new AbortController().signal,
@@ -414,7 +410,6 @@ describe("project-agent executor authorization", () => {
           },
         ],
         agentScope: "project",
-        context: "fresh",
         cwd: projectRoot,
       } as never,
       new AbortController().signal,
@@ -472,7 +467,6 @@ Profile developer prompt.
         agent: "embedded.xyz",
         task: "must not run",
         agentScope: "project",
-        context: "fresh",
         cwd: outsideRoot,
       } as never,
       new AbortController().signal,
@@ -503,7 +497,6 @@ Profile developer prompt.
         agent: " embedded.xyz ",
         task: "must not bypass project identity",
         agentScope: "project",
-        context: "fresh",
         cwd: projectRoot,
       } as never,
       new AbortController().signal,
@@ -519,7 +512,6 @@ Profile developer prompt.
       {
         tasks: [{ agent: "\tembedded.xyz\t", task: "must not bypass project identity" }],
         agentScope: "project",
-        context: "fresh",
         cwd: projectRoot,
         async: true,
       } as never,
@@ -532,7 +524,7 @@ Profile developer prompt.
     assert.equal(discoverCalls.count, 0);
   });
 
-  it("rejects forged capability, non-architect identity, and non-fresh/user execution", async () => {
+  it("rejects forged capability, non-architect identity, and unsupported scope", async () => {
     const projectRoot = makeProject();
     const profileDir = path.join(projectRoot, "profile");
     process.env.PI_CODING_AGENT_DIR = profileDir;
@@ -546,10 +538,7 @@ Profile developer prompt.
       discoverCalls,
     );
 
-    for (const params of [
-      { ...asyncParallelTooLargeParams(projectRoot), context: "fork" },
-      { ...asyncParallelTooLargeParams(projectRoot), agentScope: "both" },
-    ]) {
+    for (const params of [{ ...asyncParallelTooLargeParams(projectRoot), agentScope: "both" }]) {
       const result = await validExecutor.execute(
         "unsafe-project-execution",
         params as never,
@@ -636,7 +625,6 @@ Profile developer prompt.
       agent: "embedded.xyz",
       task: "run the exact project agent",
       agentScope: "project" as const,
-      context: "fresh" as const,
       cwd: projectRoot,
     };
 
@@ -712,7 +700,6 @@ Profile developer prompt.
         agent: "embedded.xyz",
         task: "run while primary persona is disabled",
         agentScope: "project",
-        context: "fresh",
         cwd: projectRoot,
       } as never,
       new AbortController().signal,
@@ -751,7 +738,6 @@ Profile developer prompt.
         agent: "embedded.xyz",
         task: "must not use profile fallback",
         agentScope: "project",
-        context: "fresh",
         cwd: projectRoot,
         async: true,
       } as never,

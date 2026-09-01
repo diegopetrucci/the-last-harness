@@ -367,6 +367,46 @@ describe("async status helpers", () => {
     }
   });
 
+  it("ignores legacy turn-budget fields without rewriting historical status", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-historical-turn-budget-status-"));
+    try {
+      const dir = createAsyncDir(root, "run-historical-turn-budget", {
+        runId: "run-historical-turn-budget",
+        mode: "single",
+        state: "complete",
+        startedAt: 100,
+        lastUpdate: 200,
+        turnBudget: { maxTurns: 5, graceTurns: 1, outcome: "exceeded", turnCount: 6 },
+        turnBudgetExceeded: true,
+        wrapUpRequested: true,
+        steps: [
+          {
+            agent: "worker",
+            status: "complete",
+            turnBudget: { maxTurns: 5, graceTurns: 1, outcome: "exceeded", turnCount: 6 },
+            turnBudgetExceeded: true,
+            wrapUpRequested: true,
+          },
+        ],
+      });
+      const statusPath = path.join(dir, "status.json");
+      const before = fs.readFileSync(statusPath);
+
+      const runs = listAsyncRuns(root, { reconcile: false });
+      const summary = runs[0];
+      assert.ok(summary, "historical status should remain discoverable");
+      assert.equal("turnBudget" in summary, false);
+      assert.equal("turnBudgetExceeded" in summary, false);
+      assert.equal("wrapUpRequested" in summary, false);
+      assert.equal("turnBudget" in (summary.steps[0] ?? {}), false);
+      assert.equal("turnBudgetExceeded" in (summary.steps[0] ?? {}), false);
+      assert.equal("wrapUpRequested" in (summary.steps[0] ?? {}), false);
+      assert.deepEqual(fs.readFileSync(statusPath), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces malformed status files instead of silently skipping them", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-bad-status-"));
     const dir = path.join(root, "broken-run");

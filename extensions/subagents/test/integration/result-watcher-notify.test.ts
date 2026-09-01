@@ -83,7 +83,7 @@ function createNotifyHarness(): {
 }
 
 describe("result watcher to native notify", () => {
-  it("delivers terminal result types only to the exact owner without result intercom", async () => {
+  it("does not register or emit the retired result event while notifying the exact owner", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-notify-"));
     const listeners = new Map<string, Set<(payload: unknown) => void>>();
     const emitted: Array<{ event: string; data: unknown }> = [];
@@ -401,10 +401,6 @@ describe("result watcher to native notify", () => {
       assert.match(
         sent[0]!.message.content ?? "",
         /Cancel: subagent\(\{ action: "interrupt", id: "paused-awaiting-supervisor" \}\)/,
-      );
-      assert.doesNotMatch(
-        sent[0]!.message.content ?? "",
-        /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
       );
       assert.doesNotMatch(
         sent[0]!.message.content ?? "",

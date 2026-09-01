@@ -84,26 +84,22 @@ export function suppressProgressForReadOnlyTask(behavior, task, originalTask) {
         ? { ...behavior, progress: false }
         : behavior;
 }
-function resolveChainPath(filePath, chainDir) {
-    return path.isAbsolute(filePath) ? filePath : path.join(chainDir, filePath);
+function resolveExecutionPath(filePath, baseDir) {
+    return path.isAbsolute(filePath) ? filePath : path.join(baseDir, filePath);
 }
-export function writeInitialProgressFile(progressDir) {
-    fs.mkdirSync(progressDir, { recursive: true });
-    fs.writeFileSync(path.join(progressDir, "progress.md"), INITIAL_PROGRESS_CONTENT);
-}
-export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary) {
+export function buildExecutionInstructions(behavior, baseDir, isFirstProgressAgent, previousSummary) {
     const prefixParts = [];
     const suffixParts = [];
     if (behavior.reads && behavior.reads.length > 0) {
-        const files = behavior.reads.map((f) => resolveChainPath(f, chainDir));
+        const files = behavior.reads.map((f) => resolveExecutionPath(f, baseDir));
         prefixParts.push(`[Read from: ${files.join(", ")}]`);
     }
     if (behavior.output) {
-        const outputPath = resolveChainPath(behavior.output, chainDir);
+        const outputPath = resolveExecutionPath(behavior.output, baseDir);
         prefixParts.push(`[Write to: ${outputPath}]`);
     }
     if (behavior.progress) {
-        const progressPath = path.join(chainDir, "progress.md");
+        const progressPath = path.join(baseDir, "progress.md");
         if (isFirstProgressAgent) {
             suffixParts.push(`Create and maintain progress at: ${progressPath}`);
         }
@@ -117,5 +113,12 @@ export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent,
     const prefix = prefixParts.length > 0 ? prefixParts.join("\n") + "\n\n" : "";
     const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
     return { prefix, suffix };
+}
+export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary) {
+    return buildExecutionInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary);
+}
+export function writeInitialProgressFile(progressDir) {
+    fs.mkdirSync(progressDir, { recursive: true });
+    fs.writeFileSync(path.join(progressDir, "progress.md"), INITIAL_PROGRESS_CONTENT);
 }
 export { aggregateParallelOutputs } from "../runs/shared/parallel-utils.js";

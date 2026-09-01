@@ -1,5 +1,4 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveIntercomSessionTarget } from "../intercom/intercom-bridge.ts";
 import { buildDoctorReport } from "../extension/doctor.ts";
 import {
   SLASH_TEXT_RESULT_TYPE,
@@ -28,24 +27,12 @@ function doctorReportForContext(
     sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   }
 
-  let orchestratorTarget: string | undefined;
-  try {
-    orchestratorTarget = resolveIntercomSessionTarget(
-      pi.getSessionName(),
-      ctx.sessionManager.getSessionId(),
-    );
-  } catch (error) {
-    if (!sessionError)
-      sessionError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  }
-
   return buildDoctorReport({
     cwd: ctx.cwd,
     config,
     state,
     currentSessionFile,
     currentSessionId,
-    orchestratorTarget,
     sessionError,
     ...(getHeartbeatSummary ? { heartbeat: getHeartbeatSummary() } : {}),
   });

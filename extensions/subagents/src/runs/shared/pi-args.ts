@@ -31,8 +31,9 @@ const PROMPT_RUNTIME_EXTENSION_PATH = path.join(
   `subagent-prompt-runtime${RUNTIME_EXTENSION_SUFFIX}`,
 );
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
-export const SUBAGENT_ORCHESTRATOR_TARGET_ENV = "PI_SUBAGENT_ORCHESTRATOR_TARGET";
 export const SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV = "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
+/** Child-runtime sentinel controlling native supervisor guidance and tool registration. */
+export const SUBAGENT_SUPERVISOR_BRIDGE_ENV = "PI_SUBAGENT_SUPERVISOR_BRIDGE";
 export const SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV = "PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR";
 export const SUBAGENT_RUN_ID_ENV = "PI_SUBAGENT_RUN_ID";
 export const SUBAGENT_CHILD_AGENT_ENV = "PI_SUBAGENT_CHILD_AGENT";
@@ -73,13 +74,11 @@ interface BuildPiArgsInput {
   tools?: string[] | null;
   extensions?: string[];
   subagentOnlyExtensions?: string[];
-  /** Explicit agent capability; omitted preserves the historical bridge behavior. */
+  /** Explicit agent capability; false opts out of native supervisor coordination. */
   supervisorBridge?: boolean;
   systemPrompt?: string | null;
   cwd?: string;
   promptFileStem?: string;
-  intercomSessionName?: string;
-  orchestratorIntercomTarget?: string;
   runId?: string;
   childAgentName?: string;
   /** True only when the parent selected the canonical installer-managed TLH prompt. */
@@ -253,8 +252,7 @@ function buildPiArgsInternal(
 
   const hasStructuredOutput = Boolean(input.structuredOutput);
   const contactSupervisorDisallowed = input.supervisorBridge === false;
-  const requiresContactSupervisor =
-    Boolean(input.orchestratorIntercomTarget?.trim()) && !contactSupervisorDisallowed;
+  const requiresContactSupervisor = !contactSupervisorDisallowed;
   const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
   const toolPolicy = resolveToolPolicy(input.tools, requiresReadTool);
   if (toolPolicy.error) throw new Error(toolPolicy.error);
@@ -345,17 +343,14 @@ function buildPiArgsInternal(
   // Always write the provenance sentinel. An inherited "1" must never opt a
   // same-name custom agent into project guidance.
   env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = input.projectAgentGuidance === true ? "1" : "0";
-  if (input.intercomSessionName) {
-    env.PI_SUBAGENT_INTERCOM_SESSION_NAME = input.intercomSessionName;
-  }
-  if (input.orchestratorIntercomTarget) {
-    env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = input.orchestratorIntercomTarget;
-  }
+  // Omitted supervisorBridge preserves native supervision; false must suppress
+  // both prompt guidance and runtime tool registration in the child.
+  env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = contactSupervisorDisallowed ? "0" : "1";
   if (input.parentSessionId) {
     env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = input.parentSessionId;
   }
   if (
-    input.orchestratorIntercomTarget &&
+    !contactSupervisorDisallowed &&
     input.parentSessionId &&
     input.runId &&
     input.childAgentName

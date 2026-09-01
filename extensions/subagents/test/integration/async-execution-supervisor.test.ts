@@ -350,7 +350,10 @@ describe("async execution utilities", () => {
           steps: [
             {
               jsonl: [
-                events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need input",
+                }),
               ],
             },
           ],
@@ -358,7 +361,7 @@ describe("async execution utilities", () => {
         });
         executeAsyncSingle!(id, {
           agent: "worker",
-          task: "Ask on intercom and wait.",
+          task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: {
@@ -625,7 +628,10 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Need input",
+              }),
             ],
           },
         ],
@@ -633,7 +639,7 @@ describe("async execution utilities", () => {
       });
       executeAsyncSingle!(id, {
         agent: "worker",
-        task: "Ask on intercom and wait.",
+        task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -696,7 +702,10 @@ describe("async execution utilities", () => {
           steps: [
             {
               jsonl: [
-                events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+                events.toolStart("contact_supervisor", {
+                  reason: "need_decision",
+                  message: "Need input",
+                }),
               ],
             },
           ],
@@ -704,7 +713,7 @@ describe("async execution utilities", () => {
         });
         executeAsyncSingle!(id, {
           agent: "worker",
-          task: "Ask on intercom and wait.",
+          task: "Ask for a supervisor decision and wait.",
           agentConfig: makeAgent("worker"),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
           artifactConfig: {
@@ -770,7 +779,10 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "ask", to: "main", message: "Need input" }),
+              events.toolStart("contact_supervisor", {
+                reason: "need_decision",
+                message: "Need input",
+              }),
             ],
           },
         ],
@@ -778,7 +790,7 @@ describe("async execution utilities", () => {
       });
       executeAsyncSingle!(id, {
         agent: "worker",
-        task: "Ask on intercom and wait.",
+        task: "Ask for a supervisor decision and wait.",
         agentConfig: makeAgent("worker"),
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -1332,16 +1344,16 @@ describe("async execution utilities", () => {
         steps: [
           {
             jsonl: [
-              events.toolStart("intercom", { action: "send", to: "main", message: "FYI" }),
-              events.toolResult("intercom", "sent"),
-              events.toolEnd("intercom"),
+              events.toolStart("contact_supervisor", { reason: "progress_update", message: "FYI" }),
+              events.toolResult("contact_supervisor", "sent"),
+              events.toolEnd("contact_supervisor"),
             ],
           },
-          { jsonl: [events.assistantMessage("intercom update finished")] },
+          { jsonl: [events.assistantMessage("native update finished")] },
         ],
       });
-      const intercomId = `async-non-blocking-intercom-${Date.now().toString(36)}`;
-      executeAsyncSingle!(intercomId, {
+      const nativeUpdateId = `async-non-blocking-native-${Date.now().toString(36)}`;
+      executeAsyncSingle!(nativeUpdateId, {
         agent: "worker",
         task: "Provide a short non-blocking status update only. Do not edit files.",
         agentConfig: makeAgent("worker", { acceptanceRole: "read-only" }),
@@ -1358,9 +1370,9 @@ describe("async execution utilities", () => {
         sessionRoot: path.join(tempDir, "sessions"),
         maxSubagentDepth: 2,
       });
-      const intercomPayload = (await readAsyncPayload(intercomId)) as any;
-      assert.equal(intercomPayload.state, "complete");
-      assert.equal(intercomPayload.pause, undefined);
+      const nativeUpdatePayload = (await readAsyncPayload(nativeUpdateId)) as any;
+      assert.equal(nativeUpdatePayload.state, "complete");
+      assert.equal(nativeUpdatePayload.pause, undefined);
       const existingPids = new Set(startedMockPiPids(mockPi));
 
       const cohortId = `async-supervisor-cohort-${Date.now().toString(36)}`;

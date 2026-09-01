@@ -55,11 +55,9 @@ import {
   type NestedRunSummary,
   type SubagentModelIdentity,
   type SubagentModelResolution,
-  type ResolvedTurnBudget,
   type SubagentRunMode,
   type SubagentTerminationReason,
   type ToolBudgetState,
-  type TurnBudgetState,
   type Usage,
   DEFAULT_MAX_OUTPUT,
   SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
@@ -71,13 +69,13 @@ import {
   buildControlEvent,
   deriveActivityState,
   claimControlNotification,
-  formatControlIntercomMessage,
   formatControlNoticeMessage,
 } from "../shared/subagent-control.ts";
 import type { SubagentRunConfig } from "../shared/parallel-utils.ts";
 import {
   type RunnerSubagentStep as SubagentStep,
   type RunnerStep,
+  type SubagentRunPlan,
   isParallelGroup,
   flattenSteps,
   mapConcurrent,
@@ -173,15 +171,6 @@ import {
   skipOwnedProcessGroupCleanup,
   supportsOwnedProcessGroupCleanup,
 } from "../shared/process-group-cleanup.ts";
-import {
-  appendTurnBudgetSystemPrompt,
-  formatTurnBudgetOutput,
-  initialTurnBudgetState,
-  shouldAbortForTurnBudget,
-  turnBudgetExceededMessage,
-  turnBudgetSoftNote,
-  turnBudgetState,
-} from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import {
   TERMINAL_RUN_STATES,
@@ -226,9 +215,6 @@ interface StepResult {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -236,7 +222,6 @@ interface StepResult {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
-  intercomTarget?: string;
   model?: string;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
@@ -421,19 +406,6 @@ function resolveSupervisorPauseMetadata(input: {
   toolArgs?: Record<string, unknown>;
   requestedAt: number;
 }): AsyncStatus["pause"] | undefined {
-  if (input.toolName === "intercom" && input.toolArgs?.action === "ask") {
-    const summary = boundSupervisorSummary(input.toolArgs.message);
-    return {
-      kind: "awaiting_supervisor",
-      requestedAt: input.requestedAt,
-      ...(summary ? { summary } : {}),
-      request: {
-        tool: "intercom",
-        action: "ask",
-        ...(summary ? { summary } : {}),
-      },
-    };
-  }
   if (
     input.toolName === "contact_supervisor" &&
     (input.toolArgs?.reason === "need_decision" || input.toolArgs?.reason === "interview_request")
@@ -469,9 +441,6 @@ interface RunPiStreamingResult {
   finalOutput: string;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   observedMutationAttempt?: boolean;
@@ -510,9 +479,6 @@ function runPiStreaming(
   transcriptWriter?: ChildTranscriptWriter,
   registerTimeout?: (interrupt: (() => void) | undefined) => void,
   timeoutMessage?: string,
-  registerTurnBudgetAbort?: (
-    abort: ((message: string, state?: TurnBudgetState) => void) | undefined,
-  ) => void,
   onChildProtocolOutputLimit?: (limit: ProtocolOutputLimit) => void,
   context?: {
     restored: boolean;
@@ -550,9 +516,6 @@ function runPiStreaming(
     const terminalReason: ChildTerminalReasonLatch = {};
     let interrupted = false;
     let timedOut = false;
-    let turnBudgetExceeded = false;
-    let turnBudgetMessage: string | undefined;
-    let turnBudget: TurnBudgetState | undefined;
     let observedMutationAttempt = false;
     let contextUsage: ContextUsageDiagnostics | undefined;
     let runtimeModelIdentity: SubagentModelIdentity | undefined;
@@ -713,8 +676,6 @@ function runPiStreaming(
     let interruptTerminationTimer: NodeJS.Timeout | undefined;
     let interruptHardKillTimer: NodeJS.Timeout | undefined;
     let timeoutHardKillTimer: NodeJS.Timeout | undefined;
-    let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-    let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
     let protocolLimitHardKillTimer: NodeJS.Timeout | undefined;
     let settled = false;
     let softInterruptsEnabled = true;
@@ -739,7 +700,6 @@ function runPiStreaming(
       interruptRegistered = false;
       registerInterrupt?.(undefined);
       registerTimeout?.(undefined);
-      registerTurnBudgetAbort?.(undefined);
     };
     const disableSoftInterrupts = () => {
       softInterruptsEnabled = false;
@@ -802,11 +762,9 @@ function runPiStreaming(
         ? 1
         : timedOut
           ? 1
-          : turnBudgetExceeded
-            ? 1
-            : forcedDrainAfterFinalSuccess
-              ? 0
-              : resolvedExitCode;
+          : forcedDrainAfterFinalSuccess
+            ? 0
+            : resolvedExitCode;
       const resultTerminationReason = resolveSubagentTerminationReason({
         assistantStopReason: finalAssistantStopReason,
         effectiveExitCode: resultExitCode ?? undefined,
@@ -847,11 +805,9 @@ function runPiStreaming(
             ? finalError
             : timedOut
               ? (timeoutMessage ?? "Subagent timed out.")
-              : turnBudgetExceeded
-                ? turnBudgetMessage
-                : interrupted || forcedDrainAfterFinalSuccess
-                  ? undefined
-                  : finalError,
+              : interrupted || forcedDrainAfterFinalSuccess
+                ? undefined
+                : finalError,
         finalOutput: protocolOutputLimit
           ? (finalError ?? formatProtocolOutputLimit(protocolOutputLimit))
           : timedOut && !finalOutput.trim()
@@ -859,10 +815,6 @@ function runPiStreaming(
             : finalOutput,
         interrupted,
         timedOut,
-        turnBudget,
-        turnBudgetExceeded,
-        wrapUpRequested:
-          turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
         observedMutationAttempt,
         processGroupId,
         processCleanup,
@@ -944,24 +896,6 @@ function runPiStreaming(
       }, TIMEOUT_HARD_KILL_MS);
       timeoutHardKillTimer.unref?.();
     });
-    registerTurnBudgetAbort?.((message, state) => {
-      if (settled || timedOut || turnBudgetExceeded || protocolOutputLimit) return;
-      if (!claimChildTerminalReason(terminalReason, "turn_budget_exceeded")) return;
-      turnBudgetExceeded = true;
-      turnBudgetMessage = message;
-      turnBudget = state;
-      interrupted = false;
-      error = boundChildError(message);
-      trySignalChild(child, "SIGINT");
-      turnBudgetTerminationTimer = setTimeout(() => {
-        if (!settled && !timedOut) trySignalChild(child, "SIGTERM");
-      }, 1000);
-      turnBudgetTerminationTimer.unref?.();
-      turnBudgetHardKillTimer = setTimeout(() => {
-        if (!settled && !timedOut) trySignalChild(child, "SIGKILL");
-      }, 4000);
-      turnBudgetHardKillTimer.unref?.();
-    });
     const clearDrainTimers = () => {
       if (finalDrainTimer) {
         clearTimeout(finalDrainTimer);
@@ -982,14 +916,6 @@ function runPiStreaming(
       if (timeoutHardKillTimer) {
         clearTimeout(timeoutHardKillTimer);
         timeoutHardKillTimer = undefined;
-      }
-      if (turnBudgetTerminationTimer) {
-        clearTimeout(turnBudgetTerminationTimer);
-        turnBudgetTerminationTimer = undefined;
-      }
-      if (turnBudgetHardKillTimer) {
-        clearTimeout(turnBudgetHardKillTimer);
-        turnBudgetHardKillTimer = undefined;
       }
       clearProtocolLimitHardKillTimer();
     };
@@ -1052,7 +978,6 @@ function runPiStreaming(
       disableSoftInterrupts();
       registerInterrupt?.(undefined);
       registerTimeout?.(undefined);
-      registerTurnBudgetAbort?.(undefined);
       clearDrainTimers();
       clearCloseFallbackTimer();
       clearStdioGuard();
@@ -1071,16 +996,10 @@ function runPiStreaming(
         model,
         error: timedOut
           ? (timeoutMessage ?? "Subagent timed out.")
-          : turnBudgetExceeded
-            ? turnBudgetMessage
-            : (error ?? assistantError ?? spawnErrorMessage),
+          : (error ?? assistantError ?? spawnErrorMessage),
         finalOutput:
           timedOut && !finalOutput.trim() ? (timeoutMessage ?? "Subagent timed out.") : finalOutput,
         timedOut,
-        turnBudget,
-        turnBudgetExceeded,
-        wrapUpRequested:
-          turnBudget?.outcome === "wrap-up-requested" || turnBudgetExceeded || undefined,
         observedMutationAttempt,
         processGroupId,
         processCleanup,
@@ -1240,9 +1159,6 @@ interface SingleStepContext {
   piArgv1?: string;
   registerInterrupt?: (interrupt: (() => void) | undefined) => void;
   registerTimeout?: (interrupt: (() => void) | undefined) => void;
-  registerTurnBudgetAbort?: (
-    abort: ((message: string, state?: TurnBudgetState) => void) | undefined,
-  ) => void;
   interruptSignal?: AbortSignal;
   interruptMessage?: string;
   timeoutSignal?: AbortSignal;
@@ -1250,9 +1166,6 @@ interface SingleStepContext {
   timeoutMs?: number;
   deadlineAt?: number;
   startedAt?: number;
-  turnBudget?: ResolvedTurnBudget;
-  childIntercomTarget?: string;
-  orchestratorIntercomTarget?: string;
   nestedRoute?: NestedRouteInfo;
   onAttemptStart?: (attempt: ModelAttemptStart) => void;
   onChildEvent?: (event: ChildEvent) => void;
@@ -1304,13 +1217,9 @@ type SingleStepResultValue = {
   transcriptError?: string;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   sessionFile?: string;
-  intercomTarget?: string;
   completionGuardTriggered?: boolean;
   structuredOutput?: unknown;
   structuredOutputPath?: string;
@@ -1339,7 +1248,6 @@ interface SingleStepExecutionState {
   finalResult?: SingleStepRuntimeResult;
   finalOutputSnapshot?: SingleOutputSnapshot;
   completionGuardTriggeredFinal: boolean;
-  turnBudget?: TurnBudgetState;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked: boolean;
   contextExhaustedDetected: boolean;
@@ -1456,9 +1364,6 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
   const attemptNotes: string[] = [...(step.attemptNotes ?? [])];
   let modelResolution = step.modelResolution;
   const eventsPath = path.join(path.dirname(stepContext.outputFile), "events.jsonl");
-  const initialTurnBudget = stepContext.turnBudget
-    ? initialTurnBudgetState(stepContext.turnBudget)
-    : undefined;
   const initialToolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
   // Async fresh runs commonly receive a preallocated session path. Snapshot
   // whether its artifact existed before the first child is spawned so fallback
@@ -1501,7 +1406,6 @@ function prepareSingleStepSetup(step: SubagentStep, ctx: SingleStepContext): Sin
       finalResult: undefined,
       finalOutputSnapshot: undefined,
       completionGuardTriggeredFinal: false,
-      turnBudget: initialTurnBudget,
       toolBudget: initialToolBudget,
       toolBudgetBlocked: false,
       contextExhaustedDetected: false,
@@ -1587,7 +1491,6 @@ function prepareSingleStepAttempt(input: {
   let tempDir: string | undefined;
   let buildError: string | undefined;
   try {
-    const supervisorBridgeActive = step.supervisorBridge !== false;
     ({ args, env, tempDir } = buildPiArgs({
       parentSessionId: step.parentSessionId,
       baseArgs: ["--mode", "json", "-p"],
@@ -1603,14 +1506,10 @@ function prepareSingleStepAttempt(input: {
       extensions: step.extensions,
       subagentOnlyExtensions: step.subagentOnlyExtensions,
       supervisorBridge: step.supervisorBridge,
-      systemPrompt: appendTurnBudgetSystemPrompt(step.systemPrompt ?? "", ctx.turnBudget),
+      systemPrompt: step.systemPrompt ?? "",
       systemPromptMode: step.systemPromptMode,
       cwd: step.cwd ?? ctx.cwd,
       promptFileStem: step.agent,
-      intercomSessionName: supervisorBridgeActive ? ctx.childIntercomTarget : undefined,
-      orchestratorIntercomTarget: supervisorBridgeActive
-        ? ctx.orchestratorIntercomTarget
-        : undefined,
       runId: ctx.id,
       childAgentName: step.agent,
       projectAgentGuidance: step.projectAgentGuidance === true,
@@ -1634,7 +1533,6 @@ interface SingleStepAttemptAssessment {
 
 function assessSingleStepAttempt(input: {
   step: SubagentStep;
-  ctx: SingleStepContext;
   state: SingleStepExecutionState;
   run: RunPiStreamingResult;
   candidate: string | undefined;
@@ -1645,7 +1543,6 @@ function assessSingleStepAttempt(input: {
 }): SingleStepAttemptAssessment {
   const {
     step,
-    ctx,
     state,
     run,
     candidate,
@@ -1659,25 +1556,6 @@ function assessSingleStepAttempt(input: {
     state.aggregateContextUsage,
     run.contextUsage,
   );
-  if (run.turnBudget) state.turnBudget = run.turnBudget;
-  else if (ctx.turnBudget) {
-    const assistantMessages = run.messages.filter((message) => message.role === "assistant");
-    const turnCount = assistantMessages.length;
-    const lastAssistantMessage = assistantMessages.at(-1);
-    if (turnCount > 0 && turnCount < ctx.turnBudget.maxTurns) {
-      state.turnBudget = { ...ctx.turnBudget, outcome: "within-budget", turnCount };
-    } else if (turnCount >= ctx.turnBudget.maxTurns) {
-      state.turnBudget = turnBudgetState(
-        ctx.turnBudget,
-        turnCount,
-        shouldAbortForTurnBudget(
-          ctx.turnBudget,
-          turnCount,
-          lastAssistantMessage ? isTerminalAssistantStop(lastAssistantMessage) : false,
-        ),
-      );
-    }
-  }
   cleanupTempDir(tempDir);
 
   const hiddenError = run.exitCode === 0 && !run.error ? detectSubagentError(run.messages) : null;
@@ -1816,7 +1694,7 @@ function shouldStopSingleStepAttempt(input: {
   index: number;
   candidateCount: number;
 }): boolean {
-  if (input.run.protocolOutputLimit || input.run.turnBudgetExceeded) return true;
+  if (input.run.protocolOutputLimit) return true;
   if (input.run.timedOut || input.ctx.timeoutSignal?.aborted || input.ctx.skipAcceptance?.())
     return true;
   if (input.attempt.success || input.completionGuardTriggered) return true;
@@ -1865,7 +1743,6 @@ function prepareSingleStepAcceptance(input: {
   const acceptance =
     step.effectiveAcceptance &&
     !finalResult?.interrupted &&
-    !finalResult?.turnBudgetExceeded &&
     !ctx.timeoutSignal?.aborted &&
     !ctx.interruptSignal?.aborted &&
     !acceptanceAbortController.signal.aborted &&
@@ -1968,18 +1845,6 @@ function finalizeSingleStepOutput(input: {
   if (state.attemptNotes.length > 0) {
     outputForSummary = `${state.attemptNotes.join("\n")}\n\n${outputForSummary}`.trim();
   }
-  if (!finalResult?.timedOut && finalResult?.turnBudgetExceeded && state.turnBudget) {
-    outputForSummary = formatTurnBudgetOutput(
-      turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount),
-      outputForSummary,
-    );
-  } else if (!finalResult?.timedOut && state.turnBudget?.outcome === "wrap-up-requested") {
-    const note = turnBudgetSoftNote(
-      state.turnBudget,
-      state.turnBudget.wrapUpRequestedAtTurn ?? state.turnBudget.turnCount,
-    );
-    outputForSummary = outputForSummary.trim() ? `${note}\n\n${outputForSummary}` : note;
-  }
   const outputForAcceptance = rawOutput;
   const finalizedOutput = finalizeSingleOutput({
     fullOutput: outputForSummary,
@@ -2018,7 +1883,6 @@ interface SingleStepOutcome {
   effectiveInterrupted: boolean;
   interruptedAcceptance?: SingleStepAcceptance;
   timedOutAfterAcceptance: boolean;
-  turnBudgetExceeded: boolean;
   effectiveAcceptance?: SingleStepAcceptance;
   effectiveFinalExitCode: number | null;
   terminationReason: SubagentTerminationReason;
@@ -2056,11 +1920,9 @@ function finalizeSingleStepOutcome(input: {
     finalResult?.timedOut === true ||
     ctx.timeoutSignal?.aborted === true ||
     ctx.skipAcceptance?.() === true;
-  const turnBudgetExceeded = finalResult?.turnBudgetExceeded === true;
-  const effectiveAcceptance =
-    timedOutAfterAcceptance || turnBudgetExceeded
-      ? undefined
-      : (interruptedAcceptance ?? acceptance);
+  const effectiveAcceptance = timedOutAfterAcceptance
+    ? undefined
+    : (interruptedAcceptance ?? acceptance);
   const acceptanceFailure = effectiveAcceptance
     ? acceptanceFailureMessage(effectiveAcceptance)
     : undefined;
@@ -2069,11 +1931,10 @@ function finalizeSingleStepOutcome(input: {
     effectiveAcceptance?.explicit &&
     (finalResult?.exitCode ?? 1) === 0 &&
     !effectiveInterrupted &&
-    !timedOutAfterAcceptance &&
-    !turnBudgetExceeded;
+    !timedOutAfterAcceptance;
   let effectiveFinalExitCode = finalResult?.protocolOutputLimit
     ? 1
-    : timedOutAfterAcceptance || turnBudgetExceeded
+    : timedOutAfterAcceptance
       ? 1
       : effectiveInterrupted
         ? 0
@@ -2085,7 +1946,6 @@ function finalizeSingleStepOutcome(input: {
     : resolveSubagentTerminationReason({
         paused: effectiveInterrupted,
         timedOut: timedOutAfterAcceptance,
-        turnBudgetExceeded,
         toolBudgetBlocked: state.toolBudgetBlocked,
         interrupted: effectiveInterrupted,
         assistantStopReason: finalResult?.assistantStopReason,
@@ -2096,23 +1956,15 @@ function finalizeSingleStepOutcome(input: {
     ? boundChildError(formatProtocolOutputLimit(finalResult.protocolOutputLimit))
     : timedOutAfterAcceptance
       ? boundChildError(ctx.timeoutMessage ?? "Subagent timed out.")
-      : turnBudgetExceeded
-        ? boundChildError(
-            finalResult?.error ??
-              (state.turnBudget
-                ? turnBudgetExceededMessage(state.turnBudget, state.turnBudget.turnCount)
-                : "Subagent exceeded turn budget."),
-          )
-        : effectiveInterrupted
-          ? undefined
-          : acceptanceCanFailRun
-            ? composeAcceptanceFailureError(finalResult?.error, acceptanceFailure)
-            : boundChildError(finalResult?.error);
+      : effectiveInterrupted
+        ? undefined
+        : acceptanceCanFailRun
+          ? composeAcceptanceFailureError(finalResult?.error, acceptanceFailure)
+          : boundChildError(finalResult?.error);
   const contextExhaustedReason = finalResult?.protocolOutputLimit
     ? undefined
     : state.contextExhaustedDetected &&
         !timedOutAfterAcceptance &&
-        !turnBudgetExceeded &&
         !effectiveInterrupted &&
         !acceptanceCanFailRun &&
         finalResult?.error === CONTEXT_EXHAUSTED_TERMINATION_MESSAGE &&
@@ -2136,7 +1988,6 @@ function finalizeSingleStepOutcome(input: {
     effectiveInterrupted,
     interruptedAcceptance,
     timedOutAfterAcceptance,
-    turnBudgetExceeded,
     effectiveAcceptance,
     effectiveFinalExitCode,
     terminationReason,
@@ -2251,7 +2102,7 @@ function buildSingleStepResult(input: {
   output: SingleStepOutputFinalization;
   outcome: SingleStepOutcome;
 }): SingleStepResultValue {
-  const { step, ctx, state, setup, output, outcome } = input;
+  const { step, state, setup, output, outcome } = input;
   const finalResult = state.finalResult;
   return {
     agent: step.agent,
@@ -2264,7 +2115,6 @@ function buildSingleStepResult(input: {
     stderrTruncated: finalResult?.stderrTruncated,
     protocolOutputLimit: finalResult?.protocolOutputLimit,
     sessionFile: step.sessionFile,
-    intercomTarget: ctx.childIntercomTarget,
     model: output.finalModel,
     modelIdentity: output.finalModelIdentity,
     modelResolution: state.modelResolution,
@@ -2280,33 +2130,18 @@ function buildSingleStepResult(input: {
     terminationReason: outcome.terminationReason,
     transcriptPath: setup.transcriptWriter ? setup.artifactPaths?.transcriptPath : undefined,
     transcriptError: setup.transcriptWriter?.getError(),
-    interrupted:
-      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
-        ? false
-        : outcome.effectiveInterrupted,
+    interrupted: outcome.timedOutAfterAcceptance ? false : outcome.effectiveInterrupted,
     timedOut: outcome.timedOutAfterAcceptance ? true : finalResult?.timedOut,
-    turnBudget: state.turnBudget,
-    turnBudgetExceeded: outcome.turnBudgetExceeded || undefined,
-    wrapUpRequested:
-      finalResult?.wrapUpRequested ||
-      state.turnBudget?.outcome === "wrap-up-requested" ||
-      outcome.turnBudgetExceeded ||
-      undefined,
     toolBudget: state.toolBudget,
     toolBudgetBlocked: state.toolBudgetBlocked || undefined,
     completionGuardTriggered: state.completionGuardTriggeredFinal,
-    structuredOutput:
-      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
-        ? undefined
-        : finalResult?.structuredOutput,
-    structuredOutputPath:
-      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
-        ? undefined
-        : setup.effectiveStructuredOutput?.outputPath,
-    structuredOutputSchemaPath:
-      outcome.timedOutAfterAcceptance || outcome.turnBudgetExceeded
-        ? undefined
-        : setup.effectiveStructuredOutput?.schemaPath,
+    structuredOutput: outcome.timedOutAfterAcceptance ? undefined : finalResult?.structuredOutput,
+    structuredOutputPath: outcome.timedOutAfterAcceptance
+      ? undefined
+      : setup.effectiveStructuredOutput?.outputPath,
+    structuredOutputSchemaPath: outcome.timedOutAfterAcceptance
+      ? undefined
+      : setup.effectiveStructuredOutput?.schemaPath,
     acceptance: outcome.effectiveAcceptance,
     activeRuntimeMs: setup.priorActiveRuntimeMs + (Date.now() - setup.segmentStartedAt),
   };
@@ -2379,7 +2214,6 @@ async function runSingleStep(
       setup.transcriptWriter,
       stepCtx.registerTimeout,
       stepCtx.timeoutMessage,
-      stepCtx.registerTurnBudgetAbort,
       stepCtx.onChildProtocolOutputLimit,
       {
         restored: setup.restoredSession,
@@ -2390,7 +2224,6 @@ async function runSingleStep(
     );
     const assessment = assessSingleStepAttempt({
       step,
-      ctx: stepCtx,
       state,
       run,
       candidate,
@@ -2477,7 +2310,7 @@ type RunnerStatusPayload = Omit<
 
 function markParallelGroupRunning(input: {
   statusPayload: RunnerStatusPayload;
-  group: Extract<RunnerStep, { parallel: SubagentStep[] }>;
+  tasks: SubagentStep[];
   groupStartFlatIndex: number;
   groupStartTime: number;
   statusPath: string;
@@ -2486,7 +2319,7 @@ function markParallelGroupRunning(input: {
   runId: string;
   stepIndex: number;
 }): void {
-  for (let taskIndex = 0; taskIndex < input.group.parallel.length; taskIndex++) {
+  for (let taskIndex = 0; taskIndex < input.tasks.length; taskIndex++) {
     const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
     input.statusPayload.steps[flatTaskIndex].status = "pending";
     input.statusPayload.steps[flatTaskIndex].startedAt = undefined;
@@ -2512,8 +2345,8 @@ function markParallelGroupRunning(input: {
       ts: input.groupStartTime,
       runId: input.runId,
       stepIndex: input.stepIndex,
-      agents: input.group.parallel.map((task) => task.agent),
-      count: input.group.parallel.length,
+      agents: input.tasks.map((task) => task.agent),
+      count: input.tasks.length,
     }),
   );
 }
@@ -2547,10 +2380,128 @@ function isPausedStepStatus(status: RunnerStatusStep["status"]): boolean {
   return status === "paused";
 }
 
+/**
+ * Adapt only historical chain records at the compatibility boundary. Active
+ * direct plans stay in their discriminated form throughout runner execution.
+ */
+function legacyStepToRunPlan(step: RunnerStep): SubagentRunPlan {
+  return isParallelGroup(step)
+    ? {
+        kind: "parallel",
+        tasks: step.parallel,
+        ...(step.concurrency !== undefined ? { concurrency: step.concurrency } : {}),
+        ...(step.failFast !== undefined ? { failFast: step.failFast } : {}),
+      }
+    : { kind: "single", task: step };
+}
+
+const ASYNC_RUNNER_MISSING_PLAN_ERROR =
+  "Async runner config must include a direct plan or a non-empty legacy steps array.";
+
+function isRunnerSubagentStepValue(value: unknown): value is SubagentStep {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { agent?: unknown; task?: unknown };
+  return typeof candidate.agent === "string" && typeof candidate.task === "string";
+}
+
+function isDirectRunPlanValue(value: unknown): value is SubagentRunPlan {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { kind?: unknown; task?: unknown; tasks?: unknown };
+  if (candidate.kind === "single") return isRunnerSubagentStepValue(candidate.task);
+  return (
+    candidate.kind === "parallel" &&
+    Array.isArray(candidate.tasks) &&
+    candidate.tasks.length > 0 &&
+    candidate.tasks.every(isRunnerSubagentStepValue)
+  );
+}
+
+function isLegacyRunStepsValue(value: unknown): value is RunnerStep[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((step) => {
+    if (!step || typeof step !== "object") return false;
+    const candidate = step as { parallel?: unknown };
+    if ("parallel" in candidate) {
+      return (
+        Array.isArray(candidate.parallel) &&
+        candidate.parallel.length > 0 &&
+        candidate.parallel.every(isRunnerSubagentStepValue)
+      );
+    }
+    return isRunnerSubagentStepValue(step);
+  });
+}
+
+function persistMissingRunPlanFailure(config: SubagentRunConfig): void {
+  const timestamp = Date.now();
+  const mode = config.resultMode ?? "single";
+  const status: AsyncStatus = {
+    lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+    runId: config.id,
+    ...(typeof config.sessionId === "string" ? { sessionId: config.sessionId } : {}),
+    mode,
+    state: "failed",
+    error: ASYNC_RUNNER_MISSING_PLAN_ERROR,
+    startedAt: timestamp,
+    endedAt: timestamp,
+    lastUpdate: timestamp,
+    ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
+    ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
+    ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
+    cwd: config.cwd,
+    currentStep: 0,
+    chainStepCount: 0,
+    parallelGroups: [],
+    workflowGraph: config.workflowGraph,
+    steps: [],
+    ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
+    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+    sessionDir: config.sessionDir,
+    outputFile: path.join(config.asyncDir, "output-0.log"),
+  };
+
+  fs.mkdirSync(config.asyncDir, { recursive: true });
+  writeNormalizedLifecycleStatus(config.asyncDir, status);
+  writeAtomicJson(config.resultPath, {
+    lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+    id: config.id,
+    agent: "subagent",
+    mode,
+    success: false,
+    state: "failed" as const,
+    summary: ASYNC_RUNNER_MISSING_PLAN_ERROR,
+    error: ASYNC_RUNNER_MISSING_PLAN_ERROR,
+    results: [],
+    exitCode: 1,
+    timestamp,
+    durationMs: 0,
+    asyncDir: config.asyncDir,
+    ...(config.artifactsDir ? { artifactsDir: config.artifactsDir } : {}),
+    cwd: config.cwd,
+    sessionId: config.sessionId,
+    ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
+    ...(config.taskIndex !== undefined ? { taskIndex: config.taskIndex } : {}),
+    ...(config.totalTasks !== undefined ? { totalTasks: config.totalTasks } : {}),
+  } satisfies AsyncResultArtifact);
+}
+
 async function runSubagent(config: SubagentRunConfig): Promise<void> {
+  const plan = isDirectRunPlanValue(config.plan) ? config.plan : undefined;
+  const legacySteps = isLegacyRunStepsValue(config.steps) ? config.steps : undefined;
+  if (!plan && !legacySteps) {
+    persistMissingRunPlanFailure(config);
+    throw new Error(ASYNC_RUNNER_MISSING_PLAN_ERROR);
+  }
+  return runSubagentWithInput(config, plan, legacySteps);
+}
+
+async function runSubagentWithInput(
+  config: SubagentRunConfig,
+  plan: SubagentRunPlan | undefined,
+  legacySteps: RunnerStep[] | undefined,
+): Promise<void> {
   const {
     id,
-    steps,
     resultPath,
     cwd,
     placeholder,
@@ -2582,10 +2533,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
   const activeChildInterrupts = new Map<number, () => void>();
   const activeChildTimeouts = new Map<number, () => void>();
-  const activeChildTurnBudgetAborts = new Map<
-    number,
-    (message: string, state?: TurnBudgetState) => void
-  >();
   const pendingStepSteers: ChildMessageRequest[] = [];
   let interrupted = false;
   const terminalReason: ChildTerminalReasonLatch = {};
@@ -2593,13 +2540,15 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   let activityTimer: NodeJS.Timeout | undefined;
   let timeoutTimer: DeadlineTimer | undefined;
   let timedOut = false;
-  let turnBudgetExceeded = false;
   const timeoutMessage =
     config.timeoutMs !== undefined ? `Subagent timed out after ${config.timeoutMs}ms.` : undefined;
   const timeoutAbortController = new AbortController();
   const interruptAbortController = new AbortController();
   let previousCumulativeTokens: TokenUsage = { input: 0, output: 0, total: 0 };
   let latestSessionFile: string | undefined;
+  const executionPlans: SubagentRunPlan[] = plan
+    ? [plan]
+    : (legacySteps ?? []).map((step) => legacyStepToRunPlan(step));
 
   const initializeRun = (): {
     flatSteps: SubagentStep[];
@@ -2607,7 +2556,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     sessionEnabled: boolean;
     statusPayload: RunnerStatusPayload;
   } => {
-    const flatSteps = flattenSteps(steps);
+    const flatSteps = plan
+      ? plan.kind === "single"
+        ? [plan.task]
+        : plan.tasks
+      : flattenSteps(legacySteps ?? []);
     for (const step of flatSteps) {
       step.contextPressure = parseContextPressureProjection(step.contextPressure);
       step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(
@@ -2618,11 +2571,11 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     const parallelGroups: Array<{ start: number; count: number; stepIndex: number }> = [];
     const initialStatusSteps: RunnerStatusStep[] = [];
     let flatStepCount = 0;
-    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
-      const step = steps[stepIndex]!;
-      if (isParallelGroup(step)) {
-        parallelGroups.push({ start: flatStepCount, count: step.parallel.length, stepIndex });
-        for (const task of step.parallel) {
+    for (let stepIndex = 0; stepIndex < executionPlans.length; stepIndex++) {
+      const step = executionPlans[stepIndex]!;
+      if (step.kind === "parallel") {
+        parallelGroups.push({ start: flatStepCount, count: step.tasks.length, stepIndex });
+        for (const task of step.tasks) {
           const taskFlatIndex = flatStepCount;
           const transcriptPath = resolveAsyncStepTranscriptPath({
             artifactsDir,
@@ -2672,46 +2625,47 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           flatStepCount++;
         }
       } else {
+        const task = step.task;
         const stepFlatIndex = flatStepCount;
         const transcriptPath = resolveAsyncStepTranscriptPath({
           artifactsDir,
           artifactConfig,
           runId: id,
-          agent: step.agent,
+          agent: task.agent,
           flatIndex: stepFlatIndex,
           flatStepCount: initialFlatStepCount,
         });
         initialStatusSteps.push({
-          agent: step.agent,
-          ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
-          phase: step.phase,
-          label: step.label,
-          outputName: step.outputName,
-          structured: step.structured,
+          agent: task.agent,
+          ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+          phase: task.phase,
+          label: task.label,
+          outputName: task.outputName,
+          structured: task.structured,
           status: "pending",
-          ...(step.toolBudget ? { toolBudget: initialToolBudgetState(step.toolBudget) } : {}),
-          ...(step.timeoutMs !== undefined || config.timeoutMs !== undefined
-            ? { timeoutMs: step.timeoutMs ?? config.timeoutMs }
+          ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
+          ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
+            ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
             : {}),
-          ...(step.activeRuntimeMs !== undefined ? { activeRuntimeMs: step.activeRuntimeMs } : {}),
-          ...(step.sessionFile ? { sessionFile: step.sessionFile } : {}),
+          ...(task.activeRuntimeMs !== undefined ? { activeRuntimeMs: task.activeRuntimeMs } : {}),
+          ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
           ...(transcriptPath ? { transcriptPath } : {}),
-          skills: step.skills,
-          model: step.model,
-          thinking: step.thinking,
-          ...(step.modelIdentity ? { modelIdentity: step.modelIdentity } : {}),
-          ...(step.modelResolution ? { modelResolution: step.modelResolution } : {}),
-          ...projectInitialModelFallbackFilterNotice(step.modelFallbackFilterNotice),
-          ...(step.contextUsage ? { contextUsage: step.contextUsage } : {}),
-          ...(step.contextPressure ? { contextPressure: { ...step.contextPressure } } : {}),
-          ...(step.contextPressureCrossedThresholds
-            ? { contextPressureCrossedThresholds: [...step.contextPressureCrossedThresholds] }
+          skills: task.skills,
+          model: task.model,
+          thinking: task.thinking,
+          ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
+          ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
+          ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
+          ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
+          ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
+          ...(task.contextPressureCrossedThresholds
+            ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
             : {}),
           attemptedModels:
-            step.modelCandidates && step.modelCandidates.length > 0
-              ? step.modelCandidates
-              : step.model
-                ? [step.model]
+            task.modelCandidates && task.modelCandidates.length > 0
+              ? task.modelCandidates
+              : task.model
+                ? [task.model]
                 : undefined,
           recentTools: [],
           recentOutput: [],
@@ -2727,19 +2681,26 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
       runId: id,
       ...(config.sessionId ? { sessionId: config.sessionId } : {}),
-      mode: config.resultMode ?? (flatSteps.length > 1 ? "chain" : "single"),
+      mode:
+        config.resultMode ??
+        (plan?.kind === "parallel"
+          ? "parallel"
+          : plan?.kind === "single"
+            ? "single"
+            : flatSteps.length > 1
+              ? "chain"
+              : "single"),
       state: "running",
       lastActivityAt: overallStartTime,
       startedAt: overallStartTime,
       lastUpdate: overallStartTime,
       ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
       ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
-      ...(config.turnBudget ? { turnBudget: initialTurnBudgetState(config.turnBudget) } : {}),
       ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
       pid: process.pid,
       cwd,
       currentStep: 0,
-      chainStepCount: steps.length,
+      chainStepCount: executionPlans.length,
       parallelGroups,
       workflowGraph: config.workflowGraph,
       steps: initialStatusSteps,
@@ -2796,7 +2757,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       //                  included for forward compatibility.
       // Safe to omit: outputs (empty map, unused), workflowGraph, durationMs,
       //   totalTokens, totalCost, truncated, cwd, sessionFile, shareUrl,
-      //   intercomTarget — none are load-bearing for delivery or failure surfacing.
       const gateRejectAgent = statusPayload.steps?.[0]?.agent ?? "subagent";
       try {
         // summary, timestamp, and results[].output are required on AsyncResultArtifact.
@@ -2868,7 +2828,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     const graph = structuredClone(statusPayload.workflowGraph ?? config.workflowGraph);
     const normalize = (
       status: RunnerStatusStep["status"],
-    ): "pending" | "running" | "completed" | "failed" | "paused" | "detached" => {
+    ): "pending" | "running" | "completed" | "failed" | "paused" => {
       if (status === "complete" || status === "completed") return "completed";
       if (
         status === "running" ||
@@ -3059,8 +3019,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       concurrentTerminalStatusAdopted ||
       statusPayload.state !== "running" ||
       timedOut ||
-      interrupted ||
-      turnBudgetExceeded
+      interrupted
     )
       return;
     if (!claimChildTerminalReason(terminalReason, "output_limit")) return;
@@ -3098,16 +3057,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     }
     activeChildTimeouts.set(flatIndex, interrupt);
     if (timedOut) interrupt();
-  };
-  const registerStepTurnBudgetAbort = (
-    flatIndex: number,
-    abort: ((message: string, state?: TurnBudgetState) => void) | undefined,
-  ): void => {
-    if (!abort) {
-      activeChildTurnBudgetAborts.delete(flatIndex);
-      return;
-    }
-    activeChildTurnBudgetAborts.set(flatIndex, abort);
   };
   const interruptActiveChildren = (): void => {
     for (const interrupt of Array.from(activeChildInterrupts.values())) interrupt();
@@ -3340,13 +3289,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     requesterIndex: number,
     pause: NonNullable<AsyncStatus["pause"]>,
   ): void => {
-    if (
-      supervisorPauseRequest ||
-      interrupted ||
-      timedOut ||
-      turnBudgetExceeded ||
-      statusPayload.state !== "running"
-    )
+    if (supervisorPauseRequest || interrupted || timedOut || statusPayload.state !== "running")
       return;
     if (!claimChildTerminalReason(terminalReason, "paused")) return;
     supervisorPauseRequest = {
@@ -3512,15 +3455,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   const mutatingFailureWindowMs = 5 * 60_000;
   const appendControlEvent = (event: ReturnType<typeof buildControlEvent>) => {
     if (!controlConfig.enabled) return;
-    const childIntercomTarget =
-      config.childIntercomTargets?.[event.index ?? statusPayload.currentStep];
-    const channels =
-      event.type === "active_long_running"
-        ? controlConfig.notifyChannels.filter((channel) => channel !== "intercom")
-        : controlConfig.notifyChannels;
+    const channels = controlConfig.notifyChannels;
     if (
       channels.length === 0 ||
-      !claimControlNotification(controlConfig, event, emittedControlEventKeys, childIntercomTarget)
+      !claimControlNotification(controlConfig, event, emittedControlEventKeys)
     )
       return;
     appendJsonl(
@@ -3529,16 +3467,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         type: "subagent.control",
         event,
         channels,
-        childIntercomTarget,
-        noticeText: formatControlNoticeMessage(event, childIntercomTarget),
-        ...(config.controlIntercomTarget && channels.includes("intercom")
-          ? {
-              intercom: {
-                to: config.controlIntercomTarget,
-                message: formatControlIntercomMessage(event, childIntercomTarget),
-              },
-            }
-          : {}),
+        noticeText: formatControlNoticeMessage(event),
       }),
     );
   };
@@ -3687,59 +3616,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       step.modelAttempts = attempt.modelAttempts;
     statusPayload.lastUpdate = now;
     writeStatusPayload();
-  };
-  const updateStepTurnBudget = (
-    flatIndex: number,
-    turnCount: number,
-    now: number,
-    terminalAssistantStop: boolean,
-  ): void => {
-    const budget = config.turnBudget;
-    const step = statusPayload.steps[flatIndex];
-    if (!budget || !step || timedOut || turnBudgetExceeded || step.turnBudgetExceeded) return;
-    if (turnCount < budget.maxTurns) {
-      const state: TurnBudgetState = { ...budget, outcome: "within-budget", turnCount };
-      step.turnBudget = state;
-      statusPayload.turnBudget = state;
-      return;
-    }
-    const state = turnBudgetState(budget, turnCount, false);
-    step.turnBudget = state;
-    statusPayload.turnBudget = state;
-    if (!step.wrapUpRequested) {
-      step.wrapUpRequested = true;
-      statusPayload.wrapUpRequested = true;
-      appendRecentStepOutput(step, [turnBudgetSoftNote(budget, turnCount)]);
-    }
-    if (!shouldAbortForTurnBudget(budget, turnCount, terminalAssistantStop)) return;
-    if (!claimChildTerminalReason(terminalReason, "turn_budget_exceeded")) return;
-    const exceededState = turnBudgetState(budget, turnCount, true);
-    const message = turnBudgetExceededMessage(budget, turnCount);
-    step.turnBudget = exceededState;
-    step.turnBudgetExceeded = true;
-    step.wrapUpRequested = true;
-    step.error = message;
-    turnBudgetExceeded = true;
-    statusPayload.turnBudget = exceededState;
-    statusPayload.turnBudgetExceeded = true;
-    statusPayload.wrapUpRequested = true;
-    statusPayload.error = message;
-    statusPayload.lastUpdate = now;
-    appendJsonl(
-      eventsPath,
-      JSON.stringify({
-        type: "subagent.step.turn_budget_exceeded",
-        ts: now,
-        runId: id,
-        stepIndex: flatIndex,
-        agent: step.agent,
-        turnCount,
-        maxTurns: budget.maxTurns,
-        graceTurns: budget.graceTurns,
-        message,
-      }),
-    );
-    activeChildTurnBudgetAborts.get(flatIndex)?.(message, exceededState);
   };
   const updateStepFromChildEvent = (flatIndex: number, event: ChildEvent): void => {
     const step = statusPayload.steps[flatIndex];
@@ -3962,7 +3838,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         };
       }
       statusPayload.turnCount = Math.max(statusPayload.turnCount ?? 0, step.turnCount);
-      updateStepTurnBudget(flatIndex, step.turnCount, now, isTerminalAssistantStop(event.message));
     }
     syncTopLevelCurrentTool();
     step.lastActivityAt = now;
@@ -4176,12 +4051,12 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
   let stepCursor = 0;
 
   const settleParallelGroup = (
-    group: Extract<RunnerStep, { parallel: SubagentStep[] }>,
+    group: Extract<SubagentRunPlan, { kind: "parallel" }>,
     parallelResults: ParallelStepExecutionResult[],
     groupStartFlatIndex: number,
     stepIndex: number,
   ): void => {
-    for (let t = 0; t < group.parallel.length; t++) {
+    for (let t = 0; t < group.tasks.length; t++) {
       const fi = groupStartFlatIndex + t;
       const sessionTokens = config.sessionDir
         ? parseSessionTokens(path.join(config.sessionDir, `parallel-${t}`))
@@ -4216,9 +4091,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         skipped: pr.skipped,
         interrupted: pr.interrupted,
         timedOut: pr.timedOut,
-        turnBudget: pr.turnBudget,
-        turnBudgetExceeded: pr.turnBudgetExceeded,
-        wrapUpRequested: pr.wrapUpRequested,
         toolBudget: pr.toolBudget,
         toolBudgetBlocked: pr.toolBudgetBlocked,
         contextUsage: pr.contextUsage,
@@ -4226,7 +4098,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         contextPressureCrossedThresholds: pr.contextPressureCrossedThresholds,
         terminationReason: pr.terminationReason,
         sessionFile: resolveTrackedSessionFile(fi, pr.sessionFile),
-        intercomTarget: pr.intercomTarget,
         model: pr.model,
         modelIdentity: pr.modelIdentity,
         modelResolution: pr.modelResolution,
@@ -4248,8 +4119,8 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         activeRuntimeMs: pr.activeRuntimeMs,
       });
     }
-    for (let t = 0; t < group.parallel.length; t++) {
-      const outputName = group.parallel[t]?.outputName;
+    for (let t = 0; t < group.tasks.length; t++) {
+      const outputName = group.tasks[t]?.outputName;
       if (outputName)
         outputs[outputName] = outputEntryFromAsyncResult(
           {
@@ -4308,7 +4179,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       exitCode: timedOut ? 1 : singleResult.interrupted === true ? 0 : singleResult.exitCode,
       exitSignal: singleResult.exitSignal,
       sessionFile: resolvedSeqSessionFile,
-      intercomTarget: singleResult.intercomTarget,
       model: singleResult.model,
       modelIdentity: singleResult.modelIdentity,
       modelResolution: singleResult.modelResolution,
@@ -4327,9 +4197,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       pause: singleResult.interrupted ? pauseMetadataForIndex(flatIndex) : undefined,
       interrupted: singleResult.interrupted,
       timedOut: timedOut || singleResult.timedOut ? true : undefined,
-      turnBudget: singleResult.turnBudget,
-      turnBudgetExceeded: singleResult.turnBudgetExceeded,
-      wrapUpRequested: singleResult.wrapUpRequested,
       toolBudget: singleResult.toolBudget,
       toolBudgetBlocked: singleResult.toolBudgetBlocked,
       contextUsage: singleResult.contextUsage,
@@ -4394,9 +4261,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     statusPayload.steps[flatIndex].exitSignal = singleResult.exitSignal;
     statusPayload.steps[flatIndex].timedOut = timedOut || singleResult.timedOut ? true : undefined;
     statusPayload.steps[flatIndex].processCleanup = singleResult.processCleanup;
-    statusPayload.steps[flatIndex].turnBudget = singleResult.turnBudget;
-    statusPayload.steps[flatIndex].turnBudgetExceeded = singleResult.turnBudgetExceeded;
-    statusPayload.steps[flatIndex].wrapUpRequested = singleResult.wrapUpRequested;
     statusPayload.steps[flatIndex].toolBudget = singleResult.toolBudget;
     statusPayload.steps[flatIndex].toolBudgetBlocked = singleResult.toolBudgetBlocked;
     statusPayload.steps[flatIndex].contextUsage = singleResult.contextUsage;
@@ -4406,9 +4270,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     statusPayload.steps[flatIndex].terminationReason = singleResult.terminationReason;
     if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
     if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-    if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-    if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-    if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
     statusPayload.steps[flatIndex].model = singleResult.model;
     statusPayload.steps[flatIndex].thinking = singleResult.modelIdentity
       ? singleResult.modelIdentity.thinking
@@ -4486,13 +4347,14 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     // the final record and no further step may start. For the paused case,
     // `interrupted` is set to true by adoptConcurrentTerminalStatus so the
     // existing check already stops the loop.
-    if (interrupted || timedOut || turnBudgetExceeded || concurrentTerminalStatusAdopted) break;
-    if (stepCursor >= steps.length) break;
+    if (interrupted || timedOut || concurrentTerminalStatusAdopted) break;
+    if (stepCursor >= executionPlans.length) break;
     const stepIndex = stepCursor++;
-    const step = steps[stepIndex]!;
+    const step = executionPlans[stepIndex]!;
 
-    if (isParallelGroup(step)) {
+    if (step.kind === "parallel") {
       const group = step;
+      const tasks = group.tasks;
       const concurrency = group.concurrency ?? MAX_PARALLEL_CONCURRENCY;
       const failFast = group.failFast ?? false;
       const groupStartFlatIndex = flatIndex;
@@ -4501,7 +4363,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       const groupStartTime = Date.now();
       markParallelGroupRunning({
         statusPayload,
-        group,
+        tasks,
         groupStartFlatIndex,
         groupStartTime,
         statusPath,
@@ -4511,10 +4373,10 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         stepIndex,
       });
       const parallelResults = await mapConcurrent<
-        (typeof group.parallel)[number],
+        (typeof group.tasks)[number],
         ParallelStepExecutionResult
       >(
-        group.parallel,
+        tasks,
         concurrency,
         async (task, taskIdx) => {
           const fi = groupStartFlatIndex + taskIdx;
@@ -4616,12 +4478,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
             steerInboxDir: stepSteerInboxDir(asyncDir, fi),
             piPackageRoot: config.piPackageRoot,
             piArgv1: config.piArgv1,
-            childIntercomTarget: config.childIntercomTargets?.[fi],
-            orchestratorIntercomTarget: config.controlIntercomTarget,
             nestedRoute: config.nestedRoute,
             registerInterrupt: (interrupt) => registerStepInterrupt(fi, interrupt),
             registerTimeout: (interrupt) => registerStepTimeout(fi, interrupt),
-            registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(fi, abort),
             interruptSignal: interruptAbortController.signal,
             interruptMessage: "Interrupted. Waiting for explicit next action.",
             timeoutSignal: timeoutAbortController.signal,
@@ -4629,7 +4488,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
             timeoutMs: task.timeoutMs ?? config.timeoutMs,
             deadlineAt: taskDeadlineAt,
             startedAt: taskStartTime,
-            turnBudget: config.turnBudget,
             onAttemptStart: (attempt) => updateStepModel(fi, attempt),
             onChildEvent: (event) => updateStepFromChildEvent(fi, event),
             onChildProtocolOutputLimit,
@@ -4663,9 +4521,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           statusPayload.steps[fi].exitSignal = singleResult.exitSignal;
           statusPayload.steps[fi].timedOut = timedOut || singleResult.timedOut ? true : undefined;
           statusPayload.steps[fi].processCleanup = singleResult.processCleanup;
-          statusPayload.steps[fi].turnBudget = singleResult.turnBudget;
-          statusPayload.steps[fi].turnBudgetExceeded = singleResult.turnBudgetExceeded;
-          statusPayload.steps[fi].wrapUpRequested = singleResult.wrapUpRequested;
           statusPayload.steps[fi].toolBudget = singleResult.toolBudget;
           statusPayload.steps[fi].toolBudgetBlocked = singleResult.toolBudgetBlocked;
           statusPayload.steps[fi].contextUsage = singleResult.contextUsage;
@@ -4675,9 +4530,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           statusPayload.steps[fi].terminationReason = singleResult.terminationReason;
           if (singleResult.toolBudget) statusPayload.toolBudget = singleResult.toolBudget;
           if (singleResult.toolBudgetBlocked) statusPayload.toolBudgetBlocked = true;
-          if (singleResult.turnBudget) statusPayload.turnBudget = singleResult.turnBudget;
-          if (singleResult.turnBudgetExceeded) statusPayload.turnBudgetExceeded = true;
-          if (singleResult.wrapUpRequested) statusPayload.wrapUpRequested = true;
           statusPayload.steps[fi].model = singleResult.model;
           statusPayload.steps[fi].thinking = singleResult.modelIdentity
             ? singleResult.modelIdentity.thinking
@@ -4760,7 +4612,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         globalSemaphore,
       );
 
-      flatIndex += group.parallel.length;
+      flatIndex += tasks.length;
       settleParallelGroup(group, parallelResults, groupStartFlatIndex, stepIndex);
 
       const parallelGroupInterrupted =
@@ -4785,7 +4637,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         break;
       }
     } else {
-      const seqStep = step as SubagentStep;
+      const seqStep = step.task;
       const stepStartTime = Date.now();
       const stepDeadlineAt =
         seqStep.timeoutMs !== undefined ? stepStartTime + seqStep.timeoutMs : config.deadlineAt;
@@ -4838,12 +4690,9 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         steerInboxDir: stepSteerInboxDir(asyncDir, flatIndex),
         piPackageRoot: config.piPackageRoot,
         piArgv1: config.piArgv1,
-        childIntercomTarget: config.childIntercomTargets?.[flatIndex],
-        orchestratorIntercomTarget: config.controlIntercomTarget,
         nestedRoute: config.nestedRoute,
         registerInterrupt: (interrupt) => registerStepInterrupt(flatIndex, interrupt),
         registerTimeout: (interrupt) => registerStepTimeout(flatIndex, interrupt),
-        registerTurnBudgetAbort: (abort) => registerStepTurnBudgetAbort(flatIndex, abort),
         interruptSignal: interruptAbortController.signal,
         interruptMessage: "Interrupted. Waiting for explicit next action.",
         timeoutSignal: timeoutAbortController.signal,
@@ -4851,7 +4700,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         timeoutMs: seqStep.timeoutMs ?? config.timeoutMs,
         deadlineAt: stepDeadlineAt,
         startedAt: stepStartTime,
-        turnBudget: config.turnBudget,
         onAttemptStart: (attempt) => updateStepModel(flatIndex, attempt),
         onChildEvent: (event) => updateStepFromChildEvent(flatIndex, event),
         onChildProtocolOutputLimit,
@@ -5104,7 +4952,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           ? "failed"
           : supervisorPauseTransitionFailed
             ? "failed"
-            : timedOut || turnBudgetExceeded
+            : timedOut
               ? "failed"
               : interrupted
                 ? "paused"
@@ -5115,12 +4963,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       if (timedOut) {
         statusPayload.timedOut = true;
         statusPayload.error = timeoutMessage ?? "Subagent timed out.";
-      }
-      if (turnBudgetExceeded && !statusPayload.error) {
-        const budget = statusPayload.turnBudget;
-        statusPayload.error = budget
-          ? turnBudgetExceededMessage(budget, budget.turnCount)
-          : "Subagent exceeded turn budget.";
       }
       if (supervisorPauseTransitionFailed && statusPayload.state === "failed") {
         statusPayload.error = statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE;
@@ -5185,7 +5027,7 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
       ? statusPayload.state
       : terminalReason.reason === "output_limit"
         ? "failed"
-        : timedOut || turnBudgetExceeded
+        : timedOut
           ? "failed"
           : resultPausedAwaitingSupervisor
             ? "paused"
@@ -5205,22 +5047,19 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
     const resultSummary =
       !concurrentTerminalStatusAdopted && timedOut
         ? (timeoutMessage ?? "Subagent timed out.")
-        : !concurrentTerminalStatusAdopted && turnBudgetExceeded
-          ? (statusPayload.error ?? "Subagent exceeded turn budget.")
-          : resultPausedAwaitingSupervisor
-            ? pausedOutputForIndex(
-                supervisorPauseRequest?.requesterIndex ?? 0,
-                statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ??
-                  agentName,
-              )
-            : resultState === "failed"
-              ? (statusPayload.error ??
-                (supervisorPauseTransitionFailed
-                  ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
-                  : summary))
-              : resultState === "paused"
-                ? "Paused after interrupt. Waiting for explicit next action."
-                : summary;
+        : resultPausedAwaitingSupervisor
+          ? pausedOutputForIndex(
+              supervisorPauseRequest?.requesterIndex ?? 0,
+              statusPayload.steps[supervisorPauseRequest?.requesterIndex ?? 0]?.agent ?? agentName,
+            )
+          : resultState === "failed"
+            ? (statusPayload.error ??
+              (supervisorPauseTransitionFailed
+                ? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE
+                : summary))
+            : resultState === "paused"
+              ? "Paused after interrupt. Waiting for explicit next action."
+              : summary;
 
     try {
       writeAtomicJson(resultPath, {
@@ -5233,18 +5072,13 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         summary: resultSummary,
         ...(config.timeoutMs !== undefined ? { timeoutMs: config.timeoutMs } : {}),
         ...(config.deadlineAt !== undefined ? { deadlineAt: config.deadlineAt } : {}),
-        ...(statusPayload.turnBudget ? { turnBudget: statusPayload.turnBudget } : {}),
-        ...(statusPayload.turnBudgetExceeded ? { turnBudgetExceeded: true } : {}),
-        ...(statusPayload.wrapUpRequested ? { wrapUpRequested: true } : {}),
         ...(statusPayload.toolBudget ? { toolBudget: statusPayload.toolBudget } : {}),
         ...(statusPayload.toolBudgetBlocked ? { toolBudgetBlocked: true } : {}),
         ...(!concurrentTerminalStatusAdopted && timedOut
           ? { timedOut: true, error: timeoutMessage ?? "Subagent timed out." }
-          : !concurrentTerminalStatusAdopted && turnBudgetExceeded
-            ? { error: statusPayload.error ?? "Subagent exceeded turn budget." }
-            : resultState === "failed"
-              ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
-              : {}),
+          : resultState === "failed"
+            ? { error: statusPayload.error ?? ASYNC_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE }
+            : {}),
         ...(resultPausedAwaitingSupervisor ? { pause: resultPausedAwaitingSupervisor } : {}),
         results: results.map((r) => ({
           agent: r.agent,
@@ -5260,9 +5094,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           skipped: r.skipped || undefined,
           interrupted: r.interrupted || undefined,
           timedOut: r.timedOut || undefined,
-          turnBudget: r.turnBudget,
-          turnBudgetExceeded: r.turnBudgetExceeded || undefined,
-          wrapUpRequested: r.wrapUpRequested || undefined,
           toolBudget: r.toolBudget,
           toolBudgetBlocked: r.toolBudgetBlocked || undefined,
           contextUsage: r.contextUsage,
@@ -5270,7 +5101,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
           contextPressureCrossedThresholds: r.contextPressureCrossedThresholds,
           terminationReason: r.terminationReason,
           sessionFile: r.sessionFile,
-          intercomTarget: r.intercomTarget,
           model: r.model,
           modelIdentity: r.modelIdentity,
           modelResolution: r.modelResolution,
@@ -5304,7 +5134,6 @@ async function runSubagent(config: SubagentRunConfig): Promise<void> {
         sessionId: config.sessionId,
         ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
         sessionFile: effectiveSessionFile,
-        intercomTarget: config.controlIntercomTarget,
         shareUrl,
         gistUrl,
         shareError,

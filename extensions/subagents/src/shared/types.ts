@@ -39,13 +39,7 @@ export interface ChainOutputMapEntry {
 
 export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
 
-export type WorkflowNodeStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "paused"
-  | "detached";
+export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused";
 
 export interface WorkflowGraphNode {
   id: string;
@@ -96,16 +90,6 @@ export interface Usage {
   turns: number;
 }
 
-export interface TurnBudgetConfig {
-  maxTurns: number;
-  graceTurns?: number;
-}
-
-export interface ResolvedTurnBudget {
-  maxTurns: number;
-  graceTurns: number;
-}
-
 export interface ToolBudgetConfig {
   soft?: number;
   hard: number;
@@ -128,15 +112,6 @@ export interface ToolBudgetState extends ResolvedToolBudget {
   blockedTool?: string;
 }
 
-type TurnBudgetOutcome = "within-budget" | "wrap-up-requested" | "exceeded";
-
-export interface TurnBudgetState extends ResolvedTurnBudget {
-  outcome: TurnBudgetOutcome;
-  turnCount: number;
-  wrapUpRequestedAtTurn?: number;
-  exceededAtTurn?: number;
-}
-
 export interface TokenUsage {
   input: number;
   output: number;
@@ -145,7 +120,7 @@ export interface TokenUsage {
 
 export type ActivityState = "active_long_running" | "needs_attention";
 export type ControlEventType = "active_long_running" | "needs_attention";
-export type ControlNotificationChannel = "event" | "async" | "intercom";
+export type ControlNotificationChannel = "event" | "async";
 
 export type ContextPressureSeverity = "warning" | "critical";
 export type ContextPressureThreshold = ContextPressureSeverity;
@@ -235,7 +210,7 @@ export interface ControlEvent {
   recentFailureSummary?: string;
 }
 
-export type SubagentResultStatus = "completed" | "failed" | "paused" | "detached";
+export type SubagentResultStatus = "completed" | "failed" | "paused";
 export type SubagentRunMode = "single" | "parallel" | "chain";
 
 /** Stable machine-readable reason why a child execution segment terminated. */
@@ -245,7 +220,6 @@ export type SubagentTerminationReason =
   | "model_error"
   | "interrupted"
   | "timed_out"
-  | "turn_budget_exceeded"
   | "tool_budget_blocked"
   | "paused"
   | "cancelled"
@@ -294,8 +268,7 @@ export interface AsyncCancellationMetadata {
 }
 
 export interface ForegroundSupervisorRequestMetadata {
-  tool: "intercom" | "contact_supervisor";
-  action?: "ask";
+  tool: "contact_supervisor";
   reason?: "need_decision" | "interview_request";
   requestId?: string;
   summary?: string;
@@ -368,9 +341,6 @@ export type PublicNestedRunSummary = Pick<
   | "asyncDir"
   | "sessionId"
   | "sessionFile"
-  | "intercomTarget"
-  | "ownerIntercomTarget"
-  | "leafIntercomTarget"
   | "ownerState"
   | "mode"
   | "state"
@@ -397,22 +367,18 @@ export type PublicNestedRunSummary = Pick<
   | "timeoutMs"
   | "deadlineAt"
   | "timedOut"
-  | "turnBudget"
-  | "turnBudgetExceeded"
-  | "wrapUpRequested"
 > & {
   steps?: PublicNestedStepSummary[];
   children?: PublicNestedRunSummary[];
 };
 
-export interface SubagentResultIntercomChild {
+export interface SubagentResultChild {
   agent: string;
   status: SubagentResultStatus;
   summary: string;
   index?: number;
   artifactPath?: string;
   sessionPath?: string;
-  intercomTarget?: string;
   children?: PublicNestedRunSummary[];
 }
 
@@ -423,7 +389,7 @@ export interface SubagentResultIntercomChild {
 export interface AgentProgress {
   index: number;
   agent: string;
-  status: "pending" | "running" | "completed" | "failed" | "detached";
+  status: "pending" | "running" | "completed" | "failed";
   activityState?: ActivityState;
   task: string;
   skills?: string[];
@@ -645,13 +611,8 @@ export interface SingleResult {
   projectAgent?: ProjectAgentRunCapture;
   exitCode: number;
   exitSignal?: NodeJS.Signals;
-  detached?: boolean;
-  detachedReason?: string;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -703,7 +664,6 @@ export interface SingleResult {
 export interface Details {
   mode: SubagentRunMode | "management";
   runId?: string;
-  context?: "fresh" | "fork";
   results: SingleResult[];
   controlEvents?: ControlEvent[];
   asyncId?: string;
@@ -711,7 +671,6 @@ export interface Details {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
   progress?: AgentProgress[];
   progressSummary?: ProgressSummary;
@@ -802,9 +761,6 @@ export interface NestedStepSummary {
   endedAt?: number;
   error?: string;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -823,9 +779,6 @@ export interface NestedRunSummary extends NestedRunAddress {
   pid?: number;
   sessionId?: string;
   sessionFile?: string;
-  intercomTarget?: string;
-  ownerIntercomTarget?: string;
-  leafIntercomTarget?: string;
   ownerState?: NestedOwnerState;
   controlInbox?: string;
   capabilityToken?: string;
@@ -853,9 +806,6 @@ export interface NestedRunSummary extends NestedRunAddress {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   error?: string;
@@ -905,7 +855,6 @@ export interface AsyncStartedEvent {
   workflowGraph?: WorkflowGraphSnapshot;
   timeoutMs?: number;
   deadlineAt?: number;
-  turnBudget?: TurnBudgetState;
   nestedRoute?: NestedRouteInfo;
   tkTicket?: TkTicketMetadata;
 }
@@ -935,9 +884,6 @@ export interface AsyncStatus {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   pid?: number;
@@ -987,9 +933,6 @@ export interface AsyncStatus {
     exitCode?: number | null;
     exitSignal?: NodeJS.Signals;
     timedOut?: boolean;
-    turnBudget?: TurnBudgetState;
-    turnBudgetExceeded?: boolean;
-    wrapUpRequested?: boolean;
     toolBudget?: ToolBudgetState;
     toolBudgetBlocked?: boolean;
     contextUsage?: ContextUsageDiagnostics;
@@ -1060,9 +1003,6 @@ export interface AsyncResultArtifactResultItem {
   skipped?: boolean;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   contextUsage?: ContextUsageDiagnostics;
@@ -1070,7 +1010,6 @@ export interface AsyncResultArtifactResultItem {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   terminationReason?: SubagentTerminationReason;
   sessionFile?: string;
-  intercomTarget?: string;
   model?: string;
   modelIdentity?: SubagentModelIdentity;
   modelResolution?: SubagentModelResolution;
@@ -1112,9 +1051,6 @@ export interface AsyncResultArtifact {
   error?: string;
   timeoutMs?: number;
   deadlineAt?: number;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   timedOut?: boolean;
@@ -1135,7 +1071,6 @@ export interface AsyncResultArtifact {
   sessionFile?: string;
   /** Safe per-child captures mirrored into the result artifact. */
   projectAgents?: ProjectAgentRunCapture[];
-  intercomTarget?: string;
   shareUrl?: string;
   gistUrl?: string;
   shareError?: string;
@@ -1175,9 +1110,6 @@ export interface AsyncJobState {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   toolBudget?: ToolBudgetState;
   toolBudgetBlocked?: boolean;
   sessionDir?: string;
@@ -1212,7 +1144,6 @@ export interface ForegroundResumeChild {
   artifactPaths?: ArtifactPaths;
   transcriptPath?: string;
   transcriptError?: string;
-  detachedReason?: string;
   acceptance?: AcceptanceLedger;
   pause?: ForegroundPauseMetadata;
   cancel?: AsyncCancellationMetadata;
@@ -1296,17 +1227,14 @@ export interface ErrorInfo {
   details?: string;
 }
 
-export interface IntercomEventBus {
+export interface SubagentEventBus {
   on(channel: string, handler: (data: unknown) => void): () => void;
   emit(channel: string, data: unknown): void;
 }
 
-export const INTERCOM_DETACH_REQUEST_EVENT = "pi-intercom:detach-request";
-export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
-export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 
 // ============================================================================
 // Execution Options
@@ -1328,17 +1256,11 @@ export interface RunSyncOptions {
   interruptSignal?: AbortSignal;
   timeoutMs?: number;
   deadlineAt?: number;
-  turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
-  allowIntercomDetach?: boolean;
   pauseBlockingSupervisor?: boolean;
-  intercomEvents?: IntercomEventBus;
   onUpdate?: (r: SubagentToolResult<Details>) => void;
   onControlEvent?: (event: ControlEvent) => void;
-  onDetachedExit?: (result: SingleResult) => void;
   controlConfig?: ResolvedControlConfig;
-  intercomSessionName?: string;
-  orchestratorIntercomTarget?: string;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
   artifactConfig?: ArtifactConfig;
@@ -1363,8 +1285,6 @@ export interface RunSyncOptions {
   contextPressureCrossedThresholds?: ContextPressureThreshold[];
   /** Optional bounded notice for a supplied fallback retry and/or registry filtering. */
   modelFallbackNotice?: string;
-  /** Override the agent's default thinking level for this run */
-  thinkingOverride?: import("../agents/agents.ts").AgentConfig["thinking"];
   /** Registry models available for model resolution and thinking-capability checks */
   availableModels?: import("./model-info.ts").ModelInfo[];
   /** Catalog/error evidence used to conservatively filter unavailable fallbacks. */
@@ -1388,13 +1308,6 @@ export interface RunSyncOptions {
   };
 }
 
-export type IntercomBridgeMode = "off" | "fork-only" | "always";
-
-export interface IntercomBridgeConfig {
-  mode?: IntercomBridgeMode;
-  instructionFile?: string;
-}
-
 interface TopLevelParallelConfig {
   maxTasks?: number;
   concurrency?: number;
@@ -1404,7 +1317,6 @@ export interface ExtensionConfig {
   maxSubagentDepth?: number;
   control?: ControlConfig;
   parallel?: TopLevelParallelConfig;
-  intercomBridge?: IntercomBridgeConfig;
   heartbeat?: import("../runs/shared/heartbeat-config.ts").HeartbeatConfig;
 }
 
@@ -1524,12 +1436,6 @@ export const SUBAGENT_ACTIONS = [
   "doctor",
 ] as const;
 
-export const DEFAULT_FORK_PREAMBLE =
-  "You are a delegated subagent running from a fork of the parent session. " +
-  "Treat the inherited conversation as reference-only context, not a live thread to continue. " +
-  "Do not continue or answer prior messages as if they are waiting for a reply. " +
-  "Your sole job is to execute the task below and return a focused result for that task using your tools.";
-
 function normalizeTopLevelParallelValue(value: unknown): number | undefined {
   const parsed =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
@@ -1554,14 +1460,6 @@ export function resolveTopLevelParallelConcurrency(
 
 export function getAsyncConfigPath(suffix: string): string {
   return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);
-}
-
-export function wrapForkTask(task: string, preamble?: string | false): string {
-  if (preamble === false) return task;
-  const effectivePreamble = preamble ?? DEFAULT_FORK_PREAMBLE;
-  const wrappedPrefix = `${effectivePreamble}\n\nTask:\n`;
-  if (task.startsWith(wrappedPrefix)) return task;
-  return `${wrappedPrefix}${task}`;
 }
 
 // ============================================================================

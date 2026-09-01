@@ -6,15 +6,15 @@ import {
   attachNestedChildrenToResultChildren,
   formatForegroundNativeSubagentResult,
   resolveSubagentResultStatus,
-} from "../../src/intercom/result-intercom.ts";
-import type { SubagentResultIntercomChild } from "../../src/shared/types.ts";
+} from "../../src/shared/result-formatting.ts";
+import type { SubagentResultChild } from "../../src/shared/types.ts";
 import { makePublicNestedRunSummary } from "../support/helpers.ts";
 
-describe("result intercom formatter", () => {
+describe("result formatter", () => {
   it("attaches compact nested children under their parent result child without route secrets", () => {
-    // Typed as SubagentResultIntercomChild[] so T is inferred as the full interface,
+    // Typed as SubagentResultChild[] so T is inferred as the full interface,
     // making children (which the function attaches) accessible on the return type.
-    const items: SubagentResultIntercomChild[] = [
+    const items: SubagentResultChild[] = [
       { agent: "owner-a", status: "completed", summary: "done", index: 0 },
       { agent: "owner-b", status: "completed", summary: "done", index: 1 },
     ];
@@ -66,7 +66,6 @@ describe("result intercom formatter", () => {
           status: "completed",
           summary: "done",
           artifactPath: "/tmp/a.md",
-          intercomTarget: "subagent-a-run-native-1",
           index: 0,
         },
         {
@@ -103,8 +102,6 @@ describe("result intercom formatter", () => {
     );
     assert.match(grouped.text, /Output artifact: \/tmp\/a\.md/);
     assert.match(grouped.text, /Session: \/tmp\/b\.jsonl/);
-    assert.doesNotMatch(grouped.text, /intercom target/i);
-    assert.doesNotMatch(grouped.text, /Intercom targets below/i);
     assert.ok(grouped.text.length <= 8_000);
   });
 
@@ -211,9 +208,8 @@ describe("result intercom formatter", () => {
     );
   });
 
-  it("resolves paused and detached statuses", () => {
+  it("resolves paused, completed, and failed statuses", () => {
     assert.equal(resolveSubagentResultStatus({ interrupted: true }), "paused");
-    assert.equal(resolveSubagentResultStatus({ detached: true }), "detached");
     assert.equal(resolveSubagentResultStatus({ success: true }), "completed");
     assert.equal(resolveSubagentResultStatus({ exitCode: 1 }), "failed");
   });

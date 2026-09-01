@@ -129,14 +129,13 @@ bash:
   });
 });
 
-describe("agent frontmatter defaultContext", () => {
-  it("parses defaultContext from discovered agent frontmatter", () => {
+describe("retired defaultContext frontmatter", () => {
+  it("reports an actionable migration diagnostic", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-agent-default-context-"));
     tempDirs.push(dir);
-    const agentsDir = canonicalAgentDir(dir);
-    fs.mkdirSync(agentsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(agentsDir, "developer.md"),
+    const filePath = path.join(canonicalAgentDir(dir), "developer.md");
+    writeAgent(
+      filePath,
       `---
 name: developer
 description: Worker
@@ -145,12 +144,18 @@ defaultContext: fork
 
 Do work
 `,
-      "utf-8",
     );
 
-    const result = discoverAgents(dir, "project");
-    const worker = result.agents.find((agent) => agent.name === "developer");
-    assert.equal(worker?.defaultContext, "fork");
+    const result = discoverAgentsAll(dir);
+    assert.equal(
+      result.user.some((agent) => agent.name === "developer"),
+      false,
+      "agent with retired defaultContext must be skipped",
+    );
+    const diagnostic = result.agentDiagnostics?.find((entry) => entry.filePath === filePath);
+    assert.ok(diagnostic);
+    assert.match(diagnostic.error, /retired defaultContext/);
+    assert.match(diagnostic.error, /starts child sessions fresh/);
   });
 });
 

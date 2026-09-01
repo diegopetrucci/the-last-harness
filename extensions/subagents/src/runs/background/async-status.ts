@@ -23,7 +23,6 @@ import {
   type SubagentTerminationReason,
   type TkTicketMetadata,
   type TokenUsage,
-  type TurnBudgetState,
 } from "../../shared/types.ts";
 import { readInterruptRequest } from "./control-channel.ts";
 import { readStatus } from "../../shared/utils.ts";
@@ -94,9 +93,6 @@ interface AsyncRunStepSummary {
   attemptedModels?: string[];
   error?: string;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   children?: NestedRunSummary[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }
@@ -125,9 +121,6 @@ export interface AsyncRunSummary {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   currentStep?: number;
   chainStepCount?: number;
   pendingAppends?: number;
@@ -364,11 +357,6 @@ function statusToSummary(
       ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
       ...(step.error ? { error: step.error } : {}),
       ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-      ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-      ...(step.turnBudgetExceeded !== undefined
-        ? { turnBudgetExceeded: step.turnBudgetExceeded }
-        : {}),
-      ...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
       ...(step.children?.length ? { children: step.children } : {}),
     };
   });
@@ -402,11 +390,6 @@ function statusToSummary(
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
-    ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-    ...(status.turnBudgetExceeded !== undefined
-      ? { turnBudgetExceeded: status.turnBudgetExceeded }
-      : {}),
-    ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
     currentStep: status.currentStep,
     ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
     ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
@@ -567,9 +550,6 @@ function formatActivityFacts(input: {
   interruptRequestedAt?: number;
   steerCount?: number;
   lastSteerAt?: number;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   privacySafe?: boolean;
 }): string | undefined {
   if (input.interruptRequestedAt !== undefined) return "pausing…";
@@ -583,16 +563,6 @@ function formatActivityFacts(input: {
   if (!input.privacySafe && input.currentPath)
     facts.push(safeTerminalText(shortenPath(input.currentPath)));
   if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
-  if (input.turnBudgetExceeded && input.turnBudget)
-    facts.push(
-      `turn budget exceeded ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`,
-    );
-  else if (input.wrapUpRequested && input.turnBudget)
-    facts.push(`wrap-up requested ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}`);
-  else if (input.turnBudget)
-    facts.push(
-      `turn budget ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`,
-    );
   if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
   if (input.steerCount !== undefined) facts.push(`${input.steerCount} steers`);
   if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt))

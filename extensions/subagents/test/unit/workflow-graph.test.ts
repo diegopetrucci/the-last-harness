@@ -83,6 +83,39 @@ describe("workflow graph snapshots", () => {
     ]);
   });
 
+  it("maps direct single and parallel plans without a legacy chain input", () => {
+    const task = (agent: string) => ({
+      agent,
+      task: `Work for ${agent}`,
+      inheritProjectContext: false,
+      inheritSkills: false,
+    });
+    const single = buildWorkflowGraphSnapshot({
+      runId: "direct-single",
+      mode: "single",
+      plan: { kind: "single", task: task("worker") },
+      currentStepIndex: 0,
+    });
+    assert.equal(single.nodes[0]?.kind, "step");
+    assert.equal(single.nodes[0]?.agent, "worker");
+    assert.equal(single.currentNodeId, "step-0");
+
+    const parallel = buildWorkflowGraphSnapshot({
+      runId: "direct-parallel",
+      mode: "parallel",
+      plan: {
+        kind: "parallel",
+        tasks: [task("reviewer"), { ...task("security"), phase: "Review" }],
+        concurrency: 2,
+      },
+      currentFlatIndex: 1,
+    });
+    assert.equal(parallel.nodes[0]?.kind, "parallel-group");
+    assert.equal(parallel.nodes[0]?.children?.[0]?.agent, "reviewer");
+    assert.equal(parallel.nodes[0]?.children?.[1]?.status, "running");
+    assert.deepEqual(parallel.phases, [{ title: "Review", nodeIds: ["step-0-agent-1"] }]);
+  });
+
   it("marks partially completed parallel groups as running", () => {
     const graph = buildWorkflowGraphSnapshot({
       runId: "run-3",

@@ -58,7 +58,7 @@ function withTerminalRows<T>(rows: number, fn: () => T): T {
   }
 }
 
-describe("renderSubagentResult fork indicator", () => {
+describe("renderSubagentResult", () => {
   it("shows a resolved foreground tk ticket once while active in compact and expanded cards", () => {
     const result = {
       agent: "worker",
@@ -597,7 +597,7 @@ describe("renderSubagentResult fork indicator", () => {
     const widget = renderSubagentResult!(
       {
         content: [{ type: "text", text: "Async: reviewer [abc123]" }],
-        details: { mode: "single", context: "fork", results: [] },
+        details: { mode: "single", results: [] },
       },
       { expanded: false },
       theme,
@@ -605,7 +605,6 @@ describe("renderSubagentResult fork indicator", () => {
 
     const text = widget.render(120).join("\n");
     assert.match(text, /Async: reviewer \[abc123\]/);
-    assert.match(text, /\[fork\]/);
   });
 
   it("keeps async error placeholders visible", () => {
@@ -643,20 +642,17 @@ describe("renderSubagentResult fork indicator", () => {
     const widget = renderSubagentResult!(
       {
         content: [{ type: "text", text: output }],
-        details: { mode: "management", context: "fork", results: [] },
+        details: { mode: "management", results: [] },
       },
       { expanded: false },
       theme,
     );
 
     const lines = widget.render(120).map((line) => line.trimEnd());
-    assert.match(lines[0]!, /^\[fork\] Managed agents:/);
+    assert.match(lines[0]!, /^Managed agents:/);
     assert.ok(lines.every((line) => visibleWidth(line) <= 120));
     assert.ok(
-      lines
-        .join("")
-        .replace(/\s/g, "")
-        .includes(`[fork] ${firstLine} · 4 lines`.replace(/\s/g, "")),
+      lines.join("").replace(/\s/g, "").includes(`${firstLine} · 4 lines`.replace(/\s/g, "")),
     );
     assert.doesNotMatch(lines.join("\n"), /\.\.\.|…/);
     const hintLineIndex = lines.findIndex((line) => line.includes(expandHint));
@@ -719,7 +715,7 @@ describe("renderSubagentResult fork indicator", () => {
     assert.doesNotMatch(text, /State: running/);
   });
 
-  it("uses the fork-owned live-detail shortcut independently of Pi's expand key", () => {
+  it("uses the live-detail shortcut independently of Pi's expand key", () => {
     assert.equal(expandKey, "Ctrl+Shift+D");
     const widget = renderSubagentResult!(
       {
@@ -809,46 +805,6 @@ describe("renderSubagentResult fork indicator", () => {
       .join("\n");
     assert.equal(singleLine, "No active async run transcript is available.");
     assert.ok(!singleLine.includes(expandHint));
-  });
-
-  it("shows [fork] when details are empty but context is fork", () => {
-    const widget = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "Async: reviewer [abc123]" }],
-        details: { mode: "single", context: "fork", results: [] },
-      },
-      { expanded: false },
-      theme,
-    );
-
-    const text = widget.render(120).join("\n");
-    assert.match(text, /\[fork\]/);
-  });
-
-  it("shows [fork] on single-result header", () => {
-    const widget = renderSubagentResult!(
-      {
-        content: [{ type: "text", text: "done" }],
-        details: {
-          mode: "single",
-          context: "fork",
-          results: [
-            {
-              agent: "reviewer",
-              task: "review",
-              exitCode: 0,
-              messages: [],
-              usage: emptyUsage,
-            },
-          ],
-        },
-      },
-      { expanded: false },
-      theme,
-    );
-
-    const text = widget.render(120).join("\n");
-    assert.match(text, /\[fork\]/);
   });
 
   it("uses compacted tool-call summaries when messages were stripped", () => {

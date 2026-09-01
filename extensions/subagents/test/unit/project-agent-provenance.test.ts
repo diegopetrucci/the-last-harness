@@ -65,7 +65,7 @@ describe("packaged minor-agent provenance", () => {
     // The persisted runner config type remains assignable after JSON round-trip;
     // malformed values cannot opt in at the child-env boundary because launch
     // wiring uses exact === true.
-    const config: Pick<SubagentRunConfig, "steps"> = { steps: built.steps };
+    const config: Required<Pick<SubagentRunConfig, "steps">> = { steps: built.steps };
     assert.equal(config.steps.length, 2);
   });
 });

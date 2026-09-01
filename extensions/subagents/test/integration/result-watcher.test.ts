@@ -410,20 +410,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -453,7 +439,6 @@ describe("result watcher", () => {
             results: [{ agent: "worker", output: "owner output", success: true }],
             sessionId: "session-owner",
             cwd: "/repo",
-            intercomTarget: "owner-target",
           }),
           "utf-8",
         );
@@ -465,10 +450,9 @@ describe("result watcher", () => {
             mode: "single",
             success: true,
             state: "complete",
-            summary: "legacy cwd-scoped output",
-            results: [{ agent: "worker", output: "legacy cwd-scoped output", success: true }],
+            summary: "sessionless output",
+            results: [{ agent: "worker", output: "sessionless output", success: true }],
             cwd: "/repo",
-            intercomTarget: "sessionless-target",
           }),
           "utf-8",
         );
@@ -488,15 +472,7 @@ describe("result watcher", () => {
       assert.equal(ownerCompletions.length, 1);
       assert.equal((ownerCompletions[0]?.data as { id?: string } | undefined)?.id, "owner-run");
       assert.equal(
-        owner.emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
-      assert.equal(
         other.emitted.some((entry) => entry.event === "subagent:async-complete"),
-        false,
-      );
-      assert.equal(
-        other.emitted.some((entry) => entry.event === "subagent:result-intercom"),
         false,
       );
       assert.equal(fs.existsSync(ownerResultPath), false);
@@ -606,20 +582,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -672,18 +634,15 @@ describe("result watcher", () => {
                 output: "Result from a",
                 success: true,
                 sessionFile: childSessionPath,
-                intercomTarget: "subagent-a-run-fallback-1",
               },
               {
                 agent: "b",
                 output: "Result from b",
                 success: false,
                 error: "B failed",
-                intercomTarget: "subagent-b-run-fallback-2",
               },
             ],
             sessionId: "session-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -693,11 +652,6 @@ describe("result watcher", () => {
         console.error = originalError;
         watcher.stopResultWatcher();
       }
-
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
       assert.equal(
         emitted.some((entry) => entry.event === "subagent:async-complete"),
         true,
@@ -792,7 +746,7 @@ describe("result watcher", () => {
     }
   });
 
-  it("emits one async completion event with safe child session references when intercom metadata is present", async () => {
+  it("emits one async completion event with safe child session references", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
     try {
       const emitted: Array<{ event: string; data: unknown }> = [];
@@ -808,20 +762,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -849,7 +789,6 @@ describe("result watcher", () => {
                 success: true,
                 sessionFile: firstSession,
                 artifactPaths: { outputPath: "/tmp/a-output.md" },
-                intercomTarget: "subagent-a-run-123-1",
               },
               {
                 agent: "b",
@@ -857,13 +796,11 @@ describe("result watcher", () => {
                 success: false,
                 sessionFile: missingSession,
                 artifactPaths: { outputPath: "/tmp/b-output.md" },
-                intercomTarget: "subagent-b-run-123-2",
               },
             ],
             sessionId: "session-1",
             sessionFile: "/tmp/session.jsonl",
             asyncDir: "/tmp/async-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -872,11 +809,6 @@ describe("result watcher", () => {
       } finally {
         watcher.stopResultWatcher();
       }
-
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
       const completion = emitted.find((entry) => entry.event === "subagent:async-complete")
         ?.data as { mode?: string; results?: Array<{ sessionPath?: string }> } | undefined;
       assert.equal(completion?.mode, "parallel");
@@ -920,20 +852,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -954,7 +872,6 @@ describe("result watcher", () => {
             summary: "owner done",
             results: [{ agent: "owner", output: "owner done", success: true }],
             sessionId: "session-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -965,10 +882,6 @@ describe("result watcher", () => {
       }
 
       assert.equal(fs.existsSync(resultPath), false);
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
       const completion = emitted.find((entry) => entry.event === "subagent:async-complete")
         ?.data as
         | {
@@ -1006,20 +919,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -1074,7 +973,6 @@ describe("result watcher", () => {
               { id: "top-explicit-bad", path: "not-an-array" },
             ],
             sessionId: "session-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -1092,10 +990,6 @@ describe("result watcher", () => {
             String(entry[0] ?? "").includes(resultPath) &&
             /invalid nested child record/.test(String(entry[0] ?? "")),
         ),
-      );
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
       );
       const completion = emitted.find((entry) => entry.event === "subagent:async-complete")
         ?.data as
@@ -1174,7 +1068,6 @@ describe("result watcher", () => {
             state: "complete",
             summary: "owner done",
             sessionId: "session-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -1209,10 +1102,6 @@ describe("result watcher", () => {
         ["nested-retry-child"],
       );
       assert.equal(completion?.results, undefined);
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
     } finally {
       fs.rmSync(resultsDir, { recursive: true, force: true });
       fs.rmSync(path.dirname(route.eventSink), { recursive: true, force: true });
@@ -1256,7 +1145,6 @@ describe("result watcher", () => {
             ],
             sessionId: "session-1",
             sessionFile: "/tmp/top-session.jsonl",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -1272,10 +1160,6 @@ describe("result watcher", () => {
       assert.equal(
         completion?.results?.every((child) => child.sessionPath === undefined),
         true,
-      );
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
       );
     } finally {
       fs.rmSync(resultsDir, { recursive: true, force: true });
@@ -1298,20 +1182,6 @@ describe("result watcher", () => {
           emit(event: string, data: unknown) {
             emitted.push({ event, data });
             for (const handler of listeners.get(event) ?? []) handler(data);
-            if (event === "subagent:result-intercom") {
-              const requestId =
-                data && typeof data === "object"
-                  ? (data as { requestId?: unknown }).requestId
-                  : undefined;
-              if (typeof requestId === "string") {
-                setImmediate(() =>
-                  pi.events.emit("subagent:result-intercom-delivery", {
-                    requestId,
-                    delivered: true,
-                  }),
-                );
-              }
-            }
           },
         },
       };
@@ -1335,7 +1205,6 @@ describe("result watcher", () => {
                 output: "Result from a",
                 success: true,
                 exitCode: 0,
-                intercomTarget: "subagent-a-run-paused-1",
               },
               {
                 agent: "b",
@@ -1343,11 +1212,9 @@ describe("result watcher", () => {
                 success: false,
                 exitCode: 0,
                 interrupted: true,
-                intercomTarget: "subagent-b-run-paused-2",
               },
             ],
             sessionId: "session-1",
-            intercomTarget: "subagent-chat-main",
           }),
           "utf-8",
         );
@@ -1356,11 +1223,6 @@ describe("result watcher", () => {
       } finally {
         watcher.stopResultWatcher();
       }
-
-      assert.equal(
-        emitted.some((entry) => entry.event === "subagent:result-intercom"),
-        false,
-      );
       const completion = emitted.find((entry) => entry.event === "subagent:async-complete")
         ?.data as
         | { mode?: string; state?: string; results?: Array<{ status?: string; index?: number }> }
@@ -1379,7 +1241,7 @@ describe("result watcher", () => {
     }
   });
 
-  it("completes without grouped async intercom delivery or warning logs", async () => {
+  it("emits a native async completion for a completed result file", async () => {
     const resultsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-result-watcher-"));
     try {
       const emitted: Array<{ event: string; data: unknown }> = [];
@@ -1396,11 +1258,6 @@ describe("result watcher", () => {
       const state = createState();
       state.currentSessionId = "session-1";
       const watcher = createResultWatcher(pi, state, resultsDir, 60_000);
-      const originalError = console.error;
-      const logged: unknown[][] = [];
-      console.error = (...args: unknown[]) => {
-        logged.push(args);
-      };
       try {
         fs.writeFileSync(
           path.join(resultsDir, "async-2.json"),
@@ -1413,7 +1270,6 @@ describe("result watcher", () => {
             summary: "Worker summary",
             results: [{ agent: "worker", output: "Worker summary" }],
             sessionId: "session-1",
-            intercomTarget: "orchestrator",
           }),
           "utf-8",
         );
@@ -1425,22 +1281,12 @@ describe("result watcher", () => {
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
       } finally {
-        console.error = originalError;
         watcher.stopResultWatcher();
       }
 
-      assert.equal(emitted.filter((entry) => entry.event === "subagent:result-intercom").length, 0);
       const completion = emitted.find((entry) => entry.event === "subagent:async-complete")
         ?.data as { results?: Array<{ status?: string }> } | undefined;
       assert.equal(completion?.results?.[0]?.status, "completed");
-      assert.equal(
-        logged.some((entry) =>
-          /Subagent async grouped result intercom delivery was not acknowledged/.test(
-            String(entry[0] ?? ""),
-          ),
-        ),
-        false,
-      );
     } finally {
       fs.rmSync(resultsDir, { recursive: true, force: true });
     }

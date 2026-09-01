@@ -37,7 +37,6 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
   };
   assertAllowed(testRunner);
   assert.equal(testRunner.agentScope, "user");
-  assert.equal(testRunner.context, "fresh");
 
   const webScout = {
     agent: "web-scout",
@@ -45,7 +44,6 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
   };
   assertAllowed(webScout);
   assert.equal(webScout.agentScope, "user");
-  assert.equal(webScout.context, "fresh");
 
   const contrarian = {
     agent: "contrarian",
@@ -53,14 +51,12 @@ test("validateSubagentToolInput allows bundled read-only delegation targets", ()
   };
   assertAllowed(contrarian);
   assert.equal(contrarian.agentScope, "user");
-  assert.equal(contrarian.context, "fresh");
 });
 
 test("experimental allowlist keeps contrarian enabled by default and treats stale settings as harmless no-ops", () => {
   const defaultAllowed = { agent: "contrarian", task: "stress-test this plan" };
   assert.equal(validateSubagentToolInput(defaultAllowed), undefined);
   assert.equal(defaultAllowed.agentScope, "user");
-  assert.equal(defaultAllowed.context, "fresh");
 
   const allowedWithLegacyFlag = { agent: "contrarian", task: "stress-test this plan" };
   assert.equal(
@@ -70,14 +66,12 @@ test("experimental allowlist keeps contrarian enabled by default and treats stal
     undefined,
   );
   assert.equal(allowedWithLegacyFlag.agentScope, "user");
-  assert.equal(allowedWithLegacyFlag.context, "fresh");
 });
 
 test("custom allowlists are bounded to canonical bundled subagents", () => {
   const customEnabled = { agent: "contrarian", task: "stress-test this plan" };
   assertAllowed(customEnabled, { allowedSubagents: [" Developer ", " CONTRARIAN ", "root"] });
   assert.equal(customEnabled.agentScope, "user");
-  assert.equal(customEnabled.context, "fresh");
 
   assert.match(
     validateSubagentToolInput(
@@ -90,35 +84,31 @@ test("custom allowlists are bounded to canonical bundled subagents", () => {
   const emptyFallbackAllowed = { agent: "contrarian", task: "stress-test this plan" };
   assertAllowed(emptyFallbackAllowed, { allowedSubagents: [] });
   assert.equal(emptyFallbackAllowed.agentScope, "user");
-  assert.equal(emptyFallbackAllowed.context, "fresh");
 
   const fallbackAllowed = { agent: "contrarian", task: "stress-test this plan" };
   assertAllowed(fallbackAllowed, { allowedSubagents: ["root", "system", ""] });
   assert.equal(fallbackAllowed.agentScope, "user");
-  assert.equal(fallbackAllowed.context, "fresh");
 });
 
-test("validateSubagentToolInput allows approved execution and forces fresh user context", () => {
+test("validateSubagentToolInput allows approved execution", () => {
   const single = { agent: "developer", task: "implement the ticket" };
   assertAllowed(single);
   assert.equal(single.agentScope, "user");
-  assert.equal(single.context, "fresh");
 
   const batched = {
     tasks: [
       { agent: "repo-scout", task: "map the repo" },
       { agent: "librarian", task: "research upstream docs" },
-      { agent: "code-reviewer", task: "review the diff", context: "fresh" },
+      { agent: "code-reviewer", task: "review the diff" },
       { agent: "diff-summarizer", task: "summarize" },
-      { agent: "oracle", task: "provide a second opinion", context: "fresh" },
+      { agent: "oracle", task: "provide a second opinion" },
       { agent: "developer", task: "fix one issue" },
-      { agent: "repo-scout", task: "inspect one area", context: "fresh" },
+      { agent: "repo-scout", task: "inspect one area" },
       { agent: "test-runner", task: "run the exact validation commands" },
     ],
   };
   assertAllowed(batched);
   assert.equal(batched.agentScope, "user");
-  assert.equal(batched.context, "fresh");
 });
 
 test("validateSubagentToolInput allows approved management calls and keeps enabled resume normalization", () => {
@@ -143,11 +133,9 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
     id: "run-123",
     message: "Continue with the approved ticket.",
     agentScope: "",
-    context: "",
   };
   assertAllowed(resume);
   assert.equal(resume.agentScope, "user");
-  assert.equal(resume.context, "fresh");
 
   const resumeBoth = {
     action: "resume",
@@ -157,14 +145,13 @@ test("validateSubagentToolInput allows approved management calls and keeps enabl
   };
   assertAllowed(resumeBoth);
   assert.equal(resumeBoth.agentScope, "user");
-  assert.equal(resumeBoth.context, "fresh");
 
   for (const action of ["status", "interrupt", "doctor"]) {
     assertAllowed({ action });
   }
 });
 
-test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/contexts", () => {
+test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes", () => {
   assert.match(
     validateSubagentToolInput({ action: "delete" }),
     /may not use subagent management action 'delete'/,
@@ -180,10 +167,6 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
   assert.match(
     validateSubagentToolInput({ agent: "librarian", agentScope: "project" }),
     /may not use agentScope: "project"/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "oracle", context: "resume" }),
-    /may not use context: "resume"/,
   );
   assert.match(
     validateSubagentToolInput({ action: "list", agentScope: "project" }),
@@ -209,25 +192,15 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
     validateSubagentToolInput({ action: "resume", agentScope: "invalid" }),
     /resume calls may not use agentScope: "invalid"/,
   );
-  assert.match(
-    validateSubagentToolInput({ action: "resume", context: "resume" }),
-    /subagent resume may not use context: "resume"/,
-  );
-  assert.match(
-    validateSubagentToolInput({ action: "resume", context: 1 }),
-    /subagent resume must use context: "fresh"/,
-  );
 
   const opaqueResume = {
     action: "resume",
     id: "run-123",
     message: "Continue with the approved ticket.",
     agentScope: "",
-    context: "",
   };
   assertAllowed(opaqueResume);
   assert.equal(opaqueResume.agentScope, "user");
-  assert.equal(opaqueResume.context, "fresh");
 
   const contrarianResume = {
     action: "resume",
@@ -236,7 +209,6 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
   };
   assertAllowed(contrarianResume, { resumeTargetAgent: " contrarian " });
   assert.equal(contrarianResume.agentScope, "user");
-  assert.equal(contrarianResume.context, "fresh");
 
   const allowedDeveloperResume = {
     action: "resume",
@@ -245,14 +217,13 @@ test("validateSubagentToolInput allows opaque resume and blocks unsafe scopes/co
   };
   assertAllowed(allowedDeveloperResume, { resumeTargetAgent: " Developer " });
   assert.equal(allowedDeveloperResume.agentScope, "user");
-  assert.equal(allowedDeveloperResume.context, "fresh");
 });
 
 test("validateSubagentToolInput uses generic primary-agent wording", () => {
   const reasons = [
     validateSubagentToolInput(null),
     validateSubagentToolInput({ action: "delete" }),
-    validateSubagentToolInput({ agent: "developer", context: "resume" }),
+    validateSubagentToolInput({ agent: "developer" }),
   ].filter(Boolean);
 
   for (const reason of reasons) {
@@ -327,13 +298,11 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   const single = { agent: "embedded.repo-helper", prompt: "inspect the repo" };
   assertAllowed(single, opts);
   assert.equal(single.agentScope, "project");
-  assert.equal(single.context, "fresh");
 
   // tasks (parallel batch)
   const tasks = { tasks: [{ agent: "embedded.parallel-helper", prompt: "inspect one area" }] };
   assertAllowed(tasks, opts);
   assert.equal(tasks.agentScope, "project");
-  assert.equal(tasks.context, "fresh");
 
   // mixed: bundled + embedded
   const mixed = {
@@ -344,7 +313,6 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   };
   assertAllowed(mixed, opts);
   assert.equal(mixed.agentScope, "project");
-  assert.equal(mixed.context, "fresh");
 
   assert.match(
     validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "user" }, opts),
@@ -353,10 +321,6 @@ test("validateSubagentToolInput with allowEmbeddedTargets:true allows valid embe
   assert.match(
     validateSubagentToolInput({ agent: "embedded.repo-helper", agentScope: "both" }, opts),
     /project scope is required/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "embedded.repo-helper", context: "fork" }, opts),
-    /may not use context: "fork"/,
   );
 });
 
@@ -433,35 +397,6 @@ test("validateSubagentToolInput: allowEmbeddedTargets does not affect management
   );
 });
 
-test("validateSubagentToolInput rejects non-fresh top-level and nested contexts", () => {
-  assert.match(
-    validateSubagentToolInput({ agent: "developer", context: "resume" }),
-    /may not use context: "resume"/,
-  );
-  assert.match(
-    validateSubagentToolInput({ agent: "developer", context: 1 }),
-    /must use context: "fresh"/,
-  );
-  assert.match(
-    validateSubagentToolInput({ action: "resume", context: "resume" }),
-    /subagent resume may not use context: "resume"/,
-  );
-  assert.match(
-    validateSubagentToolInput({ action: "resume", context: 1 }),
-    /subagent resume must use context: "fresh"/,
-  );
-
-  assert.match(
-    validateSubagentToolInput({ tasks: [{ agent: "developer", context: "resume" }] }),
-    /nested tasks\[0\]\.context may not use context: "resume"/,
-  );
-
-  assert.match(
-    validateSubagentToolInput({ tasks: [{ agent: "developer", context: "" }] }),
-    /nested tasks\[0\]\.context may not use context: ""/,
-  );
-});
-
 // Regression: upstream v0.34.0 added eject/disable/enable/reset management verbs that mutate
 // agent definitions/overrides. TLH policy forbids runtime agent-definition mutation. These are
 // blocked by the SAFE_SUBAGENT_ACTIONS whitelist on the tool_call path, which is the only way
@@ -516,7 +451,7 @@ test("validateSubagentToolInput blocks steer without message", () => {
 });
 
 test("validateSubagentToolInput blocks steer with execution-bearing fields", () => {
-  for (const field of ["agent", "tasks", "chain", "context", "agentScope"]) {
+  for (const field of ["agent", "tasks", "chain", "agentScope"]) {
     const input = { action: "steer", id: "run-abc", message: "Wrap up.", [field]: "some-value" };
     const reason = validateSubagentToolInput(input);
     assert.match(

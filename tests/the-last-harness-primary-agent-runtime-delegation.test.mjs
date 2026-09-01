@@ -48,7 +48,7 @@ test("enabled primary mode allows approved delegation targets and forces safe to
 
   assert.equal(await toolCall(event, ctx), undefined);
   assert.equal(event.input.agentScope, "user");
-  assert.equal(event.input.context, "fresh");
+  assert.equal(Object.hasOwn(event.input, "context"), false);
 });
 
 test("enabled primary mode allows final-validation delegation to test-runner", async () => {
@@ -70,7 +70,7 @@ test("enabled primary mode allows final-validation delegation to test-runner", a
 
   assert.equal(await toolCall(event, ctx), undefined);
   assert.equal(event.input.agentScope, "user");
-  assert.equal(event.input.context, "fresh");
+  assert.equal(Object.hasOwn(event.input, "context"), false);
 });
 
 test("tool_call caps targeted scout execution timeouts without affecting stricter or non-target calls", async () => {
@@ -166,7 +166,7 @@ test("tool_call caps targeted scout execution timeouts without affecting stricte
   }
 });
 
-test("tool_call leaves every resume timeout unchanged while still normalizing scope and context", async () => {
+test("tool_call leaves every resume timeout unchanged while still normalizing scope", async () => {
   const { toolCall } = registerRuntimeHarness({ subagentMetadata: [] });
   const ctx = createToolCallContext([
     {
@@ -207,12 +207,12 @@ test("tool_call leaves every resume timeout unchanged while still normalizing sc
   assert.equal(await toolCall(resumeChainEvent, ctx), undefined);
   assert.equal(resumeChainEvent.input.timeoutMs, 420_000);
   assert.equal(resumeChainEvent.input.agentScope, "user");
-  assert.equal(resumeChainEvent.input.context, "fresh");
+  assert.equal(Object.hasOwn(resumeChainEvent.input, "context"), false);
 
   assert.equal(await toolCall(stricterResumeChainEvent, ctx), undefined);
   assert.equal(stricterResumeChainEvent.input.timeoutMs, 120_000);
   assert.equal(stricterResumeChainEvent.input.agentScope, "user");
-  assert.equal(stricterResumeChainEvent.input.context, "fresh");
+  assert.equal(Object.hasOwn(stricterResumeChainEvent.input, "context"), false);
 
   assert.equal(await toolCall(listEvent, ctx), undefined);
   assert.equal(listEvent.input.timeoutMs, 420_000);
@@ -254,7 +254,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
     assert.equal(await toolCall(defaultEvent, blockedCtx), undefined);
     assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(defaultEvent.input.agentScope, "user");
-    assert.equal(defaultEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(defaultEvent.input, "context"), false);
 
     writeFileSync(
       join(fixture.agent, "settings.json"),
@@ -267,7 +267,7 @@ test("enabled primary mode allows contrarian by default and stale contrarian set
     assert.equal(await toolCall(legacyFlagEvent, blockedCtx), undefined);
     assert.equal(legacyFlagEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(legacyFlagEvent.input.agentScope, "user");
-    assert.equal(legacyFlagEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(legacyFlagEvent.input, "context"), false);
   });
 });
 
@@ -307,7 +307,7 @@ test("provider-aware defaults still apply to a single target when tasks is empty
     assert.equal(await toolCall(event, ctx), undefined);
     assert.equal(event.input.model, "anthropic/claude-opus-5:high");
     assert.equal(event.input.agentScope, "user");
-    assert.equal(event.input.context, "fresh");
+    assert.equal(Object.hasOwn(event.input, "context"), false);
   });
 });
 
@@ -343,7 +343,7 @@ test("enabled primary mode blocks disallowed task delegation targets after forci
         "TLH primary agents may delegate only to: developer, test-runner, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
     });
     assert.equal(event.input.agentScope, "user");
-    assert.equal(event.input.context, "fresh");
+    assert.equal(Object.hasOwn(event.input, "context"), false);
   });
 });
 
@@ -367,7 +367,6 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
       id: "run-123",
       message: "Continue the approved ticket.",
       agentScope: "",
-      context: "",
     },
   };
   const resumeBothEvent = {
@@ -384,11 +383,6 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
     toolName: "subagent",
     input: { action: "resume", id: "run-123", agentScope: "system" },
   };
-  const blockedResumeContextEvent = {
-    toolName: "subagent",
-    input: { action: "resume", id: "run-123", context: "resume" },
-  };
-
   assert.equal(await toolCall(listEvent, ctx), undefined);
   assert.equal(listEvent.input.agentScope, "user");
   assert.equal(await toolCall(listBothEvent, ctx), undefined);
@@ -399,10 +393,10 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
   assert.equal(getBothEvent.input.agentScope, "user");
   assert.equal(await toolCall(resumeEvent, ctx), undefined);
   assert.equal(resumeEvent.input.agentScope, "user");
-  assert.equal(resumeEvent.input.context, "fresh");
+  assert.equal(Object.hasOwn(resumeEvent.input, "context"), false);
   assert.equal(await toolCall(resumeBothEvent, ctx), undefined);
   assert.equal(resumeBothEvent.input.agentScope, "user");
-  assert.equal(resumeBothEvent.input.context, "fresh");
+  assert.equal(Object.hasOwn(resumeBothEvent.input, "context"), false);
   assert.deepEqual(await toolCall(blockedGetEvent, ctx), {
     block: true,
     reason:
@@ -412,11 +406,6 @@ test("enabled primary mode normalizes safe management list/get/resume inputs and
     block: true,
     reason:
       'TLH primary-agent subagent resume calls may not use agentScope: "system". TLH minor agents must run from the isolated user scope.',
-  });
-  assert.deepEqual(await toolCall(blockedResumeContextEvent, ctx), {
-    block: true,
-    reason:
-      'TLH primary-agent subagent resume may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
   });
 });
 
@@ -445,7 +434,7 @@ test("disabled primary mode enforces architect-equivalent subagent safety and sc
     };
     assert.equal(await toolCall(allowedEvent, ctx), undefined);
     assert.equal(allowedEvent.input.agentScope, "user");
-    assert.equal(allowedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(allowedEvent.input, "context"), false);
     assert.equal(allowedEvent.input.timeoutMs, SCOUT_RUN_MAX_TIMEOUT_MS);
 
     const blockedTargetEvent = {
@@ -458,19 +447,13 @@ test("disabled primary mode enforces architect-equivalent subagent safety and sc
         "TLH primary agents may delegate only to: developer, test-runner, code-reviewer, repo-scout, diff-summarizer, librarian, web-scout, oracle, contrarian, or embedded.<slug>. Disallowed target(s): planner.",
     });
     assert.equal(blockedTargetEvent.input.agentScope, "user");
-    assert.equal(blockedTargetEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(blockedTargetEvent.input, "context"), false);
 
     const blockedScopeEvent = {
       toolName: "subagent",
       input: { agent: "developer", task: "Implement the change", agentScope: "project" },
     };
     assert.match((await toolCall(blockedScopeEvent, ctx))?.reason ?? "", /may not use agentScope/);
-
-    const blockedContextEvent = {
-      toolName: "subagent",
-      input: { agent: "developer", task: "Implement the change", context: "resume" },
-    };
-    assert.match((await toolCall(blockedContextEvent, ctx))?.reason ?? "", /may not use context/);
   });
 });
 
@@ -486,7 +469,6 @@ test("Rush blocks subagent resume with a Rush-specific reason", async () => {
       id: "run-123",
       message: "Continue the approved ticket.",
       agentScope: "",
-      context: "",
     },
   };
   const ctx = createToolCallContext([
@@ -884,7 +866,7 @@ test("embedded subagents: disabled mode allows authorized targets and blocks una
     };
     assert.equal(await toolCall(allowedEvent, ctx), undefined);
     assert.equal(allowedEvent.input.agentScope, "project");
-    assert.equal(allowedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(allowedEvent.input, "context"), false);
 
     const blockedEvent = {
       toolName: "subagent",
@@ -939,7 +921,7 @@ test("embedded subagents: architect delegates authorized targets without the ret
         `authorized target should be allowed: ${JSON.stringify(input)}`,
       );
       assert.equal(input.agentScope, "project");
-      assert.equal(input.context, "fresh");
+      assert.equal(Object.hasOwn(input, "context"), false);
     }
   });
 });
@@ -1076,7 +1058,7 @@ test("embedded subagents: architect allows only root-authorized embedded targets
       "single embedded target should be allowed for architect",
     );
     assert.equal(singleEvent.input.agentScope, "project");
-    assert.equal(singleEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(singleEvent.input, "context"), false);
 
     const tasksEvent = {
       toolName: "subagent",
@@ -1178,7 +1160,7 @@ test("embedded subagents: opaque resume keeps issue #330 behavior for product an
         `${selected} opaque resume should remain allowed`,
       );
       assert.equal(opaqueResumeEvent.input.agentScope, "user");
-      assert.equal(opaqueResumeEvent.input.context, "fresh");
+      assert.equal(Object.hasOwn(opaqueResumeEvent.input, "context"), false);
     }
   });
 });
@@ -1828,7 +1810,7 @@ test("embedded subagents: current root trust does not depend on retired settings
     };
     assert.equal(await toolCall(embeddedEvent, ctx), undefined);
     assert.equal(embeddedEvent.input.agentScope, "project");
-    assert.equal(embeddedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(embeddedEvent.input, "context"), false);
   });
 });
 
@@ -1877,7 +1859,7 @@ test("embedded subagents: removing retired settings does not close the root auth
       "removing the retired setting must not close the embedded authorization path",
     );
     assert.equal(embeddedEvent.input.agentScope, "project");
-    assert.equal(embeddedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(embeddedEvent.input, "context"), false);
   });
 });
 
@@ -1906,12 +1888,12 @@ test("embedded subagents: architect keeps normal (non-embedded) targets working"
     );
     await applySessionStart(ctx);
 
-    // Normal developer target should still be blocked (wrong context, but not an embedded block)
-    const normalEvent = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+    // Normal developer targets should still use the ordinary user-scope path.
+    const normalEvent = { toolName: "subagent", input: { agent: "developer" } };
     const result = await toolCall(normalEvent, ctx);
-    assert.equal(result?.block, true);
-    // Reason should be about context, not embedded targeting
-    assert.match(result?.reason ?? "", /context.*resume|resume.*context/i);
+    assert.equal(result, undefined);
+    assert.equal(normalEvent.input.agentScope, "user");
+    assert.equal(Object.hasOwn(normalEvent.input, "context"), false);
   });
 });
 
@@ -2006,7 +1988,7 @@ test("embedded subagents: multi-turn root authorization survives setting changes
     };
     assert.equal(await toolCall(embeddedEvent, ctx), undefined);
     assert.equal(embeddedEvent.input.agentScope, "project");
-    assert.equal(embeddedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(embeddedEvent.input, "context"), false);
   });
 });
 
@@ -2061,6 +2043,6 @@ test("embedded subagents: multi-turn root authorization survives setting removal
       "removing the retired setting must not close the embedded authorization path",
     );
     assert.equal(embeddedEvent.input.agentScope, "project");
-    assert.equal(embeddedEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(embeddedEvent.input, "context"), false);
   });
 });

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyThinkingSuffix, getThinkingLevelDropNote, validatePiToolPolicy, } from "../shared/pi-args.js";
 import { injectOutputPathSystemPrompt, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode, } from "../shared/single-output.js";
-import { buildChainInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
+import { buildChainInstructions, buildExecutionInstructions, isParallelStep, resolveStepBehavior, suppressProgressForReadOnlyTask, writeInitialProgressFile, } from "../../shared/settings.js";
 import { isParallelGroup, } from "../shared/parallel-utils.js";
 import { resolvePiPackageRoot } from "../shared/pi-spawn.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
@@ -18,7 +18,6 @@ import { createStructuredOutputRuntime } from "../shared/structured-output.js";
 import { mergeContinuationAcceptance, resolveEffectiveAcceptance, validateAcceptanceInput, validateDispatchAcceptanceInput, } from "../shared/acceptance.js";
 import { ASYNC_DIR, RESULTS_DIR, SUBAGENT_ASYNC_STARTED_EVENT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, TEMP_ROOT_DIR, getAsyncConfigPath, resolveChildMaxSubagentDepth, } from "../../shared/types.js";
 import { nestedResultsPath, resolveInheritedNestedRouteFromEnv, resolveNestedParentAddressFromEnv, writeNestedEvent, } from "../shared/nested-events.js";
-import { initialTurnBudgetState } from "../shared/turn-budget.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, } from "../../shared/context-diagnostics.js";
 import { validateToolBudgetConfig } from "../shared/tool-budget.js";
 import { detectTkTicketId, normalizeTkTicketMetadata, resolveTkTicketMetadata, resolveTkTicketTaskContext, } from "../shared/tk-ticket.js";
@@ -151,8 +150,8 @@ class UnavailableSubagentSkillError extends Error {
 }
 class AsyncStartValidationError extends Error {
 }
-function appendThinkingDropNote(notes, droppedModels, model, thinking, replaceExisting, options) {
-    const note = getThinkingLevelDropNote(model, thinking, replaceExisting, options);
+function appendThinkingDropNote(notes, droppedModels, model, thinking, options) {
+    const note = getThinkingLevelDropNote(model, thinking, false, options);
     if (!note)
         return;
     if (!notes.includes(note))
@@ -183,6 +182,13 @@ function dedupeRunnerAttemptNotes(steps) {
 }
 function validateAsyncExecutionAcceptance(params) {
     const errors = [];
+    if ("tasks" in params) {
+        for (const [taskIndex, task] of params.tasks.entries()) {
+            errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${taskIndex}].acceptance`));
+            errors.push(...validateDispatchAcceptanceInput(task.acceptance, `tasks[${taskIndex}].acceptance`));
+        }
+        return errors;
+    }
     if ("chain" in params) {
         for (const [stepIndex, step] of params.chain.entries()) {
             errors.push(...validateAcceptanceInput(step.acceptance, `chain[${stepIndex}].acceptance`));
@@ -201,7 +207,7 @@ function validateAsyncExecutionAcceptance(params) {
     return errors;
 }
 export function buildAsyncRunnerSteps(id, params) {
-    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, asyncDir, } = params;
+    const { chain, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth, asyncDir } = params;
     const outputBaseDir = params.outputBaseDir;
     const resultMode = params.resultMode ?? "chain";
     const availableModels = params.availableModels;
@@ -254,7 +260,7 @@ export function buildAsyncRunnerSteps(id, params) {
         ...(s.fallbackModels ? { fallbackModels: s.fallbackModels } : {}),
         ...(s.modelFallbackNotice ? { modelFallbackNotice: s.modelFallbackNotice } : {}),
     });
-    const buildSeqStep = (s, sessionFile, behaviorCwd, progressPrecreated = false, resolvedBehavior, flatIndex) => {
+    const buildSeqStep = (s, sessionFile, behaviorCwd, progressPrecreated = false, resolvedBehavior) => {
         const a = agents.find((x) => x.name === s.agent);
         const toolBudgetInput = s.toolBudget ?? params.toolBudget ?? a.toolBudget;
         const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, s.toolBudget ? "toolBudget" : a.toolBudget ? "agent.toolBudget" : "toolBudget");
@@ -295,21 +301,20 @@ export function buildAsyncRunnerSteps(id, params) {
         const requestedModel = behavior.model ?? a.model;
         const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
         const fallbackModels = buildFallbackModelList(behavior.fallbackModels, a.fallbackModels);
-        const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
-        const effectiveThinking = thinkingOverride !== undefined ? thinkingOverride : a.thinking;
+        const effectiveThinking = a.thinking;
         const attemptNotes = [];
         const thinkingDroppedModels = [];
-        appendThinkingDropNote(attemptNotes, thinkingDroppedModels, primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
-        const model = applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
-        const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions));
+        appendThinkingDropNote(attemptNotes, thinkingDroppedModels, primaryModel, effectiveThinking, thinkingSuffixOptions);
+        const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
+        const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions));
         const modelIdentity = canonicalSubagentModelIdentity(model, primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking));
         const modelThinking = modelIdentity?.thinking ??
             (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
         const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, registry: params.modelRegistry });
         const modelCandidates = candidatePlan.candidates
             .map((candidate) => {
-            appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
-            return applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined, thinkingSuffixOptions);
+            appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingSuffixOptions);
+            return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
         })
             .filter((candidate) => candidate !== undefined);
         const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === s.agent);
@@ -378,13 +383,8 @@ export function buildAsyncRunnerSteps(id, params) {
     const nextFlatStep = () => {
         const index = flatStepIndex;
         const sessionFile = sessionFilesByFlatIndex?.[flatStepIndex];
-        const thinkingOverride = thinkingOverridesByFlatIndex?.[flatStepIndex];
         flatStepIndex++;
-        return {
-            index,
-            ...(sessionFile ? { sessionFile } : {}),
-            ...(thinkingOverride !== undefined ? { thinkingOverride } : {}),
-        };
+        return { index, ...(sessionFile ? { sessionFile } : {}) };
     };
     try {
         const builtSteps = chain.map((s) => {
@@ -401,14 +401,14 @@ export function buildAsyncRunnerSteps(id, params) {
                 return {
                     parallel: s.parallel.map((t, taskIndex) => {
                         const staticStep = nextFlatStep();
-                        return buildSeqStep(t, staticStep.sessionFile, undefined, progressPrecreated, parallelBehaviors[taskIndex], staticStep.index);
+                        return buildSeqStep(t, staticStep.sessionFile, undefined, progressPrecreated, parallelBehaviors[taskIndex]);
                     }),
                     concurrency: s.concurrency,
                     failFast: s.failFast,
                 };
             }
             const staticStep = nextFlatStep();
-            return buildSeqStep(s, staticStep.sessionFile, undefined, false, undefined, staticStep.index);
+            return buildSeqStep(s, staticStep.sessionFile, undefined, false, undefined);
         });
         return {
             steps: dedupeRunnerAttemptNotes(builtSteps),
@@ -425,8 +425,191 @@ export function buildAsyncRunnerSteps(id, params) {
         throw error;
     }
 }
+function dedupeRunnerTaskAttemptNotes(tasks) {
+    const emitted = new Set();
+    return tasks.map((task) => {
+        if (!task.attemptNotes || task.attemptNotes.length === 0)
+            return task;
+        const attemptNotes = task.attemptNotes.filter((note) => {
+            if (emitted.has(note))
+                return false;
+            emitted.add(note);
+            return true;
+        });
+        return attemptNotes.length > 0
+            ? { ...task, attemptNotes }
+            : { ...task, attemptNotes: undefined };
+    });
+}
+function buildAsyncRunnerPlan(id, params) {
+    const { tasks, agents, ctx, cwd, sessionFilesByFlatIndex, maxSubagentDepth } = params;
+    const outputBaseDir = params.artifactsDir
+        ? path.join(params.artifactsDir, "outputs", id)
+        : undefined;
+    const resultMode = "parallel";
+    const availableModels = params.availableModels;
+    const thinkingSuffixOptions = {
+        availableModels,
+        preferredModelProvider: ctx.currentModelProvider,
+    };
+    const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
+    const progressDir = params.progressDir ?? runnerCwd;
+    const originalTask = tasks[0]?.task;
+    for (const task of tasks) {
+        if (!agents.find((candidate) => candidate.name === task.agent)) {
+            return { error: `Unknown agent: ${task.agent}` };
+        }
+    }
+    let progressInstructionCreated = false;
+    const buildStepOverrides = (task) => ({
+        ...(task.output !== undefined ? { output: task.output } : {}),
+        ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
+        ...(task.reads !== undefined ? { reads: task.reads } : {}),
+        ...(task.progress !== undefined ? { progress: task.progress } : {}),
+        ...(task.model ? { model: task.model } : {}),
+        ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
+        ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
+    });
+    const buildTask = (taskSpec, sessionFile, progressPrecreated = false, resolvedBehavior) => {
+        const agent = agents.find((candidate) => candidate.name === taskSpec.agent);
+        const toolBudgetInput = taskSpec.toolBudget ?? params.toolBudget ?? agent.toolBudget;
+        const resolvedToolBudget = validateToolBudgetConfig(toolBudgetInput, taskSpec.toolBudget ? "toolBudget" : agent.toolBudget ? "agent.toolBudget" : "toolBudget");
+        if (resolvedToolBudget.error)
+            throw new AsyncStartValidationError(resolvedToolBudget.error);
+        const stepCwd = resolveChildCwd(runnerCwd, taskSpec.cwd);
+        const behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(agent, buildStepOverrides(taskSpec)), taskSpec.task, originalTask);
+        const skillNames = behavior.skills === false ? [] : behavior.skills;
+        const { resolved: resolvedSkills, missing: missingSkills } = resolveSkillsWithFallback(skillNames, stepCwd, ctx.cwd);
+        if (missingSkills.includes("pi-subagents"))
+            throw new UnavailableSubagentSkillError(UNAVAILABLE_SUBAGENT_SKILL_ERROR);
+        const toolPolicyError = validatePiToolPolicy({
+            tools: agent.tools,
+            requireReadTool: agent.inheritSkills || resolvedSkills.length > 0,
+        });
+        if (toolPolicyError)
+            throw new AsyncStartValidationError(toolPolicyError);
+        let systemPrompt = agent.systemPrompt?.trim() ?? "";
+        if (resolvedSkills.length > 0) {
+            const injection = buildSkillInjection(resolvedSkills);
+            systemPrompt = systemPrompt ? `${systemPrompt}\n\n${injection}` : injection;
+        }
+        const readInstructions = buildExecutionInstructions({ ...behavior, output: false, progress: false }, stepCwd, false);
+        const isFirstProgressAgent = behavior.progress && !progressPrecreated && !progressInstructionCreated;
+        if (behavior.progress)
+            progressInstructionCreated = true;
+        const progressInstructions = buildExecutionInstructions({ ...behavior, output: false, reads: false }, progressDir, isFirstProgressAgent);
+        const outputPath = resolveSingleOutputPath(behavior.output, ctx.cwd, stepCwd, outputBaseDir);
+        systemPrompt = injectOutputPathSystemPrompt(systemPrompt, outputPath);
+        const validationError = validateFileOnlyOutputMode(behavior.outputMode, outputPath, `Async parallel task (${taskSpec.agent})`);
+        if (validationError)
+            throw new AsyncStartValidationError(validationError);
+        let taskTemplate = taskSpec.task ?? "{previous}";
+        taskTemplate = taskTemplate.replace(/\{task\}/g, originalTask ?? "");
+        taskTemplate = taskTemplate.replace(/\{chain_dir\}/g, runnerCwd);
+        const task = injectSingleOutputInstruction(`${readInstructions.prefix}${taskTemplate}${progressInstructions.suffix}`, outputPath);
+        const requestedModel = behavior.model ?? agent.model;
+        const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
+        const fallbackModels = buildFallbackModelList(behavior.fallbackModels, agent.fallbackModels);
+        const effectiveThinking = agent.thinking;
+        const attemptNotes = [];
+        const thinkingDroppedModels = [];
+        appendThinkingDropNote(attemptNotes, thinkingDroppedModels, primaryModel, effectiveThinking, thinkingSuffixOptions);
+        const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
+        const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions));
+        const modelIdentity = canonicalSubagentModelIdentity(model, primaryThinkingDropped ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+        const modelThinking = modelIdentity?.thinking ??
+            (modelIdentity ? undefined : resolveEffectiveThinking(model, effectiveThinking));
+        const candidatePlan = buildModelCandidatePlan(primaryModel, fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, registry: params.modelRegistry });
+        const modelCandidates = candidatePlan.candidates
+            .map((candidate) => {
+            appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingSuffixOptions);
+            return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
+        })
+            .filter((candidate) => candidate !== undefined);
+        const projectAgent = params.projectAgentCaptures?.find((capture) => capture.provenance.agent === taskSpec.agent);
+        return {
+            parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
+            ...(projectAgent ? { projectAgent } : {}),
+            agent: taskSpec.agent,
+            projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
+            task,
+            phase: undefined,
+            label: undefined,
+            outputName: undefined,
+            structured: false,
+            cwd: stepCwd,
+            model,
+            thinking: modelThinking,
+            ...(modelIdentity ? { modelIdentity } : {}),
+            modelCandidates,
+            contextWindows: Object.fromEntries((availableModels ?? [])
+                .filter((candidate) => typeof candidate.contextWindow === "number" && candidate.contextWindow > 0)
+                .map((candidate) => [candidate.fullId, candidate.contextWindow])),
+            ...(attemptNotes.length > 0 ? { attemptNotes } : {}),
+            ...(thinkingDroppedModels.length > 0 ? { thinkingDroppedModels } : {}),
+            ...(candidatePlan.filteringNotice
+                ? { modelFallbackFilterNotice: candidatePlan.filteringNotice }
+                : {}),
+            modelFallbackNotice: behavior.modelFallbackNotice,
+            tools: agent.tools,
+            extensions: agent.extensions,
+            subagentOnlyExtensions: agent.subagentOnlyExtensions,
+            completionGuard: agent.completionGuard,
+            supervisorBridge: agent.supervisorBridge,
+            systemPrompt,
+            systemPromptMode: agent.systemPromptMode,
+            inheritProjectContext: agent.inheritProjectContext,
+            inheritSkills: agent.inheritSkills,
+            skills: resolvedSkills.map((resolved) => resolved.name),
+            outputPath,
+            outputMode: behavior.outputMode,
+            sessionFile,
+            maxSubagentDepth: resolveChildMaxSubagentDepth(maxSubagentDepth, agent.maxSubagentDepth),
+            effectiveAcceptance: resolveEffectiveAcceptance({
+                explicit: taskSpec.acceptance,
+                agentName: taskSpec.agent,
+                acceptanceRole: agent.acceptanceRole,
+                task,
+                mode: resultMode,
+                async: true,
+            }),
+            acceptanceInput: taskSpec.acceptance,
+            acceptanceRole: agent.acceptanceRole,
+            ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
+            ...(agent.maxExecutionTimeMs !== undefined &&
+                (params.timeoutMs === undefined || agent.maxExecutionTimeMs < params.timeoutMs)
+                ? { timeoutMs: agent.maxExecutionTimeMs }
+                : {}),
+        };
+    };
+    const progressBehaviors = tasks.map((task) => {
+        const agent = agents.find((candidate) => candidate.name === task.agent);
+        return suppressProgressForReadOnlyTask(resolveStepBehavior(agent, buildStepOverrides(task)), task.task, originalTask);
+    });
+    const progressPrecreated = progressBehaviors.some((behavior) => behavior.progress);
+    if (progressPrecreated) {
+        writeInitialProgressFile(progressDir);
+        progressInstructionCreated = true;
+    }
+    let flatStepIndex = 0;
+    const builtTasks = tasks.map((task, index) => {
+        const sessionFile = sessionFilesByFlatIndex?.[flatStepIndex++];
+        return buildTask(task, sessionFile, progressPrecreated, progressBehaviors[index]);
+    });
+    const directTasks = dedupeRunnerTaskAttemptNotes(builtTasks);
+    const plan = {
+        kind: "parallel",
+        tasks: directTasks,
+        ...(params.concurrency !== undefined ? { concurrency: params.concurrency } : {}),
+    };
+    return {
+        plan,
+        runnerCwd,
+        workflowGraph: buildWorkflowGraphSnapshot({ runId: id, mode: resultMode, plan }),
+    };
+}
 export function executeAsyncChain(id, params) {
-    const { chain, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, thinkingOverridesByFlatIndex, maxSubagentDepth, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
+    const { chain, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, maxSubagentDepth, controlConfig, nestedRoute, } = params;
     const resultMode = params.resultMode ?? "chain";
     const acceptanceErrors = validateAsyncExecutionAcceptance({ chain });
     if (acceptanceErrors.length > 0)
@@ -459,7 +642,6 @@ export function executeAsyncChain(id, params) {
         modelRegistry: params.modelRegistry,
         cwd,
         sessionFilesByFlatIndex,
-        thinkingOverridesByFlatIndex,
         progressDir: params.progressDir ??
             (artifactsDir
                 ? path.join(artifactsDir, "progress", id)
@@ -496,22 +678,6 @@ export function executeAsyncChain(id, params) {
         ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
         : undefined;
     const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
-    const initialTurnBudget = params.turnBudget
-        ? initialTurnBudgetState(params.turnBudget)
-        : undefined;
-    let childTargetIndex = 0;
-    const childIntercomTargets = childIntercomTarget
-        ? steps.flatMap((step) => {
-            if ("parallel" in step) {
-                if (!Array.isArray(step.parallel)) {
-                    childTargetIndex++;
-                    return [undefined];
-                }
-                return step.parallel.map((task) => childIntercomTarget(task.agent, childTargetIndex++));
-            }
-            return [childIntercomTarget(step.agent, childTargetIndex++)];
-        })
-        : undefined;
     const projectAgents = [
         ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
     ];
@@ -535,10 +701,7 @@ export function executeAsyncChain(id, params) {
             piPackageRoot,
             piArgv1: process.argv[1],
             controlConfig,
-            turnBudget: params.turnBudget,
             toolBudget: params.toolBudget,
-            controlIntercomTarget,
-            childIntercomTargets,
             resultMode,
             timeoutMs: params.timeoutMs,
             deadlineAt,
@@ -600,9 +763,6 @@ export function executeAsyncChain(id, params) {
                         cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
-                        ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
-                        leafIntercomTarget: childIntercomTargets?.[0],
-                        intercomTarget: childIntercomTargets?.[0],
                         ownerState: "live",
                         mode: resultMode,
                         state: "running",
@@ -611,7 +771,6 @@ export function executeAsyncChain(id, params) {
                         chainStepCount: eventChain.length,
                         parallelGroups,
                         ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-                        ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
                         startedAt: now,
                         lastUpdate: now,
                     },
@@ -643,7 +802,6 @@ export function executeAsyncChain(id, params) {
             ...(tkTicket ? { tkTicket } : {}),
             ...(projectAgents.length > 0 ? { projectAgents } : {}),
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-            ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,
         });
     }
@@ -667,13 +825,210 @@ export function executeAsyncChain(id, params) {
             asyncDir,
             workflowGraph,
             ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
-            ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}),
+            ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
+        },
+    };
+}
+export function executeAsyncParallel(id, params) {
+    const { tasks, agents, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFilesByFlatIndex, maxSubagentDepth, controlConfig, nestedRoute, } = params;
+    const resultMode = "parallel";
+    const acceptanceErrors = validateAsyncExecutionAcceptance({ tasks });
+    if (acceptanceErrors.length > 0)
+        return formatAsyncStartError(resultMode, acceptanceErrors.join(" "));
+    const inheritedNestedRoute = resolveInheritedNestedRouteFromEnv();
+    const nestedAddress = inheritedNestedRoute ? resolveNestedParentAddressFromEnv() : undefined;
+    const asyncDir = inheritedNestedRoute
+        ? path.join(TEMP_ROOT_DIR, "nested-subagent-runs", inheritedNestedRoute.rootRunId, id)
+        : path.join(ASYNC_DIR, id);
+    try {
+        fs.mkdirSync(asyncDir, { recursive: true });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+            content: [
+                { type: "text", text: `Failed to create async run directory '${asyncDir}': ${message}` },
+            ],
+            isError: true,
+            details: { mode: resultMode, results: [] },
+        };
+    }
+    let built;
+    try {
+        built = buildAsyncRunnerPlan(id, {
+            tasks,
+            concurrency: params.concurrency,
+            agents,
+            ctx,
+            availableModels: params.availableModels,
+            modelRegistry: params.modelRegistry,
+            cwd,
+            artifactsDir,
+            artifactConfig,
+            shareEnabled,
+            sessionFilesByFlatIndex,
+            progressDir: params.progressDir ??
+                (artifactsDir ? path.join(artifactsDir, "progress", id) : path.join(asyncDir, "progress")),
+            maxSubagentDepth,
+            timeoutMs: params.timeoutMs,
+            toolBudget: params.toolBudget,
+            projectAgentCaptures: params.projectAgentCaptures,
+        });
+    }
+    catch (error) {
+        try {
+            fs.rmSync(asyncDir, { recursive: true, force: true });
+        }
+        catch {
+        }
+        return formatAsyncStartError(resultMode, error instanceof Error ? error.message : String(error));
+    }
+    if ("error" in built) {
+        try {
+            fs.rmSync(asyncDir, { recursive: true, force: true });
+        }
+        catch {
+        }
+        return formatAsyncStartError(resultMode, built.error);
+    }
+    const { plan, runnerCwd, workflowGraph } = built;
+    const tkTicketContext = resolveTkTicketTaskContext({
+        runnerCwd,
+        tasks: tasks.map((task) => ({ agent: task.agent, task: task.task ?? "", cwd: task.cwd })),
+    });
+    const tkTicket = tkTicketContext
+        ? resolveTkTicketMetadata(tkTicketContext.task, { cwd: tkTicketContext.cwd })
+        : undefined;
+    const deadlineAt = params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
+    const projectAgents = [
+        ...new Map(params.projectAgentCaptures?.map((capture) => [capture.provenance.agent, capture]) ?? []).values(),
+    ];
+    const parallelGroups = [
+        { start: 0, count: plan.kind === "parallel" ? plan.tasks.length : 0, stepIndex: 0 },
+    ];
+    const flatAgents = plan.kind === "parallel" ? plan.tasks.map((task) => task.agent) : [];
+    const firstTask = plan.kind === "parallel" ? plan.tasks[0] : undefined;
+    let spawnResult;
+    try {
+        spawnResult = spawnRunner({
+            id,
+            plan,
+            resultPath: inheritedNestedRoute
+                ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
+                : path.join(RESULTS_DIR, `${id}.json`),
+            cwd: runnerCwd,
+            placeholder: "{previous}",
+            maxOutput,
+            artifactsDir: artifactConfig.enabled ? artifactsDir : undefined,
+            artifactConfig,
+            share: shareEnabled,
+            sessionDir: sessionRoot ? path.join(sessionRoot, `async-${id}`) : undefined,
+            asyncDir,
+            sessionId: ctx.currentSessionId,
+            piPackageRoot,
+            piArgv1: process.argv[1],
+            controlConfig,
+            toolBudget: params.toolBudget,
+            resultMode,
+            timeoutMs: params.timeoutMs,
+            deadlineAt,
+            workflowGraph,
+            tkTicket,
+            nestedRoute: nestedRoute ?? inheritedNestedRoute,
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
+            nestedSelf: inheritedNestedRoute && nestedAddress
+                ? {
+                    parentRunId: nestedAddress.parentRunId,
+                    parentStepIndex: nestedAddress.parentStepIndex,
+                    depth: nestedAddress.depth,
+                    path: nestedAddress.path,
+                }
+                : undefined,
+        }, id, runnerCwd);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${message}`);
+    }
+    if (spawnResult.error) {
+        return formatAsyncStartError(resultMode, `Failed to start async ${resultMode} '${id}': ${spawnResult.error}`);
+    }
+    if (spawnResult.pid) {
+        if (inheritedNestedRoute && nestedAddress) {
+            const now = Date.now();
+            try {
+                writeNestedEvent(inheritedNestedRoute, {
+                    type: "subagent.nested.started",
+                    ts: now,
+                    parentRunId: nestedAddress.parentRunId,
+                    parentStepIndex: nestedAddress.parentStepIndex,
+                    child: {
+                        id,
+                        parentRunId: nestedAddress.parentRunId,
+                        parentStepIndex: nestedAddress.parentStepIndex,
+                        depth: nestedAddress.depth,
+                        path: nestedAddress.path,
+                        cwd: runnerCwd,
+                        asyncDir,
+                        pid: spawnResult.pid,
+                        ownerState: "live",
+                        mode: resultMode,
+                        state: "running",
+                        agent: firstTask?.agent,
+                        agents: flatAgents,
+                        chainStepCount: 1,
+                        parallelGroups,
+                        ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+                        startedAt: now,
+                        lastUpdate: now,
+                    },
+                });
+            }
+            catch (error) {
+                console.error("Failed to emit nested async start event:", error);
+            }
+        }
+        ctx.pi.events.emit(SUBAGENT_ASYNC_STARTED_EVENT, {
+            lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
+            id,
+            pid: spawnResult.pid,
+            sessionId: ctx.currentSessionId,
+            mode: resultMode,
+            agent: firstTask?.agent,
+            agents: flatAgents,
+            task: firstTask?.task?.slice(0, 50),
+            chainStepCount: 1,
+            parallelGroups,
+            workflowGraph,
+            cwd: runnerCwd,
+            asyncDir,
+            ...(tkTicket ? { tkTicket } : {}),
+            ...(projectAgents.length > 0 ? { projectAgents } : {}),
+            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
+            nestedRoute,
+        });
+    }
+    return {
+        content: [
+            {
+                type: "text",
+                text: formatAsyncStartedMessage(`Async parallel: [${flatAgents.join("+")}] [${id}]`),
+            },
+        ],
+        details: {
+            mode: resultMode,
+            runId: id,
+            results: [],
+            asyncId: id,
+            asyncDir,
+            workflowGraph,
+            ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs, deadlineAt } : {}),
             ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
         },
     };
 }
 export function executeAsyncSingle(id, params) {
-    const { agent, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFile, maxSubagentDepth, controlConfig, controlIntercomTarget, childIntercomTarget, nestedRoute, } = params;
+    const { agent, agentConfig, ctx, cwd, maxOutput, artifactsDir, artifactConfig, shareEnabled, sessionRoot, sessionFile, maxSubagentDepth, controlConfig, nestedRoute, } = params;
     const task = params.task ?? "";
     const acceptanceErrors = validateAsyncExecutionAcceptance({ acceptance: params.acceptance });
     if (acceptanceErrors.length > 0)
@@ -744,13 +1099,12 @@ export function executeAsyncSingle(id, params) {
     const fallbackModels = buildFallbackModelList(params.fallbackModels, agentConfig.fallbackModels);
     const effectiveThinking = restoringModel
         ? params.restoredModelIdentity?.thinking
-        : (params.thinkingOverride ?? agentConfig.thinking);
-    const replaceThinking = !restoringModel && params.thinkingOverride !== undefined;
+        : agentConfig.thinking;
     const attemptNotes = [];
     const thinkingDroppedModels = [];
-    const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, replaceThinking, thinkingSuffixOptions));
-    appendThinkingDropNote(attemptNotes, thinkingDroppedModels, primaryModel, effectiveThinking, replaceThinking, thinkingSuffixOptions);
-    const model = applyThinkingSuffix(primaryModel, effectiveThinking, replaceThinking, thinkingSuffixOptions);
+    const primaryThinkingDropped = Boolean(getThinkingLevelDropNote(primaryModel, effectiveThinking, false, thinkingSuffixOptions));
+    appendThinkingDropNote(attemptNotes, thinkingDroppedModels, primaryModel, effectiveThinking, thinkingSuffixOptions);
+    const model = applyThinkingSuffix(primaryModel, effectiveThinking, false, thinkingSuffixOptions);
     if (restoringModel &&
         availableModels &&
         availableModels.length > 0 &&
@@ -766,8 +1120,8 @@ export function executeAsyncSingle(id, params) {
     });
     const modelCandidates = candidatePlan.candidates
         .map((candidate) => {
-        appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
-        return applyThinkingSuffix(candidate, effectiveThinking, replaceThinking, thinkingSuffixOptions);
+        appendThinkingDropNote(attemptNotes, thinkingDroppedModels, candidate, effectiveThinking, thinkingSuffixOptions);
+        return applyThinkingSuffix(candidate, effectiveThinking, false, thinkingSuffixOptions);
     })
         .filter((candidate) => candidate !== undefined);
     const modelThinking = modelIdentity?.thinking ??
@@ -793,15 +1147,13 @@ export function executeAsyncSingle(id, params) {
     const tkTicket = detectTkTicketId(task)
         ? resolveTkTicketMetadata(task, { cwd: runnerCwd })
         : normalizeTkTicketMetadata(params.inheritedTkTicket);
-    const initialTurnBudget = params.turnBudget
-        ? initialTurnBudgetState(params.turnBudget)
-        : undefined;
     let spawnResult;
     try {
         spawnResult = spawnRunner({
             id,
-            steps: [
-                {
+            plan: {
+                kind: "single",
+                task: {
                     parentSessionId: ctx.parentSessionId ?? ctx.currentSessionId,
                     ...(params.projectAgent ? { projectAgent: params.projectAgent } : {}),
                     agent,
@@ -861,7 +1213,7 @@ export function executeAsyncSingle(id, params) {
                     ...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
                     ...(activeRuntimeMs > 0 ? { activeRuntimeMs } : {}),
                 },
-            ],
+            },
             resultPath: inheritedNestedRoute
                 ? nestedResultsPath(inheritedNestedRoute.rootRunId, id)
                 : path.join(RESULTS_DIR, `${id}.json`),
@@ -879,10 +1231,7 @@ export function executeAsyncSingle(id, params) {
             controlConfig,
             timeoutMs: effectiveTimeoutMs,
             deadlineAt,
-            turnBudget: params.turnBudget,
             toolBudget: params.toolBudget,
-            controlIntercomTarget,
-            childIntercomTargets: childIntercomTarget ? [childIntercomTarget(agent, 0)] : undefined,
             tkTicket,
             ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(params.continuationSource ? { continuationSource: params.continuationSource } : {}),
@@ -923,9 +1272,6 @@ export function executeAsyncSingle(id, params) {
                         cwd: runnerCwd,
                         asyncDir,
                         pid: spawnResult.pid,
-                        ownerIntercomTarget: process.env.PI_SUBAGENT_INTERCOM_SESSION_NAME,
-                        leafIntercomTarget: childIntercomTarget?.(agent, 0),
-                        intercomTarget: childIntercomTarget?.(agent, 0),
                         ownerState: "live",
                         mode: "single",
                         state: "running",
@@ -935,7 +1281,6 @@ export function executeAsyncSingle(id, params) {
                         ...(effectiveTimeoutMs !== undefined
                             ? { timeoutMs: effectiveTimeoutMs, deadlineAt }
                             : {}),
-                        ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
                         startedAt: now,
                         lastUpdate: now,
                     },
@@ -958,7 +1303,6 @@ export function executeAsyncSingle(id, params) {
             ...(tkTicket ? { tkTicket } : {}),
             ...(params.projectAgent ? { projectAgents: [params.projectAgent] } : {}),
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
-            ...(initialTurnBudget ? { turnBudget: initialTurnBudget } : {}),
             nestedRoute,
         });
     }
@@ -971,7 +1315,6 @@ export function executeAsyncSingle(id, params) {
             asyncId: id,
             asyncDir,
             ...(effectiveTimeoutMs !== undefined ? { timeoutMs: effectiveTimeoutMs, deadlineAt } : {}),
-            ...(params.turnBudget ? { turnBudget: params.turnBudget } : {}),
             ...(params.toolBudget ? { toolBudget: params.toolBudget } : {}),
         },
     };

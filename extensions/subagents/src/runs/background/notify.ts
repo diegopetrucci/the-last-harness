@@ -87,7 +87,7 @@ interface ChainStepResult {
   agent: string;
   output?: string;
   success?: boolean;
-  status?: "completed" | "failed" | "paused" | "detached";
+  status?: "completed" | "failed" | "paused";
   summary?: string;
   artifactPath?: string;
   sessionPath?: string;
@@ -384,7 +384,6 @@ function resolveResumeTarget(
     "failed",
     "paused",
     "completed",
-    "detached",
   ];
   const resumableChild = statusPriority
     .map((status) =>
@@ -434,7 +433,7 @@ function countChildStatuses(children: ChainStepResult[]): string | undefined {
     const key = resolveChildStatus(child);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const ordered = ["completed", "failed", "paused", "detached"];
+  const ordered = ["completed", "failed", "paused"];
   const parts = ordered
     .map((status) => (counts.get(status) ? `${counts.get(status)} ${status}` : undefined))
     .filter((part): part is string => Boolean(part));
@@ -514,7 +513,7 @@ function formatProtectedLifecyclePreview(
   }
   const counts = countChildStatuses(children);
   const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-  const displayedChildren = ["failed", "paused", "completed", "detached"]
+  const displayedChildren = ["failed", "paused", "completed"]
     .flatMap((status) =>
       children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
@@ -676,7 +675,7 @@ function formatResultPreview(
   // Multi-child path.
   const counts = countChildStatuses(children);
   const countsCost = counts ? joinedLineCost([`Children: ${counts}`, ""]) : 0;
-  const displayedChildren = ["failed", "paused", "completed", "detached"]
+  const displayedChildren = ["failed", "paused", "completed"]
     .flatMap((status) =>
       children
         .map((child, index) => ({ child, index, status: resolveChildStatus(child) }))
@@ -1007,9 +1006,6 @@ function resolveCompletionStatus(result: SubagentResult): SubagentNotifyDetails[
     if (outerStatus === "failed") return "failed";
     if (statuses.includes("paused") || outerStatus === "paused") return "paused";
     if (statuses.includes("completed")) return "completed";
-    // Native notices have no detached terminal label. Treat an all-detached
-    // grouped result as failed so it receives immediate attention rather than
-    // entering successful-completion batching.
     return "failed";
   }
 

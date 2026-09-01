@@ -480,10 +480,6 @@ function compactOutputPreview(text: string): string {
 function resultStatusLine(result: Details["results"][number], output: string): string {
   if (result.pause?.kind === "awaiting_supervisor")
     return "Paused awaiting supervisor · no child process running";
-  if (result.detached)
-    return result.detachedReason
-      ? `Detached: ${safeTerminalText(result.detachedReason)}`
-      : "Detached";
   if (result.interrupted) return "Paused";
   if (result.exitCode !== 0) {
     const error = result.error
@@ -509,7 +505,6 @@ function resultGlyph(
     if (frame !== undefined) return theme.fg("accent", runningGlyph((seed ?? 0) + frame));
     return theme.fg("accent", runningGlyph(seed));
   }
-  if (result.detached) return theme.fg("warning", "■");
   if (result.interrupted) return theme.fg("warning", "■");
   if (result.exitCode !== 0) return theme.fg("error", "✗");
   if (hasEmptyTextOutputWithoutOutputTarget(result.task, output)) return theme.fg("warning", "✓");
@@ -1096,7 +1091,7 @@ function isDoneResult(result: Details["results"][number]): boolean {
   const status = result.progress?.status;
   if (status === "completed") return true;
   if (status === "running" || status === "pending") return false;
-  if (result.interrupted || result.detached) return false;
+  if (result.interrupted) return false;
   return result.exitCode === 0;
 }
 
@@ -1186,7 +1181,7 @@ function buildMultiProgressLabel(
     const totalCount = details.totalSteps ?? details.results.length;
     const statuses = Array.from(
       { length: totalCount },
-      () => "pending" as "pending" | "running" | "completed" | "failed" | "detached",
+      () => "pending" as "pending" | "running" | "completed" | "failed" | "paused",
     );
     for (const progress of details.progress ?? []) {
       if (progress.index >= 0 && progress.index < totalCount)
@@ -1203,11 +1198,7 @@ function buildMultiProgressLabel(
       if (index < 0 || index >= totalCount) continue;
       const status =
         result.progress?.status ??
-        (result.interrupted || result.detached
-          ? "detached"
-          : result.exitCode === 0
-            ? "completed"
-            : "failed");
+        (result.interrupted ? "paused" : result.exitCode === 0 ? "completed" : "failed");
       statuses[index] = status;
     }
     const done = statuses.filter((status) => status === "completed").length;
@@ -2678,12 +2669,11 @@ function renderSingleCompact(
 ): Component {
   const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
   const isRunning = r.progress?.status === "running";
-  const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
   const lines: string[] = [];
   const width = getTermWidth() - 4;
   const modelDisplay = modelThinkingBadge(theme, r.model);
   lines.push(
-    `${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}${contextBadge}`,
+    `${resultGlyph(r, output, theme, isRunning, undefined, frame)} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${modelDisplay}`,
   );
   const ticketLine = foregroundTkTicketLine(r, theme, isRunning);
   if (ticketLine) lines.push(ticketLine);
@@ -2722,8 +2712,8 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
     d.results.some((r) => r.exitCode !== 0 && r.progress?.status !== "running") ||
     workflowGraphHasStatus(d, ["failed"]);
   const paused =
-    d.results.some((r) => (r.interrupted || r.detached) && r.progress?.status !== "running") ||
-    workflowGraphHasStatus(d, ["paused", "detached"]);
+    d.results.some((r) => r.interrupted && r.progress?.status !== "running") ||
+    workflowGraphHasStatus(d, ["paused"]);
   let totalSummary = d.progressSummary;
   if (!totalSummary) {
     let sawProgress = false;
@@ -2758,13 +2748,11 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
       : paused
         ? theme.fg("warning", "■")
         : theme.fg("success", "✓");
-  const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
   const lines: string[] = [];
   const width = getTermWidth() - 4;
   lines.push(
-    `${glyph} ${theme.fg("toolTitle", theme.bold(safeTerminalText(d.mode)))}${contextBadge}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+    `${glyph} ${theme.fg("toolTitle", theme.bold(safeTerminalText(d.mode)))}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
   );
-
   const displayStart = multiLabel.showActiveGroupOnly ? multiLabel.groupStartIndex : 0;
   const displayEnd = multiLabel.showActiveGroupOnly ? multiLabel.groupEndIndex : d.results.length;
   const chainEntries = buildChainRenderEntries(d, multiLabel);
@@ -2838,10 +2826,7 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
       }
     } else if (
       !rPending &&
-      (r.exitCode !== 0 ||
-        r.interrupted ||
-        r.detached ||
-        hasEmptyTextOutputWithoutOutputTarget(r.task, output))
+      (r.exitCode !== 0 || r.interrupted || hasEmptyTextOutputWithoutOutputTarget(r.task, output))
     ) {
       lines.push(
         theme.fg(r.exitCode !== 0 ? "error" : "dim", `    ⎿  ${resultStatusLine(r, output)}`),
@@ -2862,24 +2847,22 @@ function renderZeroResult(
 ): Component {
   const t = result.content[0];
   const text = safeTerminalText(t?.type === "text" ? t.text : "(no output)");
-  const contextPrefix = d?.context === "fork" ? `${theme.fg("warning", "[fork]")} ` : "";
   const width = getTermWidth() - 4;
   if (!text.includes("\n")) {
     const c = new Container();
-    addWrappedText(c, `${contextPrefix}${text}`, width);
+    addWrappedText(c, text, width);
     return c;
   }
   if (d && !options.expanded && !result.isError) {
     const lines = text.split(/\r?\n/);
     const firstNonEmptyLine = lines.find((line) => line.trim())?.trim() || "(no output)";
     const c = new Container();
-    addWrappedText(c, `${contextPrefix}${firstNonEmptyLine} · ${lines.length} lines`, width);
+    addWrappedText(c, `${firstNonEmptyLine} · ${lines.length} lines`, width);
     addWrappedText(c, theme.fg("dim", `  Press ${liveDetailKeyText()} for full output`), width);
     return c;
   }
   const c = new Container();
-  for (const line of wrapDisplayLine(`${contextPrefix}${text}`, width))
-    c.addChild(new Text(line, 0, 0));
+  for (const line of wrapDisplayLine(text, width)) c.addChild(new Text(line, 0, 0));
   return c;
 }
 
@@ -2891,7 +2874,6 @@ function renderExpandedSingleResult(
   frame?: number,
 ): Component {
   const isRunning = r.progress?.status === "running";
-  const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
   const output = safeTerminalText(r.truncation?.text || getSingleResultOutput(r));
   const icon = isRunning
     ? resultGlyph(
@@ -2902,13 +2884,11 @@ function renderExpandedSingleResult(
         progressRunningSeed(r.progress ?? r.progressSummary),
         frame,
       )
-    : r.pause?.kind === "awaiting_supervisor"
+    : r.pause?.kind === "awaiting_supervisor" || r.interrupted
       ? theme.fg("warning", "paused")
-      : r.detached
-        ? theme.fg("warning", "detached")
-        : r.exitCode === 0
-          ? theme.fg("success", "ok")
-          : theme.fg("error", "failed");
+      : r.exitCode === 0
+        ? theme.fg("success", "ok")
+        : theme.fg("error", "failed");
 
   const progressInfo =
     isRunning && r.progress
@@ -2922,7 +2902,7 @@ function renderExpandedSingleResult(
   const c = new Container();
   c.addChild(
     new Text(
-      `${icon} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${contextBadge}${progressInfo}`,
+      `${icon} ${theme.fg("toolTitle", theme.bold(safeTerminalText(r.agent)))}${progressInfo}`,
       0,
       0,
     ),
@@ -3088,7 +3068,7 @@ function renderExpandedMultiResult(d: Details, theme: Theme, frame?: number): Co
       hasEmptyTextOutputWithoutOutputTarget(r.task, getSingleResultOutput(r)),
   );
   const hasWorkflowFailure = workflowGraphHasStatus(d, ["failed"]);
-  const hasWorkflowPause = workflowGraphHasStatus(d, ["paused", "detached"]);
+  const hasWorkflowPause = workflowGraphHasStatus(d, ["paused"]);
   const icon = hasRunning
     ? theme.fg("accent", runningGlyph(frame))
     : hasEmptyWithoutTarget
@@ -3133,7 +3113,6 @@ function renderExpandedMultiResult(d: Details, theme: Theme, frame?: number): Co
   const summaryStr = summaryParts.length ? ` | ${summaryParts.join(", ")}` : "";
 
   const modeLabel = safeTerminalText(d.mode);
-  const contextBadge = d.context === "fork" ? theme.fg("warning", " [fork]") : "";
   const multiLabel = buildMultiProgressLabel(d, hasRunning);
   const itemTitle = multiLabel.itemTitle;
 
@@ -3141,7 +3120,7 @@ function renderExpandedMultiResult(d: Details, theme: Theme, frame?: number): Co
   const c = new Container();
   c.addChild(
     new Text(
-      `${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}`,
+      `${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))} · ${multiLabel.headerLabel}${summaryStr}`,
       0,
       0,
     ),

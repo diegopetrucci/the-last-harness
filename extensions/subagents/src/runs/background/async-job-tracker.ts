@@ -12,7 +12,6 @@ import {
   POLL_INTERVAL_MS,
   RESULTS_DIR,
   SUBAGENT_CONTROL_EVENT,
-  SUBAGENT_CONTROL_INTERCOM_EVENT,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
@@ -217,9 +216,6 @@ export function createAsyncJobTracker(
       timeoutMs: run.timeoutMs,
       deadlineAt: run.deadlineAt,
       timedOut: run.timedOut,
-      turnBudget: run.turnBudget,
-      turnBudgetExceeded: run.turnBudgetExceeded,
-      wrapUpRequested: run.wrapUpRequested,
       sessionDir: run.sessionDir,
       outputFile: run.outputFile,
       totalTokens: run.totalTokens,
@@ -381,9 +377,7 @@ export function createAsyncJobTracker(
         const record = parsed as {
           event?: ControlEvent;
           channels?: string[];
-          childIntercomTarget?: string;
           noticeText?: string;
-          intercom?: { to?: string; message?: string };
         };
         const event = parseControlEvent(record.event);
         if (!event || !Array.isArray(record.channels)) return;
@@ -391,24 +385,10 @@ export function createAsyncJobTracker(
           event,
           source: "async" as const,
           asyncDir: job.asyncDir,
-          childIntercomTarget: record.childIntercomTarget,
-          noticeText:
-            record.noticeText ?? formatControlNoticeMessage(event, record.childIntercomTarget),
+          noticeText: record.noticeText ?? formatControlNoticeMessage(event),
         };
         if (record.channels.includes("event")) {
           pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
-        }
-        if (
-          event.type !== "active_long_running" &&
-          record.channels.includes("intercom") &&
-          record.intercom?.to &&
-          record.intercom.message
-        ) {
-          pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
-            ...payload,
-            to: record.intercom.to,
-            message: record.intercom.message,
-          });
         }
       };
       let readCursor = cursor;
@@ -602,9 +582,6 @@ export function createAsyncJobTracker(
             job.timeoutMs = status.timeoutMs ?? job.timeoutMs;
             job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
             job.timedOut = status.timedOut ?? job.timedOut;
-            job.turnBudget = status.turnBudget ?? job.turnBudget;
-            job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
-            job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
             job.sessionFile = status.sessionFile ?? job.sessionFile;
             if (status.tkTicket !== undefined)
               job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
@@ -713,7 +690,6 @@ export function createAsyncJobTracker(
       updatedAt: now,
       timeoutMs: info.timeoutMs,
       deadlineAt: info.deadlineAt,
-      turnBudget: info.turnBudget,
       controlEventCursor: 0,
       tkTicket: normalizedTkTicket,
       projectAgents: info.projectAgents,

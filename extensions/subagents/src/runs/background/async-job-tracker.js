@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { renderWidget, widgetRenderKey } from "../../tui/render.js";
 import { formatControlNoticeMessage, parseControlEvent } from "../shared/subagent-control.js";
-import { POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, } from "../../shared/types.js";
+import { POLL_INTERVAL_MS, RESULTS_DIR, SUBAGENT_CONTROL_EVENT, } from "../../shared/types.js";
 import { readStatus } from "../../shared/utils.js";
 import { normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
@@ -146,9 +146,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             timeoutMs: run.timeoutMs,
             deadlineAt: run.deadlineAt,
             timedOut: run.timedOut,
-            turnBudget: run.turnBudget,
-            turnBudgetExceeded: run.turnBudgetExceeded,
-            wrapUpRequested: run.wrapUpRequested,
             sessionDir: run.sessionDir,
             outputFile: run.outputFile,
             totalTokens: run.totalTokens,
@@ -304,21 +301,10 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                     event,
                     source: "async",
                     asyncDir: job.asyncDir,
-                    childIntercomTarget: record.childIntercomTarget,
-                    noticeText: record.noticeText ?? formatControlNoticeMessage(event, record.childIntercomTarget),
+                    noticeText: record.noticeText ?? formatControlNoticeMessage(event),
                 };
                 if (record.channels.includes("event")) {
                     pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
-                }
-                if (event.type !== "active_long_running" &&
-                    record.channels.includes("intercom") &&
-                    record.intercom?.to &&
-                    record.intercom.message) {
-                    pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
-                        ...payload,
-                        to: record.intercom.to,
-                        message: record.intercom.message,
-                    });
                 }
             };
             let readCursor = cursor;
@@ -505,9 +491,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
                         job.timeoutMs = status.timeoutMs ?? job.timeoutMs;
                         job.deadlineAt = status.deadlineAt ?? job.deadlineAt;
                         job.timedOut = status.timedOut ?? job.timedOut;
-                        job.turnBudget = status.turnBudget ?? job.turnBudget;
-                        job.turnBudgetExceeded = status.turnBudgetExceeded ?? job.turnBudgetExceeded;
-                        job.wrapUpRequested = status.wrapUpRequested ?? job.wrapUpRequested;
                         job.sessionFile = status.sessionFile ?? job.sessionFile;
                         if (status.tkTicket !== undefined)
                             job.tkTicket = normalizeTkTicketMetadata(status.tkTicket);
@@ -610,7 +593,6 @@ export function createAsyncJobTracker(pi, state, asyncDirRoot, options = {}) {
             updatedAt: now,
             timeoutMs: info.timeoutMs,
             deadlineAt: info.deadlineAt,
-            turnBudget: info.turnBudget,
             controlEventCursor: 0,
             tkTicket: normalizedTkTicket,
             projectAgents: info.projectAgents,

@@ -39,7 +39,7 @@ describe("async permission forwarding session identity", () => {
     assert.equal(step.parentSessionId, "session-abc123");
   });
 
-  it("consumes one flat index per parallel task before later forked steps", () => {
+  it("consumes one flat index per parallel task before later steps", () => {
     const built = buildAsyncRunnerSteps("run-abc", {
       chain: [
         { agent: "source", task: "produce targets" },
@@ -67,7 +67,6 @@ describe("async permission forwarding session identity", () => {
         "/tmp/parallel-1.jsonl",
         "/tmp/static-worker.jsonl",
       ],
-      thinkingOverridesByFlatIndex: [undefined, "off", "off", "off"],
       maxSubagentDepth: 1,
       asyncDir: "/tmp/async-run",
     });
@@ -82,8 +81,8 @@ describe("async permission forwarding session identity", () => {
     const staticWorker = built.steps[2];
     assert.ok(staticWorker && !("parallel" in staticWorker));
     assert.equal(staticWorker.sessionFile, "/tmp/static-worker.jsonl");
-    assert.equal(staticWorker.model, "anthropic/claude-sonnet-4-5:off");
-    assert.equal(staticWorker.thinking, "off");
+    assert.equal(staticWorker.model, "anthropic/claude-sonnet-4-5:high");
+    assert.equal(staticWorker.thinking, "high");
   });
 
   it("gates thinking levels on merged agent fallback candidates", () => {
@@ -131,7 +130,7 @@ describe("async permission forwarding session identity", () => {
     ]);
   });
 
-  it("applies thinking overrides to async fallback candidates", () => {
+  it("applies agent thinking to async fallback candidates", () => {
     const built = buildAsyncRunnerSteps("run-abc", {
       chain: [{ agent: "worker", task: "Do work" }],
       agents: [
@@ -147,7 +146,6 @@ describe("async permission forwarding session identity", () => {
         cwd: "/tmp/project",
         currentSessionId: "/tmp/parent-session.jsonl",
       },
-      thinkingOverridesByFlatIndex: ["off"],
       maxSubagentDepth: 1,
       asyncDir: "/tmp/async-run",
     });
@@ -155,11 +153,11 @@ describe("async permission forwarding session identity", () => {
     assert.ok(!("error" in built));
     const step = built.steps[0];
     assert.ok(step && !("parallel" in step));
-    assert.equal(step.model, "openai/gpt-5-mini:off");
+    assert.equal(step.model, "openai/gpt-5-mini:high");
     assert.deepEqual(step.modelCandidates, [
-      "openai/gpt-5-mini:off",
-      "anthropic/claude-sonnet-4:off",
+      "openai/gpt-5-mini:high",
+      "anthropic/claude-sonnet-4:low",
     ]);
-    assert.equal(step.thinking, "off");
+    assert.equal(step.thinking, "high");
   });
 });

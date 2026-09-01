@@ -45,12 +45,7 @@ const STDERR_TAIL_ERROR_TRUNCATION_MARKER =
 const RAW_STDOUT_TRUNCATION_MARKER =
   "[stdout truncated: showing the bounded prefix; later child output was dropped]";
 
-export type ChildTerminalReason =
-  | "output_limit"
-  | "timed_out"
-  | "interrupted"
-  | "paused"
-  | "turn_budget_exceeded";
+export type ChildTerminalReason = "output_limit" | "timed_out" | "interrupted" | "paused";
 
 export interface ChildTerminalReasonLatch {
   reason?: ChildTerminalReason;

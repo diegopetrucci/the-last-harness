@@ -1243,7 +1243,7 @@ describe("async execution utilities", () => {
     assert.equal(mockPi.callCount(), 2);
   });
 
-  it("background single thinking override replaces primary and fallback suffixes", async () => {
+  it("background single applies agent thinking to primary and fallback suffixes", async () => {
     mockPi.onCall({
       jsonl: [
         {
@@ -1265,9 +1265,9 @@ describe("async execution utilities", () => {
       agent: "worker",
       task: "Do work",
       agentConfig: makeAgent("worker", {
-        model: "openai/gpt-5-mini:high",
-        fallbackModels: ["anthropic/claude-sonnet-4:low"],
-        thinking: "high",
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+        thinking: "off",
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       availableModels: [
@@ -1284,7 +1284,6 @@ describe("async execution utilities", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      thinkingOverride: "off",
       maxSubagentDepth: 2,
     });
 
@@ -2592,7 +2591,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2672,7 +2671,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2726,7 +2725,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2803,7 +2802,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 

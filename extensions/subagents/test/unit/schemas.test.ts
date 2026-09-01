@@ -57,16 +57,9 @@ const { Compile: CompileSchema } = (await import("typebox/compile")) as {
 };
 
 describe("SubagentParams schema", () => {
-  it("includes context field for fresh/fork execution mode", () => {
-    const contextSchema = getPropertySchema(SubagentParams, ["context"]);
-    assert.ok(contextSchema, "context schema should exist");
-    assert.equal(contextSchema.type, "string");
-    assert.deepEqual(contextSchema.enum, ["fresh", "fork"]);
-    const description = String(contextSchema.description ?? "");
-    assert.match(description, /fresh/);
-    assert.match(description, /fork/);
-    assert.match(description, /each requested agent/);
-    assert.match(description, /overrides every child/);
+  it("does not expose a public execution context selector", () => {
+    assert.equal(getPropertySchema(SubagentParams, ["context"]), undefined);
+    assert.equal(SubagentParams.additionalProperties, false);
   });
 
   it("includes count and concurrency on top-level parallel mode", () => {
@@ -360,8 +353,6 @@ describe("SubagentParams schema", () => {
       { agent: "worker", task: "Fix", output: false },
       { agent: "worker", task: "Fix", fallbackModels: ["openai/gpt-4o"] },
       { tasks: [{ agent: "worker", task: "Fix" }], concurrency: 2 },
-      { agent: "worker", task: "Fix", context: "fresh" },
-      { agent: "worker", task: "Fix", context: "fork" },
       { agent: "worker", task: "Fix", agentScope: "user" },
       { agent: "worker", task: "Fix", artifacts: false, includeProgress: true },
       { agent: "worker", task: "Fix", async: true },
@@ -437,7 +428,6 @@ describe("SubagentParams schema", () => {
       "task",
       "tasks",
       "concurrency",
-      "context",
       "async",
       "action",
       "id",
@@ -488,6 +478,7 @@ describe("SubagentParams schema", () => {
       "skill",
       "chainDir",
       "__unknown__",
+      "context",
     ];
     const removedNestedTaskKeys = [
       "clarify",

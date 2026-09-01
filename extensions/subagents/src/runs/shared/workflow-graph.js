@@ -10,8 +10,6 @@ function normalizeStatus(status) {
             return "failed";
         case "paused":
             return "paused";
-        case "detached":
-            return "detached";
         case "pending":
             return "pending";
         default:
@@ -21,8 +19,6 @@ function normalizeStatus(status) {
 function resultStatus(result) {
     if (!result)
         return undefined;
-    if (result.detached)
-        return "detached";
     if (result.interrupted)
         return "paused";
     return result.exitCode === 0 ? "completed" : "failed";
@@ -52,8 +48,6 @@ function summarizeParallelStatuses(statuses) {
         return "failed";
     if (statuses.some((status) => status === "paused"))
         return "paused";
-    if (statuses.some((status) => status === "detached"))
-        return "detached";
     if (statuses.length > 0 && statuses.every((status) => status === "completed"))
         return "completed";
     if (statuses.some((status) => status === "completed"))
@@ -65,8 +59,85 @@ export function buildWorkflowGraphSnapshot(input) {
     const phases = [];
     let flatIndex = 0;
     let currentNodeId;
-    for (let stepIndex = 0; stepIndex < input.steps.length; stepIndex++) {
-        const step = input.steps[stepIndex];
+    if (input.plan) {
+        if (input.plan.kind === "parallel") {
+            const stepIndex = 0;
+            const groupId = "step-0";
+            const children = [];
+            const childStatuses = [];
+            for (let taskIndex = 0; taskIndex < input.plan.tasks.length; taskIndex++) {
+                const task = input.plan.tasks[taskIndex];
+                const status = nodeStatus(input, flatIndex);
+                childStatuses.push(status);
+                const childId = `step-0-agent-${taskIndex}`;
+                const child = {
+                    id: childId,
+                    kind: "agent",
+                    agent: task.agent,
+                    phase: task.phase,
+                    label: task.label?.trim() || task.agent || `Agent ${taskIndex + 1}`,
+                    status,
+                    flatIndex,
+                    stepIndex,
+                    outputName: task.outputName,
+                    structured: Boolean(task.structured),
+                    acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
+                    error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
+                };
+                children.push(child);
+                pushPhase(phases, task.phase, childId);
+                if (status === "running" || input.currentFlatIndex === flatIndex)
+                    currentNodeId = childId;
+                flatIndex++;
+            }
+            if (input.currentStepIndex === stepIndex && !currentNodeId)
+                currentNodeId = groupId;
+            nodes.push({
+                id: groupId,
+                kind: "parallel-group",
+                label: input.plan.tasks.length === 1
+                    ? "Parallel task"
+                    : `Parallel group (${input.plan.tasks.length})`,
+                status: summarizeParallelStatuses(childStatuses),
+                stepIndex,
+                children,
+            });
+        }
+        else {
+            const task = input.plan.task;
+            const status = nodeStatus(input, flatIndex);
+            const id = "step-0";
+            nodes.push({
+                id,
+                kind: "step",
+                agent: task.agent,
+                phase: task.phase,
+                label: task.label?.trim() || task.agent || "Step 1",
+                status,
+                flatIndex,
+                stepIndex: 0,
+                outputName: task.outputName,
+                structured: Boolean(task.structured),
+                acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
+                error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
+            });
+            pushPhase(phases, task.phase, id);
+            if (status === "running" ||
+                input.currentFlatIndex === flatIndex ||
+                input.currentStepIndex === 0)
+                currentNodeId = id;
+        }
+        return {
+            runId: input.runId,
+            mode: input.mode ?? (input.plan.kind === "parallel" ? "parallel" : "single"),
+            phases,
+            nodes,
+            currentNodeId,
+        };
+    }
+    const steps = input.steps ?? [];
+    for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+        const step = steps[stepIndex];
         if (isParallelStep(step)) {
             const groupId = `step-${stepIndex}`;
             const children = [];

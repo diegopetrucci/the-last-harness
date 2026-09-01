@@ -128,19 +128,14 @@ function normalizeSupervisorRequestMetadata(
 ): ForegroundSupervisorRequestMetadata | undefined {
   if (!request || typeof request !== "object" || Array.isArray(request)) return undefined;
   const raw = request as Record<string, unknown>;
-  const tool = raw.tool === "intercom" || raw.tool === "contact_supervisor" ? raw.tool : undefined;
+  const tool = raw.tool === "contact_supervisor" ? raw.tool : undefined;
   if (!tool) return undefined;
-  const action = tool === "intercom" && raw.action === "ask" ? "ask" : undefined;
   const reason =
-    tool === "contact_supervisor" &&
-    (raw.reason === "need_decision" || raw.reason === "interview_request")
-      ? raw.reason
-      : undefined;
+    raw.reason === "need_decision" || raw.reason === "interview_request" ? raw.reason : undefined;
   const requestId = boundLifecycleToken(raw.requestId);
   const summary = boundSupervisorSummary(raw.summary);
   return {
     tool,
-    ...(action ? { action } : {}),
     ...(reason ? { reason } : {}),
     ...(requestId ? { requestId } : {}),
     ...(summary ? { summary } : {}),

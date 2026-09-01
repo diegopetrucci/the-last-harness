@@ -155,7 +155,7 @@ test("disabled primary mode preflights accepted subagent dispatches", async (t) 
     assert.equal(probeCount, 1, "accepted disabled-mode dispatch must preflight its provider");
     assert.equal(store.getEntry("anthropic")?.status, "healthy");
     assert.equal(event.input.agentScope, "user");
-    assert.equal(event.input.context, "fresh");
+    assert.equal(Object.hasOwn(event.input, "context"), false);
   });
 
   cleanupTempDir(fixture);

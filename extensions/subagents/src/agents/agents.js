@@ -32,7 +32,6 @@ const KNOWN_FIELDS = new Set([
     "systemPromptMode",
     "inheritProjectContext",
     "inheritSkills",
-    "defaultContext",
     "acceptanceRole",
     "skill",
     "skills",
@@ -91,7 +90,6 @@ function cloneOverrideBase(agent) {
         systemPromptMode: agent.systemPromptMode,
         inheritProjectContext: agent.inheritProjectContext,
         inheritSkills: agent.inheritSkills,
-        defaultContext: agent.defaultContext,
         acceptanceRole: agent.acceptanceRole,
         disabled: agent.disabled,
         systemPrompt: agent.systemPrompt,
@@ -217,16 +215,6 @@ function parseBuiltinOverrideEntry(name, value, filePath) {
         }
         else {
             throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'inheritSkills'; expected a boolean.`);
-        }
-    }
-    if ("defaultContext" in input) {
-        if (input.defaultContext === "fresh" ||
-            input.defaultContext === "fork" ||
-            input.defaultContext === false) {
-            override.defaultContext = input.defaultContext;
-        }
-        else {
-            throw new Error(`Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', or false.`);
         }
     }
     if ("acceptanceRole" in input) {
@@ -416,9 +404,6 @@ function applyCustomAgentOverride(agent, override, meta) {
     if (override.inheritSkills !== undefined) {
         fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
     }
-    if (override.defaultContext !== undefined) {
-        fill("defaultContext", ["defaultContext"], override.defaultContext === false ? undefined : override.defaultContext);
-    }
     if (override.acceptanceRole !== undefined) {
         fill("acceptanceRole", ["acceptanceRole"], override.acceptanceRole === false ? undefined : override.acceptanceRole);
     }
@@ -575,11 +560,9 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                 : frontmatter.inheritSkills === "false"
                     ? false
                     : defaultInheritSkills();
-            const defaultContext = frontmatter.defaultContext === "fork"
-                ? "fork"
-                : frontmatter.defaultContext === "fresh"
-                    ? "fresh"
-                    : undefined;
+            if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+                throw new AgentDefinitionValidationError(`Agent '${localName}' uses retired defaultContext; remove it because TLH always starts child sessions fresh.`);
+            }
             let acceptanceRole;
             if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
                 if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
@@ -646,7 +629,6 @@ function loadAgentsFromDir(dir, source, agentDiagnosticsOut) {
                 systemPromptMode,
                 inheritProjectContext,
                 inheritSkills,
-                defaultContext,
                 acceptanceRole,
                 systemPrompt: body,
                 source,

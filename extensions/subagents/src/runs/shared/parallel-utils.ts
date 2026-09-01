@@ -4,7 +4,6 @@ import type {
   NestedRouteInfo,
   ResolvedControlConfig,
   ResolvedToolBudget,
-  ResolvedTurnBudget,
   SubagentRunMode,
   TkTicketMetadata,
   WorkflowGraphSnapshot,
@@ -87,10 +86,31 @@ export interface ParallelStepGroup {
 
 export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
 
+/**
+ * The direct execution contract used by supported single and parallel runs.
+ * A plan is intentionally one batch: sequencing belongs to the legacy chain
+ * compatibility reader, not to the detached runner's active contract.
+ */
+export type SubagentRunPlan =
+  | { kind: "single"; task: RunnerSubagentStep }
+  | {
+      kind: "parallel";
+      tasks: RunnerSubagentStep[];
+      concurrency?: number;
+      failFast?: boolean;
+    };
+
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
-  steps: RunnerStep[];
+  /** Canonical direct single/parallel execution plan. */
+  plan?: SubagentRunPlan;
+  /**
+   * Legacy chain-shaped configuration reader. New dispatches must persist
+   * `plan`; this field remains readable for historical runs until the chain
+   * compatibility cleanup ticket removes it.
+   */
+  steps?: RunnerStep[];
   resultPath: string;
   cwd: string;
   placeholder: string;
@@ -113,8 +133,6 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  controlIntercomTarget?: string;
-  childIntercomTargets?: Array<string | undefined>;
   resultMode?: SubagentRunMode;
   workflowGraph?: WorkflowGraphSnapshot;
   nestedRoute?: NestedRouteInfo;
@@ -125,11 +143,10 @@ export interface SubagentRunConfig {
     path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
   };
   tkTicket?: TkTicketMetadata;
-  /** Safe per-child captures mirrored from steps for artifact inspection. */
+  /** Safe per-child captures mirrored from the plan/legacy steps for artifact inspection. */
   projectAgents?: ProjectAgentRunCapture[];
   timeoutMs?: number;
   deadlineAt?: number;
-  turnBudget?: ResolvedTurnBudget;
   toolBudget?: ResolvedToolBudget;
 }
 

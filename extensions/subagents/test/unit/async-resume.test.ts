@@ -120,7 +120,6 @@ describe("async resume lookup", () => {
       assert.equal(target.agent, "worker");
       assert.equal(target.sessionFile, sessionFile);
       assert.equal(target.cwd, root);
-      assert.equal(target.intercomTarget, "subagent-worker-run-abc-1");
       assert.equal(target.continuationAcceptance, undefined);
       assert.deepEqual(target.contextPressureCrossedThresholds, ["warning", "critical"]);
     } finally {
@@ -1368,31 +1367,6 @@ describe("async resume lookup", () => {
     }
   });
 
-  it("returns a live intercom target for a running child", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-live-"));
-    try {
-      const asyncRoot = path.join(root, "runs");
-      writeJson(path.join(asyncRoot, "run-live", "status.json"), {
-        runId: "run-live",
-        mode: "single",
-        state: "running",
-        startedAt: 100,
-        lastUpdate: 100,
-        steps: [{ agent: "scout", status: "running" }],
-      });
-
-      const target = resolveAsyncResumeTarget(
-        { id: "run-live" },
-        { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") },
-      );
-
-      assert.equal(target.kind, "live");
-      assert.equal(target.intercomTarget, "subagent-scout-run-live-1");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("revives a completed child by index while a sibling async child is still running", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-resume-partial-"));
     try {
@@ -2021,7 +1995,6 @@ describe("async resume lookup", () => {
         state: "complete",
         agent: "worker",
         index: 0,
-        intercomTarget: "subagent-worker-run-old-1",
         sessionFile: "/tmp/session.jsonl",
       },
       "What changed?",

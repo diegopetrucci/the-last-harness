@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import {
   ASYNC_DIR,
-  INTERCOM_DETACH_REQUEST_EVENT,
   RESULTS_DIR,
   SUBAGENT_ASYNC_STARTED_EVENT,
   resolveTempRootDir,
@@ -77,7 +75,7 @@ function normalizePathForComparison(targetPath: string): string {
   }
 }
 
-function createRecordingEventBus(options: { acknowledgeResults?: boolean } = {}) {
+function createRecordingEventBus() {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const emitted: Array<{ channel: string; payload: unknown }> = [];
   const bus = {
@@ -96,72 +94,30 @@ function createRecordingEventBus(options: { acknowledgeResults?: boolean } = {})
       for (const handler of listeners.get(channel) ?? []) {
         handler(payload);
       }
-      if (options.acknowledgeResults && channel === "subagent:result-intercom") {
-        const requestId =
-          payload && typeof payload === "object"
-            ? (payload as { requestId?: unknown }).requestId
-            : undefined;
-        if (typeof requestId === "string") {
-          setImmediate(() =>
-            bus.emit("subagent:result-intercom-delivery", { requestId, delivered: true }),
-          );
-        }
-      }
     },
   };
   return bus;
 }
 
 describe(
-  "intercom result delivery cutover",
+  "native result lifecycle",
   { skip: !available ? "executor not importable" : undefined },
   () => {
     let tempDir: string;
-    let homeDir: string;
     let mockPi: MockPi;
-    let originalHome: string | undefined;
-    let originalUserProfile: string | undefined;
 
     before(() => {
-      originalHome = process.env.HOME;
-      originalUserProfile = process.env.USERPROFILE;
-      homeDir = createTempDir("pi-subagent-intercom-home-");
-      process.env.HOME = homeDir;
-      process.env.USERPROFILE = homeDir;
       mockPi = createMockPi();
       mockPi.install();
-      fs.mkdirSync(path.join(os.homedir(), ".pi", "agent", "extensions", "pi-intercom"), {
-        recursive: true,
-      });
-      fs.mkdirSync(path.join(os.homedir(), ".pi", "agent", "intercom"), { recursive: true });
-      fs.writeFileSync(
-        path.join(os.homedir(), ".pi", "agent", "intercom", "config.json"),
-        JSON.stringify({ enabled: true }),
-        "utf-8",
-      );
     });
 
     after(() => {
       mockPi.uninstall();
-      if (originalHome === undefined) delete process.env.HOME;
-      else process.env.HOME = originalHome;
-      if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = originalUserProfile;
-      removeTempDir(homeDir);
     });
 
     beforeEach(() => {
-      tempDir = createTempDir("pi-subagent-intercom-result-");
+      tempDir = createTempDir("pi-subagent-native-result-");
       mockPi.reset();
-      fs.mkdirSync(path.join(os.homedir(), ".pi", "agent", "extensions", "pi-intercom"), {
-        recursive: true,
-      });
-      fs.mkdirSync(path.join(os.homedir(), ".pi", "agent", "intercom"), { recursive: true });
-      fs.writeFileSync(
-        path.join(os.homedir(), ".pi", "agent", "intercom", "config.json"),
-        JSON.stringify({ enabled: true }),
-        "utf-8",
-      );
     });
 
     afterEach(() => {
@@ -302,15 +258,11 @@ describe(
 
     function makeExecutor(
       options: {
-        bridgeMode?: "always" | "off";
         agents?: ReturnType<typeof makeAgent>[];
-        acknowledgeResults?: boolean;
         kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
       } = {},
     ) {
-      const events = createRecordingEventBus({
-        acknowledgeResults: options.acknowledgeResults ?? true,
-      });
+      const events = createRecordingEventBus();
       const state = {
         baseCwd: tempDir,
         currentSessionId: null,
@@ -336,9 +288,7 @@ describe(
           setSessionName: () => {},
         },
         state,
-        config: {
-          intercomBridge: { mode: options.bridgeMode ?? "always" },
-        },
+        config: {},
         tempArtifactsDir: tempDir,
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
@@ -368,21 +318,16 @@ describe(
       return result;
     }
 
-    it("single foreground runs return one native grouped result and emit no result event", async () => {
+    it("single foreground runs return one native grouped result", async () => {
       mockPi.onCall({ output: "Full child output from worker" });
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
-        "single-intercom",
+        "single-native",
         { agent: "worker", task: "Summarize feature status" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
       );
       assert.match(result.content[0]?.text ?? "", /^subagent results/m);
       assert.match(result.content[0]?.text ?? "", /Mode: single/);
@@ -394,34 +339,27 @@ describe(
         (result.content[0]?.text ?? "").match(/Full child output from worker/g)?.length ?? 0,
         1,
       );
-      assert.doesNotMatch(result.content[0]?.text ?? "", /Delivered .* via intercom/);
-      assert.doesNotMatch(result.content[0]?.text ?? "", /Run intercom target:/);
       assert.equal(result.details?.results?.[0]?.finalOutput, "Full child output from worker");
     });
 
-    it("bridge-off single runs still use the native grouped result with no listener dependence", async () => {
+    it("native single runs always use the grouped result", async () => {
       mockPi.onCall({ output: "Legacy foreground output" });
-      const { executor, events } = makeExecutor({ bridgeMode: "off" });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
-        "single-no-intercom",
+        "single-native-default",
         { agent: "worker", task: "Summarize feature" },
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(result.content[0]?.text ?? "", /Mode: single/);
       assert.match(result.content[0]?.text ?? "", /Summary:\nLegacy foreground output/);
     });
 
-    it("native foreground results do not wait for acknowledgement listeners", async () => {
+    it("native foreground results return without external delivery", async () => {
       mockPi.onCall({ output: "Unacknowledged foreground output" });
-      const { executor, events } = makeExecutor({ acknowledgeResults: false });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-no-ack",
@@ -430,25 +368,12 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(result.content[0]?.text ?? "", /Summary:\nUnacknowledged foreground output/);
     });
 
-    it("native foreground results do not depend on installed intercom package files", async () => {
-      fs.rmSync(path.join(os.homedir(), ".pi", "agent", "extensions", "pi-intercom"), {
-        recursive: true,
-        force: true,
-      });
-      fs.rmSync(path.join(os.homedir(), ".pi", "agent", "intercom"), {
-        recursive: true,
-        force: true,
-      });
-      mockPi.onCall({ output: "No package foreground output" });
-      const { executor, events } = makeExecutor();
+    it("native foreground results are independent of external extension files", async () => {
+      mockPi.onCall({ output: "No external extension foreground output" });
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-no-package",
@@ -457,18 +382,16 @@ describe(
         undefined,
         makeMinimalCtx(tempDir),
       );
-
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
+      assert.match(
+        result.content[0]?.text ?? "",
+        /Summary:\nNo external extension foreground output/,
       );
-      assert.match(result.content[0]?.text ?? "", /Summary:\nNo package foreground output/);
     });
 
     it("native foreground summaries honor maxOutput truncation without discarding full structured output", async () => {
       const fullOutput = `first visible line\n${"second hidden line".repeat(700)}\nthird hidden line`;
       mockPi.onCall({ output: fullOutput });
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-truncated",
@@ -479,10 +402,6 @@ describe(
       );
 
       const text = result.content[0]?.text ?? "";
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(text, /\[TRUNCATED: showing first 1 of 3 lines/);
       assert.match(text, /first visible line/);
       assert.doesNotMatch(text, /second hidden line/);
@@ -493,7 +412,7 @@ describe(
 
     it("native foreground summaries preserve file-only references even when maxOutput is smaller", async () => {
       mockPi.onCall({ output: "full saved native output\nwith hidden details" });
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-file-only",
@@ -510,10 +429,6 @@ describe(
       );
 
       const text = result.content[0]?.text ?? "";
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(text, /Summary:\nOutput saved to:/);
       assert.match(text, /native-file-only\.md/);
       assert.doesNotMatch(text, /full saved native output/);
@@ -528,7 +443,7 @@ describe(
         stderr: "single terminal failure",
         exitCode: 1,
       });
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-failed",
@@ -546,10 +461,6 @@ describe(
 
       const text = result.content[0]?.text ?? "";
       assert.equal(result.isError, true);
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(text, /Mode: single/);
       assert.match(text, /Status: failed/);
       assert.match(text, /Children: 1 failed/);
@@ -571,7 +482,7 @@ describe(
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
       mockPi.onCall({ output: "save visible line\nsave hidden line\nsave final hidden" });
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       const result = await executor.execute(
         "single-file-save-failed",
@@ -589,10 +500,6 @@ describe(
 
       const text = result.content[0]?.text ?? "";
       assert.equal(result.isError, undefined);
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(text, /Status: completed/);
       assert.match(text, /\[TRUNCATED: showing first 1 of 3 lines/);
       assert.match(text, /save visible line/);
@@ -661,7 +568,7 @@ describe(
       const blockedParent = path.join(tempDir, "chain-not-a-directory");
       fs.writeFileSync(blockedParent, "blocking file", "utf-8");
       const requestedOutput = path.join(blockedParent, "report.md");
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       await expectUnsupportedChainRequest(executor, "chain-file-save-failed", {
         chain: [
@@ -674,10 +581,6 @@ describe(
         ],
         maxOutput: { lines: 1, bytes: 100 },
       });
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.equal(fs.existsSync(requestedOutput), false);
     });
 
@@ -689,7 +592,7 @@ describe(
         ...Array.from({ length: 70 }, (_, index) => `segment-${index.toString().padStart(2, "0")}`),
         "report.md",
       );
-      const { executor, events } = makeExecutor();
+      const { executor } = makeExecutor();
 
       await expectUnsupportedChainRequest(executor, "chain-earlier-save-error", {
         chain: [
@@ -703,16 +606,12 @@ describe(
         ],
         maxOutput: { lines: 1, bytes: 100 },
       });
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.equal(fs.existsSync(requestedOutput), false);
     });
 
-    it("paused foreground runs stay actionable and emit no grouped result event", async () => {
+    it("paused foreground runs stay actionable", async () => {
       mockPi.onCall({ delay: 10_000 });
-      const { executor, events, state } = makeExecutor({ agents: [makeAgent("slow")] });
+      const { executor, state } = makeExecutor({ agents: [makeAgent("slow")] });
 
       const runPromise = executor.execute(
         "single-pause",
@@ -747,10 +646,6 @@ describe(
       );
 
       const result = await runPromise;
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(
         result.content[0]?.text ?? "",
         /^Foreground run [a-z0-9-]+ paused after interrupt \(slow\)\./,
@@ -768,10 +663,10 @@ describe(
     it("top-level parallel runs bound oversized grouped native output while retaining full details", async () => {
       const fullOutput = `Parallel child output ${"P".repeat(12_000)}`;
       mockPi.onCall({ output: fullOutput });
-      const { executor, events } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
+      const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
       const result = await executor.execute(
-        "parallel-intercom",
+        "parallel-native",
         {
           tasks: [
             { agent: "a", task: "task-a" },
@@ -781,11 +676,6 @@ describe(
         new AbortController().signal,
         undefined,
         makeMinimalCtx(tempDir),
-      );
-
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
       );
       assert.match(result.content[0]?.text ?? "", /Mode: parallel/);
       assert.match(result.content[0]?.text ?? "", /Children: 2 completed/);
@@ -800,11 +690,11 @@ describe(
     });
 
     it("chain grouping requests fail closed before native summaries are built", async () => {
-      const { executor, events } = makeExecutor({
+      const { executor } = makeExecutor({
         agents: [makeAgent("a"), makeAgent("b"), makeAgent("c")],
       });
 
-      await expectUnsupportedChainRequest(executor, "chain-intercom", {
+      await expectUnsupportedChainRequest(executor, "chain-native", {
         chain: [
           { agent: "a", task: "step-a" },
           {
@@ -815,10 +705,6 @@ describe(
           },
         ],
       });
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
     });
 
     it("chain fallback requests fail closed before retries or notices are produced", async () => {
@@ -839,7 +725,7 @@ describe(
     });
 
     it("failed chain foreground requests fail closed before any child can fail", async () => {
-      const { executor, events } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
+      const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
       await expectUnsupportedChainRequest(executor, "chain-failed", {
         chain: [
@@ -847,37 +733,22 @@ describe(
           { agent: "b", task: "must not run" },
         ],
       });
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
     });
 
-    it("paused chain flows fail closed before detach or grouped receipts are possible", async () => {
-      const { executor, events: bus } = makeExecutor({
-        agents: [
-          makeAgent("a", { systemPrompt: "Intercom orchestration channel:" }),
-          makeAgent("b"),
-        ],
+    it("paused chain flows fail closed before grouped receipts are possible", async () => {
+      const { executor } = makeExecutor({
+        agents: [makeAgent("a"), makeAgent("b")],
       });
 
-      await expectUnsupportedChainRequest(executor, "chain-detached-intercom", {
+      await expectUnsupportedChainRequest(executor, "chain-native-unsupported", {
         chain: [
           { agent: "a", task: "ask supervisor" },
           { agent: "b", task: "must not run" },
         ],
       });
-      assert.equal(
-        bus.emitted.some((entry) => entry.channel === INTERCOM_DETACH_REQUEST_EVENT),
-        false,
-      );
-      assert.equal(
-        bus.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
     });
 
-    it("resume action queues a live async follow-up in the native inbox without result intercom", async () => {
+    it("resume action queues a live async follow-up in the native inbox", async () => {
       const runId = `resume-live-${Date.now()}`;
       const asyncDir = path.join(ASYNC_DIR, runId);
       const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
@@ -905,7 +776,7 @@ describe(
           ),
           "utf-8",
         );
-        const { executor, events } = makeExecutor({
+        const { executor } = makeExecutor({
           kill: (pid, signal) => {
             kills.push({ pid, signal });
             if (!acknowledged && signal === 0) {
@@ -949,10 +820,6 @@ describe(
         assert.equal(
           kills.every(({ signal }) => signal === 0),
           true,
-        );
-        assert.equal(
-          events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-          false,
         );
         const requests = consumeChildMessageRequests(asyncDir);
         assert.equal(requests.length, 1);
@@ -1277,7 +1144,7 @@ describe(
               },
             ],
             changedFiles: ["src/example.ts"],
-            testsAddedOrUpdated: ["test/integration/intercom-result-delivery.test.ts"],
+            testsAddedOrUpdated: ["test/integration/native-result-lifecycle.test.ts"],
             commandsRun: [
               { command: "npm test -- --runInBand", result: "passed", summary: "mocked" },
             ],
@@ -1291,7 +1158,7 @@ describe(
           "```",
         ].join("\n"),
       });
-      const { executor } = makeExecutor({ bridgeMode: "off" });
+      const { executor } = makeExecutor();
       const started = await executor.execute(
         "resume-paused-acceptance-start",
         {
@@ -1432,8 +1299,8 @@ describe(
                 evidence: "Added the requested resume note.",
               },
             ],
-            changedFiles: ["test/integration/intercom-result-delivery.test.ts"],
-            testsAddedOrUpdated: ["test/integration/intercom-result-delivery.test.ts"],
+            changedFiles: ["test/integration/native-result-lifecycle.test.ts"],
+            testsAddedOrUpdated: ["test/integration/native-result-lifecycle.test.ts"],
             commandsRun: [
               { command: "npm test -- --runInBand", result: "passed", summary: "mocked" },
             ],
@@ -1448,7 +1315,6 @@ describe(
         ].join("\n"),
       });
       const { executor } = makeExecutor({
-        bridgeMode: "off",
         agents: [makeAgent("a"), makeAgent("b")],
       });
       const started = await executor.execute(
@@ -1681,7 +1547,7 @@ describe(
       const runId = `resume-foreground-missing-status-${Date.now()}`;
       const asyncDir = path.join(ASYNC_DIR, runId);
       const sessionFile = path.join(tempDir, `${runId}.jsonl`);
-      const { executor, state } = makeExecutor({ bridgeMode: "off" });
+      const { executor, state } = makeExecutor();
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
       state.foregroundRuns.set(runId, {
@@ -1713,7 +1579,7 @@ describe(
       const runId = `resume-foreground-paused-missing-status-${Date.now()}`;
       const asyncDir = path.join(ASYNC_DIR, runId);
       const sessionFile = path.join(tempDir, `${runId}.jsonl`);
-      const { executor, state } = makeExecutor({ bridgeMode: "off" });
+      const { executor, state } = makeExecutor();
       fs.mkdirSync(asyncDir, { recursive: true });
       fs.writeFileSync(sessionFile, "", "utf-8");
       state.foregroundRuns.set(runId, {
@@ -1773,7 +1639,7 @@ describe(
       try {
         assert.equal(fs.existsSync(asyncDir), false);
         assert.equal(fs.existsSync(resultPath), true);
-        const { executor } = makeExecutor({ bridgeMode: "off" });
+        const { executor } = makeExecutor();
         // Explicit `dir` preserves the missing lifecycle path on the target;
         // id-only result lookup would normalize asyncDir to null and skip the guard.
         const result = await executor.execute(
@@ -1833,7 +1699,7 @@ describe(
           sessionFile,
         },
       });
-      const { executor, state } = makeExecutor({ bridgeMode: "off" });
+      const { executor, state } = makeExecutor();
       state.foregroundControls.set(route.rootRunId, {
         runId: route.rootRunId,
         mode: "single",
@@ -1897,7 +1763,7 @@ describe(
           sessionFile,
         },
       });
-      const { executor, state } = makeExecutor({ bridgeMode: "off" });
+      const { executor, state } = makeExecutor();
       state.foregroundControls.set(route.rootRunId, {
         runId: route.rootRunId,
         mode: "single",
@@ -1934,7 +1800,6 @@ describe(
       mockPi.onCall({ output: "second child done" });
       mockPi.onCall({ output: "revived foreground answer" });
       const { executor } = makeExecutor({
-        bridgeMode: "off",
         agents: [makeAgent("a"), makeAgent("b")],
       });
 
@@ -2031,7 +1896,7 @@ describe(
         ],
       });
       const { executor } = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const original = await executor.execute(
         "foreground-paused-status-original",
@@ -2160,7 +2025,7 @@ describe(
       });
       mockPi.onCall({ output: "resumed without extra guidance" });
       const { executor } = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const original = await executor.execute(
         "foreground-paused-unchanged-original",
@@ -2206,7 +2071,7 @@ describe(
       });
       mockPi.onCall({ output: "resumed after persisted pause" });
       const { executor } = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const original = await executor.execute(
         "foreground-paused-generation-original",
@@ -2280,7 +2145,7 @@ describe(
       });
       mockPi.onCall({ output: "resumed after reload" });
       const first = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const original = await first.executor.execute(
         "foreground-paused-reload-original",
@@ -2291,14 +2156,10 @@ describe(
       );
       const runId = original.details?.runId;
       assert.ok(runId, "expected foreground run id");
-      assert.equal(
-        first.events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
 
       const reloaded = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const status = await reloaded.executor.execute(
         "foreground-paused-reload-status",
@@ -2318,10 +2179,7 @@ describe(
         makeMinimalCtx(tempDir),
       );
       assert.equal(revived.isError, undefined);
-      assert.doesNotMatch(
-        revived.content[0]?.text ?? "",
-        /Session:|Async dir:|Intercom target:|\/private|\/tmp\//,
-      );
+      assert.doesNotMatch(revived.content[0]?.text ?? "", /Session:|Async dir:|\/private|\/tmp\//);
       await waitForRevivedAsyncResult(revived);
       await waitForAsyncState(runId, "continued");
 
@@ -2341,10 +2199,6 @@ describe(
       assert.equal(typeof persistedStatus.lifecycle?.continuation?.continuedAt, "number");
       assert.equal(persistedStatus.pid, undefined);
       assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${runId}.json`)), false);
-      assert.equal(
-        reloaded.events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
 
       const duplicate = await reloaded.executor.execute(
         "foreground-paused-reload-resume-duplicate",
@@ -2357,7 +2211,7 @@ describe(
       assert.match(duplicate.content[0]?.text ?? "", /already launched continuation/i);
       assert.doesNotMatch(
         duplicate.content[0]?.text ?? "",
-        /Session:|Async dir:|Intercom target:|\/private|\/tmp\//,
+        /Session:|Async dir:|\/private|\/tmp\//,
       );
 
       const cancelled = await reloaded.executor.execute(
@@ -2371,7 +2225,7 @@ describe(
       assert.match(cancelled.content[0]?.text ?? "", /already continued/i);
       assert.doesNotMatch(
         cancelled.content[0]?.text ?? "",
-        /Session:|Async dir:|Intercom target:|\/private|\/tmp\//,
+        /Session:|Async dir:|\/private|\/tmp\//,
       );
     });
 
@@ -2426,7 +2280,7 @@ describe(
       const first = makeExecutor({
         agents: [
           makeAgent("done"),
-          makeAgent("ask", { systemPrompt: "Intercom orchestration channel:" }),
+          makeAgent("ask"),
           makeAgent("wait"),
           makeAgent("started"),
           makeAgent("queued"),
@@ -2503,10 +2357,6 @@ describe(
         ) ?? [];
       assert.equal(requesterIndex, 1);
       assert.deepEqual(cohortIndexes, [2, 3]);
-      assert.equal(
-        first.events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.deepEqual(
         spawnedPids.map((pid) => isPidAlive(pid)),
         [false, false, false, false],
@@ -2515,7 +2365,7 @@ describe(
       const second = makeExecutor({
         agents: [
           makeAgent("done"),
-          makeAgent("ask", { systemPrompt: "Intercom orchestration channel:" }),
+          makeAgent("ask"),
           makeAgent("wait"),
           makeAgent("started"),
           makeAgent("queued"),
@@ -2580,7 +2430,7 @@ describe(
       const third = makeExecutor({
         agents: [
           makeAgent("done"),
-          makeAgent("ask", { systemPrompt: "Intercom orchestration channel:" }),
+          makeAgent("ask"),
           makeAgent("wait"),
           makeAgent("started"),
           makeAgent("queued"),
@@ -2615,16 +2465,13 @@ describe(
     });
 
     it("chain status flows fail closed before paused foreground recovery exists", async () => {
-      const { executor, events: bus } = makeExecutor({
-        agents: [
-          makeAgent("a", { systemPrompt: "Intercom orchestration channel:" }),
-          makeAgent("b"),
-        ],
+      const { executor } = makeExecutor({
+        agents: [makeAgent("a"), makeAgent("b")],
       });
 
       const original = await expectUnsupportedChainRequest(
         executor,
-        "foreground-detached-chain-status-original",
+        "foreground-chain-status-original",
         {
           chain: [
             { agent: "a", task: "ask supervisor" },
@@ -2633,10 +2480,6 @@ describe(
         },
       );
       assert.equal(original.details?.runId, undefined);
-      assert.equal(
-        bus.emitted.some((entry) => entry.channel === INTERCOM_DETACH_REQUEST_EVENT),
-        false,
-      );
     });
 
     it("chain parallel pause requests fail closed before any paused status is persisted", async () => {
@@ -2644,7 +2487,7 @@ describe(
         agents: [
           makeAgent("a"),
           makeAgent("done"),
-          makeAgent("ask", { systemPrompt: "Intercom orchestration channel:" }),
+          makeAgent("ask"),
           makeAgent("wait"),
           makeAgent("started"),
           makeAgent("queued"),
@@ -2672,23 +2515,11 @@ describe(
         },
       );
       assert.equal(original.details?.runId, undefined);
-      assert.equal(
-        first.events.emitted.some((entry) => entry.channel === INTERCOM_DETACH_REQUEST_EVENT),
-        false,
-      );
-      assert.equal(
-        first.events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
     });
 
     it("sequential chain pause requests fail closed before continuation state is created", async () => {
       const first = makeExecutor({
-        agents: [
-          makeAgent("a"),
-          makeAgent("b", { systemPrompt: "Intercom orchestration channel:" }),
-          makeAgent("c"),
-        ],
+        agents: [makeAgent("a"), makeAgent("b"), makeAgent("c")],
       });
       const original = await expectUnsupportedChainRequest(
         first.executor,
@@ -2702,10 +2533,6 @@ describe(
         },
       );
       assert.equal(original.details?.runId, undefined);
-      assert.equal(
-        first.events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
     });
 
     it("interrupt makes a paused foreground supervisor run terminal, idempotent, and artifact-preserving", async () => {
@@ -2723,7 +2550,7 @@ describe(
         ],
       });
       const { executor } = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       const original = await executor.execute(
         "foreground-paused-cancel-original",
@@ -2826,7 +2653,7 @@ describe(
         ],
       });
       const { executor } = makeExecutor({
-        agents: [makeAgent("a", { systemPrompt: "Intercom orchestration channel:" })],
+        agents: [makeAgent("a")],
       });
       let runDir: string | undefined;
       let statusPath: string | undefined;
@@ -2896,7 +2723,7 @@ describe(
           ),
           "utf-8",
         );
-        const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+        const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
         state.foregroundRuns.set(base, {
           runId: base,
           mode: "single",
@@ -2948,7 +2775,7 @@ describe(
           ),
           "utf-8",
         );
-        const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+        const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
         state.foregroundRuns.set(`${base}-foreground`, {
           runId: `${base}-foreground`,
           mode: "single",
@@ -3010,7 +2837,7 @@ describe(
             "utf-8",
           );
         }
-        const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+        const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
         state.foregroundRuns.set(`${base}-foreground`, {
           runId: `${base}-foreground`,
           mode: "single",
@@ -3063,7 +2890,7 @@ describe(
           ),
           "utf-8",
         );
-        const { executor, state } = makeExecutor({ bridgeMode: "off", agents: [makeAgent("a")] });
+        const { executor, state } = makeExecutor({ agents: [makeAgent("a")] });
         state.foregroundRuns.set(foregroundId, {
           runId: foregroundId,
           mode: "single",
@@ -3095,10 +2922,10 @@ describe(
         stderr: "Parallel child failure",
         exitCode: 1,
       });
-      const { executor, events } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
+      const { executor } = makeExecutor({ agents: [makeAgent("a"), makeAgent("b")] });
 
       const result = await executor.execute(
-        "parallel-mixed-intercom",
+        "parallel-mixed-native",
         {
           tasks: [
             { agent: "a", task: "task-a" },
@@ -3111,10 +2938,6 @@ describe(
       );
 
       assert.equal(result.isError, undefined);
-      assert.equal(
-        events.emitted.some((entry) => entry.channel === "subagent:result-intercom"),
-        false,
-      );
       assert.match(result.content[0]?.text ?? "", /Status: failed/);
       assert.match(result.content[0]?.text ?? "", /Children: 1 completed, 1 failed/);
       assert.match(result.content[0]?.text ?? "", /1\/2\. a — completed/);

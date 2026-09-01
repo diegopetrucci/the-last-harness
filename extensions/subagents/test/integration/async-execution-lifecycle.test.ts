@@ -1,6 +1,6 @@
 /**
  * Integration tests for async execution – interrupt, timeout, hard-kill,
- * turn budget, drain/cleanup, and relocated supervisor lifecycle tests.
+ * drain/cleanup, and relocated supervisor lifecycle tests.
  *
  * Requires pi packages to be importable. Skips gracefully if unavailable.
  */
@@ -34,7 +34,6 @@ import {
   RESULTS_DIR,
   executeAsyncChain,
   executeAsyncSingle,
-  mockAssistantMessage,
   readAsyncPayload,
   removeLifecycleLock,
   requestAsyncInterrupt,
@@ -1117,104 +1116,6 @@ describe("async execution utilities", () => {
     },
   );
 
-  it("async turn budget allows a terminal final grace turn", async () => {
-    mockPi.onCall({
-      jsonl: [
-        mockAssistantMessage("working before wrap-up", "tool_use"),
-        mockAssistantMessage("final wrapped output", "stop"),
-      ],
-    });
-    const id = `async-turn-budget-soft-${Date.now().toString(36)}`;
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Use the final grace turn to wrap up.",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      turnBudget: { maxTurns: 1, graceTurns: 1 },
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.success, true);
-    assert.equal(payload.state, "complete");
-    assert.equal(payload.turnBudgetExceeded, undefined);
-    assert.equal(payload.wrapUpRequested, true);
-    assert.equal(payload.turnBudget?.outcome, "wrap-up-requested");
-    assert.equal(payload.turnBudget?.turnCount, 2);
-    assert.equal(payload.results[0]?.wrapUpRequested, true);
-    assert.equal(payload.results[0]?.turnBudget?.turnCount, 2);
-    assert.match(
-      payload.results[0]?.output ?? "",
-      /Turn budget wrap-up was requested after 1 assistant turn/,
-    );
-    assert.match(payload.results[0]?.output ?? "", /final wrapped output/);
-    assert.equal(status.wrapUpRequested, true);
-    assert.equal(status.turnBudgetExceeded, undefined);
-    assert.equal(status.steps?.[0]?.wrapUpRequested, true);
-    assert.equal(status.steps?.[0]?.turnBudget?.turnCount, 2);
-  });
-
-  it("async turn budget hard-aborts a non-terminal final grace turn", async () => {
-    mockPi.onCall({
-      jsonl: [
-        mockAssistantMessage("working before wrap-up", "tool_use"),
-        mockAssistantMessage("still starting more tool work", "tool_use"),
-      ],
-    });
-    const id = `async-turn-budget-hard-${Date.now().toString(36)}`;
-    executeAsyncSingle(id, {
-      agent: "worker",
-      task: "Exceed the turn budget.",
-      agentConfig: makeAgent("worker"),
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-      turnBudget: { maxTurns: 1, graceTurns: 1 },
-    });
-
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.success, false);
-    assert.equal(payload.state, "failed");
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.turnBudgetExceeded, true);
-    assert.equal(payload.wrapUpRequested, true);
-    assert.equal(payload.turnBudget?.outcome, "exceeded");
-    assert.equal(payload.turnBudget?.turnCount, 2);
-    assert.equal(payload.turnBudget?.exceededAtTurn, 2);
-    assert.equal(payload.results[0]?.turnBudgetExceeded, true);
-    assert.match(payload.results[0]?.output ?? "", /Partial output before turn-budget abort:/);
-    assert.match(payload.results[0]?.output ?? "", /still starting more tool work/);
-    assert.equal(status.state, "failed");
-    assert.equal(status.turnBudgetExceeded, true);
-    assert.equal(status.steps?.[0]?.turnBudgetExceeded, true);
-    assert.equal(status.steps?.[0]?.turnBudget?.outcome, "exceeded");
-  });
-
   it("background forced drain after final assistant output is cleanup success", async () => {
     // Ratio invariant: keepaliveMs sets the mock's natural exit boundary.
     // elapsed < drainBoundMs proves the runner cleaned up the child proactively
@@ -1906,7 +1807,6 @@ describe("async execution utilities", () => {
       // not deferred to a CAS block that only runs when supervisorPauseRequest
       // is set. Without the fix resultState falls through to `interrupted ? "paused"`
       // and the artifact says `state: "paused"`.
-      // FIX 11: the adopted terminal state also beats any stale turnBudgetExceeded
       // flag in resultState precedence (concurrentTerminalStatusAdopted wins).
       assert.equal(
         resultPayload.state,
@@ -1921,7 +1821,7 @@ describe("async execution utilities", () => {
   //
   // When adoptConcurrentTerminalStatus adopts a non-paused terminal state, it sets
   // interrupted = false. Before the fix, the step-loop break condition only checked
-  // `interrupted || timedOut || turnBudgetExceeded`, so the loop would continue and
+  // `interrupted || timedOut`, so the loop would continue and
   // the NEXT sequential step would start even though a concurrent actor already
   // committed a terminal state to disk.
   //

@@ -70,13 +70,12 @@ describe("registered subagent tool description", () => {
     assert.match(description, /SINGLE:/i);
     assert.match(description, /PARALLEL:/i);
     assert.match(description, /fallbackModels/i);
-    assert.match(description, /context:\s*"fresh"\s*\|\s*"fork"/);
+    assert.doesNotMatch(description, /context:\s*"fresh"\s*\|\s*"fork"/);
     assert.match(description, /async:true|async: true/);
     assert.match(description, /Do not sleep or poll(?: status)? just to wait/i);
     assert.match(description, /no child process is running/i);
     assert.match(description, /subagents cannot spawn subagents/i);
     assert.match(description, /keep one writer/i);
-    assert.doesNotMatch(description, /fresh-redispatch|fresh redispatch|detached-for-intercom/i);
     assert.match(description, /acceptanceRole may be "read-only" or "writer"/i);
     assert.match(description, /affects inferred acceptance only, never tools?/i);
 

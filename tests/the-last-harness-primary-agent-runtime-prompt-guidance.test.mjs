@@ -793,7 +793,7 @@ test("disabled primary mode validates calls after injecting provider-aware subag
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const { toolCall } = registerRuntimeHarness();
-    const event = { toolName: "subagent", input: { agent: "developer", context: "" } };
+    const event = { toolName: "subagent", input: { agent: "developer" } };
     const ctx = createToolCallContext(
       [
         {
@@ -810,7 +810,7 @@ test("disabled primary mode validates calls after injecting provider-aware subag
     assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
     assert.equal(Object.hasOwn(event.input, "thinking"), false);
     assert.equal(event.input.agentScope, "user");
-    assert.equal(event.input.context, "fresh");
+    assert.equal(Object.hasOwn(event.input, "context"), false);
   });
 });
 
@@ -846,13 +846,12 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
         agent: "contrarian",
         prompt: "stress-test this plan",
         agentScope: "",
-        context: "",
       },
     };
     assert.equal(await toolCall(defaultEvent, ctx), undefined);
     assert.equal(defaultEvent.input.model, "anthropic/claude-opus-5:high");
     assert.equal(defaultEvent.input.agentScope, "user");
-    assert.equal(defaultEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(defaultEvent.input, "context"), false);
 
     for (const enabledFeatures of [["Contrarian", 123], ["Contrarian"], ["contrarian"]]) {
       writeFileSync(
@@ -865,13 +864,12 @@ test("disabled primary mode allows contrarian by default and ignores stale contr
           agent: "contrarian",
           prompt: "stress-test this plan",
           agentScope: "",
-          context: "",
         },
       };
       assert.equal(await toolCall(staleEvent, ctx), undefined);
       assert.equal(staleEvent.input.model, "anthropic/claude-opus-5:high");
       assert.equal(staleEvent.input.agentScope, "user");
-      assert.equal(staleEvent.input.context, "fresh");
+      assert.equal(Object.hasOwn(staleEvent.input, "context"), false);
     }
   });
 });
@@ -899,12 +897,11 @@ test("disabled primary mode allows opaque resume regardless of stale contrarian 
         id: "run-123",
         message: "Continue the approved ticket.",
         agentScope: "",
-        context: "",
       },
     };
     assert.equal(await toolCall(opaqueResumeEvent, ctx), undefined);
     assert.equal(opaqueResumeEvent.input.agentScope, "user");
-    assert.equal(opaqueResumeEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(opaqueResumeEvent.input, "context"), false);
 
     writeFileSync(
       join(fixture.agent, "settings.json"),
@@ -921,7 +918,7 @@ test("disabled primary mode allows opaque resume regardless of stale contrarian 
     };
     assert.equal(await toolCall(allowedResumeEvent, ctx), undefined);
     assert.equal(allowedResumeEvent.input.agentScope, "user");
-    assert.equal(allowedResumeEvent.input.context, "fresh");
+    assert.equal(Object.hasOwn(allowedResumeEvent.input, "context"), false);
   });
 });
 
@@ -930,7 +927,7 @@ test("enabled primary mode validates subagent input after injecting provider-awa
 
   await withEnv({ HOME: fixture.home, PI_CODING_AGENT_DIR: fixture.agent }, async () => {
     const { toolCall } = registerRuntimeHarness();
-    const event = { toolName: "subagent", input: { agent: "developer", context: "resume" } };
+    const event = { toolName: "subagent", input: { agent: "developer" } };
     const ctx = createToolCallContext(
       [
         {
@@ -944,14 +941,11 @@ test("enabled primary mode validates subagent input after injecting provider-awa
     );
 
     const result = await toolCall(event, ctx);
-    assert.deepEqual(result, {
-      block: true,
-      reason:
-        'TLH primary-agent subagent execution may not use context: "resume". TLH child sessions must start fresh so parent primary-agent/Gnosis context is not leaked.',
-    });
+    assert.equal(result, undefined);
     assert.equal(event.input.model, "openai-codex/gpt-5.6-luna:max");
     assert.equal(Object.hasOwn(event.input, "thinking"), false);
     assert.equal(event.input.agentScope, "user");
+    assert.equal(Object.hasOwn(event.input, "context"), false);
   });
 });
 
@@ -1407,14 +1401,14 @@ test("child mode keeps parent-only controls disabled while applying commit attri
 
     const childSubagentCall = {
       toolName: "subagent",
-      input: { agent: "developer", context: "resume" },
+      input: { agent: "developer" },
     };
     assert.equal(
       await toolCall(childSubagentCall, createToolCallContext([], undefined, { cwd: fixture.cwd })),
       undefined,
     );
     assert.equal(childSubagentCall.input.agentScope, undefined);
-    assert.equal(childSubagentCall.input.context, "resume");
+    assert.equal(Object.hasOwn(childSubagentCall.input, "context"), false);
 
     writeFileSync(
       join(fixture.agent, "settings.json"),

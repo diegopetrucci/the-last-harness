@@ -101,13 +101,6 @@ const SubagentParamsSchema = Type.Object(
           "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4.",
       }),
     ),
-    context: Type.Optional(
-      Type.String({
-        enum: ["fresh", "fork"],
-        description:
-          "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
-      }),
-    ),
     async: Type.Optional(
       Type.Boolean({
         description: "Launch detached background work (default: false, or per config)",

@@ -35,7 +35,6 @@ export type AgentScope = "user" | "project" | "both";
 
 type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
-type AgentDefaultContext = "fresh" | "fork";
 
 function defaultSystemPromptMode(name: string): SystemPromptMode {
   return name === "delegate" ? "append" : "replace";
@@ -60,7 +59,6 @@ const KNOWN_FIELDS = new Set([
   "systemPromptMode",
   "inheritProjectContext",
   "inheritSkills",
-  "defaultContext",
   "acceptanceRole",
   "skill",
   "skills",
@@ -84,7 +82,6 @@ interface BuiltinAgentOverrideBase {
   systemPromptMode: SystemPromptMode;
   inheritProjectContext: boolean;
   inheritSkills: boolean;
-  defaultContext?: AgentDefaultContext;
   acceptanceRole?: AcceptanceRole;
   disabled?: boolean;
   systemPrompt: string;
@@ -104,7 +101,6 @@ interface BuiltinAgentOverrideConfig {
   systemPromptMode?: SystemPromptMode;
   inheritProjectContext?: boolean;
   inheritSkills?: boolean;
-  defaultContext?: AgentDefaultContext | false;
   acceptanceRole?: AcceptanceRole | false;
   disabled?: boolean;
   systemPrompt?: string;
@@ -147,7 +143,6 @@ export interface AgentConfig {
   systemPromptMode: SystemPromptMode;
   inheritProjectContext: boolean;
   inheritSkills: boolean;
-  defaultContext?: AgentDefaultContext;
   acceptanceRole?: AcceptanceRole;
   systemPrompt: string;
   source: AgentSource;
@@ -161,7 +156,7 @@ export interface AgentConfig {
   interactive?: boolean;
   maxSubagentDepth?: number;
   completionGuard?: boolean;
-  /** When false, omit generic supervisor bridge guidance and contact_supervisor runtime support. */
+  /** When false, omit generic native supervisor guidance and contact_supervisor runtime support. */
   supervisorBridge?: boolean;
   toolBudget?: ToolBudgetConfig;
   maxExecutionTimeMs?: number;
@@ -289,7 +284,6 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
     systemPromptMode: agent.systemPromptMode,
     inheritProjectContext: agent.inheritProjectContext,
     inheritSkills: agent.inheritSkills,
-    defaultContext: agent.defaultContext,
     acceptanceRole: agent.acceptanceRole,
     disabled: agent.disabled,
     systemPrompt: agent.systemPrompt,
@@ -441,20 +435,6 @@ function parseBuiltinOverrideEntry(
     } else {
       throw new Error(
         `Builtin override '${name}' in '${filePath}' has invalid 'inheritSkills'; expected a boolean.`,
-      );
-    }
-  }
-
-  if ("defaultContext" in input) {
-    if (
-      input.defaultContext === "fresh" ||
-      input.defaultContext === "fork" ||
-      input.defaultContext === false
-    ) {
-      override.defaultContext = input.defaultContext;
-    } else {
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', or false.`,
       );
     }
   }
@@ -688,13 +668,6 @@ function applyCustomAgentOverride(
   if (override.inheritSkills !== undefined) {
     fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
   }
-  if (override.defaultContext !== undefined) {
-    fill(
-      "defaultContext",
-      ["defaultContext"],
-      override.defaultContext === false ? undefined : override.defaultContext,
-    );
-  }
   if (override.acceptanceRole !== undefined) {
     fill(
       "acceptanceRole",
@@ -900,12 +873,11 @@ function loadAgentsFromDir(
           : frontmatter.inheritSkills === "false"
             ? false
             : defaultInheritSkills();
-      const defaultContext =
-        frontmatter.defaultContext === "fork"
-          ? ("fork" as const)
-          : frontmatter.defaultContext === "fresh"
-            ? ("fresh" as const)
-            : undefined;
+      if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+        throw new AgentDefinitionValidationError(
+          `Agent '${localName}' uses retired defaultContext; remove it because TLH always starts child sessions fresh.`,
+        );
+      }
       let acceptanceRole: AcceptanceRole | undefined;
       if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
         if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
@@ -990,7 +962,6 @@ function loadAgentsFromDir(
         systemPromptMode,
         inheritProjectContext,
         inheritSkills,
-        defaultContext,
         acceptanceRole,
         systemPrompt: body,
         source,

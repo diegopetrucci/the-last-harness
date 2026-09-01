@@ -1,12 +1,9 @@
 import * as os from "node:os";
 import * as path from "node:path";
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
-export const INTERCOM_DETACH_REQUEST_EVENT = "pi-intercom:detach-request";
-export const INTERCOM_DETACH_RESPONSE_EVENT = "pi-intercom:detach-response";
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 export const SUBAGENT_CONTROL_EVENT = "subagent:control-event";
-export const SUBAGENT_CONTROL_INTERCOM_EVENT = "subagent:control-intercom";
 export const DEFAULT_MAX_OUTPUT = {
     bytes: 200 * 1024,
     lines: 5000,
@@ -88,10 +85,6 @@ export const SUBAGENT_ACTIONS = [
     "steer",
     "doctor",
 ];
-export const DEFAULT_FORK_PREAMBLE = "You are a delegated subagent running from a fork of the parent session. " +
-    "Treat the inherited conversation as reference-only context, not a live thread to continue. " +
-    "Do not continue or answer prior messages as if they are waiting for a reply. " +
-    "Your sole job is to execute the task below and return a focused result for that task using your tools.";
 function normalizeTopLevelParallelValue(value) {
     const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
     if (!Number.isInteger(parsed) || parsed < 1)
@@ -108,15 +101,6 @@ export function resolveTopLevelParallelConcurrency(override, configValue) {
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);
-}
-export function wrapForkTask(task, preamble) {
-    if (preamble === false)
-        return task;
-    const effectivePreamble = preamble ?? DEFAULT_FORK_PREAMBLE;
-    const wrappedPrefix = `${effectivePreamble}\n\nTask:\n`;
-    if (task.startsWith(wrappedPrefix))
-        return task;
-    return `${wrappedPrefix}${task}`;
 }
 function normalizeNonNegativeInteger(value) {
     const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;

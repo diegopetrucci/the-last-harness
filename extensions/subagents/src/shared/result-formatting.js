@@ -1,9 +1,7 @@
-import {} from "../shared/types.js";
-import { truncateWithMarker } from "../shared/string-utils.js";
-import { safeTerminalText } from "../shared/display-text.js";
+import {} from "./types.js";
+import { truncateWithMarker } from "./string-utils.js";
+import { safeTerminalText } from "./display-text.js";
 export function resolveSubagentResultStatus(input) {
-    if (input.detached)
-        return "detached";
     if (input.interrupted || input.state === "paused")
         return "paused";
     if (typeof input.success === "boolean")
@@ -21,7 +19,6 @@ function countStatuses(children) {
         completed: 0,
         failed: 0,
         paused: 0,
-        detached: 0,
     };
     for (const child of children) {
         counts[child.status] += 1;
@@ -33,7 +30,6 @@ function formatStatusCounts(counts) {
         counts.completed ? `${counts.completed} completed` : undefined,
         counts.failed ? `${counts.failed} failed` : undefined,
         counts.paused ? `${counts.paused} paused` : undefined,
-        counts.detached ? `${counts.detached} detached` : undefined,
     ].filter((part) => Boolean(part));
     return parts.length ? parts.join(", ") : "0 results";
 }
@@ -45,8 +41,6 @@ function resolveGroupedStatus(children) {
         return "paused";
     if (counts.completed > 0)
         return "completed";
-    if (counts.detached > 0)
-        return "detached";
     return "failed";
 }
 function compactNestedRun(run, depth = 0) {
@@ -64,9 +58,6 @@ function compactNestedRun(run, depth = 0) {
         ...(run.asyncDir ? { asyncDir: run.asyncDir } : {}),
         ...(run.sessionId ? { sessionId: run.sessionId } : {}),
         ...(run.sessionFile ? { sessionFile: run.sessionFile } : {}),
-        ...(run.intercomTarget ? { intercomTarget: run.intercomTarget } : {}),
-        ...(run.ownerIntercomTarget ? { ownerIntercomTarget: run.ownerIntercomTarget } : {}),
-        ...(run.leafIntercomTarget ? { leafIntercomTarget: run.leafIntercomTarget } : {}),
         ...(run.ownerState ? { ownerState: run.ownerState } : {}),
         ...(run.mode ? { mode: run.mode } : {}),
         state: run.state,
@@ -186,7 +177,6 @@ function prioritizedNativeForegroundChildren(children) {
         ["failed", 0],
         ["paused", 1],
         ["completed", 2],
-        ["detached", 3],
     ]);
     return children
         .map((child, index) => ({ child, originalIndex: child.index ?? index, inputOrder: index }))

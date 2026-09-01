@@ -222,28 +222,23 @@ export function suppressProgressForReadOnlyTask(
 }
 
 // =============================================================================
-// Chain Instruction Injection
+// Execution Instruction Injection
 // =============================================================================
 
 /**
- * Resolve a file path: absolute paths pass through, relative paths get chainDir prepended.
+ * Resolve a file path: absolute paths pass through, relative paths get baseDir prepended.
  */
-function resolveChainPath(filePath: string, chainDir: string): string {
-  return path.isAbsolute(filePath) ? filePath : path.join(chainDir, filePath);
+function resolveExecutionPath(filePath: string, baseDir: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.join(baseDir, filePath);
 }
 
 /**
- * Build chain instructions from resolved behavior.
+ * Build execution instructions from resolved behavior.
  * These are appended to the task to tell the agent what to read/write.
  */
-export function writeInitialProgressFile(progressDir: string): void {
-  fs.mkdirSync(progressDir, { recursive: true });
-  fs.writeFileSync(path.join(progressDir, "progress.md"), INITIAL_PROGRESS_CONTENT);
-}
-
-export function buildChainInstructions(
+export function buildExecutionInstructions(
   behavior: ResolvedStepBehavior,
-  chainDir: string,
+  baseDir: string,
   isFirstProgressAgent: boolean,
   previousSummary?: string,
 ): { prefix: string; suffix: string } {
@@ -252,19 +247,19 @@ export function buildChainInstructions(
 
   // READS - prepend to override any hardcoded filenames in task text
   if (behavior.reads && behavior.reads.length > 0) {
-    const files = behavior.reads.map((f) => resolveChainPath(f, chainDir));
+    const files = behavior.reads.map((f) => resolveExecutionPath(f, baseDir));
     prefixParts.push(`[Read from: ${files.join(", ")}]`);
   }
 
   // OUTPUT - prepend so agent knows where to write
   if (behavior.output) {
-    const outputPath = resolveChainPath(behavior.output, chainDir);
+    const outputPath = resolveExecutionPath(behavior.output, baseDir);
     prefixParts.push(`[Write to: ${outputPath}]`);
   }
 
   // Progress instructions in suffix (less critical)
   if (behavior.progress) {
-    const progressPath = path.join(chainDir, "progress.md");
+    const progressPath = path.join(baseDir, "progress.md");
     if (isFirstProgressAgent) {
       suffixParts.push(`Create and maintain progress at: ${progressPath}`);
     } else {
@@ -282,6 +277,23 @@ export function buildChainInstructions(
   const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
 
   return { prefix, suffix };
+}
+
+/**
+ * Compatibility name retained for historical chain readers.
+ */
+export function buildChainInstructions(
+  behavior: ResolvedStepBehavior,
+  chainDir: string,
+  isFirstProgressAgent: boolean,
+  previousSummary?: string,
+): { prefix: string; suffix: string } {
+  return buildExecutionInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary);
+}
+
+export function writeInitialProgressFile(progressDir: string): void {
+  fs.mkdirSync(progressDir, { recursive: true });
+  fs.writeFileSync(path.join(progressDir, "progress.md"), INITIAL_PROGRESS_CONTENT);
 }
 
 export type { ParallelTaskResult } from "../runs/shared/parallel-utils.ts";

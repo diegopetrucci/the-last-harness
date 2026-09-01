@@ -69,11 +69,10 @@ describe("buildDoctorReport", () => {
 
       const report = buildDoctorReport({
         cwd: root,
-        config: { intercomBridge: { mode: "always" } },
+        config: {},
         state: makeState(root),
         currentSessionFile: path.join(root, "sessions", "parent.jsonl"),
         currentSessionId: "session-abc123",
-        orchestratorTarget: "subagent-chat-abc123",
         expandTilde: (value) => value.replace(/^~\//, `${root}/home/`),
         paths,
         deps: {
@@ -98,14 +97,6 @@ describe("buildDoctorReport", () => {
             { name: "claude-project-skill", source: "project-claude" },
             { name: "claude-user-skill", source: "user-claude" },
           ],
-          diagnoseIntercomBridge: () => ({
-            active: true,
-            mode: "always",
-            wantsIntercom: true,
-            supervisorChannelAvailable: true,
-            extensionDir: "native:pi-subagents-supervisor-channel",
-            orchestratorTarget: "subagent-chat-abc123",
-          }),
         },
       });
 
@@ -124,11 +115,6 @@ describe("buildDoctorReport", () => {
       assert.match(
         report,
         /- skills: total 4 \(project 1, user-package 1, project-claude 1, user-claude 1\)/,
-      );
-      assert.match(report, /- bridge: active/);
-      assert.match(
-        report,
-        /- supervisor channel: available \(native:pi-subagents-supervisor-channel\)/,
       );
       assert.doesNotMatch(report, /Companion packages/);
     } finally {
@@ -157,14 +143,6 @@ describe("buildDoctorReport", () => {
             throw new Error("discovery exploded");
           },
           discoverAvailableSkills: () => [],
-          diagnoseIntercomBridge: () => ({
-            active: false,
-            mode: "fork-only",
-            wantsIntercom: false,
-            supervisorChannelAvailable: true,
-            extensionDir: "native:pi-subagents-supervisor-channel",
-            reason: "bridge mode is fork-only and context is not fork",
-          }),
         },
       });
 
@@ -174,10 +152,6 @@ describe("buildDoctorReport", () => {
       assert.match(report, /- runtime dir counts: failed — Error: not a directory:/);
       assert.match(report, /- agents: failed — Error: discovery exploded/);
       assert.match(report, /- skills: total 0 \(none\)/);
-      assert.match(
-        report,
-        /- bridge: inactive \(bridge mode is fork-only and context is not fork\)/,
-      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -218,13 +192,6 @@ describe("buildDoctorReport", () => {
           }),
           discoverAvailableSkills: () =>
             allSources.map((source) => ({ name: `${source}-skill`, source })),
-          diagnoseIntercomBridge: () => ({
-            active: false,
-            mode: "fork-only",
-            wantsIntercom: false,
-            supervisorChannelAvailable: false,
-            extensionDir: "native:pi-subagents-supervisor-channel",
-          }),
         },
       });
 
@@ -264,14 +231,6 @@ describe("buildDoctorReport — heartbeat section", () => {
       projectSettingsPath: "",
     }),
     discoverAvailableSkills: () => [],
-    diagnoseIntercomBridge: () => ({
-      active: false,
-      mode: "off" as const,
-      wantsIntercom: false,
-      supervisorChannelAvailable: false,
-      extensionDir: "test",
-      orchestratorTarget: undefined,
-    }),
   };
 
   function makeMinimalState(): SubagentState {

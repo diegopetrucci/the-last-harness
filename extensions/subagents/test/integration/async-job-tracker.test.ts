@@ -2421,7 +2421,7 @@ describe(
       }
     });
 
-    it("honors async control notification channels", async () => {
+    it("ignores removed async control notification channels", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
         const runDir = path.join(asyncRoot, "run-channels");
@@ -2471,24 +2471,20 @@ describe(
           recorder.events.some((event) => event.channel === "subagent:control-event"),
           false,
         );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          true,
-        );
       } finally {
         removeTempDir(asyncRoot);
       }
     });
 
-    it("does not bridge active-long-running records to intercom", async () => {
+    it("delivers active-long-running records through the native event channel", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
-        const runDir = path.join(asyncRoot, "run-active-intercom");
+        const runDir = path.join(asyncRoot, "run-active-native");
         fs.mkdirSync(runDir, { recursive: true });
         fs.writeFileSync(
           path.join(runDir, "status.json"),
           JSON.stringify({
-            runId: "run-active-intercom",
+            runId: "run-active-native",
             mode: "single",
             state: "running",
             startedAt: Date.now() - 1000,
@@ -2501,16 +2497,15 @@ describe(
           path.join(runDir, "events.jsonl"),
           `${JSON.stringify({
             type: "subagent.control",
-            channels: ["event", "intercom"],
+            channels: ["event"],
             event: {
               type: "active_long_running",
               to: "active_long_running",
               ts: 123,
-              runId: "run-active-intercom",
+              runId: "run-active-native",
               agent: "worker",
               message: "worker is still active but long-running",
             },
-            intercom: { to: "main", message: "stale active notice" },
           })}\n`,
           "utf-8",
         );
@@ -2520,23 +2515,19 @@ describe(
         const tracker = trackerMod!.createAsyncJobTracker(recorder.pi, state as never, asyncRoot, {
           pollIntervalMs: 10,
         });
-        tracker.handleStarted({ id: "run-active-intercom", asyncDir: runDir, agent: "worker" });
+        tracker.handleStarted({ id: "run-active-native", asyncDir: runDir, agent: "worker" });
 
         await new Promise((resolve) => setTimeout(resolve, 30));
         assert.equal(
           recorder.events.some((event) => event.channel === "subagent:control-event"),
           true,
         );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          false,
-        );
       } finally {
         removeTempDir(asyncRoot);
       }
     });
 
-    it("bridges async control events from events.jsonl to the parent event bus", async () => {
+    it("delivers async control events from events.jsonl to the parent event bus", async () => {
       const asyncRoot = createTempDir("pi-async-job-tracker-");
       try {
         const runDir = path.join(asyncRoot, "run-3");
@@ -2557,10 +2548,7 @@ describe(
           path.join(runDir, "events.jsonl"),
           `${JSON.stringify({
             type: "subagent.control",
-            channels: ["event", "intercom"],
-            childIntercomTarget: "subagent-worker-run-3-1",
-            noticeText:
-              'Subagent needs attention: worker\nNudge: intercom({ action: "send", to: "subagent-worker-run-3-1", message: "<message>" })',
+            channels: ["event"],
             event: {
               type: "needs_attention",
               to: "needs_attention",
@@ -2569,7 +2557,6 @@ describe(
               agent: "worker",
               message: "worker needs attention",
             },
-            intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker in run run-3." },
           })}\n`,
           "utf-8",
         );
@@ -2589,11 +2576,7 @@ describe(
         assert.ok(controlEvent);
         assert.match(
           (controlEvent.data as { noticeText?: string }).noticeText ?? "",
-          /subagent-worker-run-3-1/,
-        );
-        assert.equal(
-          recorder.events.some((event) => event.channel === "subagent:control-intercom"),
-          true,
+          /Nudge: subagent\(\{ action: "resume", id: "run-3"/,
         );
       } finally {
         removeTempDir(asyncRoot);
