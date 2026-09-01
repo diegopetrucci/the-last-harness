@@ -1,0 +1,73 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-g0",
+  "metadata": {
+    "marker": "synthetic-envelope-metadata",
+    "ordinal": 3
+  },
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "snapshot",
+    "eventId": "stable-event-g2",
+    "revision": 2,
+    "cursor": "opaque-cursor-g2",
+    "operation": "replace",
+    "snapshot": {
+      "snapshotId": "opaque-snapshot-g2",
+      "status": "idle",
+      "tree": {
+        "activeLeafId": "entry-g2",
+        "entries": [
+          {
+            "id": "entry-g1",
+            "parentId": null,
+            "kind": "user-turn",
+            "status": "completed",
+            "unknownMetadata": {
+              "marker": "synthetic-known-entry-field",
+              "ordinal": 9
+            },
+            "payload": {
+              "content": {
+                "format": "text",
+                "text": "synthetic custom-entry parent"
+              }
+            }
+          },
+          {
+            "id": "entry-g2",
+            "parentId": "entry-g1",
+            "kind": "custom.note",
+            "payload": {
+              "tag": "synthetic-custom-entry",
+              "nested": {
+                "marker": "synthetic-nested-value",
+                "ordinal": 7
+              },
+              "unknownField": {
+                "preserve": true,
+                "value": "synthetic-preserved-value"
+              }
+            }
+          }
+        ],
+        "rootIds": ["entry-g1"]
+      }
+    }
+  }
+}

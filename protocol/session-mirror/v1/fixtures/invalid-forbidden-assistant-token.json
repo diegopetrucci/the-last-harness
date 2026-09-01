@@ -1,0 +1,36 @@
+{
+  "protocol": {
+    "family": "session-mirror",
+    "major": 1,
+    "minor": 0
+  },
+  "source": {
+    "runtimeVersion": "fixture-runtime-0.1.0",
+    "sessionSchemaVersion": "fixture-session-schema-0.1"
+  },
+  "sessionId": "opaque-sid-o0",
+  "capabilities": [
+    "session-tree",
+    "completed-turns-only",
+    "snapshot",
+    "cursor-recovery",
+    "custom-entries",
+    "coarse-status"
+  ],
+  "message": {
+    "kind": "event",
+    "eventId": "stable-event-o1",
+    "revision": 1,
+    "baseRevision": 0,
+    "cursor": "opaque-cursor-o1",
+    "operation": "append",
+    "event": {
+      "type": "assistant.token",
+      "entryId": "entry-o1",
+      "token": {
+        "kind": "token",
+        "text": "synthetic partial assistant token"
+      }
+    }
+  }
+}

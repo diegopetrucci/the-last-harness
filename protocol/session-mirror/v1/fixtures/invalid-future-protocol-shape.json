@@ -1,0 +1,11 @@
+{
+  "protocol": {
+    "family": "session-mirror-next",
+    "major": 2,
+    "minor": 0
+  },
+  "futurePayload": {
+    "kind": "replacement-v2",
+    "requiredValue": 42
+  }
+}

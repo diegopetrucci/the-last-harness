@@ -20,7 +20,8 @@
     "tests/**/*.ts",
     "tests/**/*.d.ts",
     "scripts/**/*.ts",
-    "scripts/**/*.d.ts"
+    "scripts/**/*.d.ts",
+    "protocol/**/*.ts"
   ],
   "exclude": [
     "node_modules",
