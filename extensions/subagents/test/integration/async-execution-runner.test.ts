@@ -867,9 +867,137 @@ describe("async execution utilities", () => {
     assert.equal(payload.exitCode, 1);
     assert.equal(payload.error, expectedDiagnostic);
     assert.equal(payload.results.length, 0);
+    assert.equal(payload.mode, "single");
     assert.equal(status.state, "failed");
     assert.equal(status.error, expectedDiagnostic);
+    assert.equal(status.mode, "single");
     assert.equal(status.steps?.length, 0);
+
+    const malformedConfigPath = path.join(tempDir, "async-malformed-envelope-config.json");
+    fs.writeFileSync(
+      malformedConfigPath,
+      JSON.stringify({
+        id: "async-malformed-envelope",
+        resultPath: path.join(tempDir, "async-malformed-envelope-result.json"),
+        cwd: tempDir,
+      }),
+      "utf-8",
+    );
+    const malformedRunner = spawnSync(process.execPath, [runnerPath, malformedConfigPath], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+    assert.equal(malformedRunner.status, 1, malformedRunner.stderr);
+    assert.match(malformedRunner.stderr, /config is malformed/);
+    assert.equal(
+      fs.existsSync(malformedConfigPath),
+      false,
+      "valid JSON with a malformed envelope should still be consumed",
+    );
+
+    const unparseableConfigPath = path.join(tempDir, "async-unparseable-config.json");
+    fs.writeFileSync(unparseableConfigPath, "{bad-json", "utf-8");
+    const unparseableRunner = spawnSync(process.execPath, [runnerPath, unparseableConfigPath], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: { ...process.env },
+    });
+    assert.equal(unparseableRunner.status, 1, unparseableRunner.stderr);
+    assert.ok(
+      fs.existsSync(unparseableConfigPath),
+      "unparseable JSON should retain the config file",
+    );
+  });
+
+  it("rejects retired structured-output plans before launching a child", () => {
+    const runnerPath = path.resolve(
+      process.cwd(),
+      "extensions/subagents/src/runs/background/subagent-runner.js",
+    );
+    const cases = [
+      {
+        label: "single-file",
+        plan: {
+          kind: "single",
+          task: {
+            agent: "worker",
+            task: "This child must not launch.",
+            structuredOutput: { schemaPath: "retired" },
+          },
+        },
+        useStdin: false,
+        expectedMode: "single",
+      },
+      {
+        label: "parallel-stdin",
+        plan: {
+          kind: "parallel",
+          tasks: [
+            {
+              agent: "worker",
+              task: "This child must not launch.",
+              structuredOutputSchema: { type: "object" },
+            },
+          ],
+        },
+        useStdin: true,
+        expectedMode: "parallel",
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const id = `async-retired-structured-${testCase.label}-${Date.now().toString(36)}`;
+      const asyncDir = path.join(tempDir, id);
+      const resultPath = path.join(tempDir, `${id}-result.json`);
+      const configPath = path.join(tempDir, `${id}-config.json`);
+      const config = {
+        id,
+        plan: testCase.plan,
+        resultPath,
+        cwd: tempDir,
+        asyncDir,
+        sessionId: `session-${id}`,
+      };
+      const configJson = JSON.stringify(config);
+      if (!testCase.useStdin) fs.writeFileSync(configPath, configJson, "utf-8");
+
+      const runner = spawnSync(
+        process.execPath,
+        testCase.useStdin ? [runnerPath] : [runnerPath, configPath],
+        {
+          cwd: process.cwd(),
+          encoding: "utf-8",
+          input: testCase.useStdin ? configJson : undefined,
+          env: { ...process.env },
+        },
+      );
+
+      assert.equal(runner.status, 1, `${testCase.label}: ${runner.stderr}`);
+      assert.match(runner.stderr, /restart.*without.*properties/i, testCase.label);
+      assert.equal(mockPi.callCount(), 0, `${testCase.label}: child runner must not launch Pi`);
+      assert.ok(
+        fs.existsSync(resultPath),
+        `${testCase.label}: runner should persist a result artifact`,
+      );
+      const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const statusPath = path.join(asyncDir, "status.json");
+      assert.ok(
+        fs.existsSync(statusPath),
+        `${testCase.label}: runner should persist a status artifact`,
+      );
+      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
+      assert.equal(payload.state, "failed", testCase.label);
+      assert.equal(payload.success, false, testCase.label);
+      assert.equal(payload.mode, testCase.expectedMode, `${testCase.label}: result mode`);
+      assert.equal(status.state, "failed", testCase.label);
+      assert.equal(status.mode, testCase.expectedMode, `${testCase.label}: status mode`);
+      assert.equal(
+        payload.error,
+        "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.",
+        testCase.label,
+      );
+    }
   });
 
   it("persists a failed runner result for invalid path-only lazy-skill policy", () => {

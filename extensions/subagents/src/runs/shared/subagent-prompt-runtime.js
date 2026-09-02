@@ -1,22 +1,14 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { registerNativeSupervisorClient } from "../../supervisor/native-supervisor-channel.js";
 import { consumeChildMessageRequestsFromDir, writeChildMessageRequestToDir, } from "../background/control-channel.js";
 import { SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_STEER_INBOX_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "./pi-args.js";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, STRUCTURED_OUTPUT_TOOL_NAME, assertJsonSchemaObject, validateStructuredOutputValue, } from "./structured-output.js";
 import { TOOL_BUDGET_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge, } from "./tool-budget.js";
 import { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS, composeChildPromptRuntime, } from "../../../../shared/subagent-child-boundary.js";
 import { formatProjectAgentGuidance, inventoryProjectAgentGuidance, PACKAGED_MINOR_AGENT_ROLES, } from "../../../../shared/project-agent-guidance.js";
 export { CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS };
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
-const STRUCTURED_OUTPUT_INSTRUCTIONS = [
-    "This subagent step has a strict structured output contract.",
-    "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
-    "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
-].join("\n");
 export const NATIVE_SUPERVISOR_GUIDANCE = [
     "Native supervisor coordination:",
     "The inherited thread is reference-only. Do not continue that conversation or send questions, status updates, or completion handoffs to the supervisor in normal assistant text.",
@@ -80,10 +72,7 @@ export function rewriteSubagentPrompt(prompt, options, projectAgentGuidance = ""
         rewritten = stripInheritedSkills(rewritten);
     }
     rewritten = stripSubagentOrchestrationSkill(rewritten);
-    const structured = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV]
-        ? STRUCTURED_OUTPUT_INSTRUCTIONS
-        : "";
-    return composeChildPromptRuntime(rewritten, [projectAgentGuidance, supervisorGuidance, structured], "explicit");
+    return composeChildPromptRuntime(rewritten, [projectAgentGuidance, supervisorGuidance], "explicit");
 }
 function formatSteerMessage(request) {
     return [
@@ -248,38 +237,6 @@ export default function registerSubagentPromptRuntime(pi) {
         supervisorGuidanceSnapshot = resolveChildSupervisorGuidance();
     };
     pi.on("session_start", handleSessionStart);
-    const structuredOutputPath = process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
-    const structuredSchemaPath = process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-    if (structuredOutputPath && structuredSchemaPath) {
-        const parsedSchema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8"));
-        assertJsonSchemaObject(parsedSchema, "structured output schema");
-        const schema = parsedSchema;
-        const parameters = Type.Unsafe({
-            type: "object",
-            properties: { value: schema },
-            required: ["value"],
-            additionalProperties: false,
-        });
-        pi.registerTool({
-            name: STRUCTURED_OUTPUT_TOOL_NAME,
-            label: "Structured Output",
-            description: "Submit the required final structured output for this subagent step. This terminates the step.",
-            parameters,
-            async execute(_id, params) {
-                const validation = validateStructuredOutputValue(schema, params.value);
-                if (validation.status === "invalid") {
-                    throw new Error(`Structured output validation failed: ${validation.message}`);
-                }
-                fs.mkdirSync(path.dirname(structuredOutputPath), { recursive: true });
-                fs.writeFileSync(structuredOutputPath, JSON.stringify(params.value), { mode: 0o600 });
-                return {
-                    content: [{ type: "text", text: "Structured output captured." }],
-                    details: { path: structuredOutputPath },
-                    terminate: true,
-                };
-            },
-        });
-    }
     pi.on("before_agent_start", (event) => {
         const inheritProjectContext = readBooleanEnv(SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV);
         const inheritSkills = readBooleanEnv(SUBAGENT_INHERIT_SKILLS_ENV);

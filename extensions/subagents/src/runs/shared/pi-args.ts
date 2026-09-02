@@ -2,16 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  STRUCTURED_OUTPUT_CAPTURE_ENV,
-  STRUCTURED_OUTPUT_SCHEMA_ENV,
-  STRUCTURED_OUTPUT_TOOL_NAME,
-} from "./structured-output.ts";
-import {
-  TEMP_ROOT_DIR,
-  type JsonSchemaObject,
-  type ResolvedToolBudget,
-} from "../../shared/types.ts";
+import { TEMP_ROOT_DIR, type ResolvedToolBudget } from "../../shared/types.ts";
 import {
   findModelInfo,
   getSupportedThinkingLevels,
@@ -85,11 +76,6 @@ interface BuildPiArgsInput {
   projectAgentGuidance?: boolean;
   childIndex?: number;
   steerInboxDir?: string;
-  structuredOutput?: {
-    schema: JsonSchemaObject;
-    schemaPath: string;
-    outputPath: string;
-  };
   toolBudget?: ResolvedToolBudget;
 }
 
@@ -250,7 +236,6 @@ function buildPiArgsInternal(
     args.push("--model", modelArg);
   }
 
-  const hasStructuredOutput = Boolean(input.structuredOutput);
   const contactSupervisorDisallowed = input.supervisorBridge === false;
   const requiresContactSupervisor = !contactSupervisorDisallowed;
   const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
@@ -261,7 +246,7 @@ function buildPiArgsInternal(
   if (input.tools !== undefined) {
     if (hasOnlyExtensionPaths) {
       // Pi's --no-builtin-tools suppresses only its default builtins. Unlike --no-tools, it
-      // leaves extension/custom tools (including the runtime structured_output tool) active.
+      // leaves extension/custom tools active.
       args.push("--no-builtin-tools");
     } else {
       const allowedToolNames = [...namedToolNames];
@@ -270,9 +255,6 @@ function buildPiArgsInternal(
       }
       if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
         allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
-      }
-      if (hasStructuredOutput && !allowedToolNames.includes(STRUCTURED_OUTPUT_TOOL_NAME)) {
-        allowedToolNames.push(STRUCTURED_OUTPUT_TOOL_NAME);
       }
       if (allowedToolNames.length > 0) {
         args.push("--tools", allowedToolNames.join(","));
@@ -374,10 +356,6 @@ function buildPiArgsInternal(
   // An unset MCP_DIRECT_TOOLS means "bootstrap everything configured", which would silently
   // widen every child subagent's tool surface. This assignment must not be removed.
   env.MCP_DIRECT_TOOLS = "__none__";
-  if (input.structuredOutput) {
-    env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
-    env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
-  }
   if (input.steerInboxDir) {
     env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
   }

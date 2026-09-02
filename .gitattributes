@@ -168,7 +168,6 @@ extensions/subagents/src/runs/shared/pi-args.js linguist-generated=true
 extensions/subagents/src/runs/shared/pi-spawn.js linguist-generated=true
 extensions/subagents/src/runs/shared/process-group-cleanup.js linguist-generated=true
 extensions/subagents/src/runs/shared/single-output.js linguist-generated=true
-extensions/subagents/src/runs/shared/structured-output.js linguist-generated=true
 extensions/subagents/src/runs/shared/subagent-control.js linguist-generated=true
 extensions/subagents/src/runs/shared/subagent-prompt-runtime.js linguist-generated=true
 extensions/subagents/src/runs/shared/task-intent.js linguist-generated=true

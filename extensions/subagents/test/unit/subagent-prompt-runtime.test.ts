@@ -3,9 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import type { Static, TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import { Type } from "typebox";
-import { Compile } from "typebox/compile";
 import {
   ProjectTrustStore,
   type ExtensionAPI,
@@ -31,10 +30,6 @@ import {
   SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
-import {
-  STRUCTURED_OUTPUT_CAPTURE_ENV,
-  STRUCTURED_OUTPUT_SCHEMA_ENV,
-} from "../../src/runs/shared/structured-output.ts";
 import { TOOL_BUDGET_ENV } from "../../src/runs/shared/tool-budget.ts";
 import registerSubagentPromptRuntime, {
   CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
@@ -66,13 +61,6 @@ function makeToolInfo(name: string): ToolInfo {
   };
 }
 
-function matchesToolParameters<TParams extends TSchema>(
-  schema: TParams,
-  value: unknown,
-): value is Static<TParams> {
-  return Compile(schema).Check(value);
-}
-
 function hasSystemPrompt(value: unknown): value is { systemPrompt: string } {
   if (typeof value !== "object" || value === null || !("systemPrompt" in value)) return false;
   return typeof value.systemPrompt === "string";
@@ -86,8 +74,6 @@ const envSnapshot = {
   PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT,
   PI_SUBAGENT_INHERIT_SKILLS: process.env.PI_SUBAGENT_INHERIT_SKILLS,
   PI_SUBAGENT_STEER_INBOX: process.env.PI_SUBAGENT_STEER_INBOX,
-  PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE,
-  PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA,
   PI_SUBAGENT_TOOL_BUDGET: process.env.PI_SUBAGENT_TOOL_BUDGET,
   PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: process.env.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
   PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: process.env.PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR,
@@ -119,12 +105,6 @@ const PROMPT_WITH_EXPLICIT_SKILL = [
 const CONFIGURED_SKILLS_SECTION =
   "\n\nThe following configured skills are available to this subagent.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>configured-skill</name>\n    <description>explicit agent skill</description>\n    <location>/tmp/configured-skill/SKILL.md</location>\n  </skill>\n</available_skills>";
 
-const STRUCTURED_OUTPUT_INSTRUCTIONS = [
-  "This subagent step has a strict structured output contract.",
-  "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
-  "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
-].join("\n");
-
 afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT === undefined)
     delete process.env.PI_SUBAGENT_INHERIT_PROJECT_CONTEXT;
@@ -137,13 +117,6 @@ afterEach(() => {
   if (envSnapshot.PI_SUBAGENT_STEER_INBOX === undefined)
     delete process.env[SUBAGENT_STEER_INBOX_ENV];
   else process.env[SUBAGENT_STEER_INBOX_ENV] = envSnapshot.PI_SUBAGENT_STEER_INBOX;
-  if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE === undefined)
-    delete process.env[STRUCTURED_OUTPUT_CAPTURE_ENV];
-  else
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
-  if (envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA === undefined)
-    delete process.env[STRUCTURED_OUTPUT_SCHEMA_ENV];
-  else process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = envSnapshot.PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA;
   if (envSnapshot.PI_SUBAGENT_TOOL_BUDGET === undefined) delete process.env[TOOL_BUDGET_ENV];
   else process.env[TOOL_BUDGET_ENV] = envSnapshot.PI_SUBAGENT_TOOL_BUDGET;
   if (envSnapshot.PI_SUBAGENT_ORCHESTRATOR_SESSION_ID === undefined)
@@ -703,59 +676,6 @@ describe("subagent prompt runtime", () => {
     }
   });
 
-  it("registered structured_output tool accepts valid schema output and writes the capture file", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "subagent-structured-runtime-"));
-    try {
-      const schemaPath = path.join(dir, "schema.json");
-      const outputPath = path.join(dir, "output.json");
-      fs.writeFileSync(
-        schemaPath,
-        JSON.stringify({
-          type: "object",
-          required: ["ok"],
-          properties: { ok: { type: "boolean" } },
-        }),
-        "utf-8",
-      );
-      process.env[STRUCTURED_OUTPUT_SCHEMA_ENV] = schemaPath;
-      process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = outputPath;
-      let execute:
-        | ((_id: string, params: { value: unknown }) => Promise<{ terminate?: boolean }>)
-        | undefined;
-
-      registerSubagentPromptRuntime(
-        makeExtensionAPI({
-          registerTool<TParams extends TSchema, TDetails, TState>(
-            tool: ToolDefinition<TParams, TDetails, TState>,
-          ) {
-            if (tool.name !== "structured_output") return;
-            execute = async (toolCallId, params) => {
-              if (!matchesToolParameters(tool.parameters, params)) {
-                throw new Error("test structured_output params failed schema validation");
-              }
-              const result = await tool.execute(
-                toolCallId,
-                params,
-                undefined,
-                undefined,
-                makeMinimalCtx(process.cwd()),
-              );
-              return { terminate: result.terminate };
-            };
-          },
-          on: () => {},
-        }),
-      );
-
-      assert.ok(execute, "structured_output tool should be registered");
-      const result = await execute("tool-1", { value: { ok: true } });
-      assert.equal(result.terminate, true);
-      assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, "utf-8")), { ok: true });
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it("strips only the project context block", () => {
     const rewritten = stripProjectContext(BASE_PROMPT);
     assert.ok(!rewritten.includes("# Project Context"));
@@ -782,51 +702,6 @@ describe("subagent prompt runtime", () => {
     assert.ok(!rewritten.includes("# Project Context"));
     assert.ok(!rewritten.includes("<available_skills>"));
     assert.ok(rewritten.includes("Current working directory: /repo"));
-  });
-
-  it("keeps no-guidance and structured-output safety blocks singular", () => {
-    const noGuidance = rewriteSubagentPrompt(
-      `packaged role\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
-      {
-        inheritProjectContext: true,
-        inheritSkills: true,
-      },
-    );
-    assert.equal(countOccurrences(noGuidance, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(noGuidance, "This subagent step has a strict structured output contract."),
-      0,
-    );
-
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = "structured-output.json";
-    const structured = rewriteSubagentPrompt(
-      `packaged role\n\n${CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS}`,
-      {
-        inheritProjectContext: true,
-        inheritSkills: true,
-      },
-    );
-    assert.equal(countOccurrences(structured, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(structured, "This subagent step has a strict structured output contract."),
-      1,
-    );
-    assert.ok(
-      structured.indexOf("This subagent step has a strict structured output contract.") <
-        structured.indexOf(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS),
-    );
-    const structuredAgain = rewriteSubagentPrompt(structured, {
-      inheritProjectContext: true,
-      inheritSkills: true,
-    });
-    assert.equal(countOccurrences(structuredAgain, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 1);
-    assert.equal(
-      countOccurrences(
-        structuredAgain,
-        "This subagent step has a strict structured output contract.",
-      ),
-      1,
-    );
   });
 
   it("preserves role text containing guidance delimiters while deduplicating the exact snapshot", () => {
@@ -867,7 +742,6 @@ describe("subagent prompt runtime", () => {
   });
 
   it("preserves quoted runtime blocks and appends only the owned suffix", () => {
-    process.env[STRUCTURED_OUTPUT_CAPTURE_ENV] = "structured-output.json";
     const snapshot = [
       "## TLH Project Agent Guidance",
       "",
@@ -882,16 +756,13 @@ describe("subagent prompt runtime", () => {
       "Quoted project guidance:",
       snapshot,
       "Continuation after the quoted guidance.",
-      "Quoted structured-output instructions:",
-      STRUCTURED_OUTPUT_INSTRUCTIONS,
-      "Continuation after the quoted structured-output instructions.",
       "Quoted child boundary:",
       CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS,
       "Continuation after the quoted child boundary.",
     ].join("\n\n");
     const explicitRuntimeBlock = [
       CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-      [snapshot, STRUCTURED_OUTPUT_INSTRUCTIONS].join("\n\n"),
+      snapshot,
       CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
     ].join("\n");
     const promptWithRuntimeSuffix =
@@ -911,7 +782,6 @@ describe("subagent prompt runtime", () => {
     ].join("\n\n");
     assert.equal(rewritten, expected);
     assert.equal(countOccurrences(rewritten, snapshot), 2);
-    assert.equal(countOccurrences(rewritten, STRUCTURED_OUTPUT_INSTRUCTIONS), 2);
     assert.equal(countOccurrences(rewritten, CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS), 2);
     assert.ok(rewritten.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 
