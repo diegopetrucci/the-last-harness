@@ -14,7 +14,7 @@ function assertTerminalSafe(text: string): void {
 }
 
 describe("TUI display boundaries", () => {
-  it("sanitizes foreground live, history, and workflow-derived child text", () => {
+  it("sanitizes foreground live, history, and nested child text", () => {
     const result = {
       content: [{ type: "text" as const, text: "running" }],
       details: {
@@ -51,6 +51,32 @@ describe("TUI display boundaries", () => {
       assertTerminalSafe(rendered);
     }
     assert.deepEqual(result, snapshot);
+  });
+
+  it("renders an interrupted expanded single result as paused", () => {
+    const rendered = renderSubagentResult(
+      {
+        content: [{ type: "text", text: "Paused" }],
+        details: {
+          mode: "single" as const,
+          results: [
+            {
+              agent: "worker",
+              task: "Pause the worker.",
+              exitCode: 0,
+              interrupted: true,
+              usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+            },
+          ],
+        },
+      },
+      { expanded: true },
+      theme,
+    )
+      .render(160)
+      .join("\n");
+
+    assert.match(rendered, /^paused worker(?:\n|$)/);
   });
 
   it("sanitizes async widget metadata, output, and nested child failures", () => {

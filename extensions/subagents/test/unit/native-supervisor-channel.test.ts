@@ -10,13 +10,13 @@ import {
   ensureSupervisorChannelDir,
   registerNativeSupervisorClient,
   resolveSupervisorChannelDir,
-} from "../../src/intercom/native-supervisor-channel.ts";
+} from "../../src/supervisor/native-supervisor-channel.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_CHILD_INDEX_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
-  SUBAGENT_ORCHESTRATOR_TARGET_ENV,
   SUBAGENT_RUN_ID_ENV,
+  SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
 } from "../../src/runs/shared/pi-args.ts";
 import type { SubagentState } from "../../src/shared/types.ts";
@@ -93,8 +93,8 @@ const savedEnv = {
   [SUBAGENT_CHILD_AGENT_ENV]: process.env[SUBAGENT_CHILD_AGENT_ENV],
   [SUBAGENT_CHILD_INDEX_ENV]: process.env[SUBAGENT_CHILD_INDEX_ENV],
   [SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV]: process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV],
-  [SUBAGENT_ORCHESTRATOR_TARGET_ENV]: process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV],
   [SUBAGENT_RUN_ID_ENV]: process.env[SUBAGENT_RUN_ID_ENV],
+  [SUBAGENT_SUPERVISOR_BRIDGE_ENV]: process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV],
   [SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV]: process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV],
 };
 
@@ -142,7 +142,6 @@ function writeRequest(input: {
         message: input.message ?? "Need a decision",
         expectsReply: true,
         orchestratorSessionId: input.sessionId,
-        orchestratorTarget: "shared-name",
         runId: input.runId,
         agent,
         childIndex: index,
@@ -189,7 +188,7 @@ function restoreEnv(): void {
 
 afterEach(() => {
   restoreEnv();
-  delete process.env.PI_INTERCOM_ASK_TIMEOUT_MS;
+  delete process.env.PI_SUBAGENT_SUPERVISOR_ASK_TIMEOUT_MS;
   for (const channel of createdChannels.splice(0))
     fs.rmSync(channel, { recursive: true, force: true });
 });
@@ -246,8 +245,13 @@ describe("native supervisor channel", () => {
   it("creates request-only channels and prunes them when stale and empty", () => {
     const currentSessionId = `session-${randomUUID()}`;
     const staleEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
-    assert.deepEqual(fs.readdirSync(staleEmptyChannel), ["requests"]);
+    const staleRequestOnlyChannel = makeEmptyChannel(`run-${randomUUID()}`);
+    // A legacy channel may still contain the now-unused replies directory.
+    fs.mkdirSync(path.join(staleEmptyChannel, "replies"), { recursive: true });
+    assert.deepEqual(fs.readdirSync(staleEmptyChannel), ["replies", "requests"]);
+    assert.deepEqual(fs.readdirSync(staleRequestOnlyChannel), ["requests"]);
     ageChannel(staleEmptyChannel, 2 * 60 * 1000);
+    ageChannel(staleRequestOnlyChannel, 2 * 60 * 1000);
     const sent: Array<{ details?: { id?: string } }> = [];
     const ctx = {
       cwd: process.cwd(),
@@ -272,124 +276,27 @@ describe("native supervisor channel", () => {
     channel.dispose();
 
     assert.equal(fs.existsSync(staleEmptyChannel), false);
+    assert.equal(fs.existsSync(staleRequestOnlyChannel), false);
     assert.deepEqual(sent, []);
-  });
-
-  it("prunes a stale empty legacy replies directory left by a pre-upgrade runtime", () => {
-    const currentSessionId = `session-${randomUUID()}`;
-    const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
-    fs.mkdirSync(path.join(staleLegacyChannel, "replies"));
-    assert.deepEqual(fs.readdirSync(staleLegacyChannel).sort(), ["replies", "requests"]);
-    ageChannel(staleLegacyChannel, 2 * 60 * 1000);
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: false,
-      sessionManager: {
-        getSessionId: () => currentSessionId,
-        getSessionFile: () => null,
-        getEntries: () => [],
-      },
-    };
-    const pi = {
-      getAllTools: () => [],
-      registerTool: () => {},
-      sendMessage: () => {},
-      getSessionName: () => "shared-name",
-    };
-    const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-    channel.start();
-    channel.dispose();
-
-    assert.equal(fs.existsSync(staleLegacyChannel), false);
-  });
-
-  it("preserves stale channels with non-empty legacy replies directories", () => {
-    const currentSessionId = `session-${randomUUID()}`;
-    const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
-    const legacyRepliesDir = path.join(staleLegacyChannel, "replies");
-    const legacyReplyFile = path.join(legacyRepliesDir, "reply.json");
-    fs.mkdirSync(legacyRepliesDir);
-    fs.writeFileSync(legacyReplyFile, "{}");
-    ageChannel(staleLegacyChannel, 2 * 60 * 1000);
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: false,
-      sessionManager: {
-        getSessionId: () => currentSessionId,
-        getSessionFile: () => null,
-        getEntries: () => [],
-      },
-    };
-    const pi = {
-      getAllTools: () => [],
-      registerTool: () => {},
-      sendMessage: () => {},
-      getSessionName: () => "shared-name",
-    };
-    const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-    channel.start();
-    channel.dispose();
-
-    assert.equal(fs.existsSync(staleLegacyChannel), true);
-    assert.equal(fs.existsSync(legacyRepliesDir), true);
-    assert.equal(fs.existsSync(legacyReplyFile), true);
-    assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
-  });
-
-  it("preserves stale channels when the legacy replies path cannot be read as a directory", () => {
-    const currentSessionId = `session-${randomUUID()}`;
-    const staleLegacyChannel = makeEmptyChannel(`run-${randomUUID()}`);
-    const legacyRepliesPath = path.join(staleLegacyChannel, "replies");
-    fs.writeFileSync(legacyRepliesPath, "not a directory");
-    ageChannel(staleLegacyChannel, 2 * 60 * 1000);
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: false,
-      sessionManager: {
-        getSessionId: () => currentSessionId,
-        getSessionFile: () => null,
-        getEntries: () => [],
-      },
-    };
-    const pi = {
-      getAllTools: () => [],
-      registerTool: () => {},
-      sendMessage: () => {},
-      getSessionName: () => "shared-name",
-    };
-    const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
-
-    channel.start();
-    channel.dispose();
-
-    assert.equal(fs.existsSync(staleLegacyChannel), true);
-    assert.equal(fs.existsSync(path.join(staleLegacyChannel, "requests")), true);
-    assert.equal(fs.statSync(legacyRepliesPath).isFile(), true);
   });
 
   it("preserves fresh or non-empty supervisor channel directories", () => {
     const currentSessionId = `session-${randomUUID()}`;
     const freshEmptyChannel = makeEmptyChannel(`run-${randomUUID()}`);
     const staleWithRequest = makeEmptyChannel(`run-${randomUUID()}`);
+    const staleWithReply = makeEmptyChannel(`run-${randomUUID()}`);
     // Write a request file so the channel is non-empty (should not be removed).
     const staleRequestId = randomUUID();
     fs.writeFileSync(
       path.join(staleWithRequest, "requests", `${staleRequestId}.json`),
       JSON.stringify({ type: "subagent.supervisor.request", id: staleRequestId }),
     );
+    // Legacy reply artifacts are not read or written, but non-empty directories
+    // must remain untouched so cleanup cannot destroy unknown user data.
+    fs.mkdirSync(path.join(staleWithReply, "replies"), { recursive: true });
+    fs.writeFileSync(path.join(staleWithReply, "replies", "legacy.json"), "legacy");
     ageChannel(staleWithRequest, 2 * 60 * 1000);
-    const staleWithFreshLegacyReplies = makeEmptyChannel(`run-${randomUUID()}`);
-    const freshLegacyRepliesDir = path.join(staleWithFreshLegacyReplies, "replies");
-    fs.mkdirSync(freshLegacyRepliesDir);
-    const staleTimestamp = new Date(Date.now() - 2 * 60 * 1000);
-    for (const dir of [
-      path.join(staleWithFreshLegacyReplies, "requests"),
-      staleWithFreshLegacyReplies,
-    ]) {
-      fs.utimesSync(dir, staleTimestamp, staleTimestamp);
-    }
+    ageChannel(staleWithReply, 2 * 60 * 1000);
     const ctx = {
       cwd: process.cwd(),
       hasUI: false,
@@ -412,9 +319,7 @@ describe("native supervisor channel", () => {
 
     assert.equal(fs.existsSync(freshEmptyChannel), true);
     assert.equal(fs.existsSync(staleWithRequest), true);
-    assert.equal(fs.existsSync(staleWithFreshLegacyReplies), true);
-    assert.equal(fs.existsSync(path.join(staleWithFreshLegacyReplies, "requests")), true);
-    assert.equal(fs.existsSync(freshLegacyRepliesDir), true);
+    assert.equal(fs.existsSync(staleWithReply), true);
   });
 
   it("matches supervisor requests against the runtime session id instead of persisted session file path", () => {
@@ -984,12 +889,12 @@ describe("native supervisor channel", () => {
         registeredTools.set(tool.name, tool);
       },
     };
-    process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
     process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
     process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
     process.env[SUBAGENT_RUN_ID_ENV] = runId;
     process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
     process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+    delete process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV];
     try {
       registerNativeSupervisorClient(pi as never);
       assert.deepEqual([...registeredTools.keys()], ["contact_supervisor"]);
@@ -1001,6 +906,32 @@ describe("native supervisor channel", () => {
         registeredTools.get("contact_supervisor")?.description ?? "",
         /no child process keeps running while paused/i,
       );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("does not register native supervision when the child opts out", () => {
+    const registeredTools = new Map<string, { name: string }>();
+    const runId = `run-${randomUUID()}`;
+    const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
+    createdChannels.push(channelDir);
+    const pi = {
+      getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+      registerTool: (tool: { name: string }) => {
+        registeredTools.set(tool.name, tool);
+      },
+    };
+    process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
+    process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
+    process.env[SUBAGENT_RUN_ID_ENV] = runId;
+    process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
+    process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
+    process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] = "0";
+
+    try {
+      registerNativeSupervisorClient(pi as never);
+      assert.deepEqual([...registeredTools.keys()], []);
     } finally {
       restoreEnv();
     }
@@ -1020,7 +951,6 @@ describe("native supervisor channel", () => {
         registeredTools.set(tool.name, tool);
       },
     };
-    process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
     process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
     process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
     process.env[SUBAGENT_RUN_ID_ENV] = runId;
@@ -1040,7 +970,6 @@ describe("native supervisor channel", () => {
     const runId = `run-${randomUUID()}`;
     const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
     createdChannels.push(channelDir);
-    process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
     process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
     process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
     process.env[SUBAGENT_RUN_ID_ENV] = runId;
@@ -1096,7 +1025,6 @@ describe("native supervisor channel", () => {
       /Structured interview response requested\. Once the child is durably paused, resume it with JSON guidance matching the requested interview shape via subagent\(\{ action: "resume"/,
     );
     assert.match(request.message ?? "", /message: "<JSON>"/);
-    assert.match(request.message ?? "", /Do not send an in-band reply or write a `replies\/` file/);
     assert.doesNotMatch(request.message ?? "", /Reply with JSON/);
     assert.equal(request.expectsReply, true);
     assert.equal(typeof request.expiresAt, "number");
@@ -1111,13 +1039,12 @@ describe("native supervisor channel", () => {
     const runId = `run-${randomUUID()}`;
     const channelDir = resolveSupervisorChannelDir(runId, "worker", 0);
     createdChannels.push(channelDir);
-    process.env[SUBAGENT_ORCHESTRATOR_TARGET_ENV] = "shared-name";
     process.env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV] = "session-parent";
     process.env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV] = channelDir;
     process.env[SUBAGENT_RUN_ID_ENV] = runId;
     process.env[SUBAGENT_CHILD_AGENT_ENV] = "worker";
     process.env[SUBAGENT_CHILD_INDEX_ENV] = "0";
-    process.env.PI_INTERCOM_ASK_TIMEOUT_MS = "1";
+    process.env.PI_SUBAGENT_SUPERVISOR_ASK_TIMEOUT_MS = "1";
     const registeredTools = new Map<
       string,
       {

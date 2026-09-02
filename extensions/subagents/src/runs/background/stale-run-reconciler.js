@@ -1,9 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
-import { RESULTS_DIR, } from "../../shared/types.js";
+import { RESULTS_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
 import { createAsyncStatusJsonParseError } from "./async-status-corruption.js";
-import { normalizeParallelGroups } from "./parallel-groups.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { checkPidLiveness, normalizeAsyncLifecycleStatus, recoverStoppedLifecycleOwnership, } from "../shared/lifecycle-state.js";
 import { parseContextPressureCrossedThresholds, parseContextPressureProjection, parseContextUsageDiagnostics, parseSubagentTerminationReason, } from "../../shared/context-diagnostics.js";
@@ -235,21 +234,15 @@ function terminalStatusFromResult(status, resultPath, now) {
 function buildStartedStatus(asyncDir, startedRun, now) {
     const startedAt = startedRun.startedAt ?? now;
     const agents = startedRun.agents?.length ? startedRun.agents : ["subagent"];
-    const chainStepCount = startedRun.chainStepCount;
-    const parallelGroups = chainStepCount !== undefined
-        ? normalizeParallelGroups(startedRun.parallelGroups, agents.length, chainStepCount)
-        : [];
     return {
         runId: startedRun.runId || path.basename(asyncDir),
         ...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
-        mode: startedRun.mode ?? "single",
+        mode: normalizeSubagentRunMode(startedRun.mode),
         state: "running",
         pid: startedRun.pid,
         startedAt,
         lastUpdate: now,
         currentStep: 0,
-        ...(chainStepCount !== undefined ? { chainStepCount } : {}),
-        ...(parallelGroups.length ? { parallelGroups } : {}),
         ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
         steps: agents.map((agent) => ({
             agent,

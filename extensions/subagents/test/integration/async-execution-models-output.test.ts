@@ -31,7 +31,7 @@ import {
   type AsyncStatusPayload,
   RESULTS_DIR,
   escapeRegExp,
-  executeAsyncChain,
+  executeAsyncParallel,
   executeAsyncSingle,
   readLastMockPiArgs,
   readMockPiArgs,
@@ -351,14 +351,10 @@ describe("async execution utilities", () => {
       fs.writeFileSync(sessionFile, '{"type":"session"}\n', "utf-8");
     const asyncDir = path.join(ASYNC_DIR, id);
     const resultPath = path.join(RESULTS_DIR, `${id}.json`);
-    executeAsyncChain(id, {
-      chain: [
-        {
-          parallel: [
-            { agent: "reader", task: "Read" },
-            { agent: "editor", task: "Edit" },
-          ],
-        },
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "reader", task: "Read" },
+        { agent: "editor", task: "Edit" },
       ],
       agents: [
         makeAgent("reader", { model: "mock/test-model" }),
@@ -1041,104 +1037,6 @@ describe("async execution utilities", () => {
     assert.equal(args[args.indexOf("--model") + 1], "openai/gpt-5");
   });
 
-  it("repeated chain steps keep the later step's identity thinking-free after its duplicate drop note is deduped", async () => {
-    mockPi.onCall({ output: "Step one done" });
-    mockPi.onCall({
-      jsonl: [
-        {
-          type: "message_end",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "primary failed" }],
-            model: "anthropic/claude-sonnet-4-5",
-            errorMessage: "429 quota exceeded",
-            usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-          },
-        },
-      ],
-      exitCode: 0,
-    });
-    mockPi.onCall({ output: "Step two recovered on fallback" });
-    const id = `async-chain-thinking-drop-dedupe-${Date.now().toString(36)}`;
-    const availableModels = [
-      {
-        provider: "anthropic",
-        id: "claude-sonnet-4-5",
-        fullId: "anthropic/claude-sonnet-4-5",
-        reasoning: true,
-      },
-      {
-        provider: "openai",
-        id: "gpt-5",
-        fullId: "openai/gpt-5",
-        reasoning: true,
-        thinkingLevelMap: { max: null },
-      },
-    ];
-    executeAsyncChain(id, {
-      chain: [
-        { agent: "worker", task: "Step one" },
-        { agent: "worker", task: "Step two" },
-      ],
-      agents: [
-        makeAgent("worker", {
-          model: "anthropic/claude-sonnet-4-5",
-          fallbackModels: ["openai/gpt-5"],
-          thinking: "max",
-        }),
-      ],
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      availableModels,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    const resultPath = await waitForAsyncResultFile(id, scaleTestTimeout(15_000));
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const statusPayload = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    const note = getThinkingLevelDropNote("openai/gpt-5", "max", false, { availableModels });
-    assert.ok(note);
-    assert.equal(payload.success, true);
-    // Human-facing notice deduplication is unchanged: only the first step
-    // surfaces the shared drop note.
-    assert.equal((payload.results[0]?.output?.split(note) ?? []).length - 1, 1);
-    assert.equal(payload.results[1]?.output?.includes(note), false);
-    // The second step fell back to the unsupported model; even though its
-    // duplicate note was deduped away, its persisted identity must stay
-    // thinking-free in both the terminal result and the status file.
-    assert.equal(payload.results[1]?.model, "openai/gpt-5");
-    assert.deepEqual(payload.results[1]?.modelIdentity, { provider: "openai", model: "gpt-5" });
-    assert.equal(payload.results[1]?.modelResolution?.kind, "fallback");
-    assert.deepEqual(payload.results[1]?.modelResolution?.resumed, {
-      provider: "openai",
-      model: "gpt-5",
-    });
-    assert.deepEqual(statusPayload.steps?.[1]?.modelIdentity, {
-      provider: "openai",
-      model: "gpt-5",
-    });
-    assert.equal(statusPayload.steps?.[1]?.thinking, undefined);
-    // The first step's supported primary keeps its thinking level.
-    assert.deepEqual(payload.results[0]?.modelIdentity, {
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      thinking: "max",
-    });
-    const fallbackArgs = readMockPiArgs(mockPi, 2);
-    assert.equal(fallbackArgs[fallbackArgs.indexOf("--model") + 1], "openai/gpt-5");
-  });
-
   it("background runs preserve a max thinking suffix when capability metadata is missing", async () => {
     mockPi.onCall({ output: "Done asynchronously" });
     const id = `async-thinking-metadata-missing-${Date.now().toString(36)}`;
@@ -1243,7 +1141,7 @@ describe("async execution utilities", () => {
     assert.equal(mockPi.callCount(), 2);
   });
 
-  it("background single thinking override replaces primary and fallback suffixes", async () => {
+  it("background single applies agent thinking to primary and fallback suffixes", async () => {
     mockPi.onCall({
       jsonl: [
         {
@@ -1265,9 +1163,9 @@ describe("async execution utilities", () => {
       agent: "worker",
       task: "Do work",
       agentConfig: makeAgent("worker", {
-        model: "openai/gpt-5-mini:high",
-        fallbackModels: ["anthropic/claude-sonnet-4:low"],
-        thinking: "high",
+        model: "openai/gpt-5-mini",
+        fallbackModels: ["anthropic/claude-sonnet-4"],
+        thinking: "off",
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       availableModels: [
@@ -1284,7 +1182,6 @@ describe("async execution utilities", () => {
       },
       shareEnabled: false,
       sessionRoot: path.join(tempDir, "sessions"),
-      thinkingOverride: "off",
       maxSubagentDepth: 2,
     });
 
@@ -2090,12 +1987,12 @@ describe("async execution utilities", () => {
     assert.equal(args[args.indexOf("--model") + 1], "deepseek/deepseek-v4-flash");
   });
 
-  it("background chains inherit the parent session model when no step or agent model is set", async () => {
+  it("background parallel runs inherit the parent session model when no task or agent model is set", async () => {
     mockPi.onCall({ output: "Done asynchronously" });
 
-    const id = `async-chain-parent-model-${Date.now().toString(36)}`;
-    executeAsyncChain(id, {
-      chain: [{ agent: "worker", task: "Do work" }],
+    const id = `async-parallel-parent-model-${Date.now().toString(36)}`;
+    executeAsyncParallel(id, {
+      tasks: [{ agent: "worker", task: "Do work" }],
       agents: [makeAgent("worker")],
       ctx: {
         pi: { events: { emit() {} } },
@@ -2243,16 +2140,11 @@ describe("async execution utilities", () => {
         "---\nid: psr-raw4\n---\n# Show active tk title\n",
         "utf-8",
       );
-      executeAsyncChain(id, {
-        chain: [
-          {
-            parallel: [
-              { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
-              { agent: "reviewer", task: "Do the review" },
-            ],
-          },
+      executeAsyncParallel(id, {
+        tasks: [
+          { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
+          { agent: "reviewer", task: "Do the review" },
         ],
-        resultMode: "parallel",
         agents: [makeAgent("worker"), makeAgent("reviewer")],
         ctx: {
           pi: {
@@ -2295,16 +2187,11 @@ describe("async execution utilities", () => {
       mockPi.onCall({ output: "ambiguous one done" });
       mockPi.onCall({ output: "ambiguous two done" });
       const ambiguousId = `async-ticket-parallel-ambiguous-${Date.now().toString(36)}`;
-      executeAsyncChain(ambiguousId, {
-        chain: [
-          {
-            parallel: [
-              { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
-              { agent: "reviewer", task: "Run `tk show psr-other` first.", cwd: ticketCwd },
-            ],
-          },
+      executeAsyncParallel(ambiguousId, {
+        tasks: [
+          { agent: "worker", task: "Run `tk show psr-raw4` first.", cwd: ticketCwd },
+          { agent: "reviewer", task: "Run `tk show psr-other` first.", cwd: ticketCwd },
         ],
-        resultMode: "parallel",
         agents: [makeAgent("worker"), makeAgent("reviewer")],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
         artifactConfig: {
@@ -2403,45 +2290,21 @@ describe("async execution utilities", () => {
     assert.match(result.content[0]?.text ?? "", /Skills not found: pi-subagents/);
   });
 
-  it("background chains report unavailable pi-subagents skill requests", () => {
-    const id = `async-chain-pi-subagents-skill-${Date.now().toString(36)}`;
-    const result = executeAsyncChain(id, {
-      chain: [{ agent: "worker", task: "Do work" }],
-      agents: [makeAgent("worker", { skills: ["pi-subagents"] })],
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      cwd: tempDir,
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /Skills not found: pi-subagents/);
-  });
-
-  it("background chains resolve relative step cwd values against the shared cwd", async () => {
+  it("background parallel runs resolve relative task cwd values against the shared cwd", async () => {
     mockPi.onCall({ output: "Done asynchronously" });
-    const chainCwd = createTempDir("pi-subagent-async-chain-cwd-");
-    const id = `async-chain-skill-cwd-${Date.now().toString(36)}`;
+    const taskCwd = createTempDir("pi-subagent-async-task-cwd-");
+    const id = `async-task-cwd-parallel-${Date.now().toString(36)}`;
     const asyncDir = path.join(ASYNC_DIR, id);
     const resultPath = path.join(RESULTS_DIR, `${id}.json`);
     const statusPath = path.join(asyncDir, "status.json");
 
     try {
-      writePackageSkill(path.join(chainCwd, "packages", "app"), "async-chain-step-skill");
-      executeAsyncChain(id, {
-        chain: [{ agent: "worker", task: "Do work", cwd: "packages/app" }],
-        agents: [makeAgent("worker", { skills: ["async-chain-step-skill"] })],
+      writePackageSkill(path.join(taskCwd, "packages", "app"), "async-task-cwd-skill");
+      executeAsyncParallel(id, {
+        tasks: [{ agent: "worker", task: "Do work", cwd: "packages/app" }],
+        agents: [makeAgent("worker", { skills: ["async-task-cwd-skill"] })],
         ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-        cwd: chainCwd,
+        cwd: taskCwd,
         artifactConfig: {
           enabled: false,
           includeInput: false,
@@ -2468,9 +2331,9 @@ describe("async execution utilities", () => {
       assert.equal(payload.success, true);
       assert.equal(payload.sessionId, "session-1");
       assert.equal(status.sessionId, "session-1");
-      assert.deepEqual(status.steps?.[0]?.skills, ["async-chain-step-skill"]);
+      assert.deepEqual(status.steps?.[0]?.skills, ["async-task-cwd-skill"]);
     } finally {
-      removeTempDir(chainCwd);
+      removeTempDir(taskCwd);
     }
   });
 
@@ -2500,14 +2363,10 @@ describe("async execution utilities", () => {
     const asyncDir = path.join(ASYNC_DIR, id);
     const resultPath = path.join(RESULTS_DIR, `${id}.json`);
 
-    executeAsyncChain(id, {
-      chain: [
-        {
-          parallel: [
-            { agent: "reader", task: "Read" },
-            { agent: "editor", task: "Edit" },
-          ],
-        },
+    executeAsyncParallel(id, {
+      tasks: [
+        { agent: "reader", task: "Read" },
+        { agent: "editor", task: "Edit" },
       ],
       agents: [makeAgent("reader"), makeAgent("editor")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
@@ -2592,7 +2451,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2672,7 +2531,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2726,7 +2585,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 
@@ -2803,7 +2662,7 @@ describe("async execution utilities", () => {
         activeNoticeAfterTokens: 999_999,
         failedToolAttemptsBeforeAttention: 3,
         notifyOn: ["active_long_running", "needs_attention"],
-        notifyChannels: ["event", "async", "intercom"],
+        notifyChannels: ["event", "async"],
       },
     });
 

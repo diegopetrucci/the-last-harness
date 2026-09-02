@@ -730,7 +730,7 @@ describe(
     );
 
     it(
-      "top-level parallel reads are injected once with chain-style prefix",
+      "top-level parallel reads are injected once with a task/read prefix",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },

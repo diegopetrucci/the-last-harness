@@ -10,7 +10,6 @@ import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-
 import {
   type ActivityState,
   type AsyncJobStep,
-  type AsyncParallelGroupStatus,
   type AsyncStatus,
   type CostSummary,
   type ContextPressureProjection,
@@ -20,10 +19,10 @@ import {
   type SubagentModelIdentity,
   type SubagentModelResolution,
   type SubagentRunMode,
+  normalizeSubagentRunMode,
   type SubagentTerminationReason,
   type TkTicketMetadata,
   type TokenUsage,
-  type TurnBudgetState,
 } from "../../shared/types.ts";
 import { readInterruptRequest } from "./control-channel.ts";
 import { readStatus } from "../../shared/utils.ts";
@@ -34,7 +33,6 @@ import {
   projectNestedEvents,
 } from "../shared/nested-events.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
-import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import {
   createAsyncStatusValidationError,
@@ -57,10 +55,6 @@ import {
 interface AsyncRunStepSummary {
   index: number;
   agent: string;
-  label?: string;
-  phase?: string;
-  outputName?: string;
-  structured?: boolean;
   status: AsyncJobStep["status"];
   activityState?: ActivityState;
   lastActivityAt?: number;
@@ -94,9 +88,6 @@ interface AsyncRunStepSummary {
   attemptedModels?: string[];
   error?: string;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   children?: NestedRunSummary[];
   projectAgent?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture;
 }
@@ -125,13 +116,8 @@ export interface AsyncRunSummary {
   timeoutMs?: number;
   deadlineAt?: number;
   timedOut?: boolean;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   currentStep?: number;
-  chainStepCount?: number;
   pendingAppends?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
   steps: AsyncRunStepSummary[];
   sessionDir?: string;
   outputFile?: string;
@@ -300,12 +286,6 @@ function statusToSummary(
   const interruptRequestedAt =
     status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
   const steps = status.steps ?? [];
-  const chainStepCount = status.chainStepCount ?? steps.length;
-  const parallelGroups = normalizeParallelGroups(
-    status.parallelGroups,
-    steps.length,
-    chainStepCount,
-  );
   let nestedChildren: NestedRunSummary[] = [];
   if (nestedWarnings.length === 0 && nestedRoute) {
     try {
@@ -322,10 +302,6 @@ function statusToSummary(
     return {
       index,
       agent: step.agent,
-      ...(step.label ? { label: step.label } : {}),
-      ...(step.phase ? { phase: step.phase } : {}),
-      ...(step.outputName ? { outputName: step.outputName } : {}),
-      ...(step.structured ? { structured: step.structured } : {}),
       status: step.status,
       ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
       ...(stepActivityState ? { activityState: stepActivityState } : {}),
@@ -364,11 +340,6 @@ function statusToSummary(
       ...(step.attemptedModels ? { attemptedModels: step.attemptedModels } : {}),
       ...(step.error ? { error: step.error } : {}),
       ...(step.timedOut !== undefined ? { timedOut: step.timedOut } : {}),
-      ...(step.turnBudget ? { turnBudget: step.turnBudget } : {}),
-      ...(step.turnBudgetExceeded !== undefined
-        ? { turnBudgetExceeded: step.turnBudgetExceeded }
-        : {}),
-      ...(step.wrapUpRequested !== undefined ? { wrapUpRequested: step.wrapUpRequested } : {}),
       ...(step.children?.length ? { children: step.children } : {}),
     };
   });
@@ -394,7 +365,7 @@ function statusToSummary(
     toolCount: status.toolCount,
     steerCount: status.steerCount,
     lastSteerAt: status.lastSteerAt,
-    mode: status.mode,
+    mode: normalizeSubagentRunMode(status.mode),
     cwd: status.cwd,
     startedAt: status.startedAt,
     lastUpdate: status.lastUpdate,
@@ -402,15 +373,8 @@ function statusToSummary(
     ...(status.timeoutMs !== undefined ? { timeoutMs: status.timeoutMs } : {}),
     ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
     ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
-    ...(status.turnBudget ? { turnBudget: status.turnBudget } : {}),
-    ...(status.turnBudgetExceeded !== undefined
-      ? { turnBudgetExceeded: status.turnBudgetExceeded }
-      : {}),
-    ...(status.wrapUpRequested !== undefined ? { wrapUpRequested: status.wrapUpRequested } : {}),
     currentStep: status.currentStep,
-    ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
     ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
-    ...(parallelGroups.length ? { parallelGroups } : {}),
     steps: summarizedSteps,
     ...(nestedChildren.length ? { nestedChildren } : {}),
     ...(nestedWarnings.length ? { nestedWarnings } : {}),
@@ -567,9 +531,6 @@ function formatActivityFacts(input: {
   interruptRequestedAt?: number;
   steerCount?: number;
   lastSteerAt?: number;
-  turnBudget?: TurnBudgetState;
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
   privacySafe?: boolean;
 }): string | undefined {
   if (input.interruptRequestedAt !== undefined) return "pausing…";
@@ -583,16 +544,6 @@ function formatActivityFacts(input: {
   if (!input.privacySafe && input.currentPath)
     facts.push(safeTerminalText(shortenPath(input.currentPath)));
   if (input.turnCount !== undefined) facts.push(`${input.turnCount} turns`);
-  if (input.turnBudgetExceeded && input.turnBudget)
-    facts.push(
-      `turn budget exceeded ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`,
-    );
-  else if (input.wrapUpRequested && input.turnBudget)
-    facts.push(`wrap-up requested ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}`);
-  else if (input.turnBudget)
-    facts.push(
-      `turn budget ${input.turnBudget.turnCount}/${input.turnBudget.maxTurns}+${input.turnBudget.graceTurns}`,
-    );
   if (input.toolCount !== undefined) facts.push(`${input.toolCount} tools`);
   if (input.steerCount !== undefined) facts.push(`${input.steerCount} steers`);
   if (typeof input.lastSteerAt === "number" && Number.isFinite(input.lastSteerAt))
@@ -603,10 +554,8 @@ function formatActivityFacts(input: {
 
 function formatStepLine(step: AsyncRunStepSummary, privacySafe = false): string {
   const agent = safeTerminalText(step.agent);
-  const display = step.label ? `${safeTerminalText(step.label)} (${agent})` : agent;
-  const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
   const parts = [
-    `${step.index + 1}. ${phase}${display}`,
+    `${step.index + 1}. ${agent}`,
     step.interruptRequestedAt !== undefined && step.status === "running"
       ? "pausing"
       : safeTerminalText(step.status),
@@ -630,45 +579,9 @@ export function formatAsyncRunOutputPath(
 }
 
 export function formatAsyncRunProgressLabel(
-  run: Pick<
-    AsyncRunSummary,
-    | "mode"
-    | "state"
-    | "currentStep"
-    | "chainStepCount"
-    | "parallelGroups"
-    | "steps"
-    | "interruptRequestedAt"
-  >,
+  run: Pick<AsyncRunSummary, "mode" | "state" | "currentStep" | "steps" | "interruptRequestedAt">,
 ): string {
   const stepCount = run.steps.length || 1;
-  const chainStepCount = run.chainStepCount ?? stepCount;
-  const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, chainStepCount);
-  const activeGroup =
-    run.currentStep !== undefined
-      ? groups.find(
-          (group) =>
-            run.currentStep! >= group.start && run.currentStep! < group.start + group.count,
-        )
-      : undefined;
-  if (activeGroup) {
-    const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);
-    if (run.interruptRequestedAt !== undefined) {
-      const pausing = groupSteps.filter((step) => step.status === "running").length;
-      const done = groupSteps.filter(
-        (step) => step.status === "complete" || step.status === "completed",
-      ).length;
-      const groupLabel = `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${activeGroup.count} done`;
-      return run.mode === "parallel"
-        ? groupLabel
-        : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
-    }
-    const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, {
-      showRunning: run.state === "running",
-    });
-    if (run.mode === "parallel") return groupLabel;
-    return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
-  }
   if (run.mode === "parallel") {
     if (run.interruptRequestedAt !== undefined) {
       const pausing = run.steps.filter((step) => step.status === "running").length;
@@ -678,10 +591,6 @@ export function formatAsyncRunProgressLabel(
       return `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${stepCount} done`;
     }
     return formatParallelOutcome(run.steps, stepCount, { showRunning: run.state === "running" });
-  }
-  if (run.mode === "chain" && run.currentStep !== undefined && groups.length > 0) {
-    const logicalStep = flatToLogicalStepIndex(run.currentStep, chainStepCount, groups);
-    return `step ${logicalStep + 1}/${chainStepCount}`;
   }
   return run.currentStep !== undefined
     ? `step ${run.currentStep + 1}/${stepCount}`
@@ -694,7 +603,7 @@ function formatRunHeader(run: AsyncRunSummary): string {
   const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
   const activity = formatActivityFacts({ ...run, privacySafe });
   const runId = safeTerminalText(run.id);
-  const mode = safeTerminalText(run.mode);
+  const mode = safeTerminalText(normalizeSubagentRunMode(run.mode));
   const pending = run.pendingAppends
     ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
     : "";

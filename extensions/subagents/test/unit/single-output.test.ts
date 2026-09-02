@@ -59,6 +59,12 @@ describe("resolveSingleOutputPath", () => {
     assert.equal(resolved, absolutePath);
   });
 
+  it("keeps a platform-native absolute path out of relative resolution", () => {
+    const absolutePath =
+      process.platform === "win32" ? "C:\\reports\\review.md" : "/reports/review.md";
+    assert.equal(resolveSingleOutputPath(absolutePath, "/runtime", "/requested"), absolutePath);
+  });
+
   it("resolves relative paths against requested cwd", () => {
     const resolved = resolveSingleOutputPath("reviews/report.md", "/runtime", "/requested");
     assert.equal(resolved, path.resolve("/requested", "reviews/report.md"));

@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Type } from "typebox";
-import { CONTACT_SUPERVISOR_TOOL_NAME, SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_ORCHESTRATOR_TARGET_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "../runs/shared/pi-args.js";
+import { CONTACT_SUPERVISOR_TOOL_NAME, SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_CHILD_INDEX_ENV, SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV, SUBAGENT_RUN_ID_ENV, SUBAGENT_SUPERVISOR_BRIDGE_ENV, SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV, } from "../runs/shared/pi-args.js";
 import { POLL_INTERVAL_MS, TEMP_ROOT_DIR } from "../shared/types.js";
 import { writeAtomicJson } from "../shared/atomic-json.js";
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
 const LEGACY_REPLIES_DIR = "replies";
+const SUPERVISOR_ASK_TIMEOUT_ENV = "PI_SUBAGENT_SUPERVISOR_ASK_TIMEOUT_MS";
 export const NATIVE_SUPERVISOR_TOOL_NAME = "subagent_supervisor";
 const MAX_MESSAGE_BYTES = 64 * 1024;
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -59,9 +60,7 @@ function readChildMetadata() {
         runId,
         agent,
         childIndex: Number(rawIndex),
-        orchestratorTarget: readTextEnv(SUBAGENT_ORCHESTRATOR_TARGET_ENV),
         orchestratorSessionId,
-        childTarget: readTextEnv("PI_SUBAGENT_INTERCOM_SESSION_NAME"),
     };
 }
 function reasonHeading(reason) {
@@ -78,20 +77,18 @@ function formatChildMessage(input) {
         `Agent: ${input.agent}`,
         `Child index: ${input.childIndex}`,
     ];
-    if (input.childTarget)
-        lines.push(`Child intercom target: ${input.childTarget}`);
     lines.push("");
     if (input.message?.trim())
         lines.push(input.message.trim());
     if (input.reason === "interview_request") {
-        lines.push("", `Structured interview response requested. Once the child is durably paused, resume it with JSON guidance matching the requested interview shape via subagent({ action: "resume", id: "${input.runId}", index: ${input.childIndex}, message: "<JSON>" }).`, "Do not send an in-band reply or write a `replies/` file.");
+        lines.push("", `Structured interview response requested. Once the child is durably paused, resume it with JSON guidance matching the requested interview shape via subagent({ action: "resume", id: "${input.runId}", index: ${input.childIndex}, message: "<JSON>" }).`);
         if (input.interview !== undefined)
             lines.push(JSON.stringify(input.interview, null, "\t"));
     }
     return lines.join("\n").trimEnd();
 }
 function askTimeoutMs() {
-    const parsed = Number(process.env.PI_INTERCOM_ASK_TIMEOUT_MS);
+    const parsed = Number(process.env[SUPERVISOR_ASK_TIMEOUT_ENV]);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ASK_TIMEOUT_MS;
 }
 function delay(ms, signal) {
@@ -152,14 +149,12 @@ async function sendSupervisorRequest(params, signal) {
         reason: params.reason,
         message,
         expectsReply,
-        ...(metadata.orchestratorTarget ? { orchestratorTarget: metadata.orchestratorTarget } : {}),
         ...(metadata.orchestratorSessionId
             ? { orchestratorSessionId: metadata.orchestratorSessionId }
             : {}),
         runId: metadata.runId,
         agent: metadata.agent,
         childIndex: metadata.childIndex,
-        ...(metadata.childTarget ? { childTarget: metadata.childTarget } : {}),
         ...(params.interview !== undefined ? { interview: params.interview } : {}),
     };
     const serialized = JSON.stringify(request, null, "\t");
@@ -186,6 +181,8 @@ function hasTool(pi, name) {
     }
 }
 export function registerNativeSupervisorClient(pi) {
+    if (process.env[SUBAGENT_SUPERVISOR_BRIDGE_ENV] === "0")
+        return;
     if (!readChildMetadata())
         return;
     if (!hasTool(pi, CONTACT_SUPERVISOR_TOOL_NAME)) {

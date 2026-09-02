@@ -32,8 +32,6 @@ import {
   type ResolvedAcceptanceConfig,
   type Usage,
   DEFAULT_MAX_OUTPUT,
-  INTERCOM_DETACH_REQUEST_EVENT,
-  INTERCOM_DETACH_RESPONSE_EVENT,
   truncateOutput,
   getSubagentDepthEnv,
 } from "../../shared/types.ts";
@@ -122,22 +120,13 @@ import {
   parseAndStripAcceptanceReport,
   resolveEffectiveAcceptance,
 } from "../shared/acceptance.ts";
-import {
-  appendTurnBudgetSystemPrompt,
-  formatTurnBudgetOutput,
-  initialTurnBudgetState,
-  shouldAbortForTurnBudget,
-  turnBudgetExceededMessage,
-  turnBudgetSoftNote,
-  turnBudgetState,
-} from "../shared/turn-budget.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.ts";
 import {
   FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
   formatForegroundSupervisorPauseMessage,
 } from "../../shared/foreground-pause.ts";
-import { resolveSupervisorChannelDir } from "../../intercom/native-supervisor-channel.ts";
+import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-channel.ts";
 import {
   cleanupOwnedProcessGroup,
   skipOwnedProcessGroupCleanup,
@@ -193,12 +182,11 @@ function finalizeTerminationReason(result: SingleResult): void {
     cancelled: Boolean(result.cancel),
     paused: Boolean(result.pause),
     timedOut: result.timedOut,
-    turnBudgetExceeded: result.turnBudgetExceeded,
     toolBudgetBlocked: result.toolBudgetBlocked,
     interrupted: result.interrupted,
     assistantStopReason: finalAssistantStopReason(result.messages),
     effectiveExitCode: result.exitCode,
-    processCompleted: !result.detached,
+    processCompleted: true,
   });
 }
 
@@ -422,19 +410,6 @@ function resolveSupervisorPauseMetadata(input: {
   toolArgs: Record<string, unknown>;
   requestedAt: number;
 }): SingleResult["pause"] | undefined {
-  if (input.toolName === "intercom" && input.toolArgs.action === "ask") {
-    const summary = boundSupervisorSummary(input.toolArgs.message);
-    return {
-      kind: "awaiting_supervisor",
-      requestedAt: input.requestedAt,
-      ...(summary ? { summary } : {}),
-      request: {
-        tool: "intercom",
-        action: "ask",
-        ...(summary ? { summary } : {}),
-      },
-    };
-  }
   if (
     input.toolName === "contact_supervisor" &&
     (input.toolArgs.reason === "need_decision" || input.toolArgs.reason === "interview_request")
@@ -564,13 +539,11 @@ function normalizeSingleAttemptResult(result: SingleResult, options: RunSyncOpti
     ? "output_limit"
     : result.timedOut
       ? "timed_out"
-      : result.turnBudgetExceeded
-        ? "turn_budget_exceeded"
-        : result.toolBudgetBlocked
-          ? "tool_budget_blocked"
-          : result.interrupted
-            ? "interrupted"
-            : "completed";
+      : result.toolBudgetBlocked
+        ? "tool_budget_blocked"
+        : result.interrupted
+          ? "interrupted"
+          : "completed";
   const contextExhaustedSignature = classifyContextExhaustedTermination({
     messages: result.messages,
     contextUsage: result.contextUsage,
@@ -636,17 +609,6 @@ function finalizeSingleAttemptOutput(input: SingleAttemptFinalizationInput): Sin
     fullOutput = fullOutput.trim()
       ? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
       : timeoutMessage;
-  } else if (result.turnBudgetExceeded && result.turnBudget) {
-    fullOutput = formatTurnBudgetOutput(
-      turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount),
-      fullOutput,
-    );
-  } else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
-    const note = turnBudgetSoftNote(
-      result.turnBudget,
-      result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount,
-    );
-    fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
   }
   const completionGuard =
     result.exitCode === 0 && !result.error && agent.completionGuard !== false
@@ -689,7 +651,7 @@ function finalizeSingleAttemptOutput(input: SingleAttemptFinalizationInput): Sin
   // as *_output.md). Append the validation-evidence digest there only, so the
   // acceptance evidence survives the strip without touching result.finalOutput,
   // which is a semantic value feeding user-requested output files and
-  // chain/parallel output references.
+  // parallel output references.
   //
   // Exception: when the run saved a user-requested output file, the artifact is a
   // verbatim archive of that deliverable, so it stays byte-exact.
@@ -793,21 +755,6 @@ function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): SingleRes
     };
     return result;
   }
-  if (result.detached) {
-    result.exitCode = 0;
-    result.finalOutput =
-      result.pause?.kind === "awaiting_supervisor"
-        ? formatForegroundSupervisorPauseMessage({
-            headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-            runId: options.runId,
-            agent: agent.name,
-            requestSummary: result.pause.summary,
-            ...(options.index !== undefined ? { index: options.index } : {}),
-          })
-        : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
-    return result;
-  }
-
   normalizeSingleAttemptResult(result, options);
 
   progress.status = result.exitCode === 0 ? "completed" : "failed";
@@ -847,7 +794,7 @@ function prepareForegroundRunFinalization(input: ForegroundRunFinalizationInput)
     );
     result.finalOutput = timeoutDiagnostics;
     // Append the acceptance digest to the artifact copy only; result.finalOutput must
-    // remain exactly timeoutDiagnostics so it does not corrupt output-file or chain
+    // remain exactly timeoutDiagnostics so it does not corrupt output-file or parallel
     // output references. The savedOutputPath exception (no digest) is preserved.
     // Parse with the trailing-fence rule so the digest describes the same fence
     // the gate will evaluate.
@@ -903,18 +850,6 @@ function evaluateSingleAcceptance(
         runtimeCheckStatus: "failed",
         id: "timeout",
         message: "Acceptance was not evaluated because the subagent timed out.",
-      }),
-    };
-  }
-  if (result.turnBudgetExceeded) {
-    return {
-      interruptedAcceptance,
-      acceptance: buildSkippedAcceptanceLedger({
-        acceptance: effectiveAcceptance,
-        ledgerStatus: "rejected",
-        runtimeCheckStatus: "failed",
-        id: "turn-budget",
-        message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
       }),
     };
   }
@@ -1076,7 +1011,7 @@ async function runSingleAttempt(
     contextPressure?: ContextPressureProjection;
   },
 ): Promise<SingleResult> {
-  const effectiveThinking = options.thinkingOverride ?? agent.thinking;
+  const effectiveThinking = agent.thinking;
   const thinkingSuffixOptions = {
     availableModels: options.availableModels,
     preferredModelProvider: options.preferredModelProvider,
@@ -1084,17 +1019,12 @@ async function runSingleAttempt(
   const thinkingDropNote = getThinkingLevelDropNote(
     model,
     effectiveThinking,
-    options.thinkingOverride !== undefined,
+    false,
     thinkingSuffixOptions,
   );
   if (thinkingDropNote && !shared.attemptNotes.includes(thinkingDropNote))
     shared.attemptNotes.push(thinkingDropNote);
-  const modelArg = applyThinkingSuffix(
-    model,
-    effectiveThinking,
-    options.thinkingOverride !== undefined,
-    thinkingSuffixOptions,
-  );
+  const modelArg = applyThinkingSuffix(model, effectiveThinking, false, thinkingSuffixOptions);
   const modelIdentity = canonicalSubagentModelIdentity(
     modelArg,
     thinkingDropNote || typeof effectiveThinking !== "string" ? undefined : effectiveThinking,
@@ -1125,11 +1055,9 @@ async function runSingleAttempt(
       extensions: agent.extensions,
       subagentOnlyExtensions: agent.subagentOnlyExtensions,
       supervisorBridge: agent.supervisorBridge,
-      systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
+      systemPrompt: shared.systemPrompt,
       cwd: options.cwd ?? runtimeCwd,
       promptFileStem: agent.name,
-      intercomSessionName: options.intercomSessionName,
-      orchestratorIntercomTarget: options.orchestratorIntercomTarget,
       runId: options.runId,
       childAgentName: agent.name,
       projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
@@ -1171,7 +1099,6 @@ async function runSingleAttempt(
       transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
       skills: shared.resolvedSkillNames,
       skillsWarning: shared.skillsWarning,
-      ...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
       ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
       error: message,
       finalOutput: message,
@@ -1194,7 +1121,6 @@ async function runSingleAttempt(
     transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
     skills: shared.resolvedSkillNames,
     skillsWarning: shared.skillsWarning,
-    ...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
     ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
   };
   const startTime = Date.now();
@@ -1274,8 +1200,6 @@ async function runSingleAttempt(
     const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
     let processClosed = false;
     let settled = false;
-    let detached = false;
-    let intercomStarted = false;
     let pendingSupervisorPause: SingleResult["pause"] | undefined;
     let assistantError: string | undefined;
     let supervisorPauseCleanupPromise:
@@ -1290,19 +1214,6 @@ async function runSingleAttempt(
     let protocolLimitHardKillTimer: NodeJS.Timeout | undefined;
     let protocolOutputLimit: ProtocolOutputLimit | undefined;
     const terminalReason: ChildTerminalReasonLatch = {};
-    let turnBudgetSoftReached = false;
-    let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-    let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
-    const clearTurnBudgetTimers = () => {
-      if (turnBudgetTerminationTimer) {
-        clearTimeout(turnBudgetTerminationTimer);
-        turnBudgetTerminationTimer = undefined;
-      }
-      if (turnBudgetHardKillTimer) {
-        clearTimeout(turnBudgetHardKillTimer);
-        turnBudgetHardKillTimer = undefined;
-      }
-    };
     const clearTimeoutTimers = () => {
       if (timeoutTimer) {
         timeoutTimer.cancel();
@@ -1321,21 +1232,6 @@ async function runSingleAttempt(
       if (!protocolLimitHardKillTimer) return;
       clearTimeout(protocolLimitHardKillTimer);
       protocolLimitHardKillTimer = undefined;
-    };
-
-    const detachForIntercom = () => {
-      detached = true;
-      processClosed = true;
-      result.detached = true;
-      result.detachedReason = "intercom coordination";
-      progress.status = "detached";
-      progress.durationMs = Date.now() - startTime;
-      result.progressSummary = {
-        toolCount: progress.toolCount,
-        tokens: progress.tokens,
-        durationMs: progress.durationMs,
-      };
-      finish(-2);
     };
 
     const beginSupervisorPauseCleanup = (): Promise<
@@ -1366,7 +1262,7 @@ async function runSingleAttempt(
     };
 
     const pauseForSupervisor = (pause: NonNullable<SingleResult["pause"]>) => {
-      if (supervisorPauseRequested || detached || processClosed || settled) return;
+      if (supervisorPauseRequested || processClosed || settled) return;
       if (!claimChildTerminalReason(terminalReason, "paused")) return;
       const ownerPid = processGroupId;
       result.pause = {
@@ -1426,9 +1322,9 @@ async function runSingleAttempt(
       }
     };
     const startFinalDrain = () => {
-      if (childExited || finalDrainTimer || settled || processClosed || detached) return;
+      if (childExited || finalDrainTimer || settled || processClosed) return;
       finalDrainTimer = setTimeout(() => {
-        if (settled || processClosed || detached) return;
+        if (settled || processClosed) return;
         const termSent = trySignalChild(proc, "SIGTERM");
         if (!termSent) return;
         forcedTerminationSignal = true;
@@ -1438,32 +1334,13 @@ async function runSingleAttempt(
             `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
         }
         finalHardKillTimer = setTimeout(() => {
-          if (settled || processClosed || detached) return;
+          if (settled || processClosed) return;
           forcedTerminationSignal = trySignalChild(proc, "SIGKILL") || forcedTerminationSignal;
         }, HARD_KILL_MS);
         finalHardKillTimer.unref?.();
       }, FINAL_STOP_GRACE_MS);
       finalDrainTimer.unref?.();
     };
-
-    const unsubscribeIntercomDetach = options.intercomEvents?.on?.(
-      INTERCOM_DETACH_REQUEST_EVENT,
-      (payload) => {
-        if (!options.allowIntercomDetach || detached || processClosed || !intercomStarted) return;
-        if (!payload || typeof payload !== "object") return;
-        const requestId = (payload as { requestId?: unknown }).requestId;
-        if (typeof requestId !== "string" || requestId.length === 0) return;
-        options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true });
-        if (
-          options.pauseBlockingSupervisor &&
-          pendingSupervisorPause?.kind === "awaiting_supervisor"
-        ) {
-          pauseForSupervisor(pendingSupervisorPause);
-          return;
-        }
-        detachForIntercom();
-      },
-    );
 
     const finish = (code: number) => {
       if (settled) return;
@@ -1472,12 +1349,10 @@ async function runSingleAttempt(
       clearProtocolLimitHardKillTimer();
       clearStdioGuard();
       clearTimeoutTimers();
-      clearTurnBudgetTimers();
       if (activityTimer) {
         clearInterval(activityTimer);
         activityTimer = undefined;
       }
-      unsubscribeIntercomDetach?.();
       removeAbortListener?.();
       removeInterruptListener?.();
       resolve(code);
@@ -1570,61 +1445,6 @@ async function runSingleAttempt(
       );
       return true;
     };
-    const requestTurnBudgetAbort = (turnCount: number) => {
-      const budget = options.turnBudget;
-      if (
-        !budget ||
-        result.timedOut ||
-        result.turnBudgetExceeded ||
-        interruptedByControl ||
-        protocolOutputLimit ||
-        processClosed ||
-        settled ||
-        detached
-      )
-        return;
-      if (!claimChildTerminalReason(terminalReason, "turn_budget_exceeded")) return;
-      const message = turnBudgetExceededMessage(budget, turnCount);
-      result.turnBudgetExceeded = true;
-      result.wrapUpRequested = true;
-      result.turnBudget = turnBudgetState(budget, turnCount, true);
-      result.error = message;
-      result.finalOutput = message;
-      progress.status = "failed";
-      progress.error = message;
-      progress.durationMs = Date.now() - startTime;
-      fireUpdate();
-      trySignalChild(proc, "SIGINT");
-      turnBudgetTerminationTimer = setTimeout(() => {
-        if (processClosed || settled || detached || result.timedOut) return;
-        trySignalChild(proc, "SIGTERM");
-      }, 1000);
-      turnBudgetTerminationTimer.unref?.();
-      turnBudgetHardKillTimer = setTimeout(() => {
-        if (processClosed || settled || detached || result.timedOut) return;
-        trySignalChild(proc, "SIGKILL");
-      }, 4000);
-      turnBudgetHardKillTimer.unref?.();
-    };
-
-    const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean) => {
-      const budget = options.turnBudget;
-      if (!budget || result.timedOut || result.turnBudgetExceeded) return;
-      if (turnCount < budget.maxTurns) {
-        result.turnBudget = { ...budget, outcome: "within-budget", turnCount };
-        return;
-      }
-      if (!turnBudgetSoftReached) {
-        turnBudgetSoftReached = true;
-        result.wrapUpRequested = true;
-        appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
-      }
-      result.turnBudget = turnBudgetState(budget, turnCount, false);
-      if (shouldAbortForTurnBudget(budget, turnCount, terminalAssistantStop)) {
-        requestTurnBudgetAbort(turnCount);
-      }
-    };
-
     const updateActivityState = (now: number): boolean => {
       if (!controlConfig.enabled) return false;
       const idleState = deriveActivityState({
@@ -1666,7 +1486,7 @@ async function runSingleAttempt(
       if (!options.onUpdate || processClosed) return;
       progress.durationMs = Date.now() - startTime;
       const output =
-        (result.timedOut || result.turnBudgetExceeded) && result.finalOutput
+        result.timedOut && result.finalOutput
           ? result.finalOutput
           : getFinalOutput(result.messages ?? []);
       emitUpdateSnapshot(output || "(running...)");
@@ -1697,32 +1517,21 @@ async function runSingleAttempt(
 
       if (evt.type === "tool_execution_start") {
         const toolArgs = evt.args ?? {};
-        let shouldDetachForBlockingIntercom = false;
         let supervisorPause: SingleResult["pause"] | undefined;
         if (
-          options.allowIntercomDetach &&
-          (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")
+          options.pauseBlockingSupervisor &&
+          evt.toolName === "contact_supervisor" &&
+          (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request")
         ) {
-          intercomStarted = true;
-          shouldDetachForBlockingIntercom =
-            (evt.toolName === "intercom" && toolArgs.action === "ask") ||
-            (evt.toolName === "contact_supervisor" &&
-              (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
-          if (
-            options.pauseBlockingSupervisor &&
-            shouldDetachForBlockingIntercom &&
-            typeof evt.toolName === "string"
-          ) {
-            supervisorPause = resolveSupervisorPauseMetadata({
-              runId: options.runId,
-              agent: agent.name,
-              index: options.index ?? 0,
-              toolName: evt.toolName,
-              toolArgs,
-              requestedAt: now,
-            });
-            pendingSupervisorPause = supervisorPause;
-          }
+          supervisorPause = resolveSupervisorPauseMetadata({
+            runId: options.runId,
+            agent: agent.name,
+            index: options.index ?? 0,
+            toolName: evt.toolName,
+            toolArgs,
+            requestedAt: now,
+          });
+          pendingSupervisorPause = supervisorPause;
         }
         progress.toolCount++;
         if (options.toolBudget) {
@@ -1741,15 +1550,8 @@ async function runSingleAttempt(
           startedAt: now,
         };
         fireUpdate();
-        if (
-          options.pauseBlockingSupervisor &&
-          supervisorPause?.kind === "awaiting_supervisor" &&
-          !detached &&
-          !processClosed
-        ) {
+        if (supervisorPause?.kind === "awaiting_supervisor" && !processClosed) {
           pauseForSupervisor(supervisorPause);
-        } else if (shouldDetachForBlockingIntercom && !detached && !processClosed) {
-          detachForIntercom();
         }
       }
 
@@ -1785,7 +1587,6 @@ async function runSingleAttempt(
             Array.isArray(evt.message.content) &&
             evt.message.content.some((part) => (part as { type?: string }).type === "toolCall");
           const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-          updateTurnBudget(result.usage.turns, terminalAssistantStop);
           result.contextUsage = updateContextUsageDiagnostics(result.contextUsage, evt.message, {
             restored: shared.restoredSession,
             contextWindow: resolveEffectiveContextWindow(
@@ -1902,7 +1703,7 @@ async function runSingleAttempt(
 
     if (controlConfig.enabled) {
       activityTimer = setInterval(() => {
-        if (processClosed || settled || detached) return;
+        if (processClosed || settled) return;
         const now = Date.now();
         if (updateActivityState(now)) {
           progress.durationMs = now - startTime;
@@ -1914,8 +1715,7 @@ async function runSingleAttempt(
 
     if (attemptTimeout) {
       timeoutTimer = scheduleDeadline(attemptTimeout.deadlineAt, () => {
-        if (processClosed || settled || detached || interruptedByControl || protocolOutputLimit)
-          return;
+        if (processClosed || settled || interruptedByControl || protocolOutputLimit) return;
         if (!claimChildTerminalReason(terminalReason, "timed_out")) return;
         result.timedOut = true;
         result.error = boundChildError(attemptTimeout.message);
@@ -1926,12 +1726,12 @@ async function runSingleAttempt(
         fireUpdate();
         trySignalChild(proc, "SIGINT");
         timeoutTerminationTimer = setTimeout(() => {
-          if (processClosed || settled || detached) return;
+          if (processClosed || settled) return;
           trySignalChild(proc, "SIGTERM");
         }, 1000);
         timeoutTerminationTimer.unref?.();
         timeoutHardKillTimer = setTimeout(() => {
-          if (processClosed || settled || detached) return;
+          if (processClosed || settled) return;
           trySignalChild(proc, "SIGKILL");
         }, 4000);
         timeoutHardKillTimer.unref?.();
@@ -1956,11 +1756,11 @@ async function runSingleAttempt(
         progress.error = message;
         progress.durationMs = Date.now() - startTime;
         emitUpdateSnapshot(message);
-        if (settled || childExited || detached) return;
+        if (settled || childExited) return;
         trySignalChild(proc, "SIGTERM");
         protocolLimitHardKillTimer = setTimeout(() => {
           protocolLimitHardKillTimer = undefined;
-          if (!settled && !childExited && !detached) trySignalChild(proc, "SIGKILL");
+          if (!settled && !childExited) trySignalChild(proc, "SIGKILL");
         }, CHILD_PROTOCOL_HARD_KILL_GRACE_MS);
         protocolLimitHardKillTimer.unref?.();
       },
@@ -2104,42 +1904,6 @@ async function runSingleAttempt(
           })();
           return;
         }
-        if (detached) {
-          result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
-          progress.status = result.exitCode === 0 ? "completed" : "failed";
-          progress.durationMs = Date.now() - startTime;
-          if (result.error) progress.error = result.error;
-          result.progressSummary = {
-            toolCount: progress.toolCount,
-            tokens: progress.tokens,
-            durationMs: progress.durationMs,
-          };
-          const finalOutput = getFinalOutput(result.messages ?? []);
-          result.finalOutput =
-            finalOutput.trim() ||
-            result.error ||
-            result.finalOutput ||
-            "Detached child exited without final output.";
-          if (
-            result.artifactPaths &&
-            options.artifactConfig?.enabled !== false &&
-            options.artifactConfig?.includeOutput !== false
-          ) {
-            try {
-              writeArtifactWithFloor(
-                result.artifactPaths.outputPath,
-                result.finalOutput,
-                finalOutput,
-                !!result.savedOutputPath,
-              );
-            } catch {
-              // Detached children may outlive test/temp cleanup; recovered status is best-effort.
-            }
-          }
-          options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
-          finish(-2);
-          return;
-        }
         finish(finalCode);
       })();
     });
@@ -2170,16 +1934,12 @@ async function runSingleAttempt(
 
     if (options.signal) {
       const kill = () => {
-        if (processClosed || detached) return;
+        if (processClosed) return;
         if (
           options.pauseBlockingSupervisor &&
           pendingSupervisorPause?.kind === "awaiting_supervisor"
         ) {
           pauseForSupervisor(pendingSupervisorPause);
-          return;
-        }
-        if (options.allowIntercomDetach && intercomStarted && !detached) {
-          detachForIntercom();
           return;
         }
         proc.kill("SIGTERM");
@@ -2194,7 +1954,7 @@ async function runSingleAttempt(
 
     if (options.interruptSignal) {
       const interrupt = () => {
-        if (processClosed || detached || settled || protocolOutputLimit) return;
+        if (processClosed || settled || protocolOutputLimit) return;
         if (result.timedOut) return;
         if (!claimChildTerminalReason(terminalReason, "interrupted")) return;
         interruptedByControl = true;
@@ -2263,14 +2023,7 @@ export async function runSync(
     ...options,
     timeoutMs: effectiveTimeoutMs,
     deadlineAt: resolveEffectiveTimeoutDeadline(options.deadlineAt, effectiveTimeoutMs),
-    ...(agent.supervisorBridge === false
-      ? {
-          allowIntercomDetach: false,
-          pauseBlockingSupervisor: false,
-          intercomSessionName: undefined,
-          orchestratorIntercomTarget: undefined,
-        }
-      : {}),
+    ...(agent.supervisorBridge === false ? { pauseBlockingSupervisor: false } : {}),
   };
   const outputModeValidationError = validateFileOnlyOutputMode(
     options.outputMode,
@@ -2424,7 +2177,7 @@ export async function runSync(
       usage: { ...result.usage },
     };
     modelAttempts.push(attempt);
-    if (result.protocolOutputLimit || result.timedOut || result.turnBudgetExceeded) {
+    if (result.protocolOutputLimit || result.timedOut) {
       break;
     }
     if (attemptSucceeded) {
@@ -2512,7 +2265,6 @@ export async function runSync(
   if (
     !result.protocolOutputLimit &&
     !result.timedOut &&
-    !result.turnBudgetExceeded &&
     !result.interrupted &&
     options.interruptSignal?.aborted
   ) {
@@ -2531,7 +2283,6 @@ export async function runSync(
     acceptanceFailure &&
     result.acceptance.explicit &&
     result.exitCode === 0 &&
-    !result.detached &&
     !result.interrupted &&
     !result.timedOut &&
     !result.protocolOutputLimit

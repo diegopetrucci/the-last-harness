@@ -15,7 +15,6 @@ toolBudget: {"soft":12,"hard":20}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-defaultContext: fresh
 ---
 You are the TLH diff summarizer. Your job is to produce a terse, high-signal summary of an existing change set for the architect and reviewers.
 

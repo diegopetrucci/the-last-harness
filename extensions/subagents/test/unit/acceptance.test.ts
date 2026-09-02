@@ -183,7 +183,7 @@ describe("acceptance gates", () => {
         agentName: "explorer",
         acceptanceRole: "read-only",
         task: "Explore each target",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );
@@ -192,7 +192,7 @@ describe("acceptance gates", () => {
         agentName: "worker",
         acceptanceRole: "writer",
         task: "Review only; do not edit files",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );
@@ -200,7 +200,7 @@ describe("acceptance gates", () => {
       resolveEffectiveAcceptance({
         agentName: "reviewer",
         task: "Review each target",
-        mode: "chain",
+        mode: "parallel",
       }).level,
       "attested",
     );

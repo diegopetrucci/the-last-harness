@@ -7,7 +7,6 @@ import { discoverAgents } from "../agents/agents.js";
 import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
-import { cleanupOldChainDirs } from "../shared/settings.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
@@ -22,7 +21,7 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.js";
 import { createResultWatcher } from "../runs/background/result-watcher.js";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.js";
 import { registerSlashCommands } from "../slash/slash-commands.js";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.js";
+import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.js";
 import registerSubagentNotify, { boundedReference, MAX_DISPLAY_SUMMARY_CHARS, } from "../runs/background/notify.js";
 import { SUBAGENT_CHILD_ENV, SUBAGENT_PARENT_SESSION_ENV } from "../runs/shared/pi-args.js";
 import { formatDuration, shortenPath } from "../shared/formatters.js";
@@ -221,7 +220,6 @@ export default function registerSubagentExtension(pi) {
     }
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
-    cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
     const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);

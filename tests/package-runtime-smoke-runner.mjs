@@ -110,7 +110,6 @@ async function runPackedChildSmoke(subagentExtension, sessionContext) {
       {
         agent: "developer",
         task: "Return the deterministic faux child marker",
-        context: "fresh",
         agentScope: "user",
       },
       new AbortController().signal,

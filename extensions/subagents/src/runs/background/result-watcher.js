@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.js";
 import { createFileCoalescer } from "../../shared/file-coalescer.js";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, } from "../../shared/types.js";
-import { attachNestedChildrenToResultChildren, compactNestedResultChildren, resolveSubagentResultStatus, } from "../../intercom/result-intercom.js";
+import { attachNestedChildrenToResultChildren, compactNestedResultChildren, resolveSubagentResultStatus, } from "../../shared/result-formatting.js";
 import { lifecycleContinuationForIndex, withLifecycleStatusLock, } from "../shared/lifecycle-state.js";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.js";
 import { readStatus } from "../../shared/utils.js";
@@ -242,7 +242,6 @@ export function createResultWatcher(pi, state, resultsDir, completionTtlMs, deps
                     ...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath)
                         ? { sessionPath }
                         : {}),
-                    ...(result.intercomTarget ? { intercomTarget: result.intercomTarget } : {}),
                     ...(childNestedChildren ? { children: childNestedChildren } : {}),
                 };
             }), nestedChildren);

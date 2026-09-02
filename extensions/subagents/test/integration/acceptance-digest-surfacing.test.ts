@@ -4,7 +4,7 @@
  *
  * The digest is appended to the artifact file only. result.finalOutput is a
  * semantic value (it feeds user-requested `output:` file contents and
- * chain/parallel output references), so it must stay byte-exact.
+ * multi-run output references), so it must stay byte-exact.
  */
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
@@ -132,7 +132,7 @@ describe(
         artifactOptions("digest-final-output"),
       );
 
-      // finalOutput feeds `output:` files and chain/parallel output references.
+      // finalOutput feeds `output:` files and multi-run output references.
       // It must be exactly the stripped assistant text, with nothing appended.
       assert.equal(result.finalOutput, "Implementation complete.");
     });

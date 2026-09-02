@@ -259,10 +259,6 @@ describe("subagent context and termination diagnostics", () => {
       "timed_out",
     );
     assert.equal(
-      resolveSubagentTerminationReason({ turnBudgetExceeded: true, assistantStopReason: "stop" }),
-      "turn_budget_exceeded",
-    );
-    assert.equal(
       resolveSubagentTerminationReason({ toolBudgetBlocked: true, assistantStopReason: "stop" }),
       "tool_budget_blocked",
     );

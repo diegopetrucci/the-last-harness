@@ -8,6 +8,7 @@ import { TEMP_ROOT_DIR } from "../../src/shared/types.ts";
 import {
   SUBAGENT_PARENT_SESSION_ENV,
   SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV,
+  SUBAGENT_SUPERVISOR_BRIDGE_ENV,
   SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV,
   SUBAGENT_CHILD_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
@@ -65,7 +66,6 @@ describe("buildPiArgs session wiring", () => {
             inheritSkills: false,
             systemPrompt: "prompt",
             parentSessionId: "parent-session",
-            orchestratorIntercomTarget: "supervisor",
             runId,
             childAgentName,
           }),
@@ -592,24 +592,21 @@ describe("buildPiArgs system prompt mode wiring", () => {
     assert.equal(disabled.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV], "0");
   });
 
-  it("passes child intercom and orchestrator metadata through env", () => {
+  it("passes native supervisor metadata through env", () => {
     const { env } = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
       inheritProjectContext: true,
       inheritSkills: true,
-      intercomSessionName: "subagent-worker-78f659a3",
-      orchestratorIntercomTarget: "subagent-chat-parent",
       parentSessionId: "session-parent-123",
       runId: "78f659a3",
       childAgentName: "worker",
       childIndex: 2,
     });
 
-    assert.equal(env.PI_SUBAGENT_INTERCOM_SESSION_NAME, "subagent-worker-78f659a3");
-    assert.equal(env.PI_SUBAGENT_ORCHESTRATOR_TARGET, "subagent-chat-parent");
     assert.equal(env[SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV], "session-parent-123");
+    assert.equal(env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "1");
     assert.equal(env.PI_SUBAGENT_RUN_ID, "78f659a3");
     assert.equal(env.PI_SUBAGENT_CHILD_AGENT, "worker");
     assert.equal(env.PI_SUBAGENT_CHILD_INDEX, "2");
@@ -624,7 +621,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
       sessionEnabled: false,
       inheritProjectContext: true,
       inheritSkills: true,
-      orchestratorIntercomTarget: "subagent-chat-parent",
       runId: "78f659a3",
       childAgentName: "worker",
       childIndex: 2,
@@ -659,7 +655,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
       tools: ["bash"],
     });
 
-    assert.equal(args[args.indexOf("--tools") + 1], "read,bash");
+    assert.equal(args[args.indexOf("--tools") + 1], "read,bash,contact_supervisor");
   });
 
   it("does not duplicate read in explicit tool allowlists for lazy skills", () => {
@@ -673,7 +669,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
       tools: ["read", "bash"],
     });
 
-    assert.equal(args[args.indexOf("--tools") + 1], "read,bash");
+    assert.equal(args[args.indexOf("--tools") + 1], "read,bash,contact_supervisor");
   });
 
   it("adds read for inherited skills under explicit named and empty policies", () => {
@@ -687,7 +683,10 @@ describe("buildPiArgs system prompt mode wiring", () => {
         tools,
       });
 
-      assert.equal(args[args.indexOf("--tools") + 1], tools.length > 0 ? "read,bash" : "read");
+      assert.equal(
+        args[args.indexOf("--tools") + 1],
+        tools.length > 0 ? "read,bash,contact_supervisor" : "read,contact_supervisor",
+      );
       assert.ok(!args.includes("--no-tools"));
     }
   });
@@ -702,7 +701,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
       tools: ["bash"],
     });
 
-    assert.equal(args[args.indexOf("--tools") + 1], "bash");
+    assert.equal(args[args.indexOf("--tools") + 1], "bash,contact_supervisor");
   });
 
   it("always sets MCP_DIRECT_TOOLS=__none__ sentinel for @diegopetrucci/pi-mcp-adapter", () => {
@@ -732,7 +731,7 @@ describe("buildPiArgs system prompt mode wiring", () => {
 
     const extensionArgs = args.filter((_arg, index) => args[index - 1] === "--extension");
     assert.ok(args.includes("--no-extensions"));
-    assert.equal(args[args.indexOf("--tools") + 1], "read");
+    assert.equal(args[args.indexOf("--tools") + 1], "read,contact_supervisor");
     assert.ok(extensionArgs.includes("./main-allowed-ext.ts"));
     assert.ok(extensionArgs.includes("./child-tool.ts"));
   });
@@ -806,7 +805,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritSkills: false,
       requireReadTool: true,
       structuredOutput,
-      orchestratorIntercomTarget: "subagent-chat-parent",
     });
 
     assert.equal(toolsFlag(args), undefined);
@@ -814,8 +812,8 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
     assert.ok(!args.includes("--no-builtin-tools"));
   });
 
-  it("omits contact_supervisor runtime injection for a structured bridge opt-out", () => {
-    const { args } = buildPiArgs({
+  it("omits contact_supervisor runtime injection for an explicit supervisor opt-out", () => {
+    const { args, env } = buildPiArgs({
       baseArgs: ["-p"],
       task: "hello",
       sessionEnabled: false,
@@ -824,14 +822,32 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       tools: ["bash"],
       supervisorBridge: false,
       systemPrompt: "Prompt prose mentions contact_supervisor but is not a capability signal.",
-      orchestratorIntercomTarget: "subagent-chat-parent",
     });
 
     assert.equal(toolsFlag(args), "bash");
     assert.equal(args[args.indexOf("--exclude-tools") + 1], "contact_supervisor");
+    assert.equal(env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
   });
 
-  it("fails closed for explicit empty and MCP-only policies", () => {
+  it("does not create a native supervisor channel for an explicit supervisor opt-out", () => {
+    const { args, env } = buildPiArgs({
+      baseArgs: ["-p"],
+      task: "hello",
+      sessionEnabled: false,
+      inheritProjectContext: false,
+      inheritSkills: false,
+      supervisorBridge: false,
+      parentSessionId: "session-parent",
+      runId: "run-123",
+      childAgentName: "worker",
+    });
+
+    assert.equal(env[SUBAGENT_SUPERVISOR_BRIDGE_ENV], "0");
+    assert.equal(env[SUBAGENT_SUPERVISOR_CHANNEL_DIR_ENV], undefined);
+    assert.ok(args.includes("--exclude-tools"));
+  });
+
+  it("retains native supervision for explicit empty and MCP-only policies", () => {
     for (const tools of [null, [], ["mcp:server/lookup"]] as Array<string[] | null>) {
       const { args } = buildPiArgs({
         baseArgs: ["-p"],
@@ -842,8 +858,8 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
         tools,
       });
 
-      assert.equal(toolsFlag(args), undefined);
-      assert.ok(args.includes("--no-tools"));
+      assert.equal(toolsFlag(args), "contact_supervisor");
+      assert.ok(!args.includes("--no-tools"));
       assert.ok(!args.includes("--no-builtin-tools"));
     }
   });
@@ -858,7 +874,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       tools: [],
       requireReadTool: true,
       structuredOutput,
-      orchestratorIntercomTarget: "subagent-chat-parent",
     });
 
     assert.equal(toolsFlag(args), "read,contact_supervisor,structured_output");
@@ -875,7 +890,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritSkills: false,
       tools: ["./my-custom-tool.ts"],
       structuredOutput,
-      orchestratorIntercomTarget: "subagent-chat-parent",
     });
 
     assert.equal(toolsFlag(args), undefined);
@@ -894,7 +908,7 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       tools: ["read", "./my-custom-tool.ts"],
     });
 
-    assert.equal(toolsFlag(args), "read");
+    assert.equal(toolsFlag(args), "read,contact_supervisor");
     assert.ok(extensionArgs(args).includes("./my-custom-tool.ts"));
     assert.ok(!args.includes("--no-tools"));
     assert.ok(!args.includes("--no-builtin-tools"));
@@ -927,7 +941,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       tools: ["bash", "./my-custom-tool.ts", "bash", "read"],
       requireReadTool: true,
       structuredOutput,
-      orchestratorIntercomTarget: "subagent-chat-parent",
     });
 
     assert.equal(toolsFlag(args), "bash,read,contact_supervisor,structured_output");

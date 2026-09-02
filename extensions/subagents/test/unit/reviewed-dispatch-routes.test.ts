@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
 import type { AgentDiscoveryDiagnostic } from "../../src/agents/agents.ts";
 import {
-  executeAsyncChain,
+  executeAsyncParallel,
   executeAsyncSingle,
 } from "../../src/runs/background/async-execution.ts";
 import {
@@ -76,7 +76,7 @@ function createExecutor(
         },
       } as any,
       state: createState(),
-      config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
+      config: { maxSubagentDepth: 2, control: {} } as any,
       tempArtifactsDir: root,
       getSubagentSessionRoot: (parentSessionFile) =>
         parentSessionFile
@@ -163,23 +163,24 @@ describe("reviewed dispatch route preflight", () => {
     assert.match(text, /acceptanceRole/);
   });
 
-  it("rejects reviewed acceptance through direct async single and chain entry points before artifacts are created", () => {
+  it("rejects reviewed acceptance through direct async single and parallel entry points before artifacts are created", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-reviewed-async-"));
     tempDirs.push(root);
+    const artifactConfig = {
+      enabled: false,
+      includeInput: false,
+      includeOutput: false,
+      includeJsonl: false,
+      includeMetadata: false,
+      cleanupDays: 7,
+    } as const;
     const singleId = `reviewed-single-${Date.now().toString(36)}`;
     const single = executeAsyncSingle(singleId, {
       agent: "worker",
       task: "Implement fix",
       agentConfig: makeAgent("worker"),
       ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
+      artifactConfig,
       shareEnabled: false,
       maxSubagentDepth: 2,
       acceptance: { level: "reviewed", review: false },
@@ -189,42 +190,19 @@ describe("reviewed dispatch route preflight", () => {
     assert.equal(fs.existsSync(path.join(ASYNC_DIR, singleId)), false);
     assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${singleId}.json`)), false);
 
-    const chainCases: Array<{ id: string; chain: Array<Record<string, unknown>> }> = [
-      {
-        id: `reviewed-chain-sequential-${Date.now().toString(36)}`,
-        chain: [{ agent: "worker", task: "Implement fix", acceptance: "reviewed" }],
-      },
-      {
-        id: `reviewed-chain-static-${Date.now().toString(36)}`,
-        chain: [{ parallel: [{ agent: "worker", task: "Implement fix", acceptance: "reviewed" }] }],
-      },
-    ];
-
-    for (const testCase of chainCases) {
-      const result = executeAsyncChain(testCase.id, {
-        chain: testCase.chain as any,
-        agents: [makeAgent("worker"), makeAgent("producer"), makeAgent("reviewer")],
-        ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        maxSubagentDepth: 2,
-      });
-      assert.equal(result.isError, true, testCase.id);
-      assertReviewedRejection(result.content[0]?.text ?? "");
-      assert.equal(fs.existsSync(path.join(ASYNC_DIR, testCase.id)), false, testCase.id);
-      assert.equal(
-        fs.existsSync(path.join(RESULTS_DIR, `${testCase.id}.json`)),
-        false,
-        testCase.id,
-      );
-    }
+    const parallelId = `reviewed-parallel-${Date.now().toString(36)}`;
+    const parallel = executeAsyncParallel(parallelId, {
+      tasks: [{ agent: "worker", task: "Implement fix", acceptance: "reviewed" }],
+      agents: [makeAgent("worker")],
+      ctx: makeAsyncCtx(root, { currentSessionId: "session" }),
+      artifactConfig,
+      shareEnabled: false,
+      maxSubagentDepth: 2,
+    });
+    assert.equal(parallel.isError, true, parallelId);
+    assertReviewedRejection(parallel.content[0]?.text ?? "");
+    assert.equal(fs.existsSync(path.join(ASYNC_DIR, parallelId)), false, parallelId);
+    assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${parallelId}.json`)), false, parallelId);
   });
 
   it("rejects unsupported chain attachment on resume before launching async work", async () => {

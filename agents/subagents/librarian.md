@@ -15,7 +15,6 @@ toolBudget: {"soft":30,"hard":60}
 systemPromptMode: replace
 inheritProjectContext: true
 inheritSkills: false
-defaultContext: fresh
 ---
 You are the TLH librarian. Your job is to perform read-only external GitHub research and return concise, evidence-backed findings to the architect.
 

@@ -152,7 +152,7 @@ describe("subagent control notice delivery", () => {
     const state = makeState();
     state.foregroundControls.set("run-1", {
       runId: "run-1",
-      mode: "chain",
+      mode: "single",
       startedAt: 0,
       updatedAt: 0,
       currentAgent: "worker",
@@ -185,7 +185,7 @@ describe("subagent control notice delivery", () => {
     const state = makeState();
     state.foregroundControls.set("run-1", {
       runId: "run-1",
-      mode: "chain",
+      mode: "single",
       startedAt: 0,
       updatedAt: 0,
       currentAgent: "worker",
@@ -209,11 +209,11 @@ describe("subagent control notice delivery", () => {
     assert.equal(recorder.nudges.length, 0);
   });
 
-  it("drops queued foreground notices after the chain advances to another step", async () => {
+  it("drops queued foreground notices after the run advances to another step", async () => {
     const state = makeState();
     state.foregroundControls.set("run-1", {
       runId: "run-1",
-      mode: "chain",
+      mode: "single",
       startedAt: 0,
       updatedAt: 0,
       currentAgent: "worker",
@@ -231,7 +231,7 @@ describe("subagent control notice delivery", () => {
     });
     state.foregroundControls.set("run-1", {
       runId: "run-1",
-      mode: "chain",
+      mode: "single",
       startedAt: 0,
       updatedAt: 0,
       currentAgent: "writer",

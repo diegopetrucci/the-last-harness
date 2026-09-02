@@ -9,7 +9,6 @@
  * Toggle: async parameter (default: false)
  *
  * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" } }
  */
 
 import * as fs from "node:fs";
@@ -40,7 +39,6 @@ import {
   getArtifactsDir,
 } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.ts";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.ts";
 import {
@@ -70,7 +68,7 @@ import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { PROJECT_AGENT_TERMINAL_RETENTION_MS } from "../agents/project-agent-snapshot.ts";
 import { registerSlashCommands } from "../slash/slash-commands.ts";
-import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
+import { createNativeSupervisorChannel } from "../supervisor/native-supervisor-channel.ts";
 import registerSubagentNotify, {
   boundedReference,
   MAX_DISPLAY_SUMMARY_CHARS,
@@ -365,7 +363,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   ensureAccessibleDir(RESULTS_DIR);
   ensureAccessibleDir(ASYNC_DIR);
-  cleanupOldChainDirs();
   cleanupRuntimeDirs();
 
   const config = loadConfig();

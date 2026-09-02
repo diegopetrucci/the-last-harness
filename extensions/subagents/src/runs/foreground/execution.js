@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import { ensureArtifactsDir, getArtifactPaths, writeArtifact, writeArtifactWithFloor, writeMetadata, } from "../../shared/artifacts.js";
 import { createChildTranscriptWriter, } from "../../shared/child-transcript.js";
-import { DEFAULT_MAX_OUTPUT, INTERCOM_DETACH_REQUEST_EVENT, INTERCOM_DETACH_RESPONSE_EVENT, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
+import { DEFAULT_MAX_OUTPUT, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, claimControlNotification, deriveActivityState, shouldNotifyControlEvent, } from "../shared/subagent-control.js";
 import { getFinalOutput, findLatestSessionFile, detectSubagentError, extractToolArgsPreview, extractTextFromContent, formatErrorWithOutput, synthesizeChildExitDiagnostic, } from "../../shared/utils.js";
 import { buildSkillInjection, resolveSkillsWithFallback } from "../../agents/skills.js";
@@ -21,11 +21,10 @@ import { buildFallbackModelList, buildModelCandidatePlan, appendRuntimeFallbackR
 import { isCanonicalPackagedMinorAgent } from "../../../../shared/project-agent-guidance.js";
 import { createMutatingFailureState, didMutatingToolFail, isMutatingTool, nextLongRunningTrigger, recordMutatingFailure, resetMutatingFailureState, resolveCurrentPath, shouldEscalateMutatingFailures, summarizeRecentMutatingFailures, } from "../shared/long-running-guard.js";
 import { acceptanceFailureMessage, appendAcceptanceReportDigest, buildSkippedAcceptanceLedger, composeAcceptanceFailureError, evaluateAcceptance, formatAcceptancePrompt, parseAndStripAcceptanceReport, resolveEffectiveAcceptance, } from "../shared/acceptance.js";
-import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, shouldAbortForTurnBudget, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState, } from "../shared/turn-budget.js";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.js";
 import { boundSupervisorSummary } from "../shared/lifecycle-state.js";
 import { FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE, formatForegroundSupervisorPauseMessage, } from "../../shared/foreground-pause.js";
-import { resolveSupervisorChannelDir } from "../../intercom/native-supervisor-channel.js";
+import { resolveSupervisorChannelDir } from "../../supervisor/native-supervisor-channel.js";
 import { cleanupOwnedProcessGroup, skipOwnedProcessGroupCleanup, supportsOwnedProcessGroupCleanup, } from "../shared/process-group-cleanup.js";
 import { assistantStopReason, classifyContextExhaustedTermination, CONTEXT_EXHAUSTED_TERMINATION_MESSAGE, hasUsableSessionArtifact, mergeContextUsageDiagnostics, resolveEffectiveContextWindow, resolveSubagentTerminationReason, updateContextUsageDiagnostics, detectContextPressureCrossing, formatContextPressureGuidance, parseContextPressureCrossedThresholds, parseContextPressureProjection, } from "../../shared/context-diagnostics.js";
 const artifactOutputByResult = new WeakMap();
@@ -59,12 +58,11 @@ function finalizeTerminationReason(result) {
         cancelled: Boolean(result.cancel),
         paused: Boolean(result.pause),
         timedOut: result.timedOut,
-        turnBudgetExceeded: result.turnBudgetExceeded,
         toolBudgetBlocked: result.toolBudgetBlocked,
         interrupted: result.interrupted,
         assistantStopReason: finalAssistantStopReason(result.messages),
         effectiveExitCode: result.exitCode,
-        processCompleted: !result.detached,
+        processCompleted: true,
     });
 }
 function formatTimeoutMessage(timeoutMs) {
@@ -245,19 +243,6 @@ function findSupervisorRequestMetadata(input) {
     return {};
 }
 function resolveSupervisorPauseMetadata(input) {
-    if (input.toolName === "intercom" && input.toolArgs.action === "ask") {
-        const summary = boundSupervisorSummary(input.toolArgs.message);
-        return {
-            kind: "awaiting_supervisor",
-            requestedAt: input.requestedAt,
-            ...(summary ? { summary } : {}),
-            request: {
-                tool: "intercom",
-                action: "ask",
-                ...(summary ? { summary } : {}),
-            },
-        };
-    }
     if (input.toolName === "contact_supervisor" &&
         (input.toolArgs.reason === "need_decision" || input.toolArgs.reason === "interview_request")) {
         const request = findSupervisorRequestMetadata({
@@ -342,13 +327,11 @@ function normalizeSingleAttemptResult(result, options) {
         ? "output_limit"
         : result.timedOut
             ? "timed_out"
-            : result.turnBudgetExceeded
-                ? "turn_budget_exceeded"
-                : result.toolBudgetBlocked
-                    ? "tool_budget_blocked"
-                    : result.interrupted
-                        ? "interrupted"
-                        : "completed";
+            : result.toolBudgetBlocked
+                ? "tool_budget_blocked"
+                : result.interrupted
+                    ? "interrupted"
+                    : "completed";
     const contextExhaustedSignature = classifyContextExhaustedTermination({
         messages: result.messages,
         contextUsage: result.contextUsage,
@@ -398,13 +381,6 @@ function finalizeSingleAttemptOutput(input) {
         fullOutput = fullOutput.trim()
             ? `${timeoutMessage}\n\nPartial output before timeout:\n${fullOutput}`
             : timeoutMessage;
-    }
-    else if (result.turnBudgetExceeded && result.turnBudget) {
-        fullOutput = formatTurnBudgetOutput(turnBudgetExceededMessage(result.turnBudget, result.turnBudget.turnCount), fullOutput);
-    }
-    else if (result.wrapUpRequested && result.turnBudget?.outcome === "wrap-up-requested") {
-        const note = turnBudgetSoftNote(result.turnBudget, result.turnBudget.wrapUpRequestedAtTurn ?? result.turnBudget.turnCount);
-        fullOutput = fullOutput.trim() ? `${note}\n\n${fullOutput}` : note;
     }
     const completionGuard = result.exitCode === 0 && !result.error && agent.completionGuard !== false
         ? evaluateCompletionMutationGuard({
@@ -526,20 +502,6 @@ function finalizeSingleAttempt(input) {
         };
         return result;
     }
-    if (result.detached) {
-        result.exitCode = 0;
-        result.finalOutput =
-            result.pause?.kind === "awaiting_supervisor"
-                ? formatForegroundSupervisorPauseMessage({
-                    headline: `Foreground run ${options.runId} paused awaiting supervisor (${agent.name}).`,
-                    runId: options.runId,
-                    agent: agent.name,
-                    requestSummary: result.pause.summary,
-                    ...(options.index !== undefined ? { index: options.index } : {}),
-                })
-                : "Legacy detached supervisor coordination. Inspect status/artifacts, then resume or replace work explicitly if needed.";
-        return result;
-    }
     normalizeSingleAttemptResult(result, options);
     progress.status = result.exitCode === 0 ? "completed" : "failed";
     progress.durationMs = Date.now() - startTime;
@@ -596,18 +558,6 @@ function evaluateSingleAcceptance(input) {
                 runtimeCheckStatus: "failed",
                 id: "timeout",
                 message: "Acceptance was not evaluated because the subagent timed out.",
-            }),
-        };
-    }
-    if (result.turnBudgetExceeded) {
-        return {
-            interruptedAcceptance,
-            acceptance: buildSkippedAcceptanceLedger({
-                acceptance: effectiveAcceptance,
-                ledgerStatus: "rejected",
-                runtimeCheckStatus: "failed",
-                id: "turn-budget",
-                message: "Acceptance was not evaluated because the subagent exceeded its turn budget.",
             }),
         };
     }
@@ -710,15 +660,15 @@ function finalizeForegroundArtifacts(input) {
     }
 }
 async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared) {
-    const effectiveThinking = options.thinkingOverride ?? agent.thinking;
+    const effectiveThinking = agent.thinking;
     const thinkingSuffixOptions = {
         availableModels: options.availableModels,
         preferredModelProvider: options.preferredModelProvider,
     };
-    const thinkingDropNote = getThinkingLevelDropNote(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
+    const thinkingDropNote = getThinkingLevelDropNote(model, effectiveThinking, false, thinkingSuffixOptions);
     if (thinkingDropNote && !shared.attemptNotes.includes(thinkingDropNote))
         shared.attemptNotes.push(thinkingDropNote);
-    const modelArg = applyThinkingSuffix(model, effectiveThinking, options.thinkingOverride !== undefined, thinkingSuffixOptions);
+    const modelArg = applyThinkingSuffix(model, effectiveThinking, false, thinkingSuffixOptions);
     const modelIdentity = canonicalSubagentModelIdentity(modelArg, thinkingDropNote || typeof effectiveThinking !== "string" ? undefined : effectiveThinking);
     let args;
     let sharedEnv;
@@ -746,11 +696,9 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             extensions: agent.extensions,
             subagentOnlyExtensions: agent.subagentOnlyExtensions,
             supervisorBridge: agent.supervisorBridge,
-            systemPrompt: appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget),
+            systemPrompt: shared.systemPrompt,
             cwd: options.cwd ?? runtimeCwd,
             promptFileStem: agent.name,
-            intercomSessionName: options.intercomSessionName,
-            orchestratorIntercomTarget: options.orchestratorIntercomTarget,
             runId: options.runId,
             childAgentName: agent.name,
             projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
@@ -792,7 +740,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
             skills: shared.resolvedSkillNames,
             skillsWarning: shared.skillsWarning,
-            ...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
             ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
             error: message,
             finalOutput: message,
@@ -814,7 +761,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         transcriptPath: shared.transcriptWriter ? shared.artifactPaths?.transcriptPath : undefined,
         skills: shared.resolvedSkillNames,
         skillsWarning: shared.skillsWarning,
-        ...(options.turnBudget ? { turnBudget: initialTurnBudgetState(options.turnBudget) } : {}),
         ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
     };
     const startTime = Date.now();
@@ -887,8 +833,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
         let processClosed = false;
         let settled = false;
-        let detached = false;
-        let intercomStarted = false;
         let pendingSupervisorPause;
         let assistantError;
         let supervisorPauseCleanupPromise;
@@ -901,19 +845,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         let protocolLimitHardKillTimer;
         let protocolOutputLimit;
         const terminalReason = {};
-        let turnBudgetSoftReached = false;
-        let turnBudgetTerminationTimer;
-        let turnBudgetHardKillTimer;
-        const clearTurnBudgetTimers = () => {
-            if (turnBudgetTerminationTimer) {
-                clearTimeout(turnBudgetTerminationTimer);
-                turnBudgetTerminationTimer = undefined;
-            }
-            if (turnBudgetHardKillTimer) {
-                clearTimeout(turnBudgetHardKillTimer);
-                turnBudgetHardKillTimer = undefined;
-            }
-        };
         const clearTimeoutTimers = () => {
             if (timeoutTimer) {
                 timeoutTimer.cancel();
@@ -933,20 +864,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 return;
             clearTimeout(protocolLimitHardKillTimer);
             protocolLimitHardKillTimer = undefined;
-        };
-        const detachForIntercom = () => {
-            detached = true;
-            processClosed = true;
-            result.detached = true;
-            result.detachedReason = "intercom coordination";
-            progress.status = "detached";
-            progress.durationMs = Date.now() - startTime;
-            result.progressSummary = {
-                toolCount: progress.toolCount,
-                tokens: progress.tokens,
-                durationMs: progress.durationMs,
-            };
-            finish(-2);
         };
         const beginSupervisorPauseCleanup = () => {
             if (supervisorPauseCleanupPromise)
@@ -969,7 +886,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             return supervisorPauseCleanupPromise;
         };
         const pauseForSupervisor = (pause) => {
-            if (supervisorPauseRequested || detached || processClosed || settled)
+            if (supervisorPauseRequested || processClosed || settled)
                 return;
             if (!claimChildTerminalReason(terminalReason, "paused"))
                 return;
@@ -1029,10 +946,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }
         };
         const startFinalDrain = () => {
-            if (childExited || finalDrainTimer || settled || processClosed || detached)
+            if (childExited || finalDrainTimer || settled || processClosed)
                 return;
             finalDrainTimer = setTimeout(() => {
-                if (settled || processClosed || detached)
+                if (settled || processClosed)
                     return;
                 const termSent = trySignalChild(proc, "SIGTERM");
                 if (!termSent)
@@ -1044,7 +961,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                             `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its final message. Forcing termination.`;
                 }
                 finalHardKillTimer = setTimeout(() => {
-                    if (settled || processClosed || detached)
+                    if (settled || processClosed)
                         return;
                     forcedTerminationSignal = trySignalChild(proc, "SIGKILL") || forcedTerminationSignal;
                 }, HARD_KILL_MS);
@@ -1052,22 +969,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }, FINAL_STOP_GRACE_MS);
             finalDrainTimer.unref?.();
         };
-        const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
-            if (!options.allowIntercomDetach || detached || processClosed || !intercomStarted)
-                return;
-            if (!payload || typeof payload !== "object")
-                return;
-            const requestId = payload.requestId;
-            if (typeof requestId !== "string" || requestId.length === 0)
-                return;
-            options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true });
-            if (options.pauseBlockingSupervisor &&
-                pendingSupervisorPause?.kind === "awaiting_supervisor") {
-                pauseForSupervisor(pendingSupervisorPause);
-                return;
-            }
-            detachForIntercom();
-        });
         const finish = (code) => {
             if (settled)
                 return;
@@ -1076,12 +977,10 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             clearProtocolLimitHardKillTimer();
             clearStdioGuard();
             clearTimeoutTimers();
-            clearTurnBudgetTimers();
             if (activityTimer) {
                 clearInterval(activityTimer);
                 activityTimer = undefined;
             }
-            unsubscribeIntercomDetach?.();
             removeAbortListener?.();
             removeInterruptListener?.();
             resolve(code);
@@ -1155,61 +1054,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             }));
             return true;
         };
-        const requestTurnBudgetAbort = (turnCount) => {
-            const budget = options.turnBudget;
-            if (!budget ||
-                result.timedOut ||
-                result.turnBudgetExceeded ||
-                interruptedByControl ||
-                protocolOutputLimit ||
-                processClosed ||
-                settled ||
-                detached)
-                return;
-            if (!claimChildTerminalReason(terminalReason, "turn_budget_exceeded"))
-                return;
-            const message = turnBudgetExceededMessage(budget, turnCount);
-            result.turnBudgetExceeded = true;
-            result.wrapUpRequested = true;
-            result.turnBudget = turnBudgetState(budget, turnCount, true);
-            result.error = message;
-            result.finalOutput = message;
-            progress.status = "failed";
-            progress.error = message;
-            progress.durationMs = Date.now() - startTime;
-            fireUpdate();
-            trySignalChild(proc, "SIGINT");
-            turnBudgetTerminationTimer = setTimeout(() => {
-                if (processClosed || settled || detached || result.timedOut)
-                    return;
-                trySignalChild(proc, "SIGTERM");
-            }, 1000);
-            turnBudgetTerminationTimer.unref?.();
-            turnBudgetHardKillTimer = setTimeout(() => {
-                if (processClosed || settled || detached || result.timedOut)
-                    return;
-                trySignalChild(proc, "SIGKILL");
-            }, 4000);
-            turnBudgetHardKillTimer.unref?.();
-        };
-        const updateTurnBudget = (turnCount, terminalAssistantStop) => {
-            const budget = options.turnBudget;
-            if (!budget || result.timedOut || result.turnBudgetExceeded)
-                return;
-            if (turnCount < budget.maxTurns) {
-                result.turnBudget = { ...budget, outcome: "within-budget", turnCount };
-                return;
-            }
-            if (!turnBudgetSoftReached) {
-                turnBudgetSoftReached = true;
-                result.wrapUpRequested = true;
-                appendRecentOutput(progress, [turnBudgetSoftNote(budget, turnCount)]);
-            }
-            result.turnBudget = turnBudgetState(budget, turnCount, false);
-            if (shouldAbortForTurnBudget(budget, turnCount, terminalAssistantStop)) {
-                requestTurnBudgetAbort(turnCount);
-            }
-        };
         const updateActivityState = (now) => {
             if (!controlConfig.enabled)
                 return false;
@@ -1251,7 +1095,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             if (!options.onUpdate || processClosed)
                 return;
             progress.durationMs = Date.now() - startTime;
-            const output = (result.timedOut || result.turnBudgetExceeded) && result.finalOutput
+            const output = result.timedOut && result.finalOutput
                 ? result.finalOutput
                 : getFinalOutput(result.messages ?? []);
             emitUpdateSnapshot(output || "(running...)");
@@ -1277,28 +1121,19 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
             updateActivityState(now);
             if (evt.type === "tool_execution_start") {
                 const toolArgs = evt.args ?? {};
-                let shouldDetachForBlockingIntercom = false;
                 let supervisorPause;
-                if (options.allowIntercomDetach &&
-                    (evt.toolName === "intercom" || evt.toolName === "contact_supervisor")) {
-                    intercomStarted = true;
-                    shouldDetachForBlockingIntercom =
-                        (evt.toolName === "intercom" && toolArgs.action === "ask") ||
-                            (evt.toolName === "contact_supervisor" &&
-                                (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request"));
-                    if (options.pauseBlockingSupervisor &&
-                        shouldDetachForBlockingIntercom &&
-                        typeof evt.toolName === "string") {
-                        supervisorPause = resolveSupervisorPauseMetadata({
-                            runId: options.runId,
-                            agent: agent.name,
-                            index: options.index ?? 0,
-                            toolName: evt.toolName,
-                            toolArgs,
-                            requestedAt: now,
-                        });
-                        pendingSupervisorPause = supervisorPause;
-                    }
+                if (options.pauseBlockingSupervisor &&
+                    evt.toolName === "contact_supervisor" &&
+                    (toolArgs.reason === "need_decision" || toolArgs.reason === "interview_request")) {
+                    supervisorPause = resolveSupervisorPauseMetadata({
+                        runId: options.runId,
+                        agent: agent.name,
+                        index: options.index ?? 0,
+                        toolName: evt.toolName,
+                        toolArgs,
+                        requestedAt: now,
+                    });
+                    pendingSupervisorPause = supervisorPause;
                 }
                 progress.toolCount++;
                 if (options.toolBudget) {
@@ -1317,14 +1152,8 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     startedAt: now,
                 };
                 fireUpdate();
-                if (options.pauseBlockingSupervisor &&
-                    supervisorPause?.kind === "awaiting_supervisor" &&
-                    !detached &&
-                    !processClosed) {
+                if (supervisorPause?.kind === "awaiting_supervisor" && !processClosed) {
                     pauseForSupervisor(supervisorPause);
-                }
-                else if (shouldDetachForBlockingIntercom && !detached && !processClosed) {
-                    detachForIntercom();
                 }
             }
             if (evt.type === "tool_execution_end") {
@@ -1352,7 +1181,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     const hasToolCall = Array.isArray(evt.message.content) &&
                         evt.message.content.some((part) => part.type === "toolCall");
                     const terminalAssistantStop = stopReason === "stop" && !hasToolCall;
-                    updateTurnBudget(result.usage.turns, terminalAssistantStop);
                     result.contextUsage = updateContextUsageDiagnostics(result.contextUsage, evt.message, {
                         restored: shared.restoredSession,
                         contextWindow: resolveEffectiveContextWindow(result.model ?? model, options.availableModels, options.preferredModelProvider),
@@ -1442,7 +1270,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         };
         if (controlConfig.enabled) {
             activityTimer = setInterval(() => {
-                if (processClosed || settled || detached)
+                if (processClosed || settled)
                     return;
                 const now = Date.now();
                 if (updateActivityState(now)) {
@@ -1454,7 +1282,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
         if (attemptTimeout) {
             timeoutTimer = scheduleDeadline(attemptTimeout.deadlineAt, () => {
-                if (processClosed || settled || detached || interruptedByControl || protocolOutputLimit)
+                if (processClosed || settled || interruptedByControl || protocolOutputLimit)
                     return;
                 if (!claimChildTerminalReason(terminalReason, "timed_out"))
                     return;
@@ -1467,13 +1295,13 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 fireUpdate();
                 trySignalChild(proc, "SIGINT");
                 timeoutTerminationTimer = setTimeout(() => {
-                    if (processClosed || settled || detached)
+                    if (processClosed || settled)
                         return;
                     trySignalChild(proc, "SIGTERM");
                 }, 1000);
                 timeoutTerminationTimer.unref?.();
                 timeoutHardKillTimer = setTimeout(() => {
-                    if (processClosed || settled || detached)
+                    if (processClosed || settled)
                         return;
                     trySignalChild(proc, "SIGKILL");
                 }, 4000);
@@ -1500,12 +1328,12 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                 progress.error = message;
                 progress.durationMs = Date.now() - startTime;
                 emitUpdateSnapshot(message);
-                if (settled || childExited || detached)
+                if (settled || childExited)
                     return;
                 trySignalChild(proc, "SIGTERM");
                 protocolLimitHardKillTimer = setTimeout(() => {
                     protocolLimitHardKillTimer = undefined;
-                    if (!settled && !childExited && !detached)
+                    if (!settled && !childExited)
                         trySignalChild(proc, "SIGKILL");
                 }, CHILD_PROTOCOL_HARD_KILL_GRACE_MS);
                 protocolLimitHardKillTimer.unref?.();
@@ -1637,36 +1465,6 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
                     })();
                     return;
                 }
-                if (detached) {
-                    result.exitCode = result.error && finalCode === 0 ? 1 : finalCode;
-                    progress.status = result.exitCode === 0 ? "completed" : "failed";
-                    progress.durationMs = Date.now() - startTime;
-                    if (result.error)
-                        progress.error = result.error;
-                    result.progressSummary = {
-                        toolCount: progress.toolCount,
-                        tokens: progress.tokens,
-                        durationMs: progress.durationMs,
-                    };
-                    const finalOutput = getFinalOutput(result.messages ?? []);
-                    result.finalOutput =
-                        finalOutput.trim() ||
-                            result.error ||
-                            result.finalOutput ||
-                            "Detached child exited without final output.";
-                    if (result.artifactPaths &&
-                        options.artifactConfig?.enabled !== false &&
-                        options.artifactConfig?.includeOutput !== false) {
-                        try {
-                            writeArtifactWithFloor(result.artifactPaths.outputPath, result.finalOutput, finalOutput, !!result.savedOutputPath);
-                        }
-                        catch {
-                        }
-                    }
-                    options.onDetachedExit?.(snapshotResult(result, snapshotProgress(progress)));
-                    finish(-2);
-                    return;
-                }
                 finish(finalCode);
             })();
         });
@@ -1692,15 +1490,11 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         });
         if (options.signal) {
             const kill = () => {
-                if (processClosed || detached)
+                if (processClosed)
                     return;
                 if (options.pauseBlockingSupervisor &&
                     pendingSupervisorPause?.kind === "awaiting_supervisor") {
                     pauseForSupervisor(pendingSupervisorPause);
-                    return;
-                }
-                if (options.allowIntercomDetach && intercomStarted && !detached) {
-                    detachForIntercom();
                     return;
                 }
                 proc.kill("SIGTERM");
@@ -1715,7 +1509,7 @@ async function runSingleAttempt(runtimeCwd, agent, task, model, options, shared)
         }
         if (options.interruptSignal) {
             const interrupt = () => {
-                if (processClosed || detached || settled || protocolOutputLimit)
+                if (processClosed || settled || protocolOutputLimit)
                     return;
                 if (result.timedOut)
                     return;
@@ -1774,14 +1568,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         ...options,
         timeoutMs: effectiveTimeoutMs,
         deadlineAt: resolveEffectiveTimeoutDeadline(options.deadlineAt, effectiveTimeoutMs),
-        ...(agent.supervisorBridge === false
-            ? {
-                allowIntercomDetach: false,
-                pauseBlockingSupervisor: false,
-                intercomSessionName: undefined,
-                orchestratorIntercomTarget: undefined,
-            }
-            : {}),
+        ...(agent.supervisorBridge === false ? { pauseBlockingSupervisor: false } : {}),
     };
     const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
     if (outputModeValidationError) {
@@ -1896,7 +1683,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
             usage: { ...result.usage },
         };
         modelAttempts.push(attempt);
-        if (result.protocolOutputLimit || result.timedOut || result.turnBudgetExceeded) {
+        if (result.protocolOutputLimit || result.timedOut) {
             break;
         }
         if (attemptSucceeded) {
@@ -1974,7 +1761,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     result.acceptance = acceptance instanceof Promise ? await acceptance : acceptance;
     if (!result.protocolOutputLimit &&
         !result.timedOut &&
-        !result.turnBudgetExceeded &&
         !result.interrupted &&
         options.interruptSignal?.aborted) {
         result.interrupted = true;
@@ -1991,7 +1777,6 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
     if (acceptanceFailure &&
         result.acceptance.explicit &&
         result.exitCode === 0 &&
-        !result.detached &&
         !result.interrupted &&
         !result.timedOut &&
         !result.protocolOutputLimit) {

@@ -237,6 +237,11 @@ describe("trusted project-agent loader", () => {
         { extraFrontmatter: "supervisorBridge: maybe" },
         /supervisorBridge must be true or false/,
       ],
+      [
+        "LEGACY-CONTEXT.md",
+        { extraFrontmatter: "defaultContext: fork" },
+        /defaultContext is no longer supported.*starts child sessions fresh/,
+      ],
     ] as const;
 
     for (const [fileName, options, expected] of cases) {

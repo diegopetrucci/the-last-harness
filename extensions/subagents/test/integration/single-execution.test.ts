@@ -26,11 +26,7 @@ import {
   events,
   tryImport,
 } from "../support/helpers.ts";
-import {
-  ASYNC_DIR,
-  INTERCOM_DETACH_REQUEST_EVENT,
-  INTERCOM_DETACH_RESPONSE_EVENT,
-} from "../../src/shared/types.ts";
+import { ASYNC_DIR } from "../../src/shared/types.ts";
 import type {
   ChildProcessCleanupResult,
   ContextUsageDiagnostics,
@@ -126,18 +122,6 @@ interface RunSyncResult {
   finalOutput?: string;
   interrupted?: boolean;
   timedOut?: boolean;
-  turnBudget?: {
-    maxTurns: number;
-    graceTurns: number;
-    outcome: string;
-    turnCount: number;
-    wrapUpRequestedAtTurn?: number;
-    exceededAtTurn?: number;
-  };
-  turnBudgetExceeded?: boolean;
-  wrapUpRequested?: boolean;
-  detached?: boolean;
-  detachedReason?: string;
   pause?: {
     kind?: string;
     summary?: string;
@@ -3509,11 +3493,10 @@ describe(
       });
     });
 
-    it("passes supervisor metadata through to child execution", async () => {
+    it("passes native supervisor metadata through to child execution", async () => {
       mockPi.onCall({
         echoEnv: [
-          "PI_SUBAGENT_INTERCOM_SESSION_NAME",
-          "PI_SUBAGENT_ORCHESTRATOR_TARGET",
+          "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID",
           "PI_SUBAGENT_RUN_ID",
           "PI_SUBAGENT_CHILD_AGENT",
           "PI_SUBAGENT_CHILD_INDEX",
@@ -3524,14 +3507,12 @@ describe(
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "78f659a3",
         index: 2,
-        intercomSessionName: "subagent-echo-78f659a3-3",
-        orchestratorIntercomTarget: "subagent-chat-parent",
+        parentSessionId: "session-parent",
       });
 
       assert.equal(result.exitCode, 0);
       assert.deepEqual(JSON.parse(result.finalOutput ?? "{}"), {
-        PI_SUBAGENT_INTERCOM_SESSION_NAME: "subagent-echo-78f659a3-3",
-        PI_SUBAGENT_ORCHESTRATOR_TARGET: "subagent-chat-parent",
+        PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: "session-parent",
         PI_SUBAGENT_RUN_ID: "78f659a3",
         PI_SUBAGENT_CHILD_AGENT: "echo",
         PI_SUBAGENT_CHILD_INDEX: "2",
@@ -3960,38 +3941,6 @@ describe(
       assert.equal(metadata.sessionFile, undefined);
     });
 
-    it("allows a foreground run to finish on the final turn-budget grace turn", async () => {
-      mockPi.onCall({
-        jsonl: [
-          mockAssistantMessage("working before wrap-up", "tool_use"),
-          mockAssistantMessage("final wrapped output", "stop"),
-        ],
-      });
-      const agents = makeAgentConfigs(["worker"]);
-
-      const result = await runSync(
-        tempDir,
-        agents,
-        "worker",
-        "Use the final grace turn to wrap up.",
-        {
-          turnBudget: { maxTurns: 1, graceTurns: 1 },
-          runId: "foreground-turn-budget-soft",
-        },
-      );
-
-      assert.equal(result.exitCode, 0);
-      assert.equal(result.turnBudgetExceeded, undefined);
-      assert.equal(result.wrapUpRequested, true);
-      assert.equal(result.turnBudget?.outcome, "wrap-up-requested");
-      assert.equal(result.turnBudget?.turnCount, 2);
-      assert.match(
-        result.finalOutput ?? "",
-        /Turn budget wrap-up was requested after 1 assistant turn/,
-      );
-      assert.match(result.finalOutput ?? "", /final wrapped output/);
-    });
-
     it("does not run acceptance verification after a foreground timeout", async () => {
       const markerPath = path.join(tempDir, "verify-ran.txt");
       const report = [
@@ -4269,91 +4218,7 @@ describe(
       assert.match(result.finalOutput ?? "", /Interrupted/);
     });
 
-    for (const toolName of ["intercom", "contact_supervisor"]) {
-      it(`pauses cleanly on ${toolName} handoff and reaps the child before returning`, async () => {
-        const eventBus = createEventBus();
-        let accepted = false;
-        eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
-          if (!payload || typeof payload !== "object") return;
-          accepted = (payload as { accepted?: unknown }).accepted === true;
-        });
-        mockPi.onCall({
-          steps: [
-            {
-              jsonl: [
-                events.toolStart(
-                  toolName,
-                  toolName === "intercom"
-                    ? { action: "ask", to: "orchestrator" }
-                    : { reason: "need_decision", message: "Need a decision" },
-                ),
-              ],
-            },
-            { delay: 1000, jsonl: [events.assistantMessage("received pong")] },
-          ],
-        });
-        const agents = makeAgentConfigs(["echo"]);
-
-        // Emit the detach request the moment we observe the coordination tool start
-        // in a progress update — this is the signal the parent has set
-        // `intercomStarted=true`. Using a fixed delay here races the mock's
-        // cold spawn and flakes under load.
-        let detachEmitted = false;
-        const runPromise = runSync(tempDir, agents, "echo", "Task", {
-          runId: `${toolName}-detach`,
-          allowIntercomDetach: true,
-          pauseBlockingSupervisor: true,
-          intercomEvents: eventBus,
-          onUpdate: (update: unknown) => {
-            if (detachEmitted) return;
-            const progress = (
-              update as { details?: { progress?: Array<{ currentTool?: string }> } }
-            ).details?.progress;
-            const sawCoordinationTool =
-              Array.isArray(progress) && progress.some((p) => p?.currentTool === toolName);
-            if (!sawCoordinationTool) return;
-            detachEmitted = true;
-            eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "test-request" });
-          },
-        });
-
-        const callDeadline = Date.now() + 5_000;
-        let childPid: number | undefined;
-        while (Date.now() < callDeadline && childPid === undefined) {
-          const callFiles = fs
-            .readdirSync(mockPi.dir)
-            .filter((name) => name.startsWith("call-") && name.endsWith(".json"))
-            .sort();
-          const match = callFiles.at(-1)?.match(/^call-\d+-(\d+)-/);
-          if (match) childPid = Number(match[1]);
-          if (childPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-
-        const result = await runPromise;
-
-        assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
-        assert.equal(result.interrupted, true);
-        assert.equal(result.pause?.kind, "awaiting_supervisor");
-        assert.equal(result.pause?.ownerPid, undefined);
-        assert.match(
-          result.finalOutput ?? "",
-          /Resume unchanged: subagent\(\{ action: "resume", id: "/,
-        );
-        assert.match(result.finalOutput ?? "", /No child process is running\./);
-        assert.match(result.finalOutput ?? "", /Cancel: subagent\(\{ action: "interrupt", id: /);
-        assert.doesNotMatch(
-          result.finalOutput ?? "",
-          /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
-        );
-        assert.equal(accepted, true);
-        assert.ok(childPid, "expected mock child pid");
-        assert.throws(() => process.kill(childPid!, 0), /ESRCH/);
-      });
-    }
-
     for (const testCase of [
-      { name: "intercom ask", toolName: "intercom", args: { action: "ask", to: "orchestrator" } },
       {
         name: "contact_supervisor need_decision",
         toolName: "contact_supervisor",
@@ -4376,18 +4241,14 @@ describe(
 
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: `${testCase.toolName}-blocking-detach`,
-          allowIntercomDetach: true,
           pauseBlockingSupervisor: true,
         });
 
         assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
         assert.equal(result.interrupted, true);
         assert.equal(result.pause?.kind, "awaiting_supervisor");
         assert.equal(result.pause?.ownerPid, undefined);
-        if (testCase.toolName === "intercom") {
-          assert.deepEqual(result.pause?.request, { tool: "intercom", action: "ask" });
-        } else if (testCase.args.reason === "interview_request") {
+        if (testCase.args.reason === "interview_request") {
           assert.deepEqual(result.pause?.request, {
             tool: "contact_supervisor",
             reason: "interview_request",
@@ -4407,10 +4268,6 @@ describe(
         );
         assert.match(result.finalOutput ?? "", /No child process is running\./);
         assert.match(result.finalOutput ?? "", /Cancel: subagent\(\{ action: "interrupt", id: /);
-        assert.doesNotMatch(
-          result.finalOutput ?? "",
-          /detached for intercom coordination|fresh follow-up|fresh-redispatch/i,
-        );
       });
     }
 
@@ -4440,7 +4297,6 @@ describe(
         const agents = makeAgentConfigs(["echo"]);
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: "stubborn-owned-group-pause",
-          allowIntercomDetach: true,
           pauseBlockingSupervisor: true,
         });
 
@@ -4487,7 +4343,6 @@ describe(
 
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-ordering",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: (transition: unknown) => {
           transitions.push(
@@ -4528,7 +4383,6 @@ describe(
       const secret = "/private/root/pause-persist-secret";
       const result = await runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-persist-fails",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
           if (stage === "pausing") throw new Error(`pause persistence failed at ${secret}`);
@@ -4562,7 +4416,6 @@ describe(
       const secret = "/private/root/pause-finalize-secret";
       const runPromise = runSync(tempDir, agents, "echo", "Task", {
         runId: "pause-finalize-fails",
-        allowIntercomDetach: true,
         pauseBlockingSupervisor: true,
         onSupervisorPauseTransition: ({ stage }: { stage: string }) => {
           if (stage === "paused") throw new Error(`pause finalization failed at ${secret}`);
@@ -4597,11 +4450,6 @@ describe(
 
     for (const testCase of [
       {
-        name: "intercom send",
-        toolName: "intercom",
-        args: { action: "send", to: "orchestrator", message: "FYI" },
-      },
-      {
         name: "contact_supervisor progress_update",
         toolName: "contact_supervisor",
         args: { reason: "progress_update", message: "FYI" },
@@ -4619,68 +4467,13 @@ describe(
 
         const result = await runSync(tempDir, agents, "echo", "Task", {
           runId: `${testCase.toolName}-nonblocking`,
-          allowIntercomDetach: true,
         });
 
         assert.equal(result.exitCode, 0);
-        assert.equal(result.detached, undefined);
         assert.equal(result.finalOutput, "done");
         assert.equal(result.progress?.status, "completed");
       });
     }
-
-    it("lets an active intercom child accept detach when another child is listening", async () => {
-      const eventBus = createEventBus();
-      let firstDetachResponse: boolean | undefined;
-      eventBus.on(INTERCOM_DETACH_RESPONSE_EVENT, (payload) => {
-        if (!payload || typeof payload !== "object") return;
-        if ((payload as { requestId?: unknown }).requestId !== "parallel-request") return;
-        firstDetachResponse ??= (payload as { accepted?: unknown }).accepted === true;
-      });
-      mockPi.onCall({ delay: 500, output: "quiet child done" });
-      const agents = makeAgentConfigs(["quiet", "intercom"]);
-
-      const quietRun = runSync(tempDir, agents, "quiet", "Quiet task", {
-        runId: "quiet-listener",
-        allowIntercomDetach: true,
-        intercomEvents: eventBus,
-      });
-      for (let attempt = 0; attempt < 50 && mockPi.callCount() < 1; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      assert.equal(mockPi.callCount(), 1);
-      mockPi.onCall({
-        steps: [
-          { jsonl: [events.toolStart("intercom", { action: "send", to: "orchestrator" })] },
-          { delay: 500, jsonl: [events.assistantMessage("after intercom")] },
-        ],
-      });
-
-      let detachEmitted = false;
-      const intercomRun = runSync(tempDir, agents, "intercom", "Intercom task", {
-        runId: "active-intercom",
-        allowIntercomDetach: true,
-        intercomEvents: eventBus,
-        onUpdate: (update: unknown) => {
-          if (detachEmitted) return;
-          const progress = (update as { details?: { progress?: Array<{ currentTool?: string }> } })
-            .details?.progress;
-          const sawIntercom =
-            Array.isArray(progress) && progress.some((p) => p?.currentTool === "intercom");
-          if (!sawIntercom) return;
-          detachEmitted = true;
-          eventBus.emit(INTERCOM_DETACH_REQUEST_EVENT, { requestId: "parallel-request" });
-        },
-      });
-
-      const [quietResult, intercomResult] = await Promise.all([quietRun, intercomRun]);
-
-      assert.equal(quietResult.exitCode, 0);
-      assert.equal(quietResult.detached, undefined);
-      assert.equal(intercomResult.exitCode, 0);
-      assert.equal(intercomResult.detached, true);
-      assert.equal(firstDetachResponse, true);
-    });
 
     it("handles stderr without exit code as info (not error)", async () => {
       mockPi.onCall({ output: "Success", stderr: "Warning: something", exitCode: 0 });

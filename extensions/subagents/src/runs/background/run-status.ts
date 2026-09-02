@@ -24,11 +24,10 @@ import {
   type NestedRunSummary,
   type SubagentState,
   type SubagentToolResult,
+  normalizeSubagentRunMode,
 } from "../../shared/types.ts";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import { resolveAsyncRunLocation } from "./async-resume.ts";
 import { resolveSubagentRunId } from "./run-id-resolver.ts";
-import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { formatOwnedProcessGroupCleanup } from "../shared/process-group-cleanup.ts";
 import {
@@ -156,18 +155,9 @@ function isPausingLifecycleStep(
 
 function stepLineLabel(status: AsyncStatus, index: number): string {
   const steps = status.steps ?? [];
-  if (status.mode === "parallel") return `Agent ${index + 1}/${steps.length || 1}`;
-  if (status.mode === "chain") {
-    const chainStepCount = status.chainStepCount ?? (steps.length || 1);
-    const groups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
-    const group = groups.find(
-      (candidate) => index >= candidate.start && index < candidate.start + candidate.count,
-    );
-    if (group)
-      return `Step ${group.stepIndex + 1}/${chainStepCount} Agent ${index - group.start + 1}/${group.count}`;
-    return `Step ${flatToLogicalStepIndex(index, chainStepCount, groups) + 1}/${chainStepCount}`;
-  }
-  return `Step ${index + 1}`;
+  return status.mode === "parallel"
+    ? `Agent ${index + 1}/${steps.length || 1}`
+    : `Step ${index + 1}`;
 }
 
 function nestedRunDisplayName(run: NestedRunSummary): string {
@@ -211,15 +201,8 @@ function formatAsyncStepStatusLines(
   const acceptanceText = step.acceptance?.status
     ? `, acceptance: ${safeTerminalText(step.acceptance.status)}`
     : "";
-  const budgetText = step.turnBudget
-    ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${safeTerminalText(step.turnBudget.outcome)})`
-    : "";
-  const display = step.label
-    ? `${safeTerminalText(step.label)} (${safeTerminalText(step.agent)})`
-    : safeTerminalText(step.agent);
-  const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
   lines.push(
-    `${stepLineLabel(status, index)}: ${phase}${display} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${acceptanceText}${budgetText}${errorText}`,
+    `${stepLineLabel(status, index)}: ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${modelText}${stepActivityText ? `, ${safeTerminalText(stepActivityText)}` : ""}${steeringSuffix}${acceptanceText}${errorText}`,
   );
   if (step.acceptance?.status === "rejected" && !privacySafeAwaitingSupervisorLifecycle) {
     const reason = acceptanceRejectionReason(step.acceptance);
@@ -296,9 +279,6 @@ function formatAsyncStepStatusLines(
     lines.push(`  Output: ${safeTerminalText(stepOutputPath)}`);
   if (step.status === "running") {
     lines.push(
-      `  Intercom target: ${safeTerminalText(resolveSubagentIntercomTarget(status.runId, step.agent, index))} (if registered)`,
-    );
-    lines.push(
       `  Steer: subagent({ action: "steer", id: "${safeTerminalText(status.runId)}", index: ${index}, message: "..." })`,
     );
   }
@@ -335,7 +315,6 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
     const parts = [
       `${child.index + 1}. ${safeTerminalText(child.agent)} ${statusLabel}`,
       child.exitCode !== undefined ? `exit ${child.exitCode}` : undefined,
-      child.detachedReason ? `detached: ${safeTerminalText(child.detachedReason)}` : undefined,
       child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt
         ? "awaiting supervisor"
         : undefined,
@@ -374,10 +353,7 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
       `Transcript: subagent({ action: "status", id: "${runId}", index: 0, view: "transcript" })`,
     );
   const resumable = run.children.find(
-    (child) =>
-      child.status !== "detached" &&
-      !child.cancel?.cancelledAt &&
-      hasExistingSessionFile(child.sessionFile),
+    (child) => !child.cancel?.cancelledAt && hasExistingSessionFile(child.sessionFile),
   );
   const awaitingSupervisor = run.children.some(
     (child) => child.pause?.kind === "awaiting_supervisor" && !child.cancel?.cancelledAt,
@@ -391,10 +367,6 @@ function formatRememberedForegroundStatus(run: ForegroundResumeRun): string {
   } else if (run.children.some((child) => child.cancel?.cancelledAt)) {
     lines.push(
       "Resume: unavailable; this paused foreground run was cancelled and kept its existing artifacts.",
-    );
-  } else if (run.children.some((child) => child.status === "detached")) {
-    lines.push(
-      "Recovery: legacy detached foreground state has no resumable child session in memory. Inspect existing artifacts, then resume or replace work from status if needed.",
     );
   } else {
     lines.push("Resume: unavailable; no child session file was persisted.");
@@ -450,13 +422,10 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
     run.activityState || run.lastActivityAt
       ? `Activity: ${formatActivityLabel(run.lastActivityAt, run.activityState)}`
       : undefined,
-    run.mode ? `Mode: ${safeTerminalText(run.mode)}` : undefined,
+    run.mode ? `Mode: ${safeTerminalText(normalizeSubagentRunMode(run.mode))}` : undefined,
     `Agent: ${safeTerminalText(nestedRunDisplayName(run))}`,
     run.currentStep !== undefined
-      ? `Progress: step ${run.currentStep + 1}/${run.chainStepCount ?? run.steps?.length ?? 1}`
-      : undefined,
-    run.turnBudget
-      ? `Turn budget: ${run.turnBudget.turnCount}/${run.turnBudget.maxTurns}+${run.turnBudget.graceTurns} (${safeTerminalText(run.turnBudget.outcome)})`
+      ? `Progress: step ${run.currentStep + 1}/${run.steps?.length ?? 1}`
       : undefined,
     run.asyncDir ? `Dir: ${safeTerminalText(run.asyncDir)}` : undefined,
     run.sessionFile ? `Session: ${safeTerminalText(run.sessionFile)}` : undefined,
@@ -474,11 +443,8 @@ function formatNestedExactStatus(rootRunId: string, run: NestedRunSummary): stri
         step.status === "running"
           ? formatActivityLabel(step.lastActivityAt, step.activityState)
           : undefined;
-      const budget = step.turnBudget
-        ? `, turn budget: ${step.turnBudget.turnCount}/${step.turnBudget.maxTurns}+${step.turnBudget.graceTurns} (${safeTerminalText(step.turnBudget.outcome)})`
-        : "";
       lines.push(
-        `  ${index + 1}. ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${activity ? `, ${activity}` : ""}${budget}${step.error ? `, error: ${safeTerminalText(step.error)}` : ""}`,
+        `  ${index + 1}. ${safeTerminalText(step.agent)} ${safeTerminalText(step.status)}${activity ? `, ${activity}` : ""}${step.error ? `, error: ${safeTerminalText(step.error)}` : ""}`,
       );
       lines.push(
         ...formatNestedRunStatusLines(step.children, { indent: "    ", commandHints: true }),
@@ -509,11 +475,9 @@ function formatDetailedAsyncStatus(
   eventsPath: string,
 ): string {
   const progressLabel = formatAsyncRunProgressLabel({
-    mode: status.mode,
+    mode: normalizeSubagentRunMode(status.mode),
     state: status.state,
     currentStep: status.currentStep,
-    chainStepCount: status.chainStepCount,
-    parallelGroups: status.parallelGroups,
     steps: (status.steps ?? []).map((step, index) => ({
       index,
       agent: step.agent,
@@ -538,7 +502,7 @@ function formatDetailedAsyncStatus(
       : undefined,
     statusActivityText ? `Activity: ${statusActivityText}` : undefined,
     steeringText ? `Steering: ${steeringText}` : undefined,
-    `Mode: ${safeTerminalText(status.mode)}`,
+    `Mode: ${safeTerminalText(normalizeSubagentRunMode(status.mode))}`,
     !privacySafeAwaitingSupervisorLifecycle && typeof status.pid === "number"
       ? `PID: ${status.pid}`
       : undefined,
@@ -549,9 +513,6 @@ function formatDetailedAsyncStatus(
     status.pendingAppends ? `Pending appends: ${status.pendingAppends}` : undefined,
     `Started: ${started}`,
     `Updated: ${updated}`,
-    status.turnBudget
-      ? `Turn budget: ${status.turnBudget.turnCount}/${status.turnBudget.maxTurns}+${status.turnBudget.graceTurns} (${safeTerminalText(status.turnBudget.outcome)})`
-      : undefined,
     !privacySafeAwaitingSupervisorLifecycle ? `Dir: ${safeTerminalText(asyncDir)}` : undefined,
     !privacySafeAwaitingSupervisorLifecycle && outputPath
       ? `Output: ${safeTerminalText(outputPath)}`

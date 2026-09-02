@@ -1,87 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  isParallelGroup,
-  flattenSteps,
   mapConcurrent,
   aggregateParallelOutputs,
   MAX_PARALLEL_CONCURRENCY,
   DEFAULT_GLOBAL_CONCURRENCY_LIMIT,
   Semaphore,
-  type RunnerSubagentStep,
-  type ParallelStepGroup,
-  type RunnerStep,
 } from "../../src/runs/shared/parallel-utils.ts";
-import { makeRunnerStep } from "../support/helpers.ts";
-
-describe("isParallelGroup", () => {
-  it("returns true for a parallel step group", () => {
-    const step: ParallelStepGroup = {
-      parallel: [makeRunnerStep("a", "do stuff"), makeRunnerStep("b", "do other stuff")],
-    };
-    assert.equal(isParallelGroup(step), true);
-  });
-
-  it("returns false for a sequential step", () => {
-    const step: RunnerSubagentStep = makeRunnerStep("a", "do stuff");
-    assert.equal(isParallelGroup(step), false);
-  });
-
-  it("returns false when parallel is not an array", () => {
-    const step = {
-      parallel: [makeRunnerStep("a", "do stuff")],
-    } satisfies ParallelStepGroup;
-    Reflect.set(step, "parallel", "not-an-array");
-    assert.equal(isParallelGroup(step), false);
-  });
-});
-
-describe("flattenSteps", () => {
-  it("returns sequential steps unchanged", () => {
-    const steps: RunnerStep[] = [makeRunnerStep("a", "t1"), makeRunnerStep("b", "t2")];
-    const flat = flattenSteps(steps);
-    assert.equal(flat.length, 2);
-    assert.equal(flat[0].agent, "a");
-    assert.equal(flat[1].agent, "b");
-  });
-
-  it("expands parallel groups into individual steps", () => {
-    const steps: RunnerStep[] = [
-      makeRunnerStep("scout", "find info"),
-      {
-        parallel: [
-          makeRunnerStep("reviewer-a", "review part 1"),
-          makeRunnerStep("reviewer-b", "review part 2"),
-        ],
-      },
-      makeRunnerStep("summarizer", "combine"),
-    ];
-    const flat = flattenSteps(steps);
-    assert.equal(flat.length, 4);
-    assert.deepEqual(
-      flat.map((s) => s.agent),
-      ["scout", "reviewer-a", "reviewer-b", "summarizer"],
-    );
-  });
-
-  it("handles empty steps array", () => {
-    assert.deepEqual(flattenSteps([]), []);
-  });
-
-  it("handles empty parallel group", () => {
-    const steps: RunnerStep[] = [
-      makeRunnerStep("before", "x"),
-      { parallel: [] },
-      makeRunnerStep("after", "y"),
-    ];
-    const flat = flattenSteps(steps);
-    assert.equal(flat.length, 2);
-    assert.deepEqual(
-      flat.map((s) => s.agent),
-      ["before", "after"],
-    );
-  });
-});
 
 describe("mapConcurrent", () => {
   it("processes all items and preserves order", async () => {
@@ -241,7 +166,7 @@ describe("aggregateParallelOutputs", () => {
   it("marks skipped tasks (exitCode=-1) distinctly from failed", () => {
     const result = aggregateParallelOutputs([
       { agent: "agent-a", output: "done", exitCode: 0 },
-      { agent: "agent-b", output: "(skipped — fail-fast)", exitCode: -1 },
+      { agent: "agent-b", output: "(skipped before execution)", exitCode: -1 },
     ]);
     assert.ok(result.includes("SKIPPED"), "skipped task should show SKIPPED");
     assert.ok(!result.includes("FAILED"), "skipped task should not show FAILED");

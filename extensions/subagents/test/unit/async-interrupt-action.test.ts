@@ -10,17 +10,7 @@ import {
   writeChildMessageAcceptance,
 } from "../../src/runs/background/control-channel.ts";
 import { createSubagentExecutor } from "../../src/runs/foreground/subagent-executor.ts";
-import {
-  ASYNC_DIR,
-  RESULTS_DIR,
-  SUBAGENT_CONTROL_INTERCOM_EVENT,
-  type SubagentState,
-} from "../../src/shared/types.ts";
-// Legacy event name kept as a test-local literal for the no-emission regression guard.
-// Do not re-add this constant to production types or result-intercom — the delivery/receipt
-// pipeline it belonged to has been permanently removed.
-const LEGACY_RESULT_INTERCOM_EVENT = "subagent:result-intercom";
-
+import { ASYNC_DIR, RESULTS_DIR, type SubagentState } from "../../src/shared/types.ts";
 function createState(): SubagentState {
   return {
     baseCwd: "",
@@ -82,15 +72,12 @@ function cleanup(runId: string, asyncDir: string): void {
 function executorWithKill(
   state: SubagentState,
   kill: (pid: number, signal?: NodeJS.Signals | 0) => boolean,
-  emittedEvents?: Array<{ event: string; payload: unknown }>,
   discoverAgents: () => { agents: any[] } = () => ({ agents: [] }),
 ) {
   return createSubagentExecutor({
     pi: {
       events: {
-        emit(event: string, payload: unknown) {
-          emittedEvents?.push({ event, payload });
-        },
+        emit() {},
         on() {
           return () => {};
         },
@@ -100,7 +87,7 @@ function executorWithKill(
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
+    config: { maxSubagentDepth: 2, control: {} } as any,
     tempArtifactsDir: os.tmpdir(),
     getSubagentSessionRoot: (parentSessionFile) =>
       parentSessionFile
@@ -193,7 +180,7 @@ describe("async interrupt action", () => {
     const asyncDir = path.join(ASYNC_DIR, runId);
     writeJson(path.join(asyncDir, "status.json"), {
       runId,
-      mode: "chain",
+      mode: "parallel",
       state: "running",
       pid: 12345,
       sessionId: "session",
@@ -225,7 +212,7 @@ describe("async interrupt action", () => {
     }
   });
 
-  it("queues indexed live resume natively without interrupt or result-intercom emission", async () => {
+  it("queues indexed live resume natively without interrupt", async () => {
     const state = createState();
     const runId = `resume-native-${Date.now().toString(36)}`;
     const asyncDir = path.join(ASYNC_DIR, runId);
@@ -247,30 +234,23 @@ describe("async interrupt action", () => {
       ],
     });
     const kills: Array<{ pid: number; signal?: NodeJS.Signals | 0 }> = [];
-    const emitted: Array<{ event: string; payload: unknown }> = [];
     try {
-      const result = await executorWithKill(
-        state,
-        (pid, signal) => {
-          kills.push({ pid, signal });
-          const requestDir = steerRequestsDir(asyncDir);
-          const requestFile = fs.existsSync(requestDir) ? fs.readdirSync(requestDir)[0] : undefined;
-          if (requestFile) {
-            const request = JSON.parse(
-              fs.readFileSync(path.join(requestDir, requestFile), "utf-8"),
-            );
-            writeChildMessageAcceptance(asyncDir, {
-              requestId: request.id,
-              type: "resume",
-              status: "accepted",
-              ts: Date.now(),
-              acceptedIndexes: [1],
-            });
-          }
-          return true;
-        },
-        emitted,
-      ).execute(
+      const result = await executorWithKill(state, (pid, signal) => {
+        kills.push({ pid, signal });
+        const requestDir = steerRequestsDir(asyncDir);
+        const requestFile = fs.existsSync(requestDir) ? fs.readdirSync(requestDir)[0] : undefined;
+        if (requestFile) {
+          const request = JSON.parse(fs.readFileSync(path.join(requestDir, requestFile), "utf-8"));
+          writeChildMessageAcceptance(asyncDir, {
+            requestId: request.id,
+            type: "resume",
+            status: "accepted",
+            ts: Date.now(),
+            acceptedIndexes: [1],
+          });
+        }
+        return true;
+      }).execute(
         "resume",
         { action: "resume", id: runId, index: 1, message: "Continue with the focused fix." },
         new AbortController().signal,
@@ -298,14 +278,6 @@ describe("async interrupt action", () => {
       assert.equal(
         kills.every(({ signal }) => signal === 0),
         true,
-      );
-      assert.equal(
-        emitted.some(({ event }) => event === SUBAGENT_CONTROL_INTERCOM_EVENT),
-        false,
-      );
-      assert.equal(
-        emitted.some(({ event }) => event === LEGACY_RESULT_INTERCOM_EVENT),
-        false,
       );
       assert.equal(fs.existsSync(path.join(asyncDir, "control", "interrupt.json")), false);
     } finally {
@@ -462,20 +434,11 @@ describe("async interrupt action", () => {
     const runId = `resume-gone-${Date.now().toString(36)}`;
     const asyncDir = createRunningAsync(state, runId, { track: false });
     try {
-      let revivalDiscoveryReached = false;
-      const result = await executorWithKill(
-        state,
-        () => {
-          const error = new Error("gone") as NodeJS.ErrnoException;
-          error.code = "ESRCH";
-          throw error;
-        },
-        undefined,
-        () => {
-          revivalDiscoveryReached = true;
-          throw new Error("durable revival path must not be reached");
-        },
-      ).execute(
+      const result = await executorWithKill(state, () => {
+        const error = new Error("gone") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }).execute(
         "resume",
         { action: "resume", id: runId, message: "Continue." },
         new AbortController().signal,
@@ -484,7 +447,6 @@ describe("async interrupt action", () => {
       );
       assert.equal(result.isError, true);
       assert.match(text(result), /was running when resume began.*No durable revival was started/);
-      assert.equal(revivalDiscoveryReached, false);
       assert.doesNotMatch(text(result), /accepted for live async run/);
       const steerResult = await executorWithKill(state, () => true).execute(
         "steer",

@@ -58,7 +58,7 @@ function makeExecutor(state: SubagentState) {
       },
     } as any,
     state,
-    config: { maxSubagentDepth: 2, control: {}, intercomBridge: {} } as any,
+    config: { maxSubagentDepth: 2, control: {} } as any,
     tempArtifactsDir: os.tmpdir(),
     getSubagentSessionRoot: (parentSessionFile) =>
       parentSessionFile

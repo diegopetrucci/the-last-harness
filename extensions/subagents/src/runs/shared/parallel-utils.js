@@ -1,19 +1,3 @@
-export function isParallelGroup(step) {
-    return "parallel" in step && Array.isArray(step.parallel);
-}
-export function flattenSteps(steps) {
-    const flat = [];
-    for (const step of steps) {
-        if (isParallelGroup(step)) {
-            for (const task of step.parallel)
-                flat.push(task);
-        }
-        else {
-            flat.push(step);
-        }
-    }
-    return flat;
-}
 export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;
 export class Semaphore {
     available;

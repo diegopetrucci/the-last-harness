@@ -2,7 +2,7 @@
  * Integration tests for error handling across execution modes.
  *
  * Tests: agent crashes, stderr capture, detectSubagentError override,
- * signal/abort handling, and error propagation in chains.
+ * signal/abort handling, and error propagation across parallel tasks.
  *
  * Requires pi packages for execution tests. Skips gracefully if unavailable.
  */

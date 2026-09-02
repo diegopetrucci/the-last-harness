@@ -321,20 +321,19 @@ describe("subagent async widget rendering", () => {
     );
   });
 
-  it("shows the tk ticket title for mixed chain layouts before live detail", () => {
+  it("shows the tk ticket title for mixed parallel layouts before live detail", () => {
     const text = buildWidgetLines(
       [
         {
-          asyncId: "run-chain-ticket",
-          asyncDir: "/tmp/run-chain-ticket",
+          asyncId: "run-parallel-ticket",
+          asyncDir: "/tmp/run-parallel-ticket",
           status: "running",
-          mode: "chain",
+          mode: "parallel",
           agents: ["scout", "reviewer", "writer"],
+          runningSteps: 1,
+          completedSteps: 2,
           tkTicket: { id: "psr-raw4", title: "Show active tk title" },
-          activeParallelGroup: false,
           currentStep: 2,
-          chainStepCount: 2,
-          parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
           stepsTotal: 3,
           steps: [
             { index: 0, agent: "scout", status: "complete" },
@@ -348,7 +347,7 @@ describe("subagent async widget rendering", () => {
     ).join("\n");
 
     assert.match(text, /ticket: Show active tk title/);
-    assert.match(text, /Step 1\/2: parallel group · 2\/2 done/);
+    assert.match(text, /2\/3 done/);
     assert.ok(
       text.indexOf("ticket: Show active tk title") <
         text.indexOf("Press Ctrl+Shift+D for live detail"),
@@ -364,7 +363,6 @@ describe("subagent async widget rendering", () => {
           asyncDir: "/tmp/run-ticket",
           status: "running",
           mode: "parallel",
-          activeParallelGroup: true,
           agents: ["ticketed"],
           tkTicket: { id: "psr-raw4", title: "Show active tk title" },
           steps: [{ index: 0, agent: "ticketed", status: "running", currentTool: "read" }],
@@ -375,7 +373,6 @@ describe("subagent async widget rendering", () => {
           asyncDir: "/tmp/run-plain",
           status: "running",
           mode: "parallel",
-          activeParallelGroup: true,
           agents: ["plain"],
           steps: [{ index: 0, agent: "plain", status: "running", currentTool: "grep" }],
           stepsTotal: 1,
@@ -390,7 +387,7 @@ describe("subagent async widget rendering", () => {
     assert.ok(text.indexOf("ticket: Show active tk title") < text.indexOf("⎿  read"));
   });
 
-  it("uses spinner and done wording for async jobs with parallel groups", () => {
+  it("uses spinner and done wording for async parallel jobs", () => {
     const lines = buildWidgetLines(
       [
         {
@@ -399,8 +396,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["scout", "reviewer", "worker"],
-          hasParallelGroups: true,
-          activeParallelGroup: true,
           runningSteps: 3,
           completedSteps: 0,
           stepsTotal: 3,
@@ -427,7 +422,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer", "reviewer", "reviewer"],
-          activeParallelGroup: true,
           runningSteps: 3,
           completedSteps: 0,
           stepsTotal: 3,
@@ -507,7 +501,7 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /\/private\/|54321|cleanup failed/);
   });
 
-  it("projects continued lifecycles as healthy across single, parallel, chain, and compact layouts", () => {
+  it("projects continued lifecycles as healthy across single, parallel, and compact layouts", () => {
     const staleStep = {
       index: 0,
       agent: "worker",
@@ -548,7 +542,6 @@ describe("subagent async widget rendering", () => {
           mode: "parallel",
           agents: ["worker", "reviewer"],
           stepsTotal: 2,
-          activeParallelGroup: true,
           steps: [
             staleStep,
             { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
@@ -563,32 +556,6 @@ describe("subagent async widget rendering", () => {
     assert.match(parallelText, /Agent 2\/2: reviewer · continued/);
     assert.doesNotMatch(parallelText, /✗|pausing|stale-tool|stale\/path/);
 
-    const chainText = buildWidgetLines(
-      [
-        {
-          asyncId: "continued-chain",
-          asyncDir: "/tmp/continued-chain",
-          status: "continued",
-          mode: "chain",
-          agents: ["worker", "reviewer", "writer"],
-          currentStep: 2,
-          chainStepCount: 2,
-          parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
-          stepsTotal: 3,
-          steps: [
-            { ...staleStep, index: 0 },
-            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
-            { ...staleStep, index: 2, agent: "writer", status: "running" as const },
-          ],
-        },
-      ],
-      theme,
-      180,
-    ).join("\n");
-    assert.match(chainText, /Step 1\/2: parallel group · 2\/2 done/);
-    assert.match(chainText, /Step 2\/2: writer · continued/);
-    assert.doesNotMatch(chainText, /✗|pausing|stale-tool|stale\/path/);
-
     const pendingParallelText = buildWidgetLines(
       [
         {
@@ -598,7 +565,6 @@ describe("subagent async widget rendering", () => {
           mode: "parallel",
           agents: ["worker", "reviewer", "tail"],
           stepsTotal: 3,
-          activeParallelGroup: true,
           steps: [
             { ...staleStep, agent: "worker", status: "complete" as const },
             { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
@@ -613,37 +579,12 @@ describe("subagent async widget rendering", () => {
     assert.match(pendingParallelText, /Agent 3\/3: tail · pending/);
     assert.doesNotMatch(pendingParallelText, /Agent 3\/3: tail · continued/);
 
-    const pendingChainText = buildWidgetLines(
-      [
-        {
-          asyncId: "continued-chain-pending-tail",
-          asyncDir: "/tmp/continued-chain-pending-tail",
-          status: "continued",
-          mode: "chain",
-          agents: ["worker", "reviewer", "tail"],
-          chainStepCount: 3,
-          stepsTotal: 3,
-          currentStep: 2,
-          steps: [
-            { ...staleStep, agent: "worker", status: "complete" as const },
-            { ...staleStep, index: 1, agent: "reviewer", status: "paused" as const },
-            { ...staleStep, index: 2, agent: "tail", status: "pending" as const },
-          ],
-        },
-      ],
-      theme,
-      180,
-    ).join("\n");
-    assert.match(pendingChainText, /Step 3\/3: tail · pending/);
-    assert.doesNotMatch(pendingChainText, /Step 3\/3: tail · continued/);
-
     const buildCompactParallelJob = (status: "continued" | "running"): AsyncJobState => ({
       asyncId: `compact-${status}-parallel`,
       asyncDir: `/tmp/compact-${status}-parallel`,
       status,
       mode: "parallel",
       agents: Array.from({ length: 9 }, (_, index) => `worker-${index + 1}`),
-      activeParallelGroup: true,
       stepsTotal: 9,
       interruptRequestedAt: 20_000,
       currentTool: "stale-job-tool",
@@ -708,7 +649,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: ["parallel-worker"],
-        activeParallelGroup: true,
         runningSteps: 1,
         completedSteps: 0,
         stepsTotal: 1,
@@ -794,7 +734,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["worker"],
-          activeParallelGroup: true,
           runningSteps: 1,
           completedSteps: 0,
           stepsTotal: 1,
@@ -953,7 +892,6 @@ describe("subagent async widget rendering", () => {
           status: "running" as const,
           mode: "parallel" as const,
           agents: ["worker-1", "worker-2", "worker-3"],
-          activeParallelGroup: true,
           runningSteps: 2,
           completedSteps: 1,
           stepsTotal: 3,
@@ -995,7 +933,6 @@ describe("subagent async widget rendering", () => {
           status: "running" as const,
           mode: "parallel" as const,
           agents: ["pausing-worker", "active-worker"],
-          activeParallelGroup: true,
           runningSteps: 2,
           completedSteps: 0,
           stepsTotal: 2,
@@ -1032,7 +969,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["worker"],
-          activeParallelGroup: true,
           runningSteps: 1,
           completedSteps: 0,
           stepsTotal: 1,
@@ -1150,7 +1086,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: ["reviewer", "reviewer", "reviewer"],
-        activeParallelGroup: true,
         runningSteps: 3,
         completedSteps: 0,
         stepsTotal: 3,
@@ -1235,7 +1170,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer", "reviewer", "reviewer"],
-          activeParallelGroup: true,
           runningSteps: 3,
           completedSteps: 0,
           stepsTotal: 3,
@@ -1287,7 +1221,6 @@ describe("subagent async widget rendering", () => {
               status: "running",
               mode: "parallel",
               agents: ["worker", "worker", "worker", "worker"],
-              activeParallelGroup: true,
               runningSteps: 4,
               completedSteps: 0,
               stepsTotal: 4,
@@ -1432,7 +1365,6 @@ describe("subagent async widget rendering", () => {
               status: "running",
               mode: "parallel",
               agents: ["worker", "worker", "worker", "worker"],
-              activeParallelGroup: true,
               runningSteps: 4,
               completedSteps: 0,
               stepsTotal: 4,
@@ -1721,7 +1653,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["scout", "reviewer"],
-          activeParallelGroup: true,
           runningSteps: 2,
           completedSteps: 0,
           stepsTotal: 2,
@@ -1812,7 +1743,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: Array.from({ length: 40 }, (_, index) => `agent-${index}`),
-          activeParallelGroup: true,
           runningSteps: 40,
           completedSteps: 0,
           stepsTotal: 40,
@@ -1899,7 +1829,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: Array.from({ length: 15 }, (_, i) => `subagent-${i}`),
-        activeParallelGroup: true,
         runningSteps: 0,
         completedSteps: 15,
         stepsTotal: 15,
@@ -1949,7 +1878,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: ["developer", "code-reviewer"],
-        activeParallelGroup: true,
         runningSteps: 12,
         completedSteps: 0,
         stepsTotal: 12,
@@ -2050,7 +1978,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: ["developer", "code-reviewer"],
-        activeParallelGroup: true,
         runningSteps: 12,
         completedSteps: 0,
         stepsTotal: 12,
@@ -2111,7 +2038,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: Array.from({ length: 10 }, (_, i) => `agent-${i}`),
-        activeParallelGroup: true,
         runningSteps: 10,
         completedSteps: 0,
         stepsTotal: 10,
@@ -2196,7 +2122,6 @@ describe("subagent async widget rendering", () => {
         status: "running",
         mode: "parallel",
         agents: Array.from({ length: 10 }, (_, i) => `agent-${i}`),
-        activeParallelGroup: true,
         runningSteps: 10,
         completedSteps: 0,
         stepsTotal: 10,
@@ -2268,7 +2193,6 @@ describe("subagent async widget rendering", () => {
             updatedAt: now,
             ...(mode === "parallel"
               ? {
-                  activeParallelGroup: true,
                   runningSteps: steps,
                   completedSteps: 0,
                   stepsTotal: Math.max(1, steps),
@@ -2463,7 +2387,6 @@ describe("subagent async widget rendering", () => {
           activityState: "active_long_running",
           lastActivityAt,
           updatedAt: now,
-          activeParallelGroup: true,
           stepsTotal: 2,
           runningSteps: 2,
           completedSteps: 0,
@@ -2537,7 +2460,6 @@ describe("subagent async widget rendering", () => {
           activityState: "active_long_running",
           lastActivityAt,
           updatedAt: now,
-          activeParallelGroup: true,
           stepsTotal: 15,
           runningSteps: 15,
           completedSteps: 0,
@@ -2883,7 +2805,6 @@ describe("subagent async widget rendering", () => {
             status: "running",
             mode: "parallel",
             agents: ["reviewer"],
-            activeParallelGroup: true,
             runningSteps: 1,
             completedSteps: 0,
             stepsTotal: 1,
@@ -2912,7 +2833,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer", "reviewer", "reviewer"],
-          activeParallelGroup: true,
           runningSteps: 2,
           completedSteps: 1,
           stepsTotal: 3,
@@ -2963,7 +2883,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer", "reviewer"],
-          activeParallelGroup: true,
           runningSteps: 1,
           completedSteps: 1,
           stepsTotal: 2,
@@ -3008,7 +2927,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer", "scout"],
-          activeParallelGroup: true,
           runningSteps: 2,
           completedSteps: 0,
           stepsTotal: 2,
@@ -3102,7 +3020,6 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["reviewer"],
-          activeParallelGroup: true,
           runningSteps: 1,
           completedSteps: 0,
           stepsTotal: 1,
@@ -3132,7 +3049,6 @@ describe("subagent async widget rendering", () => {
       status: "running",
       mode: "parallel",
       agents: ["reviewer"],
-      activeParallelGroup: true,
       runningSteps: 1,
       completedSteps: 0,
       stepsTotal: 1,
@@ -3234,7 +3150,6 @@ describe("subagent async widget rendering", () => {
       asyncDir: "/tmp/unbroken-command-token",
       status: "running",
       mode: "parallel",
-      activeParallelGroup: true,
       agents: Array.from({ length: 12 }, () => longAgent),
       runningSteps: 1,
       completedSteps: 11,
@@ -3286,7 +3201,6 @@ describe("subagent async widget rendering", () => {
       asyncDir: "/tmp/compact-command-status-density",
       status: "running",
       mode: "parallel",
-      activeParallelGroup: true,
       agents: Array.from({ length: 12 }, () => "worker"),
       runningSteps: 1,
       completedSteps: 11,
@@ -3507,7 +3421,6 @@ describe("subagent async widget rendering", () => {
       asyncDir: "/tmp/compact-command-prefix",
       status: "running",
       mode: "parallel",
-      activeParallelGroup: true,
       agents: Array.from({ length: 12 }, () => longAgent),
       runningSteps: 1,
       completedSteps: 11,
@@ -3769,67 +3682,7 @@ describe("subagent async widget rendering", () => {
     assert.doesNotMatch(text, /Press Configured\+Expand\+Key for live detail/);
   });
 
-  it("includes logical chain context for active async chain parallel groups", () => {
-    const lines = buildWidgetLines(
-      [
-        {
-          asyncId: "run-chain",
-          asyncDir: "/tmp/chain",
-          status: "running",
-          mode: "chain",
-          agents: ["reviewer", "auditor"],
-          activeParallelGroup: true,
-          currentStep: 1,
-          chainStepCount: 3,
-          parallelGroups: [{ start: 1, count: 2, stepIndex: 1 }],
-          runningSteps: 1,
-          completedSteps: 1,
-          stepsTotal: 2,
-        },
-      ],
-      theme,
-      160,
-    );
-
-    const text = lines.join("\n");
-    assert.match(text, /step 2\/3 · parallel group: 1\/2 done/);
-  });
-
-  it("uses logical chain steps after an async chain parallel group finishes", () => {
-    const job: AsyncJobState = {
-      asyncId: "run-chain",
-      asyncDir: "/tmp/chain",
-      status: "running",
-      mode: "chain",
-      agents: ["scout", "reviewer", "auditor", "writer"],
-      activeParallelGroup: false,
-      currentStep: 3,
-      chainStepCount: 2,
-      parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-      stepsTotal: 4,
-      steps: [
-        { index: 0, agent: "scout", status: "complete" },
-        { index: 1, agent: "reviewer", status: "complete" },
-        { index: 2, agent: "auditor", status: "complete" },
-        { index: 3, agent: "writer", status: "running", toolCount: 1 },
-      ],
-    };
-    const text = buildWidgetLines([job], theme, 180).join("\n");
-    assert.match(text, /async subagent chain \(2\)/);
-    assert.match(text, /chain · step 2\/2/);
-    assert.match(text, /Step 1\/2: parallel group · 3\/3 done/);
-    assert.match(text, /Step 2\/2: writer/);
-    assert.doesNotMatch(text, /1 tool use|duration|token|turn/);
-    assert.match(text, /Press Ctrl\+Shift\+D for live detail/);
-    assert.doesNotMatch(text, outputPathPattern("/tmp/chain/output-3.log"));
-    assert.doesNotMatch(text, /step 4\/4/);
-    assert.doesNotMatch(text, /Step 4\/4/);
-
-    const expandedText = buildWidgetLines([job], theme, 180, true).join("\n");
-    assert.match(expandedText, outputPathPattern("/tmp/chain/output-3.log"));
-  });
-
-  it("omits zero-running labels for pending active async parallel groups", () => {
+  it("omits zero-running labels for pending active async parallel jobs", () => {
     const lines = buildWidgetLines(
       [
         {
@@ -3838,24 +3691,9 @@ describe("subagent async widget rendering", () => {
           status: "running",
           mode: "parallel",
           agents: ["scout", "reviewer", "worker"],
-          activeParallelGroup: true,
           runningSteps: 0,
           completedSteps: 0,
           stepsTotal: 3,
-        },
-        {
-          asyncId: "chain-pending",
-          asyncDir: "/tmp/chain-pending",
-          status: "running",
-          mode: "chain",
-          agents: ["reviewer", "auditor"],
-          activeParallelGroup: true,
-          currentStep: 0,
-          chainStepCount: 2,
-          parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
-          runningSteps: 0,
-          completedSteps: 0,
-          stepsTotal: 2,
         },
       ],
       theme,
@@ -3863,9 +3701,9 @@ describe("subagent async widget rendering", () => {
     );
 
     const text = lines.join("\n");
-    assert.match(text, /parallel · 0\/3 done/);
-    assert.match(text, /chain · step 1\/2 · parallel group: 0\/2 done/);
+    assert.match(text, /0\/3 done/);
     assert.doesNotMatch(text, /0 agents running/);
+    assert.doesNotMatch(text, /chain|parallel group/i);
   });
 
   it("shows explicit overflow counts for hidden work", () => {

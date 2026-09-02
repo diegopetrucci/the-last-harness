@@ -55,7 +55,6 @@ const KNOWN_FRONTMATTER_FIELDS = new Set([
   "systemPromptMode",
   "inheritProjectContext",
   "inheritSkills",
-  "defaultContext",
   "acceptanceRole",
   "skill",
   "skills",
@@ -1116,9 +1115,11 @@ function parseProjectAgentDefinitionFromText(
       "systemPromptMode must be 'append' or 'replace'",
     );
   }
-  const defaultContext = frontmatter.defaultContext;
-  if (defaultContext !== undefined && defaultContext !== "fresh" && defaultContext !== "fork") {
-    throw new ProjectAgentDefinitionError(filePath, "defaultContext must be 'fresh' or 'fork'");
+  if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+    throw new ProjectAgentDefinitionError(
+      filePath,
+      "defaultContext is no longer supported; remove it because TLH always starts child sessions fresh",
+    );
   }
 
   let acceptanceRole: AcceptanceRole | undefined;
@@ -1185,7 +1186,6 @@ function parseProjectAgentDefinitionFromText(
             : "replace",
     inheritProjectContext,
     inheritSkills,
-    defaultContext,
     acceptanceRole,
     systemPrompt: body,
     source: "project",

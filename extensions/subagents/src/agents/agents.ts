@@ -5,12 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type {
-  AcceptanceInput,
-  AcceptanceRole,
-  OutputMode,
-  ToolBudgetConfig,
-} from "../shared/types.ts";
+import type { AcceptanceRole, ToolBudgetConfig } from "../shared/types.ts";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
@@ -35,7 +30,6 @@ export type AgentScope = "user" | "project" | "both";
 
 type AgentSource = "builtin" | "package" | "user" | "project";
 type SystemPromptMode = "append" | "replace";
-type AgentDefaultContext = "fresh" | "fork";
 
 function defaultSystemPromptMode(name: string): SystemPromptMode {
   return name === "delegate" ? "append" : "replace";
@@ -60,7 +54,6 @@ const KNOWN_FIELDS = new Set([
   "systemPromptMode",
   "inheritProjectContext",
   "inheritSkills",
-  "defaultContext",
   "acceptanceRole",
   "skill",
   "skills",
@@ -84,7 +77,6 @@ interface BuiltinAgentOverrideBase {
   systemPromptMode: SystemPromptMode;
   inheritProjectContext: boolean;
   inheritSkills: boolean;
-  defaultContext?: AgentDefaultContext;
   acceptanceRole?: AcceptanceRole;
   disabled?: boolean;
   systemPrompt: string;
@@ -104,7 +96,6 @@ interface BuiltinAgentOverrideConfig {
   systemPromptMode?: SystemPromptMode;
   inheritProjectContext?: boolean;
   inheritSkills?: boolean;
-  defaultContext?: AgentDefaultContext | false;
   acceptanceRole?: AcceptanceRole | false;
   disabled?: boolean;
   systemPrompt?: string;
@@ -147,7 +138,6 @@ export interface AgentConfig {
   systemPromptMode: SystemPromptMode;
   inheritProjectContext: boolean;
   inheritSkills: boolean;
-  defaultContext?: AgentDefaultContext;
   acceptanceRole?: AcceptanceRole;
   systemPrompt: string;
   source: AgentSource;
@@ -161,7 +151,7 @@ export interface AgentConfig {
   interactive?: boolean;
   maxSubagentDepth?: number;
   completionGuard?: boolean;
-  /** When false, omit generic supervisor bridge guidance and contact_supervisor runtime support. */
+  /** When false, omit generic native supervisor guidance and contact_supervisor runtime support. */
   supervisorBridge?: boolean;
   toolBudget?: ToolBudgetConfig;
   maxExecutionTimeMs?: number;
@@ -187,45 +177,6 @@ class AgentDefinitionValidationError extends Error {
   }
 }
 
-interface ChainStepConfig {
-  agent?: string;
-  task?: string;
-  phase?: string;
-  label?: string;
-  as?: string;
-  outputSchema?: string | Record<string, unknown>;
-  output?: string | false;
-  outputMode?: OutputMode;
-  reads?: string[] | false;
-  model?: string;
-  skills?: string[] | false;
-  progress?: boolean;
-  parallel?: unknown;
-  expand?: unknown;
-  collect?: unknown;
-  concurrency?: number;
-  failFast?: boolean;
-  acceptance?: AcceptanceInput;
-  toolBudget?: ToolBudgetConfig;
-}
-
-export interface ChainConfig {
-  name: string;
-  localName?: string;
-  packageName?: string;
-  description: string;
-  source: AgentSource;
-  filePath: string;
-  steps: ChainStepConfig[];
-  extraFields?: Record<string, string>;
-}
-
-interface ChainDiscoveryDiagnostic {
-  source: AgentSource;
-  filePath: string;
-  error: string;
-}
-
 export interface AgentDiscoveryDiagnostic {
   source: AgentSource;
   filePath: string;
@@ -241,10 +192,6 @@ export interface AgentDiscoveryResult {
 
 export interface ProjectAgentSnapshotDiscoveryResult extends AgentDiscoveryResult {
   projectSnapshot: ProjectAgentSnapshotDiscoveryMetadata;
-}
-
-function getUserChainDir(): string {
-  return path.join(getAgentDir(), "chains");
 }
 
 function splitToolList(rawTools: string[] | undefined): { tools?: string[] | null } {
@@ -289,7 +236,6 @@ function cloneOverrideBase(agent: AgentConfig): BuiltinAgentOverrideBase {
     systemPromptMode: agent.systemPromptMode,
     inheritProjectContext: agent.inheritProjectContext,
     inheritSkills: agent.inheritSkills,
-    defaultContext: agent.defaultContext,
     acceptanceRole: agent.acceptanceRole,
     disabled: agent.disabled,
     systemPrompt: agent.systemPrompt,
@@ -441,20 +387,6 @@ function parseBuiltinOverrideEntry(
     } else {
       throw new Error(
         `Builtin override '${name}' in '${filePath}' has invalid 'inheritSkills'; expected a boolean.`,
-      );
-    }
-  }
-
-  if ("defaultContext" in input) {
-    if (
-      input.defaultContext === "fresh" ||
-      input.defaultContext === "fork" ||
-      input.defaultContext === false
-    ) {
-      override.defaultContext = input.defaultContext;
-    } else {
-      throw new Error(
-        `Builtin override '${name}' in '${filePath}' has invalid 'defaultContext'; expected 'fresh', 'fork', or false.`,
       );
     }
   }
@@ -688,13 +620,6 @@ function applyCustomAgentOverride(
   if (override.inheritSkills !== undefined) {
     fill("inheritSkills", ["inheritSkills"], override.inheritSkills);
   }
-  if (override.defaultContext !== undefined) {
-    fill(
-      "defaultContext",
-      ["defaultContext"],
-      override.defaultContext === false ? undefined : override.defaultContext,
-    );
-  }
   if (override.acceptanceRole !== undefined) {
     fill(
       "acceptanceRole",
@@ -900,12 +825,11 @@ function loadAgentsFromDir(
           : frontmatter.inheritSkills === "false"
             ? false
             : defaultInheritSkills();
-      const defaultContext =
-        frontmatter.defaultContext === "fork"
-          ? ("fork" as const)
-          : frontmatter.defaultContext === "fresh"
-            ? ("fresh" as const)
-            : undefined;
+      if (Object.prototype.hasOwnProperty.call(frontmatter, "defaultContext")) {
+        throw new AgentDefinitionValidationError(
+          `Agent '${localName}' uses retired defaultContext; remove it because TLH always starts child sessions fresh.`,
+        );
+      }
       let acceptanceRole: AcceptanceRole | undefined;
       if (frontmatter.acceptanceRole !== undefined && frontmatter.acceptanceRole.trim()) {
         if (frontmatter.acceptanceRole === "read-only" || frontmatter.acceptanceRole === "writer")
@@ -990,7 +914,6 @@ function loadAgentsFromDir(
         systemPromptMode,
         inheritProjectContext,
         inheritSkills,
-        defaultContext,
         acceptanceRole,
         systemPrompt: body,
         source,
@@ -1036,13 +959,6 @@ function resolveNearestProjectAgentDirs(cwd: string): { preferredDir: string | n
   if (!projectRoot) return { preferredDir: null };
 
   return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
-}
-
-function resolveNearestProjectChainDirs(cwd: string): { preferredDir: string | null } {
-  const projectRoot = findNearestProjectRoot(cwd);
-  if (!projectRoot) return { preferredDir: null };
-
-  return { preferredDir: path.join(getProjectConfigDir(projectRoot), "chains") };
 }
 
 /**
@@ -1157,21 +1073,15 @@ export function discoverAgentsAll(cwd: string): {
   package: AgentConfig[];
   user: AgentConfig[];
   project: AgentConfig[];
-  chains: ChainConfig[];
-  chainDiagnostics: ChainDiscoveryDiagnostic[];
   agentDiagnostics?: AgentDiscoveryDiagnostic[];
   userDir: string;
   projectDir: string | null;
-  userChainDir: string;
-  projectChainDir: string | null;
   userSettingsPath: string;
   projectSettingsPath: string | null;
 } {
   const userDirOld = path.join(getAgentDir(), "agents");
   const userDirNew = getLegacyGlobalAgentsDir();
-  const userChainDir = getUserChainDir();
   const { preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
-  const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
   const userSettingsPath = getUserAgentSettingsPath();
   const projectSettingsPath = getProjectAgentSettingsPath(cwd);
   const userSettings = readSubagentSettings(userSettingsPath);
@@ -1196,8 +1106,6 @@ export function discoverAgentsAll(cwd: string): {
   const packageAgents: AgentConfig[] = [];
   const project: AgentConfig[] = [];
 
-  const chains: ChainConfig[] = [];
-  const chainDiagnostics: ChainDiscoveryDiagnostic[] = [];
   const userDir = userDirNew && fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
   return {
@@ -1205,13 +1113,9 @@ export function discoverAgentsAll(cwd: string): {
     package: packageAgents,
     user,
     project,
-    chains,
-    chainDiagnostics,
     agentDiagnostics,
     userDir,
     projectDir,
-    userChainDir,
-    projectChainDir,
     userSettingsPath,
     projectSettingsPath,
   };

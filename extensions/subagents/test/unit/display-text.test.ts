@@ -20,7 +20,7 @@ import {
 } from "../../src/runs/background/fleet-view.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { formatNestedRunStatusLines } from "../../src/runs/shared/nested-render.ts";
-import { formatForegroundNativeSubagentResult } from "../../src/intercom/result-intercom.ts";
+import { formatForegroundNativeSubagentResult } from "../../src/shared/result-formatting.ts";
 import type { AsyncJobStep, AsyncStatus, NestedRunSummary } from "../../src/shared/types.ts";
 
 const unsafe = "visible \x1b[31mred\x1b[0m\x07tail";
@@ -162,7 +162,6 @@ describe("background display boundaries", () => {
           startedAt: 100,
           lastUpdate: 200,
           error: unsafe,
-          turnBudget: { turnCount: 5, maxTurns: 10, graceTurns: 1, outcome: "bad\u0000outcome" },
           steps: [{ agent: "worker", status: "failed", error: unsafe }],
         }),
         "utf8",
@@ -177,7 +176,6 @@ describe("background display boundaries", () => {
       assertTerminalSafe(rendered);
       assert.match(rendered, /Error: visible red tail/);
       assert.match(rendered, /error: visible red tail/);
-      assert.match(rendered, /Turn budget: 5\/10\+1 \(\[binary content\]\)/);
       assert.notEqual(rendered, BINARY_CONTENT_PLACEHOLDER);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

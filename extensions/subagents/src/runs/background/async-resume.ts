@@ -10,7 +10,6 @@ import {
   lifecycleContinuationForIndex,
   recoverStaleLifecycleContinuationClaim,
 } from "../shared/lifecycle-state.ts";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.ts";
 import {
   normalizeProjectAgentRunCapture,
   type ProjectAgentRunCapture,
@@ -152,7 +151,6 @@ type AsyncResumeTarget = {
   state: AsyncStatus["state"];
   agent: string;
   index: number;
-  intercomTarget: string;
   cwd?: string;
   sessionFile?: string;
   tkTicket?: import("../../shared/types.ts").TkTicketMetadata;
@@ -347,12 +345,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
         resultPath,
         `results[${index}].sessionFile`,
       );
-      const intercomTarget = validateOptionalString(
-        child,
-        "intercomTarget",
-        resultPath,
-        `results[${index}].intercomTarget`,
-      );
       const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
       const thinking = parseThinkingLevel(child.thinking);
       const modelIdentity = parseResultModelIdentity(
@@ -411,7 +403,6 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
       return {
         agent,
         sessionFile,
-        intercomTarget,
         ...(typeof success === "boolean" ? { success } : {}),
         ...(typeof interrupted === "boolean" ? { interrupted } : {}),
         ...(model ? { model } : {}),
@@ -953,7 +944,6 @@ function buildLiveAsyncResumeTarget(
     state: context.state,
     agent: statusStep.agent,
     index,
-    intercomTarget: resolveSubagentIntercomTarget(context.runId, statusStep.agent, index),
     cwd: context.status?.cwd ?? context.result?.cwd,
     sessionFile:
       statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
@@ -1124,7 +1114,6 @@ function resolveTerminalAsyncResumeTarget(
     state: context.state,
     agent,
     index,
-    intercomTarget: resolveSubagentIntercomTarget(context.runId, agent, index),
     cwd: context.status?.cwd ?? context.result?.cwd,
     ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
   };

@@ -6,15 +6,15 @@ import {
   attachNestedChildrenToResultChildren,
   formatForegroundNativeSubagentResult,
   resolveSubagentResultStatus,
-} from "../../src/intercom/result-intercom.ts";
-import type { SubagentResultIntercomChild } from "../../src/shared/types.ts";
+} from "../../src/shared/result-formatting.ts";
+import type { SubagentResultChild } from "../../src/shared/types.ts";
 import { makePublicNestedRunSummary } from "../support/helpers.ts";
 
-describe("result intercom formatter", () => {
+describe("result formatter", () => {
   it("attaches compact nested children under their parent result child without route secrets", () => {
-    // Typed as SubagentResultIntercomChild[] so T is inferred as the full interface,
+    // Typed as SubagentResultChild[] so T is inferred as the full interface,
     // making children (which the function attaches) accessible on the return type.
-    const items: SubagentResultIntercomChild[] = [
+    const items: SubagentResultChild[] = [
       { agent: "owner-a", status: "completed", summary: "done", index: 0 },
       { agent: "owner-b", status: "completed", summary: "done", index: 1 },
     ];
@@ -66,7 +66,6 @@ describe("result intercom formatter", () => {
           status: "completed",
           summary: "done",
           artifactPath: "/tmp/a.md",
-          intercomTarget: "subagent-a-run-native-1",
           index: 0,
         },
         {
@@ -103,16 +102,13 @@ describe("result intercom formatter", () => {
     );
     assert.match(grouped.text, /Output artifact: \/tmp\/a\.md/);
     assert.match(grouped.text, /Session: \/tmp\/b\.jsonl/);
-    assert.doesNotMatch(grouped.text, /intercom target/i);
-    assert.doesNotMatch(grouped.text, /Intercom targets below/i);
     assert.ok(grouped.text.length <= 8_000);
   });
 
   it("bounds native foreground errors, child summaries, and nested previews", () => {
     const grouped = formatForegroundNativeSubagentResult({
-      runId: "run-chain-native-error",
-      mode: "chain",
-      chainSteps: 2,
+      runId: "run-native-error",
+      mode: "parallel",
       statusOverride: "failed",
       errorSummary: `Collected output validation failed: ${"E".repeat(2_000)}`,
       children: [
@@ -123,10 +119,10 @@ describe("result intercom formatter", () => {
           artifactPath: "/tmp/reviewer-output.md",
           children: Array.from({ length: 9 }, (_, index) => ({
             id: `nested-${index}`,
-            parentRunId: "run-chain-native-error",
+            parentRunId: "run-native-error",
             parentStepIndex: 0,
             depth: 1,
-            path: [{ runId: "run-chain-native-error", stepIndex: 0 }],
+            path: [{ runId: "run-native-error", stepIndex: 0 }],
             state: "complete",
             agent: `nested-agent-${index}`,
             children: [
@@ -134,10 +130,7 @@ describe("result intercom formatter", () => {
                 id: `nested-${index}-child`,
                 parentRunId: `nested-${index}`,
                 depth: 2,
-                path: [
-                  { runId: "run-chain-native-error", stepIndex: 0 },
-                  { runId: `nested-${index}` },
-                ],
+                path: [{ runId: "run-native-error", stepIndex: 0 }, { runId: `nested-${index}` }],
                 state: "complete",
                 agent: `nested-child-${index}`,
                 children: [
@@ -146,7 +139,7 @@ describe("result intercom formatter", () => {
                     parentRunId: `nested-${index}-child`,
                     depth: 3,
                     path: [
-                      { runId: "run-chain-native-error", stepIndex: 0 },
+                      { runId: "run-native-error", stepIndex: 0 },
                       { runId: `nested-${index}` },
                       { runId: `nested-${index}-child` },
                     ],
@@ -163,7 +156,6 @@ describe("result intercom formatter", () => {
 
     assert.equal(grouped.status, "failed");
     assert.equal(grouped.summary, "1 failed");
-    assert.match(grouped.text, /Chain steps: 2/);
     assert.match(grouped.text, /Error:\nCollected output validation failed:/);
     assert.match(grouped.text, /\[error truncated; full text is unavailable\]/);
     assert.match(
@@ -211,9 +203,8 @@ describe("result intercom formatter", () => {
     );
   });
 
-  it("resolves paused and detached statuses", () => {
+  it("resolves paused, completed, and failed statuses", () => {
     assert.equal(resolveSubagentResultStatus({ interrupted: true }), "paused");
-    assert.equal(resolveSubagentResultStatus({ detached: true }), "detached");
     assert.equal(resolveSubagentResultStatus({ success: true }), "completed");
     assert.equal(resolveSubagentResultStatus({ exitCode: 1 }), "failed");
   });

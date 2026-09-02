@@ -253,7 +253,6 @@ test("test-runner is a fresh, non-mutating validation role with cheap provider d
   assert.equal(parsed.frontmatter.tools, "bash");
   assert.equal(parsed.frontmatter.inheritProjectContext, "false");
   assert.equal(parsed.frontmatter.inheritSkills, "false");
-  assert.equal(parsed.frontmatter.defaultContext, "fresh");
   assert.equal(parsed.frontmatter.completionGuard, "false");
   assert.equal(parsed.frontmatter.supervisorBridge, "false");
   assert.doesNotMatch(parsed.body, /contact_supervisor/);

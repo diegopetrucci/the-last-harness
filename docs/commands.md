@@ -214,9 +214,9 @@ The report is built from sanitized session analysis only. It omits raw transcrip
 
 ## Model-facing subagent tools
 
-TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports single or parallel execution plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
+TLH ships the `subagent` tool as first-party runtime functionality. It is a model-facing tool, not a slash command you need to invoke manually. `subagent` supports only direct single or parallel execution, in the foreground by default or through TLH-tracked background mode with `async: true`, plus the closed action set `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Each child starts a fresh session; caller `context`, agent `defaultContext`, and turn budgets are not supported. TLH-tracked async work uses a detached OS child process managed by TLH, not the removed external pi-intercom detach request/result/control integration. Saved chains and mutating agent-management actions are not in the model-facing TLH contract.
 
-The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-context/user/project-scope isolation, async control and durable resume behavior, acceptance, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
+The architect normally handles these tools for you. See [subagents.md](subagents.md) for dispatch fields, fresh-session/user/project-scope isolation, async control and durable resume behavior, native `contact_supervisor`, tool budgets, timeouts, diagnostics, acceptance, artifacts, migration, and undo steps. Project custom embedded-agent paths and trust rules are in [custom-subagents.md](custom-subagents.md).
 
 ## Project custom subagents
 

@@ -2,21 +2,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.js";
 import { isAsyncAvailable } from "../runs/background/async-execution.js";
-import { diagnoseIntercomBridge, } from "../intercom/intercom-bridge.js";
 import { discoverAvailableSkills, SOURCE_PRIORITY } from "../agents/skills.js";
-import { ASYNC_DIR, CHAIN_RUNS_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
 import { inspectRuntimeDirs } from "./runtime-cleanup.js";
 const DEFAULT_PATHS = {
     tempRootDir: TEMP_ROOT_DIR,
     asyncDir: ASYNC_DIR,
     resultsDir: RESULTS_DIR,
-    chainRunsDir: CHAIN_RUNS_DIR,
 };
 const DEFAULT_DEPS = {
     isAsyncAvailable,
     discoverAgentsAll,
     discoverAvailableSkills,
-    diagnoseIntercomBridge,
 };
 function errorText(error) {
     return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
@@ -100,15 +97,6 @@ function formatDiscovery(input, deps) {
         }),
     ];
 }
-function formatIntercomDiagnostic(diagnostic, context) {
-    const lines = [
-        `- bridge: ${diagnostic.active ? "active" : "inactive"}${diagnostic.reason ? ` (${diagnostic.reason})` : ""}`,
-        `- mode: ${diagnostic.mode}; context: ${context ?? "unspecified"}`,
-        `- orchestrator target: ${diagnostic.orchestratorTarget ?? "not available"}`,
-        `- supervisor channel: ${diagnostic.supervisorChannelAvailable ? "available" : "unavailable"} (${diagnostic.extensionDir})`,
-    ];
-    return lines;
-}
 function formatHeartbeatSection(summary) {
     if (!summary)
         return [`- heartbeat: not available`];
@@ -163,7 +151,6 @@ export function buildDoctorReport(input) {
         formatExistingDirectory("temp root", paths.tempRootDir),
         formatExistingDirectory("async runs", paths.asyncDir),
         formatExistingDirectory("results", paths.resultsDir),
-        formatExistingDirectory("chain runs", paths.chainRunsDir),
         lineFromCheck("runtime dir counts", () => formatRuntimeDirCounts(paths)),
         "",
         "Discovery",
@@ -171,13 +158,6 @@ export function buildDoctorReport(input) {
         "",
         "Permission system",
         ...formatPermissionSystemSection(),
-        "",
-        "Intercom bridge",
-        ...lineFromCheck("intercom bridge", () => formatIntercomDiagnostic(deps.diagnoseIntercomBridge({
-            config: input.config.intercomBridge,
-            context: input.context,
-            orchestratorTarget: input.orchestratorTarget,
-        }), input.context).join("\n")).split("\n"),
         "",
         "Heartbeat",
         ...formatHeartbeatSection(input.heartbeat),

@@ -1038,7 +1038,7 @@ export function buildAcceptanceReportDigest(report: AcceptanceReport): string {
  * Join an already-stripped output with its acceptance-report digest.
  *
  * Only ever applied to supervisor-facing artifact content, never to the semantic
- * output value (finalOutput / persisted output files / chain output references).
+ * output value (finalOutput / persisted output files / output references).
  * Pure remove-nothing/append-only string function.
  */
 export function appendAcceptanceReportDigest(output: string, report: AcceptanceReport): string {

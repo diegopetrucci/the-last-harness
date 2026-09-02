@@ -302,7 +302,6 @@ describe("canonical packaged agent overrides", () => {
             systemPromptMode: "append",
             inheritProjectContext: true,
             inheritSkills: true,
-            defaultContext: "fork",
             acceptanceRole: "writer",
             tools: ["bash", "mcp:xcodebuild_list_sims"],
             skills: ["tdd"],
@@ -326,7 +325,6 @@ describe("canonical packaged agent overrides", () => {
     assert.equal(developer.systemPromptMode, "append");
     assert.equal(developer.inheritProjectContext, true);
     assert.equal(developer.inheritSkills, true);
-    assert.equal(developer.defaultContext, "fork");
     assert.equal(developer.acceptanceRole, "writer");
     assert.deepEqual(developer.tools, ["bash"]);
     assert.deepEqual(developer.skills, ["tdd"]);
@@ -395,7 +393,6 @@ describe("canonical packaged agent overrides", () => {
             tools: ["bash"],
             skills: ["override-skill"],
             inheritProjectContext: true,
-            defaultContext: "fork",
             acceptanceRole: "writer",
             completionGuard: true,
             supervisorBridge: true,
@@ -405,7 +402,7 @@ describe("canonical packaged agent overrides", () => {
     });
     writeCanonicalAgent(
       "developer",
-      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\ndefaultContext: fresh\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
+      "---\nname: developer\ndescription: TLH developer\nmodel: google/gemini-3-pro\nthinking: medium\ntools: read, mcp:local_tool\nskills: agent-skill\ninheritProjectContext: false\nacceptanceRole: read-only\ncompletionGuard: false\nsupervisorBridge: false\n---\n\nImplement the change.\n",
     );
 
     const developer = findAgent("developer");
@@ -414,7 +411,6 @@ describe("canonical packaged agent overrides", () => {
     assert.deepEqual(developer.tools, ["read"]);
     assert.deepEqual(developer.skills, ["agent-skill"]);
     assert.equal(developer.inheritProjectContext, false);
-    assert.equal(developer.defaultContext, "fresh");
     assert.equal(developer.acceptanceRole, "read-only");
     assert.equal(developer.completionGuard, false);
     assert.equal(developer.supervisorBridge, false);

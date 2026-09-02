@@ -4,7 +4,7 @@ EXECUTION
 • Call { action: "list" } first; run only listed executable agents.
 • SINGLE: { agent, task? }.
 • PARALLEL: { tasks:[{ agent, task, cwd?, count?, output?, outputMode?, reads?, progress?, model? }, ...], concurrency? }.
-• Optional execution fields: context:"fresh"|"fork", async:true, timeoutMs, cwd, artifacts, includeProgress.
+• Optional execution fields: async:true, timeoutMs, cwd, artifacts, includeProgress.
 
 OUTPUT / MODELS
 • SINGLE also accepts output, outputMode, model, fallbackModels.

@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASYNC_DIR, RESULTS_DIR, } from "../../shared/types.js";
 import { lifecycleContinuationForIndex, recoverStaleLifecycleContinuationClaim, } from "../shared/lifecycle-state.js";
-import { resolveSubagentIntercomTarget } from "../../intercom/intercom-bridge.js";
 import { normalizeProjectAgentRunCapture, } from "../../agents/project-agent-snapshot.js";
 import { reconcileAsyncRun } from "./stale-run-reconciler.js";
 import { normalizeTkTicketMetadata } from "../shared/tk-ticket.js";
@@ -119,7 +118,6 @@ function validateResultFile(value, resultPath) {
             const child = ensureObject(entry, `${resultPath} results[${index}]`);
             const agent = validateOptionalString(child, "agent", resultPath, `results[${index}].agent`);
             const sessionFile = validateOptionalString(child, "sessionFile", resultPath, `results[${index}].sessionFile`);
-            const intercomTarget = validateOptionalString(child, "intercomTarget", resultPath, `results[${index}].intercomTarget`);
             const model = validateOptionalString(child, "model", resultPath, `results[${index}].model`);
             const thinking = parseThinkingLevel(child.thinking);
             const modelIdentity = parseResultModelIdentity(child.modelIdentity, resultPath, `results[${index}].modelIdentity`);
@@ -150,7 +148,6 @@ function validateResultFile(value, resultPath) {
             return {
                 agent,
                 sessionFile,
-                intercomTarget,
                 ...(typeof success === "boolean" ? { success } : {}),
                 ...(typeof interrupted === "boolean" ? { interrupted } : {}),
                 ...(model ? { model } : {}),
@@ -561,7 +558,6 @@ function buildLiveAsyncResumeTarget(context, index, statusStep) {
         state: context.state,
         agent: statusStep.agent,
         index,
-        intercomTarget: resolveSubagentIntercomTarget(context.runId, statusStep.agent, index),
         cwd: context.status?.cwd ?? context.result?.cwd,
         sessionFile: statusStep.sessionFile ?? context.status?.sessionFile ?? context.result?.sessionFile,
     };
@@ -676,7 +672,6 @@ function resolveTerminalAsyncResumeTarget(context) {
         state: context.state,
         agent,
         index,
-        intercomTarget: resolveSubagentIntercomTarget(context.runId, agent, index),
         cwd: context.status?.cwd ?? context.result?.cwd,
         ...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
     };

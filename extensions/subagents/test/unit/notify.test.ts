@@ -1502,7 +1502,7 @@ describe("completion formatting helpers", () => {
     );
   });
 
-  it("buildCompletionDetails prioritizes child failure, outer failure, pause, completion, then all-detached failure", () => {
+  it("buildCompletionDetails prioritizes child failure, outer failure, pause, and completion", () => {
     const base = {
       id: "grouped",
       agent: "parallel",
@@ -1553,23 +1553,6 @@ describe("completion formatting helpers", () => {
         ],
       }).status,
       "paused",
-    );
-    assert.equal(
-      buildCompletionDetails({
-        ...base,
-        results: [
-          { agent: "a", status: "completed", summary: "done" },
-          { agent: "b", status: "detached", summary: "detached" },
-        ],
-      }).status,
-      "completed",
-    );
-    assert.equal(
-      buildCompletionDetails({
-        ...base,
-        results: [{ agent: "a", status: "detached", summary: "detached" }],
-      }).status,
-      "failed",
     );
   });
 
