@@ -1,36 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CHAIN_RUNS_DIR, } from "./types.js";
-const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const INITIAL_PROGRESS_CONTENT = "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 function normalizeOutputOverride(output) {
     return output === "false" ? false : output;
-}
-export function isParallelStep(step) {
-    return "parallel" in step && Array.isArray(step.parallel);
-}
-export function cleanupOldChainDirs() {
-    if (!fs.existsSync(CHAIN_RUNS_DIR))
-        return;
-    const now = Date.now();
-    let dirs;
-    try {
-        dirs = fs.readdirSync(CHAIN_RUNS_DIR);
-    }
-    catch {
-        return;
-    }
-    for (const dir of dirs) {
-        try {
-            const dirPath = path.join(CHAIN_RUNS_DIR, dir);
-            const stat = fs.statSync(dirPath);
-            if (stat.isDirectory() && now - stat.mtimeMs > CHAIN_DIR_MAX_AGE_MS) {
-                fs.rmSync(dirPath, { recursive: true });
-            }
-        }
-        catch {
-        }
-    }
 }
 export function resolveStepBehavior(agentConfig, stepOverrides) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
@@ -87,7 +59,7 @@ export function suppressProgressForReadOnlyTask(behavior, task, originalTask) {
 function resolveExecutionPath(filePath, baseDir) {
     return path.isAbsolute(filePath) ? filePath : path.join(baseDir, filePath);
 }
-export function buildExecutionInstructions(behavior, baseDir, isFirstProgressAgent, previousSummary) {
+export function buildExecutionInstructions(behavior, baseDir, isFirstProgressAgent) {
     const prefixParts = [];
     const suffixParts = [];
     if (behavior.reads && behavior.reads.length > 0) {
@@ -107,15 +79,9 @@ export function buildExecutionInstructions(behavior, baseDir, isFirstProgressAge
             suffixParts.push(`Update progress at: ${progressPath}`);
         }
     }
-    if (previousSummary && previousSummary.trim()) {
-        suffixParts.push(`Previous step output:\n${previousSummary.trim()}`);
-    }
     const prefix = prefixParts.length > 0 ? prefixParts.join("\n") + "\n\n" : "";
     const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
     return { prefix, suffix };
-}
-export function buildChainInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary) {
-    return buildExecutionInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary);
 }
 export function writeInitialProgressFile(progressDir) {
     fs.mkdirSync(progressDir, { recursive: true });

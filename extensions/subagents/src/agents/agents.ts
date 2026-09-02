@@ -5,12 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type {
-  AcceptanceInput,
-  AcceptanceRole,
-  OutputMode,
-  ToolBudgetConfig,
-} from "../shared/types.ts";
+import type { AcceptanceRole, ToolBudgetConfig } from "../shared/types.ts";
 import { getLegacyGlobalAgentsDir, isGlobalAgentsDir } from "../shared/profile.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { mergeAgentsForScope } from "./agent-selection.ts";
@@ -182,45 +177,6 @@ class AgentDefinitionValidationError extends Error {
   }
 }
 
-interface ChainStepConfig {
-  agent?: string;
-  task?: string;
-  phase?: string;
-  label?: string;
-  as?: string;
-  outputSchema?: string | Record<string, unknown>;
-  output?: string | false;
-  outputMode?: OutputMode;
-  reads?: string[] | false;
-  model?: string;
-  skills?: string[] | false;
-  progress?: boolean;
-  parallel?: unknown;
-  expand?: unknown;
-  collect?: unknown;
-  concurrency?: number;
-  failFast?: boolean;
-  acceptance?: AcceptanceInput;
-  toolBudget?: ToolBudgetConfig;
-}
-
-export interface ChainConfig {
-  name: string;
-  localName?: string;
-  packageName?: string;
-  description: string;
-  source: AgentSource;
-  filePath: string;
-  steps: ChainStepConfig[];
-  extraFields?: Record<string, string>;
-}
-
-interface ChainDiscoveryDiagnostic {
-  source: AgentSource;
-  filePath: string;
-  error: string;
-}
-
 export interface AgentDiscoveryDiagnostic {
   source: AgentSource;
   filePath: string;
@@ -236,10 +192,6 @@ export interface AgentDiscoveryResult {
 
 export interface ProjectAgentSnapshotDiscoveryResult extends AgentDiscoveryResult {
   projectSnapshot: ProjectAgentSnapshotDiscoveryMetadata;
-}
-
-function getUserChainDir(): string {
-  return path.join(getAgentDir(), "chains");
 }
 
 function splitToolList(rawTools: string[] | undefined): { tools?: string[] | null } {
@@ -1009,13 +961,6 @@ function resolveNearestProjectAgentDirs(cwd: string): { preferredDir: string | n
   return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
 
-function resolveNearestProjectChainDirs(cwd: string): { preferredDir: string | null } {
-  const projectRoot = findNearestProjectRoot(cwd);
-  if (!projectRoot) return { preferredDir: null };
-
-  return { preferredDir: path.join(getProjectConfigDir(projectRoot), "chains") };
-}
-
 /**
  * @deprecated Retained only for callers that clear the retired generic source.
  * TLH does not read this environment variable for agent discovery.
@@ -1128,21 +1073,15 @@ export function discoverAgentsAll(cwd: string): {
   package: AgentConfig[];
   user: AgentConfig[];
   project: AgentConfig[];
-  chains: ChainConfig[];
-  chainDiagnostics: ChainDiscoveryDiagnostic[];
   agentDiagnostics?: AgentDiscoveryDiagnostic[];
   userDir: string;
   projectDir: string | null;
-  userChainDir: string;
-  projectChainDir: string | null;
   userSettingsPath: string;
   projectSettingsPath: string | null;
 } {
   const userDirOld = path.join(getAgentDir(), "agents");
   const userDirNew = getLegacyGlobalAgentsDir();
-  const userChainDir = getUserChainDir();
   const { preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
-  const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
   const userSettingsPath = getUserAgentSettingsPath();
   const projectSettingsPath = getProjectAgentSettingsPath(cwd);
   const userSettings = readSubagentSettings(userSettingsPath);
@@ -1167,8 +1106,6 @@ export function discoverAgentsAll(cwd: string): {
   const packageAgents: AgentConfig[] = [];
   const project: AgentConfig[] = [];
 
-  const chains: ChainConfig[] = [];
-  const chainDiagnostics: ChainDiscoveryDiagnostic[] = [];
   const userDir = userDirNew && fs.existsSync(userDirNew) ? userDirNew : userDirOld;
 
   return {
@@ -1176,13 +1113,9 @@ export function discoverAgentsAll(cwd: string): {
     package: packageAgents,
     user,
     project,
-    chains,
-    chainDiagnostics,
     agentDiagnostics,
     userDir,
     projectDir,
-    userChainDir,
-    projectChainDir,
     userSettingsPath,
     projectSettingsPath,
   };

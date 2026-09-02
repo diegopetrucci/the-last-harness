@@ -1,4 +1,4 @@
-import type { AgentConfig, ChainConfig } from "./agents.ts";
+import type { AgentConfig } from "./agents.ts";
 
 const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*$/;
 
@@ -33,7 +33,7 @@ export function buildRuntimeName(localName: string, packageName?: string): strin
 }
 
 export function frontmatterNameForConfig(
-  config: Pick<AgentConfig | ChainConfig, "name" | "localName" | "packageName">,
+  config: Pick<AgentConfig, "name" | "localName" | "packageName">,
 ): string {
   if (config.localName) return config.localName;
   if (config.packageName && config.name.startsWith(`${config.packageName}.`)) {

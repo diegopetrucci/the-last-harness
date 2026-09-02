@@ -3,13 +3,12 @@ import * as path from "node:path";
 import { discoverAgentsAll } from "../agents/agents.js";
 import { isAsyncAvailable } from "../runs/background/async-execution.js";
 import { discoverAvailableSkills, SOURCE_PRIORITY } from "../agents/skills.js";
-import { ASYNC_DIR, CHAIN_RUNS_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
+import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR, } from "../shared/types.js";
 import { inspectRuntimeDirs } from "./runtime-cleanup.js";
 const DEFAULT_PATHS = {
     tempRootDir: TEMP_ROOT_DIR,
     asyncDir: ASYNC_DIR,
     resultsDir: RESULTS_DIR,
-    chainRunsDir: CHAIN_RUNS_DIR,
 };
 const DEFAULT_DEPS = {
     isAsyncAvailable,
@@ -152,7 +151,6 @@ export function buildDoctorReport(input) {
         formatExistingDirectory("temp root", paths.tempRootDir),
         formatExistingDirectory("async runs", paths.asyncDir),
         formatExistingDirectory("results", paths.resultsDir),
-        formatExistingDirectory("chain runs", paths.chainRunsDir),
         lineFromCheck("runtime dir counts", () => formatRuntimeDirCounts(paths)),
         "",
         "Discovery",

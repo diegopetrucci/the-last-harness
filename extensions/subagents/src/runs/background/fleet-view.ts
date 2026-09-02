@@ -379,13 +379,10 @@ function formatAsyncFleetLines(runs: AsyncRunSummary[]): string[] {
     lines.push(`  transcript: subagent({ action: "status", id: "${runId}", view: "transcript" })`);
     for (const step of run.steps) {
       const agent = safeTerminalText(step.agent);
-      const label = step.label ? safeTerminalText(step.label) : undefined;
-      const display = label ? `${label} (${agent})` : agent;
-      const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
       const stepActivity = formatActivityFacts(step);
       const modelThinking = safeTerminalText(formatModelThinking(step.model, step.thinking));
       const parts = [
-        `${step.index}. ${phase}${display}`,
+        `${step.index}. ${agent}`,
         safeTerminalText(step.status),
         stepActivity,
         modelThinking,

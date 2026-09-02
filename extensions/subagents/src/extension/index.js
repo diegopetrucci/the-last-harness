@@ -7,7 +7,6 @@ import { discoverAgents } from "../agents/agents.js";
 import { getTlhProjectAgentAccess } from "../../../the-last-harness/project-agent-access.mjs";
 import { cleanupAllArtifactDirs, cleanupOldArtifacts, getArtifactsDir, } from "../shared/artifacts.js";
 import { resolveCurrentSessionId } from "../shared/session-identity.js";
-import { cleanupOldChainDirs } from "../shared/settings.js";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.js";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.js";
 import { externalSubagentCoexistenceWarning, findConfiguredExternalSubagentPackages, } from "./external-package-guard.js";
@@ -221,7 +220,6 @@ export default function registerSubagentExtension(pi) {
     }
     ensureAccessibleDir(RESULTS_DIR);
     ensureAccessibleDir(ASYNC_DIR);
-    cleanupOldChainDirs();
     cleanupRuntimeDirs();
     const config = loadConfig();
     const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);

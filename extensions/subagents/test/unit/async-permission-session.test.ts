@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import type { AgentConfig } from "../../src/agents/agents.ts";
-import { buildAsyncRunnerSteps } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 
 function makeAgent(name: string): AgentConfig {
   return {
@@ -20,8 +20,8 @@ function makeAgent(name: string): AgentConfig {
 describe("async permission forwarding session identity", () => {
   it("uses the parent session id for permission forwarding instead of the async status identity", () => {
     const currentSessionId = path.join("/tmp", "parent-session.jsonl");
-    const built = buildAsyncRunnerSteps("run-abc", {
-      chain: [{ agent: "worker", task: "Do work" }],
+    const built = buildAsyncRunnerPlan("run-abc", {
+      tasks: [{ agent: "worker", task: "Do work" }],
       agents: [makeAgent("worker")],
       ctx: {
         pi: {} as never,
@@ -30,25 +30,20 @@ describe("async permission forwarding session identity", () => {
         parentSessionId: "session-abc123",
       },
       maxSubagentDepth: 1,
-      asyncDir: "/tmp/async-run",
     });
 
     assert.ok(!("error" in built));
-    const step = built.steps[0];
+    const step = built.plan.tasks[0];
     assert.ok(step && !("parallel" in step));
     assert.equal(step.parentSessionId, "session-abc123");
   });
 
-  it("consumes one flat index per parallel task before later steps", () => {
-    const built = buildAsyncRunnerSteps("run-abc", {
-      chain: [
+  it("consumes one flat index per direct task", () => {
+    const built = buildAsyncRunnerPlan("run-abc", {
+      tasks: [
         { agent: "source", task: "produce targets" },
-        {
-          parallel: [
-            { agent: "reviewer", task: "Review first" },
-            { agent: "reviewer", task: "Review second" },
-          ],
-        },
+        { agent: "reviewer", task: "Review first" },
+        { agent: "reviewer", task: "Review second" },
         { agent: "worker", task: "Use reviews" },
       ],
       agents: [
@@ -68,17 +63,15 @@ describe("async permission forwarding session identity", () => {
         "/tmp/static-worker.jsonl",
       ],
       maxSubagentDepth: 1,
-      asyncDir: "/tmp/async-run",
     });
 
     assert.ok(!("error" in built));
-    const group = built.steps[1];
-    assert.ok(group && "parallel" in group && Array.isArray(group.parallel));
+    const parallelTasks = built.plan.tasks.slice(1, 3);
     assert.deepEqual(
-      group.parallel.map((task) => task.sessionFile),
+      parallelTasks.map((task) => task.sessionFile),
       ["/tmp/parallel-0.jsonl", "/tmp/parallel-1.jsonl"],
     );
-    const staticWorker = built.steps[2];
+    const staticWorker = built.plan.tasks[3];
     assert.ok(staticWorker && !("parallel" in staticWorker));
     assert.equal(staticWorker.sessionFile, "/tmp/static-worker.jsonl");
     assert.equal(staticWorker.model, "anthropic/claude-sonnet-4-5:high");
@@ -86,8 +79,8 @@ describe("async permission forwarding session identity", () => {
   });
 
   it("gates thinking levels on merged agent fallback candidates", () => {
-    const built = buildAsyncRunnerSteps("run-abc", {
-      chain: [{ agent: "worker", task: "Do work" }],
+    const built = buildAsyncRunnerPlan("run-abc", {
+      tasks: [{ agent: "worker", task: "Do work" }],
       agents: [
         {
           ...makeAgent("worker"),
@@ -117,11 +110,10 @@ describe("async permission forwarding session identity", () => {
         },
       ],
       maxSubagentDepth: 1,
-      asyncDir: "/tmp/async-run",
     });
 
     assert.ok(!("error" in built));
-    const step = built.steps[0];
+    const step = built.plan.tasks[0];
     assert.ok(step && !("parallel" in step));
     assert.equal(step.model, "openai/gpt-5:high");
     assert.deepEqual(step.modelCandidates, ["openai/gpt-5:high", "anthropic/claude-haiku-4-5"]);
@@ -131,8 +123,8 @@ describe("async permission forwarding session identity", () => {
   });
 
   it("applies agent thinking to async fallback candidates", () => {
-    const built = buildAsyncRunnerSteps("run-abc", {
-      chain: [{ agent: "worker", task: "Do work" }],
+    const built = buildAsyncRunnerPlan("run-abc", {
+      tasks: [{ agent: "worker", task: "Do work" }],
       agents: [
         {
           ...makeAgent("worker"),
@@ -147,11 +139,10 @@ describe("async permission forwarding session identity", () => {
         currentSessionId: "/tmp/parent-session.jsonl",
       },
       maxSubagentDepth: 1,
-      asyncDir: "/tmp/async-run",
     });
 
     assert.ok(!("error" in built));
-    const step = built.steps[0];
+    const step = built.plan.tasks[0];
     assert.ok(step && !("parallel" in step));
     assert.equal(step.model, "openai/gpt-5-mini:high");
     assert.deepEqual(step.modelCandidates, [

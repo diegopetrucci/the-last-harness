@@ -137,7 +137,7 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
     assert.equal(getProjectConfigDir(cwd), path.join(cwd, runtimeConfigDirName));
   });
 
-  it("discovers canonical packaged agents and settings while preserving chain paths", () => {
+  it("discovers canonical packaged agents and settings while ignoring legacy chain paths", () => {
     const settingsPath = path.join(agentDir, "settings.json");
     writeFile(
       path.join(agentDir, "tlh", "agents", "subagents", "developer.md"),
@@ -178,9 +178,7 @@ Inspect env.
 
     const discovered = discoverAgentsAll(cwd);
     assert.equal(discovered.userDir, path.join(agentDir, "agents"));
-    assert.equal(discovered.userChainDir, path.join(agentDir, "chains"));
     assert.equal(discovered.userSettingsPath, settingsPath);
-    assert.deepEqual(discovered.chains, []);
 
     const developer = discovered.user.find(
       (agent) =>

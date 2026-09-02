@@ -18,9 +18,8 @@ import { buildSubagentSpawnEnv, PI_CODING_AGENT_PACKAGE, getPiSpawnCommand, reso
 import { captureSingleOutputSnapshot, finalizeSingleOutput, formatSavedOutputReference, resolveSingleOutput, } from "../shared/single-output.js";
 import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput, getSubagentDepthEnv, } from "../../shared/types.js";
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, deriveActivityState, claimControlNotification, formatControlNoticeMessage, } from "../shared/subagent-control.js";
-import { isParallelGroup, flattenSteps, mapConcurrent, aggregateParallelOutputs, MAX_PARALLEL_CONCURRENCY, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
+import { mapConcurrent, MAX_PARALLEL_CONCURRENCY, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
-import { outputEntryFromAsyncResult, resolveOutputReferences } from "../shared/chain-outputs.js";
 import { createStructuredOutputRuntime, readStructuredOutput, } from "../shared/structured-output.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, resolveRuntimeModelContext, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
@@ -857,9 +856,7 @@ function prepareSingleStepSetup(step, ctx) {
         (step.structuredOutputSchema
             ? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(stepContext.outputFile), "structured-output"))
             : undefined);
-    const placeholderRegex = new RegExp(stepContext.placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
-    let task = step.task.replace(placeholderRegex, () => stepContext.previousOutput);
-    task = resolveOutputReferences(task, stepContext.outputs ?? {});
+    let task = step.task;
     const taskForCompletionGuard = task;
     if (step.effectiveAcceptance) {
         const acceptancePrompt = formatAcceptancePrompt(step.effectiveAcceptance);
@@ -1580,32 +1577,6 @@ function projectInitialModelFallbackFilterNotice(notice) {
     const sanitized = sanitizeModelFallbackNotice(notice);
     return sanitized ? { modelFallbackNotice: sanitized } : {};
 }
-function markParallelGroupRunning(input) {
-    for (let taskIndex = 0; taskIndex < input.tasks.length; taskIndex++) {
-        const flatTaskIndex = input.groupStartFlatIndex + taskIndex;
-        input.statusPayload.steps[flatTaskIndex].status = "pending";
-        input.statusPayload.steps[flatTaskIndex].startedAt = undefined;
-        input.statusPayload.steps[flatTaskIndex].endedAt = undefined;
-        input.statusPayload.steps[flatTaskIndex].durationMs = undefined;
-        input.statusPayload.steps[flatTaskIndex].lastActivityAt = undefined;
-        input.statusPayload.steps[flatTaskIndex].activityState = undefined;
-        input.statusPayload.steps[flatTaskIndex].error = undefined;
-    }
-    input.statusPayload.currentStep = input.groupStartFlatIndex;
-    input.statusPayload.activityState = undefined;
-    input.statusPayload.lastActivityAt = input.groupStartTime;
-    input.statusPayload.lastUpdate = input.groupStartTime;
-    input.statusPayload.outputFile = path.join(input.asyncDir, `output-${input.groupStartFlatIndex}.log`);
-    writeAtomicJson(input.statusPath, input.statusPayload);
-    appendJsonl(input.eventsPath, JSON.stringify({
-        type: "subagent.parallel.started",
-        ts: input.groupStartTime,
-        runId: input.runId,
-        stepIndex: input.stepIndex,
-        agents: input.tasks.map((task) => task.agent),
-        count: input.tasks.length,
-    }));
-}
 function resolveAsyncStepTranscriptPath(input) {
     if (!input.artifactsDir ||
         input.artifactConfig?.enabled === false ||
@@ -1616,17 +1587,7 @@ function resolveAsyncStepTranscriptPath(input) {
 function isPausedStepStatus(status) {
     return status === "paused";
 }
-function legacyStepToRunPlan(step) {
-    return isParallelGroup(step)
-        ? {
-            kind: "parallel",
-            tasks: step.parallel,
-            ...(step.concurrency !== undefined ? { concurrency: step.concurrency } : {}),
-            ...(step.failFast !== undefined ? { failFast: step.failFast } : {}),
-        }
-        : { kind: "single", task: step };
-}
-const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a direct plan or a non-empty legacy steps array.";
+const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
 function isRunnerSubagentStepValue(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -1644,24 +1605,9 @@ function isDirectRunPlanValue(value) {
         candidate.tasks.length > 0 &&
         candidate.tasks.every(isRunnerSubagentStepValue));
 }
-function isLegacyRunStepsValue(value) {
-    if (!Array.isArray(value) || value.length === 0)
-        return false;
-    return value.every((step) => {
-        if (!step || typeof step !== "object")
-            return false;
-        const candidate = step;
-        if ("parallel" in candidate) {
-            return (Array.isArray(candidate.parallel) &&
-                candidate.parallel.length > 0 &&
-                candidate.parallel.every(isRunnerSubagentStepValue));
-        }
-        return isRunnerSubagentStepValue(step);
-    });
-}
 function persistMissingRunPlanFailure(config) {
     const timestamp = Date.now();
-    const mode = config.resultMode ?? "single";
+    const mode = "single";
     const status = {
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
         runId: config.id,
@@ -1677,9 +1623,6 @@ function persistMissingRunPlanFailure(config) {
         ...(config.toolBudget ? { toolBudget: initialToolBudgetState(config.toolBudget) } : {}),
         cwd: config.cwd,
         currentStep: 0,
-        chainStepCount: 0,
-        parallelGroups: [],
-        workflowGraph: config.workflowGraph,
         steps: [],
         ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
         ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
@@ -1711,19 +1654,15 @@ function persistMissingRunPlanFailure(config) {
     });
 }
 async function runSubagent(config) {
-    const plan = isDirectRunPlanValue(config.plan) ? config.plan : undefined;
-    const legacySteps = isLegacyRunStepsValue(config.steps) ? config.steps : undefined;
-    if (!plan && !legacySteps) {
+    if (!isDirectRunPlanValue(config.plan)) {
         persistMissingRunPlanFailure(config);
         throw new Error(ASYNC_RUNNER_MISSING_PLAN_ERROR);
     }
-    return runSubagentWithInput(config, plan, legacySteps);
+    return runSubagentWithInput(config, config.plan);
 }
-async function runSubagentWithInput(config, plan, legacySteps) {
-    const { id, resultPath, cwd, placeholder, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig, } = config;
+async function runSubagentWithInput(config, plan) {
+    const { id, resultPath, cwd, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
     const globalSemaphore = new Semaphore(DEFAULT_GLOBAL_CONCURRENCY_LIMIT);
-    let previousOutput = "";
-    const outputs = {};
     const results = [];
     const overallStartTime = Date.now();
     const shareEnabled = config.share === true;
@@ -1733,7 +1672,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
         interruptRunner?.();
     };
     process.on(ASYNC_INTERRUPT_SIGNAL, interruptSignalTrampoline);
-    const statusPath = path.join(asyncDir, "status.json");
     const eventsPath = path.join(asyncDir, "events.jsonl");
     const logPath = path.join(asyncDir, `subagent-log-${id}.md`);
     const controlConfig = config.controlConfig ?? DEFAULT_CONTROL_CONFIG;
@@ -1751,124 +1689,53 @@ async function runSubagentWithInput(config, plan, legacySteps) {
     const interruptAbortController = new AbortController();
     let previousCumulativeTokens = { input: 0, output: 0, total: 0 };
     let latestSessionFile;
-    const executionPlans = plan
-        ? [plan]
-        : (legacySteps ?? []).map((step) => legacyStepToRunPlan(step));
     const initializeRun = () => {
-        const flatSteps = plan
-            ? plan.kind === "single"
-                ? [plan.task]
-                : plan.tasks
-            : flattenSteps(legacySteps ?? []);
+        const flatSteps = plan.kind === "single" ? [plan.task] : plan.tasks;
         for (const step of flatSteps) {
             step.contextPressure = parseContextPressureProjection(step.contextPressure);
             step.contextPressureCrossedThresholds = parseContextPressureCrossedThresholds(step.contextPressureCrossedThresholds);
         }
         const initialFlatStepCount = flatSteps.length;
-        const parallelGroups = [];
-        const initialStatusSteps = [];
-        let flatStepCount = 0;
-        for (let stepIndex = 0; stepIndex < executionPlans.length; stepIndex++) {
-            const step = executionPlans[stepIndex];
-            if (step.kind === "parallel") {
-                parallelGroups.push({ start: flatStepCount, count: step.tasks.length, stepIndex });
-                for (const task of step.tasks) {
-                    const taskFlatIndex = flatStepCount;
-                    const transcriptPath = resolveAsyncStepTranscriptPath({
-                        artifactsDir,
-                        artifactConfig,
-                        runId: id,
-                        agent: task.agent,
-                        flatIndex: taskFlatIndex,
-                        flatStepCount: initialFlatStepCount,
-                    });
-                    initialStatusSteps.push({
-                        agent: task.agent,
-                        ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-                        phase: task.phase,
-                        label: task.label,
-                        outputName: task.outputName,
-                        structured: task.structured,
-                        status: "pending",
-                        ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
-                        ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
-                            ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
-                            : {}),
-                        ...(task.activeRuntimeMs !== undefined
-                            ? { activeRuntimeMs: task.activeRuntimeMs }
-                            : {}),
-                        ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-                        ...(transcriptPath ? { transcriptPath } : {}),
-                        skills: task.skills,
-                        model: task.model,
-                        thinking: task.thinking,
-                        ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
-                        ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
-                        ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
-                        ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
-                        ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
-                        ...(task.contextPressureCrossedThresholds
-                            ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
-                            : {}),
-                        attemptedModels: task.modelCandidates && task.modelCandidates.length > 0
-                            ? task.modelCandidates
-                            : task.model
-                                ? [task.model]
-                                : undefined,
-                        recentTools: [],
-                        recentOutput: [],
-                    });
-                    flatStepCount++;
-                }
-            }
-            else {
-                const task = step.task;
-                const stepFlatIndex = flatStepCount;
-                const transcriptPath = resolveAsyncStepTranscriptPath({
-                    artifactsDir,
-                    artifactConfig,
-                    runId: id,
-                    agent: task.agent,
-                    flatIndex: stepFlatIndex,
-                    flatStepCount: initialFlatStepCount,
-                });
-                initialStatusSteps.push({
-                    agent: task.agent,
-                    ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-                    phase: task.phase,
-                    label: task.label,
-                    outputName: task.outputName,
-                    structured: task.structured,
-                    status: "pending",
-                    ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
-                    ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
-                        ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
-                        : {}),
-                    ...(task.activeRuntimeMs !== undefined ? { activeRuntimeMs: task.activeRuntimeMs } : {}),
-                    ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
-                    ...(transcriptPath ? { transcriptPath } : {}),
-                    skills: task.skills,
-                    model: task.model,
-                    thinking: task.thinking,
-                    ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
-                    ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
-                    ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
-                    ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
-                    ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
-                    ...(task.contextPressureCrossedThresholds
-                        ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
-                        : {}),
-                    attemptedModels: task.modelCandidates && task.modelCandidates.length > 0
-                        ? task.modelCandidates
-                        : task.model
-                            ? [task.model]
-                            : undefined,
-                    recentTools: [],
-                    recentOutput: [],
-                });
-                flatStepCount++;
-            }
-        }
+        const initialStatusSteps = flatSteps.map((task, taskFlatIndex) => {
+            const transcriptPath = resolveAsyncStepTranscriptPath({
+                artifactsDir,
+                artifactConfig,
+                runId: id,
+                agent: task.agent,
+                flatIndex: taskFlatIndex,
+                flatStepCount: initialFlatStepCount,
+            });
+            return {
+                agent: task.agent,
+                ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
+                status: "pending",
+                ...(task.toolBudget ? { toolBudget: initialToolBudgetState(task.toolBudget) } : {}),
+                ...(task.timeoutMs !== undefined || config.timeoutMs !== undefined
+                    ? { timeoutMs: task.timeoutMs ?? config.timeoutMs }
+                    : {}),
+                ...(task.activeRuntimeMs !== undefined ? { activeRuntimeMs: task.activeRuntimeMs } : {}),
+                ...(task.sessionFile ? { sessionFile: task.sessionFile } : {}),
+                ...(transcriptPath ? { transcriptPath } : {}),
+                skills: task.skills,
+                model: task.model,
+                thinking: task.thinking,
+                ...(task.modelIdentity ? { modelIdentity: task.modelIdentity } : {}),
+                ...(task.modelResolution ? { modelResolution: task.modelResolution } : {}),
+                ...projectInitialModelFallbackFilterNotice(task.modelFallbackFilterNotice),
+                ...(task.contextUsage ? { contextUsage: task.contextUsage } : {}),
+                ...(task.contextPressure ? { contextPressure: { ...task.contextPressure } } : {}),
+                ...(task.contextPressureCrossedThresholds
+                    ? { contextPressureCrossedThresholds: [...task.contextPressureCrossedThresholds] }
+                    : {}),
+                attemptedModels: task.modelCandidates && task.modelCandidates.length > 0
+                    ? task.modelCandidates
+                    : task.model
+                        ? [task.model]
+                        : undefined,
+                recentTools: [],
+                recentOutput: [],
+            };
+        });
         const sessionEnabled = Boolean(config.sessionDir) ||
             shareEnabled ||
             flatSteps.some((step) => Boolean(step.sessionFile));
@@ -1876,14 +1743,7 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
             runId: id,
             ...(config.sessionId ? { sessionId: config.sessionId } : {}),
-            mode: config.resultMode ??
-                (plan?.kind === "parallel"
-                    ? "parallel"
-                    : plan?.kind === "single"
-                        ? "single"
-                        : flatSteps.length > 1
-                            ? "chain"
-                            : "single"),
+            mode: plan.kind,
             state: "running",
             lastActivityAt: overallStartTime,
             startedAt: overallStartTime,
@@ -1894,9 +1754,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             pid: process.pid,
             cwd,
             currentStep: 0,
-            chainStepCount: executionPlans.length,
-            parallelGroups,
-            workflowGraph: config.workflowGraph,
             steps: initialStatusSteps,
             ...(config.tkTicket ? { tkTicket: config.tkTicket } : {}),
             ...(config.projectAgents ? { projectAgents: config.projectAgents } : {}),
@@ -1989,50 +1846,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             console.error("Failed to emit nested async status event:", error);
         }
     };
-    const refreshWorkflowGraph = () => {
-        if (!config.workflowGraph)
-            return;
-        const graph = structuredClone(statusPayload.workflowGraph ?? config.workflowGraph);
-        const normalize = (status) => {
-            if (status === "complete" || status === "completed")
-                return "completed";
-            if (status === "running" ||
-                status === "failed" ||
-                status === "paused" ||
-                status === "pending")
-                return status;
-            return "pending";
-        };
-        const updateNode = (node) => {
-            if (node.flatIndex !== undefined) {
-                const step = statusPayload.steps[node.flatIndex];
-                if (step) {
-                    node.status = normalize(step.status);
-                    node.error = step.error;
-                    node.acceptanceStatus = step.acceptance?.status;
-                }
-                if (statusPayload.currentStep === node.flatIndex)
-                    graph.currentNodeId = node.id;
-            }
-            for (const child of node.children ?? [])
-                updateNode(child);
-            if (node.children?.length && node.status !== "paused" && node.status !== "failed") {
-                if (node.children.every((child) => child.status === "completed"))
-                    node.status = "completed";
-                else if (node.children.some((child) => child.status === "running"))
-                    node.status = "running";
-                else if (node.children.some((child) => child.status === "failed"))
-                    node.status = "failed";
-                else if (node.children.some((child) => child.status === "paused"))
-                    node.status = "paused";
-            }
-            if (node.error)
-                node.status = "failed";
-        };
-        for (const node of graph.nodes)
-            updateNode(node);
-        statusPayload.workflowGraph = graph;
-    };
     const listTrackedSessionFiles = (sessionDir) => {
         if (!sessionDir)
             return [];
@@ -2098,7 +1911,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
     const writeStatusPayload = () => {
         if (statusPayload.currentStep !== undefined)
             refreshTrackedSessionFile(statusPayload.currentStep);
-        refreshWorkflowGraph();
         if (concurrentTerminalStatusAdopted || (interrupted && pausedCheckpointCommitted)) {
             const merged = mergeAndWriteSourceRunnerStatus(asyncDir, statusPayload);
             if (TERMINAL_RUN_STATES.has(merged.state) && merged.state !== statusPayload.state) {
@@ -3005,8 +2817,7 @@ async function runSubagentWithInput(config, plan, legacySteps) {
         pid: process.pid,
     }));
     let flatIndex = 0;
-    let stepCursor = 0;
-    const settleParallelGroup = (group, parallelResults, groupStartFlatIndex, stepIndex) => {
+    const settleParallelResults = (group, parallelResults, groupStartFlatIndex) => {
         for (let t = 0; t < group.tasks.length; t++) {
             const fi = groupStartFlatIndex + t;
             const sessionTokens = config.sessionDir
@@ -3070,32 +2881,13 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                 activeRuntimeMs: pr.activeRuntimeMs,
             });
         }
-        for (let t = 0; t < group.tasks.length; t++) {
-            const outputName = group.tasks[t]?.outputName;
-            if (outputName)
-                outputs[outputName] = outputEntryFromAsyncResult({
-                    agent: parallelResults[t].agent,
-                    output: parallelResults[t].output,
-                    structuredOutput: parallelResults[t].structuredOutput,
-                }, stepIndex);
-        }
-        statusPayload.outputs = outputs;
-        previousOutput = aggregateParallelOutputs(parallelResults.map((r) => ({
-            agent: r.agent,
-            output: r.output,
-            exitCode: r.exitCode,
-            error: r.error,
-            model: r.model,
-            attemptedModels: r.attemptedModels,
-        })));
     };
-    const settleSequentialStep = (seqStep, stepIndex, stepStartTime, singleResult) => {
+    const settleSingleStep = (seqStep, stepStartTime, singleResult) => {
         const resolvedSeqSessionFile = resolveTrackedSessionFile(flatIndex, singleResult.sessionFile ?? seqStep.sessionFile);
         if (resolvedSeqSessionFile) {
             statusPayload.steps[flatIndex].sessionFile = resolvedSeqSessionFile;
             latestSessionFile = resolvedSeqSessionFile;
         }
-        previousOutput = singleResult.output;
         results.push({
             agent: singleResult.agent,
             ...(singleResult.projectAgent ? { projectAgent: singleResult.projectAgent } : {}),
@@ -3140,14 +2932,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             terminationReason: singleResult.terminationReason,
             activeRuntimeMs: singleResult.activeRuntimeMs,
         });
-        if (seqStep.outputName) {
-            outputs[seqStep.outputName] = outputEntryFromAsyncResult({
-                agent: singleResult.agent,
-                output: singleResult.output,
-                structuredOutput: singleResult.structuredOutput,
-            }, stepIndex);
-        }
-        statusPayload.outputs = outputs;
         const cumulativeTokens = config.sessionDir ? parseSessionTokens(config.sessionDir) : null;
         let stepTokens = cumulativeTokens
             ? {
@@ -3268,71 +3052,19 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             appendControlEvent(event);
         }
     };
-    while (true) {
-        if (interrupted || timedOut || concurrentTerminalStatusAdopted)
-            break;
-        if (stepCursor >= executionPlans.length)
-            break;
-        const stepIndex = stepCursor++;
-        const step = executionPlans[stepIndex];
+    if (!interrupted && !timedOut && !concurrentTerminalStatusAdopted) {
+        const step = plan;
         if (step.kind === "parallel") {
             const group = step;
             const tasks = group.tasks;
             const concurrency = group.concurrency ?? MAX_PARALLEL_CONCURRENCY;
-            const failFast = group.failFast ?? false;
             const groupStartFlatIndex = flatIndex;
-            let aborted = false;
-            const groupStartTime = Date.now();
-            markParallelGroupRunning({
-                statusPayload,
-                tasks,
-                groupStartFlatIndex,
-                groupStartTime,
-                statusPath,
-                eventsPath,
-                asyncDir,
-                runId: id,
-                stepIndex,
-            });
             const parallelResults = await mapConcurrent(tasks, concurrency, async (task, taskIdx) => {
                 const fi = groupStartFlatIndex + taskIdx;
                 if (timedOut)
                     return timedOutStepResult(task);
                 if (interrupted || concurrentTerminalStatusAdopted)
                     return pausedStepResult(task);
-                if (aborted && failFast) {
-                    const skippedAt = Date.now();
-                    statusPayload.steps[fi].status = "failed";
-                    statusPayload.steps[fi].error = "Skipped due to fail-fast";
-                    statusPayload.steps[fi].terminationReason = "process_exit";
-                    statusPayload.steps[fi].startedAt = skippedAt;
-                    statusPayload.steps[fi].endedAt = skippedAt;
-                    statusPayload.steps[fi].durationMs = 0;
-                    statusPayload.steps[fi].exitCode = -1;
-                    statusPayload.steps[fi].activityState = undefined;
-                    statusPayload.lastUpdate = skippedAt;
-                    writeStatusPayload();
-                    appendJsonl(eventsPath, JSON.stringify({
-                        type: "subagent.step.failed",
-                        ts: skippedAt,
-                        runId: id,
-                        stepIndex: fi,
-                        agent: task.agent,
-                        exitCode: -1,
-                        durationMs: 0,
-                    }));
-                    return {
-                        agent: task.agent,
-                        ...(task.projectAgent ? { projectAgent: task.projectAgent } : {}),
-                        output: "(skipped — fail-fast)",
-                        exitCode: -1,
-                        skipped: true,
-                        terminationReason: "process_exit",
-                        model: task.model,
-                        modelIdentity: task.modelIdentity,
-                        modelResolution: task.modelResolution,
-                    };
-                }
                 const taskSessionDir = config.sessionDir
                     ? path.join(config.sessionDir, `parallel-${taskIdx}`)
                     : undefined;
@@ -3364,11 +3096,8 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                 }));
                 flushPendingStepSteers(fi);
                 const singleResult = await runSingleStep(task, {
-                    previousOutput,
-                    placeholder,
                     cwd,
                     sessionEnabled,
-                    outputs,
                     sessionDir: taskSessionDir,
                     artifactsDir,
                     artifactConfig,
@@ -3491,8 +3220,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                     });
                     appendControlEvent(event);
                 }
-                if (singleResult.exitCode !== 0 && failFast)
-                    aborted = true;
                 return timedOut
                     ? {
                         ...singleResult,
@@ -3506,21 +3233,7 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                     : { ...singleResult, skipped: false };
             }, globalSemaphore);
             flatIndex += tasks.length;
-            settleParallelGroup(group, parallelResults, groupStartFlatIndex, stepIndex);
-            const parallelGroupInterrupted = interrupted || parallelResults.some((result) => result.interrupted === true);
-            if (!parallelGroupInterrupted) {
-                appendJsonl(eventsPath, JSON.stringify({
-                    type: "subagent.parallel.completed",
-                    ts: Date.now(),
-                    runId: id,
-                    stepIndex,
-                    success: parallelResults.every((r) => r.exitCode === 0 || r.exitCode === -1),
-                }));
-            }
-            if (parallelGroupInterrupted ||
-                parallelResults.some((r) => r.exitCode !== 0 && r.exitCode !== -1)) {
-                break;
-            }
+            settleParallelResults(group, parallelResults, groupStartFlatIndex);
         }
         else {
             const seqStep = step.task;
@@ -3551,11 +3264,8 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             }));
             flushPendingStepSteers(flatIndex);
             const singleResult = await runSingleStep(seqStep, {
-                previousOutput,
-                placeholder,
                 cwd,
                 sessionEnabled,
-                outputs,
                 sessionDir: config.sessionDir,
                 artifactsDir,
                 artifactConfig,
@@ -3581,11 +3291,8 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                 onChildProtocolOutputLimit,
                 skipAcceptance: () => timedOut,
             });
-            settleSequentialStep(seqStep, stepIndex, stepStartTime, singleResult);
+            settleSingleStep(seqStep, stepStartTime, singleResult);
             flatIndex++;
-            if (singleResult.exitCode !== 0) {
-                break;
-            }
         }
     }
     let summary = results
@@ -3604,7 +3311,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
             truncated = true;
         }
     }
-    const resultMode = config.resultMode ?? statusPayload.mode;
     const totalCost = results.reduce((sum, result) => ({
         inputTokens: sum.inputTokens + (result.totalCost?.inputTokens ?? 0),
         outputTokens: sum.outputTokens + (result.totalCost?.outputTokens ?? 0),
@@ -3614,11 +3320,7 @@ async function runSubagentWithInput(config, plan, legacySteps) {
         ? totalCost
         : undefined;
     const finalFlatAgents = statusPayload.steps.map((step) => step.agent);
-    const agentName = finalFlatAgents.length === 1
-        ? finalFlatAgents[0]
-        : resultMode === "parallel"
-            ? `parallel:${finalFlatAgents.join("+")}`
-            : `chain:${finalFlatAgents.join("->")}`;
+    const agentName = finalFlatAgents.length === 1 ? finalFlatAgents[0] : `parallel:${finalFlatAgents.join("+")}`;
     let sessionFile;
     let shareUrl;
     let gistUrl;
@@ -3914,7 +3616,7 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                 lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
                 id,
                 agent: agentName,
-                mode: resultMode,
+                mode: plan.kind,
                 success: resultSuccess,
                 state: resultState,
                 summary: resultSummary,
@@ -3968,8 +3670,6 @@ async function runSubagentWithInput(config, plan, legacySteps) {
                     pause: r.pause,
                     activeRuntimeMs: r.activeRuntimeMs,
                 })),
-                outputs,
-                workflowGraph: statusPayload.workflowGraph,
                 exitCode: resultState === "failed" ? 1 : 0,
                 timestamp: runEndedAt,
                 durationMs: runEndedAt - overallStartTime,

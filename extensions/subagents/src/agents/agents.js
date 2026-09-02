@@ -55,9 +55,6 @@ class AgentDefinitionValidationError extends Error {
         this.name = "AgentDefinitionValidationError";
     }
 }
-function getUserChainDir() {
-    return path.join(getAgentDir(), "chains");
-}
 function splitToolList(rawTools) {
     if (rawTools === undefined)
         return {};
@@ -674,12 +671,6 @@ function resolveNearestProjectAgentDirs(cwd) {
         return { preferredDir: null };
     return { preferredDir: path.join(getProjectConfigDir(projectRoot), "agents") };
 }
-function resolveNearestProjectChainDirs(cwd) {
-    const projectRoot = findNearestProjectRoot(cwd);
-    if (!projectRoot)
-        return { preferredDir: null };
-    return { preferredDir: path.join(getProjectConfigDir(projectRoot), "chains") };
-}
 export const EXTRA_AGENT_DIRS_ENV = "PI_SUBAGENT_EXTRA_AGENT_DIRS";
 function loadCanonicalPackagedAgents(agentDiagnostics) {
     const canonicalDir = path.resolve(getAgentDir(), "tlh", "agents", "subagents");
@@ -743,9 +734,7 @@ export function discoverAgentsWithProjectSnapshot(cwd, capability, expected) {
 export function discoverAgentsAll(cwd) {
     const userDirOld = path.join(getAgentDir(), "agents");
     const userDirNew = getLegacyGlobalAgentsDir();
-    const userChainDir = getUserChainDir();
     const { preferredDir: projectDir } = resolveNearestProjectAgentDirs(cwd);
-    const { preferredDir: projectChainDir } = resolveNearestProjectChainDirs(cwd);
     const userSettingsPath = getUserAgentSettingsPath();
     const projectSettingsPath = getProjectAgentSettingsPath(cwd);
     const userSettings = readSubagentSettings(userSettingsPath);
@@ -756,21 +745,15 @@ export function discoverAgentsAll(cwd) {
     const user = applyCustomAgentOverrides(applySubagentDefaultModel(loadCanonicalPackagedAgents(agentDiagnostics), defaultModel), userSettings, projectSettings, userSettingsPath, projectSettingsPath);
     const packageAgents = [];
     const project = [];
-    const chains = [];
-    const chainDiagnostics = [];
     const userDir = userDirNew && fs.existsSync(userDirNew) ? userDirNew : userDirOld;
     return {
         builtin,
         package: packageAgents,
         user,
         project,
-        chains,
-        chainDiagnostics,
         agentDiagnostics,
         userDir,
         projectDir,
-        userChainDir,
-        projectChainDir,
         userSettingsPath,
         projectSettingsPath,
     };

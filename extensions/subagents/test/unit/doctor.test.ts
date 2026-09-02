@@ -47,7 +47,6 @@ describe("buildDoctorReport", () => {
         tempRootDir: path.join(root, "temp-root"),
         asyncDir: path.join(root, "async"),
         resultsDir: path.join(root, "results"),
-        chainRunsDir: path.join(root, "chains"),
       };
       for (const dir of Object.values(paths)) fs.mkdirSync(dir, { recursive: true });
       fs.mkdirSync(path.join(paths.asyncDir, "run-active"), { recursive: true });
@@ -82,12 +81,8 @@ describe("buildDoctorReport", () => {
             package: [],
             user: [makeAgent("user-a", "user")],
             project: [makeAgent("project-a", "project"), makeAgent("project-b", "project")],
-            chains: [],
-            chainDiagnostics: [],
             userDir: path.join(root, "home", ".agents"),
             projectDir: path.join(root, ".pi", "agents"),
-            userChainDir: path.join(root, "home", ".pi", "agent", "chains"),
-            projectChainDir: path.join(root, ".pi", "chains"),
             userSettingsPath: path.join(root, "home", ".pi", "agent", "settings.json"),
             projectSettingsPath: path.join(root, ".pi", "settings.json"),
           }),
@@ -135,7 +130,6 @@ describe("buildDoctorReport", () => {
           tempRootDir: root,
           asyncDir: asyncPath,
           resultsDir: path.join(root, "missing-results"),
-          chainRunsDir: path.join(root, "missing-chains"),
         },
         deps: {
           isAsyncAvailable: () => false,
@@ -172,7 +166,6 @@ describe("buildDoctorReport", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: {
           isAsyncAvailable: () => true,
@@ -181,12 +174,8 @@ describe("buildDoctorReport", () => {
             package: [],
             user: [],
             project: [],
-            chains: [],
-            chainDiagnostics: [],
             userDir: root,
             projectDir: null,
-            userChainDir: root,
-            projectChainDir: null,
             userSettingsPath: path.join(root, "settings.json"),
             projectSettingsPath: null,
           }),
@@ -221,12 +210,8 @@ describe("buildDoctorReport — heartbeat section", () => {
       package: [],
       user: [],
       project: [],
-      chains: [],
-      chainDiagnostics: [],
       userDir: "",
       projectDir: "",
-      userChainDir: "",
-      projectChainDir: "",
       userSettingsPath: "",
       projectSettingsPath: "",
     }),
@@ -261,7 +246,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -282,7 +266,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -315,7 +298,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -348,7 +330,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -385,7 +366,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -421,7 +401,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });
@@ -454,7 +433,6 @@ describe("buildDoctorReport — heartbeat section", () => {
           tempRootDir: root,
           asyncDir: path.join(root, "async"),
           resultsDir: path.join(root, "results"),
-          chainRunsDir: path.join(root, "chains"),
         },
         deps: minimalDeps,
       });

@@ -9,12 +9,12 @@ import {
   type AsyncStartedEvent,
   type ControlEvent,
   type SubagentState,
+  normalizeSubagentRunMode,
   POLL_INTERVAL_MS,
   RESULTS_DIR,
   SUBAGENT_CONTROL_EVENT,
 } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
-import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import {
   hasLiveNestedDescendants,
@@ -168,23 +168,7 @@ export function createAsyncJobTracker(
     }
   };
   const summaryToJob = (run: AsyncRunSummary): AsyncJobState => {
-    const groups = normalizeParallelGroups(
-      run.parallelGroups,
-      run.steps.length,
-      run.chainStepCount ?? run.steps.length,
-    );
-    const activeGroup =
-      run.currentStep !== undefined
-        ? groups.find(
-            (group) =>
-              run.currentStep! >= group.start && run.currentStep! < group.start + group.count,
-          )
-        : undefined;
-    const visibleSteps = activeGroup
-      ? run.steps
-          .slice(activeGroup.start, activeGroup.start + activeGroup.count)
-          .map((step, index) => ({ ...step, index: activeGroup.start + index }))
-      : run.steps.map((step, index) => ({ ...step, index }));
+    const visibleSteps = run.steps.map((step, index) => ({ ...step, index }));
     return {
       asyncId: run.id,
       asyncDir: run.asyncDir,
@@ -200,8 +184,6 @@ export function createAsyncJobTracker(
       mode: run.mode,
       agents: visibleSteps.map((step) => step.agent),
       currentStep: run.currentStep,
-      chainStepCount: run.chainStepCount,
-      parallelGroups: groups,
       steps: visibleSteps,
       stepsTotal: visibleSteps.length,
       runningSteps: visibleSteps.filter((step) => step.status === "running").length,
@@ -209,8 +191,6 @@ export function createAsyncJobTracker(
         (step) =>
           step.status === "complete" || step.status === "completed" || step.status === "continued",
       ).length,
-      hasParallelGroups: groups.length > 0,
-      activeParallelGroup: Boolean(activeGroup),
       startedAt: run.startedAt,
       updatedAt: run.lastUpdate ?? run.startedAt,
       timeoutMs: run.timeoutMs,
@@ -508,8 +488,6 @@ export function createAsyncJobTracker(
               sessionId: job.sessionId,
               mode: job.mode,
               agents: job.agents,
-              chainStepCount: job.chainStepCount,
-              parallelGroups: job.parallelGroups,
               startedAt: job.startedAt,
               sessionFile: job.sessionFile,
               projectAgents: job.projectAgents,
@@ -528,9 +506,8 @@ export function createAsyncJobTracker(
             job.currentPath = status.currentPath;
             job.turnCount = status.turnCount ?? job.turnCount;
             job.toolCount = status.toolCount ?? job.toolCount;
-            job.mode = status.mode;
+            job.mode = normalizeSubagentRunMode(status.mode);
             job.currentStep = status.currentStep ?? job.currentStep;
-            job.chainStepCount = status.chainStepCount ?? job.chainStepCount;
             job.startedAt = status.startedAt ?? job.startedAt;
             if (status.lastUpdate !== undefined) job.updatedAt = status.lastUpdate;
             if (
@@ -542,27 +519,7 @@ export function createAsyncJobTracker(
               cancelProjectReferenceCleanup(job.asyncId);
             }
             if (status.steps?.length) {
-              const groups = normalizeParallelGroups(
-                status.parallelGroups,
-                status.steps.length,
-                status.chainStepCount ?? status.steps.length,
-              );
-              job.parallelGroups = groups.length ? groups : job.parallelGroups;
-              job.hasParallelGroups = groups.length > 0 || job.hasParallelGroups;
-              const activeGroup =
-                status.currentStep !== undefined
-                  ? groups.find(
-                      (group) =>
-                        status.currentStep! >= group.start &&
-                        status.currentStep! < group.start + group.count,
-                    )
-                  : undefined;
-              const visibleSteps = activeGroup
-                ? status.steps
-                    .slice(activeGroup.start, activeGroup.start + activeGroup.count)
-                    .map((step, index) => ({ ...step, index: activeGroup.start + index }))
-                : status.steps.map((step, index) => ({ ...step, index }));
-              job.activeParallelGroup = Boolean(activeGroup);
+              const visibleSteps = status.steps.map((step, index) => ({ ...step, index }));
               job.agents = visibleSteps.map((step) => step.agent);
               job.steps = visibleSteps;
               refreshNestedProjection();
@@ -655,22 +612,7 @@ export function createAsyncJobTracker(
     const now = Date.now();
     cancelProjectReferenceCleanup(info.id);
     const asyncDir = info.asyncDir ?? path.join(asyncDirRoot, info.id);
-    const rawAgents = info.agents?.length
-      ? info.agents
-      : info.chain && info.chain.length > 0
-        ? info.chain
-        : info.agent
-          ? [info.agent]
-          : undefined;
-    const validParallelGroups = normalizeParallelGroups(
-      info.parallelGroups,
-      Number.MAX_SAFE_INTEGER,
-      info.chainStepCount ?? Number.MAX_SAFE_INTEGER,
-    );
-    const firstGroup = validParallelGroups.find((group) => group.start === 0);
-    const firstGroupCount = firstGroup?.count;
-    const agents =
-      firstGroupCount && firstGroupCount > 0 ? rawAgents?.slice(0, firstGroupCount) : rawAgents;
+    const agents = info.agents?.length ? info.agents : info.agent ? [info.agent] : undefined;
     const normalizedTkTicket = normalizeTkTicketMetadata(info.tkTicket);
     state.asyncJobs.set(info.id, {
       asyncId: info.id,
@@ -678,14 +620,10 @@ export function createAsyncJobTracker(
       status: "queued",
       pid: typeof info.pid === "number" ? info.pid : undefined,
       ...(typeof info.sessionId === "string" ? { sessionId: info.sessionId } : {}),
-      mode: info.mode ?? (info.chain ? "chain" : "single"),
+      mode: normalizeSubagentRunMode(info.mode),
       agents,
-      chainStepCount: info.chainStepCount,
-      parallelGroups: validParallelGroups,
       nestedRoute: info.nestedRoute,
-      stepsTotal: firstGroupCount ?? agents?.length,
-      hasParallelGroups: validParallelGroups.length > 0,
-      activeParallelGroup: Boolean(firstGroupCount && firstGroupCount > 0),
+      stepsTotal: agents?.length,
       startedAt: now,
       updatedAt: now,
       timeoutMs: info.timeoutMs,

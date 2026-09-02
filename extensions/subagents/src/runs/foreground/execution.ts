@@ -651,7 +651,7 @@ function finalizeSingleAttemptOutput(input: SingleAttemptFinalizationInput): Sin
   // as *_output.md). Append the validation-evidence digest there only, so the
   // acceptance evidence survives the strip without touching result.finalOutput,
   // which is a semantic value feeding user-requested output files and
-  // chain/parallel output references.
+  // parallel output references.
   //
   // Exception: when the run saved a user-requested output file, the artifact is a
   // verbatim archive of that deliverable, so it stays byte-exact.
@@ -794,7 +794,7 @@ function prepareForegroundRunFinalization(input: ForegroundRunFinalizationInput)
     );
     result.finalOutput = timeoutDiagnostics;
     // Append the acceptance digest to the artifact copy only; result.finalOutput must
-    // remain exactly timeoutDiagnostics so it does not corrupt output-file or chain
+    // remain exactly timeoutDiagnostics so it does not corrupt output-file or parallel
     // output references. The savedOutputPath exception (no digest) is preserved.
     // Parse with the trailing-fence rule so the digest describes the same fence
     // the gate will evaluate.

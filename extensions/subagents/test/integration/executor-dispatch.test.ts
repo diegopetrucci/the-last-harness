@@ -27,7 +27,7 @@ interface ExecutorResult {
   content: Array<{ text?: string }>;
   isError?: boolean;
   details?: {
-    mode?: "single" | "parallel" | "chain" | "management";
+    mode?: "single" | "parallel" | "management";
     asyncId?: string;
     progress?: Array<{ status?: string }>;
     results?: Array<{ skills?: string[] }>;

@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import {
   RESULTS_DIR,
-  type AsyncParallelGroupStatus,
   type AsyncResultArtifact,
   type AsyncStatus,
   type ContextPressureProjection,
@@ -14,9 +13,9 @@ import {
   type SubagentModelResolution,
   type SubagentRunMode,
   type SubagentTerminationReason,
+  normalizeSubagentRunMode,
 } from "../../shared/types.ts";
 import { createAsyncStatusJsonParseError } from "./async-status-corruption.ts";
-import { normalizeParallelGroups } from "./parallel-groups.ts";
 import {
   nestedSummaryFromAsyncStatus,
   projectNestedEvents,
@@ -50,8 +49,6 @@ interface StartedRunMetadata {
   sessionId?: string;
   mode?: SubagentRunMode;
   agents?: string[];
-  chainStepCount?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
   startedAt?: number;
   sessionFile?: string;
   projectAgents?: import("../../agents/project-agent-snapshot.ts").ProjectAgentRunCapture[];
@@ -365,22 +362,15 @@ function buildStartedStatus(
 ): AsyncStatus {
   const startedAt = startedRun.startedAt ?? now;
   const agents = startedRun.agents?.length ? startedRun.agents : ["subagent"];
-  const chainStepCount = startedRun.chainStepCount;
-  const parallelGroups =
-    chainStepCount !== undefined
-      ? normalizeParallelGroups(startedRun.parallelGroups, agents.length, chainStepCount)
-      : [];
   return {
     runId: startedRun.runId || path.basename(asyncDir),
     ...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
-    mode: startedRun.mode ?? "single",
+    mode: normalizeSubagentRunMode(startedRun.mode),
     state: "running",
     pid: startedRun.pid,
     startedAt,
     lastUpdate: now,
     currentStep: 0,
-    ...(chainStepCount !== undefined ? { chainStepCount } : {}),
-    ...(parallelGroups.length ? { parallelGroups } : {}),
     ...(startedRun.projectAgents ? { projectAgents: startedRun.projectAgents } : {}),
     steps: agents.map((agent) => ({
       agent,

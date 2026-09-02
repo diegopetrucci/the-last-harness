@@ -25,7 +25,6 @@ function runningJob() {
     status: "running",
     mode: "parallel",
     agents: ["reviewer"],
-    activeParallelGroup: true,
     runningSteps: 1,
     completedSteps: 0,
     stepsTotal: 1,

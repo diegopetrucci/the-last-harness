@@ -1,36 +1,25 @@
 /**
- * Tests for step behavior resolution, skill normalization, and chain instruction building.
+ * Tests for step behavior resolution and skill normalization.
  *
- * Covers the pure logic of isParallelStep, normalizeSkillInput, resolveStepBehavior,
- * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates, and buildChainInstructions.
+ * Covers the pure logic of normalizeSkillInput, resolveStepBehavior, and
+ * suppressProgressForReadOnlyTask / taskDisallowsFileUpdates.
  * Uses dynamic import since settings.ts transitively depends on pi packages.
  */
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createTempDir, removeTempDir, tryImport } from "../support/helpers.ts";
+import { tryImport } from "../support/helpers.ts";
 
 // Top-level await
 const settings = await tryImport<any>("./src/shared/settings.ts");
 const skills = await tryImport<any>("./src/agents/skills.ts");
 const available = !!(settings && skills);
 
-const buildChainInstructions = settings?.buildChainInstructions;
+const buildExecutionInstructions = settings?.buildExecutionInstructions;
 const resolveStepBehavior = settings?.resolveStepBehavior;
 const suppressProgressForReadOnlyTask = settings?.suppressProgressForReadOnlyTask;
 const taskDisallowsFileUpdates = settings?.taskDisallowsFileUpdates;
-const isParallelStep = settings?.isParallelStep;
 const normalizeSkillInput = skills?.normalizeSkillInput;
-
-describe("isParallelStep", { skip: !available ? "pi packages not available" : undefined }, () => {
-  it("returns true for parallel steps", () => {
-    assert.ok(isParallelStep({ parallel: [{ agent: "a", task: "t" }] }));
-  });
-
-  it("returns false for sequential steps", () => {
-    assert.ok(!isParallelStep({ agent: "a", task: "t" }));
-  });
-});
 
 describe(
   "normalizeSkillInput",
@@ -128,6 +117,97 @@ describe(
 );
 
 describe(
+  "buildExecutionInstructions",
+  { skip: !available ? "pi packages not available" : undefined },
+  () => {
+    const baseDir = "/tmp/step-behavior";
+
+    it("adds read headers to the task prefix", () => {
+      const instructions = buildExecutionInstructions(
+        {
+          reads: ["context.md"],
+          output: false,
+          outputMode: "inline",
+          progress: false,
+          skills: undefined,
+        },
+        baseDir,
+        false,
+      );
+      assert.equal(instructions.prefix, "[Read from: /tmp/step-behavior/context.md]\n\n");
+      assert.equal(instructions.suffix, "");
+    });
+
+    it("adds write headers to the task prefix", () => {
+      const instructions = buildExecutionInstructions(
+        {
+          reads: undefined,
+          output: "output.md",
+          outputMode: "inline",
+          progress: false,
+          skills: undefined,
+        },
+        baseDir,
+        false,
+      );
+      assert.equal(instructions.prefix, "[Write to: /tmp/step-behavior/output.md]\n\n");
+      assert.equal(instructions.suffix, "");
+    });
+
+    it("adds create-progress instructions for the first progress task", () => {
+      const instructions = buildExecutionInstructions(
+        {
+          reads: undefined,
+          output: false,
+          outputMode: "inline",
+          progress: true,
+          skills: undefined,
+        },
+        baseDir,
+        true,
+      );
+      assert.equal(
+        instructions.suffix,
+        "\n\n---\nCreate and maintain progress at: /tmp/step-behavior/progress.md",
+      );
+    });
+
+    it("adds update-progress instructions for later progress tasks", () => {
+      const instructions = buildExecutionInstructions(
+        {
+          reads: undefined,
+          output: false,
+          outputMode: "inline",
+          progress: true,
+          skills: undefined,
+        },
+        baseDir,
+        false,
+      );
+      assert.equal(
+        instructions.suffix,
+        "\n\n---\nUpdate progress at: /tmp/step-behavior/progress.md",
+      );
+    });
+
+    it("returns empty instructions when no behavior is configured", () => {
+      const instructions = buildExecutionInstructions(
+        {
+          reads: undefined,
+          output: false,
+          outputMode: "inline",
+          progress: false,
+          skills: undefined,
+        },
+        baseDir,
+        false,
+      );
+      assert.deepEqual(instructions, { prefix: "", suffix: "" });
+    });
+  },
+);
+
+describe(
   "read-only progress suppression",
   { skip: !available ? "pi packages not available" : undefined },
   () => {
@@ -156,109 +236,6 @@ describe(
         suppressProgressForReadOnlyTask(behavior, "Implement the approved fix.").progress,
         true,
       );
-    });
-  },
-);
-
-describe(
-  "buildChainInstructions",
-  { skip: !available ? "pi packages not available" : undefined },
-  () => {
-    it("adds [Read from:] prefix for reads", () => {
-      const behavior = {
-        reads: ["context.md"],
-        output: false,
-        outputMode: "inline",
-        progress: false,
-        skills: undefined,
-      };
-      const dir = createTempDir("chain-test-");
-      try {
-        const { prefix } = buildChainInstructions(behavior, dir, false);
-        assert.ok(prefix.includes("[Read from:"), `should have Read instruction: ${prefix}`);
-        assert.ok(prefix.includes("context.md"), "should reference the file");
-      } finally {
-        removeTempDir(dir);
-      }
-    });
-
-    it("adds [Write to:] prefix for output", () => {
-      const behavior = {
-        reads: undefined,
-        output: "output.md",
-        outputMode: "inline",
-        progress: false,
-        skills: undefined,
-      };
-      const dir = createTempDir("chain-test-");
-      try {
-        const { prefix } = buildChainInstructions(behavior, dir, false);
-        assert.ok(prefix.includes("[Write to:"), `should have Write instruction: ${prefix}`);
-        assert.ok(prefix.includes("output.md"), "should reference the file");
-      } finally {
-        removeTempDir(dir);
-      }
-    });
-
-    it("adds progress instructions in suffix for first progress step", () => {
-      const behavior = {
-        reads: undefined,
-        output: false,
-        outputMode: "inline",
-        progress: true,
-        skills: undefined,
-      };
-      const dir = createTempDir("chain-test-");
-      try {
-        const { suffix } = buildChainInstructions(behavior, dir, true);
-        assert.ok(suffix.includes("progress.md"), `should reference progress.md: ${suffix}`);
-        assert.ok(
-          suffix.includes("Create") || suffix.includes("maintain"),
-          `should say create/maintain for first progress step: ${suffix}`,
-        );
-      } finally {
-        removeTempDir(dir);
-      }
-    });
-
-    it("includes previous output in suffix when not in template", () => {
-      const behavior = {
-        reads: undefined,
-        output: false,
-        outputMode: "inline",
-        progress: false,
-        skills: undefined,
-      };
-      const dir = createTempDir("chain-test-");
-      try {
-        const { suffix } = buildChainInstructions(
-          behavior,
-          dir,
-          false,
-          "Previous step output here",
-        );
-        assert.ok(suffix.includes("Previous step output here"), "should include previous output");
-      } finally {
-        removeTempDir(dir);
-      }
-    });
-
-    it("returns empty prefix/suffix when no behavior configured", () => {
-      const behavior = {
-        reads: undefined,
-        output: false,
-        outputMode: "inline",
-        progress: false,
-        skills: undefined,
-      };
-      const dir = createTempDir("chain-test-");
-      try {
-        const { prefix, suffix } = buildChainInstructions(behavior, dir, false);
-        assert.equal(prefix, "");
-        assert.equal(suffix, "");
-      } finally {
-        removeTempDir(dir);
-      }
     });
   },
 );

@@ -443,8 +443,10 @@ Run the markdown chain
     );
 
     const result = discoverAgentsAll(dir);
-    assert.deepEqual(result.chains, []);
-    assert.deepEqual(result.chainDiagnostics, []);
+    assert.equal(
+      result.project.some((agent) => agent.filePath.endsWith("dynamic-review.chain.md")),
+      false,
+    );
   });
 });
 
@@ -561,8 +563,6 @@ Review the task.
         discoverAgents(dir, "both").agents.some((agent) => agent.name === "my-workflow.reviewer"),
         false,
       );
-
-      assert.deepEqual(all.chains, []);
     }));
 
   it("ignores packages referenced from Pi settings", () =>
@@ -680,7 +680,6 @@ Review nested package.
         ),
         undefined,
       );
-      assert.deepEqual(all.chains, []);
     }));
 
   it("ignores nested package manifests even when a default-profile ~/.agents marker exists", () =>
@@ -732,7 +731,6 @@ Review nested HOME package.
         discoverAgents(nested, "both").agents.find((agent) => agent.name === "home-package-agent"),
         undefined,
       );
-      assert.deepEqual(all.chains, []);
     }));
 
   it("ignores package agents when PI_CODING_AGENT_DIR points at a custom profile", () =>
@@ -786,7 +784,6 @@ Review custom profile package.
         ),
         undefined,
       );
-      assert.deepEqual(all.chains, []);
     }));
 
   it("keeps generic project markers inert despite nearer package manifests", () =>
@@ -867,7 +864,6 @@ Review nested package.
         all.project.some((agent) => agent.name === "nested-package-agent"),
         false,
       );
-      assert.deepEqual(all.chains, []);
     }));
 
   it("does not inspect broad package agent roots", () =>
@@ -1004,7 +1000,6 @@ Project chain.
       );
       assert.equal(projectScoped, undefined);
       assert.deepEqual(discoverAgentsAll(dir).package, []);
-      assert.deepEqual(discoverAgentsAll(dir).chains, []);
     }));
 });
 
@@ -1447,7 +1442,6 @@ Review
       false,
     );
     assert.deepEqual(result.package, []);
-    assert.deepEqual(result.chains, []);
     assert.equal(
       result.project.some((agent) => agent.filePath.endsWith("review.chain.md")),
       false,
@@ -1569,7 +1563,6 @@ Review
       undefined,
     );
     assert.deepEqual(result.package, []);
-    assert.deepEqual(result.chains, []);
   });
 
   it("does not inspect invalid package frontmatter from generic paths", () => {
@@ -1612,7 +1605,7 @@ Review
       false,
     );
     assert.equal(
-      result.chains.some((chain) => chain.filePath.endsWith("review.chain.md")),
+      result.project.some((agent) => agent.filePath.endsWith("review.chain.md")),
       false,
     );
     assert.equal(
@@ -1820,9 +1813,7 @@ Inspect canonical
     );
 
     const result = discoverAgentsAll(dir);
-    assert.deepEqual(result.chains, []);
     assert.equal(result.projectDir, path.join(dir, ".pi", "agents"));
-    assert.equal(result.projectChainDir, path.join(dir, ".pi", "chains"));
   });
 
   it("does not discover user or project chains on name collisions", () => {
@@ -1867,8 +1858,6 @@ Inspect project
 `,
         "utf-8",
       );
-
-      assert.deepEqual(discoverAgentsAll(dir).chains, []);
     } finally {
       if (oldHome === undefined) delete process.env.HOME;
       else process.env.HOME = oldHome;

@@ -39,7 +39,6 @@ import {
   getArtifactsDir,
 } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
-import { cleanupOldChainDirs } from "../shared/settings.ts";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.ts";
 import { handleSubagentLiveDetailShortcut } from "./live-detail-shortcut.ts";
 import {
@@ -364,7 +363,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   ensureAccessibleDir(RESULTS_DIR);
   ensureAccessibleDir(ASYNC_DIR);
-  cleanupOldChainDirs();
   cleanupRuntimeDirs();
 
   const config = loadConfig();

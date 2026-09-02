@@ -1,18 +1,11 @@
 /**
- * Chain behavior, template resolution, and directory management
+ * Subagent execution behavior and instruction injection.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentConfig } from "../agents/agents.ts";
-import {
-  CHAIN_RUNS_DIR,
-  type AcceptanceInput,
-  type JsonSchemaObject,
-  type OutputMode,
-  type ToolBudgetConfig,
-} from "./types.ts";
-const CHAIN_DIR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+import type { OutputMode } from "./types.ts";
 const INITIAL_PROGRESS_CONTENT =
   "# Progress\n\n## Status\nIn Progress\n\n## Tasks\n\n## Files Changed\n\n## Notes\n";
 
@@ -47,104 +40,11 @@ function normalizeOutputOverride(output: string | false | undefined): string | f
 }
 
 // =============================================================================
-// Chain Step Types
-// =============================================================================
-
-/** Sequential step: single agent execution */
-export interface SequentialStep {
-  agent: string;
-  task?: string;
-  phase?: string;
-  label?: string;
-  as?: string;
-  outputSchema?: JsonSchemaObject;
-  cwd?: string;
-  output?: string | false;
-  outputMode?: OutputMode;
-  reads?: string[] | false;
-  progress?: boolean;
-  model?: string;
-  fallbackModels?: string[];
-  modelFallbackNotice?: string;
-  toolBudget?: ToolBudgetConfig;
-  acceptance?: AcceptanceInput;
-}
-
-/** Parallel task item within a parallel step */
-interface ParallelTaskItem {
-  agent: string;
-  task?: string;
-  phase?: string;
-  label?: string;
-  as?: string;
-  outputSchema?: JsonSchemaObject;
-  cwd?: string;
-  count?: number;
-  output?: string | false;
-  outputMode?: OutputMode;
-  reads?: string[] | false;
-  progress?: boolean;
-  model?: string;
-  fallbackModels?: string[];
-  modelFallbackNotice?: string;
-  toolBudget?: ToolBudgetConfig;
-  acceptance?: AcceptanceInput;
-}
-
-/** Parallel step: multiple agents running concurrently */
-interface ParallelStep {
-  parallel: ParallelTaskItem[];
-  concurrency?: number;
-  failFast?: boolean;
-  cwd?: string;
-}
-
-/** Union type for chain steps */
-export type ChainStep = SequentialStep | ParallelStep;
-
-// =============================================================================
-// Type Guards
-// =============================================================================
-
-export function isParallelStep(step: ChainStep): step is ParallelStep {
-  return "parallel" in step && Array.isArray((step as ParallelStep).parallel);
-}
-
-// =============================================================================
-// Chain Directory Management
-// =============================================================================
-
-export function cleanupOldChainDirs(): void {
-  if (!fs.existsSync(CHAIN_RUNS_DIR)) return;
-  const now = Date.now();
-  let dirs: string[];
-  try {
-    dirs = fs.readdirSync(CHAIN_RUNS_DIR);
-  } catch {
-    // Startup cleanup is best-effort. If the scoped temp root is unreadable,
-    // skip cleanup instead of failing extension startup.
-    return;
-  }
-
-  for (const dir of dirs) {
-    try {
-      const dirPath = path.join(CHAIN_RUNS_DIR, dir);
-      const stat = fs.statSync(dirPath);
-      if (stat.isDirectory() && now - stat.mtimeMs > CHAIN_DIR_MAX_AGE_MS) {
-        fs.rmSync(dirPath, { recursive: true });
-      }
-    } catch {
-      // Skip directories that can't be processed; continue with others
-    }
-  }
-}
-
-// =============================================================================
 // Behavior Resolution
 // =============================================================================
 
 /**
- * Resolve effective chain behavior per step.
+ * Resolve effective behavior for one execution step.
  * Priority: step override > agent frontmatter > false (disabled)
  */
 export function resolveStepBehavior(
@@ -240,7 +140,6 @@ export function buildExecutionInstructions(
   behavior: ResolvedStepBehavior,
   baseDir: string,
   isFirstProgressAgent: boolean,
-  previousSummary?: string,
 ): { prefix: string; suffix: string } {
   const prefixParts: string[] = [];
   const suffixParts: string[] = [];
@@ -267,28 +166,11 @@ export function buildExecutionInstructions(
     }
   }
 
-  // Include previous step's summary in suffix if available
-  if (previousSummary && previousSummary.trim()) {
-    suffixParts.push(`Previous step output:\n${previousSummary.trim()}`);
-  }
-
   const prefix = prefixParts.length > 0 ? prefixParts.join("\n") + "\n\n" : "";
 
   const suffix = suffixParts.length > 0 ? "\n\n---\n" + suffixParts.join("\n") : "";
 
   return { prefix, suffix };
-}
-
-/**
- * Compatibility name retained for historical chain readers.
- */
-export function buildChainInstructions(
-  behavior: ResolvedStepBehavior,
-  chainDir: string,
-  isFirstProgressAgent: boolean,
-  previousSummary?: string,
-): { prefix: string; suffix: string } {
-  return buildExecutionInstructions(behavior, chainDir, isFirstProgressAgent, previousSummary);
 }
 
 export function writeInitialProgressFile(progressDir: string): void {

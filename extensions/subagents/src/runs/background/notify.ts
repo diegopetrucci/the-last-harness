@@ -83,7 +83,7 @@ interface NestedNotifyChild {
   children?: NestedNotifyChild[];
 }
 
-interface ChainStepResult {
+interface SubagentChildResult {
   agent: string;
   output?: string;
   success?: boolean;
@@ -138,7 +138,7 @@ interface SubagentResult {
   shareUrl?: string;
   gistUrl?: string;
   shareError?: string;
-  results?: ChainStepResult[];
+  results?: SubagentChildResult[];
   taskIndex?: number;
   totalTasks?: number;
   sessionId?: string | null;
@@ -380,7 +380,7 @@ function resolveResumeTarget(
     const sessionPath = normalizeSessionPath(children[0]?.sessionPath ?? result.sessionFile);
     return sessionPath && fs.existsSync(sessionPath) ? { sessionPath } : undefined;
   }
-  const statusPriority: Array<NonNullable<ChainStepResult["status"]>> = [
+  const statusPriority: Array<NonNullable<SubagentChildResult["status"]>> = [
     "failed",
     "paused",
     "completed",
@@ -405,7 +405,9 @@ function resolveResumeTarget(
   return { sessionPath, index: resumableChild.index, childCount: children.length };
 }
 
-function resolveChildStatus(child: ChainStepResult): NonNullable<ChainStepResult["status"]> {
+function resolveChildStatus(
+  child: SubagentChildResult,
+): NonNullable<SubagentChildResult["status"]> {
   return child.status ?? (child.success === false ? "failed" : "completed");
 }
 
@@ -426,7 +428,7 @@ function resolveOuterStatus(result: SubagentResult): SubagentNotifyDetails["stat
   return "completed";
 }
 
-function countChildStatuses(children: ChainStepResult[]): string | undefined {
+function countChildStatuses(children: SubagentChildResult[]): string | undefined {
   if (children.length <= 1) return undefined;
   const counts = new Map<string, number>();
   for (const child of children) {
@@ -483,7 +485,7 @@ function formatNestedChildren(
   return entries.length > 0 ? ["Nested subagents:", ...entries] : [];
 }
 
-function formatChildReferences(child: ChainStepResult, privacySafe = false): string[] {
+function formatChildReferences(child: SubagentChildResult, privacySafe = false): string[] {
   if (privacySafe) return [];
   const acceptanceLine = (() => {
     if (!child.acceptance) return undefined;

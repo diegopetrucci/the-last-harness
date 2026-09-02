@@ -14,6 +14,7 @@ import {
   type NestedRunState,
   type NestedStepSummary,
   type SubagentRunMode,
+  normalizeSubagentRunMode,
   type SubagentTerminationReason,
   type SubagentState,
 } from "../../shared/types.ts";
@@ -412,9 +413,13 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
     ...(stringValue(raw.capabilityToken, 128)
       ? { capabilityToken: stringValue(raw.capabilityToken, 128) }
       : {}),
-    ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain"
+    ...(raw.mode === "single" || raw.mode === "parallel"
       ? { mode: raw.mode }
-      : {}),
+      : // Historical nested artifacts may contain the retired mode; project it
+        // as a supported single run without rewriting the artifact.
+        raw.mode === "chain"
+        ? { mode: "single" as const }
+        : {}),
     ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
     ...(Array.isArray(raw.agents)
       ? {
@@ -426,9 +431,6 @@ export function sanitizeSummary(input: unknown, depth = 0): NestedRunSummary | u
       : {}),
     ...(clampNumber(raw.currentStep) !== undefined
       ? { currentStep: clampNumber(raw.currentStep) }
-      : {}),
-    ...(clampNumber(raw.chainStepCount) !== undefined
-      ? { chainStepCount: clampNumber(raw.chainStepCount) }
       : {}),
     ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
       ? { activityState: raw.activityState }
@@ -1024,10 +1026,9 @@ export function nestedSummaryFromAsyncStatus(
     asyncDir,
     ...(status.pid ? { pid: status.pid } : {}),
     ...(status.sessionId ? { sessionId: status.sessionId } : {}),
-    mode: status.mode ?? fallback.mode,
+    mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
     state: nestedStateFromAsyncState(status.state),
     ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-    ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
     ...(status.activityState ? { activityState: status.activityState } : {}),
     ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
     ...(status.currentTool ? { currentTool: status.currentTool } : {}),

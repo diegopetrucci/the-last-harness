@@ -138,7 +138,6 @@ extensions/subagents/src/runs/background/completion-dedupe.js linguist-generated
 extensions/subagents/src/runs/background/control-channel.js linguist-generated=true
 extensions/subagents/src/runs/background/fleet-view.js linguist-generated=true
 extensions/subagents/src/runs/background/notify.js linguist-generated=true
-extensions/subagents/src/runs/background/parallel-groups.js linguist-generated=true
 extensions/subagents/src/runs/background/result-watcher.js linguist-generated=true
 extensions/subagents/src/runs/background/run-id-resolver.js linguist-generated=true
 extensions/subagents/src/runs/background/run-status.js linguist-generated=true
@@ -147,7 +146,6 @@ extensions/subagents/src/runs/background/subagent-runner.js linguist-generated=t
 extensions/subagents/src/runs/foreground/execution.js linguist-generated=true
 extensions/subagents/src/runs/foreground/subagent-executor.js linguist-generated=true
 extensions/subagents/src/runs/shared/acceptance.js linguist-generated=true
-extensions/subagents/src/runs/shared/chain-outputs.js linguist-generated=true
 extensions/subagents/src/runs/shared/child-protocol.js linguist-generated=true
 extensions/subagents/src/runs/shared/completion-guard.js linguist-generated=true
 extensions/subagents/src/runs/shared/deadline-timer.js linguist-generated=true
@@ -176,7 +174,6 @@ extensions/subagents/src/runs/shared/subagent-prompt-runtime.js linguist-generat
 extensions/subagents/src/runs/shared/task-intent.js linguist-generated=true
 extensions/subagents/src/runs/shared/tk-ticket.js linguist-generated=true
 extensions/subagents/src/runs/shared/tool-budget.js linguist-generated=true
-extensions/subagents/src/runs/shared/workflow-graph.js linguist-generated=true
 extensions/subagents/src/shared/artifacts.js linguist-generated=true
 extensions/subagents/src/shared/atomic-json.js linguist-generated=true
 extensions/subagents/src/shared/child-transcript.js linguist-generated=true

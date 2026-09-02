@@ -2,12 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath, } from "../../shared/formatters.js";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.js";
-import {} from "../../shared/types.js";
+import { normalizeSubagentRunMode, } from "../../shared/types.js";
 import { readInterruptRequest } from "./control-channel.js";
 import { readStatus } from "../../shared/utils.js";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, projectNestedEvents, } from "../shared/nested-events.js";
 import { formatNestedRunStatusLines } from "../shared/nested-render.js";
-import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.js";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.js";
 import { createAsyncStatusValidationError, fingerprintAsyncStatusFile, isAsyncStatusCorruptionError, } from "./async-status-corruption.js";
 import { isProtectedPausedLifecycle, protectedLifecycleText } from "../shared/lifecycle-privacy.js";
@@ -124,8 +123,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
     const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
     const interruptRequestedAt = status.state === "running" ? readInterruptRequest(asyncDir)?.ts : undefined;
     const steps = status.steps ?? [];
-    const chainStepCount = status.chainStepCount ?? steps.length;
-    const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
     let nestedChildren = [];
     if (nestedWarnings.length === 0 && nestedRoute) {
         try {
@@ -141,10 +138,6 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         return {
             index,
             agent: step.agent,
-            ...(step.label ? { label: step.label } : {}),
-            ...(step.phase ? { phase: step.phase } : {}),
-            ...(step.outputName ? { outputName: step.outputName } : {}),
-            ...(step.structured ? { structured: step.structured } : {}),
             status: step.status,
             ...(step.projectAgent ? { projectAgent: step.projectAgent } : {}),
             ...(stepActivityState ? { activityState: stepActivityState } : {}),
@@ -204,7 +197,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         toolCount: status.toolCount,
         steerCount: status.steerCount,
         lastSteerAt: status.lastSteerAt,
-        mode: status.mode,
+        mode: normalizeSubagentRunMode(status.mode),
         cwd: status.cwd,
         startedAt: status.startedAt,
         lastUpdate: status.lastUpdate,
@@ -213,9 +206,7 @@ function statusToSummary(asyncDir, status, nestedWarnings = [], nestedRoute) {
         ...(status.deadlineAt !== undefined ? { deadlineAt: status.deadlineAt } : {}),
         ...(status.timedOut !== undefined ? { timedOut: status.timedOut } : {}),
         currentStep: status.currentStep,
-        ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
         ...(status.pendingAppends !== undefined ? { pendingAppends: status.pendingAppends } : {}),
-        ...(parallelGroups.length ? { parallelGroups } : {}),
         steps: summarizedSteps,
         ...(nestedChildren.length ? { nestedChildren } : {}),
         ...(nestedWarnings.length ? { nestedWarnings } : {}),
@@ -376,10 +367,8 @@ function formatActivityFacts(input) {
 }
 function formatStepLine(step, privacySafe = false) {
     const agent = safeTerminalText(step.agent);
-    const display = step.label ? `${safeTerminalText(step.label)} (${agent})` : agent;
-    const phase = step.phase ? `[${safeTerminalText(step.phase)}] ` : "";
     const parts = [
-        `${step.index + 1}. ${phase}${display}`,
+        `${step.index + 1}. ${agent}`,
         step.interruptRequestedAt !== undefined && step.status === "running"
             ? "pausing"
             : safeTerminalText(step.status),
@@ -405,28 +394,6 @@ export function formatAsyncRunOutputPath(run) {
 }
 export function formatAsyncRunProgressLabel(run) {
     const stepCount = run.steps.length || 1;
-    const chainStepCount = run.chainStepCount ?? stepCount;
-    const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, chainStepCount);
-    const activeGroup = run.currentStep !== undefined
-        ? groups.find((group) => run.currentStep >= group.start && run.currentStep < group.start + group.count)
-        : undefined;
-    if (activeGroup) {
-        const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);
-        if (run.interruptRequestedAt !== undefined) {
-            const pausing = groupSteps.filter((step) => step.status === "running").length;
-            const done = groupSteps.filter((step) => step.status === "complete" || step.status === "completed").length;
-            const groupLabel = `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${activeGroup.count} done`;
-            return run.mode === "parallel"
-                ? groupLabel
-                : `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
-        }
-        const groupLabel = formatParallelOutcome(groupSteps, activeGroup.count, {
-            showRunning: run.state === "running",
-        });
-        if (run.mode === "parallel")
-            return groupLabel;
-        return `step ${activeGroup.stepIndex + 1}/${chainStepCount} · parallel group: ${groupLabel}`;
-    }
     if (run.mode === "parallel") {
         if (run.interruptRequestedAt !== undefined) {
             const pausing = run.steps.filter((step) => step.status === "running").length;
@@ -434,10 +401,6 @@ export function formatAsyncRunProgressLabel(run) {
             return `${pausing === 1 ? "1 agent pausing" : `${pausing} agents pausing`} · ${done}/${stepCount} done`;
         }
         return formatParallelOutcome(run.steps, stepCount, { showRunning: run.state === "running" });
-    }
-    if (run.mode === "chain" && run.currentStep !== undefined && groups.length > 0) {
-        const logicalStep = flatToLogicalStepIndex(run.currentStep, chainStepCount, groups);
-        return `step ${logicalStep + 1}/${chainStepCount}`;
     }
     return run.currentStep !== undefined
         ? `step ${run.currentStep + 1}/${stepCount}`
@@ -449,7 +412,7 @@ function formatRunHeader(run) {
     const cwd = run.cwd ? shortenPath(run.cwd) : shortenPath(run.asyncDir);
     const activity = formatActivityFacts({ ...run, privacySafe });
     const runId = safeTerminalText(run.id);
-    const mode = safeTerminalText(run.mode);
+    const mode = safeTerminalText(normalizeSubagentRunMode(run.mode));
     const pending = run.pendingAppends
         ? ` | ${run.pendingAppends} pending append${run.pendingAppends === 1 ? "" : "s"}`
         : "";

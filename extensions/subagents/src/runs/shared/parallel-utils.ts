@@ -4,9 +4,7 @@ import type {
   NestedRouteInfo,
   ResolvedControlConfig,
   ResolvedToolBudget,
-  SubagentRunMode,
   TkTicketMetadata,
-  WorkflowGraphSnapshot,
 } from "../../shared/types.ts";
 import type { ProjectAgentRunCapture } from "../../agents/project-agent-snapshot.ts";
 
@@ -19,10 +17,6 @@ export interface RunnerSubagentStep {
   /** Parent-verified provenance for the canonical installer-managed TLH prompt. */
   projectAgentGuidance?: boolean;
   task: string;
-  phase?: string;
-  label?: string;
-  outputName?: string;
-  structured?: boolean;
   cwd?: string;
   model?: string;
   thinking?: string;
@@ -78,18 +72,10 @@ export interface RunnerSubagentStep {
   activeRuntimeMs?: number;
 }
 
-export interface ParallelStepGroup {
-  parallel: RunnerSubagentStep[];
-  concurrency?: number;
-  failFast?: boolean;
-}
-
-export type RunnerStep = RunnerSubagentStep | ParallelStepGroup;
-
 /**
  * The direct execution contract used by supported single and parallel runs.
- * A plan is intentionally one batch: sequencing belongs to the legacy chain
- * compatibility reader, not to the detached runner's active contract.
+ * A plan is intentionally one batch: sequencing is not part of the detached
+ * runner's active contract.
  */
 export type SubagentRunPlan =
   | { kind: "single"; task: RunnerSubagentStep }
@@ -97,23 +83,15 @@ export type SubagentRunPlan =
       kind: "parallel";
       tasks: RunnerSubagentStep[];
       concurrency?: number;
-      failFast?: boolean;
     };
 
 /** Full persisted configuration consumed by the detached subagent runner. */
 export interface SubagentRunConfig {
   id: string;
   /** Canonical direct single/parallel execution plan. */
-  plan?: SubagentRunPlan;
-  /**
-   * Legacy chain-shaped configuration reader. New dispatches must persist
-   * `plan`; this field remains readable for historical runs until the chain
-   * compatibility cleanup ticket removes it.
-   */
-  steps?: RunnerStep[];
+  plan: SubagentRunPlan;
   resultPath: string;
   cwd: string;
-  placeholder: string;
   taskIndex?: number;
   totalTasks?: number;
   maxOutput?: MaxOutputConfig;
@@ -133,8 +111,6 @@ export interface SubagentRunConfig {
   piPackageRoot?: string;
   piArgv1?: string;
   controlConfig?: ResolvedControlConfig;
-  resultMode?: SubagentRunMode;
-  workflowGraph?: WorkflowGraphSnapshot;
   nestedRoute?: NestedRouteInfo;
   nestedSelf?: {
     parentRunId: string;
@@ -143,27 +119,11 @@ export interface SubagentRunConfig {
     path?: Array<{ runId: string; stepIndex?: number; agent?: string }>;
   };
   tkTicket?: TkTicketMetadata;
-  /** Safe per-child captures mirrored from the plan/legacy steps for artifact inspection. */
+  /** Safe per-child captures mirrored from the direct plan for artifact inspection. */
   projectAgents?: ProjectAgentRunCapture[];
   timeoutMs?: number;
   deadlineAt?: number;
   toolBudget?: ResolvedToolBudget;
-}
-
-export function isParallelGroup(step: RunnerStep): step is ParallelStepGroup {
-  return "parallel" in step && Array.isArray(step.parallel);
-}
-
-export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
-  const flat: RunnerSubagentStep[] = [];
-  for (const step of steps) {
-    if (isParallelGroup(step)) {
-      for (const task of step.parallel) flat.push(task);
-    } else {
-      flat.push(step);
-    }
-  }
-  return flat;
 }
 
 export const DEFAULT_GLOBAL_CONCURRENCY_LIMIT = 20;

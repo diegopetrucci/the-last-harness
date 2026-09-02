@@ -1194,8 +1194,8 @@ describe("result watcher", () => {
           JSON.stringify({
             id: "async-paused",
             runId: "run-paused",
-            agent: "chain:a->b",
-            mode: "chain",
+            agent: "a+b",
+            mode: "parallel",
             success: false,
             state: "paused",
             summary: "Paused after interrupt. Waiting for explicit next action.",
@@ -1227,7 +1227,7 @@ describe("result watcher", () => {
         ?.data as
         | { mode?: string; state?: string; results?: Array<{ status?: string; index?: number }> }
         | undefined;
-      assert.equal(completion?.mode, "chain");
+      assert.equal(completion?.mode, "parallel");
       assert.equal(completion?.state, "paused");
       assert.deepEqual(
         completion?.results?.map((child) => ({ status: child.status, index: child.index })),

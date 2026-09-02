@@ -29,8 +29,12 @@ The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 - **Single:** one `agent` and optional `task`.
 - **Parallel:** a `tasks` array, with optional `concurrency`. Each task names an `agent` and `task` and may override output, reads, progress, or model behavior.
 - **Synchronous by default:** the tool waits for the child result.
-- **Asynchronous when requested:** `async: true` starts detached work and returns an ID and runtime directory so the parent can continue useful work.
+- **Asynchronous when requested:** `async: true` starts TLH-tracked background work in a detached OS child process managed by TLH and returns an ID and runtime directory so the parent can continue useful work.
 - **Execution controls:** `timeoutMs`, `cwd`, `artifacts`, and `includeProgress`; single runs also accept `output`, `outputMode`, `model`, and `fallbackModels`. Every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
+
+`single` and `parallel` are the only execution forms; each is available in the foreground or as a TLH-tracked async run. This is a fresh-only contract: `context` is not an execution input, `defaultContext` is not a supported definition or settings field, and no parent transcript is inherited. A child receives its task and explicitly configured definition; project-instruction and skill settings remain explicit child configuration, not transcript inheritance. `async: true` is TLH's internal tracked background runner, using the detached OS child process described above; it is not the removed external pi-intercom detach request/result/control integration or a separate control-channel API.
+
+`timeoutMs` sets a hard wall-clock cancellation deadline for the requested execution (one shared deadline for a parallel run), while `toolBudget` is a separate per-child tool-call limit whose `hard` threshold is required and whose `soft` threshold and block list are optional. An agent's `maxExecutionTimeMs` remains a hard per-child upper bound; when both limits apply, the stricter applicable execution deadline wins. There is no `turnBudget` or turn-count control in the reduced contract.
 
 The runtime capability gate drops a thinking level only when positive registry metadata rules it out: `reasoning: false`, a `null` level mapping, or a present map that omits `xhigh` or `max`. Missing capability metadata and unknown or unresolvable models fail open and still receive the suffix. Already-suffixed model arguments short-circuit before capability checks. Each drop emits a note naming the level and model.
 
@@ -46,7 +50,7 @@ An agent may declare `supervisorBridge: false` to opt out of generic native-supe
 
 A path-only declaration cannot be combined with lazy skills because Pi cannot express a securely named `read` tool alongside unknown extension registrations. Such a definition fails early with guidance to list each extension tool name (TLH injects `read` automatically). MCP entries in the declaration are not registered as direct child tools; the child MCP sentinel keeps direct MCP bootstrap disabled.
 
-The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
+The supported actions are `list`, `get`, `status`, `interrupt`, `resume`, `steer`, and `doctor`. Saved chains and chain dispatch are intentionally not part of the current TLH contract. TLH does not execute, rewrite, or delete saved-chain artifacts; existing `.chain.md` and `.chain.json` files are left untouched. Mutating agent-management actions such as create/delete/reset are also not exposed through the model-facing schema; project custom agents remain Markdown files managed at the exact Git-root path documented in [custom-subagents.md](custom-subagents.md). Project custom subagents are intentionally omitted from management `list`/`get` results.
 
 Keep one writer per working directory. Parallel developers writing the same checkout can race even though their session contexts are isolated; use parallelism for read-only discovery/review or independent workspaces, and keep one owner for edits.
 
@@ -216,9 +220,19 @@ Control signals distinguish `active_long_running` from `needs_attention`. A chil
 
 Paused/interrupted runs record acceptance as skipped rather than rejected. A continuation inherits the paused ledger's effective acceptance contract and provenance, and a resume-time override may only strengthen it. A later follow-up from a completed or failed run does not inherit the old contract.
 
+### Migration caveat
+
+Existing historical run, session, and saved-chain artifacts are not rewritten or deleted; their status/history may remain readable. However, an older paused run whose persisted configuration depends on retired `steps`, fork/context inheritance, the removed external pi-intercom detach request/result/control integration, or turn-budget behavior cannot be resumed under the reduced runtime. Start a new direct single or parallel run instead. Normal direct-plan durable pause/resume remains supported.
+
+### Context diagnostics are not inheritance
+
+Persisted `contextUsage`, `contextPressure`, and `contextPressureCrossedThresholds` are measured diagnostics for status, pressure notifications, and durable-resume safety. They are not caller-supplied context, do not carry a parent transcript into a child, and do not change fresh-child startup. `contextUsage.contextTokens` records the latest valid per-response measurement; `peakTokens` and `restoredTokens` are diagnostic history rather than inherited input.
+
+The fixed pressure bands (hardcoded, not configurable) are a warning at **80%** and critical at **95%** of the measured context window. A durable resume is blocked when the latest measured usage is at least 80%, and the guidance recommends a fresh narrowly scoped dispatch instead. Missing measurements are left missing rather than replaced with a guessed total.
+
 ### Native supervisor coordination
 
-A child that needs a decision, structured interview, or meaningful progress update uses `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. Custom/project agents with an active supervisor bridge receive neutral generic guidance; canonical packaged minor prompts already carry role-specific guidance and do not receive a duplicate block. Only the native supervisor channel is used for this coordination, and separately installed user extensions remain untouched when TLH primary-agent filtering is disabled.
+A child that needs a decision, structured interview, or meaningful progress update uses native `contact_supervisor`. Blocking requests durably pause the child; the parent then uses `subagent_supervisor({ action: "pending" })` or `subagent_supervisor({ action: "status" })` to inspect the native channel, followed by `subagent({ action: "resume", ... })` or `subagent({ action: "interrupt", ... })` to continue or cancel it. Custom/project agents with an active supervisor bridge receive neutral generic guidance; canonical packaged minor prompts already carry role-specific guidance and do not receive a duplicate block. This native supervisor channel and TLH's own status/lifecycle controls are the supported coordination surfaces; the removed external pi-intercom detach request/result/control integration is not supported. Separately installed user extensions remain untouched when TLH primary-agent filtering is disabled.
 
 ### Child protocol and display boundaries
 
@@ -405,6 +419,8 @@ Credential failures are detected at dispatch time and also from completed runs, 
 Only unambiguous credential rejections (revoked/expired OAuth grants, 401/403 during token refresh) surface this warning. Transient network failures, rate limits, and server errors are silent — they are retried automatically on the next dispatch.
 
 ## Updating, migrating, and removing
+
+See the [migration caveat](#migration-caveat) for historical artifacts and paused runs, and [custom-agent/settings migration](custom-subagents.md#migrate-from-an-older-profile-definition) for cleanup steps.
 
 `tlh update` updates the first-party runtime together with the rest of TLH. It does not download or publish a standalone subagent package. On legacy profiles, install/update removes a retired external subagent package only when TLH can establish that it managed that package. Profiles with provenance preserve a matching manually owned entry; pre-provenance profiles treat the old default identities as TLH-managed for the one-time migration.
 

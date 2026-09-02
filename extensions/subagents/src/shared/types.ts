@@ -30,42 +30,6 @@ export type JsonSchemaObject = Record<string, unknown>;
 /** Internal result shape retained until the Pi 0.83 tool-result hook applies the error flag. */
 export type SubagentToolResult<T> = AgentToolResult<T> & { isError?: boolean };
 
-export interface ChainOutputMapEntry {
-  text: string;
-  structured?: unknown;
-  agent: string;
-  stepIndex: number;
-}
-
-export type ChainOutputMap = Record<string, ChainOutputMapEntry>;
-
-export type WorkflowNodeStatus = "pending" | "running" | "completed" | "failed" | "paused";
-
-export interface WorkflowGraphNode {
-  id: string;
-  kind: "step" | "parallel-group" | "agent";
-  agent?: string;
-  phase?: string;
-  label: string;
-  status: WorkflowNodeStatus;
-  flatIndex?: number;
-  stepIndex?: number;
-  children?: WorkflowGraphNode[];
-  itemKey?: string;
-  outputName?: string;
-  structured?: boolean;
-  acceptanceStatus?: AcceptanceLedgerStatus;
-  error?: string;
-}
-
-export interface WorkflowGraphSnapshot {
-  runId: string;
-  mode: "chain" | "parallel" | "single";
-  phases: Array<{ title: string; nodeIds: string[] }>;
-  nodes: WorkflowGraphNode[];
-  currentNodeId?: string;
-}
-
 export interface SavedOutputReference {
   path: string;
   bytes: number;
@@ -211,7 +175,16 @@ export interface ControlEvent {
 }
 
 export type SubagentResultStatus = "completed" | "failed" | "paused";
-export type SubagentRunMode = "single" | "parallel" | "chain";
+export type SubagentRunMode = "single" | "parallel";
+
+/**
+ * Normalize a persisted run mode for supported runtime projections.
+ * Historical artifacts may still contain the retired `chain` value; callers
+ * must read those files without treating the value as an executable mode.
+ */
+export function normalizeSubagentRunMode(value: unknown): SubagentRunMode {
+  return value === "parallel" ? "parallel" : "single";
+}
 
 /** Stable machine-readable reason why a child execution segment terminated. */
 export type SubagentTerminationReason =
@@ -347,8 +320,6 @@ export type PublicNestedRunSummary = Pick<
   | "agent"
   | "agents"
   | "currentStep"
-  | "chainStepCount"
-  | "parallelGroups"
   | "activityState"
   | "lastActivityAt"
   | "currentTool"
@@ -684,12 +655,8 @@ export interface Details {
     originalLines?: number;
     artifactPath?: string;
   };
-  // Chain metadata for observability
-  totalSteps?: number; // Total steps in chain
-  currentStepIndex?: number; // 0-indexed current step (for running chains)
-  workflowGraph?: WorkflowGraphSnapshot;
-  outputs?: ChainOutputMap;
-  parallelGroups?: AsyncParallelGroupStatus[];
+  /** Number of direct children in the execution plan. */
+  totalSteps?: number;
   // Aggregated child usage across all agents in the run
   totalChildUsage?: Usage;
   // Aggregated cost across all agents in the run
@@ -721,12 +688,6 @@ export interface ArtifactConfig {
 // ============================================================================
 // Async Execution
 // ============================================================================
-
-export interface AsyncParallelGroupStatus {
-  start: number;
-  count: number;
-  stepIndex: number;
-}
 
 export type NestedRunState = "queued" | "running" | "complete" | "failed" | "paused";
 type NestedOwnerState = "live" | "gone" | "unknown";
@@ -787,8 +748,6 @@ export interface NestedRunSummary extends NestedRunAddress {
   agent?: string;
   agents?: string[];
   currentStep?: number;
-  chainStepCount?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
   steps?: NestedStepSummary[];
   children?: NestedRunSummary[];
   activityState?: ActivityState;
@@ -849,10 +808,6 @@ export interface AsyncStartedEvent {
   mode?: SubagentRunMode;
   agent?: string;
   agents?: string[];
-  chain?: string[];
-  chainStepCount?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
-  workflowGraph?: WorkflowGraphSnapshot;
   timeoutMs?: number;
   deadlineAt?: number;
   nestedRoute?: NestedRouteInfo;
@@ -889,16 +844,9 @@ export interface AsyncStatus {
   pid?: number;
   cwd?: string;
   currentStep?: number;
-  chainStepCount?: number;
   pendingAppends?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
-  workflowGraph?: WorkflowGraphSnapshot;
   steps?: Array<{
     agent: string;
-    phase?: string;
-    label?: string;
-    outputName?: string;
-    structured?: boolean;
     status:
       | "pending"
       | "running"
@@ -970,7 +918,6 @@ export interface AsyncStatus {
   totalTokens?: TokenUsage;
   totalCost?: CostSummary;
   sessionFile?: string;
-  outputs?: ChainOutputMap;
   tkTicket?: TkTicketMetadata;
   /** Safe per-child project-agent captures retained for status/control display. */
   projectAgents?: ProjectAgentRunCapture[];
@@ -1056,8 +1003,6 @@ export interface AsyncResultArtifact {
   timedOut?: boolean;
   pause?: AsyncPauseMetadata;
   results: AsyncResultArtifactResultItem[];
-  outputs?: ChainOutputMap;
-  workflowGraph?: WorkflowGraphSnapshot;
   exitCode: number;
   timestamp: number;
   durationMs: number;
@@ -1097,14 +1042,10 @@ export interface AsyncJobState {
   mode?: SubagentRunMode;
   agents?: string[];
   currentStep?: number;
-  chainStepCount?: number;
-  parallelGroups?: AsyncParallelGroupStatus[];
   steps?: AsyncJobStep[];
   stepsTotal?: number;
   runningSteps?: number;
   completedSteps?: number;
-  hasParallelGroups?: boolean;
-  activeParallelGroup?: boolean;
   startedAt?: number;
   updatedAt?: number;
   timeoutMs?: number;
@@ -1419,7 +1360,6 @@ export function resolveTempRootDir(options?: {
 export const TEMP_ROOT_DIR = resolveTempRootDir();
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
-export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";

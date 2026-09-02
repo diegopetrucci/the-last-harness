@@ -1405,7 +1405,7 @@ describe("async resume lookup", () => {
       fs.writeFileSync(sessionFile, "", "utf-8");
       writeJson(path.join(asyncRoot, "run-pending", "status.json"), {
         runId: "run-pending",
-        mode: "chain",
+        mode: "parallel",
         state: "running",
         startedAt: 100,
         lastUpdate: 200,
@@ -1438,7 +1438,7 @@ describe("async resume lookup", () => {
       fs.writeFileSync(secondSession, "", "utf-8");
       writeJson(path.join(asyncRoot, "run-multi", "status.json"), {
         runId: "run-multi",
-        mode: "chain",
+        mode: "parallel",
         state: "complete",
         startedAt: 100,
         lastUpdate: 200,

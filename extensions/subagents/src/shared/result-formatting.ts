@@ -4,6 +4,7 @@ import {
   type SubagentResultChild,
   type SubagentResultStatus,
   type SubagentRunMode,
+  normalizeSubagentRunMode,
 } from "./types.ts";
 import { truncateWithMarker } from "./string-utils.ts";
 import { safeTerminalText } from "./display-text.ts";
@@ -75,8 +76,6 @@ function compactNestedRun(
     ...(run.agent ? { agent: run.agent } : {}),
     ...(run.agents?.length ? { agents: run.agents.slice(0, 12) } : {}),
     ...(run.currentStep !== undefined ? { currentStep: run.currentStep } : {}),
-    ...(run.chainStepCount !== undefined ? { chainStepCount: run.chainStepCount } : {}),
-    ...(run.parallelGroups?.length ? { parallelGroups: run.parallelGroups.slice(0, 8) } : {}),
     ...(run.activityState ? { activityState: run.activityState } : {}),
     ...(run.lastActivityAt !== undefined ? { lastActivityAt: run.lastActivityAt } : {}),
     ...(run.currentTool ? { currentTool: run.currentTool } : {}),
@@ -321,7 +320,6 @@ function formatForegroundNativeSubagentText(input: {
   mode: SubagentRunMode;
   status: SubagentResultStatus;
   children: NativeForegroundChild[];
-  chainSteps?: number;
   errorSummary?: string;
 }): string {
   const counts = countStatuses(input.children);
@@ -335,9 +333,6 @@ function formatForegroundNativeSubagentText(input: {
     `Status: ${boundedNativeForegroundLabel(input.status)}`,
     `Children: ${formatStatusCounts(counts)}`,
   ];
-  if (input.mode === "chain" && typeof input.chainSteps === "number") {
-    outerLines.push(`Chain steps: ${input.chainSteps}`);
-  }
   if (input.errorSummary) {
     outerLines.push("", "Error:", boundedNativeForegroundError(input.errorSummary));
   }
@@ -458,7 +453,6 @@ interface GroupedNativeForegroundMessageInput {
   runId: string;
   mode: SubagentRunMode;
   children: NativeForegroundChild[];
-  chainSteps?: number;
   statusOverride?: SubagentResultStatus;
   errorSummary?: string;
 }
@@ -479,10 +473,9 @@ export function formatForegroundNativeSubagentResult(input: GroupedNativeForegro
     summary,
     text: formatForegroundNativeSubagentText({
       runId: input.runId,
-      mode: input.mode,
+      mode: normalizeSubagentRunMode(input.mode),
       status,
       children,
-      ...(typeof input.chainSteps === "number" ? { chainSteps: input.chainSteps } : {}),
       ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
     }),
   };

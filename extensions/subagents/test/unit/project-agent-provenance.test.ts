@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { buildAsyncRunnerSteps } from "../../src/runs/background/async-execution.ts";
+import { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import { SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV } from "../../src/runs/shared/pi-args.ts";
 import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
 import { makeAgent, makeExtensionAPI } from "../support/helpers.ts";
@@ -21,11 +21,10 @@ afterEach(() => {
 });
 
 describe("packaged minor-agent provenance", () => {
-  it("serializes a strict provenance boolean on every async runner step", () => {
+  it("serializes a strict provenance boolean on every async runner task", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "tlh-provenance-"));
     fixtures.push(root);
     const agentDir = path.join(root, "agent");
-    const asyncDir = path.join(root, "async");
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env[SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV] = "1";
 
@@ -35,37 +34,33 @@ describe("packaged minor-agent provenance", () => {
     const custom = makeAgent("code-reviewer", {
       filePath: path.join(root, "custom", "code-reviewer.md"),
     });
-    const built = buildAsyncRunnerSteps("provenance", {
-      chain: [
+    const built = buildAsyncRunnerPlan("provenance", {
+      tasks: [
         { agent: "developer", task: "canonical" },
         { agent: "code-reviewer", task: "custom" },
       ],
       agents: [canonical, custom],
       ctx: { pi: makeExtensionAPI(), cwd: root, currentSessionId: "parent" },
       maxSubagentDepth: 2,
-      asyncDir,
     });
 
     assert.equal("error" in built, false);
     if ("error" in built) return;
     assert.deepEqual(
-      built.steps.flatMap((step) =>
-        "parallel" in step
-          ? step.parallel.map((task) => task.projectAgentGuidance)
-          : [step.projectAgentGuidance],
-      ),
+      built.plan.tasks.map((task) => task.projectAgentGuidance),
       [true, false],
     );
-    const persisted = JSON.parse(JSON.stringify(built.steps)) as unknown;
-    assert.ok(Array.isArray(persisted));
-    const persistedSteps = persisted as Array<{ projectAgentGuidance?: unknown }>;
-    assert.equal(persistedSteps[0]?.projectAgentGuidance, true);
-    assert.equal(persistedSteps[1]?.projectAgentGuidance, false);
+    const persisted = JSON.parse(JSON.stringify(built.plan)) as unknown;
+    assert.ok(persisted && typeof persisted === "object");
+    const persistedPlan = persisted as { tasks: Array<{ projectAgentGuidance?: unknown }> };
+    assert.equal(persistedPlan.tasks[0]?.projectAgentGuidance, true);
+    assert.equal(persistedPlan.tasks[1]?.projectAgentGuidance, false);
 
-    // The persisted runner config type remains assignable after JSON round-trip;
+    // The persisted direct plan remains assignable after JSON round-trip;
     // malformed values cannot opt in at the child-env boundary because launch
     // wiring uses exact === true.
-    const config: Required<Pick<SubagentRunConfig, "steps">> = { steps: built.steps };
-    assert.equal(config.steps.length, 2);
+    const config: Required<Pick<SubagentRunConfig, "plan">> = { plan: built.plan };
+    assert.equal(config.plan.kind, "parallel");
+    assert.equal(config.plan.tasks.length, 2);
   });
 });

@@ -107,9 +107,8 @@ describe("result formatter", () => {
 
   it("bounds native foreground errors, child summaries, and nested previews", () => {
     const grouped = formatForegroundNativeSubagentResult({
-      runId: "run-chain-native-error",
-      mode: "chain",
-      chainSteps: 2,
+      runId: "run-native-error",
+      mode: "parallel",
       statusOverride: "failed",
       errorSummary: `Collected output validation failed: ${"E".repeat(2_000)}`,
       children: [
@@ -120,10 +119,10 @@ describe("result formatter", () => {
           artifactPath: "/tmp/reviewer-output.md",
           children: Array.from({ length: 9 }, (_, index) => ({
             id: `nested-${index}`,
-            parentRunId: "run-chain-native-error",
+            parentRunId: "run-native-error",
             parentStepIndex: 0,
             depth: 1,
-            path: [{ runId: "run-chain-native-error", stepIndex: 0 }],
+            path: [{ runId: "run-native-error", stepIndex: 0 }],
             state: "complete",
             agent: `nested-agent-${index}`,
             children: [
@@ -131,10 +130,7 @@ describe("result formatter", () => {
                 id: `nested-${index}-child`,
                 parentRunId: `nested-${index}`,
                 depth: 2,
-                path: [
-                  { runId: "run-chain-native-error", stepIndex: 0 },
-                  { runId: `nested-${index}` },
-                ],
+                path: [{ runId: "run-native-error", stepIndex: 0 }, { runId: `nested-${index}` }],
                 state: "complete",
                 agent: `nested-child-${index}`,
                 children: [
@@ -143,7 +139,7 @@ describe("result formatter", () => {
                     parentRunId: `nested-${index}-child`,
                     depth: 3,
                     path: [
-                      { runId: "run-chain-native-error", stepIndex: 0 },
+                      { runId: "run-native-error", stepIndex: 0 },
                       { runId: `nested-${index}` },
                       { runId: `nested-${index}-child` },
                     ],
@@ -160,7 +156,6 @@ describe("result formatter", () => {
 
     assert.equal(grouped.status, "failed");
     assert.equal(grouped.summary, "1 failed");
-    assert.match(grouped.text, /Chain steps: 2/);
     assert.match(grouped.text, /Error:\nCollected output validation failed:/);
     assert.match(grouped.text, /\[error truncated; full text is unavailable\]/);
     assert.match(

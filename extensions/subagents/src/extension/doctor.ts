@@ -5,7 +5,6 @@ import { isAsyncAvailable } from "../runs/background/async-execution.ts";
 import { discoverAvailableSkills, SOURCE_PRIORITY, type SkillSource } from "../agents/skills.ts";
 import {
   ASYNC_DIR,
-  CHAIN_RUNS_DIR,
   RESULTS_DIR,
   TEMP_ROOT_DIR,
   type ExtensionConfig,
@@ -18,7 +17,6 @@ interface DoctorPaths {
   tempRootDir: string;
   asyncDir: string;
   resultsDir: string;
-  chainRunsDir: string;
 }
 
 interface DoctorDeps {
@@ -46,7 +44,6 @@ const DEFAULT_PATHS: DoctorPaths = {
   tempRootDir: TEMP_ROOT_DIR,
   asyncDir: ASYNC_DIR,
   resultsDir: RESULTS_DIR,
-  chainRunsDir: CHAIN_RUNS_DIR,
 };
 
 const DEFAULT_DEPS: DoctorDeps = {
@@ -223,7 +220,6 @@ export function buildDoctorReport(input: DoctorReportInput): string {
     formatExistingDirectory("temp root", paths.tempRootDir),
     formatExistingDirectory("async runs", paths.asyncDir),
     formatExistingDirectory("results", paths.resultsDir),
-    formatExistingDirectory("chain runs", paths.chainRunsDir),
     lineFromCheck("runtime dir counts", () => formatRuntimeDirCounts(paths)),
     "",
     "Discovery",

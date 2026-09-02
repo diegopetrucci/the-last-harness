@@ -19,14 +19,12 @@ import {
   removeTempDir,
 } from "../support/helpers.ts";
 import type { MockPi } from "../support/helpers.ts";
-import { deliverInterruptRequest } from "../../src/runs/background/control-channel.ts";
 import {
   SUBAGENT_CHILD_AGENT_ENV,
   SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV,
   INVALID_LAZY_SKILL_TOOL_POLICY_ERROR,
 } from "../../src/runs/shared/pi-args.ts";
 import { sanitizeModelFallbackNotice } from "../../src/runs/shared/model-fallback.ts";
-import { resolveAsyncResumeTarget } from "../../src/runs/background/async-resume.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
 import {
   ASYNC_DIR,
@@ -35,20 +33,21 @@ import {
   RESULTS_DIR,
   TEMP_ROOT_DIR,
   createSubagentExecutor,
-  executeAsyncChain,
+  executeAsyncParallel,
   executeAsyncSingle,
   isAsyncAvailable,
   readAsyncPayload,
   readMockPiArgs,
-  readMockPiArgsMatching,
   readStatus,
-  waitForAsyncControlCondition,
   waitForAsyncResultFile,
   waitForMockPiCall,
 } from "../support/async-execution-helpers.ts";
 import { scaleTestTimeout } from "../support/scale-timeout.ts";
 import { getAsyncConfigPath } from "../../src/shared/types.ts";
-import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
+import type {
+  RunnerSubagentStep,
+  SubagentRunConfig,
+} from "../../src/runs/shared/parallel-utils.ts";
 
 function inferredAcceptanceRejectionOutput(output: string): string {
   return [
@@ -144,8 +143,7 @@ describe("async execution utilities", () => {
       const persistedConfig = JSON.parse(
         fs.readFileSync(getAsyncConfigPath(id), "utf-8"),
       ) as SubagentRunConfig;
-      assert.equal(persistedConfig.steps, undefined);
-      assert.equal(persistedConfig.plan?.kind, "single");
+      assert.equal(persistedConfig.plan.kind, "single");
       const resultPath = await waitForAsyncResultFile(id);
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
       assert.equal(payload.success, true);
@@ -404,16 +402,11 @@ describe("async execution utilities", () => {
         echoEnv: [SUBAGENT_CHILD_AGENT_ENV, SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV],
       });
       const parallelId = `async-packaged-identities-${Date.now().toString(36)}`;
-      const parallel = executeAsyncChain(parallelId, {
-        chain: [
-          {
-            parallel: [
-              { agent: "developer", task: "Echo the developer identity." },
-              { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
-            ],
-          },
+      const parallel = executeAsyncParallel(parallelId, {
+        tasks: [
+          { agent: "developer", task: "Echo the developer identity." },
+          { agent: "code-reviewer", task: "Echo the code-reviewer identity." },
         ],
-        resultMode: "parallel",
         agents: [canonicalAgent("developer"), canonicalAgent("code-reviewer")],
         ...commonParams,
       });
@@ -521,16 +514,11 @@ describe("async execution utilities", () => {
     mockPi.onCall({ output: "parallel one done" });
     mockPi.onCall({ output: "parallel two done" });
     const parallelId = `async-receipt-parallel-${Date.now().toString(36)}`;
-    const parallelResult = executeAsyncChain(parallelId, {
-      chain: [
-        {
-          parallel: [
-            { agent: "worker", task: "Do one" },
-            { agent: "reviewer", task: "Do two" },
-          ],
-        },
+    const parallelResult = executeAsyncParallel(parallelId, {
+      tasks: [
+        { agent: "worker", task: "Do one" },
+        { agent: "reviewer", task: "Do two" },
       ],
-      resultMode: "parallel",
       agents: [makeAgent("worker"), makeAgent("reviewer")],
       ...commonParams,
     });
@@ -547,21 +535,6 @@ describe("async execution utilities", () => {
     };
     assert.equal(parallelPayload.mode, "parallel");
     assert.equal(parallelPayload.agent, "parallel:worker+reviewer");
-
-    mockPi.onCall({ output: "chain done" });
-    const chainId = `async-receipt-chain-${Date.now().toString(36)}`;
-    const chainResult = executeAsyncChain(chainId, {
-      chain: [{ agent: "worker", task: "Do chained work" }],
-      agents: [makeAgent("worker")],
-      ...commonParams,
-    });
-    assert.match(chainResult.content[0]?.text ?? "", /^Async chain: .+ \[[^\]\n]+\]$/);
-    assert.doesNotMatch(
-      chainResult.content[0]?.text ?? "",
-      /Do not run sleep timers or polling loops/,
-    );
-    assert.equal(chainResult.content[0]?.text?.includes("\n"), false);
-    await waitForAsyncResultFile(chainId);
   });
 
   it("applies agent acceptance roles to inferred async acceptance", async () => {
@@ -598,59 +571,6 @@ describe("async execution utilities", () => {
     assert.ok(asyncId, "expected asyncId");
     const payload = await readAsyncPayload(asyncId);
     assert.equal(payload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
-  });
-
-  it("infers async chain acceptance after expanding top-level task templates", async () => {
-    mockPi.onCall({ output: "patched" });
-    mockPi.onCall({ output: "reviewed" });
-
-    const patchId = `async-role-task-template-patch-${Date.now().toString(36)}`;
-    executeAsyncChain(patchId, {
-      task: "Patch src/auth.ts",
-      chain: [{ agent: "explorer", task: "{task}" }],
-      agents: [makeAgent("explorer", { acceptanceRole: "read-only" })],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-role-task-patch",
-      },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-    const patchPayload = await readAsyncPayload(patchId);
-    assert.equal(patchPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "checked");
-
-    const reviewId = `async-role-task-template-review-${Date.now().toString(36)}`;
-    executeAsyncChain(reviewId, {
-      task: "Review only; do not edit files",
-      chain: [{ agent: "implementer", task: "{task}" }],
-      agents: [makeAgent("implementer", { acceptanceRole: "writer" })],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-role-task-review",
-      },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-    const reviewPayload = await readAsyncPayload(reviewId);
-    assert.equal(reviewPayload.results[0]?.acceptance?.effectiveAcceptance?.level, "attested");
   });
 
   it("top-level async parallel conversion preserves output, reads, and progress", async () => {
@@ -702,12 +622,8 @@ describe("async execution utilities", () => {
     const persistedConfig = JSON.parse(
       fs.readFileSync(getAsyncConfigPath(asyncId), "utf-8"),
     ) as SubagentRunConfig;
-    assert.equal(persistedConfig.steps, undefined);
-    assert.equal(persistedConfig.plan?.kind, "parallel");
-    assert.equal(
-      persistedConfig.plan?.kind === "parallel" ? persistedConfig.plan.tasks.length : undefined,
-      1,
-    );
+    assert.equal(persistedConfig.plan.kind, "parallel");
+    assert.equal(persistedConfig.plan.tasks.length, 1);
     const resultPath = path.join(RESULTS_DIR, `${asyncId}.json`);
     const statusPath = path.join(ASYNC_DIR, asyncId, "status.json");
     const deadline = Date.now() + scaleTestTimeout(10_000);
@@ -724,10 +640,6 @@ describe("async execution utilities", () => {
     assert.equal(payload.results[0]?.acceptance?.status, "checked");
     assert.equal(status.sessionId, parentSessionFile);
     assert.equal(status.steps?.[0]?.acceptance?.status, "checked");
-    assert.equal(status.workflowGraph?.mode, "parallel");
-    assert.equal(status.workflowGraph?.nodes[0]?.kind, "parallel-group");
-    assert.equal(status.workflowGraph?.nodes[0]?.children?.[0]?.agent, "worker");
-    assert.equal(status.chainStepCount, 1);
     const outputPath = path.join(
       tempDir,
       "parent-session",
@@ -876,260 +788,6 @@ describe("async execution utilities", () => {
     assert.equal(fs.existsSync(path.join(tempDir, "progress.md")), false);
   });
 
-  it("async chains reject malformed named output references before spawning", async () => {
-    const id = `async-malformed-output-ref-${Date.now().toString(36)}`;
-    const result = executeAsyncChain(id, {
-      chain: [{ agent: "consumer", task: "Use {outputs.bad-name}" }],
-      agents: [makeAgent("consumer")],
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-malformed" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(
-      result.content[0]?.text ?? "",
-      /Invalid chain output reference '\{outputs\.bad-name\}'/,
-    );
-    assert.equal(mockPi.callCount(), 0);
-  });
-
-  it("async chains persist structured outputs, named outputs, and graph labels", async () => {
-    const schema = {
-      type: "object",
-      required: ["value"],
-      properties: { value: { type: "string" } },
-    };
-    mockPi.onCall({ structuredOutput: { value: "Alpha structured" } });
-    mockPi.onCall({ output: "used named output" });
-    const id = `async-structured-chain-${Date.now().toString(36)}`;
-    const result = executeAsyncChain(id, {
-      chain: [
-        {
-          agent: "producer",
-          task: "Produce data",
-          phase: "Collect",
-          label: "Produce structured data",
-          as: "data",
-          outputSchema: schema,
-        },
-        { agent: "consumer", task: "Use {outputs.data}", phase: "Use", label: "Consume data" },
-      ],
-      agents: [makeAgent("producer"), makeAgent("consumer")],
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-structured" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-
-    assert.ok(!result.isError);
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.deepEqual(payload.results[0]?.structuredOutput, { value: "Alpha structured" });
-    assert.deepEqual(payload.outputs?.data?.structured, { value: "Alpha structured" });
-    assert.match(readMockPiArgs(mockPi, 1).at(-1) ?? "", /Alpha structured/);
-    assert.equal(status.steps?.[0]?.label, "Produce structured data");
-    assert.equal(status.steps?.[0]?.phase, "Collect");
-    assert.equal(status.steps?.[0]?.outputName, "data");
-    assert.equal(status.steps?.[0]?.structured, true);
-    assert.equal(payload.workflowGraph?.nodes?.[0]?.label, "Produce structured data");
-    assert.equal(payload.workflowGraph?.nodes?.[0]?.outputName, "data");
-    assert.equal(payload.workflowGraph?.nodes?.[0]?.status, "completed");
-    assert.equal(payload.workflowGraph?.nodes?.[1]?.status, "completed");
-  });
-
-  it("async chains can start parallel, funnel into one step, then fan back out", async () => {
-    mockPi.onCall({ matchArgIncludes: "Scout API", output: "Scout A async findings" });
-    mockPi.onCall({ matchArgIncludes: "Scout UI", output: "Scout B async findings" });
-    mockPi.onCall({ matchArgIncludes: "Synthesize:", output: "Async funnel synthesis" });
-    mockPi.onCall({ matchArgIncludes: "Review funnel A:", output: "Async reviewer A done" });
-    mockPi.onCall({ matchArgIncludes: "Review funnel B:", output: "Async reviewer B done" });
-    const id = `async-parallel-funnel-fanout-${Date.now().toString(36)}`;
-    const result = executeAsyncChain(id, {
-      chain: [
-        {
-          parallel: [
-            { agent: "scout-a", task: "Scout API" },
-            { agent: "scout-b", task: "Scout UI" },
-          ],
-          concurrency: 2,
-        },
-        { agent: "synthesizer", task: "Synthesize:\n{previous}" },
-        {
-          parallel: [
-            { agent: "review-a", task: "Review funnel A:\n{previous}" },
-            { agent: "review-b", task: "Review funnel B:\n{previous}" },
-          ],
-          concurrency: 2,
-        },
-      ],
-      agents: [
-        makeAgent("scout-a"),
-        makeAgent("scout-b"),
-        makeAgent("synthesizer"),
-        makeAgent("review-a"),
-        makeAgent("review-b"),
-      ],
-      ctx: {
-        pi: { events: { emit() {} } },
-        cwd: tempDir,
-        currentSessionId: "session-parallel-funnel-fanout",
-      },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      maxSubagentDepth: 2,
-    });
-
-    assert.ok(!result.isError, `should launch: ${JSON.stringify(result.content)}`);
-    const resultPath = await waitForAsyncResultFile(id);
-    const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
-    const status = JSON.parse(
-      fs.readFileSync(path.join(ASYNC_DIR, id, "status.json"), "utf-8"),
-    ) as AsyncStatusPayload;
-    assert.equal(payload.success, true);
-    assert.deepEqual(
-      payload.results.map((entry) => entry.output),
-      [
-        "Scout A async findings",
-        "Scout B async findings",
-        "Async funnel synthesis",
-        "Async reviewer A done",
-        "Async reviewer B done",
-      ],
-    );
-    assert.deepEqual(
-      status.steps?.map((step) => step.status),
-      ["complete", "complete", "complete", "complete", "complete"],
-    );
-    assert.deepEqual(status.parallelGroups, [
-      { start: 0, count: 2, stepIndex: 0 },
-      { start: 3, count: 2, stepIndex: 2 },
-    ]);
-    const funnelTask = readMockPiArgsMatching(mockPi, "Synthesize:").at(-1) ?? "";
-    assert.match(funnelTask, /=== Parallel Task 1 \(scout-a\) ===/);
-    assert.match(funnelTask, /Scout A async findings/);
-    assert.match(funnelTask, /=== Parallel Task 2 \(scout-b\) ===/);
-    assert.match(funnelTask, /Scout B async findings/);
-    assert.match(
-      readMockPiArgsMatching(mockPi, "Review funnel A:").at(-1) ?? "",
-      /Review funnel A:\nAsync funnel synthesis/,
-    );
-    assert.match(
-      readMockPiArgsMatching(mockPi, "Review funnel B:").at(-1) ?? "",
-      /Review funnel B:\nAsync funnel synthesis/,
-    );
-    assert.equal(payload.workflowGraph?.nodes?.[0]?.kind, "parallel-group");
-    assert.equal(payload.workflowGraph?.nodes?.[0]?.status, "completed");
-    assert.equal(payload.workflowGraph?.nodes?.[1]?.kind, "step");
-    assert.equal(payload.workflowGraph?.nodes?.[1]?.status, "completed");
-    assert.equal(payload.workflowGraph?.nodes?.[2]?.kind, "parallel-group");
-    assert.equal(payload.workflowGraph?.nodes?.[2]?.status, "completed");
-  });
-
-  it(
-    "paused sequential resumes keep the later child session instead of a pre-launch sibling session",
-    {
-      skip:
-        process.platform === "win32"
-          ? "cross-process interrupt delivery unreliable on Windows CI"
-          : undefined,
-    },
-    async () => {
-      mockPi.onCall({ delay: 500, output: "first done" });
-      mockPi.onCall({ delay: 5_000, output: "second done" });
-      const id = `async-paused-sequential-session-${Date.now().toString(36)}`;
-      const sessionRoot = path.join(tempDir, "session-root-sequential");
-      executeAsyncChain(id, {
-        chain: [
-          { agent: "worker", task: "First step" },
-          { agent: "worker", task: "Second step" },
-        ],
-        resultMode: "chain",
-        agents: [makeAgent("worker")],
-        ctx: {
-          pi: { events: { emit() {} } },
-          cwd: tempDir,
-          currentSessionId: "session-sequential",
-        },
-        artifactConfig: {
-          enabled: false,
-          includeInput: false,
-          includeOutput: false,
-          includeJsonl: false,
-          includeMetadata: false,
-          cleanupDays: 7,
-        },
-        shareEnabled: false,
-        sessionRoot,
-        maxSubagentDepth: 2,
-      });
-
-      const asyncDir = path.join(ASYNC_DIR, id);
-      const statusPath = path.join(asyncDir, "status.json");
-      const sessionDir = path.join(sessionRoot, `async-${id}`);
-      const firstSessionFile = path.join(sessionDir, "first.jsonl");
-      const secondSessionFile = path.join(sessionDir, "second.jsonl");
-
-      await waitForAsyncControlCondition(
-        asyncDir,
-        (status) => status.steps?.[0]?.status === "running",
-      );
-      fs.mkdirSync(sessionDir, { recursive: true });
-      fs.writeFileSync(firstSessionFile, "", "utf-8");
-      await waitForAsyncControlCondition(
-        asyncDir,
-        (status) =>
-          status.steps?.[0]?.status === "complete" && status.steps?.[1]?.status === "running",
-      );
-      fs.writeFileSync(secondSessionFile, "", "utf-8");
-
-      const statusBeforeInterrupt = JSON.parse(
-        fs.readFileSync(statusPath, "utf-8"),
-      ) as AsyncStatusPayload & {
-        pid?: number;
-      };
-      deliverInterruptRequest({ asyncDir, pid: statusBeforeInterrupt.pid, source: "test" });
-
-      const { status } = await waitForAsyncControlCondition(
-        asyncDir,
-        (current) => current.state === "paused" && current.steps?.[1]?.status === "paused",
-      );
-      assert.equal(status.steps?.[0]?.sessionFile, path.resolve(firstSessionFile));
-      assert.equal(status.steps?.[1]?.sessionFile, path.resolve(secondSessionFile));
-      const target = resolveAsyncResumeTarget(
-        { id, index: 1 },
-        { asyncDirRoot: ASYNC_DIR, resultsDir: RESULTS_DIR },
-      );
-      assert.equal(target.kind, "revive");
-      assert.equal(target.sessionFile, path.resolve(secondSessionFile));
-    },
-  );
-
   it("readStatus caches unchanged files and invalidates same-mtime replacements", () => {
     const dir = createTempDir();
     try {
@@ -1170,20 +828,18 @@ describe("async execution utilities", () => {
     }
   });
 
-  it("rejects a durable runner config without a direct plan or legacy steps", () => {
+  it("rejects a durable runner config without a valid direct plan", () => {
     const id = `async-missing-run-plan-${Date.now().toString(36)}`;
     const asyncDir = path.join(tempDir, id);
     const resultPath = path.join(tempDir, `${id}-result.json`);
     const configPath = path.join(tempDir, `${id}-config.json`);
-    const config = {
+    const config: Record<string, unknown> = {
       id,
       resultPath,
       cwd: tempDir,
-      placeholder: "{previous}",
       asyncDir,
-      resultMode: "single",
       sessionId: "session-missing-run-plan",
-    } satisfies Omit<SubagentRunConfig, "plan" | "steps">;
+    };
     fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
 
     const runnerPath = path.resolve(
@@ -1198,15 +854,14 @@ describe("async execution utilities", () => {
 
     assert.equal(runner.status, 1, runner.stderr);
     assert.equal(fs.existsSync(configPath), false, "runner should consume its persisted config");
-    assert.match(runner.stderr, /direct plan or a non-empty legacy steps array/);
+    assert.match(runner.stderr, /valid direct plan/);
     assert.ok(fs.existsSync(resultPath), "runner should persist a result artifact");
     const statusPath = path.join(asyncDir, "status.json");
     assert.ok(fs.existsSync(statusPath), "runner should persist status");
 
     const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
     const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
-    const expectedDiagnostic =
-      "Async runner config must include a direct plan or a non-empty legacy steps array.";
+    const expectedDiagnostic = "Async runner config must include a valid direct plan.";
     assert.equal(payload.state, "failed");
     assert.equal(payload.success, false);
     assert.equal(payload.exitCode, 1);
@@ -1225,8 +880,9 @@ describe("async execution utilities", () => {
     const configPath = path.join(tempDir, `${id}-config.json`);
     const config: SubagentRunConfig = {
       id,
-      steps: [
-        {
+      plan: {
+        kind: "single",
+        task: {
           agent: "worker",
           task: "Inspect the task",
           tools: ["./custom-tool.ts"],
@@ -1235,10 +891,9 @@ describe("async execution utilities", () => {
           inheritSkills: false,
           systemPrompt: "You are a test agent.",
         },
-      ],
+      },
       resultPath,
       cwd: tempDir,
-      placeholder: "{previous}",
       asyncDir,
       artifactsDir,
       artifactConfig: {
@@ -1311,17 +966,18 @@ describe("async execution utilities", () => {
       modelFallbackFilterNotice: persistedNotice,
       inheritProjectContext: false,
       inheritSkills: false,
-    } satisfies NonNullable<SubagentRunConfig["steps"]>[number] & {
+    } satisfies RunnerSubagentStep & {
       modelFallbackFilterNotice: string;
     };
     const config: SubagentRunConfig = {
       id,
-      steps: [step, { parallel: [{ ...step, task: "Inspect the parallel task" }] }],
+      plan: {
+        kind: "parallel",
+        tasks: [step, { ...step, task: "Inspect the parallel task" }],
+      },
       resultPath,
       cwd: tempDir,
-      placeholder: "{previous}",
       asyncDir,
-      resultMode: "chain",
       piArgv1: path.join(path.dirname(mockPi.dir), "pi-coding-agent", "dist", "cli.mjs"),
       sessionId: "session-persisted-fallback-notice",
     };
@@ -1482,9 +1138,9 @@ describe("async execution utilities", () => {
     assert.match(singleResult.content[0]?.text ?? "", /Failed to start async run/);
     assert.match(singleResult.content[0]?.text ?? "", /cwd does not exist/);
 
-    const chainId = `async-missing-cwd-chain-${Date.now().toString(36)}`;
-    const chainResult = executeAsyncChain(chainId, {
-      chain: [{ agent: "worker", task: "Do work" }],
+    const parallelId = `async-missing-cwd-parallel-${Date.now().toString(36)}`;
+    const parallelResult = executeAsyncParallel(parallelId, {
+      tasks: [{ agent: "worker", task: "Do work" }],
       agents: [makeAgent("worker")],
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
       cwd: missingCwd,
@@ -1501,9 +1157,9 @@ describe("async execution utilities", () => {
       maxSubagentDepth: 2,
     });
 
-    assert.equal(chainResult.isError, true);
-    assert.match(chainResult.content[0]?.text ?? "", /Failed to start async chain/);
-    assert.match(chainResult.content[0]?.text ?? "", /cwd does not exist/);
+    assert.equal(parallelResult.isError, true);
+    assert.match(parallelResult.content[0]?.text ?? "", /Failed to start async parallel/);
+    assert.match(parallelResult.content[0]?.text ?? "", /cwd does not exist/);
   });
 
   it("returns a tool error when the async runner process cannot spawn", () => {
@@ -1543,33 +1199,5 @@ describe("async execution utilities", () => {
         process.env[pathKey] = originalPath;
       }
     }
-  });
-
-  it("returns a tool error when an async chain cannot write its detached runner config", () => {
-    const id = `async-chain-write-fail-${Date.now().toString(36)}`;
-    assert.ok(TEMP_ROOT_DIR, "TEMP_ROOT_DIR should be available for async tests");
-    fs.mkdirSync(TEMP_ROOT_DIR, { recursive: true });
-    fs.mkdirSync(path.join(TEMP_ROOT_DIR, `async-cfg-${id}.json`), { recursive: true });
-
-    const result = executeAsyncChain(id, {
-      chain: [{ agent: "worker", task: "Do work" }],
-      agents: [makeAgent("worker")],
-      ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      artifactConfig: {
-        enabled: false,
-        includeInput: false,
-        includeOutput: false,
-        includeJsonl: false,
-        includeMetadata: false,
-        cleanupDays: 7,
-      },
-      shareEnabled: false,
-      sessionRoot: path.join(tempDir, "sessions"),
-      maxSubagentDepth: 2,
-    });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0]?.text ?? "", /Failed to start async chain/);
-    assert.match(result.content[0]?.text ?? "", /async-cfg-/);
   });
 });

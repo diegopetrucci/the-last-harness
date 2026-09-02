@@ -317,7 +317,7 @@ describe("async stale-run reconciliation", () => {
       fs.mkdirSync(resultsDir, { recursive: true });
       writeStatus(asyncDir, {
         runId: "run-mixed",
-        mode: "chain",
+        mode: "parallel",
         state: "running",
         pid: 12345,
         startedAt: 1000,

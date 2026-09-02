@@ -61,10 +61,8 @@ import {
 import {
   buildExecutionInstructions,
   writeInitialProgressFile,
-  isParallelStep,
   resolveStepBehavior,
   suppressProgressForReadOnlyTask,
-  type ChainStep,
   type ResolvedStepBehavior,
   type StepOverrides,
 } from "../../shared/settings.ts";
@@ -222,7 +220,8 @@ export interface SubagentParamsLike {
   agent?: string;
   task?: string;
   message?: string;
-  chain?: ChainStep[];
+  /** Chain-shaped input is intentionally unsupported; kept only for fail-closed validation. */
+  chain?: unknown;
   tasks?: TaskParam[];
   concurrency?: number;
   async?: boolean;
@@ -1372,7 +1371,7 @@ function persistPausedForegroundCohortRun(input: {
   runId: string;
   cwd: string;
   sessionId: string | null;
-  mode: "parallel" | "chain";
+  mode: "parallel";
   stage: "pausing" | "paused";
   ownerPid?: number;
   results?: SingleResult[];
@@ -1380,10 +1379,6 @@ function persistPausedForegroundCohortRun(input: {
   pause?: AsyncStatus["pause"];
   startedAt?: number;
   currentStep?: number;
-  chainStepCount?: number;
-  parallelGroups?: AsyncStatus["parallelGroups"];
-  workflowGraph?: AsyncStatus["workflowGraph"];
-  outputs?: AsyncStatus["outputs"];
 }): void {
   const asyncDir = pausedForegroundStatusPath(input.runId);
   const now = Date.now();
@@ -1472,10 +1467,6 @@ function persistPausedForegroundCohortRun(input: {
         cwd: input.cwd,
         ...(pause ? { pause } : {}),
         ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
-        ...(input.chainStepCount !== undefined ? { chainStepCount: input.chainStepCount } : {}),
-        ...(input.parallelGroups ? { parallelGroups: input.parallelGroups } : {}),
-        ...(input.workflowGraph ? { workflowGraph: input.workflowGraph } : {}),
-        ...(input.outputs ? { outputs: input.outputs } : {}),
         pid: input.stage === "pausing" ? input.ownerPid : undefined,
         steps,
       });
@@ -1498,10 +1489,6 @@ function persistPausedForegroundCohortRun(input: {
             cwd: input.cwd,
             ...(pause ? { pause } : {}),
             ...(input.currentStep !== undefined ? { currentStep: input.currentStep } : {}),
-            ...(input.chainStepCount !== undefined ? { chainStepCount: input.chainStepCount } : {}),
-            ...(input.parallelGroups ? { parallelGroups: input.parallelGroups } : {}),
-            ...(input.workflowGraph ? { workflowGraph: input.workflowGraph } : {}),
-            ...(input.outputs ? { outputs: input.outputs } : {}),
             steps,
           };
         },
@@ -1939,7 +1926,7 @@ function rememberForegroundRun(
   state: SubagentState,
   input: {
     runId: string;
-    mode: "single" | "parallel" | "chain";
+    mode: SubagentRunMode;
     cwd: string;
     results: SingleResult[];
   },
@@ -1995,7 +1982,7 @@ function updateRememberedForegroundChild(
   state: SubagentState,
   input: {
     runId: string;
-    mode: "single" | "parallel" | "chain";
+    mode: SubagentRunMode;
     cwd: string;
     index: number;
     result: SingleResult;
@@ -2094,7 +2081,7 @@ function resolveForegroundResumeTarget(
 ):
   | {
       runId: string;
-      mode: "single" | "parallel" | "chain";
+      mode: SubagentRunMode;
       state: "complete" | "failed" | "paused";
       agent: string;
       index: number;
@@ -4715,34 +4702,6 @@ function resultSummaryForNativeForeground(result: SingleResult, displayOutput?: 
   return lines.join("\n\n");
 }
 
-function resultNoticeForEarlierSuccessfulChainStep(result: SingleResult): string {
-  const lines: string[] = [];
-  if (result.outputSaveError) {
-    lines.push(`Output file error:\n${boundedNativeForegroundSaveError(result.outputSaveError)}`);
-  }
-  if (result.modelFallbackNotice) lines.push(`Notice: ${result.modelFallbackNotice}`);
-  // Derive wording from the same values that populate artifactPath/sessionPath in the
-  // enclosing child block (result.artifactPaths?.outputPath and result.sessionFile), so
-  // the note and the rendered paths cannot drift apart. Do NOT condition on outputMode
-  // alone — the previous wording did that and produced a false "unavailable" claim when
-  // an artifact or session path was about to be rendered directly below.
-  const hasArtifact = Boolean(result.artifactPaths?.outputPath);
-  const hasSession = Boolean(result.sessionFile);
-  const stepOutputNote =
-    hasArtifact && hasSession
-      ? "Earlier successful chain step output omitted here; see the artifact and session paths below for reference."
-      : hasArtifact
-        ? "Earlier successful chain step output omitted here; see the artifact path below for reference."
-        : hasSession
-          ? "Earlier successful chain step output omitted here; see the session path below for reference."
-          : "Earlier successful chain step output omitted here; full step output is unavailable.";
-  lines.push(stepOutputNote);
-  if (result.outputMode === "file-only" && result.savedOutputPath && result.outputReference) {
-    lines.push(getSingleResultOutput(result) || result.outputReference.message);
-  }
-  return lines.join("\n\n");
-}
-
 function formatFailedSingleRunOutput(result: SingleResult, displayOutput: string): string {
   const error = safeTerminalText(result.error || "Failed");
   const output = safeTerminalText(displayOutput).trim();
@@ -4779,47 +4738,23 @@ function buildForegroundNativeResult(input: {
 }): { text: string; details: Details } | null {
   const visibleResults = input.details.results.map((result, index) => ({ result, index }));
   if (visibleResults.length === 0) return null;
-  const finalVisibleIndex =
-    input.mode === "chain" ? visibleResults[visibleResults.length - 1]?.index : undefined;
-  const children = visibleResults.map(({ result, index }, visibleIndex) => {
-    const status = resolveSubagentResultStatus({
+  const children = visibleResults.map(({ result, index }, visibleIndex) => ({
+    agent: result.agent,
+    status: resolveSubagentResultStatus({
       exitCode: result.exitCode,
       interrupted: result.interrupted,
-    });
-    const retainFullChainSummary =
-      input.mode !== "chain" ||
-      index === finalVisibleIndex ||
-      status === "failed" ||
-      status === "paused";
-    const nativeForegroundPriority =
-      input.mode === "chain"
-        ? index === finalVisibleIndex
-          ? 4
-          : status === "failed" || status === "paused"
-            ? 3
-            : 1
-        : undefined;
-    return {
-      agent: result.agent,
-      status,
-      summary: retainFullChainSummary
-        ? resultSummaryForNativeForeground(result, input.displayOutputs?.[index])
-        : resultNoticeForEarlierSuccessfulChainStep(result),
-      index,
-      displayIndex: visibleIndex + 1,
-      displayTotal: visibleResults.length,
-      ...(nativeForegroundPriority !== undefined ? { nativeForegroundPriority } : {}),
-      artifactPath: result.artifactPaths?.outputPath,
-      sessionPath: result.sessionFile,
-    };
-  });
+    }),
+    summary: resultSummaryForNativeForeground(result, input.displayOutputs?.[index]),
+    index,
+    displayIndex: visibleIndex + 1,
+    displayTotal: visibleResults.length,
+    artifactPath: result.artifactPaths?.outputPath,
+    sessionPath: result.sessionFile,
+  }));
   const grouped = formatForegroundNativeSubagentResult({
     runId: input.runId,
     mode: input.mode,
     children: attachNestedChildrenToResultChildren(input.runId, children, input.nestedChildren),
-    ...(typeof input.details.totalSteps === "number"
-      ? { chainSteps: input.details.totalSteps }
-      : {}),
     ...(input.statusOverride ? { statusOverride: input.statusOverride } : {}),
     ...(input.errorSummary ? { errorSummary: input.errorSummary } : {}),
   });
@@ -4915,41 +4850,10 @@ function validateExecutionAcceptance(params: SubagentParamsLike): string[] {
     errors.push(...validateAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
     errors.push(...validateDispatchAcceptanceInput(task.acceptance, `tasks[${index}].acceptance`));
   }
-  for (const [stepIndex, step] of (params.chain ?? []).entries()) {
-    errors.push(
-      ...validateAcceptanceInput(
-        (step as { acceptance?: unknown }).acceptance,
-        `chain[${stepIndex}].acceptance`,
-      ),
-    );
-    errors.push(
-      ...validateDispatchAcceptanceInput(
-        (step as { acceptance?: unknown }).acceptance,
-        `chain[${stepIndex}].acceptance`,
-      ),
-    );
-    if (isParallelStep(step)) {
-      for (const [taskIndex, task] of step.parallel.entries()) {
-        errors.push(
-          ...validateAcceptanceInput(
-            task.acceptance,
-            `chain[${stepIndex}].parallel[${taskIndex}].acceptance`,
-          ),
-        );
-        errors.push(
-          ...validateDispatchAcceptanceInput(
-            task.acceptance,
-            `chain[${stepIndex}].parallel[${taskIndex}].acceptance`,
-          ),
-        );
-      }
-    }
-  }
   return errors;
 }
 
 function getRequestedModeLabel(params: SubagentParamsLike): Details["mode"] {
-  if ((params.chain?.length ?? 0) > 0) return "chain";
   if ((params.tasks?.length ?? 0) > 0) return "parallel";
   if (params.agent) return "single";
   return "single";
@@ -5025,37 +4929,6 @@ function expandTopLevelTaskCounts(tasks: TaskParam[]): { tasks?: TaskParam[]; er
   return { tasks: expanded };
 }
 
-function expandChainParallelCounts(chain: ChainStep[]): { chain?: ChainStep[]; error?: string } {
-  const expandedChain: ChainStep[] = [];
-  for (let stepIndex = 0; stepIndex < chain.length; stepIndex++) {
-    const step = chain[stepIndex]!;
-    if (!isParallelStep(step)) {
-      expandedChain.push(step);
-      continue;
-    }
-    const expandedParallel = [];
-    for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
-      const task = step.parallel[taskIndex]!;
-      const rawCount = (task as typeof task & { count?: unknown }).count;
-      if (
-        rawCount !== undefined &&
-        (typeof rawCount !== "number" || !Number.isInteger(rawCount) || rawCount < 1)
-      ) {
-        return {
-          error: `chain[${stepIndex}].parallel[${taskIndex}].count must be an integer >= 1`,
-        };
-      }
-      const concreteTask = { ...task };
-      delete concreteTask.count;
-      for (let repeat = 0; repeat < (rawCount ?? 1); repeat++) {
-        expandedParallel.push({ ...concreteTask });
-      }
-    }
-    expandedChain.push({ ...step, parallel: expandedParallel });
-  }
-  return { chain: expandedChain };
-}
-
 function normalizeRepeatedParallelCounts(params: SubagentParamsLike): {
   params?: SubagentParamsLike;
   error?: SubagentToolResult<Details>;
@@ -5066,13 +4939,6 @@ function normalizeRepeatedParallelCounts(params: SubagentParamsLike): {
       return { error: buildRequestedModeError(params, expandedTasks.error) };
     }
     return { params: { ...params, tasks: expandedTasks.tasks } };
-  }
-  if (params.chain) {
-    const expandedChain = expandChainParallelCounts(params.chain);
-    if (expandedChain.error) {
-      return { error: buildRequestedModeError(params, expandedChain.error) };
-    }
-    return { params: { ...params, chain: expandedChain.chain } };
   }
   return { params };
 }
@@ -6310,7 +6176,6 @@ async function runSinglePath(
 }
 
 function inferExecutionMode(params: SubagentParamsLike): SubagentRunMode {
-  if ((params.chain?.length ?? 0) > 0) return "chain";
   if ((params.tasks?.length ?? 0) > 0) return "parallel";
   return "single";
 }

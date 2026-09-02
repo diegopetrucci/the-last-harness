@@ -180,7 +180,7 @@ describe("async interrupt action", () => {
     const asyncDir = path.join(ASYNC_DIR, runId);
     writeJson(path.join(asyncDir, "status.json"), {
       runId,
-      mode: "chain",
+      mode: "parallel",
       state: "running",
       pid: 12345,
       sessionId: "session",

@@ -1,5 +1,8 @@
 import * as os from "node:os";
 import * as path from "node:path";
+export function normalizeSubagentRunMode(value) {
+    return value === "parallel" ? "parallel" : "single";
+}
 export const SUBAGENT_LIFECYCLE_ARTIFACT_VERSION = 1;
 export const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 export const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
@@ -69,7 +72,6 @@ export function resolveTempRootDir(options) {
 export const TEMP_ROOT_DIR = resolveTempRootDir();
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
-export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");
 export const TEMP_ARTIFACTS_DIR = path.join(TEMP_ROOT_DIR, "artifacts");
 export const WIDGET_KEY = "subagent-async";
 export const SLASH_TEXT_RESULT_TYPE = "subagent-slash-text-result";

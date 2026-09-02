@@ -24,7 +24,7 @@ describe("async status helpers", () => {
       const outputFile = path.join(root, "run-a", "output-1.log");
       createAsyncDir(root, "run-a", {
         runId: "run-a",
-        mode: "chain",
+        mode: "parallel",
         state: "running",
         startedAt: 100,
         lastUpdate: 200,
@@ -247,7 +247,7 @@ describe("async status helpers", () => {
       const now = Date.now();
       createAsyncDir(root, "run-mixed", {
         runId: "run-mixed",
-        mode: "chain",
+        mode: "parallel",
         state: "running",
         activityState: "needs_attention",
         lastActivityAt: now - 90_000,
@@ -597,8 +597,6 @@ describe("async status helpers", () => {
         startedAt: 100,
         lastUpdate: 300,
         currentStep: 0,
-        chainStepCount: 1,
-        parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
         steps: [
           { agent: "scout", status: "running", durationMs: 12_000 },
           { agent: "reviewer", status: "running", durationMs: 11_000 },
@@ -624,8 +622,6 @@ describe("async status helpers", () => {
         startedAt: 100,
         lastUpdate: 300,
         currentStep: 0,
-        chainStepCount: 1,
-        parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
         steps: [
           { agent: "scout", status: "failed" },
           { agent: "reviewer", status: "failed" },
@@ -643,68 +639,17 @@ describe("async status helpers", () => {
     }
   });
 
-  it("uses explicit parallel group wording for async chains", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-parallel-wording-"));
-    try {
-      createAsyncDir(root, "run-parallel", {
-        runId: "run-parallel",
-        mode: "chain",
-        state: "running",
-        startedAt: 100,
-        lastUpdate: 300,
-        currentStep: 0,
-        chainStepCount: 2,
-        parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-        steps: [
-          { agent: "scout", status: "running", durationMs: 12_000 },
-          { agent: "reviewer", status: "running", durationMs: 11_000 },
-          { agent: "worker", status: "pending" },
-          { agent: "writer", status: "pending" },
-        ],
-      });
-      const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
-      assert.match(text, /step 1\/2 · parallel group: 2 agents running · 0\/3 done/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("uses parallel group wording even when concurrency leaves one agent running", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-parallel-one-running-"));
-    try {
-      createAsyncDir(root, "run-parallel-one", {
-        runId: "run-parallel-one",
-        mode: "chain",
-        state: "running",
-        startedAt: 100,
-        lastUpdate: 300,
-        currentStep: 1,
-        chainStepCount: 1,
-        parallelGroups: [{ start: 0, count: 3, stepIndex: 0 }],
-        steps: [
-          { agent: "scout", status: "complete", durationMs: 12_000 },
-          { agent: "reviewer", status: "running", durationMs: 11_000 },
-          { agent: "worker", status: "pending" },
-        ],
-      });
-      const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
-      assert.match(text, /step 1\/1 · parallel group: 1 agent running · 1\/3 done/);
-      assert.doesNotMatch(text, /step 2\/3/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("ignores invalid persisted parallel group metadata", () => {
+  it("ignores retired parallel metadata without rewriting historical status", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-invalid-parallel-group-"));
     try {
-      createAsyncDir(root, "run-invalid-group", {
+      const dir = createAsyncDir(root, "run-invalid-group", {
         runId: "run-invalid-group",
         mode: "chain",
         state: "running",
         startedAt: 100,
         lastUpdate: 300,
         currentStep: 0,
+        // These ignored legacy extras stay only to exercise historical open-object safety; status.json must not be rewritten.
         chainStepCount: 2,
         parallelGroups: [{ start: 0, count: 3, stepIndex: 4 }, null, "bad"],
         steps: [
@@ -712,15 +657,17 @@ describe("async status helpers", () => {
           { agent: "writer", status: "pending" },
         ],
       });
+      const before = fs.readFileSync(path.join(dir, "status.json"));
       const text = formatAsyncRunList(listAsyncRuns(root, { states: ["running"] }));
-      assert.match(text, /step 1\/2/);
+      assert.match(text, /run-invalid-group \| running .* \| single \| step 1\/2/);
       assert.doesNotMatch(text, /parallel group/);
+      assert.deepEqual(fs.readFileSync(path.join(dir, "status.json")), before);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("keeps top-level parallel wording without valid group metadata", () => {
+  it("keeps top-level parallel wording with ordinary status metadata", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-parallel-invalid-group-"));
     try {
       createAsyncDir(root, "run-parallel-invalid-group", {
@@ -730,8 +677,6 @@ describe("async status helpers", () => {
         startedAt: 100,
         lastUpdate: 300,
         currentStep: 0,
-        chainStepCount: 1,
-        parallelGroups: "bad",
         steps: [
           { agent: "scout", status: "running" },
           { agent: "reviewer", status: "pending" },
@@ -745,12 +690,12 @@ describe("async status helpers", () => {
     }
   });
 
-  it("keeps serial step wording for sequential running chains", () => {
+  it("keeps step wording for single running async jobs", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-async-sequential-wording-"));
     try {
       createAsyncDir(root, "run-seq", {
         runId: "run-seq",
-        mode: "chain",
+        mode: "single",
         state: "running",
         startedAt: 100,
         lastUpdate: 300,

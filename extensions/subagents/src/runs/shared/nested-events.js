@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { RESULTS_DIR, TEMP_ROOT_DIR, } from "../../shared/types.js";
+import { RESULTS_DIR, TEMP_ROOT_DIR, normalizeSubagentRunMode, } from "../../shared/types.js";
 import { isSafeNestedPathId, parseNestedPathEnv, sanitizeNestedPath, } from "./nested-path.js";
 import { SUBAGENT_PARENT_CAPABILITY_TOKEN_ENV, SUBAGENT_PARENT_CHILD_INDEX_ENV, SUBAGENT_PARENT_CONTROL_INBOX_ENV, SUBAGENT_PARENT_DEPTH_ENV, SUBAGENT_PARENT_EVENT_SINK_ENV, SUBAGENT_PARENT_PATH_ENV, SUBAGENT_PARENT_ROOT_RUN_ID_ENV, SUBAGENT_PARENT_RUN_ID_ENV, } from "./pi-args.js";
 import { writeAtomicJson } from "../../shared/atomic-json.js";
@@ -296,9 +296,12 @@ export function sanitizeSummary(input, depth = 0) {
         ...(stringValue(raw.capabilityToken, 128)
             ? { capabilityToken: stringValue(raw.capabilityToken, 128) }
             : {}),
-        ...(raw.mode === "single" || raw.mode === "parallel" || raw.mode === "chain"
+        ...(raw.mode === "single" || raw.mode === "parallel"
             ? { mode: raw.mode }
-            : {}),
+            :
+                raw.mode === "chain"
+                    ? { mode: "single" }
+                    : {}),
         ...(stringValue(raw.agent, 128) ? { agent: stringValue(raw.agent, 128) } : {}),
         ...(Array.isArray(raw.agents)
             ? {
@@ -310,9 +313,6 @@ export function sanitizeSummary(input, depth = 0) {
             : {}),
         ...(clampNumber(raw.currentStep) !== undefined
             ? { currentStep: clampNumber(raw.currentStep) }
-            : {}),
-        ...(clampNumber(raw.chainStepCount) !== undefined
-            ? { chainStepCount: clampNumber(raw.chainStepCount) }
             : {}),
         ...(raw.activityState === "active_long_running" || raw.activityState === "needs_attention"
             ? { activityState: raw.activityState }
@@ -843,10 +843,9 @@ export function nestedSummaryFromAsyncStatus(status, asyncDir, fallback) {
         asyncDir,
         ...(status.pid ? { pid: status.pid } : {}),
         ...(status.sessionId ? { sessionId: status.sessionId } : {}),
-        mode: status.mode ?? fallback.mode,
+        mode: normalizeSubagentRunMode(status.mode ?? fallback.mode),
         state: nestedStateFromAsyncState(status.state),
         ...(status.currentStep !== undefined ? { currentStep: status.currentStep } : {}),
-        ...(status.chainStepCount !== undefined ? { chainStepCount: status.chainStepCount } : {}),
         ...(status.activityState ? { activityState: status.activityState } : {}),
         ...(status.lastActivityAt !== undefined ? { lastActivityAt: status.lastActivityAt } : {}),
         ...(status.currentTool ? { currentTool: status.currentTool } : {}),

@@ -166,7 +166,7 @@ describe("result watcher to native notify", () => {
       });
       writeResult("03-paused.json", {
         id: "paused",
-        agent: "chain:a+b",
+        agent: "parallel:a+b",
         success: false,
         state: "paused",
         summary: "Paused after interrupt.",
@@ -256,7 +256,7 @@ describe("result watcher to native notify", () => {
     assert.equal(
       contents.some(
         (content) =>
-          content.startsWith("Background task paused: **chain:a+b**") &&
+          content.startsWith("Background task paused: **parallel:a+b**") &&
           /Async id: paused/.test(content) &&
           /Revive child: subagent\({ action: "resume", id: "paused", index: 4, message: "\.\.\." }\)/.test(
             content,
