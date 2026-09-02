@@ -1577,6 +1577,12 @@ function directRunPlanValidationError(value) {
     }
     return ASYNC_RUNNER_MISSING_PLAN_ERROR;
 }
+function rejectedPlanMode(value) {
+    if (isRecord(value) && (value.kind === "single" || value.kind === "parallel")) {
+        return value.kind;
+    }
+    return "single";
+}
 function isRunnerConfigEnvelope(value) {
     return (isRecord(value) &&
         typeof value.id === "string" &&
@@ -1591,7 +1597,7 @@ function parseRunnerConfig(value) {
 }
 function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_ERROR) {
     const timestamp = Date.now();
-    const mode = "single";
+    const mode = rejectedPlanMode(config.plan);
     const status = {
         lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
         runId: config.id,

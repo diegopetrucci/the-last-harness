@@ -2286,6 +2286,13 @@ function directRunPlanValidationError(value: unknown): string {
   return ASYNC_RUNNER_MISSING_PLAN_ERROR;
 }
 
+function rejectedPlanMode(value: unknown): SubagentRunMode {
+  if (isRecord(value) && (value.kind === "single" || value.kind === "parallel")) {
+    return value.kind;
+  }
+  return "single";
+}
+
 function isRunnerConfigEnvelope(value: unknown): value is RunnerConfigEnvelope {
   return (
     isRecord(value) &&
@@ -2306,7 +2313,7 @@ function persistMissingRunPlanFailure(
   error = ASYNC_RUNNER_MISSING_PLAN_ERROR,
 ): void {
   const timestamp = Date.now();
-  const mode = "single" as const;
+  const mode = rejectedPlanMode(config.plan);
   const status: AsyncStatus = {
     lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
     runId: config.id,

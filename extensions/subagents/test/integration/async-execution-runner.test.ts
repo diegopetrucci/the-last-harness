@@ -867,8 +867,10 @@ describe("async execution utilities", () => {
     assert.equal(payload.exitCode, 1);
     assert.equal(payload.error, expectedDiagnostic);
     assert.equal(payload.results.length, 0);
+    assert.equal(payload.mode, "single");
     assert.equal(status.state, "failed");
     assert.equal(status.error, expectedDiagnostic);
+    assert.equal(status.mode, "single");
     assert.equal(status.steps?.length, 0);
 
     const malformedConfigPath = path.join(tempDir, "async-malformed-envelope-config.json");
@@ -925,6 +927,7 @@ describe("async execution utilities", () => {
           },
         },
         useStdin: false,
+        expectedMode: "single",
       },
       {
         label: "parallel-stdin",
@@ -939,6 +942,7 @@ describe("async execution utilities", () => {
           ],
         },
         useStdin: true,
+        expectedMode: "parallel",
       },
     ] as const;
 
@@ -977,8 +981,17 @@ describe("async execution utilities", () => {
         `${testCase.label}: runner should persist a result artifact`,
       );
       const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
+      const statusPath = path.join(asyncDir, "status.json");
+      assert.ok(
+        fs.existsSync(statusPath),
+        `${testCase.label}: runner should persist a status artifact`,
+      );
+      const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatusPayload;
       assert.equal(payload.state, "failed", testCase.label);
       assert.equal(payload.success, false, testCase.label);
+      assert.equal(payload.mode, testCase.expectedMode, `${testCase.label}: result mode`);
+      assert.equal(status.state, "failed", testCase.label);
+      assert.equal(status.mode, testCase.expectedMode, `${testCase.label}: status mode`);
       assert.equal(
         payload.error,
         "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.",
