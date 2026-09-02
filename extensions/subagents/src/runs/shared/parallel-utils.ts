@@ -56,12 +56,6 @@ export interface RunnerSubagentStep {
   outputMode?: "inline" | "file-only";
   sessionFile?: string;
   maxSubagentDepth?: number;
-  structuredOutput?: {
-    schema: import("../../shared/types.ts").JsonSchemaObject;
-    schemaPath: string;
-    outputPath: string;
-  };
-  structuredOutputSchema?: import("../../shared/types.ts").JsonSchemaObject;
   effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
   acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
   acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;

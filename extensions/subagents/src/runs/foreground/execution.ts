@@ -3,7 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
@@ -79,7 +79,6 @@ import {
   cleanupTempDir,
   getThinkingLevelDropNote,
 } from "../shared/pi-args.ts";
-import { readStructuredOutput } from "../shared/structured-output.ts";
 import {
   captureSingleOutputSnapshot,
   formatSavedOutputReference,
@@ -514,7 +513,7 @@ type SingleAttemptFinalizationInput = {
   emitControlEvent: (event: ControlEvent) => void;
 };
 
-function normalizeSingleAttemptResult(result: SingleResult, options: RunSyncOptions): void {
+function normalizeSingleAttemptResult(result: SingleResult): void {
   if (result.error && result.exitCode === 0) {
     result.exitCode = 1;
   }
@@ -556,31 +555,9 @@ function normalizeSingleAttemptResult(result: SingleResult, options: RunSyncOpti
   });
   if (result.exitCode === 0 && !result.error) {
     const finalText = getFinalOutput(result.messages ?? []);
-    const missingStructuredOutput = options.structuredOutput
-      ? !existsSync(options.structuredOutput.outputPath)
-      : false;
-    if (
-      !contextExhaustedSignature &&
-      !finalText?.trim() &&
-      (!options.structuredOutput || missingStructuredOutput)
-    ) {
+    if (!contextExhaustedSignature && !finalText?.trim()) {
       result.exitCode = 1;
       result.error = "Subagent produced no output (possible model cold-start or empty response).";
-    }
-  }
-  if (options.structuredOutput && result.exitCode === 0 && !result.error) {
-    const structured = readStructuredOutput({
-      schema: options.structuredOutput.schema,
-      schemaPath: options.structuredOutput.schemaPath,
-      outputPath: options.structuredOutput.outputPath,
-    });
-    result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
-    result.structuredOutputPath = options.structuredOutput.outputPath;
-    if (structured.error) {
-      result.exitCode = 1;
-      result.error = structured.error;
-    } else {
-      result.structuredOutput = structured.value;
     }
   }
 }
@@ -755,7 +732,7 @@ function finalizeSingleAttempt(input: SingleAttemptFinalizationInput): SingleRes
     };
     return result;
   }
-  normalizeSingleAttemptResult(result, options);
+  normalizeSingleAttemptResult(result);
 
   progress.status = result.exitCode === 0 ? "completed" : "failed";
   progress.durationMs = Date.now() - startTime;
@@ -1063,7 +1040,6 @@ async function runSingleAttempt(
       projectAgentGuidance: isCanonicalPackagedMinorAgent(agent),
       childIndex: options.index ?? 0,
       parentSessionId: options.parentSessionId,
-      structuredOutput: options.structuredOutput,
       steerInboxDir: options.steerInboxDir,
       toolBudget: options.toolBudget,
     }));
@@ -1124,14 +1100,6 @@ async function runSingleAttempt(
     ...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
   };
   const startTime = Date.now();
-  if (options.structuredOutput) {
-    try {
-      if (existsSync(options.structuredOutput.outputPath))
-        unlinkSync(options.structuredOutput.outputPath);
-    } catch {
-      // Missing/stale structured-output files are handled after the child exits.
-    }
-  }
   const controlConfig = options.controlConfig ?? DEFAULT_CONTROL_CONFIG;
   let interruptedByControl = false;
   const allControlEvents: ControlEvent[] = [];

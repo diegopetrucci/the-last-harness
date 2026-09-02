@@ -44,12 +44,6 @@ const {
 const { estimateTlhLaunchContextAllocation } = await jiti.import(
   "../extensions/the-last-harness/launch-context.ts",
 );
-const STRUCTURED_OUTPUT_INSTRUCTIONS = [
-  "This subagent step has a strict structured output contract.",
-  "Your final action must be to call the `structured_output` tool with JSON matching the provided schema.",
-  "Do not rely on prose-only completion; if you do not call `structured_output`, the parent will fail this step.",
-].join("\n");
-
 function writeProjectGuidance(cwd, role, content) {
   const directory = join(cwd, ".tlh", "agents", "builtin");
   mkdirSync(directory, { recursive: true });
@@ -479,121 +473,81 @@ test("malformed and duplicate-owner reserved-marker base text remains intact", (
   assert.ok(onePass.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 });
 
-test("marked root and explicit content replace when their text changes", async () => {
-  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: undefined }, async () => {
-    const options = { inheritProjectContext: true, inheritSkills: true };
-    const rootOnly = appendBeforeChildSubagentBoundary("base prompt", "root version one");
-    assert.doesNotMatch(rootOnly, /You are a child subagent, not the parent orchestrator\./);
-    const first = rewriteSubagentPrompt(rootOnly, options, "guidance version one");
-    assert.match(first, /root version one/);
-    assert.ok(first.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-    const second = rewriteSubagentPrompt(
-      appendBeforeChildSubagentBoundary(first, "root version two"),
+test("marked root and explicit content replace when their text changes", () => {
+  const options = { inheritProjectContext: true, inheritSkills: true };
+  const rootOnly = appendBeforeChildSubagentBoundary("base prompt", "root version one");
+  assert.doesNotMatch(rootOnly, /You are a child subagent, not the parent orchestrator\./);
+  const first = rewriteSubagentPrompt(rootOnly, options, "guidance version one");
+  assert.match(first, /root version one/);
+  assert.ok(first.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
+  const second = rewriteSubagentPrompt(
+    appendBeforeChildSubagentBoundary(first, "root version two"),
+    options,
+    "guidance version two",
+  );
+
+  assert.match(second, /root version two/);
+  assert.match(second, /guidance version two/);
+  assert.doesNotMatch(second, /root version one|guidance version one/);
+  assert.equal((second.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length, 1);
+  assert.equal(
+    (second.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (second.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
+    1,
+  );
+  assert.equal(
+    rewriteSubagentPrompt(
+      appendBeforeChildSubagentBoundary(second, "root version two"),
       options,
       "guidance version two",
-    );
-
-    assert.match(second, /root version two/);
-    assert.match(second, /guidance version two/);
-    assert.doesNotMatch(second, /root version one|guidance version one/);
-    assert.equal((second.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length, 1);
-    assert.equal(
-      (second.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
-      1,
-    );
-    assert.equal(
-      (second.match(/You are a child subagent, not the parent orchestrator\./g) ?? []).length,
-      1,
-    );
-    assert.equal(
-      rewriteSubagentPrompt(
-        appendBeforeChildSubagentBoundary(second, "root version two"),
-        options,
-        "guidance version two",
-      ),
-      second,
-    );
-    const clearedRoot = appendBeforeChildSubagentBoundary(second, "");
-    assert.doesNotMatch(clearedRoot, /root version two/);
-    assert.match(clearedRoot, /guidance version two/);
-    assert.equal(
-      (clearedRoot.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length,
-      0,
-    );
-    assert.ok(clearedRoot.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-  });
+    ),
+    second,
+  );
+  const clearedRoot = appendBeforeChildSubagentBoundary(second, "");
+  assert.doesNotMatch(clearedRoot, /root version two/);
+  assert.match(clearedRoot, /guidance version two/);
+  assert.equal(
+    (clearedRoot.match(new RegExp(CHILD_SUBAGENT_ROOT_RUNTIME_OPEN, "g")) ?? []).length,
+    0,
+  );
+  assert.ok(clearedRoot.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
 });
 
-test("defangs reserved owner markers inside root and guidance additions", async () => {
+test("defangs reserved owner markers inside root and guidance additions", () => {
   const markerLookalikes = [
     `balanced ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}`,
     `nested ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN}outer ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN}inner${CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE}${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE}`,
     `partial ${CHILD_SUBAGENT_ROOT_RUNTIME_OPEN.slice(0, -4)} and ${CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE.slice(0, -4)}`,
   ].join("\n\n");
-  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: undefined }, async () => {
-    const options = { inheritProjectContext: true, inheritSkills: true };
-    const rootAdditions = ["normal root guidance", markerLookalikes].join("\n\n");
-    const explicitAdditions = ["normal project guidance", markerLookalikes].join("\n\n");
-    const onePass = rewriteSubagentPrompt(
-      appendBeforeChildSubagentBoundary("base prompt", rootAdditions),
-      options,
-      explicitAdditions,
-    );
-    const twoPasses = rewriteSubagentPrompt(
-      appendBeforeChildSubagentBoundary(onePass, rootAdditions),
-      options,
-      explicitAdditions,
-    );
+  const options = { inheritProjectContext: true, inheritSkills: true };
+  const rootAdditions = ["normal root guidance", markerLookalikes].join("\n\n");
+  const explicitAdditions = ["normal project guidance", markerLookalikes].join("\n\n");
+  const onePass = rewriteSubagentPrompt(
+    appendBeforeChildSubagentBoundary("base prompt", rootAdditions),
+    options,
+    explicitAdditions,
+  );
+  const twoPasses = rewriteSubagentPrompt(
+    appendBeforeChildSubagentBoundary(onePass, rootAdditions),
+    options,
+    explicitAdditions,
+  );
 
-    assert.equal(twoPasses, onePass);
-    assert.match(onePass, /normal root guidance/);
-    assert.match(onePass, /normal project guidance/);
-    assert.match(onePass, /\[tlh child-runtime marker:/);
-    for (const marker of [
-      CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
-      CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
-      CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
-      CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
-    ]) {
-      assert.equal((onePass.match(new RegExp(marker, "g")) ?? []).length, 1, marker);
-    }
-  });
-});
-
-test("structured-output additions toggle inside the explicit owner wrapper", async () => {
-  await withEnv({ PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: "structured-output.json" }, async () => {
-    const options = { inheritProjectContext: true, inheritSkills: true };
-    const guidance = "stable guidance";
-    const withStructured = rewriteSubagentPrompt("base prompt", options, guidance);
-    assert.equal(
-      (withStructured.match(/This subagent step has a strict structured output contract\./g) ?? [])
-        .length,
-      1,
-    );
-
-    delete process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE;
-    const withoutStructured = rewriteSubagentPrompt(withStructured, options, guidance);
-    assert.equal(
-      (
-        withoutStructured.match(/This subagent step has a strict structured output contract\./g) ??
-        []
-      ).length,
-      0,
-    );
-    assert.equal(
-      (withoutStructured.match(new RegExp(CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN, "g")) ?? []).length,
-      1,
-    );
-
-    process.env.PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE = "structured-output.json";
-    const restored = rewriteSubagentPrompt(withoutStructured, options, guidance);
-    assert.equal(
-      (restored.match(/This subagent step has a strict structured output contract\./g) ?? [])
-        .length,
-      1,
-    );
-    assert.ok(restored.endsWith(CHILD_SUBAGENT_BOUNDARY_INSTRUCTIONS));
-  });
+  assert.equal(twoPasses, onePass);
+  assert.match(onePass, /normal root guidance/);
+  assert.match(onePass, /normal project guidance/);
+  assert.match(onePass, /\[tlh child-runtime marker:/);
+  for (const marker of [
+    CHILD_SUBAGENT_ROOT_RUNTIME_OPEN,
+    CHILD_SUBAGENT_ROOT_RUNTIME_CLOSE,
+    CHILD_SUBAGENT_EXPLICIT_RUNTIME_OPEN,
+    CHILD_SUBAGENT_EXPLICIT_RUNTIME_CLOSE,
+  ]) {
+    assert.equal((onePass.match(new RegExp(marker, "g")) ?? []).length, 1, marker);
+  }
 });
 
 test("child hook composition is idempotent in either registration order", async (t) => {
@@ -622,8 +576,6 @@ test("child hook composition is idempotent in either registration order", async 
       PI_SUBAGENT_PROJECT_AGENT_GUIDANCE: "1",
       PI_SUBAGENT_INHERIT_PROJECT_CONTEXT: "1",
       PI_SUBAGENT_INHERIT_SKILLS: "1",
-      PI_SUBAGENT_STRUCTURED_OUTPUT_CAPTURE: "structured-output.json",
-      PI_SUBAGENT_STRUCTURED_OUTPUT_SCHEMA: undefined,
       PI_SUBAGENT_SUPERVISOR_CHANNEL_DIR: undefined,
       PI_SUBAGENT_RUN_ID: undefined,
       PI_SUBAGENT_ORCHESTRATOR_SESSION_ID: undefined,
@@ -650,9 +602,6 @@ test("child hook composition is idempotent in either registration order", async 
           "</tlh_project_agent_guidance>",
         ].join("\n"),
         "Continuation after the quoted project guidance.",
-        "Quoted structured-output instructions:",
-        STRUCTURED_OUTPUT_INSTRUCTIONS,
-        "Continuation after the quoted structured-output instructions.",
         "Quoted root defaults:",
         quotedRootDefaults,
         "Quoted child boundary:",
@@ -716,12 +665,6 @@ test("child hook composition is idempotent in either registration order", async 
           (onePass.match(/<tlh_project_agent_guidance>/g) ?? []).length,
           2,
           `${label}: quoted and authoritative project guidance must both survive`,
-        );
-        assert.equal(
-          (onePass.match(/This subagent step has a strict structured output contract\./g) ?? [])
-            .length,
-          2,
-          `${label}: quoted and authoritative structured output instructions must both survive`,
         );
         assert.equal(
           (onePass.match(/## TLH Child Subagent Defaults/g) ?? []).length,

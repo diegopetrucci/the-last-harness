@@ -25,8 +25,6 @@ export type OutputMode = "inline" | "file-only";
 
 export type AcceptanceRole = "read-only" | "writer";
 
-export type JsonSchemaObject = Record<string, unknown>;
-
 /** Internal result shape retained until the Pi 0.83 tool-result hook applies the error flag. */
 export type SubagentToolResult<T> = AgentToolResult<T> & { isError?: boolean };
 
@@ -619,9 +617,6 @@ export interface SingleResult {
   savedOutputPath?: string;
   outputReference?: SavedOutputReference;
   outputSaveError?: string;
-  structuredOutput?: unknown;
-  structuredOutputPath?: string;
-  structuredOutputSchemaPath?: string;
   acceptance?: AcceptanceLedger;
   pause?: ForegroundPauseMetadata;
   cancel?: AsyncCancellationMetadata;
@@ -904,9 +899,6 @@ export interface AsyncStatus {
     stderrTruncated?: boolean;
     protocolOutputLimit?: ProtocolOutputLimit;
     processCleanup?: ChildProcessCleanupResult;
-    structuredOutput?: unknown;
-    structuredOutputPath?: string;
-    structuredOutputSchemaPath?: string;
     acceptance?: AcceptanceLedger;
     pause?: AsyncPauseMetadata;
     cancel?: AsyncCancellationMetadata;
@@ -969,9 +961,6 @@ export interface AsyncResultArtifactResultItem {
   truncated?: boolean;
   transcriptPath?: string;
   transcriptError?: string;
-  structuredOutput?: unknown;
-  structuredOutputPath?: string;
-  structuredOutputSchemaPath?: string;
   acceptance?: AcceptanceLedger;
   pause?: AsyncPauseMetadata;
   activeRuntimeMs?: number;
@@ -1236,11 +1225,6 @@ export interface RunSyncOptions {
   modelScope?: ModelScopeConfig;
   /** Skills to make available (overrides agent default if provided) */
   skills?: string[];
-  structuredOutput?: {
-    schema: JsonSchemaObject;
-    schemaPath: string;
-    outputPath: string;
-  };
   steerInboxDir?: string;
   acceptance?: AcceptanceInput;
   acceptanceContext?: {

@@ -781,12 +781,6 @@ describe("buildPiArgs system prompt mode wiring", () => {
 });
 
 describe("buildPiArgs explicit child tool-policy wiring", () => {
-  const structuredOutput = {
-    schema: { type: "object" as const },
-    schemaPath: "/tmp/schema.json",
-    outputPath: "/tmp/output.json",
-  };
-
   function toolsFlag(args: string[]): string | undefined {
     const index = args.indexOf("--tools");
     return index === -1 ? undefined : args[index + 1];
@@ -804,7 +798,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
       requireReadTool: true,
-      structuredOutput,
     });
 
     assert.equal(toolsFlag(args), undefined);
@@ -873,10 +866,9 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritSkills: false,
       tools: [],
       requireReadTool: true,
-      structuredOutput,
     });
 
-    assert.equal(toolsFlag(args), "read,contact_supervisor,structured_output");
+    assert.equal(toolsFlag(args), "read,contact_supervisor");
     assert.ok(!args.includes("--no-tools"));
     assert.ok(!args.includes("--no-builtin-tools"));
   });
@@ -889,7 +881,6 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritProjectContext: false,
       inheritSkills: false,
       tools: ["./my-custom-tool.ts"],
-      structuredOutput,
     });
 
     assert.equal(toolsFlag(args), undefined);
@@ -940,10 +931,9 @@ describe("buildPiArgs explicit child tool-policy wiring", () => {
       inheritSkills: false,
       tools: ["bash", "./my-custom-tool.ts", "bash", "read"],
       requireReadTool: true,
-      structuredOutput,
     });
 
-    assert.equal(toolsFlag(args), "bash,read,contact_supervisor,structured_output");
+    assert.equal(toolsFlag(args), "bash,read,contact_supervisor");
     assert.ok(!args.includes("--no-tools"));
     assert.ok(!args.includes("--no-builtin-tools"));
     assert.deepEqual(

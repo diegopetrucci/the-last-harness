@@ -2,8 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV, STRUCTURED_OUTPUT_TOOL_NAME, } from "./structured-output.js";
-import { TEMP_ROOT_DIR, } from "../../shared/types.js";
+import { TEMP_ROOT_DIR } from "../../shared/types.js";
 import { findModelInfo, getSupportedThinkingLevels, THINKING_LEVELS, } from "../../shared/model-info.js";
 import { TOOL_BUDGET_ENV, encodeToolBudgetEnv } from "./tool-budget.js";
 const TASK_ARG_LIMIT = 8000;
@@ -131,7 +130,6 @@ function buildPiArgsInternal(input, onTempDirCreated) {
     if (modelArg) {
         args.push("--model", modelArg);
     }
-    const hasStructuredOutput = Boolean(input.structuredOutput);
     const contactSupervisorDisallowed = input.supervisorBridge === false;
     const requiresContactSupervisor = !contactSupervisorDisallowed;
     const requiresReadTool = input.inheritSkills || input.requireReadTool === true;
@@ -150,9 +148,6 @@ function buildPiArgsInternal(input, onTempDirCreated) {
             }
             if (requiresContactSupervisor && !allowedToolNames.includes(CONTACT_SUPERVISOR_TOOL_NAME)) {
                 allowedToolNames.push(CONTACT_SUPERVISOR_TOOL_NAME);
-            }
-            if (hasStructuredOutput && !allowedToolNames.includes(STRUCTURED_OUTPUT_TOOL_NAME)) {
-                allowedToolNames.push(STRUCTURED_OUTPUT_TOOL_NAME);
             }
             if (allowedToolNames.length > 0) {
                 args.push("--tools", allowedToolNames.join(","));
@@ -238,10 +233,6 @@ function buildPiArgsInternal(input, onTempDirCreated) {
         env[SUBAGENT_CHILD_INDEX_ENV] = String(input.childIndex);
     }
     env.MCP_DIRECT_TOOLS = "__none__";
-    if (input.structuredOutput) {
-        env[STRUCTURED_OUTPUT_CAPTURE_ENV] = input.structuredOutput.outputPath;
-        env[STRUCTURED_OUTPUT_SCHEMA_ENV] = input.structuredOutput.schemaPath;
-    }
     if (input.steerInboxDir) {
         env[SUBAGENT_STEER_INBOX_ENV] = input.steerInboxDir;
     }

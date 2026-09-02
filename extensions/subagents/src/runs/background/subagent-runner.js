@@ -20,7 +20,6 @@ import { DEFAULT_MAX_OUTPUT, SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, truncateOutput
 import { DEFAULT_CONTROL_CONFIG, buildControlEvent, deriveActivityState, claimControlNotification, formatControlNoticeMessage, } from "../shared/subagent-control.js";
 import { mapConcurrent, MAX_PARALLEL_CONCURRENCY, DEFAULT_GLOBAL_CONCURRENCY_LIMIT, Semaphore, } from "../shared/parallel-utils.js";
 import { buildPiArgs, cleanupTempDir } from "../shared/pi-args.js";
-import { createStructuredOutputRuntime, readStructuredOutput, } from "../shared/structured-output.js";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, } from "../shared/nested-events.js";
 import { appendRuntimeFallbackResolution, canonicalSubagentModelIdentity, combineModelFallbackNotices, formatModelAttemptNote, resolveRuntimeModelContext, isRetryableModelFailure, sanitizeModelFallbackNotice, } from "../shared/model-fallback.js";
 import { CHILD_PROTOCOL_HARD_KILL_GRACE_MS, appendBoundedChildMessage, boundChildError, boundChildStderrError, claimChildTerminalReason, childUsageNumber, createBoundedBytePrefix, createBoundedByteTail, createBoundedLineReader, formatBoundedRawStdout, formatBoundedStderr, formatProtocolOutputLimit, formatStderrLineOverflow, formatStderrTailOverflow, MAX_CHILD_ERROR_BYTES, MAX_CHILD_RAW_STDOUT_BYTES, MAX_CHILD_STDERR_LINE_BYTES, parseChildProtocolInput, } from "../shared/child-protocol.js";
@@ -852,10 +851,6 @@ function prepareSingleStepSetup(step, ctx) {
             parentRegisterTimeout?.(interrupt);
         },
     };
-    const effectiveStructuredOutput = step.structuredOutput ??
-        (step.structuredOutputSchema
-            ? createStructuredOutputRuntime(step.structuredOutputSchema, path.join(path.dirname(stepContext.outputFile), "structured-output"))
-            : undefined);
     let task = step.task;
     const taskForCompletionGuard = task;
     if (step.effectiveAcceptance) {
@@ -917,7 +912,6 @@ function prepareSingleStepSetup(step, ctx) {
         parentRegisterTimeout,
         childDeadlineAt,
         ctx: stepContext,
-        effectiveStructuredOutput,
         task,
         taskForCompletionGuard,
         sessionEnabled,
@@ -945,7 +939,7 @@ function prepareSingleStepSetup(step, ctx) {
     };
 }
 function prepareSingleStepAttempt(input) {
-    const { step, ctx, state, candidate, index, effectiveStructuredOutput, task, sessionEnabled, sessionDir, } = input;
+    const { step, ctx, state, candidate, index, task, sessionEnabled, sessionDir } = input;
     const attemptThinking = dispatchThinkingDropped(step, candidate)
         ? undefined
         : resolveEffectiveThinking(candidate, step.thinking);
@@ -971,14 +965,6 @@ function prepareSingleStepAttempt(input) {
         modelAttempts: state.modelAttempts.length > 0 ? [...state.modelAttempts] : undefined,
     });
     const outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
-    if (effectiveStructuredOutput) {
-        try {
-            if (fs.existsSync(effectiveStructuredOutput.outputPath))
-                fs.unlinkSync(effectiveStructuredOutput.outputPath);
-        }
-        catch {
-        }
-    }
     let args;
     let env;
     let tempDir;
@@ -1008,7 +994,6 @@ function prepareSingleStepAttempt(input) {
             projectAgentGuidance: step.projectAgentGuidance === true,
             childIndex: ctx.flatIndex,
             steerInboxDir: ctx.steerInboxDir,
-            structuredOutput: effectiveStructuredOutput,
             toolBudget: step.toolBudget,
         }));
     }
@@ -1020,7 +1005,7 @@ function prepareSingleStepAttempt(input) {
     return { candidate, attemptThinking, outputSnapshot, args, env, tempDir, buildError };
 }
 function assessSingleStepAttempt(input) {
-    const { step, state, run, candidate, outputSnapshot, tempDir, effectiveStructuredOutput, taskForCompletionGuard, } = input;
+    const { step, state, run, candidate, outputSnapshot, tempDir, taskForCompletionGuard } = input;
     state.finalAttemptContextUsage = run.contextUsage;
     state.aggregateContextUsage = mergeContextUsageDiagnostics(state.aggregateContextUsage, run.contextUsage);
     cleanupTempDir(tempDir);
@@ -1041,34 +1026,13 @@ function assessSingleStepAttempt(input) {
         });
     state.contextExhaustedDetected =
         run.contextExhausted === true || contextExhaustedSignature === "context_exhausted";
-    const missingStructuredOutput = effectiveStructuredOutput
-        ? !fs.existsSync(effectiveStructuredOutput.outputPath)
-        : false;
     const emptyOutputError = run.exitCode === 0 &&
         !run.error &&
         !hiddenError?.hasError &&
         !contextExhaustedSignature &&
-        !run.finalOutput.trim() &&
-        (!effectiveStructuredOutput || missingStructuredOutput)
+        !run.finalOutput.trim()
         ? "Subagent produced no output (possible model cold-start or empty response)."
         : undefined;
-    let structuredOutput;
-    let structuredError;
-    if (effectiveStructuredOutput &&
-        run.exitCode === 0 &&
-        !run.error &&
-        !hiddenError?.hasError &&
-        !emptyOutputError) {
-        const structured = readStructuredOutput({
-            schema: effectiveStructuredOutput.schema,
-            schemaPath: effectiveStructuredOutput.schemaPath,
-            outputPath: effectiveStructuredOutput.outputPath,
-        });
-        if (structured.error)
-            structuredError = structured.error;
-        else
-            structuredOutput = structured.value;
-    }
     const completionGuard = run.exitCode === 0 &&
         !run.error &&
         !hiddenError?.hasError &&
@@ -1089,15 +1053,13 @@ function assessSingleStepAttempt(input) {
         ? 1
         : completionGuardTriggered
             ? 1
-            : structuredError
-                ? 1
-                : hiddenError?.hasError
-                    ? (hiddenError.exitCode ?? 1)
-                    : emptyOutputError
+            : hiddenError?.hasError
+                ? (hiddenError.exitCode ?? 1)
+                : emptyOutputError
+                    ? 1
+                    : run.error && run.exitCode === 0
                         ? 1
-                        : run.error && run.exitCode === 0
-                            ? 1
-                            : run.exitCode;
+                        : run.exitCode;
     const childFailureError = hiddenError?.hasError
         ? hiddenError.details
             ? `${hiddenError.errorType} failed (exit ${effectiveExitCode}): ${hiddenError.details}`
@@ -1109,7 +1071,7 @@ function assessSingleStepAttempt(input) {
                     : undefined)));
     const error = boundChildError(run.protocolOutputLimit
         ? formatProtocolOutputLimit(run.protocolOutputLimit)
-        : (completionGuardError ?? structuredError ?? childFailureError));
+        : (completionGuardError ?? childFailureError));
     const attempt = {
         model: candidate ?? run.model ?? step.model ?? "default",
         success: effectiveExitCode === 0 && !error,
@@ -1133,7 +1095,6 @@ function assessSingleStepAttempt(input) {
         exitCode: effectiveExitCode,
         model: candidate ?? run.model,
         error,
-        structuredOutput,
     };
     return { attempt, completionGuardTriggered };
 }
@@ -1456,13 +1417,6 @@ function buildSingleStepResult(input) {
         toolBudget: state.toolBudget,
         toolBudgetBlocked: state.toolBudgetBlocked || undefined,
         completionGuardTriggered: state.completionGuardTriggeredFinal,
-        structuredOutput: outcome.timedOutAfterAcceptance ? undefined : finalResult?.structuredOutput,
-        structuredOutputPath: outcome.timedOutAfterAcceptance
-            ? undefined
-            : setup.effectiveStructuredOutput?.outputPath,
-        structuredOutputSchemaPath: outcome.timedOutAfterAcceptance
-            ? undefined
-            : setup.effectiveStructuredOutput?.schemaPath,
         acceptance: outcome.effectiveAcceptance,
         activeRuntimeMs: setup.priorActiveRuntimeMs + (Date.now() - setup.segmentStartedAt),
     };
@@ -1481,7 +1435,6 @@ async function runSingleStep(step, ctx) {
             state,
             candidate,
             index,
-            effectiveStructuredOutput: setup.effectiveStructuredOutput,
             task: setup.task,
             sessionEnabled: setup.sessionEnabled,
             sessionDir: setup.sessionDir,
@@ -1528,7 +1481,6 @@ async function runSingleStep(step, ctx) {
             candidate,
             outputSnapshot: attempt.outputSnapshot,
             tempDir: attempt.tempDir,
-            effectiveStructuredOutput: setup.effectiveStructuredOutput,
             taskForCompletionGuard: setup.taskForCompletionGuard,
         });
         if (shouldStopSingleStepAttempt({
@@ -1588,24 +1540,56 @@ function isPausedStepStatus(status) {
     return status === "paused";
 }
 const ASYNC_RUNNER_MISSING_PLAN_ERROR = "Async runner config must include a valid direct plan.";
+const ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR = "Async runner config contains unsupported structuredOutput or structuredOutputSchema task properties. Structured output contracts are retired; restart with a new direct single or parallel run without those properties.";
+const ASYNC_RUNNER_INVALID_CONFIG_ERROR = "Async runner config is malformed.";
+function isRecord(value) {
+    return typeof value === "object" && value !== null;
+}
+function hasRetiredStructuredOutputProperty(value) {
+    return (isRecord(value) &&
+        (Object.hasOwn(value, "structuredOutput") || Object.hasOwn(value, "structuredOutputSchema")));
+}
 function isRunnerSubagentStepValue(value) {
-    if (!value || typeof value !== "object")
+    if (!isRecord(value) || hasRetiredStructuredOutputProperty(value))
         return false;
-    const candidate = value;
-    return typeof candidate.agent === "string" && typeof candidate.task === "string";
+    return typeof value.agent === "string" && typeof value.task === "string";
 }
 function isDirectRunPlanValue(value) {
-    if (!value || typeof value !== "object")
+    if (!isRecord(value))
         return false;
-    const candidate = value;
-    if (candidate.kind === "single")
-        return isRunnerSubagentStepValue(candidate.task);
-    return (candidate.kind === "parallel" &&
-        Array.isArray(candidate.tasks) &&
-        candidate.tasks.length > 0 &&
-        candidate.tasks.every(isRunnerSubagentStepValue));
+    if (value.kind === "single")
+        return isRunnerSubagentStepValue(value.task);
+    return (value.kind === "parallel" &&
+        Array.isArray(value.tasks) &&
+        value.tasks.length > 0 &&
+        value.tasks.every(isRunnerSubagentStepValue));
 }
-function persistMissingRunPlanFailure(config) {
+function directRunPlanValidationError(value) {
+    if (isRecord(value)) {
+        if (value.kind === "single" && hasRetiredStructuredOutputProperty(value.task)) {
+            return ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR;
+        }
+        if (value.kind === "parallel" &&
+            Array.isArray(value.tasks) &&
+            value.tasks.some(hasRetiredStructuredOutputProperty)) {
+            return ASYNC_RUNNER_RETIRED_STRUCTURED_OUTPUT_ERROR;
+        }
+    }
+    return ASYNC_RUNNER_MISSING_PLAN_ERROR;
+}
+function isRunnerConfigEnvelope(value) {
+    return (isRecord(value) &&
+        typeof value.id === "string" &&
+        typeof value.resultPath === "string" &&
+        typeof value.cwd === "string" &&
+        typeof value.asyncDir === "string");
+}
+function parseRunnerConfig(value) {
+    if (!isRunnerConfigEnvelope(value))
+        throw new Error(ASYNC_RUNNER_INVALID_CONFIG_ERROR);
+    return value;
+}
+function persistMissingRunPlanFailure(config, error = ASYNC_RUNNER_MISSING_PLAN_ERROR) {
     const timestamp = Date.now();
     const mode = "single";
     const status = {
@@ -1614,7 +1598,7 @@ function persistMissingRunPlanFailure(config) {
         ...(typeof config.sessionId === "string" ? { sessionId: config.sessionId } : {}),
         mode,
         state: "failed",
-        error: ASYNC_RUNNER_MISSING_PLAN_ERROR,
+        error,
         startedAt: timestamp,
         endedAt: timestamp,
         lastUpdate: timestamp,
@@ -1638,8 +1622,8 @@ function persistMissingRunPlanFailure(config) {
         mode,
         success: false,
         state: "failed",
-        summary: ASYNC_RUNNER_MISSING_PLAN_ERROR,
-        error: ASYNC_RUNNER_MISSING_PLAN_ERROR,
+        summary: error,
+        error,
         results: [],
         exitCode: 1,
         timestamp,
@@ -1654,11 +1638,13 @@ function persistMissingRunPlanFailure(config) {
     });
 }
 async function runSubagent(config) {
-    if (!isDirectRunPlanValue(config.plan)) {
-        persistMissingRunPlanFailure(config);
-        throw new Error(ASYNC_RUNNER_MISSING_PLAN_ERROR);
+    const plan = isDirectRunPlanValue(config.plan) ? config.plan : undefined;
+    if (!plan) {
+        const error = directRunPlanValidationError(config.plan);
+        persistMissingRunPlanFailure(config, error);
+        throw new Error(error);
     }
-    return runSubagentWithInput(config, config.plan);
+    return runSubagentWithInput({ ...config, plan }, plan);
 }
 async function runSubagentWithInput(config, plan) {
     const { id, resultPath, cwd, taskIndex, totalTasks, maxOutput, artifactsDir, artifactConfig } = config;
@@ -2871,9 +2857,6 @@ async function runSubagentWithInput(config, plan) {
                 processCleanup: pr.processCleanup,
                 transcriptPath: pr.transcriptPath,
                 transcriptError: pr.transcriptError,
-                structuredOutput: pr.structuredOutput,
-                structuredOutputPath: pr.structuredOutputPath,
-                structuredOutputSchemaPath: pr.structuredOutputSchemaPath,
                 acceptance: pr.acceptance,
                 pause: pr.interrupted
                     ? pauseMetadataForIndex(fi, statusPayload.steps[fi]?.endedAt)
@@ -2917,9 +2900,6 @@ async function runSubagentWithInput(config, plan) {
             processCleanup: singleResult.processCleanup,
             transcriptPath: singleResult.transcriptPath,
             transcriptError: singleResult.transcriptError,
-            structuredOutput: singleResult.structuredOutput,
-            structuredOutputPath: singleResult.structuredOutputPath,
-            structuredOutputSchemaPath: singleResult.structuredOutputSchemaPath,
             acceptance: singleResult.acceptance,
             pause: singleResult.interrupted ? pauseMetadataForIndex(flatIndex) : undefined,
             interrupted: singleResult.interrupted,
@@ -3009,10 +2989,6 @@ async function runSubagentWithInput(config, plan) {
         statusPayload.steps[flatIndex].transcriptPath =
             singleResult.transcriptPath ?? statusPayload.steps[flatIndex].transcriptPath;
         statusPayload.steps[flatIndex].transcriptError = singleResult.transcriptError;
-        statusPayload.steps[flatIndex].structuredOutput = singleResult.structuredOutput;
-        statusPayload.steps[flatIndex].structuredOutputPath = singleResult.structuredOutputPath;
-        statusPayload.steps[flatIndex].structuredOutputSchemaPath =
-            singleResult.structuredOutputSchemaPath;
         statusPayload.steps[flatIndex].acceptance = singleResult.acceptance;
         if (pausedStep)
             applyPausedStepMetadata(flatIndex, stepEndTime);
@@ -3183,10 +3159,6 @@ async function runSubagentWithInput(config, plan) {
                 statusPayload.steps[fi].transcriptPath =
                     singleResult.transcriptPath ?? statusPayload.steps[fi].transcriptPath;
                 statusPayload.steps[fi].transcriptError = singleResult.transcriptError;
-                statusPayload.steps[fi].structuredOutput = singleResult.structuredOutput;
-                statusPayload.steps[fi].structuredOutputPath = singleResult.structuredOutputPath;
-                statusPayload.steps[fi].structuredOutputSchemaPath =
-                    singleResult.structuredOutputSchemaPath;
                 statusPayload.steps[fi].acceptance = singleResult.acceptance;
                 if (pausedStep)
                     applyPausedStepMetadata(fi, taskEndTime);
@@ -3663,9 +3635,6 @@ async function runSubagentWithInput(config, plan) {
                     truncated: r.truncated,
                     transcriptPath: r.transcriptPath,
                     transcriptError: r.transcriptError,
-                    structuredOutput: r.structuredOutput,
-                    structuredOutputPath: r.structuredOutputPath,
-                    structuredOutputSchemaPath: r.structuredOutputSchemaPath,
                     acceptance: r.acceptance,
                     pause: r.pause,
                     activeRuntimeMs: r.activeRuntimeMs,
@@ -3699,12 +3668,13 @@ const configArg = process.argv[2];
 if (configArg) {
     try {
         const configJson = fs.readFileSync(configArg, "utf-8");
-        const config = JSON.parse(configJson);
+        const configValue = JSON.parse(configJson);
         try {
             fs.unlinkSync(configArg);
         }
         catch {
         }
+        const config = parseRunnerConfig(configValue);
         runSubagent(config).catch((runErr) => {
             console.error("Subagent runner error:", runErr);
             process.exit(1);
@@ -3723,7 +3693,8 @@ else {
     });
     process.stdin.on("end", () => {
         try {
-            const config = JSON.parse(input);
+            const configValue = JSON.parse(input);
+            const config = parseRunnerConfig(configValue);
             runSubagent(config).catch((runErr) => {
                 console.error("Subagent runner error:", runErr);
                 process.exit(1);
