@@ -83,14 +83,16 @@ export interface BeatResult {
   model: Model<Api>;
   /**
    * True when the session circuit-breaker is now disabled (either as a result
-   * of this beat or due to a prior error that finally tripped the threshold).
+   * of this beat or due to a prior failure that finally tripped the threshold).
    */
   sessionDisabled: boolean;
 }
 
 /**
  * Usage and cost observed before a provider iterator has finished cleaning up.
- * Only outcomes that can be classified from the observed usage are allowed.
+ * Only outcomes that can be classified from the observed usage are allowed;
+ * generation cutoffs with usage are represented as `error` here, while the
+ * final beat result/JSONL record retains the `generation_cutoff` outcome.
  */
 export interface BeatAccounting {
   gapId: string;
@@ -206,7 +208,7 @@ export interface HeartbeatController {
   /**
    * Reset session-scoped state for a new session.
    *
-   * Clears the error-breaker (disabled flag), consecutive-error count, captured
+   * Clears the failure breaker (disabled flag), consecutive-failure count, captured
    * request, idle/session identity, and any open gap state.  Does NOT reset the
    * resolved config.  Safe to call when a gap is somehow still open — closes
    * it without emitting a duplicate log entry.
@@ -432,7 +434,7 @@ export function createHeartbeatController(
     if (beatAbortController) {
       // Use a named reason so executeBeat can distinguish a lifecycle cancellation
       // (gap closing) from a provider-induced abort (e.g. after usage-bearing event).
-      // This prevents the error-breaker from firing on lifecycle cancellations.
+      // This prevents the failure breaker from firing on lifecycle cancellations.
       beatAbortController.abort("lifecycle");
       beatAbortController = null;
     }
@@ -462,8 +464,10 @@ export function createHeartbeatController(
     const model = currentCapture.model;
 
     let outcome: HeartbeatOutcome = "error";
-    // Provider error events and generation cutoffs are bounded "error" paths;
-    // neither may be reclassified from any usage attached to the event.
+    // Provider errors remain genuine "error" outcomes. Generation-bearing
+    // events become "generation_cutoff" outcomes unless cache-write evidence
+    // preserves the existing mismatch classification.
+    let forcedOutcome: "generation_cutoff" | "cache_write_mismatch" | undefined;
     let classifyFromUsage = true;
     let usage: HeartbeatUsage | undefined;
     let estCostUsd: number | undefined;
@@ -599,16 +603,20 @@ export function createHeartbeatController(
         const eventUsage = extractEventUsage(event);
 
         // A block start without cache-read evidence is already the generation
-        // boundary.  Deltas/ends and generated done messages are likewise too
-        // late to qualify as a cheap cache-read beat.  Preserve the existing
+        // boundary. Deltas/ends and generated done messages are likewise too
+        // late to qualify as a cheap cache-read beat. Preserve the existing
         // mismatch classifier for cache-write evidence on any event.
         if (isGenerationBearingEvent(event, eventUsage)) {
           if (isUsageBearing(eventUsage)) {
             usage = eventUsage;
           }
-          if (eventUsage.cacheWrite <= CACHE_WRITE_MISMATCH_THRESHOLD) {
-            // A generation-boundary abort is a bounded non-success, even when
-            // the same event happens to include cache-read or output usage.
+          if (eventUsage.cacheWrite > CACHE_WRITE_MISMATCH_THRESHOLD) {
+            forcedOutcome = "cache_write_mismatch";
+          } else {
+            // A generation-boundary abort is a distinct bounded non-success,
+            // even when the same event happens to include cache-read or output
+            // usage. Do not wait for a later usage event.
+            forcedOutcome = "generation_cutoff";
             classifyFromUsage = false;
           }
           // Publish before aborting: closing the iterator may yield to a
@@ -635,10 +643,12 @@ export function createHeartbeatController(
       }
 
       // Classify the outcome from usage evidence unless a provider error or
-      // generation cutoff already forced the bounded error outcome. cache_read
-      // requires actual cacheRead evidence; zero-cacheRead usage is not a
-      // successful TTL refresh and leaves outcome as the default "error".
-      if (classifyFromUsage && usage) {
+      // generation boundary already forced a result. cache_read requires actual
+      // cacheRead evidence; zero-cacheRead usage is not a successful TTL refresh
+      // and leaves outcome as the default "error".
+      if (forcedOutcome) {
+        outcome = forcedOutcome;
+      } else if (classifyFromUsage && usage) {
         outcome = classifyObservedUsage(usage, classifyFromUsage);
       }
       // If no usage was observed: outcome remains the default "error".
@@ -655,7 +665,9 @@ export function createHeartbeatController(
       // usage-bearing event path.
       publishBeatAccounting();
     } catch {
-      outcome = "error";
+      // Preserve a classification made before iterator cleanup. In particular,
+      // a generation cutoff must remain distinct from a provider/stream error.
+      outcome = forcedOutcome ?? "error";
     } finally {
       // Only clear our own reference — a newer beat may have already replaced it.
       if (beatAbortController === abortCtrl) {
@@ -714,8 +726,28 @@ export function createHeartbeatController(
     // gap we started with is still the active one.  A lifecycle event could have
     // closed this gap and opened a new one while the stream was in flight.
     if (state.gap?.gapId !== capturedGapId || gapGeneration !== capturedGeneration) {
-      // Stale beat: a newer gap is active.  Do NOT clear state.inFlight — the
-      // newer gap owns that flag and may have its own beat in flight.
+      // If this gap was closed while iterator cleanup was pending, preserve a
+      // genuine failure for the session breaker. Lifecycle cancellations return
+      // above, and a generation change means resetSession/new-gap state owns the
+      // machine now. No beat-count or timer mutation is possible without a gap.
+      if (
+        state.gap === null &&
+        gapGeneration === capturedGeneration &&
+        (outcome === "cache_read" || outcome === "error" || outcome === "generation_cutoff")
+      ) {
+        completeBeat(state, outcome, now());
+        deps.onBeatResult?.({
+          gapId,
+          outcome,
+          usage,
+          estCostUsd,
+          model,
+          sessionDisabled: state.disabled,
+        });
+      }
+      // This beat is stale. If a newer gap is active, do not clear
+      // state.inFlight: the newer gap owns that flag and may have its own beat
+      // in flight.
       return;
     }
 
@@ -740,7 +772,7 @@ export function createHeartbeatController(
 
     // Errors do not refresh the provider cache, so keep lastRequestAt as-is
     // while still avoiding a zero-delay retry burst.
-    if (outcome === "error") {
+    if (outcome === "error" || outcome === "generation_cutoff") {
       rearmAfterSkip();
     } else {
       // Re-arm for the next interval after a successful or otherwise terminal beat.

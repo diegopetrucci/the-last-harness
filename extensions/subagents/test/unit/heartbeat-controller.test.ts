@@ -650,7 +650,7 @@ describe("createHeartbeatController — early-generation cutoff", () => {
       await new Promise((r) => setTimeout(r, 30));
 
       assert.deepEqual(consumed, ["start", label], `${label} must be the first cutoff boundary`);
-      assert.equal(sink.records[0]?.["outcome"], "error");
+      assert.equal(sink.records[0]?.["outcome"], "generation_cutoff");
       ctrl.destroy();
     }
   });
@@ -792,7 +792,7 @@ describe("createHeartbeatController — early-generation cutoff", () => {
       await new Promise((r) => setTimeout(r, 30));
 
       assert.deepEqual(consumed, ["start", label]);
-      assert.equal(sink.records[0]?.["outcome"], "error");
+      assert.equal(sink.records[0]?.["outcome"], "generation_cutoff");
       ctrl.destroy();
     }
   });
@@ -854,12 +854,12 @@ describe("createHeartbeatController — early-generation cutoff", () => {
       await new Promise((r) => setTimeout(r, 30));
 
       assert.deepEqual(consumed, ["start", label]);
-      assert.equal(sink.records[0]?.["outcome"], "error");
+      assert.equal(sink.records[0]?.["outcome"], "generation_cutoff");
       ctrl.destroy();
     }
   });
 
-  it("bounds repeated late-usage cutoffs with the existing error breaker", async () => {
+  it("bounds repeated generation cutoffs with the existing error breaker", async () => {
     const timer = makeTimerFake();
     const sink = makeLoggerSink();
     const scheduledDelays: number[] = [];
@@ -903,18 +903,21 @@ describe("createHeartbeatController — early-generation cutoff", () => {
       await new Promise((r) => setTimeout(r, 30));
     }
 
-    assert.equal(streamCalls, 3, "three late-usage errors should reach the session breaker");
+    assert.equal(streamCalls, 3, "three generation cutoffs should reach the session breaker");
     assert.equal(finalUsageConsumed, false, "late final usage must never be consumed");
-    assert.equal(sink.records.filter((record) => record["outcome"] === "error").length, 3);
+    assert.equal(
+      sink.records.filter((record) => record["outcome"] === "generation_cutoff").length,
+      3,
+    );
     assert.ok(
       scheduledDelays.slice(1).every((delay) => delay >= MIN_REARM_DELAY_MS),
-      "late-usage errors must use positive backoff before the breaker trips",
+      "generation cutoffs must use positive backoff before the breaker trips",
     );
 
     timer.advance(config.intervalMs + MIN_REARM_DELAY_MS);
     timer.firePending();
     await new Promise((r) => setTimeout(r, 20));
-    assert.equal(streamCalls, 3, "the error breaker must stop further late-usage attempts");
+    assert.equal(streamCalls, 3, "the error breaker must stop further generation-cutoff attempts");
     ctrl.destroy();
   });
 });
@@ -1137,6 +1140,62 @@ describe("createHeartbeatController — cache_write_mismatch circuit breaker", (
     timer.firePending();
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(streamCalls, before, "stream should not be called after gap stopped");
+    ctrl.destroy();
+  });
+
+  it("keeps cache_write_mismatch when iterator cleanup throws", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const beatResults: import("../../src/runs/shared/heartbeat-controller.ts").BeatResult[] = [];
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      onBeatResult: (result) => beatResults.push(result),
+      streamProvider() {
+        const events: AssistantMessageEvent[] = [
+          makeStartEvent(),
+          makeTextStartEvent({
+            input: 100,
+            cacheRead: 0,
+            cacheWrite: 1024,
+            output: 0,
+            totalTokens: 1124,
+          }),
+        ];
+        let index = 0;
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                const event = events[index++];
+                if (event) return { done: false, value: event };
+                return { done: true, value: undefined };
+              },
+              return() {
+                return Promise.reject(new Error("iterator cleanup failed"));
+              },
+            };
+          },
+        };
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-mismatch-cleanup", "sess-mismatch-cleanup");
+
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(sink.records.length, 1, "cleanup failure must not duplicate the beat record");
+    assert.equal(sink.records[0]?.["outcome"], "cache_write_mismatch");
+    assert.equal(beatResults.length, 1);
+    assert.equal(beatResults[0]!.outcome, "cache_write_mismatch");
     ctrl.destroy();
   });
 });
@@ -1379,8 +1438,8 @@ describe("createHeartbeatController — error event classification (finding 2)",
     const rec = sink.records[0] as { outcome: string };
     assert.equal(
       rec.outcome,
-      "error",
-      "zero cacheRead must produce 'error' outcome, not 'cache_read'",
+      "generation_cutoff",
+      "generation before cache usage must produce 'generation_cutoff', not 'cache_read'",
     );
     ctrl.destroy();
   });
@@ -1488,6 +1547,55 @@ describe("createHeartbeatController — onBeatResult callback (finding 7)", () =
     assert.equal(beatResults[0]!.gapId, "gap-cb");
     assert.ok(beatResults[0]!.usage, "usage should be present");
     assert.equal(typeof beatResults[0]!.sessionDisabled, "boolean");
+    ctrl.destroy();
+  });
+
+  it("reports a failure when gap close races cutoff iterator cleanup", async () => {
+    const timer = makeTimerFake();
+    const sink = makeLoggerSink();
+    const beatResults: import("../../src/runs/shared/heartbeat-controller.ts").BeatResult[] = [];
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+
+    const ctrl = createHeartbeatController(BASE_CONFIG, {
+      now: timer.now,
+      setTimeout: timer.setTimeout,
+      clearTimeout: timer.clearTimeout,
+      logPath: "/fake.jsonl",
+      ...sink,
+      onBeatResult: (result) => beatResults.push(result),
+      streamProvider() {
+        return (async function* () {
+          try {
+            yield makeTextStartEvent({ input: 100, cacheRead: 0, output: 5 });
+          } finally {
+            markCleanupStarted();
+            await cleanupRelease;
+          }
+        })();
+      },
+    });
+
+    ctrl.onProviderRequest({}, makeModel());
+    ctrl.onIdle(true);
+    ctrl.startGap("gap-cutoff-race", "sess-cutoff-race");
+    timer.advance(BASE_CONFIG.intervalMs + 1);
+    timer.firePending();
+
+    await cleanupStarted;
+    ctrl.endGap();
+    releaseCleanup();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(beatResults.length, 1, "cutoff completion must still report its failure");
+    assert.equal(beatResults[0]!.outcome, "generation_cutoff");
+    assert.equal(beatResults[0]!.sessionDisabled, false);
     ctrl.destroy();
   });
 

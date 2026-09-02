@@ -233,6 +233,21 @@ describe("completeBeat — error and circuit breaker", () => {
     assert.equal(state.disabled, false);
   });
 
+  it("counts generation_cutoff as a breaker failure", () => {
+    const state = createHeartbeatState();
+    openGap(state, "g", 0);
+
+    for (let i = 0; i < MAX_CONSECUTIVE_ERRORS; i++) {
+      beginBeat(state);
+      const result = completeBeat(state, "generation_cutoff", (i + 1) * 1000);
+      assert.equal(result.disableSession, i === MAX_CONSECUTIVE_ERRORS - 1);
+    }
+
+    assert.equal(state.consecutiveErrors, MAX_CONSECUTIVE_ERRORS);
+    assert.equal(state.disabled, true);
+    assert.equal(state.gap?.beatCount, MAX_CONSECUTIVE_ERRORS);
+  });
+
   it("disables session after MAX_CONSECUTIVE_ERRORS errors", () => {
     const state = createHeartbeatState();
     openGap(state, "g", 0);
