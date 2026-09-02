@@ -404,7 +404,7 @@ describe("buildDoctorReport — heartbeat section", () => {
         },
         deps: minimalDeps,
       });
-      assert.match(report, /circuit breaker: open/);
+      assert.match(report, /circuit breaker: open \(disabled after failures\)/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

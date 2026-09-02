@@ -100,7 +100,14 @@ describe("createHeartbeatLogger — appends JSONL lines", () => {
 });
 
 describe("createHeartbeatLogger — record shapes for all outcomes", () => {
-  const outcomes = ["cache_read", "cache_write_mismatch", "error", "capped", "lost"] as const;
+  const outcomes = [
+    "cache_read",
+    "cache_write_mismatch",
+    "error",
+    "generation_cutoff",
+    "capped",
+    "lost",
+  ] as const;
 
   for (const outcome of outcomes) {
     it(`writes a parseable record for outcome=${outcome}`, () => {

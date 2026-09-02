@@ -119,7 +119,7 @@ function formatHeartbeatSection(summary) {
         `- cache-read tokens: ${summary.totalCacheReadTokens}`,
         `- ${costStr}`,
         `- gaps: ${gapsStr || "none yet"}`,
-        `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after errors)" : "closed"}`,
+        `- circuit breaker: ${summary.breakerDisabled ? "open (disabled after failures)" : "closed"}`,
     ];
 }
 function formatPermissionSystemSection() {

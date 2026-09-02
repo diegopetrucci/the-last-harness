@@ -60,7 +60,7 @@ export function completeBeat(state, outcome, now) {
             state.gap.lastRequestAt = now;
         }
     }
-    else if (outcome === "error") {
+    else if (outcome === "error" || outcome === "generation_cutoff") {
         state.consecutiveErrors++;
     }
     else if (outcome === "cache_write_mismatch") {
