@@ -422,12 +422,12 @@ export interface ModelCandidatePlan {
 }
 
 export function buildFallbackModelList(
-  perExecutionFallbackModels: string[] | undefined,
+  providerFallbackModels: string[] | undefined,
   agentFallbackModels: string[] | undefined,
 ): string[] | undefined {
   const seen = new Set<string>();
   const fallbackModels: string[] = [];
-  for (const raw of [...(perExecutionFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
+  for (const raw of [...(providerFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
     const model = typeof raw === "string" ? raw.trim() : "";
     if (!model || seen.has(model)) continue;
     seen.add(model);

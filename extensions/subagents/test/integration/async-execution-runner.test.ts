@@ -588,7 +588,9 @@ describe("async execution utilities", () => {
       tempArtifactsDir: tempDir,
       getSubagentSessionRoot: () => tempDir,
       expandTilde: (p: string) => p,
-      discoverAgents: () => ({ agents: [makeAgent("worker", { defaultProgress: true })] }),
+      discoverAgents: () => ({
+        agents: [makeAgent("worker", { defaultReads: ["input.md"], defaultProgress: true })],
+      }),
     });
 
     const parentSessionFile = path.join(tempDir, "parent-session", "session.jsonl");
@@ -607,7 +609,6 @@ describe("async execution utilities", () => {
             agent: "worker",
             task: "Do async work",
             output: "async-top-output.md",
-            reads: ["input.md"],
           },
         ],
         async: true,

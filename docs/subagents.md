@@ -27,10 +27,10 @@ Only `architect` and `disabled` may initiate a custom embedded run. Such a call 
 The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 
 - **Single:** one `agent` and optional `task`.
-- **Parallel:** a `tasks` array, with optional `concurrency`. Each task names an `agent` and `task` and may override output, reads, progress, or model behavior.
+- **Parallel:** a `tasks` array. Each task names an `agent` and `task` and may override output or model behavior; parallel limits are configured in `<agent-dir>/extensions/subagent/config.json`.
 - **Synchronous by default:** the tool waits for the child result.
 - **Asynchronous when requested:** `async: true` starts TLH-tracked background work in a detached OS child process managed by TLH and returns an ID and runtime directory so the parent can continue useful work.
-- **Execution controls:** `timeoutMs`, `cwd`, `artifacts`, and `includeProgress`; single runs also accept `output`, `outputMode`, `model`, and `fallbackModels`. Every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
+- **Execution controls:** `timeoutMs`, `cwd`, and `artifacts`; single runs also accept `output`, `outputMode`, and `model`. Agent definitions own `defaultReads`, `defaultProgress`, and `fallbackModels`; every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
 
 `single` and `parallel` are the only execution forms; each is available in the foreground or as a TLH-tracked async run. This is a fresh-only contract: `context` is not an execution input, `defaultContext` is not a supported definition or settings field, and no parent transcript is inherited. A child receives its task and explicitly configured definition; project-instruction and skill settings remain explicit child configuration, not transcript inheritance. Persisted direct plans containing the retired `structuredOutput` or `structuredOutputSchema` task properties fail closed; start a new direct run without a structured output contract. `async: true` is TLH's internal tracked background runner, using the detached OS child process described above; it is not the removed external pi-intercom detach request/result/control integration or a separate control-channel API.
 
@@ -395,12 +395,15 @@ The active runtime config is:
 
 For the default release profile that is `~/.the-last-harness/agent/extensions/subagent/config.json`. Install and update add only the missing TLH default `control.activeNoticeAfterMs: 270000` (4m30); the parent-facing subagent tool description is always compact. Existing `toolDescriptionMode` keys are ignored, intentionally preserved by install/update, and may be manually deleted. Existing values and unrelated keys survive. Remove a customized notice key and run `tlh update` to restore the managed default; restore a pre-update `settings.json.backup-*` when undoing an isolated-settings merge.
 
+Parallel limits are configured here: `parallel.maxTasks` caps tasks per call (default `8`), and `parallel.concurrency` caps simultaneously running children (default `4`).
+
 Useful diagnostics:
 
 - `tlh doctor` checks installer-owned profile resources without writing.
 - `tlh doctor --repair` can restore bundled agent definitions and settings defaults after backing up settings.
 - `/subagents-doctor` reports runtime-specific diagnostics.
 - `subagent({ action: "status", view: "fleet" })` reports active runs and transcript commands.
+- When parallel work is rejected or queued, inspect `parallel.maxTasks` and `parallel.concurrency` in the active config.
 
 See [commands.md](commands.md) for command visibility and [install.md](install.md) for the exact install/update migration and uninstall behavior.
 

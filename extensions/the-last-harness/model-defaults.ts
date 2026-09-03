@@ -9,7 +9,10 @@ import type {
 } from "./types.js";
 
 import { isRecord } from "./common.js";
-import { isEmbeddedSubagentTarget } from "../the-last-harness-subagent-safety.mjs";
+import {
+  isEmbeddedSubagentTarget,
+  PROVIDER_AWARE_FALLBACK_MODELS,
+} from "../the-last-harness-subagent-safety.mjs";
 
 export type ProviderModelReference = {
   provider: string;
@@ -1264,7 +1267,9 @@ function applyModelToRunnableTarget(
           ? `${fallbackModelBase}:${fallbackThinking}`
           : fallbackModelBase;
         if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
-          target.fallbackModels = [fallbackModelId];
+          (target as Record<PropertyKey, unknown>)[PROVIDER_AWARE_FALLBACK_MODELS] = [
+            fallbackModelId,
+          ];
         }
         if (
           !Object.hasOwn(target, "modelFallbackNotice") ||
@@ -1338,7 +1343,7 @@ function applyModelToRunnableTarget(
 
   if (fallbackModels?.length) {
     if (usesGeneratedFallback) {
-      target.fallbackModels = fallbackModels;
+      (target as Record<PropertyKey, unknown>)[PROVIDER_AWARE_FALLBACK_MODELS] = fallbackModels;
     }
     if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {
       target.modelFallbackNotice = resolution.modelFallbackNotice;

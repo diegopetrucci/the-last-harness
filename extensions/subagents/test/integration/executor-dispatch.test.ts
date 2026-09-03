@@ -14,10 +14,15 @@ import {
   makeAgent,
   makeExtensionAPI,
   makeMinimalCtx,
+  makeModel,
   makeSubagentState,
   removeTempDir,
   tryImport,
 } from "../support/helpers.ts";
+import {
+  getProviderAwareFallbackModels,
+  PROVIDER_AWARE_FALLBACK_MODELS,
+} from "../../../the-last-harness-subagent-safety.mjs";
 import type { MockPi } from "../support/helpers.ts";
 import { readAsyncPayload } from "../support/async-execution-helpers.ts";
 
@@ -30,7 +35,7 @@ interface ExecutorResult {
     mode?: "single" | "parallel" | "management";
     asyncId?: string;
     progress?: Array<{ status?: string }>;
-    results?: Array<{ skills?: string[] }>;
+    results?: Array<{ skills?: string[]; attemptedModels?: string[] }>;
   };
 }
 
@@ -49,6 +54,94 @@ interface ExecutorModule {
 const { createSubagentExecutor } = await tryImport<ExecutorModule>(
   "./src/runs/foreground/subagent-executor.ts",
 );
+
+interface ProviderAwareModelDefaultsModule {
+  applyProviderAwareSubagentModels(
+    input: unknown,
+    agents: ReadonlyMap<string, Record<string, unknown>>,
+    availableModels: readonly unknown[],
+    currentProvider?: string,
+  ): number;
+}
+
+const { applyProviderAwareSubagentModels } = await tryImport<ProviderAwareModelDefaultsModule>(
+  "../the-last-harness/model-defaults.ts",
+);
+
+function providerAwareModelDefaultsAgent(): Record<string, unknown> {
+  return {
+    name: "echo",
+    tlhModelDefaults: [
+      {
+        provider: "openai-codex",
+        models: [{ provider: "openai-codex", id: "primary" }],
+        effort: "high",
+      },
+      {
+        provider: "anthropic",
+        models: [{ provider: "anthropic", id: "fallback" }],
+        effort: "high",
+      },
+    ],
+    tlhModelDefaultsSource: "frontmatter",
+    preferOppositeProvider: true,
+  };
+}
+
+function providerAwareAvailableModels() {
+  return [
+    makeModel("primary", { provider: "openai-codex" }),
+    makeModel("fallback", { provider: "anthropic" }),
+  ];
+}
+
+function applyGeneratedProviderFallback(input: Record<string, unknown>): void {
+  assert.equal(Symbol.keyFor(PROVIDER_AWARE_FALLBACK_MODELS), "tlh.providerAwareFallbackModels");
+  const jsonCallerInput: unknown = JSON.parse(
+    '{"tlh.providerAwareFallbackModels":["spoofed/model"]}',
+  );
+  assert.equal(getProviderAwareFallbackModels(jsonCallerInput), undefined);
+
+  const availableModels = providerAwareAvailableModels();
+  const mutations = applyProviderAwareSubagentModels(
+    input,
+    new Map([["echo", providerAwareModelDefaultsAgent()]]),
+    availableModels,
+    "anthropic",
+  );
+  assert.equal(mutations, 1);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/fallback:high"]);
+  assert.equal(Object.hasOwn(input, "fallbackModels"), false);
+}
+
+function providerErrorResponse(model: string) {
+  return {
+    jsonl: [
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "quota hit" }],
+          model,
+          errorMessage: "429 quota exceeded",
+          usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
+        },
+      },
+    ],
+    exitCode: 0,
+  };
+}
+
+function providerAwareContext(
+  cwd: string,
+  availableModels: ReturnType<typeof providerAwareAvailableModels>,
+) {
+  const ctx = makeMinimalCtx(cwd);
+  ctx.model = makeModel("session", { provider: "anthropic" });
+  ctx.modelRegistry.getAvailable = () => availableModels;
+  ctx.modelRegistry.getAll = () => availableModels;
+  return ctx;
+}
 
 function writeProjectOverride(projectRoot: string, agentName: string, model: string): void {
   const settingsPath = path.join(projectRoot, ".pi", "settings.json");
@@ -219,7 +312,128 @@ describe("subagent executor dispatch wiring", () => {
     assert.equal(mockPi.callCount(), 0);
   });
 
-  it("uses top-level parallel maxTasks and concurrency overrides", async () => {
+  it("rejects retired execution controls before foreground or async child launch", async () => {
+    const cases: Array<{
+      label: string;
+      params: Record<string, unknown>;
+      guidance: RegExp;
+    }> = [
+      {
+        label: "parallel-task reads",
+        params: { tasks: [{ agent: "echo", task: "task one", reads: ["legacy.md"] }] },
+        guidance: /tasks\[0\]\.reads is no longer supported.*defaultReads/,
+      },
+      {
+        label: "parallel-task progress",
+        params: { tasks: [{ agent: "echo", task: "task one", progress: true }] },
+        guidance: /tasks\[0\]\.progress is no longer supported.*defaultProgress/,
+      },
+      {
+        label: "parallel concurrency",
+        params: { tasks: [{ agent: "echo", task: "task one" }], concurrency: 1 },
+        guidance:
+          /concurrency is no longer supported.*parallel\.concurrency.*extensions\/subagent\/config\.json/,
+      },
+      {
+        label: "single fallbackModels",
+        params: { agent: "echo", task: "task one", fallbackModels: ["legacy/model"] },
+        guidance: /fallbackModels is no longer supported.*agent definition/,
+      },
+      {
+        label: "includeProgress",
+        params: { agent: "echo", task: "task one", includeProgress: true },
+        guidance: /includeProgress is no longer supported.*tracked automatically/,
+      },
+    ];
+
+    for (const testCase of cases) {
+      for (const asyncMode of [false, true]) {
+        mockPi.reset();
+        const params = { ...testCase.params, ...(asyncMode ? { async: true } : {}) };
+        const result = await makeExecutor().execute(
+          "id",
+          params,
+          new AbortController().signal,
+          undefined,
+          makeMinimalCtx(tempDir),
+        );
+
+        assert.equal(result.isError, true, `${testCase.label} (${asyncMode ? "async" : "sync"})`);
+        assert.match(result.content[0]?.text ?? "", testCase.guidance);
+        assert.equal(result.details?.asyncId, undefined);
+        assert.equal(mockPi.callCount(), 0);
+      }
+    }
+  });
+
+  it("passes model-defaults generated provider fallbacks through single dispatch", async () => {
+    mockPi.reset();
+    const availableModels = providerAwareAvailableModels();
+    mockPi.onCall(providerErrorResponse("openai-codex/primary:high"));
+    mockPi.onCall({ output: "Recovered on the generated fallback" });
+
+    const input: Record<string, unknown> = { agent: "echo", task: "Task" };
+    applyGeneratedProviderFallback(input);
+    const result = await makeExecutor().execute(
+      "single-provider-aware-fallback",
+      input,
+      new AbortController().signal,
+      undefined,
+      providerAwareContext(tempDir, availableModels),
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+      "openai-codex/primary:high",
+      "anthropic/fallback:high",
+    ]);
+    assert.equal(mockPi.callCount(), 2);
+  });
+
+  it("passes model-defaults generated provider fallbacks through parallel dispatch", async () => {
+    mockPi.reset();
+    const availableModels = providerAwareAvailableModels();
+    mockPi.onCall(providerErrorResponse("openai-codex/primary:high"));
+    mockPi.onCall({ output: "Recovered on the parallel generated fallback" });
+
+    const task: Record<string, unknown> = { agent: "echo", task: "Task" };
+    applyGeneratedProviderFallback(task);
+    const result = await makeExecutor().execute(
+      "parallel-provider-aware-fallback",
+      { tasks: [task] },
+      new AbortController().signal,
+      undefined,
+      providerAwareContext(tempDir, availableModels),
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
+      "openai-codex/primary:high",
+      "anthropic/fallback:high",
+    ]);
+    assert.equal(mockPi.callCount(), 2);
+  });
+
+  it("accepts a model-defaults-mutated input without retired-control rejection", async () => {
+    mockPi.reset();
+    mockPi.onCall({ output: "Accepted model-defaults input" });
+    const input: Record<string, unknown> = { agent: "echo", task: "Task" };
+    applyGeneratedProviderFallback(input);
+
+    const result = await makeExecutor().execute(
+      "model-defaults-mutated-input",
+      input,
+      new AbortController().signal,
+      undefined,
+      providerAwareContext(tempDir, providerAwareAvailableModels()),
+    );
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.details?.results?.[0]?.attemptedModels?.length, 1);
+    assert.equal(mockPi.callCount(), 1);
+  });
+
+  it("uses top-level parallel maxTasks and configured concurrency", async () => {
     const maxTasksResult = await makeExecutor({ parallel: { maxTasks: 9 } }).execute(
       "id",
       { tasks: [{ agent: "echo", task: "task one", count: 9 }] },
@@ -231,8 +445,8 @@ describe("subagent executor dispatch wiring", () => {
     assert.equal(mockPi.callCount(), 9);
 
     for (const testCase of [
-      { name: "config", configConcurrency: 2, paramsConcurrency: undefined, expectedMaxRunning: 2 },
-      { name: "per-call", configConcurrency: 3, paramsConcurrency: 1, expectedMaxRunning: 1 },
+      { name: "config-two", configConcurrency: 2, expectedMaxRunning: 2 },
+      { name: "config-three", configConcurrency: 3, expectedMaxRunning: 3 },
     ]) {
       mockPi.reset();
       for (let index = 0; index < 3; index++) {
@@ -256,7 +470,6 @@ describe("subagent executor dispatch wiring", () => {
             { agent: "second", task: "task two" },
             { agent: "echo", task: "task three" },
           ],
-          ...(testCase.paramsConcurrency ? { concurrency: testCase.paramsConcurrency } : {}),
         },
         new AbortController().signal,
         (update) => {

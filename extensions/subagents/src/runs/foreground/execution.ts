@@ -2053,7 +2053,10 @@ export async function runSync(
   }
   systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
 
-  const fallbackModels = buildFallbackModelList(options.fallbackModels, agent.fallbackModels);
+  const fallbackModels = buildFallbackModelList(
+    options.providerFallbackModels,
+    agent.fallbackModels,
+  );
   const candidatePlan = buildModelCandidatePlan(
     options.modelOverride ?? agent.model,
     fallbackModels,

@@ -9,6 +9,8 @@ const { normalizeAgentModelDefaults } = await jiti.import(
 );
 const { findAvailableProviderModel, formatProviderModelReference, splitKnownThinkingSuffix } =
   modelDefaults;
+const { getProviderAwareFallbackModels } =
+  await import("../extensions/the-last-harness-subagent-safety.mjs");
 
 function frontmatterModelFields(agent) {
   const frontmatter = {};
@@ -383,7 +385,7 @@ test("provider-aware opposite-provider preference picks Codex for opted-in Anthr
   const input = { agent: anthropicParentPrefersCodexReviewer.name, task: "Review the diff" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, available, "anthropic"), 1);
   assert.equal(input.model, "openai-codex/gpt-5.6-sol");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5"]);
   assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -405,7 +407,7 @@ test("provider-aware opposite-provider preference picks Anthropic for opted-in O
   const input = { agent: openaiParentPrefersAnthropicReviewer.name, task: "Review the diff" };
   assert.equal(applyProviderAwareSubagentModels(input, agents, available, "openai-codex"), 1);
   assert.equal(input.model, "anthropic/claude-opus-5");
-  assert.deepEqual(input.fallbackModels, ["openai-codex/gpt-5.6-sol"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["openai-codex/gpt-5.6-sol"]);
   assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -429,13 +431,15 @@ test("provider-aware subagent mutation gives code-reviewer the opposite availabl
   const anthropicInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(anthropicInput, agents, available, "anthropic"), 1);
   assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(anthropicInput), [
+    "anthropic/claude-opus-5:high",
+  ]);
   assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const codexInput = { agent: "code-reviewer" };
   assert.equal(applyProviderAwareSubagentModels(codexInput, agents, available, "openai-codex"), 1);
   assert.equal(codexInput.model, "anthropic/claude-opus-5:high");
-  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(codexInput), ["openai-codex/gpt-5.6-sol:high"]);
   assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const noOppositeInput = { agent: "code-reviewer" };
@@ -473,7 +477,9 @@ test("provider-aware OpenRouter opposite roles use vendor-aware direct candidate
     1,
   );
   assert.equal(anthropicSession.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(anthropicSession.fallbackModels, ["openrouter/anthropic/claude-sonnet-4-6:low"]);
+  assert.deepEqual(getProviderAwareFallbackModels(anthropicSession), [
+    "openrouter/anthropic/claude-sonnet-4-6:low",
+  ]);
   assert.equal(anthropicSession.modelFallbackNotice, neutralNotice);
   assert.equal(
     resolveProviderAwareSubagentResolution(openrouterReviewer, available, "openrouter", {
@@ -492,7 +498,9 @@ test("provider-aware OpenRouter opposite roles use vendor-aware direct candidate
     1,
   );
   assert.equal(openaiSession.model, "anthropic/claude-opus-5:medium");
-  assert.deepEqual(openaiSession.fallbackModels, ["openrouter/openai/gpt-5.6:low"]);
+  assert.deepEqual(getProviderAwareFallbackModels(openaiSession), [
+    "openrouter/openai/gpt-5.6:low",
+  ]);
 
   const unknownSession = { agent: openrouterReviewer.name };
   assert.equal(
@@ -581,7 +589,9 @@ test("OpenRouter registry-missing fallback preserves stored effort and distingui
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(input.fallbackModels, ["openrouter/anthropic/claude-sonnet-4-6:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), [
+    "openrouter/anthropic/claude-sonnet-4-6:high",
+  ]);
   assert.equal(
     input.modelFallbackNotice,
     "TLH fell back to the session model; review independence is reduced.",
@@ -628,7 +638,9 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     1,
   );
   assert.equal(reviewerInput.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(reviewerInput.fallbackModels, ["anthropic/claude-sonnet-4-6:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(reviewerInput), [
+    "anthropic/claude-sonnet-4-6:high",
+  ]);
   assert.equal(reviewerInput.modelFallbackNotice, reducedIndependenceNotice);
 
   const oracleInput = { agent: "oracle" };
@@ -640,7 +652,7 @@ test("provider-aware subagent mutation gives code-reviewer and oracle current-se
     1,
   );
   assert.equal(oracleInput.model, "anthropic/claude-opus-5:high");
-  assert.deepEqual(oracleInput.fallbackModels, ["openai-codex/gpt-5.6-luna:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(oracleInput), ["openai-codex/gpt-5.6-luna:high"]);
   assert.equal(oracleInput.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -916,7 +928,9 @@ test("provider-aware subagent mutation injects model but preserves caller-suppli
     1,
   );
   assert.equal(withFallbackNotice.model, "anthropic/claude-opus-5:high");
-  assert.deepEqual(withFallbackNotice.fallbackModels, ["openai-codex/gpt-5.6-sol:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(withFallbackNotice), [
+    "openai-codex/gpt-5.6-sol:high",
+  ]);
   assert.equal(withFallbackNotice.modelFallbackNotice, "custom fallback notice");
 
   // Explicit model still prevents all injection regardless of other fallback fields.
@@ -1083,7 +1097,9 @@ test("tlhAnthropicThinking: opposite-provider fallback carries the fallback prov
     1,
   );
   assert.equal(anthropicInput.model, "openai-codex/gpt-5.6-sol:max");
-  assert.deepEqual(anthropicInput.fallbackModels, ["anthropic/claude-opus-5:medium"]);
+  assert.deepEqual(getProviderAwareFallbackModels(anthropicInput), [
+    "anthropic/claude-opus-5:medium",
+  ]);
   assert.equal(anthropicInput.modelFallbackNotice, reducedIndependenceNotice);
 
   // Codex session → primary is Anthropic (opposite) with Anthropic thinking,
@@ -1094,7 +1110,7 @@ test("tlhAnthropicThinking: opposite-provider fallback carries the fallback prov
     1,
   );
   assert.equal(codexInput.model, "anthropic/claude-opus-5:medium");
-  assert.deepEqual(codexInput.fallbackModels, ["openai-codex/gpt-5.6-sol:max"]);
+  assert.deepEqual(getProviderAwareFallbackModels(codexInput), ["openai-codex/gpt-5.6-sol:max"]);
   assert.equal(codexInput.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -1234,7 +1250,7 @@ test("saved effort appends after exact suffix-like primary and generated fallbac
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high:low");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:high:low"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:high:low"]);
 });
 
 test("model-only exact suffix-like OpenRouter IDs do not receive generic effort", () => {
@@ -1779,7 +1795,7 @@ test("persisted thinking suffix is applied to opposite-provider fallbacks", () =
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:high"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:high"]);
   assert.equal(input.modelFallbackNotice, reducedIndependenceNotice);
 });
 
@@ -1797,7 +1813,7 @@ test("persisted off effort is explicit on selected and generated fallback models
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:off");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:off"]);
 });
 
 test("unsupported stored effort is neutralized on the primary and generated fallback models", () => {
@@ -1818,17 +1834,16 @@ test("unsupported stored effort is neutralized on the primary and generated fall
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:off");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:off"]);
+  const fallbackModels = getProviderAwareFallbackModels(input);
+  assert.ok(fallbackModels);
 
   // The runtime independently reads the persisted xhigh value from the agent.
   // Its replaceExisting=false path must leave TLH's supported neutralizer suffixes alone.
   assert.equal(applyRuntimeThinkingSuffix(input.model, "xhigh", false), input.model);
-  assert.equal(
-    applyRuntimeThinkingSuffix(input.fallbackModels[0], "xhigh", false),
-    input.fallbackModels[0],
-  );
+  assert.equal(applyRuntimeThinkingSuffix(fallbackModels[0], "xhigh", false), fallbackModels[0]);
   assert.doesNotMatch(input.model, /:xhigh$/);
-  assert.doesNotMatch(input.fallbackModels[0], /:xhigh$/);
+  assert.doesNotMatch(fallbackModels[0], /:xhigh$/);
   assert.equal(warnings.length, 1);
   assert.equal(
     warnings[0],
@@ -1861,12 +1876,11 @@ test("nonstandard stored effort prefers provider-resolved bundled suffixes on bo
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:medium"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:medium"]);
+  const fallbackModels = getProviderAwareFallbackModels(input);
+  assert.ok(fallbackModels);
   assert.equal(applyRuntimeThinkingSuffix(input.model, "turbo", false), input.model);
-  assert.equal(
-    applyRuntimeThinkingSuffix(input.fallbackModels[0], "turbo", false),
-    input.fallbackModels[0],
-  );
+  assert.equal(applyRuntimeThinkingSuffix(fallbackModels[0], "turbo", false), fallbackModels[0]);
   assert.equal(warnings.length, 1);
   assert.equal(
     warnings[0],
@@ -1936,7 +1950,7 @@ test("supported primary saved effort survives an incompatible generated fallback
     1,
   );
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.deepEqual(input.fallbackModels, ["anthropic/claude-opus-5:off"]);
+  assert.deepEqual(getProviderAwareFallbackModels(input), ["anthropic/claude-opus-5:off"]);
   assert.equal(warnings.length, 1);
   assert.equal(
     warnings[0],
@@ -2963,7 +2977,10 @@ test("project defaults: code-reviewer effort-only preserves opposite-provider se
   assert.equal(mutations, 1);
   // Opposite-provider selection preserved: codex reviewer for anthropic session.
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.ok(Array.isArray(input.fallbackModels), "fallback models generated for opposite-role");
+  assert.ok(
+    Array.isArray(getProviderAwareFallbackModels(input)),
+    "fallback models generated for opposite-role",
+  );
 });
 
 test("project defaults: code-reviewer effort-only preserves opposite-provider selection (codex session → anthropic)", () => {
@@ -2979,7 +2996,10 @@ test("project defaults: code-reviewer effort-only preserves opposite-provider se
   assert.equal(mutations, 1);
   // Opposite-provider selection preserved: anthropic reviewer for codex session.
   assert.equal(input.model, "anthropic/claude-opus-5:high");
-  assert.ok(Array.isArray(input.fallbackModels), "fallback models generated for opposite-role");
+  assert.ok(
+    Array.isArray(getProviderAwareFallbackModels(input)),
+    "fallback models generated for opposite-role",
+  );
 });
 
 // Model pin bypasses opposite-provider selection on both provider families.
@@ -2996,7 +3016,7 @@ test("project defaults: code-reviewer model pin bypasses opposite-provider selec
   assert.equal(mutations, 1);
   // Model pin bypasses opposite selection; no generated fallback.
   assert.equal(input.model, "anthropic/claude-opus-5:high");
-  assert.equal(input.fallbackModels, undefined);
+  assert.equal(getProviderAwareFallbackModels(input), undefined);
 });
 
 test("project defaults: code-reviewer model pin bypasses opposite-provider selection (codex session)", () => {
@@ -3012,7 +3032,7 @@ test("project defaults: code-reviewer model pin bypasses opposite-provider selec
   assert.equal(mutations, 1);
   // Model pin bypasses opposite selection; no generated fallback.
   assert.equal(input.model, "openai-codex/gpt-5.6-sol:high");
-  assert.equal(input.fallbackModels, undefined);
+  assert.equal(getProviderAwareFallbackModels(input), undefined);
 });
 
 // -----------------------------------------------------------------------

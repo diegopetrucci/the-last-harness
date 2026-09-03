@@ -30,6 +30,12 @@ export const SAFE_SUBAGENT_ACTIONS = Object.freeze([
 ]);
 export const SUBAGENT_CHILD_ENV = "PI_SUBAGENT_CHILD";
 
+// Provider-aware model policy attaches generated fallback candidates to an
+// in-process dispatch object without exposing them as caller-facing tool
+// parameters. Symbols are ignored by JSON/schema traversal while surviving the
+// shallow target copies used by the dispatch path.
+export const PROVIDER_AWARE_FALLBACK_MODELS = Symbol.for("tlh.providerAwareFallbackModels");
+
 const DEFAULT_ALLOWED_SUBAGENTS = ALLOWED_SUBAGENTS;
 const ALLOWED_SUBAGENTS_BY_ID = new Map(
   ALLOWED_SUBAGENTS.map((agent) => [agent.toLowerCase(), agent]),
@@ -45,6 +51,21 @@ const SAFE_SUBAGENT_ACTION_SET = new Set(SAFE_SUBAGENT_ACTIONS);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Read provider-aware fallback candidates attached to an in-process dispatch
+ * target. Symbols are deliberately outside ordinary tool input so this reader
+ * can consume model-default mutations without exposing a caller-facing field.
+ */
+export function getProviderAwareFallbackModels(target) {
+  if (!isRecord(target)) return undefined;
+  const candidates = target[PROVIDER_AWARE_FALLBACK_MODELS];
+  if (!Array.isArray(candidates)) return undefined;
+  const normalized = candidates.filter(
+    (candidate) => typeof candidate === "string" && candidate.trim() !== "",
+  );
+  return normalized.length > 0 ? [...normalized] : undefined;
 }
 
 function stringField(value) {

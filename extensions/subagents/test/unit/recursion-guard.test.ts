@@ -72,11 +72,10 @@ describe("top-level parallel config helpers", () => {
     assert.equal(resolveTopLevelParallelMaxTasks("oops"), 8);
   });
 
-  it("resolves concurrency from per-call override, config, or default", () => {
-    assert.equal(resolveTopLevelParallelConcurrency(2, 6), 2);
-    assert.equal(resolveTopLevelParallelConcurrency(undefined, 6), 6);
-    assert.equal(resolveTopLevelParallelConcurrency(0, 6), 6);
-    assert.equal(resolveTopLevelParallelConcurrency(undefined, 0), 4);
+  it("resolves concurrency from config or the default", () => {
+    assert.equal(resolveTopLevelParallelConcurrency(6), 6);
+    assert.equal(resolveTopLevelParallelConcurrency(0), 4);
+    assert.equal(resolveTopLevelParallelConcurrency(undefined), 4);
   });
 });
 

@@ -7,10 +7,8 @@ function normalizeOutputOverride(output) {
 export function resolveStepBehavior(agentConfig, stepOverrides) {
     const stepOutput = normalizeOutputOverride(stepOverrides.output);
     const output = stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
-    const reads = stepOverrides.reads !== undefined ? stepOverrides.reads : (agentConfig.defaultReads ?? false);
-    const progress = stepOverrides.progress !== undefined
-        ? stepOverrides.progress
-        : (agentConfig.defaultProgress ?? false);
+    const reads = agentConfig.defaultReads ?? false;
+    const progress = agentConfig.defaultProgress ?? false;
     let skills;
     if (stepOverrides.skills === false) {
         skills = false;
@@ -23,7 +21,6 @@ export function resolveStepBehavior(agentConfig, stepOverrides) {
     }
     const outputMode = stepOverrides.outputMode ?? "inline";
     const model = stepOverrides.model ?? agentConfig.model;
-    const fallbackModels = stepOverrides.fallbackModels;
     const modelFallbackNotice = stepOverrides.modelFallbackNotice;
     return {
         output,
@@ -32,7 +29,6 @@ export function resolveStepBehavior(agentConfig, stepOverrides) {
         progress,
         skills,
         model,
-        fallbackModels,
         modelFallbackNotice,
     };
 }

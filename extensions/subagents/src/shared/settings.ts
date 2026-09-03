@@ -20,18 +20,14 @@ export interface ResolvedStepBehavior {
   progress: boolean;
   skills: string[] | false;
   model?: string;
-  fallbackModels?: string[];
   modelFallbackNotice?: string;
 }
 
 export interface StepOverrides {
   output?: string | false;
   outputMode?: OutputMode;
-  reads?: string[] | false;
-  progress?: boolean;
   skills?: string[] | false;
   model?: string;
-  fallbackModels?: string[];
   modelFallbackNotice?: string;
 }
 
@@ -56,15 +52,9 @@ export function resolveStepBehavior(
   const output =
     stepOutput !== undefined ? stepOutput : (normalizeOutputOverride(agentConfig.output) ?? false);
 
-  // Reads: step override > frontmatter defaultReads > false (no reads)
-  const reads =
-    stepOverrides.reads !== undefined ? stepOverrides.reads : (agentConfig.defaultReads ?? false);
-
-  // Progress: step override > frontmatter defaultProgress > false
-  const progress =
-    stepOverrides.progress !== undefined
-      ? stepOverrides.progress
-      : (agentConfig.defaultProgress ?? false);
+  // Reads and progress are agent-definition behavior, not per-task controls.
+  const reads = agentConfig.defaultReads ?? false;
+  const progress = agentConfig.defaultProgress ?? false;
 
   let skills: string[] | false;
   if (stepOverrides.skills === false) {
@@ -77,7 +67,6 @@ export function resolveStepBehavior(
 
   const outputMode = stepOverrides.outputMode ?? "inline";
   const model = stepOverrides.model ?? agentConfig.model;
-  const fallbackModels = stepOverrides.fallbackModels;
   const modelFallbackNotice = stepOverrides.modelFallbackNotice;
   return {
     output,
@@ -86,7 +75,6 @@ export function resolveStepBehavior(
     progress,
     skills,
     model,
-    fallbackModels,
     modelFallbackNotice,
   };
 }

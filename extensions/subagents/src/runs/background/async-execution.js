@@ -206,10 +206,7 @@ export function buildAsyncRunnerPlan(id, params) {
     const buildStepOverrides = (task) => ({
         ...(task.output !== undefined ? { output: task.output } : {}),
         ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-        ...(task.reads !== undefined ? { reads: task.reads } : {}),
-        ...(task.progress !== undefined ? { progress: task.progress } : {}),
         ...(task.model ? { model: task.model } : {}),
-        ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
         ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
     });
     const buildTask = (taskSpec, sessionFile, progressPrecreated = false, resolvedBehavior) => {
@@ -248,7 +245,7 @@ export function buildAsyncRunnerPlan(id, params) {
         const task = injectSingleOutputInstruction(`${readInstructions.prefix}${taskSpec.task ?? ""}${progressInstructions.suffix}`, outputPath);
         const requestedModel = behavior.model ?? agent.model;
         const primaryModel = resolveSubagentModelOverride(requestedModel, ctx.currentModel, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" });
-        const fallbackModels = buildFallbackModelList(behavior.fallbackModels, agent.fallbackModels);
+        const fallbackModels = buildFallbackModelList(taskSpec.providerFallbackModels, agent.fallbackModels);
         const effectiveThinking = agent.thinking;
         const attemptNotes = [];
         const thinkingDroppedModels = [];
@@ -603,7 +600,7 @@ export function executeAsyncSingle(id, params) {
             onWarn: (violation) => scopeWarnings.push(violation.message),
         }
         : undefined);
-    const fallbackModels = buildFallbackModelList(params.fallbackModels, agentConfig.fallbackModels);
+    const fallbackModels = buildFallbackModelList(params.providerFallbackModels, agentConfig.fallbackModels);
     const effectiveThinking = restoringModel
         ? params.restoredModelIdentity?.thinking
         : agentConfig.thinking;

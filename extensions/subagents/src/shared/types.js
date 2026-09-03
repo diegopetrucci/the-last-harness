@@ -96,10 +96,8 @@ function normalizeTopLevelParallelValue(value) {
 export function resolveTopLevelParallelMaxTasks(value) {
     return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
 }
-export function resolveTopLevelParallelConcurrency(override, configValue) {
-    return (normalizeTopLevelParallelValue(override) ??
-        normalizeTopLevelParallelValue(configValue) ??
-        MAX_CONCURRENCY);
+export function resolveTopLevelParallelConcurrency(configValue) {
+    return normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
 }
 export function getAsyncConfigPath(suffix) {
     return path.join(TEMP_ROOT_DIR, `async-cfg-${suffix}.json`);

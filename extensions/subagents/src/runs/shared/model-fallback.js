@@ -245,10 +245,10 @@ export function resolveSubagentModelOverride(requestedModel, parentModel, availa
     }
     return resolved;
 }
-export function buildFallbackModelList(perExecutionFallbackModels, agentFallbackModels) {
+export function buildFallbackModelList(providerFallbackModels, agentFallbackModels) {
     const seen = new Set();
     const fallbackModels = [];
-    for (const raw of [...(perExecutionFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
+    for (const raw of [...(providerFallbackModels ?? []), ...(agentFallbackModels ?? [])]) {
         const model = typeof raw === "string" ? raw.trim() : "";
         if (!model || seen.has(model))
             continue;

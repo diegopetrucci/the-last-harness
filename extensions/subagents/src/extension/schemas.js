@@ -34,13 +34,6 @@ const OutputModeOverride = Type.String({
     enum: ["inline", "file-only"],
     description: "Return saved output inline (default) or only a concise file reference. file-only requires output to be a path.",
 });
-const ReadsOverride = Type.Unsafe({
-    anyOf: [{ type: "array", items: { type: "string" } }, { type: "boolean" }],
-    description: "Files to read before running (array of filenames), or false to disable",
-});
-const FallbackModelsOverride = Type.Array(Type.String(), {
-    description: "Per-execution fallback models to try after the primary model and before any agent fallbackModels.",
-});
 const TaskItem = Type.Object({
     agent: Type.String(),
     task: Type.String(),
@@ -53,19 +46,13 @@ const TaskItem = Type.Object({
     })),
     output: Type.Optional(OutputOverride),
     outputMode: Type.Optional(OutputModeOverride),
-    reads: Type.Optional(ReadsOverride),
-    progress: Type.Optional(Type.Boolean({ description: "Enable progress.md tracking for this task" })),
     model: Type.Optional(Type.String({ description: "Override model for this task" })),
 }, { additionalProperties: false });
 const SubagentParamsSchema = Type.Object({
     agent: Type.Optional(Type.String({ description: "Agent name for SINGLE mode or action='get'." })),
     task: Type.Optional(Type.String({ description: "Task (SINGLE mode, optional for self-contained agents)" })),
     tasks: Type.Optional(Type.Array(TaskItem, {
-        description: "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, reads?, progress?, model?}, ...]",
-    })),
-    concurrency: Type.Optional(Type.Integer({
-        minimum: 1,
-        description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4.",
+        description: "PARALLEL mode: [{agent, task, cwd?, count?, output?, outputMode?, model?}, ...]",
     })),
     async: Type.Optional(Type.Boolean({
         description: "Launch detached background work (default: false, or per config)",
@@ -95,13 +82,11 @@ const SubagentParamsSchema = Type.Object({
     model: Type.Optional(Type.String({
         description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')",
     })),
-    fallbackModels: Type.Optional(FallbackModelsOverride),
     timeoutMs: Type.Optional(Type.Integer({
         minimum: 1,
         description: "Optional run-level timeout in ms for foreground and async/background runs.",
     })),
     cwd: Type.Optional(Type.String()),
     artifacts: Type.Optional(Type.Boolean({ description: "Write debug artifacts (default: true)" })),
-    includeProgress: Type.Optional(Type.Boolean({ description: "Include full progress in result (default: false)" })),
 }, { additionalProperties: false });
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
