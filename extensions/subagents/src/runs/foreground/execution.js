@@ -140,7 +140,7 @@ function formatTimeoutDiagnostics(result, options, artifactPaths) {
         for (const line of recentOutput)
             sections.push(`- ${line}`);
     }
-    sections.push("", "Recovery guidance:", "- Inspect the session/jsonl artifacts above for the full transcript.", "- Re-dispatch or resume the subagent after addressing the blocking tool, path, or workspace state.");
+    sections.push("", "Recovery guidance:", "- Inspect the session and artifact paths listed above; compact mode may omit the diagnostic child transcript.", '- If exact child protocol or raw stderr is required, set artifacts.mode to "debug" and reproduce the failure before retrying.', "- Re-dispatch or resume the subagent after addressing the blocking tool, path, or workspace state.");
     return sections.join("\n");
 }
 function resolveAttemptTimeout(options) {
@@ -601,7 +601,7 @@ function finalizeForegroundArtifacts(input) {
             runId: options.runId,
             agent: agentName,
             projectAgent: result.projectAgent,
-            task,
+            ...(options.artifactConfig?.mode !== "compact" ? { task } : {}),
             exitCode: result.exitCode,
             exitSignal: result.exitSignal,
             timedOut: result.timedOut,

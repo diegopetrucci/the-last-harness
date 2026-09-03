@@ -343,6 +343,45 @@ describe(
       assert.equal(result.details?.results?.[0]?.finalOutput, "Full child output from worker");
     });
 
+    it("public artifacts:false disables child artifacts but keeps file-only output and sessions", async () => {
+      const outputPath = path.join(tempDir, "artifacts-disabled-report.md");
+      const parentSessionFile = path.join(tempDir, "parent", "session.jsonl");
+      const childArtifactsDir = path.join(path.dirname(parentSessionFile), "subagent-artifacts");
+      const ctx = makeMinimalCtx(tempDir);
+      ctx.sessionManager.getSessionFile = () => parentSessionFile;
+      mockPi.onCall({ output: "saved output with artifacts disabled" });
+      const { executor } = makeExecutor();
+
+      const result = await executor.execute(
+        "single-artifacts-disabled",
+        {
+          agent: "worker",
+          task: "Write the report",
+          artifacts: false,
+          output: outputPath,
+          outputMode: "file-only",
+        },
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+
+      const child = result.details?.results?.[0];
+      assert.equal(result.isError, undefined);
+      assert.equal(child?.artifactPaths, undefined);
+      assert.equal(fs.existsSync(childArtifactsDir), false);
+      assert.equal(child?.outputMode, "file-only");
+      assert.equal(child?.savedOutputPath, outputPath);
+      assert.equal(fs.readFileSync(outputPath, "utf8"), "saved output with artifacts disabled");
+      assert.ok(child?.sessionFile, "expected canonical child session path");
+      assert.equal(path.basename(child.sessionFile), "session.jsonl");
+      assert.equal(path.basename(path.dirname(child.sessionFile)), "run-0");
+      assert.ok(
+        fs.existsSync(child.sessionFile),
+        "expected persisted canonical child session file",
+      );
+    });
+
     it("native single runs always use the grouped result", async () => {
       mockPi.onCall({ output: "Legacy foreground output" });
       const { executor } = makeExecutor();
@@ -2627,7 +2666,7 @@ describe(
         makeMinimalCtx(tempDir),
       );
       assert.match(status.content[0]?.text ?? "", /cancelled/);
-      assert.match(status.content[0]?.text ?? "", /kept its existing artifacts/i);
+      assert.match(status.content[0]?.text ?? "", /kept its retained output\/session artifacts/i);
     });
 
     it("bounds paused-cancel lifecycle failures without leaking raw status paths", async () => {

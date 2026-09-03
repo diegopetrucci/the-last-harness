@@ -137,7 +137,9 @@ const SubagentParamsSchema = Type.Object(
     ),
     cwd: Type.Optional(Type.String()),
     artifacts: Type.Optional(
-      Type.Boolean({ description: "Write debug artifacts (default: true)" }),
+      Type.Boolean({
+        description: "Write per-child run artifacts (default: true)",
+      }),
     ),
   },
   { additionalProperties: false },

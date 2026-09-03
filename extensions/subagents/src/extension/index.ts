@@ -37,6 +37,7 @@ import {
   cleanupAllArtifactDirs,
   cleanupOldArtifacts,
   getArtifactsDir,
+  resolveArtifactConfig,
 } from "../shared/artifacts.ts";
 import { resolveCurrentSessionId } from "../shared/session-identity.ts";
 import { handlePauseAllShortcut } from "./pause-all-shortcut.ts";
@@ -83,7 +84,6 @@ import {
   type SubagentState,
   type SubagentToolResult,
   ASYNC_DIR,
-  DEFAULT_ARTIFACT_CONFIG,
   RESULTS_DIR,
   SLASH_TEXT_RESULT_TYPE,
   SUBAGENT_ASYNC_COMPLETE_EVENT,
@@ -366,6 +366,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
   cleanupRuntimeDirs();
 
   const config = loadConfig();
+  const artifactConfig = resolveArtifactConfig(config.artifacts);
   const resolvedHbConfig = resolveHeartbeatConfig(config.heartbeat);
   // Lazily captured session context for modelRegistry access.
   // ctx is not available at extension setup; we capture it from the session_start
@@ -379,7 +380,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     getModelRegistry: () => heartbeatSessionCtx?.modelRegistry,
   });
   const tempArtifactsDir = getArtifactsDir(null);
-  cleanupAllArtifactDirs(DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+  cleanupAllArtifactDirs(artifactConfig.cleanupDays);
   const liveDetailController = createSubagentLiveDetailController();
 
   const state: SubagentState = {
@@ -469,6 +470,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     pi,
     state,
     config,
+    artifactConfig,
     tempArtifactsDir,
     getSubagentSessionRoot,
     expandTilde,
@@ -792,7 +794,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
     try {
       const sessionFile = ctx.sessionManager.getSessionFile();
       if (sessionFile) {
-        cleanupOldArtifacts(getArtifactsDir(sessionFile), DEFAULT_ARTIFACT_CONFIG.cleanupDays);
+        cleanupOldArtifacts(getArtifactsDir(sessionFile), artifactConfig.cleanupDays);
       }
     } catch {
       // Cleanup failures should not block session lifecycle events.

@@ -5,6 +5,7 @@ EXECUTION
 • SINGLE: { agent, task? }.
 • PARALLEL: { tasks:[{ agent, task, cwd?, count?, output?, outputMode?, model? }, ...] }.
 • Optional execution fields: async:true, timeoutMs, cwd, artifacts.
+• artifacts controls whether per-child run artifacts are written; diagnostic detail is profile-configured.
 
 OUTPUT / MODELS
 • SINGLE also accepts output, outputMode, and model.

@@ -274,7 +274,8 @@ function formatTimeoutDiagnostics(
   sections.push(
     "",
     "Recovery guidance:",
-    "- Inspect the session/jsonl artifacts above for the full transcript.",
+    "- Inspect the session and artifact paths listed above; compact mode may omit the diagnostic child transcript.",
+    '- If exact child protocol or raw stderr is required, set artifacts.mode to "debug" and reproduce the failure before retrying.',
     "- Re-dispatch or resume the subagent after addressing the blocking tool, path, or workspace state.",
   );
   return sections.join("\n");
@@ -929,7 +930,7 @@ function finalizeForegroundArtifacts(input: ForegroundArtifactFinalizationInput)
       runId: options.runId,
       agent: agentName,
       projectAgent: result.projectAgent,
-      task,
+      ...(options.artifactConfig?.mode !== "compact" ? { task } : {}),
       exitCode: result.exitCode,
       exitSignal: result.exitSignal,
       timedOut: result.timedOut,
@@ -1470,8 +1471,8 @@ async function runSingleAttempt(
         return;
       }
       if (parsed.kind === "unknown") {
-        // Preserve unknown object envelopes in the transcript without allowing
-        // their fields to affect foreground state.
+        // When the debug transcript is enabled, preserve unknown object
+        // envelopes without allowing their fields to affect foreground state.
         shared.transcriptWriter?.writeStdoutLine(line);
         return;
       }

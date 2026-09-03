@@ -27,6 +27,7 @@ import {
   MAX_CHILD_RAW_STDOUT_BYTES,
   MAX_CHILD_STDERR_BYTES,
 } from "../../src/runs/shared/child-protocol.ts";
+import { resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import type { AsyncResultArtifact } from "../../src/shared/types.ts";
 
 interface ForegroundExecutionModule {
@@ -68,6 +69,25 @@ function readTranscriptText(transcriptPath: string, recordType?: string): string
       return typeof typed.text === "string" ? typed.text : "";
     })
     .join("");
+}
+
+function readAsyncEventTypes(asyncDir: string): string[] {
+  const eventPath = path.join(asyncDir, "events.jsonl");
+  const text = fs.readFileSync(eventPath, "utf8").trim();
+  assert.ok(text.length > 0, "async event log should contain lifecycle records");
+  return text.split("\n").map((line, index) => {
+    const record: unknown = JSON.parse(line);
+    if (record === null || typeof record !== "object" || Array.isArray(record)) {
+      throw new Error(`async event ${index} should be a JSON object`);
+    }
+    const type = (record as Record<string, unknown>).type;
+    if (typeof type !== "string") throw new Error(`async event ${index} should have a type`);
+    return type;
+  });
+}
+
+function compactArtifactConfig() {
+  return resolveArtifactConfig({ mode: "compact" });
 }
 
 async function within<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -332,7 +352,16 @@ describe(
         const id = `background-protocol-overflow-${Date.now().toString(36)}`;
         const oversizedLine = `BG_PROTOCOL_BEGIN_${"x".repeat(MAX_CHILD_PENDING_LINE_BYTES)}_BG_PROTOCOL_END`;
         mockPi.onCall({
-          rawStdout: oversizedLine,
+          steps: [
+            {
+              jsonl: [events.toolStart("read", { path: "fixture.txt" }), "ordinary child stdout"],
+              stderr: "ordinary child stderr\n",
+            },
+            {
+              stderr: `BG_STDERR_BEGIN_${"x".repeat(MAX_CHILD_STDERR_BYTES)}_BG_STDERR_END\n`,
+            },
+            { jsonl: [oversizedLine] },
+          ],
           keepAliveAfterFinalMessageMs: 60_000,
           ignoreSigterm: true,
         });
@@ -341,14 +370,7 @@ describe(
           task: "Trigger overflow",
           agentConfig: makeAgent("worker", { fallbackModels: ["mock/fallback"] }),
           ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-          artifactConfig: {
-            enabled: false,
-            includeInput: false,
-            includeOutput: false,
-            includeJsonl: false,
-            includeMetadata: false,
-            cleanupDays: 7,
-          },
+          artifactConfig: compactArtifactConfig(),
           shareEnabled: false,
           maxSubagentDepth: 2,
         });
@@ -369,6 +391,24 @@ describe(
         assert.ok(pid);
         const signals = fs.readFileSync(path.join(mockPi.dir, `signals-${pid}.jsonl`), "utf8");
         assert.match(signals, /"signal":"SIGTERM"/);
+        const eventTypes = readAsyncEventTypes(path.join(ASYNC_DIR, id));
+        for (const type of [
+          "subagent.child.stderr.truncated",
+          "subagent.child.stderr.overflow",
+          "subagent.child.protocol_output_limit",
+        ]) {
+          assert.ok(
+            eventTypes.includes(type),
+            `compact events should retain bounded diagnostic notice ${type}`,
+          );
+        }
+        for (const type of [
+          "subagent.child.stderr",
+          "subagent.child.stdout",
+          "tool_execution_start",
+        ]) {
+          assert.equal(eventTypes.includes(type), false, `compact events should suppress ${type}`);
+        }
         assert.equal(mockPi.callCount(), 1);
       },
     );

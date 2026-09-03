@@ -12,7 +12,7 @@ import {
   resolveSkillPath,
 } from "../../src/agents/skills.ts";
 import { loadConfig } from "../../src/extension/config.ts";
-import { cleanupAllArtifactDirs } from "../../src/shared/artifacts.ts";
+import { cleanupAllArtifactDirs, resolveArtifactConfig } from "../../src/shared/artifacts.ts";
 import {
   getConfigDirName,
   getProjectConfigDir,
@@ -90,6 +90,42 @@ describe("PI_CODING_AGENT_DIR runtime paths", () => {
 
     const config = loadConfig();
     assert.equal(config.maxSubagentDepth, 3);
+  });
+
+  it("copies open config keys safely and restricts artifact settings to mode", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    writeFile(
+      configPath,
+      '{"__proto__":{"polluted":true},"futureSetting":{"enabled":true},"artifacts":{"mode":"debug","includeInput":true,"includeJsonl":true}}',
+    );
+
+    const config = loadConfig();
+    assert.equal((Object.prototype as { polluted?: boolean }).polluted, undefined);
+    assert.equal(Object.prototype.hasOwnProperty.call(config, "__proto__"), true);
+    assert.deepEqual(config["__proto__"], { polluted: true });
+    assert.deepEqual(config.futureSetting, { enabled: true });
+    assert.deepEqual(config.artifacts, { mode: "debug" });
+  });
+
+  it("routes malformed artifact settings through compact fallback without dropping open keys", () => {
+    const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+    writeFile(
+      configPath,
+      JSON.stringify({
+        futureSetting: { enabled: true },
+        artifacts: { mode: { unexpected: true }, includeTranscript: true },
+      }),
+    );
+
+    const config = loadConfig();
+    assert.deepEqual(config.futureSetting, { enabled: true });
+    assert.deepEqual(config.artifacts, { mode: { unexpected: true } });
+    assert.equal(resolveArtifactConfig(config.artifacts).mode, "compact");
+
+    writeFile(configPath, JSON.stringify({ artifacts: null }));
+    const nullConfig = loadConfig();
+    assert.deepEqual(nullConfig.artifacts, { mode: null });
+    assert.equal(resolveArtifactConfig(nullConfig.artifacts).mode, "compact");
   });
 
   it("prefers the active runtime package config-dir over the import-resolved package", () => {

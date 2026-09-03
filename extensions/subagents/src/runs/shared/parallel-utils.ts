@@ -1,6 +1,6 @@
 import type {
-  ArtifactConfig,
   MaxOutputConfig,
+  ResolvedArtifactConfig,
   NestedRouteInfo,
   ResolvedControlConfig,
   ResolvedToolBudget,
@@ -90,7 +90,8 @@ export interface SubagentRunConfig {
   totalTasks?: number;
   maxOutput?: MaxOutputConfig;
   artifactsDir?: string;
-  artifactConfig?: Partial<ArtifactConfig>;
+  /** Resolved once before persistence; historical readers resolve missing values at the boundary. */
+  artifactConfig: ResolvedArtifactConfig;
   share?: boolean;
   sessionDir?: string;
   asyncDir: string;

@@ -215,7 +215,7 @@ describe("async run status inspection", () => {
       assert.match(
         text,
         new RegExp(
-          `Transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(tail truncated\\):`,
+          `Status transcript tail from ${outputPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(not _transcript\\.jsonl\\) \\(tail truncated\\):`,
         ),
       );
       assert.doesNotMatch(text, /first line/);
@@ -449,11 +449,11 @@ describe("async run status inspection", () => {
       assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
       assert.match(
         text,
-        /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/,
+        /status transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/,
       );
       assert.match(
         text,
-        /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/,
+        /status transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/,
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1282,7 +1282,7 @@ describe("async run status inspection", () => {
       );
 
       assert.equal(result.isError, true);
-      assert.match(textContent(result), /Transcript index must be an integer/);
+      assert.match(textContent(result), /Status transcript index must be an integer/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

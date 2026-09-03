@@ -15,6 +15,7 @@ import {
   revokeProjectAgentSnapshot,
 } from "../../src/agents/project-agent-snapshot.ts";
 import type { RunnerSubagentStep } from "../../src/runs/shared/parallel-utils.ts";
+import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
 import { makeAsyncCtx } from "../support/helpers.ts";
 
 const agent = (
@@ -72,6 +73,7 @@ describe("async runner execution", () => {
     const result = buildAsyncRunnerPlan("run-project-config", {
       tasks: [{ agent: selected.name, task: "use captured config" }],
       agents: [selected],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
       projectAgentCaptures: [capture],
@@ -93,6 +95,7 @@ describe("async runner execution", () => {
         { agent: "worker", task: "task beats run", toolBudget: { hard: 2, block: ["grep"] } },
       ],
       agents: [agent("worker", { hard: 4, block: ["read"] })],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
       toolBudget: { hard: 3, block: ["find"] },
@@ -113,6 +116,7 @@ describe("async runner execution", () => {
     const result = buildAsyncRunnerPlan("run-2", {
       tasks: [{ agent: "worker", task: "agent budget applies" }],
       agents: [agent("worker", { hard: 4, block: ["read"] })],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
     });
@@ -136,6 +140,7 @@ describe("async runner execution", () => {
         task: "Inspect the task",
       })),
       agents,
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
     });
@@ -175,6 +180,7 @@ describe("async runner execution", () => {
         agent("slow", undefined, 300),
         agent("caller-bound", undefined, 900),
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
       timeoutMs: 250,
@@ -195,6 +201,7 @@ describe("async runner execution", () => {
         tools: ["./custom-tool.ts"],
         skills: ["tmux"],
       })),
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
     });
@@ -214,6 +221,7 @@ describe("async runner execution", () => {
           tools: ["./custom-tool.ts"],
         },
       ],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx,
       maxSubagentDepth: 2,
     });

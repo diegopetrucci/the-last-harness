@@ -12,6 +12,8 @@ import {
   formatBoundedRawStdout,
   formatBoundedStderr,
   formatProtocolOutputLimit,
+  formatStderrLineOverflow,
+  formatStderrTailOverflow,
   isChildProtocolEvent,
   MAX_CHILD_ERROR_BYTES,
   MAX_CHILD_RAW_STDOUT_BYTES,
@@ -171,7 +173,13 @@ describe("createBoundedLineReader", () => {
     assert.equal(limits[0]?.code, "protocol_output_limit");
     assert.equal(limits[0]?.stream, "stdout");
     assert.equal(reader.exceeded(), true);
-    assert.match(formatProtocolOutputLimit(limits[0]!), /protocol_output_limit/);
+    const diagnostic = formatProtocolOutputLimit(limits[0]!);
+    assert.match(diagnostic, /protocol_output_limit/);
+    assert.match(diagnostic, /not retained in full/);
+    assert.match(diagnostic, /bounded prefix and tail.*protocol_output_limit record/);
+    assert.match(diagnostic, /subsequent input on that stream is dropped/);
+    assert.doesNotMatch(diagnostic, /offending line was discarded/);
+    assert.match(diagnostic, /artifacts\.mode.*debug/);
   });
 
   it("keeps protocol diagnostics bounded", () => {
@@ -206,6 +214,30 @@ describe("bounded child diagnostics", () => {
     assert.equal(tail.wasTruncated(), true);
     assert.equal(tail.byteLength() <= 8, true);
     assert.match(formatBoundedStderr(tail), /stderr truncated/);
+    const diagnostic = formatStderrTailOverflow(tail);
+    assert.match(diagnostic, /async output-N\.log.*raw stderr/);
+    assert.match(
+      diagnostic,
+      /artifacts\.mode.*debug.*diagnostic child transcript.*surrounding child protocol/,
+    );
+    assert.doesNotMatch(diagnostic, /Exact raw stderr requires/);
+
+    const lineLimits: ProtocolOutputLimit[] = [];
+    const lineReader = createBoundedLineReader({
+      stream: "stderr",
+      maxPendingLineBytes: 4,
+      onLine: () => {},
+      onLimit: (limit) => lineLimits.push(limit),
+    });
+    lineReader.push(Buffer.from("12345", "utf8"));
+    const lineDiagnostic = formatStderrLineOverflow(lineLimits[0]!);
+    assert.match(lineDiagnostic, /events\.jsonl/);
+    assert.match(lineDiagnostic, /async output-N\.log.*raw stderr/);
+    assert.match(
+      lineDiagnostic,
+      /artifacts\.mode.*debug.*diagnostic child transcript.*surrounding child protocol/,
+    );
+    assert.doesNotMatch(lineDiagnostic, /exact raw stderr is required/);
     assert.match(tail.text(), /end/);
   });
 

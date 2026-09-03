@@ -31,7 +31,7 @@ import {
   type ProjectAgentSnapshotExpected,
   type ProjectAgentSnapshotManifest,
 } from "../../agents/project-agent-snapshot.ts";
-import { getArtifactsDir } from "../../shared/artifacts.ts";
+import { getArtifactsDir, resolveArtifactConfig } from "../../shared/artifacts.ts";
 import {
   FOREGROUND_SUPERVISOR_LIFECYCLE_ERROR_MESSAGE,
   formatForegroundPauseMessage,
@@ -153,7 +153,6 @@ import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
   type AgentProgress,
   type AcceptanceInput,
-  type ArtifactConfig,
   type ArtifactPaths,
   type ControlConfig,
   type ControlEvent,
@@ -164,6 +163,7 @@ import {
   type MaxOutputConfig,
   type NestedRouteInfo,
   type NestedRunSummary,
+  type ResolvedArtifactConfig,
   type ResolvedControlConfig,
   type TkTicketMetadata,
   type ResolvedToolBudget,
@@ -177,7 +177,6 @@ import {
   type SubagentRunMode,
   type SubagentState,
   ASYNC_DIR,
-  DEFAULT_ARTIFACT_CONFIG,
   RESULTS_DIR,
   SUBAGENT_ACTIONS,
   TEMP_ROOT_DIR,
@@ -284,6 +283,8 @@ interface ExecutorDeps {
   pi: ExtensionAPI;
   state: SubagentState;
   config: ExtensionConfig;
+  /** Resolved once by the trusted parent; optional for direct test/legacy callers. */
+  artifactConfig?: ResolvedArtifactConfig;
   tempArtifactsDir: string;
   getSubagentSessionRoot: (parentSessionFile: string | null) => string;
   expandTilde: (p: string) => string;
@@ -320,7 +321,7 @@ interface ExecutionContextData {
   sessionDirForIndex: (idx?: number) => string;
   sessionFileForIndex: (idx?: number) => string | undefined;
   sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
-  artifactConfig: ArtifactConfig;
+  artifactConfig: ResolvedArtifactConfig;
   artifactsDir: string;
   effectiveAsync: boolean;
   controlConfig: ResolvedControlConfig;
@@ -2101,7 +2102,7 @@ function resolveForegroundResumeTarget(
   const { run, index, child } = resolved;
   if (child.cancel?.cancelledAt)
     throw new Error(
-      `Foreground run '${run.runId}' child ${index} was cancelled while paused and cannot be resumed. Inspect status or transcript artifacts if needed.`,
+      `Foreground run '${run.runId}' child ${index} was cancelled while paused and cannot be resumed. Inspect status and any retained output/session artifacts if needed; compact mode may omit the diagnostic child transcript.`,
     );
   if (!child.sessionFile)
     throw new Error(
@@ -2865,7 +2866,7 @@ function cancelPersistedPausedForegroundRun(
       content: [
         {
           type: "text",
-          text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing artifacts and transcript were preserved; resume is no longer available for that child.`,
+          text: `Cancelled paused foreground run ${runId} child ${targetIndex}. Existing enabled artifacts and the canonical child session were preserved; compact mode may omit the diagnostic child transcript. Resume is no longer available for that child.`,
         },
       ],
       details: { mode: "management", results: [] },
@@ -4288,6 +4289,7 @@ async function resumeAsyncRun(input: {
   requestCwd: string;
   ctx: ExtensionContext;
   deps: ExecutorDeps;
+  artifactConfig: ResolvedArtifactConfig;
 }): Promise<SubagentToolResult<Details>> {
   const requestedFollowUp = (input.params.message ?? input.params.task ?? "").trim();
   input.deps.state.currentSessionId = resolveCurrentSessionId(input.ctx.sessionManager);
@@ -4499,10 +4501,6 @@ async function resumeAsyncRun(input: {
   }
 
   const runId = continuationRunId;
-  const artifactConfig: ArtifactConfig = {
-    ...DEFAULT_ARTIFACT_CONFIG,
-    enabled: input.params.artifacts !== false,
-  };
   const artifactsDir = getArtifactsDir(parentSessionFile);
   const resumeModelResolution = buildResumeModelResolution(target, input.params.model);
   const restoredModelIdentity =
@@ -4583,7 +4581,7 @@ async function resumeAsyncRun(input: {
       cwd: effectiveCwd,
       maxOutput: input.params.maxOutput,
       artifactsDir,
-      artifactConfig,
+      artifactConfig: input.artifactConfig,
       shareEnabled: input.params.share === true,
       sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
       sessionFile: target.sessionFile,
@@ -5211,7 +5209,7 @@ interface ForegroundParallelRunInput {
   sessionFileForIndex: (idx?: number) => string | undefined;
   sessionFileForTask: (agentName: string, idx?: number) => string | undefined;
   shareEnabled: boolean;
-  artifactConfig: ArtifactConfig;
+  artifactConfig: ResolvedArtifactConfig;
   artifactsDir: string;
   outputBaseDir: string;
   maxOutput?: MaxOutputConfig;
@@ -6266,7 +6264,7 @@ function executeStatusAction(
               content: [
                 {
                   type: "text",
-                  text: "Live foreground transcript is already visible in the expanded running subagent result. Persisted session transcript becomes inspectable after the foreground run completes when sessions are enabled.",
+                  text: "Live foreground status transcript is already visible in the expanded running subagent result. The canonical session becomes inspectable after the foreground run completes when sessions are enabled; this view is not the optional _transcript.jsonl diagnostic artifact.",
                 },
               ],
               details: { mode: "management", results: [] },
@@ -6291,7 +6289,7 @@ function executeStatusAction(
         content: [
           {
             type: "text",
-            text: "Live foreground transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background transcript.",
+            text: "Live foreground status transcript is already visible in the expanded running subagent result. Pass an async run id to inspect a background status transcript; neither view is the optional _transcript.jsonl diagnostic artifact.",
           },
         ],
         details: { mode: "management", results: [] },
@@ -6770,6 +6768,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     ctx: ExtensionContext,
   ) => Promise<SubagentToolResult<Details>>;
 } {
+  const configuredArtifactConfig =
+    deps.artifactConfig ?? resolveArtifactConfig(deps.config.artifacts);
+
   const execute = async (
     _id: string,
     params: SubagentParamsLike,
@@ -6797,7 +6798,16 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
         return executeDoctorAction(paramsWithResolvedCwd, requestCwd, ctx, deps);
       if (action === "status") return executeStatusAction(paramsWithResolvedCwd, ctx, deps);
       if (action === "resume") {
-        return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps });
+        return resumeAsyncRun({
+          params: paramsWithResolvedCwd,
+          requestCwd,
+          ctx,
+          deps,
+          artifactConfig: {
+            ...configuredArtifactConfig,
+            enabled: paramsWithResolvedCwd.artifacts !== false,
+          },
+        });
       }
       if (action === "steer") return executeSteerAction(paramsWithResolvedCwd, ctx, deps);
       if (action === "interrupt") return executeInterruptAction(paramsWithResolvedCwd, ctx, deps);
@@ -6894,8 +6904,8 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const effectiveAsync = requestedAsync;
     const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 
-    const artifactConfig: ArtifactConfig = {
-      ...DEFAULT_ARTIFACT_CONFIG,
+    const artifactConfig: ResolvedArtifactConfig = {
+      ...configuredArtifactConfig,
       enabled: effectiveParams.artifacts !== false,
     };
     const artifactsDir = getArtifactsDir(parentSessionFile);

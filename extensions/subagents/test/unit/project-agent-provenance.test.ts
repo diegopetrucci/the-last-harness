@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { buildAsyncRunnerPlan } from "../../src/runs/background/async-execution.ts";
 import { SUBAGENT_PROJECT_AGENT_GUIDANCE_ENV } from "../../src/runs/shared/pi-args.ts";
 import type { SubagentRunConfig } from "../../src/runs/shared/parallel-utils.ts";
+import { DEFAULT_ARTIFACT_CONFIG } from "../../src/shared/types.ts";
 import { makeAgent, makeExtensionAPI } from "../support/helpers.ts";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -40,6 +41,7 @@ describe("packaged minor-agent provenance", () => {
         { agent: "code-reviewer", task: "custom" },
       ],
       agents: [canonical, custom],
+      artifactConfig: DEFAULT_ARTIFACT_CONFIG,
       ctx: { pi: makeExtensionAPI(), cwd: root, currentSessionId: "parent" },
       maxSubagentDepth: 2,
     });
