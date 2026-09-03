@@ -111,6 +111,18 @@ async function* makeCacheReadStream(): AsyncIterable<AssistantMessageEvent> {
   };
 }
 
+/** Fake stream that reaches generation before any usable cache evidence. */
+async function* makeGenerationCutoffStream(): AsyncIterable<AssistantMessageEvent> {
+  yield {
+    type: "text_start",
+    contentIndex: 0,
+    partial: makeAssistantMessage({
+      content: [{ type: "text", text: "" }],
+      usage: makeUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 }),
+    }),
+  };
+}
+
 interface FakePi extends Pick<ExtensionAPI, "appendEntry" | "registerEntryRenderer"> {
   entries: Array<{ customType: string; data: unknown }>;
   /** Set of customType strings for which a renderer was registered. */
@@ -1310,6 +1322,110 @@ describe("createHeartbeatWiring — enabled: beat accounting (finding 7)", () =>
     // Wiring must still function (no throw into host)
     wiring.disarm();
     assert.doesNotThrow(() => wiring.destroy());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: session breaker propagation
+// ---------------------------------------------------------------------------
+
+describe("createHeartbeatWiring — enabled: generation-cutoff breaker", () => {
+  it("stops post-breaker starts/rearms without logging empty gaps", async () => {
+    const written: string[] = [];
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const pi = makeFakePi();
+    const deps = makeTestDeps({ written, timers });
+    let streamCalls = 0;
+    let markCleanupStarted!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>((resolve) => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    deps.streamProvider = () => {
+      streamCalls++;
+      const delayedCleanup = streamCalls === 3;
+      return (async function* () {
+        try {
+          for await (const event of makeGenerationCutoffStream()) yield event;
+        } finally {
+          if (delayedCleanup) {
+            markCleanupStarted();
+            await cleanupRelease;
+          }
+        }
+      })();
+    };
+
+    const wiring = createHeartbeatWiring(
+      pi,
+      { heartbeat: { enabled: true, intervalMs: 255_000, maxBeatsPerGap: 10 } },
+      deps,
+    );
+
+    wiring.onProviderRequest({ messages: [] }, makeModel());
+    wiring.onIdle(true);
+    wiring.notifyAsyncStarted(0, "session-breaker");
+
+    // Three cutoffs are bounded by the existing three-failure session breaker.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await fireLatestTimer(timers);
+    }
+    const thirdTimer = timers.at(-1);
+    assert.ok(thirdTimer, "third cutoff must have a timer");
+    thirdTimer.fn();
+    await cleanupStarted;
+
+    const beforeClose = wiring.getSessionSummary();
+    assert.equal(beforeClose.enabled, true);
+    assert.equal(beforeClose.totalBeats, 3);
+    assert.equal(
+      beforeClose.breakerDisabled,
+      false,
+      "the third cutoff is not complete until iterator cleanup settles",
+    );
+
+    // Close the gap while the third cutoff is waiting for iterator cleanup.
+    // Its completion must still trip the session breaker after this summary.
+    const closed = wiring.notifyAsyncComplete(
+      "job-before-breaker",
+      makeJobsMap([["job-before-breaker", "running"]]),
+    );
+    assert.equal(closed, true);
+    const summaryCountAfterClose = parseSummaryLines(written).length;
+    assert.equal(summaryCountAfterClose, 1);
+
+    releaseCleanup();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const afterRace = wiring.getSessionSummary();
+    assert.equal(afterRace.breakerDisabled, true, "late cutoff completion must trip the breaker");
+    assert.equal(streamCalls, 3);
+
+    const timerCountAfterClose = timers.length;
+    wiring.notifyAsyncStarted(0, "session-after-breaker");
+    wiring.tryRearm(1, "session-after-breaker");
+    wiring.notifyAsyncComplete(
+      "job-after-breaker",
+      makeJobsMap([["job-after-breaker", "running"]]),
+    );
+    wiring.disarm();
+
+    assert.equal(
+      timers.length,
+      timerCountAfterClose,
+      "post-breaker starts and rearms must not create timers",
+    );
+    assert.equal(
+      parseSummaryLines(written).length,
+      summaryCountAfterClose,
+      "post-breaker lifecycle calls must not create an empty gap summary",
+    );
+    const after = wiring.getSessionSummary();
+    assert.equal(after.enabled, true, "diagnostics must remain enabled after the breaker trips");
+    assert.equal(after.breakerDisabled, true, "diagnostics must report the tripped breaker");
+    wiring.destroy();
   });
 });
 

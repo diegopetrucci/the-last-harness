@@ -22,7 +22,8 @@ import type { ResolvedHeartbeatConfig } from "./heartbeat-config.ts";
 export type HeartbeatOutcome =
   | "cache_read" // beat succeeded; cache was read at read-prices
   | "cache_write_mismatch" // beat observed a large cache write; gap stopped
-  | "error" // stream or auth error during beat
+  | "error" // genuine stream or auth error during beat
+  | "generation_cutoff" // generation began before usable cache-usage evidence
   | "capped" // per-gap beat cap or max-duration cap reached
   | "lost" // elapsed >= LATE_BEAT_THRESHOLD_MS at beat time; cache TTL likely expired
   | "cancelled"; // beat aborted by a lifecycle event (gap closing) — never affects error breaker
@@ -51,9 +52,9 @@ export interface HeartbeatGap {
 
 /** Full mutable state owned by the state machine. */
 export interface HeartbeatMachineState {
-  /** Permanently disabled for the session (e.g. 3 consecutive errors). */
+  /** Permanently disabled for the session (e.g. 3 consecutive beat failures). */
   disabled: boolean;
-  /** Number of consecutive beat errors. Resets on cache_read. */
+  /** Number of consecutive beat failures. Resets on cache_read. */
   consecutiveErrors: number;
   /** True while a beat stream is in flight. */
   inFlight: boolean;
@@ -78,7 +79,7 @@ export const MIN_REARM_DELAY_MS = 1_000;
 /** If cacheWrite tokens exceed this in a ghost request, stop the gap. */
 export const CACHE_WRITE_MISMATCH_THRESHOLD = 256;
 
-/** Session is disabled after this many consecutive beat errors. */
+/** Session is disabled after this many consecutive beat failures. */
 export const MAX_CONSECUTIVE_ERRORS = 3;
 
 // ---------------------------------------------------------------------------
@@ -191,8 +192,9 @@ export interface CompleteBeatResult {
 /**
  * Record the outcome of a completed beat and advance state.
  *
- * Every ghost request (including errors and mismatches) increments beatCount so
- * the economic cap and beat indices remain accurate across all outcomes.
+ * Every ghost request (including errors, generation cutoffs, and mismatches)
+ * increments beatCount so the economic cap and beat indices remain accurate
+ * across all outcomes.
  *
  * @param state   Machine state (mutated in place).
  * @param outcome The result of the beat.
@@ -228,7 +230,7 @@ export function completeBeat(
       // starts from when we successfully refreshed the cache.
       state.gap.lastRequestAt = now;
     }
-  } else if (outcome === "error") {
+  } else if (outcome === "error" || outcome === "generation_cutoff") {
     state.consecutiveErrors++;
   } else if (outcome === "cache_write_mismatch") {
     stopGap = true;

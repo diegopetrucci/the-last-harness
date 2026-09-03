@@ -825,7 +825,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", (_event, ctx) => {
     if (resolvedHbConfig.enabled) {
-      // Reset session-scoped state (error breaker, consecutive errors, session
+      // Reset session-scoped state (failure breaker, consecutive failures, session
       // totals) for the new session.  Must run before capturing ctx so stale
       // state from the previous session does not persist into this one.
       hbWiring.resetSession();
