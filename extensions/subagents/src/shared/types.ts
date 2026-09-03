@@ -1207,8 +1207,8 @@ export interface RunSyncOptions {
   modelOverride?: string;
   /** Durable explanation for a restored or explicitly overridden model selection. */
   modelResolution?: SubagentModelResolution;
-  /** Per-execution fallback models tried before agent frontmatter fallback models. */
-  fallbackModels?: string[];
+  /** Provider-aware fallback candidates generated for this dispatch target. */
+  providerFallbackModels?: string[];
   /** Latest persisted display projection restored for the same execution segment. */
   contextPressure?: ContextPressureProjection;
   /** Thresholds already crossed in this execution, used for restart-safe deduplication. */
@@ -1371,15 +1371,8 @@ export function resolveTopLevelParallelMaxTasks(value: unknown): number {
   return normalizeTopLevelParallelValue(value) ?? MAX_PARALLEL;
 }
 
-export function resolveTopLevelParallelConcurrency(
-  override: unknown,
-  configValue: unknown,
-): number {
-  return (
-    normalizeTopLevelParallelValue(override) ??
-    normalizeTopLevelParallelValue(configValue) ??
-    MAX_CONCURRENCY
-  );
+export function resolveTopLevelParallelConcurrency(configValue: unknown): number {
+  return normalizeTopLevelParallelValue(configValue) ?? MAX_CONCURRENCY;
 }
 
 export function getAsyncConfigPath(suffix: string): string {

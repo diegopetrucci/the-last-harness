@@ -1079,7 +1079,7 @@ describe("async execution utilities", () => {
     assert.equal(args[args.indexOf("--model") + 1], `${model}:max`);
   });
 
-  it("background runs try per-dispatch fallback models before agent fallback models and only persist notices after a retry", async () => {
+  it("background runs try agent fallback models and only persist notices after a retry", async () => {
     mockPi.onCall({
       jsonl: [
         {
@@ -1095,7 +1095,7 @@ describe("async execution utilities", () => {
       ],
       exitCode: 0,
     });
-    mockPi.onCall({ output: "Recovered asynchronously on dispatch fallback" });
+    mockPi.onCall({ output: "Recovered asynchronously on agent fallback" });
     const id = `async-dispatch-fallback-${Date.now().toString(36)}`;
     const resultPath = path.join(RESULTS_DIR, `${id}.json`);
     executeAsyncSingle(id, {
@@ -1106,8 +1106,7 @@ describe("async execution utilities", () => {
         fallbackModels: ["google/gemini-2.5-pro"],
       }),
       ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-      fallbackModels: ["anthropic/claude-sonnet-4"],
-      modelFallbackNotice: "Dispatch fallback engaged",
+      modelFallbackNotice: "Agent fallback engaged",
       artifactConfig: {
         enabled: false,
         includeInput: false,
@@ -1133,11 +1132,11 @@ describe("async execution utilities", () => {
     assert.equal(payload.success, true);
     assert.deepEqual(payload.results[0].attemptedModels, [
       "openai/gpt-5-mini",
-      "anthropic/claude-sonnet-4",
+      "google/gemini-2.5-pro",
     ]);
-    assert.equal(payload.results[0].modelFallbackNotice, "Dispatch fallback engaged");
+    assert.equal(payload.results[0].modelFallbackNotice, "Agent fallback engaged");
     assert.match(payload.results[0].output ?? "", /^\[fallback\]/);
-    assert.match(payload.results[0].output ?? "", /Notice: Dispatch fallback engaged/);
+    assert.match(payload.results[0].output ?? "", /Notice: Agent fallback engaged/);
     assert.equal(mockPi.callCount(), 2);
   });
 

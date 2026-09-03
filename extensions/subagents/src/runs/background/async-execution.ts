@@ -146,7 +146,7 @@ interface AsyncSingleParams {
   contextUsage?: ContextUsageDiagnostics;
   contextPressure?: ContextPressureProjection;
   contextPressureCrossedThresholds?: import("../../shared/types.ts").ContextPressureThreshold[];
-  fallbackModels?: string[];
+  providerFallbackModels?: string[];
   modelFallbackNotice?: string;
   availableModels?: AvailableModelInfo[];
   modelRegistry?: ModelRegistryEvidence;
@@ -173,10 +173,8 @@ interface AsyncParallelTaskParams {
   cwd?: string;
   output?: string | false;
   outputMode?: OutputMode;
-  reads?: string[] | false;
-  progress?: boolean;
   model?: string;
-  fallbackModels?: string[];
+  providerFallbackModels?: string[];
   modelFallbackNotice?: string;
   acceptance?: AcceptanceInput;
   toolBudget?: ToolBudgetConfig;
@@ -449,10 +447,7 @@ export function buildAsyncRunnerPlan(
   const buildStepOverrides = (task: AsyncParallelTaskParams): StepOverrides => ({
     ...(task.output !== undefined ? { output: task.output } : {}),
     ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-    ...(task.reads !== undefined ? { reads: task.reads } : {}),
-    ...(task.progress !== undefined ? { progress: task.progress } : {}),
     ...(task.model ? { model: task.model } : {}),
-    ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
     ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
   });
 
@@ -528,7 +523,10 @@ export function buildAsyncRunnerPlan(
       ctx.currentModelProvider,
       { scope: ctx.modelScope, source: behavior.model ? "explicit" : "inherited" },
     );
-    const fallbackModels = buildFallbackModelList(behavior.fallbackModels, agent.fallbackModels);
+    const fallbackModels = buildFallbackModelList(
+      taskSpec.providerFallbackModels,
+      agent.fallbackModels,
+    );
     const effectiveThinking = agent.thinking;
     const attemptNotes: string[] = [];
     const thinkingDroppedModels: string[] = [];
@@ -1001,7 +999,10 @@ export function executeAsyncSingle(id: string, params: AsyncSingleParams): Async
         }
       : undefined,
   );
-  const fallbackModels = buildFallbackModelList(params.fallbackModels, agentConfig.fallbackModels);
+  const fallbackModels = buildFallbackModelList(
+    params.providerFallbackModels,
+    agentConfig.fallbackModels,
+  );
   const effectiveThinking = restoringModel
     ? params.restoredModelIdentity?.thinking
     : agentConfig.thinking;

@@ -1584,7 +1584,7 @@ export async function runSync(runtimeCwd, agents, agentName, task, options) {
         systemPrompt = systemPrompt ? `${systemPrompt}\n\n${skillInjection}` : skillInjection;
     }
     systemPrompt = injectOutputPathSystemPrompt(systemPrompt, options.outputPath);
-    const fallbackModels = buildFallbackModelList(options.fallbackModels, agent.fallbackModels);
+    const fallbackModels = buildFallbackModelList(options.providerFallbackModels, agent.fallbackModels);
     const candidatePlan = buildModelCandidatePlan(options.modelOverride ?? agent.model, fallbackModels, options.availableModels, options.preferredModelProvider, { scope: options.modelScope, registry: options.modelRegistry });
     const candidates = candidatePlan.candidates;
     const filteringNotice = candidatePlan.filteringNotice;

@@ -2012,7 +2012,7 @@ describe(
     });
 
     it(
-      "tries per-dispatch fallback models before agent fallback models and only shows notices after a retry",
+      "tries agent fallback models and only shows notices after a retry",
       {
         skip: !createSubagentExecutor ? "executor not importable" : undefined,
       },
@@ -2032,7 +2032,7 @@ describe(
           ],
           exitCode: 0,
         });
-        mockPi.onCall({ output: "Recovered on the dispatch fallback" });
+        mockPi.onCall({ output: "Recovered on the agent fallback" });
         const executor = makeExecutor([
           makeAgent("echo", {
             model: "openai/gpt-5-mini",
@@ -2041,17 +2041,15 @@ describe(
         ]);
         const ctx = makeMinimalCtx(tempDir);
         const primary = makeModel("gpt-5-mini", { provider: "openai" });
-        const dispatchFallback = makeModel("claude-sonnet-4", { provider: "anthropic" });
         const agentFallback = makeModel("gemini-2.5-pro", { provider: "google" });
-        ctx.modelRegistry.getAvailable = () => [primary, dispatchFallback];
-        ctx.modelRegistry.getAll = () => [primary, dispatchFallback, agentFallback];
+        ctx.modelRegistry.getAvailable = () => [primary, agentFallback];
+        ctx.modelRegistry.getAll = () => [primary, agentFallback];
 
         const result = await executor.execute(
-          "single-dispatch-fallback-order",
+          "single-agent-fallback-order",
           {
             agent: "echo",
             task: "Task",
-            fallbackModels: ["anthropic/claude-sonnet-4"],
             modelFallbackNotice: "Quota fallback engaged",
           },
           new AbortController().signal,
@@ -2062,19 +2060,15 @@ describe(
         assert.equal(result.isError, undefined);
         assert.match(
           result.content[0]?.text ?? "",
-          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the dispatch fallback/,
+          /Summary:\nNotice: Quota fallback engaged(?: Skipped.*)?\n\nRecovered on the agent fallback/,
         );
         assert.deepEqual(result.details?.results?.[0]?.attemptedModels, [
           "openai/gpt-5-mini",
-          "anthropic/claude-sonnet-4",
+          "google/gemini-2.5-pro",
         ]);
         assert.match(
           result.details?.results?.[0]?.modelFallbackNotice ?? "",
           /Quota fallback engaged/,
-        );
-        assert.match(
-          result.details?.results?.[0]?.modelFallbackNotice ?? "",
-          /provider credentials|fallbackModels/,
         );
         assert.equal(mockPi.callCount(), 2);
       },

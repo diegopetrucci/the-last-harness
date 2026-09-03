@@ -259,6 +259,7 @@ describe(
     function makeExecutor(
       options: {
         agents?: ReturnType<typeof makeAgent>[];
+        config?: Record<string, unknown>;
         kill?: (pid: number, signal?: NodeJS.Signals | 0) => boolean;
       } = {},
     ) {
@@ -288,7 +289,7 @@ describe(
           setSessionName: () => {},
         },
         state,
-        config: {},
+        config: options.config ?? {},
         tempArtifactsDir: tempDir,
         getSubagentSessionRoot: () => tempDir,
         expandTilde: (value: string) => value,
@@ -2285,6 +2286,7 @@ describe(
           makeAgent("started"),
           makeAgent("queued"),
         ],
+        config: { parallel: { concurrency: 3 } },
       });
       const cohortContext = makeMinimalCtx(tempDir);
       cohortContext.model = makeModel("test-model", { provider: "mock" });
@@ -2302,7 +2304,6 @@ describe(
             { agent: "started", task: "start late work", model: "openai/gpt-5-mini" },
             { agent: "queued", task: "must not start" },
           ],
-          concurrency: 3,
         },
         new AbortController().signal,
         undefined,

@@ -147,6 +147,7 @@ import {
   resolveEffectiveContextWindow,
 } from "../../shared/context-diagnostics.ts";
 import { safeTerminalDocument, safeTerminalText } from "../../shared/display-text.ts";
+import { getProviderAwareFallbackModels } from "../../../../the-last-harness-subagent-safety.mjs";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { inspectSubagentStatus } from "../background/run-status.ts";
 import {
@@ -201,10 +202,7 @@ interface TaskParam {
   count?: number;
   output?: string | boolean;
   outputMode?: "inline" | "file-only";
-  reads?: string[] | boolean;
-  progress?: boolean;
   model?: string;
-  fallbackModels?: string[];
   modelFallbackNotice?: string;
   acceptance?: AcceptanceInput;
   toolBudget?: ToolBudgetConfig;
@@ -223,7 +221,6 @@ export interface SubagentParamsLike {
   /** Chain-shaped input is intentionally unsupported; kept only for fail-closed validation. */
   chain?: unknown;
   tasks?: TaskParam[];
-  concurrency?: number;
   async?: boolean;
   timeoutMs?: number;
   toolBudget?: ToolBudgetConfig;
@@ -234,9 +231,7 @@ export interface SubagentParamsLike {
   cwd?: string;
   maxOutput?: MaxOutputConfig;
   artifacts?: boolean;
-  includeProgress?: boolean;
   model?: string;
-  fallbackModels?: string[];
   modelFallbackNotice?: string;
   skill?: string | string[] | boolean;
   output?: string | boolean;
@@ -475,6 +470,8 @@ function projectExecutionError(message: string): { error: string } {
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+const providerFallbackModelsForTarget = getProviderAwareFallbackModels;
 
 function asProjectAgentCapability(value: Record<string, unknown>): ProjectAgentSnapshotCapability {
   // SAFETY: The provider resolver below rechecks this opaque object identity before use.
@@ -4599,7 +4596,7 @@ async function resumeAsyncRun(input: {
       controlConfig: resolveControlConfig(input.deps.config.control, input.params.control),
       availableModels,
       modelRegistry: modelRegistrySnapshot.evidence,
-      fallbackModels: input.params.fallbackModels,
+      providerFallbackModels: providerFallbackModelsForTarget(input.params),
       modelFallbackNotice: input.params.modelFallbackNotice,
     });
   } catch (error) {
@@ -4782,6 +4779,37 @@ function unknownAgentMessage(
   );
   if (!diagnostic) return `${prefix}: ${agentName}`;
   return `${prefix}: ${agentName}. Malformed definition at '${diagnostic.filePath}': ${diagnostic.error}`;
+}
+
+function retiredExecutionControlError(params: SubagentParamsLike): string | undefined {
+  const input = params as Record<string, unknown>;
+  const topLevelGuidance: Record<string, string> = {
+    concurrency:
+      "Configure `parallel.concurrency` in `<agent-dir>/extensions/subagent/config.json`; per-call concurrency is no longer supported.",
+    fallbackModels:
+      "Configure fallbackModels in the agent definition; per-call fallback selection is no longer supported.",
+    includeProgress:
+      "Progress is tracked automatically and is not a caller-controlled execution option.",
+  };
+  for (const [key, guidance] of Object.entries(topLevelGuidance)) {
+    if (Object.hasOwn(input, key)) return `${key} is no longer supported. ${guidance}`;
+  }
+
+  if (Array.isArray(input.tasks)) {
+    for (const [index, rawTask] of input.tasks.entries()) {
+      if (!isRecordValue(rawTask)) continue;
+      if (Object.hasOwn(rawTask, "reads")) {
+        return `tasks[${index}].reads is no longer supported. Configure defaultReads in the agent definition instead.`;
+      }
+      if (Object.hasOwn(rawTask, "progress")) {
+        return `tasks[${index}].progress is no longer supported. Configure defaultProgress in the agent definition instead.`;
+      }
+      if (Object.hasOwn(rawTask, "fallbackModels")) {
+        return `tasks[${index}].fallbackModels is no longer supported. Configure fallbackModels in the agent definition instead.`;
+      }
+    }
+  }
+  return undefined;
 }
 
 function validateExecutionInput(
@@ -5050,7 +5078,9 @@ function runAsyncPath(
       task: task.task,
       cwd: task.cwd,
       ...(modelOverrides[index] ? { model: modelOverrides[index] } : {}),
-      ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
+      ...(providerFallbackModelsForTarget(task)
+        ? { providerFallbackModels: providerFallbackModelsForTarget(task) }
+        : {}),
       ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
       ...(task.output === true
         ? agentConfigs[index]?.output
@@ -5060,18 +5090,13 @@ function runAsyncPath(
           ? { output: task.output }
           : {}),
       ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-      ...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
-      ...(task.progress !== undefined ? { progress: task.progress } : {}),
       ...(task.toolBudget !== undefined ? { toolBudget: task.toolBudget } : {}),
       ...(task.acceptance !== undefined ? { acceptance: task.acceptance } : {}),
     }));
     return releaseAsyncProjectRunOnError(
       executeAsyncParallel(id, {
         tasks: parallelTasks,
-        concurrency: resolveTopLevelParallelConcurrency(
-          params.concurrency,
-          deps.config.parallel?.concurrency,
-        ),
+        concurrency: resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency),
         agents,
         ctx: asyncCtx,
         availableModels,
@@ -5144,7 +5169,7 @@ function runAsyncPath(
         outputMode: effectiveOutputMode,
         outputBaseDir: resolveSingleRunOutputBaseDir(artifactsDir, id),
         modelOverride,
-        fallbackModels: params.fallbackModels,
+        providerFallbackModels: providerFallbackModelsForTarget(params),
         modelFallbackNotice: params.modelFallbackNotice,
         maxSubagentDepth,
         controlConfig,
@@ -5196,6 +5221,7 @@ interface ForegroundParallelRunInput {
   modelRegistry: ModelRegistryEvidence;
   modelScope?: ModelScopeConfig;
   modelOverrides: (string | undefined)[];
+  providerFallbackModels: (string[] | undefined)[];
   behaviors: ResolvedStepBehavior[];
   firstProgressIndex: number;
   controlConfig: ResolvedControlConfig;
@@ -5465,7 +5491,7 @@ async function runForegroundParallelTasks(
         steerInboxDir,
         nestedRoute: input.foregroundControl?.nestedRoute,
         modelOverride: input.modelOverrides[index],
-        fallbackModels: behavior?.fallbackModels,
+        providerFallbackModels: input.providerFallbackModels[index],
         modelFallbackNotice: behavior?.modelFallbackNotice,
         availableModels: input.availableModels,
         modelRegistry: input.modelRegistry,
@@ -5574,7 +5600,6 @@ async function runParallelPath(
     controlConfig,
   } = data;
   const onControlEvent = createForegroundControlNotifier(data, deps);
-  const allProgress: AgentProgress[] = [];
   const allArtifactPaths: ArtifactPaths[] = [];
   const tasks = params.tasks!;
   const tkTicketContext = resolveTkTicketTaskContext({ runnerCwd: effectiveCwd, tasks });
@@ -5583,11 +5608,7 @@ async function runParallelPath(
     : undefined;
   const tkTicketIndex = tkTicketContext?.taskIndex;
   const maxParallelTasks = resolveTopLevelParallelMaxTasks(deps.config.parallel?.maxTasks);
-  const parallelConcurrency = resolveTopLevelParallelConcurrency(
-    params.concurrency,
-    deps.config.parallel?.concurrency,
-  );
-
+  const parallelConcurrency = resolveTopLevelParallelConcurrency(deps.config.parallel?.concurrency);
   if (tasks.length > maxParallelTasks)
     return {
       content: [{ type: "text", text: `Max ${maxParallelTasks} tasks` }],
@@ -5632,10 +5653,7 @@ async function runParallelPath(
       ? { output: task.output === true ? (agentConfigs[index]?.output ?? false) : task.output }
       : {}),
     ...(task.outputMode !== undefined ? { outputMode: task.outputMode } : {}),
-    ...(task.reads !== undefined && task.reads !== true ? { reads: task.reads } : {}),
-    ...(task.progress !== undefined ? { progress: task.progress } : {}),
     ...(task.model ? { model: task.model } : {}),
-    ...(task.fallbackModels ? { fallbackModels: task.fallbackModels } : {}),
     ...(task.modelFallbackNotice ? { modelFallbackNotice: task.modelFallbackNotice } : {}),
   }));
   const modelOverrides: (string | undefined)[] = tasks.map((_, i) =>
@@ -5718,6 +5736,7 @@ async function runParallelPath(
     modelRegistry: modelRegistrySnapshot.evidence,
     modelScope: data.modelScope,
     modelOverrides,
+    providerFallbackModels: tasks.map((task) => providerFallbackModelsForTarget(task)),
     behaviors,
     firstProgressIndex: parallelProgressPrecreated ? -1 : firstProgressIndex,
     controlConfig,
@@ -5738,10 +5757,8 @@ async function runParallelPath(
     runSync: data.runSync,
   });
   for (const result of results) {
-    if (result.progress) allProgress.push(result.progress);
     if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
   }
-
   if (foregroundControl) {
     updateForegroundNestedProjection(foregroundControl);
     attachRootChildrenToSteps(runId, results, foregroundControl.nestedChildren);
@@ -5751,7 +5768,6 @@ async function runParallelPath(
     mode: "parallel",
     runId,
     results,
-    progress: params.includeProgress ? allProgress : undefined,
     artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
     totalChildUsage: sumResultsUsage(results),
     totalCost: sumResultsCost(results),
@@ -5856,7 +5872,6 @@ async function runSinglePath(
     controlConfig,
   } = data;
   const onControlEvent = createForegroundControlNotifier(data, deps);
-  const allProgress: AgentProgress[] = [];
   const allArtifactPaths: ArtifactPaths[] = [];
   const agentConfig = agents.find((a) => a.name === params.agent);
   if (!agentConfig) {
@@ -5890,7 +5905,7 @@ async function runSinglePath(
     },
   );
   const skillOverride: string[] | false | undefined = normalizeSkillInput(params.skill);
-  const fallbackModels = params.fallbackModels;
+  const providerFallbackModels = providerFallbackModelsForTarget(params);
   const modelFallbackNotice = params.modelFallbackNotice;
   const rawOutput = params.output !== undefined ? params.output : agentConfig.output;
   const effectiveOutput = normalizeSingleOutputOverride(rawOutput, agentConfig.output);
@@ -6025,7 +6040,7 @@ async function runSinglePath(
       },
       index: 0,
       modelOverride,
-      fallbackModels,
+      providerFallbackModels,
       modelFallbackNotice,
       availableModels,
       modelRegistry: modelRegistrySnapshot.evidence,
@@ -6054,7 +6069,6 @@ async function runSinglePath(
     foregroundControl.toolCount = r.progress?.toolCount;
     foregroundControl.updatedAt = Date.now();
   }
-  if (r.progress) allProgress.push(r.progress);
   if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
 
   const fullOutput = getSingleResultOutput(r);
@@ -6080,7 +6094,6 @@ async function runSinglePath(
     runId,
     results: [r],
     ...(effectiveToolBudget.toolBudget ? { toolBudget: effectiveToolBudget.toolBudget } : {}),
-    progress: params.includeProgress ? allProgress : undefined,
     artifacts: allArtifactPaths.length ? { dir: artifactsDir, files: allArtifactPaths } : undefined,
     truncation: r.truncation,
     totalChildUsage: sumResultsUsage([r]),
@@ -6772,6 +6785,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
     const requestCwd = resolveRequestedCwd(ctx.cwd, requestParams.cwd);
     const paramsWithResolvedCwd =
       requestParams.cwd === undefined ? requestParams : { ...requestParams, cwd: requestCwd };
+    const retiredControlDetail = retiredExecutionControlError(paramsWithResolvedCwd);
+    if (retiredControlDetail)
+      return buildRequestedModeError(paramsWithResolvedCwd, retiredControlDetail);
     const unsupportedSavedChainDetail = unsupportedSavedChainInput(paramsWithResolvedCwd);
     if (unsupportedSavedChainDetail)
       return unsupportedSavedChainInputResult(paramsWithResolvedCwd, unsupportedSavedChainDetail);

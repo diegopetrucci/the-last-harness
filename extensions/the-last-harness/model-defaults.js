@@ -1,7 +1,7 @@
 import { THINKING_LEVELS } from "./constants.js";
 import { getAvailableThinkingLevels, isThinkingLevel } from "./thinking.js";
 import { isRecord } from "./common.js";
-import { isEmbeddedSubagentTarget } from "../the-last-harness-subagent-safety.mjs";
+import { isEmbeddedSubagentTarget, PROVIDER_AWARE_FALLBACK_MODELS, } from "../the-last-harness-subagent-safety.mjs";
 const OPENAI_PROVIDERS = new Set(["openai-codex", "openai"]);
 const ANTHROPIC_PROVIDERS = new Set(["anthropic"]);
 const OPENROUTER_PROVIDERS = new Set(["openrouter"]);
@@ -641,7 +641,9 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
                     ? `${fallbackModelBase}:${fallbackThinking}`
                     : fallbackModelBase;
                 if (!Object.hasOwn(target, "fallbackModels") || target.fallbackModels === undefined) {
-                    target.fallbackModels = [fallbackModelId];
+                    target[PROVIDER_AWARE_FALLBACK_MODELS] = [
+                        fallbackModelId,
+                    ];
                 }
                 if (!Object.hasOwn(target, "modelFallbackNotice") ||
                     target.modelFallbackNotice === undefined) {
@@ -692,7 +694,7 @@ function applyModelToRunnableTarget(target, agents, availableModels, currentProv
         .filter((m) => Boolean(m));
     if (fallbackModels?.length) {
         if (usesGeneratedFallback) {
-            target.fallbackModels = fallbackModels;
+            target[PROVIDER_AWARE_FALLBACK_MODELS] = fallbackModels;
         }
         if (!Object.hasOwn(target, "modelFallbackNotice") || target.modelFallbackNotice === undefined) {
             target.modelFallbackNotice = resolution.modelFallbackNotice;
