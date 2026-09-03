@@ -27,7 +27,7 @@ Only `architect` and `disabled` may initiate a custom embedded run. Such a call 
 The model-facing `subagent` tool deliberately has a small, fail-closed surface:
 
 - **Single:** one `agent` and optional `task`.
-- **Parallel:** a `tasks` array. Each task names an `agent` and `task` and may override output or model behavior; parallel limits are configured in `<agent-dir>/extensions/subagent/config.json`.
+- **Parallel:** a `tasks` array. Each task accepts `agent`, `task`, optional `cwd`, `count`, `output`, `outputMode`, and `model`; parallel limits are configured in `<agent-dir>/extensions/subagent/config.json`.
 - **Synchronous by default:** the tool waits for the child result.
 - **Asynchronous when requested:** `async: true` starts TLH-tracked background work in a detached OS child process managed by TLH and returns an ID and runtime directory so the parent can continue useful work.
 - **Execution controls:** `timeoutMs`, `cwd`, and `artifacts`; single runs also accept `output`, `outputMode`, and `model`. Agent definitions own `defaultReads`, `defaultProgress`, and `fallbackModels`; every execution starts a fresh child session. Execution is action-free for single/parallel runs; legacy `action: "single"`, `action: "parallel"`, `action: "tasks"`, and `maxRuntimeMs` inputs are not accepted.
